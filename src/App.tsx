@@ -16,6 +16,7 @@ import LoginScreen from "./components/LoginScreen";
 import LogForm from "./components/LogForm";
 import LogView from "./components/LogView";
 import PhasesView from "./components/PhasesView";
+import TindeqView from "./components/TindeqView";
 
 export default function App() {
   const { session, loading, signOut } = useAuth();
@@ -254,6 +255,7 @@ function AuthedApp({
                 onDelete={(id) => void removeSession(id)}
               />
             )}
+            {view === "tindeq" && <TindeqView />}
           </>
         )}
       </div>
