@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { computeTindeqStats } from "../lib/metrics";
 import type { TindeqRecordingMeta } from "../types";
 
 interface Props {
   recordings: TindeqRecordingMeta[];
+  selectedTag: string | null;
+  onSelectTag: (tag: string | null) => void;
 }
 
 const W = 300;
@@ -119,9 +121,11 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
   );
 }
 
-export default function TindeqTrendChart({ recordings }: Props) {
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
-
+export default function TindeqTrendChart({
+  recordings,
+  selectedTag,
+  onSelectTag,
+}: Props) {
   // Tags ordered by frequency, so the exercises you measure most come first
   const tags = useMemo(() => {
     const counts = new Map<string, number>();
@@ -166,14 +170,14 @@ export default function TindeqTrendChart({ recordings }: Props) {
           <TagChip
             label="All"
             active={selectedTag === null}
-            onClick={() => setSelectedTag(null)}
+            onClick={() => onSelectTag(null)}
           />
           {tags.map((t) => (
             <TagChip
               key={t}
               label={t}
               active={selectedTag === t}
-              onClick={() => setSelectedTag(selectedTag === t ? null : t)}
+              onClick={() => onSelectTag(selectedTag === t ? null : t)}
             />
           ))}
         </div>

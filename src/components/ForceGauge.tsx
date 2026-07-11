@@ -4,18 +4,28 @@ import type { TindeqSample } from "../types";
 
 const WINDOW_MS = 10_000;
 
+export interface GaugeTargetZone {
+  kg: number;
+  lowKg: number;
+  highKg: number;
+  workS: number;
+  label: string;
+}
+
 interface Props {
   current: number;
   peak: number;
   elapsedMs: number;
   samplesRef: RefObject<TindeqSample[]>;
   live: boolean;
+  target?: GaugeTargetZone | null;
 }
 
 function drawTrace(
   canvas: HTMLCanvasElement,
   samples: TindeqSample[],
   nowT: number,
+  target?: GaugeTargetZone | null,
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -32,7 +42,9 @@ function drawTrace(
   const t1 = Math.max(nowT, WINDOW_MS);
   const t0 = t1 - WINDOW_MS;
   const visible = samples.filter((s) => s.t >= t0);
-  const maxKg = Math.max(10, ...visible.map((s) => s.kg)) * 1.15;
+  const maxKg =
+    Math.max(10, target ? target.highKg : 0, ...visible.map((s) => s.kg)) *
+    1.15;
 
   // gridlines
   ctx.strokeStyle = "#1a2030";
@@ -43,6 +55,22 @@ function drawTrace(
     ctx.moveTo(0, y);
     ctx.lineTo(w, y);
     ctx.stroke();
+  }
+
+  // target zone band + line
+  if (target) {
+    const yLow = h - (target.lowKg / maxKg) * h;
+    const yHigh = h - (target.highKg / maxKg) * h;
+    ctx.fillStyle = "rgba(74,222,128,0.10)";
+    ctx.fillRect(0, yHigh, w, yLow - yHigh);
+    const yTarget = h - (target.kg / maxKg) * h;
+    ctx.strokeStyle = "rgba(74,222,128,0.6)";
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, yTarget);
+    ctx.lineTo(w, yTarget);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   if (visible.length < 2) return;
@@ -66,6 +94,7 @@ export default function ForceGauge({
   elapsedMs,
   samplesRef,
   live,
+  target,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -75,18 +104,22 @@ export default function ForceGauge({
     if (!live) {
       // one final draw of whatever is in the buffer
       const samples = samplesRef.current;
-      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0);
+      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0, target);
       return;
     }
     let raf = 0;
     const tick = () => {
       const samples = samplesRef.current;
-      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0);
+      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0, target);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [live, samplesRef]);
+  }, [live, samplesRef, target]);
+
+  const inZone =
+    target && live && current >= target.lowKg && current <= target.highKg;
+  const workDone = target && elapsedMs >= target.workS * 1000;
 
   return (
     <div className="card">
@@ -116,7 +149,7 @@ export default function ForceGauge({
               fontSize: 44,
               fontWeight: 800,
               lineHeight: 1,
-              color: "#e2e8f0",
+              color: inZone ? "#4ade80" : "#e2e8f0",
               letterSpacing: "-0.04em",
             }}
           >
@@ -141,8 +174,17 @@ export default function ForceGauge({
             </span>{" "}
             kg
           </div>
-          <div style={{ fontSize: 11, color: "#4a5a70", marginTop: 2 }}>
+          <div
+            style={{
+              fontSize: 11,
+              color: workDone ? "#4ade80" : "#4a5a70",
+              marginTop: 2,
+            }}
+          >
             {(elapsedMs / 1000).toFixed(1)}s
+            {target && (
+              <span style={{ color: "#3a4a60" }}> / {target.workS}s</span>
+            )}
           </div>
         </div>
       </div>
@@ -150,6 +192,25 @@ export default function ForceGauge({
         ref={canvasRef}
         style={{ width: "100%", height: 140, display: "block" }}
       />
+      {target && (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 10,
+            color: "#4a5a70",
+            marginTop: 6,
+          }}
+        >
+          <span>
+            target{" "}
+            <span style={{ color: "#4ade80" }}>{target.kg.toFixed(1)} kg</span>{" "}
+            ({target.lowKg.toFixed(1)}–{target.highKg.toFixed(1)}) ·{" "}
+            {target.workS}s
+          </span>
+          <span style={{ color: "#3a4a60" }}>{target.label}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -7,6 +7,8 @@ import {
   insertRecording,
 } from "../lib/repo";
 import type { TindeqRecordingMeta } from "../types";
+import ForceCurveCard from "./ForceCurveCard";
+import type { GaugeTarget } from "./ForceCurveCard";
 import ForceGauge from "./ForceGauge";
 import RecordingRow from "./RecordingRow";
 import TindeqTrendChart from "./TindeqTrendChart";
@@ -20,6 +22,8 @@ export default function TindeqView() {
   const [saving, setSaving] = useState(false);
   const [recordings, setRecordings] = useState<TindeqRecordingMeta[]>([]);
   const [listError, setListError] = useState<string | null>(null);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [gaugeTarget, setGaugeTarget] = useState<GaugeTarget | null>(null);
 
   // Recently used tags, most frequent first — one tap to re-tag the next rep
   const recentTags = (() => {
@@ -275,12 +279,43 @@ export default function TindeqView() {
             </button>
           </div>
 
+          {gaugeTarget && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 8,
+                fontSize: 10,
+                color: "#4a5a70",
+              }}
+            >
+              <span style={{ flex: 1 }}>
+                Target set: <span style={{ color: "#4ade80" }}>{gaugeTarget.label}</span>
+              </span>
+              <button
+                onClick={() => setGaugeTarget(null)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#3a4a60",
+                  fontSize: 10,
+                  cursor: "pointer",
+                  fontFamily: "'DM Mono', monospace",
+                  textDecoration: "underline",
+                }}
+              >
+                clear
+              </button>
+            </div>
+          )}
           <ForceGauge
             current={tindeq.current}
             peak={tindeq.peak}
             elapsedMs={tindeq.elapsedMs}
             samplesRef={tindeq.samplesRef}
             live={status === "measuring"}
+            target={gaugeTarget}
           />
 
           <div className="grid-2" style={{ marginTop: 10 }}>
@@ -432,7 +467,24 @@ export default function TindeqView() {
       )}
 
       {/* Trend */}
-      <TindeqTrendChart recordings={recordings} />
+      <TindeqTrendChart
+        recordings={recordings}
+        selectedTag={selectedTag}
+        onSelectTag={setSelectedTag}
+      />
+
+      {/* Force–duration curve for the selected exercise */}
+      {selectedTag && (
+        <ForceCurveCard
+          key={selectedTag}
+          tag={selectedTag}
+          recordings={recordings.filter((r) => r.tag === selectedTag)}
+          onUseTarget={(t) => {
+            setGaugeTarget(t);
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        />
+      )}
 
       {/* Past recordings */}
       <div
