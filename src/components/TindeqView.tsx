@@ -6,23 +6,104 @@ import {
   fetchRecordings,
   insertRecording,
 } from "../lib/repo";
-import type { TindeqRecordingMeta } from "../types";
+import type { TindeqRecordingMeta, TindeqSide } from "../types";
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import ForceGauge from "./ForceGauge";
 import RecordingRow from "./RecordingRow";
 import TindeqTrendChart from "./TindeqTrendChart";
 
+const SIDE_OPTIONS: { value: TindeqSide; label: string }[] = [
+  { value: "", label: "—" },
+  { value: "left", label: "Left" },
+  { value: "right", label: "Right" },
+  { value: "both", label: "Both" },
+];
+
+/// Shared exercise setup: used before starting a measure AND in the save
+/// card, editing the same state — set once, tweak between reps.
+function TagSideEditor({
+  tag,
+  side,
+  recentTags,
+  onTag,
+  onSide,
+}: {
+  tag: string;
+  side: TindeqSide;
+  recentTags: string[];
+  onTag: (t: string) => void;
+  onSide: (s: TindeqSide) => void;
+}) {
+  return (
+    <div>
+      <div className="grid-2" style={{ gap: 10 }}>
+        <div>
+          <span className="field-label" style={{ marginTop: 0 }}>
+            Exercise tag
+          </span>
+          <input
+            className="field"
+            value={tag}
+            onChange={(e) => onTag(e.target.value)}
+            placeholder="e.g. FDP"
+          />
+        </div>
+        <div>
+          <span className="field-label" style={{ marginTop: 0 }}>
+            Side
+          </span>
+          <select
+            className="field"
+            value={side}
+            onChange={(e) => onSide(e.target.value as TindeqSide)}
+          >
+            {SIDE_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {recentTags.length > 0 && (
+        <div
+          style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 7 }}
+        >
+          {recentTags.map((t) => (
+            <button
+              key={t}
+              className="tag"
+              onClick={() => onTag(tag === t ? "" : t)}
+              style={{
+                background: tag === t ? "#60a5fa" : "#0a0c10",
+                color: tag === t ? "#0a0c10" : "#4a5a70",
+                border: `1px solid ${tag === t ? "#60a5fa" : "#1e2d40"}`,
+                cursor: "pointer",
+                fontFamily: "'DM Mono', monospace",
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TindeqView() {
   const tindeq = useTindeq();
   const [pending, setPending] = useState<StoppedRecording | null>(null);
   const [pendingNote, setPendingNote] = useState("");
   const [pendingTag, setPendingTag] = useState("");
+  const [pendingSide, setPendingSide] = useState<TindeqSide>("");
   const [gaugeSession, setGaugeSession] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [recordings, setRecordings] = useState<TindeqRecordingMeta[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [selectedSide, setSelectedSide] = useState<TindeqSide | null>(null);
   const [gaugeTarget, setGaugeTarget] = useState<GaugeTarget | null>(null);
 
   // Recently used tags, most frequent first — one tap to re-tag the next rep
@@ -77,12 +158,13 @@ export default function TindeqView() {
         avgKg: pending.avgKg,
         note: pendingNote.trim(),
         tag: pendingTag.trim(),
+        side: pendingSide,
         groupId: gaugeSession,
         samples: pending.samples,
       });
       setRecordings((list) => [saved, ...list]);
       setPending(null);
-      // keep the tag — alternating hands means the next rep often reuses it
+      // keep tag and side — set them once, tweak side between reps
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Failed to save recording");
     } finally {
@@ -318,6 +400,30 @@ export default function TindeqView() {
             target={gaugeTarget}
           />
 
+          {/* Exercise setup before each measure */}
+          {status === "connected" && !pending && (
+            <div className="card" style={{ marginTop: 10 }}>
+              <div
+                style={{
+                  fontSize: 9,
+                  color: "#4a5a70",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  marginBottom: 8,
+                }}
+              >
+                Next recording
+              </div>
+              <TagSideEditor
+                tag={pendingTag}
+                side={pendingSide}
+                recentTags={recentTags}
+                onTag={setPendingTag}
+                onSide={setPendingSide}
+              />
+            </div>
+          )}
+
           <div className="grid-2" style={{ marginTop: 10 }}>
             <button
               className="btn-ghost"
@@ -404,40 +510,15 @@ export default function TindeqView() {
                   {pending.avgKg.toFixed(1)} kg
                 </span>
               </div>
-              <span className="field-label">Tag</span>
-              {recentTags.length > 0 && (
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 5,
-                    flexWrap: "wrap",
-                    marginBottom: 7,
-                  }}
-                >
-                  {recentTags.map((t) => (
-                    <button
-                      key={t}
-                      className="tag"
-                      onClick={() => setPendingTag(pendingTag === t ? "" : t)}
-                      style={{
-                        background: pendingTag === t ? "#60a5fa" : "#0a0c10",
-                        color: pendingTag === t ? "#0a0c10" : "#4a5a70",
-                        border: `1px solid ${pendingTag === t ? "#60a5fa" : "#1e2d40"}`,
-                        cursor: "pointer",
-                        fontFamily: "'DM Mono', monospace",
-                      }}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <input
-                className="field"
-                value={pendingTag}
-                onChange={(e) => setPendingTag(e.target.value)}
-                placeholder="e.g. right hand FDP"
-              />
+              <div style={{ marginTop: 12 }}>
+                <TagSideEditor
+                  tag={pendingTag}
+                  side={pendingSide}
+                  recentTags={recentTags}
+                  onTag={setPendingTag}
+                  onSide={setPendingSide}
+                />
+              </div>
               <span className="field-label">Note (optional)</span>
               <input
                 className="field"
@@ -471,14 +552,24 @@ export default function TindeqView() {
         recordings={recordings}
         selectedTag={selectedTag}
         onSelectTag={setSelectedTag}
+        selectedSide={selectedSide}
+        onSelectSide={setSelectedSide}
       />
 
-      {/* Force–duration curve for the selected exercise */}
+      {/* Force–duration curve for the selected exercise (+side) */}
       {selectedTag && (
         <ForceCurveCard
-          key={selectedTag}
-          tag={selectedTag}
-          recordings={recordings.filter((r) => r.tag === selectedTag)}
+          key={`${selectedTag}|${selectedSide ?? "all"}`}
+          tag={
+            selectedSide
+              ? `${selectedTag} · ${selectedSide}`
+              : selectedTag
+          }
+          recordings={recordings.filter(
+            (r) =>
+              r.tag === selectedTag &&
+              (selectedSide === null || r.side === selectedSide),
+          )}
           onUseTarget={(t) => {
             setGaugeTarget(t);
             window.scrollTo({ top: 0, behavior: "smooth" });

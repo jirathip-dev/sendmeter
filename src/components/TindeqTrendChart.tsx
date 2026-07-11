@@ -1,11 +1,13 @@
 import { useMemo } from "react";
 import { computeTindeqStats } from "../lib/metrics";
-import type { TindeqRecordingMeta } from "../types";
+import type { TindeqRecordingMeta, TindeqSide } from "../types";
 
 interface Props {
   recordings: TindeqRecordingMeta[];
   selectedTag: string | null;
   onSelectTag: (tag: string | null) => void;
+  selectedSide: TindeqSide | null;
+  onSelectSide: (side: TindeqSide | null) => void;
 }
 
 const W = 300;
@@ -125,6 +127,8 @@ export default function TindeqTrendChart({
   recordings,
   selectedTag,
   onSelectTag,
+  selectedSide,
+  onSelectSide,
 }: Props) {
   // Tags ordered by frequency, so the exercises you measure most come first
   const tags = useMemo(() => {
@@ -137,10 +141,13 @@ export default function TindeqTrendChart({
       .map(([tag]) => tag);
   }, [recordings]);
 
-  const filtered =
-    selectedTag === null
-      ? recordings
-      : recordings.filter((r) => r.tag === selectedTag);
+  const hasSides = recordings.some((r) => r.side !== "");
+
+  const filtered = recordings.filter(
+    (r) =>
+      (selectedTag === null || r.tag === selectedTag) &&
+      (selectedSide === null || r.side === selectedSide),
+  );
 
   const stats = computeTindeqStats(filtered);
   if (recordings.length < 2) return null;
@@ -165,7 +172,7 @@ export default function TindeqTrendChart({
 
       {tags.length > 0 && (
         <div
-          style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}
+          style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}
         >
           <TagChip
             label="All"
@@ -178,6 +185,25 @@ export default function TindeqTrendChart({
               label={t}
               active={selectedTag === t}
               onClick={() => onSelectTag(selectedTag === t ? null : t)}
+            />
+          ))}
+        </div>
+      )}
+      {hasSides && (
+        <div
+          style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}
+        >
+          <TagChip
+            label="Both sides"
+            active={selectedSide === null}
+            onClick={() => onSelectSide(null)}
+          />
+          {(["left", "right"] as const).map((s) => (
+            <TagChip
+              key={s}
+              label={s === "left" ? "Left" : "Right"}
+              active={selectedSide === s}
+              onClick={() => onSelectSide(selectedSide === s ? null : s)}
             />
           ))}
         </div>

@@ -273,6 +273,7 @@ export type Database = {
           recorded_at: string
           sample_count: number
           samples: Json
+          side: string
           tag: string
           user_id: string
         }
@@ -286,6 +287,7 @@ export type Database = {
           recorded_at?: string
           sample_count: number
           samples: Json
+          side?: string
           tag?: string
           user_id?: string
         }
@@ -299,6 +301,7 @@ export type Database = {
           recorded_at?: string
           sample_count?: number
           samples?: Json
+          side?: string
           tag?: string
           user_id?: string
         }

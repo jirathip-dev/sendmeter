@@ -9,6 +9,7 @@ import type {
   Session,
   TindeqRecordingMeta,
   TindeqSample,
+  TindeqSide,
   WorkoutDetail,
 } from "../types";
 import { SESSION_TYPES } from "../constants";
@@ -213,7 +214,7 @@ export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
   const { data, error } = await supabase
     .from("tindeq_recordings")
     .select(
-      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, group_id",
+      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id",
     )
     .order("recorded_at", { ascending: false });
   if (error) throw error;
@@ -226,6 +227,7 @@ export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
     sampleCount: r.sample_count,
     note: r.note,
     tag: r.tag,
+    side: r.side as TindeqSide,
     groupId: r.group_id,
   }));
 }
@@ -254,11 +256,12 @@ export async function insertRecording(
       sample_count: rec.samples.length,
       note: rec.note,
       tag: rec.tag,
+      side: rec.side,
       group_id: rec.groupId,
       samples: rec.samples.map((s) => [s.t, s.kg]),
     })
     .select(
-      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, group_id",
+      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id",
     )
     .single();
   if (error) throw error;
@@ -271,6 +274,7 @@ export async function insertRecording(
     sampleCount: data.sample_count,
     note: data.note,
     tag: data.tag,
+    side: data.side as TindeqSide,
     groupId: data.group_id,
   };
 }

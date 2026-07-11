@@ -98,6 +98,8 @@ export interface TindeqSample {
   kg: number;
 }
 
+export type TindeqSide = "" | "left" | "right" | "both";
+
 export interface TindeqRecordingMeta {
   id: string;
   recordedAt: string; // ISO timestamp
@@ -106,7 +108,8 @@ export interface TindeqRecordingMeta {
   avgKg: number;
   sampleCount: number;
   note: string;
-  tag: string; // e.g. "right hand FDP" — trends group by this
+  tag: string; // exercise, e.g. "FDP" — trends group by this
+  side: TindeqSide;
   groupId: string | null; // gauge session this recording belongs to
 }
 
@@ -116,6 +119,7 @@ export interface NewTindeqRecording {
   avgKg: number;
   note: string;
   tag: string;
+  side: TindeqSide;
   groupId: string | null;
   samples: TindeqSample[];
 }

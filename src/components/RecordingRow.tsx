@@ -102,6 +102,18 @@ export default function RecordingRow({ rec, onDelete }: Props) {
                 {rec.tag}
               </span>
             )}
+            {rec.side && (
+              <span
+                className="tag"
+                style={{
+                  background: "rgba(250,204,21,0.10)",
+                  color: "#facc15",
+                  border: "1px solid rgba(250,204,21,0.3)",
+                }}
+              >
+                {rec.side === "both" ? "L+R" : rec.side === "left" ? "L" : "R"}
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 11, color: "#4a5a70" }}>
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s · avg{" "}
