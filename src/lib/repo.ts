@@ -25,7 +25,11 @@ type SessionRow = {
   load: number | null; // generated column, only null in Postgres edge cases
   note: string;
   phase: string;
+  group_id: string | null;
 };
+
+const SESSION_COLS =
+  "id, date, type, type_label, duration_min, rpe, load, note, phase, group_id";
 
 function toSession(r: SessionRow): Session {
   return {
@@ -38,13 +42,14 @@ function toSession(r: SessionRow): Session {
     load: r.load ?? r.duration_min * r.rpe,
     note: r.note,
     phase: r.phase as PhaseId,
+    groupId: r.group_id,
   };
 }
 
 export async function fetchSessions(): Promise<Session[]> {
   const { data, error } = await supabase
     .from("sessions")
-    .select("id, date, type, type_label, duration_min, rpe, load, note, phase")
+    .select(SESSION_COLS)
     .order("date", { ascending: false })
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -64,7 +69,34 @@ export async function insertSession(form: LogFormState): Promise<Session> {
       note: form.note,
       phase: form.phase,
     })
-    .select("id, date, type, type_label, duration_min, rpe, load, note, phase")
+    .select(SESSION_COLS)
+    .single();
+  if (error) throw error;
+  return toSession(data);
+}
+
+/// Log a completed Tindeq gauge session into the training log so it feeds
+/// ACWR and shows in History, linked back to its recordings via group_id.
+export async function insertTindeqSession(input: {
+  durationMin: number;
+  rpe: number;
+  phase: PhaseId;
+  note: string;
+  groupId: string;
+}): Promise<Session> {
+  const { data, error } = await supabase
+    .from("sessions")
+    .insert({
+      date: today(),
+      type: "tindeq",
+      type_label: "Tindeq",
+      duration_min: Math.max(1, Math.min(600, input.durationMin)),
+      rpe: input.rpe,
+      note: input.note,
+      phase: input.phase,
+      group_id: input.groupId,
+    })
+    .select(SESSION_COLS)
     .single();
   if (error) throw error;
   return toSession(data);
@@ -217,6 +249,31 @@ export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
       "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id",
     )
     .order("recorded_at", { ascending: false });
+  if (error) throw error;
+  return data.map((r) => ({
+    id: r.id,
+    recordedAt: r.recorded_at,
+    durationMs: r.duration_ms,
+    peakKg: r.peak_kg,
+    avgKg: r.avg_kg,
+    sampleCount: r.sample_count,
+    note: r.note,
+    tag: r.tag,
+    side: r.side as TindeqSide,
+    groupId: r.group_id,
+  }));
+}
+
+export async function fetchRecordingsByGroup(
+  groupId: string,
+): Promise<TindeqRecordingMeta[]> {
+  const { data, error } = await supabase
+    .from("tindeq_recordings")
+    .select(
+      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id",
+    )
+    .eq("group_id", groupId)
+    .order("recorded_at", { ascending: true });
   if (error) throw error;
   return data.map((r) => ({
     id: r.id,

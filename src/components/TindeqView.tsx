@@ -101,13 +101,31 @@ function TagSideEditor({
   );
 }
 
-export default function TindeqView() {
+interface TindeqViewProps {
+  onLogSession: (input: {
+    durationMin: number;
+    rpe: number;
+    note: string;
+    groupId: string;
+  }) => Promise<void>;
+}
+
+export default function TindeqView({ onLogSession }: TindeqViewProps) {
   const tindeq = useTindeq();
   const [pending, setPending] = useState<StoppedRecording | null>(null);
   const [pendingNote, setPendingNote] = useState("");
   const [pendingTag, setPendingTag] = useState("");
   const [pendingSide, setPendingSide] = useState<TindeqSide>("");
-  const [gaugeSession, setGaugeSession] = useState<string | null>(null);
+  const [gaugeSession, setGaugeSession] = useState<{
+    id: string;
+    startedAt: number;
+  } | null>(null);
+  const [endingSession, setEndingSession] = useState<{
+    id: string;
+    durationMin: number;
+    rpe: number;
+  } | null>(null);
+  const [loggingSession, setLoggingSession] = useState(false);
   const [saving, setSaving] = useState(false);
   const [recordings, setRecordings] = useState<TindeqRecordingMeta[]>([]);
   const [listError, setListError] = useState<string | null>(null);
@@ -129,8 +147,39 @@ export default function TindeqView() {
   const recentTags = allTags.slice(0, 6);
 
   const sessionCount = gaugeSession
-    ? recordings.filter((r) => r.groupId === gaugeSession).length
+    ? recordings.filter((r) => r.groupId === gaugeSession.id).length
     : 0;
+
+  function endSession() {
+    if (!gaugeSession) return;
+    const durationMin = Math.max(
+      1,
+      Math.round((Date.now() - gaugeSession.startedAt) / 60000),
+    );
+    if (sessionCount > 0) {
+      setEndingSession({ id: gaugeSession.id, durationMin, rpe: 5 });
+    }
+    setGaugeSession(null);
+  }
+
+  async function logEndedSession() {
+    if (!endingSession) return;
+    setLoggingSession(true);
+    const recs = recordings.filter((r) => r.groupId === endingSession.id);
+    const tags = [...new Set(recs.map((r) => r.tag).filter(Boolean))];
+    const note = [
+      `${recs.length} recording${recs.length === 1 ? "" : "s"}`,
+      ...(tags.length ? [tags.join(", ")] : []),
+    ].join(" · ");
+    await onLogSession({
+      durationMin: endingSession.durationMin,
+      rpe: endingSession.rpe,
+      note,
+      groupId: endingSession.id,
+    });
+    setLoggingSession(false);
+    setEndingSession(null);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -169,7 +218,7 @@ export default function TindeqView() {
         note: pendingNote.trim(),
         tag: pendingTag.trim(),
         side: pendingSide,
-        groupId: gaugeSession,
+        groupId: gaugeSession?.id ?? null,
         samples: pending.samples,
       });
       setRecordings((list) => [saved, ...list]);
@@ -240,7 +289,7 @@ export default function TindeqView() {
                 </span>
               </span>
               <button
-                onClick={() => setGaugeSession(null)}
+                onClick={endSession}
                 style={{
                   background: "none",
                   border: "1px solid #2a3a50",
@@ -261,7 +310,12 @@ export default function TindeqView() {
                 Group recordings into a session
               </span>
               <button
-                onClick={() => setGaugeSession(crypto.randomUUID())}
+                onClick={() =>
+                  setGaugeSession({
+                    id: crypto.randomUUID(),
+                    startedAt: Date.now(),
+                  })
+                }
                 style={{
                   background: "none",
                   border: "1px solid #2a3a50",
@@ -296,6 +350,91 @@ export default function TindeqView() {
             {tindeq.secure
               ? "This browser doesn't support Web Bluetooth. Use Chrome or Edge on desktop or Android — iOS Safari can't connect to Bluetooth devices."
               : "Web Bluetooth requires a secure (HTTPS) connection."}
+          </div>
+        </div>
+      )}
+
+      {/* Log the just-ended gauge session into History / ACWR */}
+      {endingSession && (
+        <div className="card" style={{ marginBottom: 10 }}>
+          <div
+            style={{
+              fontSize: 9,
+              color: "#4a5a70",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: 10,
+            }}
+          >
+            Log session to history
+          </div>
+          <span className="field-label" style={{ marginTop: 0 }}>
+            Duration (minutes)
+          </span>
+          <div className="stepper">
+            <button
+              className="stepper-btn"
+              onClick={() =>
+                setEndingSession((s) =>
+                  s ? { ...s, durationMin: Math.max(1, s.durationMin - 5) } : s,
+                )
+              }
+            >
+              −
+            </button>
+            <span className="stepper-val">{endingSession.durationMin}</span>
+            <button
+              className="stepper-btn"
+              onClick={() =>
+                setEndingSession((s) =>
+                  s
+                    ? { ...s, durationMin: Math.min(600, s.durationMin + 5) }
+                    : s,
+                )
+              }
+            >
+              +
+            </button>
+          </div>
+          <span className="field-label">RPE (1–10)</span>
+          <div className="stepper">
+            <button
+              className="stepper-btn"
+              onClick={() =>
+                setEndingSession((s) =>
+                  s ? { ...s, rpe: Math.max(1, s.rpe - 1) } : s,
+                )
+              }
+            >
+              −
+            </button>
+            <span className="stepper-val">{endingSession.rpe}</span>
+            <button
+              className="stepper-btn"
+              onClick={() =>
+                setEndingSession((s) =>
+                  s ? { ...s, rpe: Math.min(10, s.rpe + 1) } : s,
+                )
+              }
+            >
+              +
+            </button>
+          </div>
+          <div className="grid-2" style={{ marginTop: 12 }}>
+            <button
+              className="btn-ghost"
+              disabled={loggingSession}
+              onClick={() => setEndingSession(null)}
+            >
+              Skip
+            </button>
+            <button
+              className="btn-primary"
+              disabled={loggingSession}
+              onClick={() => void logEndedSession()}
+            >
+              {loggingSession ? "Logging…" : "Log Session"}
+            </button>
           </div>
         </div>
       )}

@@ -74,6 +74,7 @@ export function useTrainingData(userId: string) {
       load: form.duration * form.rpe,
       note: form.note,
       phase: form.phase,
+      groupId: null,
     };
     setSessions((list) => sortSessions([...list, temp]));
     try {
@@ -84,6 +85,23 @@ export function useTrainingData(userId: string) {
     } catch (e) {
       setSessions((list) => list.filter((s) => s.id !== temp.id));
       setError(e instanceof Error ? e.message : "Failed to save session");
+    }
+  }
+
+  async function addTindeqSession(input: {
+    durationMin: number;
+    rpe: number;
+    note: string;
+    groupId: string;
+  }) {
+    try {
+      const saved = await repo.insertTindeqSession({
+        ...input,
+        phase: currentPhase,
+      });
+      setSessions((list) => sortSessions([...list, saved]));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to log session");
     }
   }
 
@@ -125,6 +143,7 @@ export function useTrainingData(userId: string) {
     error,
     dismissError: () => setError(null),
     addSession,
+    addTindeqSession,
     removeSession,
     setPhase,
     reload,

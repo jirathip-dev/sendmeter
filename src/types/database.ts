@@ -225,6 +225,7 @@ export type Database = {
           created_at: string
           date: string
           duration_min: number
+          group_id: string | null
           id: string
           load: number | null
           note: string
@@ -238,6 +239,7 @@ export type Database = {
           created_at?: string
           date: string
           duration_min: number
+          group_id?: string | null
           id?: string
           load?: number | null
           note?: string
@@ -251,6 +253,7 @@ export type Database = {
           created_at?: string
           date?: string
           duration_min?: number
+          group_id?: string | null
           id?: string
           load?: number | null
           note?: string

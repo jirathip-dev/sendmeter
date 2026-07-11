@@ -54,6 +54,7 @@ function AuthedApp({
     error,
     dismissError,
     addSession,
+    addTindeqSession,
     removeSession,
     setPhase,
     reload,
@@ -275,7 +276,9 @@ function AuthedApp({
                 onDelete={(id) => void removeSession(id)}
               />
             )}
-            {view === "tindeq" && <TindeqView />}
+            {view === "tindeq" && (
+              <TindeqView onLogSession={addTindeqSession} />
+            )}
           </>
         )}
       </div>

@@ -37,6 +37,7 @@ export interface Session {
   load: number; // duration * rpe
   note: string;
   phase: PhaseId;
+  groupId: string | null; // Tindeq gauge session this was logged from
 }
 
 export interface TrainingData {

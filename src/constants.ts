@@ -75,6 +75,7 @@ export const SESSION_TYPES: SessionType[] = [
   { id: "campus", label: "Campus Board", defaultRpe: 9, defaultDuration: 30 },
   { id: "custom", label: "Custom", defaultRpe: 6, defaultDuration: 60 },
   { id: "auto", label: "Auto-tracked", defaultRpe: 6, defaultDuration: 60 },
+  { id: "tindeq", label: "Tindeq", defaultRpe: 5, defaultDuration: 30 },
 ];
 
 export const NAV: NavItem[] = [
