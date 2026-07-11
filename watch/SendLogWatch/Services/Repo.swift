@@ -29,6 +29,18 @@ enum Repo {
         return rows.first?.currentPhase ?? "capacity"
     }
 
+    static func fetchLabeledWorkouts() async throws -> [LabeledWorkoutRow] {
+        try await client
+            .from("climb_workouts")
+            .select("avg_hr, mean_effort, attempts_per_10min, rpe_confirmed")
+            .not("rpe_confirmed", operator: .is, value: "null")
+            .not("mean_effort", operator: .is, value: "null")
+            .order("started_at", ascending: false)
+            .limit(200)
+            .execute()
+            .value
+    }
+
     static func makeSaveBundle(
         summary: WorkoutSummary,
         boulders: Int,
@@ -38,7 +50,14 @@ enum Repo {
     ) -> WorkoutSaveBundle {
         let sessionId = UUID()
         let workoutId = UUID()
-        let minutes = max(1, min(600, Int((summary.endedAt.timeIntervalSince(summary.startedAt) / 60).rounded())))
+        let durationS = summary.endedAt.timeIntervalSince(summary.startedAt)
+        let minutes = max(1, min(600, Int((durationS / 60).rounded())))
+        let meanEffort = summary.attempts.isEmpty
+            ? 0.0
+            : summary.attempts.map(\.effortScore).reduce(0, +) / Double(summary.attempts.count)
+        let attemptsPer10min = durationS > 0
+            ? Double(summary.attempts.count) / (durationS / 600.0)
+            : 0.0
 
         var noteParts = ["\(boulders) boulder\(boulders == 1 ? "" : "s")"]
         if let hr = summary.avgHR, hr > 0 { noteParts.append("avg HR \(Int(hr.rounded()))") }
@@ -66,6 +85,8 @@ enum Repo {
             attemptsConfirmed: boulders,
             rpePredicted: (summary.predictedRPE * 10).rounded() / 10,
             rpeConfirmed: rpe,
+            meanEffort: (meanEffort * 100).rounded() / 100,
+            attemptsPer10min: (attemptsPer10min * 100).rounded() / 100,
             sessionId: sessionId,
             raw: tunables.keepRawTrace ? summary.rawTrace : nil
         )

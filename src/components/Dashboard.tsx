@@ -5,6 +5,7 @@ import type {
   Session,
   WeeklyLoad,
 } from "../types";
+import RpeScatterCard from "./RpeScatterCard";
 import SessionRow from "./SessionRow";
 
 interface Props {
@@ -248,6 +249,11 @@ export default function Dashboard({
             ))}
           </div>
         </div>
+      </div>
+
+      {/* Model quality (hidden until enough confirmed workouts) */}
+      <div style={{ marginBottom: 10 }}>
+        <RpeScatterCard />
       </div>
 
       {/* Log button */}

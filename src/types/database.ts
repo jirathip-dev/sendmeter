@@ -94,12 +94,14 @@ export type Database = {
           active_kcal: number | null
           attempts_confirmed: number
           attempts_detected: number
+          attempts_per_10min: number | null
           avg_hr: number | null
           created_at: string
           elevation_gain_m: number
           ended_at: string
           id: string
           max_hr: number | null
+          mean_effort: number | null
           raw: Json | null
           rpe_confirmed: number | null
           rpe_predicted: number | null
@@ -111,12 +113,14 @@ export type Database = {
           active_kcal?: number | null
           attempts_confirmed?: number
           attempts_detected?: number
+          attempts_per_10min?: number | null
           avg_hr?: number | null
           created_at?: string
           elevation_gain_m?: number
           ended_at: string
           id?: string
           max_hr?: number | null
+          mean_effort?: number | null
           raw?: Json | null
           rpe_confirmed?: number | null
           rpe_predicted?: number | null
@@ -128,12 +132,14 @@ export type Database = {
           active_kcal?: number | null
           attempts_confirmed?: number
           attempts_detected?: number
+          attempts_per_10min?: number | null
           avg_hr?: number | null
           created_at?: string
           elevation_gain_m?: number
           ended_at?: string
           id?: string
           max_hr?: number | null
+          mean_effort?: number | null
           raw?: Json | null
           rpe_confirmed?: number | null
           rpe_predicted?: number | null

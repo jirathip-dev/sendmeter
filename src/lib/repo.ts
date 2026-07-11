@@ -4,6 +4,7 @@ import type {
   NewTindeqRecording,
   PhaseId,
   PhasePeriod,
+  RpePair,
   Session,
   TindeqRecordingMeta,
   TindeqSample,
@@ -261,6 +262,21 @@ export async function insertRecording(
     sampleCount: data.sample_count,
     note: data.note,
   };
+}
+
+export async function fetchRpePairs(): Promise<RpePair[]> {
+  const { data, error } = await supabase
+    .from("climb_workouts")
+    .select("rpe_predicted, rpe_confirmed, started_at")
+    .not("rpe_predicted", "is", null)
+    .not("rpe_confirmed", "is", null)
+    .order("started_at", { ascending: true });
+  if (error) throw error;
+  return data.map((r) => ({
+    predicted: Number(r.rpe_predicted),
+    confirmed: r.rpe_confirmed as number,
+    startedAt: r.started_at,
+  }));
 }
 
 export async function fetchWorkoutForSession(

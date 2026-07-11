@@ -42,6 +42,11 @@ struct Tunables {
     var rpeEffortW: Double = 0.45
     var rpeDensityW: Double = 0.25
 
+    // RPE ridge model (on-device fit over confirmed workouts)
+    var rpeRidgeLambda: Double = 1.0
+    var rpeMinTrainingSamples: Int = 10
+    var rpeModelMaxAgeS: Double = 86_400
+
     // Debug
     var keepRawTrace: Bool = true        // store 1Hz trace on climb_workouts.raw
 

@@ -84,8 +84,36 @@ final class WorkoutManager: NSObject {
             startMotion()
             startFusion()
             isRunning = true
+            refitRPEModelIfStale()
         } catch {
             errorMsg = error.localizedDescription
+        }
+    }
+
+    /// Refit the ridge RPE model in the background if it's stale. Fitting at
+    /// start (not end) keeps end() instant and offline-safe.
+    private func refitRPEModelIfStale() {
+        let t = tunables
+        let existing = RPEModelStore.load()
+        let stale = existing.map { Date().timeIntervalSince($0.fittedAt) > t.rpeModelMaxAgeS } ?? true
+        guard stale else { return }
+        Task.detached(priority: .background) {
+            guard let rows = try? await Repo.fetchLabeledWorkouts() else { return }
+            let labeled = rows.compactMap { r -> LabeledWorkout? in
+                guard let rpe = r.rpeConfirmed, let effort = r.meanEffort else { return nil }
+                let hrr = r.avgHr.map { max(0, min(1, ($0 - t.restHR) / (t.maxHR - t.restHR))) } ?? 0
+                return LabeledWorkout(
+                    sessionHRR: hrr,
+                    meanEffort: effort,
+                    attemptsPer10min: r.attemptsPer10min ?? 0,
+                    rpe: Double(rpe)
+                )
+            }
+            if let model = RPEModelFitter.fit(
+                rows: labeled, lambda: t.rpeRidgeLambda, minSamples: t.rpeMinTrainingSamples
+            ) {
+                RPEModelStore.save(model)
+            }
         }
     }
 
@@ -124,6 +152,24 @@ final class WorkoutManager: NSObject {
         isRunning = false
 
         let durationS = endDate.timeIntervalSince(startDate)
+
+        // Fitted ridge model when available, hand formula otherwise.
+        let predictedRPE: Double
+        if let model = RPEModelStore.load(), durationS > 0 {
+            let hrr = avgHR.map { max(0, min(1, ($0 - tunables.restHR) / (tunables.maxHR - tunables.restHR))) } ?? 0
+            let meanEffort = attempts.isEmpty
+                ? 0.0 : attempts.map(\.effortScore).reduce(0, +) / Double(attempts.count)
+            predictedRPE = model.predict(
+                sessionHRR: hrr,
+                meanEffort: meanEffort,
+                attemptsPer10min: Double(attempts.count) / (durationS / 600.0)
+            )
+        } else {
+            predictedRPE = AttemptDetector.predictRPE(
+                attempts: attempts, avgHR: avgHR, durationS: durationS, tunables: tunables
+            )
+        }
+
         return WorkoutSummary(
             startedAt: startDate,
             endedAt: endDate,
@@ -132,9 +178,7 @@ final class WorkoutManager: NSObject {
             activeKcal: kcal,
             elevationGainM: max(0, maxAltitudeSeen - minAltitudeSeen),
             attempts: attempts,
-            predictedRPE: AttemptDetector.predictRPE(
-                attempts: attempts, avgHR: avgHR, durationS: durationS, tunables: tunables
-            ),
+            predictedRPE: predictedRPE,
             rawTrace: rawTrace
         )
     }

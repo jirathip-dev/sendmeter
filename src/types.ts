@@ -54,6 +54,12 @@ export interface LogFormState {
   phase: PhaseId;
 }
 
+export interface RpePair {
+  predicted: number;
+  confirmed: number;
+  startedAt: string;
+}
+
 export interface PhasePeriod {
   id: string;
   phase: PhaseId;

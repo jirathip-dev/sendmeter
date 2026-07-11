@@ -19,10 +19,12 @@
 		4562D7A9729F5A7792B7F749 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = D058C07A276E53ABB60F2DF8 /* Supabase */; };
 		5216527D9E3AF0A0B6815D14 /* WorkoutConfirmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B0B6474C5FB03A0156D334D /* WorkoutConfirmView.swift */; };
 		535860619C7E8677AC8C2480 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 855CD08B40F873897AAA7B90 /* Models.swift */; };
+		56B819F69D4DC0B1B53B63FF /* RPEModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C700B5EA4076589938F9E7D1 /* RPEModelTests.swift */; };
 		863A3B0F1E3AEED24115F952 /* Tunables.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5B0A2335EDF406CBCF914E /* Tunables.swift */; };
 		9A7EA461C7FF5ECF5F89274C /* ForceGaugeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */; };
 		A0263D9E8A446CE07240A7DC /* WorkoutLiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 697C379E1AF401F93DF99FDE /* WorkoutLiveView.swift */; };
 		B70CB20285D8CD75D4CFBC78 /* SupabaseConfig.plist in Resources */ = {isa = PBXBuildFile; fileRef = 31CAF69C6E6F85F9B4BBF90C /* SupabaseConfig.plist */; };
+		B9B05BBB7E9B726CE2B77B6D /* RPEModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A88D1A4233F7DF2166F66F40 /* RPEModel.swift */; };
 		BED9909AC45CB7A013A673ED /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A3A7035BCA687113E36516 /* HomeView.swift */; };
 		E01CD22A2E1DEE4F8D7A903C /* Repo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D08406925F88A83E6D13C7C /* Repo.swift */; };
 		E14BFA9A5B49A896F6406843 /* SendLogWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A4DA8FD76F0ECCFCBDDE959 /* SendLogWatchApp.swift */; };
@@ -64,7 +66,9 @@
 		8BA19231E1E57EB244F7AE3F /* SendLogWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendLogWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		95E14F6FB96B66B2D48CA6F3 /* TindeqProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TindeqProtocol.swift; sourceTree = "<group>"; };
 		9A4DA8FD76F0ECCFCBDDE959 /* SendLogWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendLogWatchApp.swift; sourceTree = "<group>"; };
+		A88D1A4233F7DF2166F66F40 /* RPEModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RPEModel.swift; sourceTree = "<group>"; };
 		B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceGaugeView.swift; sourceTree = "<group>"; };
+		C700B5EA4076589938F9E7D1 /* RPEModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RPEModelTests.swift; sourceTree = "<group>"; };
 		EEF796B6F211D510D330DED4 /* WorkoutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutManager.swift; sourceTree = "<group>"; };
 		FD9ECA4EA7E6FC7993F03946 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -125,6 +129,7 @@
 			isa = PBXGroup;
 			children = (
 				0F0DCE2316940D4E2D59A507 /* AttemptDetectorTests.swift */,
+				C700B5EA4076589938F9E7D1 /* RPEModelTests.swift */,
 				837E50DE195A86516756FA62 /* TindeqProtocolTests.swift */,
 			);
 			path = SendLogWatchTests;
@@ -137,6 +142,7 @@
 				4D7C2124FF466F5D09449B86 /* AuthManager.swift */,
 				627D456DCA9758C86551AFE9 /* OfflineQueue.swift */,
 				0D08406925F88A83E6D13C7C /* Repo.swift */,
+				A88D1A4233F7DF2166F66F40 /* RPEModel.swift */,
 				2319690D6DF01856389AAD42 /* SupabaseService.swift */,
 				81B59990F0B83865CA6EE1B8 /* TindeqManager.swift */,
 				95E14F6FB96B66B2D48CA6F3 /* TindeqProtocol.swift */,
@@ -280,6 +286,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				00D403B5DFA758E1542F7199 /* AttemptDetectorTests.swift in Sources */,
+				56B819F69D4DC0B1B53B63FF /* RPEModelTests.swift in Sources */,
 				E19F80C1D6DFEFBA5C8F32D8 /* TindeqProtocolTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -294,6 +301,7 @@
 				BED9909AC45CB7A013A673ED /* HomeView.swift in Sources */,
 				535860619C7E8677AC8C2480 /* Models.swift in Sources */,
 				096061ED4D06104F66619DCC /* OfflineQueue.swift in Sources */,
+				B9B05BBB7E9B726CE2B77B6D /* RPEModel.swift in Sources */,
 				E01CD22A2E1DEE4F8D7A903C /* Repo.swift in Sources */,
 				06A8815129CE7EA259ECF85F /* RootView.swift in Sources */,
 				E14BFA9A5B49A896F6406843 /* SendLogWatchApp.swift in Sources */,

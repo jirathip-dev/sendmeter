@@ -69,6 +69,8 @@ struct ClimbWorkoutInsert: Codable {
     var attemptsConfirmed: Int
     var rpePredicted: Double
     var rpeConfirmed: Int
+    var meanEffort: Double
+    var attemptsPer10min: Double
     var sessionId: UUID
     var raw: [[Double?]]?
 
@@ -84,7 +86,23 @@ struct ClimbWorkoutInsert: Codable {
         case attemptsConfirmed = "attempts_confirmed"
         case rpePredicted = "rpe_predicted"
         case rpeConfirmed = "rpe_confirmed"
+        case meanEffort = "mean_effort"
+        case attemptsPer10min = "attempts_per_10min"
         case sessionId = "session_id"
+    }
+}
+
+struct LabeledWorkoutRow: Codable {
+    var avgHr: Double?
+    var meanEffort: Double?
+    var attemptsPer10min: Double?
+    var rpeConfirmed: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case avgHr = "avg_hr"
+        case meanEffort = "mean_effort"
+        case attemptsPer10min = "attempts_per_10min"
+        case rpeConfirmed = "rpe_confirmed"
     }
 }
 
