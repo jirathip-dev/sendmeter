@@ -17,7 +17,7 @@ import LogForm from "./components/LogForm";
 import LogView from "./components/LogView";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
-import WatchPasswordSheet from "./components/WatchPasswordSheet";
+import AccountSheet from "./components/AccountSheet";
 
 export default function App() {
   const { session, loading, signOut } = useAuth();
@@ -180,7 +180,7 @@ function AuthedApp({
               fontFamily: "'DM Mono', monospace",
             }}
           >
-            Watch
+            Account
           </button>
           <button
             onClick={() => void onSignOut()}
@@ -328,10 +328,8 @@ function AuthedApp({
         </div>
       )}
 
-      {/* Watch password bottom sheet */}
-      {showWatchSheet && (
-        <WatchPasswordSheet onClose={() => setShowWatchSheet(false)} />
-      )}
+      {/* Account bottom sheet */}
+      {showWatchSheet && <AccountSheet onClose={() => setShowWatchSheet(false)} />}
 
       {/* Legacy import bottom sheet */}
       {importPrompt && legacy && (

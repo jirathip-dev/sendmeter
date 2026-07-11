@@ -265,6 +265,14 @@ export async function insertRecording(
   };
 }
 
+/// Deletes the auth user; every table cascades from auth.users, so all data
+/// goes with it. Required by App Store guideline 5.1.1(v).
+export async function deleteAccount(): Promise<void> {
+  const { error } = await supabase.rpc("delete_account");
+  if (error) throw error;
+  await supabase.auth.signOut();
+}
+
 export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);

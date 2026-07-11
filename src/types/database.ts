@@ -266,34 +266,40 @@ export type Database = {
         Row: {
           avg_kg: number
           duration_ms: number
+          group_id: string | null
           id: string
           note: string
           peak_kg: number
           recorded_at: string
           sample_count: number
           samples: Json
+          tag: string
           user_id: string
         }
         Insert: {
           avg_kg: number
           duration_ms: number
+          group_id?: string | null
           id?: string
           note?: string
           peak_kg: number
           recorded_at?: string
           sample_count: number
           samples: Json
+          tag?: string
           user_id?: string
         }
         Update: {
           avg_kg?: number
           duration_ms?: number
+          group_id?: string | null
           id?: string
           note?: string
           peak_kg?: number
           recorded_at?: string
           sample_count?: number
           samples?: Json
+          tag?: string
           user_id?: string
         }
         Relationships: []
@@ -324,7 +330,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      delete_account: { Args: never; Returns: undefined }
     }
     Enums: {
       [_ in never]: never

@@ -1,0 +1,77 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Dusk sky -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#131a28"/>
+      <stop offset="0.62" stop-color="#0e1420"/>
+      <stop offset="1" stop-color="#0a0c10"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#f97316" stop-opacity="0"/>
+      <stop offset="1" stop-color="#f97316" stop-opacity="0.22"/>
+    </linearGradient>
+    <linearGradient id="faceLit" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#8b93a5"/>
+      <stop offset="1" stop-color="#6b7280"/>
+    </linearGradient>
+    <linearGradient id="faceShade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a5262"/>
+      <stop offset="1" stop-color="#39404e"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#sky)"/>
+  <!-- warm dusk glow behind the boulder, upper right like the photo -->
+  <rect x="512" y="0" width="512" height="560" fill="url(#glow)"/>
+  <circle cx="880" cy="200" r="10" fill="#e2e8f0" opacity="0.25"/>
+  <circle cx="120" cy="140" r="6" fill="#e2e8f0" opacity="0.2"/>
+  <circle cx="770" cy="90" r="5" fill="#e2e8f0" opacity="0.18"/>
+
+  <!-- ground -->
+  <rect x="0" y="810" width="1024" height="214" fill="#0d1117"/>
+  <ellipse cx="512" cy="828" rx="430" ry="42" fill="#080a0e"/>
+
+  <!-- crash pads peeking out -->
+  <g transform="rotate(-3 260 780)">
+    <rect x="110" y="742" width="330" height="86" rx="20" fill="#3b82f6"/>
+    <rect x="110" y="742" width="330" height="30" rx="15" fill="#60a5fa" opacity="0.55"/>
+  </g>
+  <g transform="rotate(2 700 790)">
+    <rect x="560" y="752" width="320" height="80" rx="20" fill="#f97316"/>
+    <rect x="560" y="752" width="320" height="28" rx="14" fill="#fb923c" opacity="0.55"/>
+  </g>
+
+  <!-- The boulder: tilted block, overhanging on the left (Burden of Dreams) -->
+  <!-- shaded overhang face (left / underside) -->
+  <polygon points="205,655 425,175 560,235 480,745 268,760" fill="url(#faceShade)"
+           stroke="#39404e" stroke-width="8" stroke-linejoin="round"/>
+  <!-- lit face (right) -->
+  <polygon points="560,235 855,345 838,660 480,745" fill="url(#faceLit)"
+           stroke="#6b7280" stroke-width="8" stroke-linejoin="round"/>
+  <!-- top edge highlight -->
+  <polygon points="425,175 560,235 855,345 812,318 445,190" fill="#a3aab8" opacity="0.9"/>
+
+  <!-- the seam / crack on the lit face -->
+  <path d="M 620 262 Q 600 420 640 540 Q 660 610 648 705" fill="none"
+        stroke="#39404e" stroke-width="14" stroke-linecap="round" opacity="0.7"/>
+  <!-- texture patches -->
+  <ellipse cx="740" cy="430" rx="52" ry="30" fill="#5b6373" opacity="0.55" transform="rotate(-14 740 430)"/>
+  <ellipse cx="700" cy="590" rx="40" ry="22" fill="#5b6373" opacity="0.45" transform="rotate(8 700 590)"/>
+  <ellipse cx="330" cy="520" rx="46" ry="26" fill="#2f3542" opacity="0.6" transform="rotate(18 330 520)"/>
+  <ellipse cx="390" cy="330" rx="34" ry="18" fill="#2f3542" opacity="0.5" transform="rotate(24 390 330)"/>
+
+  <!-- chalked crimp line up the overhang -->
+  <g fill="#e8edf2">
+    <rect x="300" y="620" width="52" height="20" rx="10" transform="rotate(14 326 630)"/>
+    <rect x="340" y="500" width="50" height="19" rx="9.5" transform="rotate(12 365 509)"/>
+    <rect x="378" y="385" width="46" height="18" rx="9" transform="rotate(10 401 394)"/>
+    <rect x="412" y="280" width="42" height="17" rx="8.5" transform="rotate(8 433 288)"/>
+  </g>
+  <!-- the send hold at the lip -->
+  <circle cx="472" cy="205" r="17" fill="#4ade80"/>
+
+  <!-- rubble -->
+  <ellipse cx="180" cy="836" rx="34" ry="14" fill="#141b26"/>
+  <ellipse cx="900" cy="846" rx="42" ry="16" fill="#141b26"/>
+  <ellipse cx="520" cy="856" rx="30" ry="12" fill="#10151d"/>
+</svg>

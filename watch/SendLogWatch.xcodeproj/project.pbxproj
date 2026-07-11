@@ -29,6 +29,7 @@
 		9A7EA461C7FF5ECF5F89274C /* ForceGaugeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */; };
 		A0263D9E8A446CE07240A7DC /* WorkoutLiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 697C379E1AF401F93DF99FDE /* WorkoutLiveView.swift */; };
 		B70CB20285D8CD75D4CFBC78 /* SupabaseConfig.plist in Resources */ = {isa = PBXBuildFile; fileRef = 31CAF69C6E6F85F9B4BBF90C /* SupabaseConfig.plist */; };
+		B7A5DCA3C00EF93788D59373 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BEEE8AAC40F4A723B23CC605 /* Assets.xcassets */; };
 		B9B05BBB7E9B726CE2B77B6D /* RPEModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A88D1A4233F7DF2166F66F40 /* RPEModel.swift */; };
 		BED9909AC45CB7A013A673ED /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A3A7035BCA687113E36516 /* HomeView.swift */; };
 		E01CD22A2E1DEE4F8D7A903C /* Repo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D08406925F88A83E6D13C7C /* Repo.swift */; };
@@ -76,6 +77,7 @@
 		A50FFDAFB6A352CD40100A9F /* RecoveryEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryEngine.swift; sourceTree = "<group>"; };
 		A88D1A4233F7DF2166F66F40 /* RPEModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RPEModel.swift; sourceTree = "<group>"; };
 		B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceGaugeView.swift; sourceTree = "<group>"; };
+		BEEE8AAC40F4A723B23CC605 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C700B5EA4076589938F9E7D1 /* RPEModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RPEModelTests.swift; sourceTree = "<group>"; };
 		E403A52519EBC8DB64D0897F /* ReadinessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessManager.swift; sourceTree = "<group>"; };
 		EEF796B6F211D510D330DED4 /* WorkoutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutManager.swift; sourceTree = "<group>"; };
@@ -98,6 +100,7 @@
 		0DCB9DE247BC0BD87BCA2B36 /* SendLogWatch */ = {
 			isa = PBXGroup;
 			children = (
+				BEEE8AAC40F4A723B23CC605 /* Assets.xcassets */,
 				FD9ECA4EA7E6FC7993F03946 /* Info.plist */,
 				2D066322EA629D7A704CC603 /* SendLogWatch.entitlements */,
 				9A4DA8FD76F0ECCFCBDDE959 /* SendLogWatchApp.swift */,
@@ -289,6 +292,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B7A5DCA3C00EF93788D59373 /* Assets.xcassets in Resources */,
 				B70CB20285D8CD75D4CFBC78 /* SupabaseConfig.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
