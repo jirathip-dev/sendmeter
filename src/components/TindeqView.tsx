@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useTindeq } from "../hooks/useTindeq";
 import type { StoppedRecording } from "../hooks/useTindeq";
 import {
@@ -26,15 +26,18 @@ function TagSideEditor({
   tag,
   side,
   recentTags,
+  allTags,
   onTag,
   onSide,
 }: {
   tag: string;
   side: TindeqSide;
   recentTags: string[];
+  allTags: string[];
   onTag: (t: string) => void;
   onSide: (s: TindeqSide) => void;
 }) {
+  const listId = useId();
   return (
     <div>
       <div className="grid-2" style={{ gap: 10 }}>
@@ -47,7 +50,13 @@ function TagSideEditor({
             value={tag}
             onChange={(e) => onTag(e.target.value)}
             placeholder="e.g. FDP"
+            list={listId}
           />
+          <datalist id={listId}>
+            {allTags.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
         </div>
         <div>
           <span className="field-label" style={{ marginTop: 0 }}>
@@ -106,17 +115,18 @@ export default function TindeqView() {
   const [selectedSide, setSelectedSide] = useState<TindeqSide | null>(null);
   const [gaugeTarget, setGaugeTarget] = useState<GaugeTarget | null>(null);
 
-  // Recently used tags, most frequent first — one tap to re-tag the next rep
-  const recentTags = (() => {
+  // Every tag ever used, most frequent first; top 6 become one-tap chips,
+  // the full list feeds the input's autocomplete datalist.
+  const allTags = (() => {
     const counts = new Map<string, number>();
     for (const r of recordings) {
       if (r.tag) counts.set(r.tag, (counts.get(r.tag) ?? 0) + 1);
     }
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
-      .map(([t]) => t)
-      .slice(0, 6);
+      .map(([t]) => t);
   })();
+  const recentTags = allTags.slice(0, 6);
 
   const sessionCount = gaugeSession
     ? recordings.filter((r) => r.groupId === gaugeSession).length
@@ -418,6 +428,7 @@ export default function TindeqView() {
                 tag={pendingTag}
                 side={pendingSide}
                 recentTags={recentTags}
+                allTags={allTags}
                 onTag={setPendingTag}
                 onSide={setPendingSide}
               />
@@ -515,6 +526,7 @@ export default function TindeqView() {
                   tag={pendingTag}
                   side={pendingSide}
                   recentTags={recentTags}
+                  allTags={allTags}
                   onTag={setPendingTag}
                   onSide={setPendingSide}
                 />
