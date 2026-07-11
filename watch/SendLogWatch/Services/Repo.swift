@@ -29,6 +29,26 @@ enum Repo {
         return rows.first?.currentPhase ?? "capacity"
     }
 
+    static func fetchSessionLoads(sinceDays: Int) async throws -> [SessionLoadRow] {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -sinceDays, to: Date())!
+        return try await client
+            .from("sessions")
+            .select("date, load")
+            .gte("date", value: cutoff.localDateString)
+            .execute()
+            .value
+    }
+
+    static func upsertHealthMetrics(_ rows: [HealthMetricsUpsert]) async throws {
+        guard !rows.isEmpty else { return }
+        // Later computation wins (not ignoreDuplicates) — rows are recomputed
+        // from HealthKit on every refresh.
+        try await client
+            .from("health_metrics")
+            .upsert(rows, onConflict: "user_id,date")
+            .execute()
+    }
+
     static func fetchLabeledWorkouts() async throws -> [LabeledWorkoutRow] {
         try await client
             .from("climb_workouts")

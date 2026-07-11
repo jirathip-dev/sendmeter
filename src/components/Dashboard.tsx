@@ -5,6 +5,7 @@ import type {
   Session,
   WeeklyLoad,
 } from "../types";
+import ReadinessCard from "./ReadinessCard";
 import RpeScatterCard from "./RpeScatterCard";
 import SessionRow from "./SessionRow";
 
@@ -251,7 +252,10 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Model quality (hidden until enough confirmed workouts) */}
+      {/* Readiness + model quality (each hidden until data exists) */}
+      <div style={{ marginBottom: 10 }}>
+        <ReadinessCard />
+      </div>
       <div style={{ marginBottom: 10 }}>
         <RpeScatterCard />
       </div>

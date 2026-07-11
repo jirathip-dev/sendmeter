@@ -155,6 +155,31 @@ struct UserSettingsRow: Codable {
     }
 }
 
+struct SessionLoadRow: Codable {
+    var date: String
+    var load: Int?
+}
+
+struct HealthMetricsUpsert: Codable {
+    var date: String // YYYY-MM-DD local
+    var hrvSdnnMs: Double?
+    var restingHr: Double?
+    var sleepHours: Double?
+    var bodyMassKg: Double?
+    var readiness: Int?
+    var zone: String?
+    var computedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case date, readiness, zone
+        case hrvSdnnMs = "hrv_sdnn_ms"
+        case restingHr = "resting_hr"
+        case sleepHours = "sleep_hours"
+        case bodyMassKg = "body_mass_kg"
+        case computedAt = "computed_at"
+    }
+}
+
 /// One confirmed workout = three idempotent upserts, bundled for the offline queue.
 struct WorkoutSaveBundle: Codable {
     var session: SessionInsert

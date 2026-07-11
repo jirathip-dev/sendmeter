@@ -15,12 +15,17 @@
 		17412ACEB5CB59F9DAFD65AC /* AttemptDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72DDDDA69E8D7F38845EDD0A /* AttemptDetector.swift */; };
 		17CD8292D5EA383B3857A0E0 /* TindeqProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95E14F6FB96B66B2D48CA6F3 /* TindeqProtocol.swift */; };
 		2D45DF368B2E1D299A50DCA2 /* WorkoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEF796B6F211D510D330DED4 /* WorkoutManager.swift */; };
+		2D6FA645E8BEDF7E85CDFBFA /* RecoveryEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50FFDAFB6A352CD40100A9F /* RecoveryEngine.swift */; };
 		3D74AD8D071B513A17042121 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B01D79DEA9FC0FB6AD3AE6E /* SignInView.swift */; };
 		4562D7A9729F5A7792B7F749 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = D058C07A276E53ABB60F2DF8 /* Supabase */; };
 		5216527D9E3AF0A0B6815D14 /* WorkoutConfirmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B0B6474C5FB03A0156D334D /* WorkoutConfirmView.swift */; };
 		535860619C7E8677AC8C2480 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 855CD08B40F873897AAA7B90 /* Models.swift */; };
+		546A8270C846F35AD13D2507 /* HealthMetricsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7ADA80317E5D2116D6EC84F0 /* HealthMetricsProvider.swift */; };
 		56B819F69D4DC0B1B53B63FF /* RPEModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C700B5EA4076589938F9E7D1 /* RPEModelTests.swift */; };
+		67C302AD8C5E79AA8557C08B /* RecoveryEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F809E106DA80CDC20895FE4 /* RecoveryEngineTests.swift */; };
+		7F4CD678DF3F444809D9BC28 /* ReadinessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E403A52519EBC8DB64D0897F /* ReadinessManager.swift */; };
 		863A3B0F1E3AEED24115F952 /* Tunables.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5B0A2335EDF406CBCF914E /* Tunables.swift */; };
+		95B800AA603CAC715CDDFC2C /* RecoveryTunables.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF15B07B14D380077BE3BF8D /* RecoveryTunables.swift */; };
 		9A7EA461C7FF5ECF5F89274C /* ForceGaugeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */; };
 		A0263D9E8A446CE07240A7DC /* WorkoutLiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 697C379E1AF401F93DF99FDE /* WorkoutLiveView.swift */; };
 		B70CB20285D8CD75D4CFBC78 /* SupabaseConfig.plist in Resources */ = {isa = PBXBuildFile; fileRef = 31CAF69C6E6F85F9B4BBF90C /* SupabaseConfig.plist */; };
@@ -59,6 +64,7 @@
 		627D456DCA9758C86551AFE9 /* OfflineQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineQueue.swift; sourceTree = "<group>"; };
 		697C379E1AF401F93DF99FDE /* WorkoutLiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutLiveView.swift; sourceTree = "<group>"; };
 		72DDDDA69E8D7F38845EDD0A /* AttemptDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttemptDetector.swift; sourceTree = "<group>"; };
+		7ADA80317E5D2116D6EC84F0 /* HealthMetricsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthMetricsProvider.swift; sourceTree = "<group>"; };
 		81B59990F0B83865CA6EE1B8 /* TindeqManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TindeqManager.swift; sourceTree = "<group>"; };
 		833025E139E5F46F5028066E /* SendLogWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SendLogWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		837E50DE195A86516756FA62 /* TindeqProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TindeqProtocolTests.swift; sourceTree = "<group>"; };
@@ -66,11 +72,15 @@
 		8BA19231E1E57EB244F7AE3F /* SendLogWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendLogWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		95E14F6FB96B66B2D48CA6F3 /* TindeqProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TindeqProtocol.swift; sourceTree = "<group>"; };
 		9A4DA8FD76F0ECCFCBDDE959 /* SendLogWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendLogWatchApp.swift; sourceTree = "<group>"; };
+		9F809E106DA80CDC20895FE4 /* RecoveryEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryEngineTests.swift; sourceTree = "<group>"; };
+		A50FFDAFB6A352CD40100A9F /* RecoveryEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryEngine.swift; sourceTree = "<group>"; };
 		A88D1A4233F7DF2166F66F40 /* RPEModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RPEModel.swift; sourceTree = "<group>"; };
 		B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceGaugeView.swift; sourceTree = "<group>"; };
 		C700B5EA4076589938F9E7D1 /* RPEModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RPEModelTests.swift; sourceTree = "<group>"; };
+		E403A52519EBC8DB64D0897F /* ReadinessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadinessManager.swift; sourceTree = "<group>"; };
 		EEF796B6F211D510D330DED4 /* WorkoutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutManager.swift; sourceTree = "<group>"; };
 		FD9ECA4EA7E6FC7993F03946 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		FF15B07B14D380077BE3BF8D /* RecoveryTunables.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryTunables.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -129,6 +139,7 @@
 			isa = PBXGroup;
 			children = (
 				0F0DCE2316940D4E2D59A507 /* AttemptDetectorTests.swift */,
+				9F809E106DA80CDC20895FE4 /* RecoveryEngineTests.swift */,
 				C700B5EA4076589938F9E7D1 /* RPEModelTests.swift */,
 				837E50DE195A86516756FA62 /* TindeqProtocolTests.swift */,
 			);
@@ -140,7 +151,10 @@
 			children = (
 				72DDDDA69E8D7F38845EDD0A /* AttemptDetector.swift */,
 				4D7C2124FF466F5D09449B86 /* AuthManager.swift */,
+				7ADA80317E5D2116D6EC84F0 /* HealthMetricsProvider.swift */,
 				627D456DCA9758C86551AFE9 /* OfflineQueue.swift */,
+				E403A52519EBC8DB64D0897F /* ReadinessManager.swift */,
+				A50FFDAFB6A352CD40100A9F /* RecoveryEngine.swift */,
 				0D08406925F88A83E6D13C7C /* Repo.swift */,
 				A88D1A4233F7DF2166F66F40 /* RPEModel.swift */,
 				2319690D6DF01856389AAD42 /* SupabaseService.swift */,
@@ -154,6 +168,7 @@
 		956FF5847CE66E4757555473 /* Config */ = {
 			isa = PBXGroup;
 			children = (
+				FF15B07B14D380077BE3BF8D /* RecoveryTunables.swift */,
 				4E5B0A2335EDF406CBCF914E /* Tunables.swift */,
 			);
 			path = Config;
@@ -287,6 +302,7 @@
 			files = (
 				00D403B5DFA758E1542F7199 /* AttemptDetectorTests.swift in Sources */,
 				56B819F69D4DC0B1B53B63FF /* RPEModelTests.swift in Sources */,
+				67C302AD8C5E79AA8557C08B /* RecoveryEngineTests.swift in Sources */,
 				E19F80C1D6DFEFBA5C8F32D8 /* TindeqProtocolTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -298,10 +314,14 @@
 				17412ACEB5CB59F9DAFD65AC /* AttemptDetector.swift in Sources */,
 				F5A06ED9F92DD98B94EF0A54 /* AuthManager.swift in Sources */,
 				9A7EA461C7FF5ECF5F89274C /* ForceGaugeView.swift in Sources */,
+				546A8270C846F35AD13D2507 /* HealthMetricsProvider.swift in Sources */,
 				BED9909AC45CB7A013A673ED /* HomeView.swift in Sources */,
 				535860619C7E8677AC8C2480 /* Models.swift in Sources */,
 				096061ED4D06104F66619DCC /* OfflineQueue.swift in Sources */,
 				B9B05BBB7E9B726CE2B77B6D /* RPEModel.swift in Sources */,
+				7F4CD678DF3F444809D9BC28 /* ReadinessManager.swift in Sources */,
+				2D6FA645E8BEDF7E85CDFBFA /* RecoveryEngine.swift in Sources */,
+				95B800AA603CAC715CDDFC2C /* RecoveryTunables.swift in Sources */,
 				E01CD22A2E1DEE4F8D7A903C /* Repo.swift in Sources */,
 				06A8815129CE7EA259ECF85F /* RootView.swift in Sources */,
 				E14BFA9A5B49A896F6406843 /* SendLogWatchApp.swift in Sources */,

@@ -54,6 +54,16 @@ export interface LogFormState {
   phase: PhaseId;
 }
 
+export interface HealthMetric {
+  date: string; // YYYY-MM-DD
+  readiness: number | null;
+  zone: string | null;
+  hrvSdnnMs: number | null;
+  restingHr: number | null;
+  sleepHours: number | null;
+  bodyMassKg: number | null;
+}
+
 export interface RpePair {
   predicted: number;
   confirmed: number;

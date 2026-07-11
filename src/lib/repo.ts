@@ -1,5 +1,6 @@
 import { supabase } from "./supabase";
 import type {
+  HealthMetric,
   LogFormState,
   NewTindeqRecording,
   PhaseId,
@@ -262,6 +263,29 @@ export async function insertRecording(
     sampleCount: data.sample_count,
     note: data.note,
   };
+}
+
+export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
+  const { data, error } = await supabase
+    .from("health_metrics")
+    .select(
+      "date, readiness, zone, hrv_sdnn_ms, resting_hr, sleep_hours, body_mass_kg",
+    )
+    .gte("date", cutoffStr)
+    .order("date", { ascending: true });
+  if (error) throw error;
+  return data.map((r) => ({
+    date: r.date,
+    readiness: r.readiness,
+    zone: r.zone,
+    hrvSdnnMs: r.hrv_sdnn_ms,
+    restingHr: r.resting_hr,
+    sleepHours: r.sleep_hours,
+    bodyMassKg: r.body_mass_kg,
+  }));
 }
 
 export async function fetchRpePairs(): Promise<RpePair[]> {

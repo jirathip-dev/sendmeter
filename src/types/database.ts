@@ -157,6 +157,42 @@ export type Database = {
           },
         ]
       }
+      health_metrics: {
+        Row: {
+          body_mass_kg: number | null
+          computed_at: string
+          date: string
+          hrv_sdnn_ms: number | null
+          readiness: number | null
+          resting_hr: number | null
+          sleep_hours: number | null
+          user_id: string
+          zone: string | null
+        }
+        Insert: {
+          body_mass_kg?: number | null
+          computed_at?: string
+          date: string
+          hrv_sdnn_ms?: number | null
+          readiness?: number | null
+          resting_hr?: number | null
+          sleep_hours?: number | null
+          user_id?: string
+          zone?: string | null
+        }
+        Update: {
+          body_mass_kg?: number | null
+          computed_at?: string
+          date?: string
+          hrv_sdnn_ms?: number | null
+          readiness?: number | null
+          resting_hr?: number | null
+          sleep_hours?: number | null
+          user_id?: string
+          zone?: string | null
+        }
+        Relationships: []
+      }
       phase_periods: {
         Row: {
           created_at: string
