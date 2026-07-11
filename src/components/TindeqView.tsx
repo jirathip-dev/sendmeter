@@ -9,6 +9,7 @@ import {
 import type { TindeqRecordingMeta } from "../types";
 import ForceGauge from "./ForceGauge";
 import RecordingRow from "./RecordingRow";
+import TindeqTrendChart from "./TindeqTrendChart";
 
 export default function TindeqView() {
   const tindeq = useTindeq();
@@ -303,6 +304,9 @@ export default function TindeqView() {
           )}
         </div>
       )}
+
+      {/* Trend */}
+      <TindeqTrendChart recordings={recordings} />
 
       {/* Past recordings */}
       <div

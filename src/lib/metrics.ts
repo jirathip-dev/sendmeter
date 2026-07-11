@@ -1,4 +1,10 @@
-import type { AcwrData, AcwrStatus, Session, WeeklyLoad } from "../types";
+import type {
+  AcwrData,
+  AcwrStatus,
+  Session,
+  TindeqRecordingMeta,
+  WeeklyLoad,
+} from "../types";
 import { daysAgo, today } from "./dates";
 
 export function getACWRStatus(acwr: number | null): AcwrStatus {
@@ -19,6 +25,37 @@ export function computeAcwr(sessions: Session[]): AcwrData {
       .filter((s) => s.date >= daysAgo(27) && s.date <= today())
       .reduce((sum, s) => sum + s.load, 0) / 4;
   return { acute, chronic, acwr: chronic > 0 ? acute / chronic : null };
+}
+
+export interface TindeqStats {
+  bestPeak: number;
+  lastPeak: number;
+  avg30d: number | null;
+  delta: number | null; // lastPeak - avg30d
+}
+
+export function computeTindeqStats(
+  recordings: TindeqRecordingMeta[],
+): TindeqStats | null {
+  if (recordings.length < 2) return null;
+  const sorted = [...recordings].sort((a, b) =>
+    a.recordedAt.localeCompare(b.recordedAt),
+  );
+  const last = sorted[sorted.length - 1]!;
+  const bestPeak = Math.max(...sorted.map((r) => r.peakKg));
+  const cutoff = Date.now() - 30 * 86400000;
+  const window = sorted.filter(
+    (r) => Date.parse(r.recordedAt) >= cutoff && r.id !== last.id,
+  );
+  const avg30d = window.length
+    ? window.reduce((s, r) => s + r.peakKg, 0) / window.length
+    : null;
+  return {
+    bestPeak,
+    lastPeak: last.peakKg,
+    avg30d,
+    delta: avg30d === null ? null : last.peakKg - avg30d,
+  };
 }
 
 export function computeWeeklyLoads(sessions: Session[]): WeeklyLoad[] {
