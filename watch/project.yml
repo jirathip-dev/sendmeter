@@ -16,8 +16,7 @@ targets:
     dependencies:
       - package: Supabase
         products:
-          - Auth
-          - PostgREST
+          - Supabase
     entitlements:
       path: SendLogWatch/SendLogWatch.entitlements
       properties:
@@ -47,3 +46,6 @@ targets:
       - SendLogWatchTests
     dependencies:
       - target: SendLogWatch
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true

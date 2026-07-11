@@ -1,0 +1,560 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		00D403B5DFA758E1542F7199 /* AttemptDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0DCE2316940D4E2D59A507 /* AttemptDetectorTests.swift */; };
+		064E657EE546A190D507330A /* SupabaseService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2319690D6DF01856389AAD42 /* SupabaseService.swift */; };
+		06A8815129CE7EA259ECF85F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CF6847BA4CADF5E9C390CCB /* RootView.swift */; };
+		07C05ADA4C478253725D8D63 /* TindeqManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81B59990F0B83865CA6EE1B8 /* TindeqManager.swift */; };
+		096061ED4D06104F66619DCC /* OfflineQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 627D456DCA9758C86551AFE9 /* OfflineQueue.swift */; };
+		17412ACEB5CB59F9DAFD65AC /* AttemptDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72DDDDA69E8D7F38845EDD0A /* AttemptDetector.swift */; };
+		17CD8292D5EA383B3857A0E0 /* TindeqProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95E14F6FB96B66B2D48CA6F3 /* TindeqProtocol.swift */; };
+		2D45DF368B2E1D299A50DCA2 /* WorkoutManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEF796B6F211D510D330DED4 /* WorkoutManager.swift */; };
+		3D74AD8D071B513A17042121 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B01D79DEA9FC0FB6AD3AE6E /* SignInView.swift */; };
+		4562D7A9729F5A7792B7F749 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = D058C07A276E53ABB60F2DF8 /* Supabase */; };
+		5216527D9E3AF0A0B6815D14 /* WorkoutConfirmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B0B6474C5FB03A0156D334D /* WorkoutConfirmView.swift */; };
+		535860619C7E8677AC8C2480 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 855CD08B40F873897AAA7B90 /* Models.swift */; };
+		863A3B0F1E3AEED24115F952 /* Tunables.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5B0A2335EDF406CBCF914E /* Tunables.swift */; };
+		9A7EA461C7FF5ECF5F89274C /* ForceGaugeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */; };
+		A0263D9E8A446CE07240A7DC /* WorkoutLiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 697C379E1AF401F93DF99FDE /* WorkoutLiveView.swift */; };
+		B70CB20285D8CD75D4CFBC78 /* SupabaseConfig.plist in Resources */ = {isa = PBXBuildFile; fileRef = 31CAF69C6E6F85F9B4BBF90C /* SupabaseConfig.plist */; };
+		BED9909AC45CB7A013A673ED /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A3A7035BCA687113E36516 /* HomeView.swift */; };
+		E01CD22A2E1DEE4F8D7A903C /* Repo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D08406925F88A83E6D13C7C /* Repo.swift */; };
+		E14BFA9A5B49A896F6406843 /* SendLogWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A4DA8FD76F0ECCFCBDDE959 /* SendLogWatchApp.swift */; };
+		E19F80C1D6DFEFBA5C8F32D8 /* TindeqProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 837E50DE195A86516756FA62 /* TindeqProtocolTests.swift */; };
+		F45C0765038D52C55148403C /* Sparkline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47073B7B842713B9F061C685 /* Sparkline.swift */; };
+		F5A06ED9F92DD98B94EF0A54 /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D7C2124FF466F5D09449B86 /* AuthManager.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1923E50182A420098A8C1215 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 39D5FACAD71FDB2005FA76A4 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D6A386A0C32B0CABBE4EC38D;
+			remoteInfo = SendLogWatch;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0D08406925F88A83E6D13C7C /* Repo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Repo.swift; sourceTree = "<group>"; };
+		0F0DCE2316940D4E2D59A507 /* AttemptDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttemptDetectorTests.swift; sourceTree = "<group>"; };
+		2319690D6DF01856389AAD42 /* SupabaseService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupabaseService.swift; sourceTree = "<group>"; };
+		2B01D79DEA9FC0FB6AD3AE6E /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
+		2D066322EA629D7A704CC603 /* SendLogWatch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SendLogWatch.entitlements; sourceTree = "<group>"; };
+		31CAF69C6E6F85F9B4BBF90C /* SupabaseConfig.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = SupabaseConfig.plist; sourceTree = "<group>"; };
+		47073B7B842713B9F061C685 /* Sparkline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sparkline.swift; sourceTree = "<group>"; };
+		4B0B6474C5FB03A0156D334D /* WorkoutConfirmView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutConfirmView.swift; sourceTree = "<group>"; };
+		4CF6847BA4CADF5E9C390CCB /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		4D7C2124FF466F5D09449B86 /* AuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthManager.swift; sourceTree = "<group>"; };
+		4E5B0A2335EDF406CBCF914E /* Tunables.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tunables.swift; sourceTree = "<group>"; };
+		51A3A7035BCA687113E36516 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		627D456DCA9758C86551AFE9 /* OfflineQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfflineQueue.swift; sourceTree = "<group>"; };
+		697C379E1AF401F93DF99FDE /* WorkoutLiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutLiveView.swift; sourceTree = "<group>"; };
+		72DDDDA69E8D7F38845EDD0A /* AttemptDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttemptDetector.swift; sourceTree = "<group>"; };
+		81B59990F0B83865CA6EE1B8 /* TindeqManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TindeqManager.swift; sourceTree = "<group>"; };
+		833025E139E5F46F5028066E /* SendLogWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SendLogWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		837E50DE195A86516756FA62 /* TindeqProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TindeqProtocolTests.swift; sourceTree = "<group>"; };
+		855CD08B40F873897AAA7B90 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		8BA19231E1E57EB244F7AE3F /* SendLogWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendLogWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		95E14F6FB96B66B2D48CA6F3 /* TindeqProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TindeqProtocol.swift; sourceTree = "<group>"; };
+		9A4DA8FD76F0ECCFCBDDE959 /* SendLogWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendLogWatchApp.swift; sourceTree = "<group>"; };
+		B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceGaugeView.swift; sourceTree = "<group>"; };
+		EEF796B6F211D510D330DED4 /* WorkoutManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutManager.swift; sourceTree = "<group>"; };
+		FD9ECA4EA7E6FC7993F03946 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F4E003E6A44D0D6784677382 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4562D7A9729F5A7792B7F749 /* Supabase in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0DCB9DE247BC0BD87BCA2B36 /* SendLogWatch */ = {
+			isa = PBXGroup;
+			children = (
+				FD9ECA4EA7E6FC7993F03946 /* Info.plist */,
+				2D066322EA629D7A704CC603 /* SendLogWatch.entitlements */,
+				9A4DA8FD76F0ECCFCBDDE959 /* SendLogWatchApp.swift */,
+				956FF5847CE66E4757555473 /* Config */,
+				3832365D1C1FC230211B5075 /* Models */,
+				22A44A3231053D66900C3635 /* Resources */,
+				6566F8C7C6E7C8BD2687AA27 /* Services */,
+				F486C000807FB95966D386C7 /* Views */,
+			);
+			path = SendLogWatch;
+			sourceTree = "<group>";
+		};
+		22A44A3231053D66900C3635 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				31CAF69C6E6F85F9B4BBF90C /* SupabaseConfig.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		3832365D1C1FC230211B5075 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				855CD08B40F873897AAA7B90 /* Models.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		55699D082F11D6FACC4F9841 = {
+			isa = PBXGroup;
+			children = (
+				0DCB9DE247BC0BD87BCA2B36 /* SendLogWatch */,
+				5910F1D286DCEF7ED2F9D49D /* SendLogWatchTests */,
+				C84A7B3990FD6FDD20E9FC5B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		5910F1D286DCEF7ED2F9D49D /* SendLogWatchTests */ = {
+			isa = PBXGroup;
+			children = (
+				0F0DCE2316940D4E2D59A507 /* AttemptDetectorTests.swift */,
+				837E50DE195A86516756FA62 /* TindeqProtocolTests.swift */,
+			);
+			path = SendLogWatchTests;
+			sourceTree = "<group>";
+		};
+		6566F8C7C6E7C8BD2687AA27 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				72DDDDA69E8D7F38845EDD0A /* AttemptDetector.swift */,
+				4D7C2124FF466F5D09449B86 /* AuthManager.swift */,
+				627D456DCA9758C86551AFE9 /* OfflineQueue.swift */,
+				0D08406925F88A83E6D13C7C /* Repo.swift */,
+				2319690D6DF01856389AAD42 /* SupabaseService.swift */,
+				81B59990F0B83865CA6EE1B8 /* TindeqManager.swift */,
+				95E14F6FB96B66B2D48CA6F3 /* TindeqProtocol.swift */,
+				EEF796B6F211D510D330DED4 /* WorkoutManager.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		956FF5847CE66E4757555473 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				4E5B0A2335EDF406CBCF914E /* Tunables.swift */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		C84A7B3990FD6FDD20E9FC5B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				833025E139E5F46F5028066E /* SendLogWatch.app */,
+				8BA19231E1E57EB244F7AE3F /* SendLogWatchTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E4B226C4B51AA69B638AA460 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				47073B7B842713B9F061C685 /* Sparkline.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		F486C000807FB95966D386C7 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */,
+				51A3A7035BCA687113E36516 /* HomeView.swift */,
+				4CF6847BA4CADF5E9C390CCB /* RootView.swift */,
+				2B01D79DEA9FC0FB6AD3AE6E /* SignInView.swift */,
+				4B0B6474C5FB03A0156D334D /* WorkoutConfirmView.swift */,
+				697C379E1AF401F93DF99FDE /* WorkoutLiveView.swift */,
+				E4B226C4B51AA69B638AA460 /* Components */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		D6A386A0C32B0CABBE4EC38D /* SendLogWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D1FDE2EBA5EB209A59A8419A /* Build configuration list for PBXNativeTarget "SendLogWatch" */;
+			buildPhases = (
+				E305A18D979CF935D35F44CD /* Sources */,
+				5127F8D5557F4C10C909E240 /* Resources */,
+				F4E003E6A44D0D6784677382 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SendLogWatch;
+			packageProductDependencies = (
+				D058C07A276E53ABB60F2DF8 /* Supabase */,
+			);
+			productName = SendLogWatch;
+			productReference = 833025E139E5F46F5028066E /* SendLogWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F2623DBA0D1DAB7CBDC3F0AB /* SendLogWatchTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8824180F2DAB861EA3EA053A /* Build configuration list for PBXNativeTarget "SendLogWatchTests" */;
+			buildPhases = (
+				C2C86100D267FCF2F7A38D41 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D79B04DCDD651B25BEF52044 /* PBXTargetDependency */,
+			);
+			name = SendLogWatchTests;
+			packageProductDependencies = (
+			);
+			productName = SendLogWatchTests;
+			productReference = 8BA19231E1E57EB244F7AE3F /* SendLogWatchTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		39D5FACAD71FDB2005FA76A4 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = 37D36C04150248EB1272BCCD /* Build configuration list for PBXProject "SendLogWatch" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 55699D082F11D6FACC4F9841;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				9E4F30982C1B8730ECE14C7D /* XCRemoteSwiftPackageReference "supabase-swift" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = C84A7B3990FD6FDD20E9FC5B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				D6A386A0C32B0CABBE4EC38D /* SendLogWatch */,
+				F2623DBA0D1DAB7CBDC3F0AB /* SendLogWatchTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5127F8D5557F4C10C909E240 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B70CB20285D8CD75D4CFBC78 /* SupabaseConfig.plist in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C2C86100D267FCF2F7A38D41 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				00D403B5DFA758E1542F7199 /* AttemptDetectorTests.swift in Sources */,
+				E19F80C1D6DFEFBA5C8F32D8 /* TindeqProtocolTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E305A18D979CF935D35F44CD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				17412ACEB5CB59F9DAFD65AC /* AttemptDetector.swift in Sources */,
+				F5A06ED9F92DD98B94EF0A54 /* AuthManager.swift in Sources */,
+				9A7EA461C7FF5ECF5F89274C /* ForceGaugeView.swift in Sources */,
+				BED9909AC45CB7A013A673ED /* HomeView.swift in Sources */,
+				535860619C7E8677AC8C2480 /* Models.swift in Sources */,
+				096061ED4D06104F66619DCC /* OfflineQueue.swift in Sources */,
+				E01CD22A2E1DEE4F8D7A903C /* Repo.swift in Sources */,
+				06A8815129CE7EA259ECF85F /* RootView.swift in Sources */,
+				E14BFA9A5B49A896F6406843 /* SendLogWatchApp.swift in Sources */,
+				3D74AD8D071B513A17042121 /* SignInView.swift in Sources */,
+				F45C0765038D52C55148403C /* Sparkline.swift in Sources */,
+				064E657EE546A190D507330A /* SupabaseService.swift in Sources */,
+				07C05ADA4C478253725D8D63 /* TindeqManager.swift in Sources */,
+				17CD8292D5EA383B3857A0E0 /* TindeqProtocol.swift in Sources */,
+				863A3B0F1E3AEED24115F952 /* Tunables.swift in Sources */,
+				5216527D9E3AF0A0B6815D14 /* WorkoutConfirmView.swift in Sources */,
+				A0263D9E8A446CE07240A7DC /* WorkoutLiveView.swift in Sources */,
+				2D45DF368B2E1D299A50DCA2 /* WorkoutManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D79B04DCDD651B25BEF52044 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D6A386A0C32B0CABBE4EC38D /* SendLogWatch */;
+			targetProxy = 1923E50182A420098A8C1215 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		02CD91C141280F787B2C2971 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		139178DBCBDC2A2CFF58C4CB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = SendLogWatch/SendLogWatch.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SendLogWatch/Info.plist;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jirathip.sendlog.SendLogWatch;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Debug;
+		};
+		1F0FA8AFEC228102D08A1F5F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		63EFADCE516417EE261ADC4C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = SendLogWatch/SendLogWatch.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = SendLogWatch/Info.plist;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jirathip.sendlog.SendLogWatch;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.10;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
+		69ECBC3448B80C12CF8891E5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jirathip.sendlog.SendLogWatchTests;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SendLogWatch.app/SendLogWatch";
+			};
+			name = Debug;
+		};
+		832DD219E70795D3A28DF41F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.jirathip.sendlog.SendLogWatchTests;
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SendLogWatch.app/SendLogWatch";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		37D36C04150248EB1272BCCD /* Build configuration list for PBXProject "SendLogWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				02CD91C141280F787B2C2971 /* Debug */,
+				1F0FA8AFEC228102D08A1F5F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		8824180F2DAB861EA3EA053A /* Build configuration list for PBXNativeTarget "SendLogWatchTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				69ECBC3448B80C12CF8891E5 /* Debug */,
+				832DD219E70795D3A28DF41F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D1FDE2EBA5EB209A59A8419A /* Build configuration list for PBXNativeTarget "SendLogWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				139178DBCBDC2A2CFF58C4CB /* Debug */,
+				63EFADCE516417EE261ADC4C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		9E4F30982C1B8730ECE14C7D /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		D058C07A276E53ABB60F2DF8 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9E4F30982C1B8730ECE14C7D /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 39D5FACAD71FDB2005FA76A4 /* Project object */;
+}

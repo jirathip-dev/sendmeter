@@ -141,7 +141,9 @@ final class AttemptDetector {
         let windowStart = max(0, i - Int(t.startWindowS * t.tickHz))
         var minTick = windowStart
         var minAlt = ticks[windowStart].altitude
-        for j in windowStart...i where ticks[j].altitude < minAlt {
+        // <= keeps the LAST tick at the minimum: flat rest before the rise
+        // must not count toward attempt duration
+        for j in windowStart...i where ticks[j].altitude <= minAlt {
             minAlt = ticks[j].altitude
             minTick = j
         }
