@@ -1,5 +1,33 @@
 # Send Log Watch — build & deploy guide
 
+## Status (2026-07-11)
+
+Everything below is **already done** on this Mac:
+
+- ✅ Xcode 26.6 installed; `xcodegen` installed; project generates and builds clean.
+- ✅ All 12 unit tests pass; app installs and launches in the watchOS simulator.
+- ✅ Apple ID added in Xcode; development certificate created (`Apple Development: guyjrt10984@gmail.com`).
+- ✅ Team `9244PWFYD7` + automatic signing set in `project.yml` — no Xcode signing UI needed, survives regeneration.
+- ✅ Schema (`climb_workouts`, `climb_attempts`) applied to Supabase with RLS.
+
+**Remaining — deploy to the physical watch** (needs the iPhone, ~10 min):
+
+1. Plug the iPhone (paired to the watch) into this Mac with a cable → tap **Trust** on the phone.
+2. On the watch: Settings → Privacy & Security → **Developer Mode** → on (watch reboots). Keep the watch on its charger.
+3. Verify the device shows up: `xcrun devicectl list devices` (or Xcode → Window → Devices and Simulators).
+4. Register + provision + build (first run also creates the free-tier provisioning profile):
+   ```bash
+   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+   cd watch
+   xcodebuild build -project SendLogWatch.xcodeproj -scheme SendLogWatch \
+     -destination 'generic/platform=watchOS' -allowProvisioningUpdates
+   ```
+   (This failed before with "team has no devices" — it succeeds once the phone+watch are connected. Or just press Run in Xcode with the watch selected as destination.)
+5. Deploy: select the watch as run destination in Xcode → Run. First install over Wi-Fi is slow.
+6. On the watch, grant Health / Motion / Bluetooth prompts.
+7. In the **web app**: top-right **Watch** button → set a password. Sign in on the watch with your email + that password (one time; persists).
+8. Free Apple ID: the install expires every **7 days** — rebuild to the watch weekly (step 5 only).
+
 A standalone Apple Watch app (watchOS 10+, Series 6 or later; built for Series 9/10/Ultra):
 
 - **Force Gauge** — connects to a Tindeq Progressor over Bluetooth, live force + peak + sparkline, tare/start/stop, saves recordings to the same Supabase tables the web app reads.
