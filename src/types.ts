@@ -92,3 +92,25 @@ export interface NewTindeqRecording {
   note: string;
   samples: TindeqSample[];
 }
+
+export interface WorkoutAttempt {
+  startedAt: string;
+  durationS: number;
+  elevationGainM: number;
+  avgHr: number | null;
+  peakHr: number | null;
+  effortScore: number | null;
+}
+
+export interface WorkoutDetail {
+  id: string;
+  avgHr: number | null;
+  maxHr: number | null;
+  activeKcal: number | null;
+  elevationGainM: number;
+  attemptsDetected: number;
+  attemptsConfirmed: number;
+  rpePredicted: number | null;
+  rpeConfirmed: number | null;
+  attempts: WorkoutAttempt[];
+}

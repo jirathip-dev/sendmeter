@@ -234,6 +234,10 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					D6A386A0C32B0CABBE4EC38D = {
+						DevelopmentTeam = 9244PWFYD7;
+						ProvisioningStyle = Automatic;
+					};
 				};
 			};
 			buildConfigurationList = 37D36C04150248EB1272BCCD /* Build configuration list for PBXProject "SendLogWatch" */;
@@ -384,7 +388,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = SendLogWatch/SendLogWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9244PWFYD7;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SendLogWatch/Info.plist;
 				MARKETING_VERSION = 1.0;
@@ -457,7 +463,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = SendLogWatch/SendLogWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9244PWFYD7;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = SendLogWatch/Info.plist;
 				MARKETING_VERSION = 1.0;

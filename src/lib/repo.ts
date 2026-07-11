@@ -6,6 +6,7 @@ import type {
   Session,
   TindeqRecordingMeta,
   TindeqSample,
+  WorkoutDetail,
 } from "../types";
 import { SESSION_TYPES } from "../constants";
 import { today } from "./dates";
@@ -161,6 +162,40 @@ export async function insertRecording(
     avgKg: data.avg_kg,
     sampleCount: data.sample_count,
     note: data.note,
+  };
+}
+
+export async function fetchWorkoutForSession(
+  sessionId: string,
+): Promise<WorkoutDetail | null> {
+  const { data, error } = await supabase
+    .from("climb_workouts")
+    .select(
+      "id, avg_hr, max_hr, active_kcal, elevation_gain_m, attempts_detected, attempts_confirmed, rpe_predicted, rpe_confirmed, climb_attempts(started_at, duration_s, elevation_gain_m, avg_hr, peak_hr, effort_score)",
+    )
+    .eq("session_id", sessionId)
+    .order("started_at", { referencedTable: "climb_attempts", ascending: true })
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    id: data.id,
+    avgHr: data.avg_hr,
+    maxHr: data.max_hr,
+    activeKcal: data.active_kcal,
+    elevationGainM: data.elevation_gain_m,
+    attemptsDetected: data.attempts_detected,
+    attemptsConfirmed: data.attempts_confirmed,
+    rpePredicted: data.rpe_predicted === null ? null : Number(data.rpe_predicted),
+    rpeConfirmed: data.rpe_confirmed,
+    attempts: data.climb_attempts.map((a) => ({
+      startedAt: a.started_at,
+      durationS: a.duration_s,
+      elevationGainM: a.elevation_gain_m,
+      avgHr: a.avg_hr,
+      peakHr: a.peak_hr,
+      effortScore: a.effort_score,
+    })),
   };
 }
 
