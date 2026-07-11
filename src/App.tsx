@@ -17,6 +17,7 @@ import LogForm from "./components/LogForm";
 import LogView from "./components/LogView";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
+import WatchPasswordSheet from "./components/WatchPasswordSheet";
 
 export default function App() {
   const { session, loading, signOut } = useAuth();
@@ -59,6 +60,7 @@ function AuthedApp({
 
   const [view, setView] = useState<ViewId>("dashboard");
   const [showModal, setShowModal] = useState(false);
+  const [showWatchSheet, setShowWatchSheet] = useState(false);
   const [importDismissed, setImportDismissed] = useState(false);
   const [importing, setImporting] = useState(false);
   const [form, setForm] = useState<LogFormState>({
@@ -163,6 +165,22 @@ function AuthedApp({
               background: phase.color,
             }}
           />
+          <button
+            onClick={() => setShowWatchSheet(true)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#3a4a60",
+              fontSize: 9,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              cursor: "pointer",
+              padding: 4,
+              fontFamily: "'DM Mono', monospace",
+            }}
+          >
+            Watch
+          </button>
           <button
             onClick={() => void onSignOut()}
             style={{
@@ -306,6 +324,11 @@ function AuthedApp({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Watch password bottom sheet */}
+      {showWatchSheet && (
+        <WatchPasswordSheet onClose={() => setShowWatchSheet(false)} />
       )}
 
       {/* Legacy import bottom sheet */}

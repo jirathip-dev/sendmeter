@@ -39,6 +39,118 @@ export type Database = {
   }
   public: {
     Tables: {
+      climb_attempts: {
+        Row: {
+          avg_hr: number | null
+          created_at: string
+          duration_s: number
+          effort_score: number | null
+          elevation_gain_m: number
+          id: string
+          motion_intensity: number | null
+          peak_hr: number | null
+          started_at: string
+          user_id: string
+          workout_id: string
+        }
+        Insert: {
+          avg_hr?: number | null
+          created_at?: string
+          duration_s: number
+          effort_score?: number | null
+          elevation_gain_m: number
+          id?: string
+          motion_intensity?: number | null
+          peak_hr?: number | null
+          started_at: string
+          user_id?: string
+          workout_id: string
+        }
+        Update: {
+          avg_hr?: number | null
+          created_at?: string
+          duration_s?: number
+          effort_score?: number | null
+          elevation_gain_m?: number
+          id?: string
+          motion_intensity?: number | null
+          peak_hr?: number | null
+          started_at?: string
+          user_id?: string
+          workout_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "climb_attempts_workout_id_fkey"
+            columns: ["workout_id"]
+            isOneToOne: false
+            referencedRelation: "climb_workouts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      climb_workouts: {
+        Row: {
+          active_kcal: number | null
+          attempts_confirmed: number
+          attempts_detected: number
+          avg_hr: number | null
+          created_at: string
+          elevation_gain_m: number
+          ended_at: string
+          id: string
+          max_hr: number | null
+          raw: Json | null
+          rpe_confirmed: number | null
+          rpe_predicted: number | null
+          session_id: string | null
+          started_at: string
+          user_id: string
+        }
+        Insert: {
+          active_kcal?: number | null
+          attempts_confirmed?: number
+          attempts_detected?: number
+          avg_hr?: number | null
+          created_at?: string
+          elevation_gain_m?: number
+          ended_at: string
+          id?: string
+          max_hr?: number | null
+          raw?: Json | null
+          rpe_confirmed?: number | null
+          rpe_predicted?: number | null
+          session_id?: string | null
+          started_at: string
+          user_id?: string
+        }
+        Update: {
+          active_kcal?: number | null
+          attempts_confirmed?: number
+          attempts_detected?: number
+          avg_hr?: number | null
+          created_at?: string
+          elevation_gain_m?: number
+          ended_at?: string
+          id?: string
+          max_hr?: number | null
+          raw?: Json | null
+          rpe_confirmed?: number | null
+          rpe_predicted?: number | null
+          session_id?: string | null
+          started_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "climb_workouts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       sessions: {
         Row: {
           created_at: string

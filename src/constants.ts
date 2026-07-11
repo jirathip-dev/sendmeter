@@ -74,6 +74,7 @@ export const SESSION_TYPES: SessionType[] = [
   { id: "arc", label: "ARC / Traversing", defaultRpe: 4, defaultDuration: 40 },
   { id: "campus", label: "Campus Board", defaultRpe: 9, defaultDuration: 30 },
   { id: "custom", label: "Custom", defaultRpe: 6, defaultDuration: 60 },
+  { id: "auto", label: "Auto-tracked", defaultRpe: 6, defaultDuration: 60 },
 ];
 
 export const NAV: NavItem[] = [
