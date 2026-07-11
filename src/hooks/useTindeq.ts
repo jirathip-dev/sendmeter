@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BleClient } from "@capacitor-community/bluetooth-le";
+import { Capacitor } from "@capacitor/core";
 import { parseNotification, TINDEQ } from "../lib/tindeq-protocol";
 import type { TindeqSample } from "../types";
 
@@ -17,6 +19,7 @@ export interface StoppedRecording {
 }
 
 const MAX_RECORDING_MS = 120_000;
+const IS_NATIVE = Capacitor.isNativePlatform();
 const FAKE_MODE =
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).has("fake-tindeq");
@@ -36,9 +39,18 @@ function summarize(samples: TindeqSample[]): StoppedRecording | null {
   };
 }
 
+/**
+ * Tindeq Progressor over BleClient: Web Bluetooth in browsers, native
+ * CoreBluetooth inside the Capacitor iOS app — one code path for both.
+ */
 export function useTindeq() {
-  const supported = FAKE_MODE || (typeof navigator !== "undefined" && "bluetooth" in navigator);
-  const secure = typeof window === "undefined" || window.isSecureContext;
+  // Native always has BLE; web needs Web Bluetooth + secure context.
+  const supported =
+    FAKE_MODE ||
+    IS_NATIVE ||
+    (typeof navigator !== "undefined" && "bluetooth" in navigator);
+  const secure =
+    IS_NATIVE || typeof window === "undefined" || window.isSecureContext;
 
   const [status, setStatus] = useState<TindeqStatus>(
     supported && secure ? "idle" : "unsupported",
@@ -49,9 +61,8 @@ export function useTindeq() {
   const [peak, setPeak] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
 
-  const deviceRef = useRef<BluetoothDevice | null>(null);
-  const controlRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
-  const notifyRef = useRef<BluetoothRemoteGATTCharacteristic | null>(null);
+  const deviceIdRef = useRef<string | null>(null);
+  const initializedRef = useRef(false);
   const samplesRef = useRef<TindeqSample[]>([]);
   const t0Ref = useRef<number | null>(null);
   const measuringRef = useRef(false);
@@ -64,7 +75,7 @@ export function useTindeq() {
     rafRef.current = 0;
   }, []);
 
-  // Flush latest sample into React state at most once per frame; auto-stop at cap.
+  // Flush latest sample into React state at most once per frame.
   const startRaf = useCallback(() => {
     const tick = () => {
       const { kg, t } = latestRef.current;
@@ -93,24 +104,27 @@ export function useTindeq() {
     measuringRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
-    controlRef.current = null;
-    notifyRef.current = null;
-    deviceRef.current = null;
+    deviceIdRef.current = null;
   }, [stopRaf]);
 
   useEffect(() => {
     return () => {
-      const device = deviceRef.current;
+      const deviceId = deviceIdRef.current;
       cleanupDevice();
-      device?.gatt?.disconnect();
+      if (deviceId) void BleClient.disconnect(deviceId).catch(() => {});
     };
   }, [cleanupDevice]);
 
   const writeCmd = useCallback(async (cmd: number) => {
     if (FAKE_MODE) return;
-    const c = controlRef.current;
-    if (!c) throw new Error("Not connected");
-    await c.writeValue(new Uint8Array([cmd]));
+    const deviceId = deviceIdRef.current;
+    if (!deviceId) throw new Error("Not connected");
+    await BleClient.write(
+      deviceId,
+      TINDEQ.service,
+      TINDEQ.controlChar,
+      new DataView(new Uint8Array([cmd]).buffer),
+    );
   }, []);
 
   const connect = useCallback(async () => {
@@ -122,47 +136,49 @@ export function useTindeq() {
       return;
     }
     try {
-      const device = await navigator.bluetooth.requestDevice({
-        filters: [{ namePrefix: TINDEQ.namePrefix }],
+      if (!initializedRef.current) {
+        await BleClient.initialize();
+        initializedRef.current = true;
+      }
+      const device = await BleClient.requestDevice({
+        namePrefix: TINDEQ.namePrefix,
         optionalServices: [TINDEQ.service],
       });
-      device.addEventListener("gattserverdisconnected", () => {
+      await BleClient.connect(device.deviceId, () => {
         // keep samples so an interrupted recording can still be saved
         cleanupDevice();
         setStatus("idle");
         setErrorMsg("Device disconnected");
       });
-      const gatt = await device.gatt!.connect();
-      const service = await gatt.getPrimaryService(TINDEQ.service);
-      const [notify, control] = await Promise.all([
-        service.getCharacteristic(TINDEQ.notifyChar),
-        service.getCharacteristic(TINDEQ.controlChar),
-      ]);
-      await notify.startNotifications();
-      notify.addEventListener("characteristicvaluechanged", (e) => {
-        const dv = (e.target as BluetoothRemoteGATTCharacteristic).value;
-        if (!dv) return;
-        const frame = parseNotification(dv);
-        if (frame.kind === "weight") handleSamples(frame.samples);
-        else if (frame.kind === "lowBattery") setLowBattery(true);
-      });
-      deviceRef.current = device;
-      controlRef.current = control;
-      notifyRef.current = notify;
+      await BleClient.startNotifications(
+        device.deviceId,
+        TINDEQ.service,
+        TINDEQ.notifyChar,
+        (dv) => {
+          const frame = parseNotification(dv);
+          if (frame.kind === "weight") handleSamples(frame.samples);
+          else if (frame.kind === "lowBattery") setLowBattery(true);
+        },
+      );
+      deviceIdRef.current = device.deviceId;
       setStatus("connected");
+      // battery status arrives as a tag-0x02 push when low
+      await writeCmd(TINDEQ.cmd.sampleBattery).catch(() => {});
     } catch (e) {
       cleanupDevice();
       setStatus("idle");
-      // user cancelling the chooser is not an error worth showing
+      // user cancelling the device chooser is not an error worth showing
       if (e instanceof DOMException && e.name === "NotFoundError") return;
-      setErrorMsg(e instanceof Error ? e.message : "Connection failed");
+      const msg = e instanceof Error ? e.message : "Connection failed";
+      if (/cancel/i.test(msg)) return;
+      setErrorMsg(msg);
     }
-  }, [cleanupDevice, handleSamples]);
+  }, [cleanupDevice, handleSamples, writeCmd]);
 
   const disconnect = useCallback(() => {
-    const device = deviceRef.current;
+    const deviceId = deviceIdRef.current;
     cleanupDevice();
-    device?.gatt?.disconnect();
+    if (deviceId) void BleClient.disconnect(deviceId).catch(() => {});
     setStatus("idle");
   }, [cleanupDevice]);
 
@@ -211,7 +227,7 @@ export function useTindeq() {
     } catch {
       // device may already be gone; the recording is still valid
     }
-    setStatus(deviceRef.current || FAKE_MODE ? "connected" : "idle");
+    setStatus(deviceIdRef.current || FAKE_MODE ? "connected" : "idle");
     const summary = summarize(samplesRef.current);
     if (summary) {
       setCurrent(0);

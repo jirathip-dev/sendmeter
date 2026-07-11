@@ -1,26 +1,54 @@
 import { useState } from "react";
+import { Capacitor } from "@capacitor/core";
 import { supabase } from "../lib/supabase";
+
+const IS_NATIVE = Capacitor.isNativePlatform();
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  // Magic links can't redirect back into the native app shell, so the
+  // iPhone app defaults to password sign-in (same password as the watch).
+  const [mode, setMode] = useState<"magic" | "password">(
+    IS_NATIVE ? "password" : "magic",
+  );
   const [sent, setSent] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function sendLink() {
     if (!email.trim()) return;
-    setSending(true);
+    setBusy(true);
     setError(null);
     const { error: err } = await supabase.auth.signInWithOtp({
       email: email.trim(),
       options: { emailRedirectTo: window.location.origin },
     });
-    setSending(false);
+    setBusy(false);
     if (err) {
       setError(err.message);
     } else {
       setSent(true);
     }
+  }
+
+  async function signInPassword() {
+    if (!email.trim() || !password) return;
+    setBusy(true);
+    setError(null);
+    const { error: err } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    setBusy(false);
+    if (err) {
+      setError(
+        err.message.toLowerCase().includes("invalid login credentials")
+          ? "Wrong email or password. Set a password via the Watch button on the web app first."
+          : err.message,
+      );
+    }
+    // success: onAuthStateChange flips the app to signed-in
   }
 
   return (
@@ -77,8 +105,9 @@ export default function LoginScreen() {
                 Sign in
               </div>
               <div style={{ fontSize: 12, color: "#7a8a9a" }}>
-                Enter your email and we'll send you a magic link. No password
-                needed.
+                {mode === "magic"
+                  ? "Enter your email and we'll send you a magic link. No password needed."
+                  : "Sign in with your email and password."}
               </div>
               <span className="field-label">Email</span>
               <input
@@ -89,20 +118,66 @@ export default function LoginScreen() {
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendLink()}
+                onKeyDown={(e) =>
+                  e.key === "Enter" && mode === "magic" && sendLink()
+                }
               />
+              {mode === "password" && (
+                <>
+                  <span className="field-label">Password</span>
+                  <input
+                    className="field"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && signInPassword()}
+                  />
+                </>
+              )}
               {error && (
                 <div style={{ fontSize: 11, color: "#f87171", marginTop: 8 }}>
                   {error}
                 </div>
               )}
               <div style={{ marginTop: 14 }}>
+                {mode === "magic" ? (
+                  <button
+                    className="btn-primary"
+                    disabled={busy}
+                    onClick={sendLink}
+                  >
+                    {busy ? "Sending…" : "Send Magic Link"}
+                  </button>
+                ) : (
+                  <button
+                    className="btn-primary"
+                    disabled={busy}
+                    onClick={signInPassword}
+                  >
+                    {busy ? "Signing in…" : "Sign In"}
+                  </button>
+                )}
+              </div>
+              <div style={{ marginTop: 12, textAlign: "center" }}>
                 <button
-                  className="btn-primary"
-                  disabled={sending}
-                  onClick={sendLink}
+                  onClick={() => {
+                    setMode(mode === "magic" ? "password" : "magic");
+                    setError(null);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "#4a5a70",
+                    fontSize: 11,
+                    cursor: "pointer",
+                    fontFamily: "'DM Mono', monospace",
+                    textDecoration: "underline",
+                  }}
                 >
-                  {sending ? "Sending…" : "Send Magic Link"}
+                  {mode === "magic"
+                    ? "Sign in with password instead"
+                    : "Sign in with magic link instead"}
                 </button>
               </div>
             </div>
