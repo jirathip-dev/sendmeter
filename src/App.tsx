@@ -49,6 +49,7 @@ function AuthedApp({
     sessions,
     currentPhase,
     phaseStartDate,
+    phasePeriods,
     loading,
     error,
     dismissError,
@@ -264,6 +265,7 @@ function AuthedApp({
             {view === "phases" && (
               <PhasesView
                 currentPhase={currentPhase}
+                phasePeriods={phasePeriods}
                 onSetPhase={(id) => void setPhase(id)}
               />
             )}

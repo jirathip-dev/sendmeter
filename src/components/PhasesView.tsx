@@ -1,9 +1,20 @@
 import { PHASES } from "../constants";
-import type { PhaseId } from "../types";
+import { today } from "../lib/dates";
+import type { PhaseId, PhasePeriod } from "../types";
 
 interface Props {
   currentPhase: PhaseId;
+  phasePeriods: PhasePeriod[];
   onSetPhase: (id: PhaseId) => void;
+}
+
+function periodDays(p: PhasePeriod): number {
+  const end = p.endedOn ?? today();
+  return (
+    Math.floor(
+      (new Date(end).getTime() - new Date(p.startedOn).getTime()) / 86400000,
+    ) + 1
+  );
 }
 
 const ZONES = [
@@ -14,7 +25,24 @@ const ZONES = [
   { range: "> 1.5", label: "Danger — injury risk", color: "#f87171" },
 ];
 
-export default function PhasesView({ currentPhase, onSetPhase }: Props) {
+export default function PhasesView({
+  currentPhase,
+  phasePeriods,
+  onSetPhase,
+}: Props) {
+  const chronological = [...phasePeriods].sort((a, b) =>
+    a.startedOn.localeCompare(b.startedOn),
+  );
+  const totalDays = chronological.reduce((s, p) => s + periodDays(p), 0);
+
+  function phaseHistory(id: PhaseId): string | null {
+    const mine = phasePeriods.filter((p) => p.phase === id);
+    if (mine.length === 0) return null;
+    const days = mine.reduce((s, p) => s + periodDays(p), 0);
+    const wks = (days / 7).toFixed(1);
+    return `${mine.length} period${mine.length === 1 ? "" : "s"} · ${wks} wks total`;
+  }
+
   return (
     <div>
       <div className="section-head">PHASES</div>
@@ -111,10 +139,71 @@ export default function PhasesView({ currentPhase, onSetPhase }: Props) {
               <div style={{ fontSize: 10, color: "#3a4a60" }}>
                 {p.intensity}
               </div>
+              {phaseHistory(p.id) && (
+                <div style={{ fontSize: 9, color: "#4a5a70", marginTop: 4 }}>
+                  {phaseHistory(p.id)}
+                </div>
+              )}
             </div>
           </div>
         </div>
       ))}
+
+      {/* Phase timeline */}
+      {chronological.length >= 2 && totalDays > 0 && (
+        <div className="card" style={{ marginBottom: 10 }}>
+          <div
+            style={{
+              fontSize: 10,
+              color: "#4a5a70",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: 10,
+            }}
+          >
+            Phase Timeline
+          </div>
+          <div
+            style={{
+              display: "flex",
+              height: 10,
+              borderRadius: 3,
+              overflow: "hidden",
+            }}
+          >
+            {chronological.map((p) => {
+              const info = PHASES.find((x) => x.id === p.phase);
+              const days = periodDays(p);
+              return (
+                <div
+                  key={p.id}
+                  title={`${info?.name ?? p.phase} · ${p.startedOn} → ${
+                    p.endedOn ?? "now"
+                  } · ${(days / 7).toFixed(1)} wks`}
+                  style={{
+                    width: `${(days / totalDays) * 100}%`,
+                    minWidth: 4,
+                    background: info?.color ?? "#334155",
+                    opacity: p.endedOn === null ? 1 : 0.65,
+                  }}
+                />
+              );
+            })}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 9,
+              color: "#2a3a50",
+              marginTop: 5,
+            }}
+          >
+            <span>{chronological[0]!.startedOn}</span>
+            <span>now</span>
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ marginTop: 6 }}>
         <div

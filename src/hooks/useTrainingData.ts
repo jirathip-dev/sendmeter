@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { LogFormState, PhaseId, Session } from "../types";
+import type { LogFormState, PhaseId, PhasePeriod, Session } from "../types";
 import { today } from "../lib/dates";
 import * as repo from "../lib/repo";
 
@@ -11,19 +11,22 @@ export function useTrainingData(userId: string) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentPhase, setCurrentPhase] = useState<PhaseId>("capacity");
   const [phaseStartDate, setPhaseStartDate] = useState(today());
+  const [phasePeriods, setPhasePeriods] = useState<PhasePeriod[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [remoteSessions, settings] = await Promise.all([
+      const [remoteSessions, settings, periods] = await Promise.all([
         repo.fetchSessions(),
         repo.fetchSettings(),
+        repo.fetchPhasePeriods(),
       ]);
       setSessions(remoteSessions);
       setCurrentPhase(settings.currentPhase);
       setPhaseStartDate(settings.phaseStartDate);
+      setPhasePeriods(periods);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load data");
@@ -34,12 +37,17 @@ export function useTrainingData(userId: string) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([repo.fetchSessions(), repo.fetchSettings()])
-      .then(([remoteSessions, settings]) => {
+    Promise.all([
+      repo.fetchSessions(),
+      repo.fetchSettings(),
+      repo.fetchPhasePeriods(),
+    ])
+      .then(([remoteSessions, settings, periods]) => {
         if (cancelled) return;
         setSessions(remoteSessions);
         setCurrentPhase(settings.currentPhase);
         setPhaseStartDate(settings.phaseStartDate);
+        setPhasePeriods(periods);
         setError(null);
       })
       .catch((e: unknown) => {
@@ -92,11 +100,15 @@ export function useTrainingData(userId: string) {
 
   async function setPhase(id: PhaseId) {
     const prev = { currentPhase, phaseStartDate };
-    const next = { currentPhase: id, phaseStartDate: today() };
-    setCurrentPhase(next.currentPhase);
-    setPhaseStartDate(next.phaseStartDate);
+    // Optimistic: show the new phase immediately; real start date arrives
+    // from switchPhase (it may be earlier than today on a same-day undo).
+    setCurrentPhase(id);
+    setPhaseStartDate(today());
     try {
-      await repo.updateSettings(next);
+      const { periods, settings } = await repo.switchPhase(id);
+      setPhasePeriods(periods);
+      setCurrentPhase(settings.currentPhase);
+      setPhaseStartDate(settings.phaseStartDate);
     } catch (e) {
       setCurrentPhase(prev.currentPhase);
       setPhaseStartDate(prev.phaseStartDate);
@@ -108,6 +120,7 @@ export function useTrainingData(userId: string) {
     sessions,
     currentPhase,
     phaseStartDate,
+    phasePeriods,
     loading,
     error,
     dismissError: () => setError(null),

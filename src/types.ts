@@ -54,6 +54,13 @@ export interface LogFormState {
   phase: PhaseId;
 }
 
+export interface PhasePeriod {
+  id: string;
+  phase: PhaseId;
+  startedOn: string; // YYYY-MM-DD
+  endedOn: string | null; // null = current open period
+}
+
 export interface AcwrData {
   acute: number;
   chronic: number;
