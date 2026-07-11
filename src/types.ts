@@ -69,3 +69,26 @@ export interface AcwrStatus {
   label: string;
   color: string;
 }
+
+export interface TindeqSample {
+  t: number; // ms since measurement start
+  kg: number;
+}
+
+export interface TindeqRecordingMeta {
+  id: string;
+  recordedAt: string; // ISO timestamp
+  durationMs: number;
+  peakKg: number;
+  avgKg: number;
+  sampleCount: number;
+  note: string;
+}
+
+export interface NewTindeqRecording {
+  durationMs: number;
+  peakKg: number;
+  avgKg: number;
+  note: string;
+  samples: TindeqSample[];
+}
