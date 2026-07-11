@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { computeTindeqStats } from "../lib/metrics";
 import type { TindeqRecordingMeta } from "../types";
 
@@ -12,13 +13,33 @@ const PAD_BOTTOM = 16;
 const PAD_LEFT = 30;
 const PAD_RIGHT = 8;
 
-export default function TindeqTrendChart({ recordings }: Props) {
-  const stats = computeTindeqStats(recordings);
-  if (!stats) return null;
-
-  const sorted = [...recordings].sort((a, b) =>
-    a.recordedAt.localeCompare(b.recordedAt),
+function TagChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="tag"
+      style={{
+        background: active ? "#4ade80" : "#0a0c10",
+        color: active ? "#0a0c10" : "#4a5a70",
+        border: `1px solid ${active ? "#4ade80" : "#1e2d40"}`,
+        cursor: "pointer",
+        fontFamily: "'DM Mono', monospace",
+      }}
+    >
+      {label}
+    </button>
   );
+}
+
+function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
   const xs = sorted.map((r) => Date.parse(r.recordedAt));
   const tMin = xs[0]!;
   const tMax = Math.max(xs[xs.length - 1]!, tMin + 1);
@@ -47,6 +68,84 @@ export default function TindeqTrendChart({ recordings }: Props) {
   };
 
   return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+      <text x={2} y={PAD_TOP + 3} fontSize={8} fill="#2a3a50">
+        {yMax.toFixed(0)}kg
+      </text>
+      <text x={2} y={H - PAD_BOTTOM} fontSize={8} fill="#2a3a50">
+        {yMin.toFixed(0)}
+      </text>
+      <polyline
+        points={points}
+        fill="none"
+        stroke="#4ade80"
+        strokeWidth={1.5}
+        vectorEffect="non-scaling-stroke"
+      />
+      {sorted.map((r, i) => (
+        <circle
+          key={r.id}
+          cx={px(xs[i]!)}
+          cy={py(r.peakKg)}
+          r={i === prIdx ? 4 : 2.5}
+          fill={i === prIdx ? "#facc15" : "#4ade80"}
+        >
+          <title>{`${fmtDate(xs[i]!)} · ${r.peakKg.toFixed(1)} kg${r.tag ? ` · ${r.tag}` : ""}`}</title>
+        </circle>
+      ))}
+      {sorted[prIdx] && (
+        <text
+          x={Math.min(px(xs[prIdx]!), W - 18)}
+          y={Math.max(py(sorted[prIdx]!.peakKg) - 8, 8)}
+          fontSize={8}
+          fill="#facc15"
+        >
+          PR
+        </text>
+      )}
+      <text x={PAD_LEFT} y={H - 4} fontSize={8} fill="#2a3a50">
+        {fmtDate(tMin)}
+      </text>
+      <text
+        x={W - PAD_RIGHT}
+        y={H - 4}
+        fontSize={8}
+        fill="#2a3a50"
+        textAnchor="end"
+      >
+        {fmtDate(tMax)}
+      </text>
+    </svg>
+  );
+}
+
+export default function TindeqTrendChart({ recordings }: Props) {
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
+
+  // Tags ordered by frequency, so the exercises you measure most come first
+  const tags = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of recordings) {
+      if (r.tag) counts.set(r.tag, (counts.get(r.tag) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([tag]) => tag);
+  }, [recordings]);
+
+  const filtered =
+    selectedTag === null
+      ? recordings
+      : recordings.filter((r) => r.tag === selectedTag);
+
+  const stats = computeTindeqStats(filtered);
+  if (recordings.length < 2) return null;
+
+  const sorted = [...filtered].sort((a, b) =>
+    a.recordedAt.localeCompare(b.recordedAt),
+  );
+
+  return (
     <div className="card" style={{ marginTop: 10 }}>
       <div
         style={{
@@ -60,102 +159,86 @@ export default function TindeqTrendChart({ recordings }: Props) {
         Peak Force Trend
       </div>
 
-      <div className="grid-2" style={{ gridTemplateColumns: "1fr 1fr 1fr", marginBottom: 10 }}>
-        <div>
-          <div style={{ fontSize: 9, color: "#4a5a70" }}>Best</div>
-          <div
-            style={{
-              fontFamily: "'Syne', sans-serif",
-              fontWeight: 800,
-              fontSize: 16,
-              color: "#facc15",
-            }}
-          >
-            {stats.bestPeak.toFixed(1)}
-          </div>
+      {tags.length > 0 && (
+        <div
+          style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}
+        >
+          <TagChip
+            label="All"
+            active={selectedTag === null}
+            onClick={() => setSelectedTag(null)}
+          />
+          {tags.map((t) => (
+            <TagChip
+              key={t}
+              label={t}
+              active={selectedTag === t}
+              onClick={() => setSelectedTag(selectedTag === t ? null : t)}
+            />
+          ))}
         </div>
-        <div>
-          <div style={{ fontSize: 9, color: "#4a5a70" }}>Last</div>
-          <div
-            style={{
-              fontFamily: "'Syne', sans-serif",
-              fontWeight: 800,
-              fontSize: 16,
-              color: "#e2e8f0",
-            }}
-          >
-            {stats.lastPeak.toFixed(1)}
-          </div>
-        </div>
-        <div>
-          <div style={{ fontSize: 9, color: "#4a5a70" }}>vs 30d avg</div>
-          <div
-            style={{
-              fontFamily: "'Syne', sans-serif",
-              fontWeight: 800,
-              fontSize: 16,
-              color:
-                stats.delta === null
-                  ? "#4a5a70"
-                  : stats.delta >= 0
-                    ? "#4ade80"
-                    : "#f87171",
-            }}
-          >
-            {stats.delta === null
-              ? "—"
-              : `${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)}`}
-          </div>
-        </div>
-      </div>
+      )}
 
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        style={{ width: "100%", display: "block" }}
-      >
-        <text x={2} y={PAD_TOP + 3} fontSize={8} fill="#2a3a50">
-          {yMax.toFixed(0)}kg
-        </text>
-        <text x={2} y={H - PAD_BOTTOM} fontSize={8} fill="#2a3a50">
-          {yMin.toFixed(0)}
-        </text>
-        <polyline
-          points={points}
-          fill="none"
-          stroke="#4ade80"
-          strokeWidth={1.5}
-          vectorEffect="non-scaling-stroke"
-        />
-        {sorted.map((r, i) => (
-          <circle
-            key={r.id}
-            cx={px(xs[i]!)}
-            cy={py(r.peakKg)}
-            r={i === prIdx ? 4 : 2.5}
-            fill={i === prIdx ? "#facc15" : "#4ade80"}
+      {stats && sorted.length >= 2 ? (
+        <>
+          <div
+            className="grid-2"
+            style={{ gridTemplateColumns: "1fr 1fr 1fr", marginBottom: 10 }}
           >
-            <title>
-              {`${fmtDate(xs[i]!)} · ${r.peakKg.toFixed(1)} kg`}
-            </title>
-          </circle>
-        ))}
-        {sorted[prIdx] && (
-          <text
-            x={Math.min(px(xs[prIdx]!), W - 18)}
-            y={Math.max(py(sorted[prIdx]!.peakKg) - 8, 8)}
-            fontSize={8}
-            fill="#facc15"
-          >
-            PR
-          </text>
-        )}
-        <text x={PAD_LEFT} y={H - 4} fontSize={8} fill="#2a3a50">
-          {fmtDate(tMin)}
-        </text>
-        <text x={W - PAD_RIGHT} y={H - 4} fontSize={8} fill="#2a3a50" textAnchor="end">
-          {fmtDate(tMax)}
-        </text>
-      </svg>
+            <div>
+              <div style={{ fontSize: 9, color: "#4a5a70" }}>Best</div>
+              <div
+                style={{
+                  fontFamily: "'Syne', sans-serif",
+                  fontWeight: 800,
+                  fontSize: 16,
+                  color: "#facc15",
+                }}
+              >
+                {stats.bestPeak.toFixed(1)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 9, color: "#4a5a70" }}>Last</div>
+              <div
+                style={{
+                  fontFamily: "'Syne', sans-serif",
+                  fontWeight: 800,
+                  fontSize: 16,
+                  color: "#e2e8f0",
+                }}
+              >
+                {stats.lastPeak.toFixed(1)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 9, color: "#4a5a70" }}>vs 30d avg</div>
+              <div
+                style={{
+                  fontFamily: "'Syne', sans-serif",
+                  fontWeight: 800,
+                  fontSize: 16,
+                  color:
+                    stats.delta === null
+                      ? "#4a5a70"
+                      : stats.delta >= 0
+                        ? "#4ade80"
+                        : "#f87171",
+                }}
+              >
+                {stats.delta === null
+                  ? "—"
+                  : `${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)}`}
+              </div>
+            </div>
+          </div>
+          <Chart sorted={sorted} />
+        </>
+      ) : (
+        <div style={{ fontSize: 11, color: "#3a4a60", padding: "12px 0" }}>
+          Not enough recordings with this tag yet.
+        </div>
+      )}
     </div>
   );
 }

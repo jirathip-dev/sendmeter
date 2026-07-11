@@ -67,17 +67,41 @@ export default function RecordingRow({ rec, onDelete }: Props) {
       >
         <div className="session-phase-bar" style={{ background: "#4ade80" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, color: "#e2e8f0", marginBottom: 4 }}>
-            <span
-              style={{
-                fontFamily: "'Syne', sans-serif",
-                fontWeight: 800,
-                color: "#4ade80",
-              }}
-            >
-              {rec.peakKg.toFixed(1)} kg
-            </span>{" "}
-            peak
+          <div
+            style={{
+              fontSize: 13,
+              color: "#e2e8f0",
+              marginBottom: 4,
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              flexWrap: "wrap",
+            }}
+          >
+            <span>
+              <span
+                style={{
+                  fontFamily: "'Syne', sans-serif",
+                  fontWeight: 800,
+                  color: "#4ade80",
+                }}
+              >
+                {rec.peakKg.toFixed(1)} kg
+              </span>{" "}
+              peak
+            </span>
+            {rec.tag && (
+              <span
+                className="tag"
+                style={{
+                  background: "rgba(96,165,250,0.12)",
+                  color: "#60a5fa",
+                  border: "1px solid rgba(96,165,250,0.35)",
+                }}
+              >
+                {rec.tag}
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 11, color: "#4a5a70" }}>
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s · avg{" "}

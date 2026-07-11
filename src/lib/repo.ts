@@ -212,7 +212,9 @@ export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
   // samples deliberately excluded — the list view only needs metadata
   const { data, error } = await supabase
     .from("tindeq_recordings")
-    .select("id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note")
+    .select(
+      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, group_id",
+    )
     .order("recorded_at", { ascending: false });
   if (error) throw error;
   return data.map((r) => ({
@@ -223,6 +225,8 @@ export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
     avgKg: r.avg_kg,
     sampleCount: r.sample_count,
     note: r.note,
+    tag: r.tag,
+    groupId: r.group_id,
   }));
 }
 
@@ -249,9 +253,13 @@ export async function insertRecording(
       avg_kg: rec.avgKg,
       sample_count: rec.samples.length,
       note: rec.note,
+      tag: rec.tag,
+      group_id: rec.groupId,
       samples: rec.samples.map((s) => [s.t, s.kg]),
     })
-    .select("id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note")
+    .select(
+      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, group_id",
+    )
     .single();
   if (error) throw error;
   return {
@@ -262,6 +270,8 @@ export async function insertRecording(
     avgKg: data.avg_kg,
     sampleCount: data.sample_count,
     note: data.note,
+    tag: data.tag,
+    groupId: data.group_id,
   };
 }
 

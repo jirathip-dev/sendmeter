@@ -106,6 +106,8 @@ export interface TindeqRecordingMeta {
   avgKg: number;
   sampleCount: number;
   note: string;
+  tag: string; // e.g. "right hand FDP" — trends group by this
+  groupId: string | null; // gauge session this recording belongs to
 }
 
 export interface NewTindeqRecording {
@@ -113,6 +115,8 @@ export interface NewTindeqRecording {
   peakKg: number;
   avgKg: number;
   note: string;
+  tag: string;
+  groupId: string | null;
   samples: TindeqSample[];
 }
 

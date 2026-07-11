@@ -15,9 +15,27 @@ export default function TindeqView() {
   const tindeq = useTindeq();
   const [pending, setPending] = useState<StoppedRecording | null>(null);
   const [pendingNote, setPendingNote] = useState("");
+  const [pendingTag, setPendingTag] = useState("");
+  const [gaugeSession, setGaugeSession] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [recordings, setRecordings] = useState<TindeqRecordingMeta[]>([]);
   const [listError, setListError] = useState<string | null>(null);
+
+  // Recently used tags, most frequent first — one tap to re-tag the next rep
+  const recentTags = (() => {
+    const counts = new Map<string, number>();
+    for (const r of recordings) {
+      if (r.tag) counts.set(r.tag, (counts.get(r.tag) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([t]) => t)
+      .slice(0, 6);
+  })();
+
+  const sessionCount = gaugeSession
+    ? recordings.filter((r) => r.groupId === gaugeSession).length
+    : 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -54,10 +72,13 @@ export default function TindeqView() {
         peakKg: pending.peakKg,
         avgKg: pending.avgKg,
         note: pendingNote.trim(),
+        tag: pendingTag.trim(),
+        groupId: gaugeSession,
         samples: pending.samples,
       });
       setRecordings((list) => [saved, ...list]);
       setPending(null);
+      // keep the tag — alternating hands means the next rep often reuses it
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Failed to save recording");
     } finally {
@@ -91,6 +112,77 @@ export default function TindeqView() {
       <div className="section-sub">
         Live force from your Progressor via Bluetooth.
       </div>
+
+      {/* Gauge session bar */}
+      {status !== "unsupported" && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "10px 14px",
+            background: gaugeSession ? "rgba(96,165,250,0.08)" : "#0f1420",
+            border: `1px solid ${gaugeSession ? "rgba(96,165,250,0.35)" : "#1a2030"}`,
+            borderRadius: 8,
+            marginBottom: 10,
+          }}
+        >
+          {gaugeSession ? (
+            <>
+              <div
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: "#60a5fa",
+                }}
+              />
+              <span style={{ fontSize: 12, color: "#e2e8f0", flex: 1 }}>
+                Gauge session{" "}
+                <span style={{ color: "#4a5a70" }}>
+                  · {sessionCount} recording{sessionCount === 1 ? "" : "s"}
+                </span>
+              </span>
+              <button
+                onClick={() => setGaugeSession(null)}
+                style={{
+                  background: "none",
+                  border: "1px solid #2a3a50",
+                  color: "#64748b",
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  fontSize: 10,
+                  cursor: "pointer",
+                  fontFamily: "'DM Mono', monospace",
+                }}
+              >
+                End Session
+              </button>
+            </>
+          ) : (
+            <>
+              <span style={{ fontSize: 11, color: "#4a5a70", flex: 1 }}>
+                Group recordings into a session
+              </span>
+              <button
+                onClick={() => setGaugeSession(crypto.randomUUID())}
+                style={{
+                  background: "none",
+                  border: "1px solid #2a3a50",
+                  color: "#7a8a9a",
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  fontSize: 10,
+                  cursor: "pointer",
+                  fontFamily: "'DM Mono', monospace",
+                }}
+              >
+                Start Session
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {status === "unsupported" && (
         <div className="card">
@@ -277,12 +369,46 @@ export default function TindeqView() {
                   {pending.avgKg.toFixed(1)} kg
                 </span>
               </div>
+              <span className="field-label">Tag</span>
+              {recentTags.length > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 5,
+                    flexWrap: "wrap",
+                    marginBottom: 7,
+                  }}
+                >
+                  {recentTags.map((t) => (
+                    <button
+                      key={t}
+                      className="tag"
+                      onClick={() => setPendingTag(pendingTag === t ? "" : t)}
+                      style={{
+                        background: pendingTag === t ? "#60a5fa" : "#0a0c10",
+                        color: pendingTag === t ? "#0a0c10" : "#4a5a70",
+                        border: `1px solid ${pendingTag === t ? "#60a5fa" : "#1e2d40"}`,
+                        cursor: "pointer",
+                        fontFamily: "'DM Mono', monospace",
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input
+                className="field"
+                value={pendingTag}
+                onChange={(e) => setPendingTag(e.target.value)}
+                placeholder="e.g. right hand FDP"
+              />
               <span className="field-label">Note (optional)</span>
               <input
                 className="field"
                 value={pendingNote}
                 onChange={(e) => setPendingNote(e.target.value)}
-                placeholder="e.g. right hand, half crimp 20mm"
+                placeholder="e.g. half crimp 20mm"
               />
               <div className="grid-2" style={{ marginTop: 12 }}>
                 <button
@@ -337,13 +463,96 @@ export default function TindeqView() {
           No recordings yet.
         </div>
       )}
-      {recordings.map((rec) => (
-        <RecordingRow
-          key={rec.id}
-          rec={rec}
-          onDelete={(id) => void removeRecording(id)}
-        />
-      ))}
+      <GroupedRecordings
+        recordings={recordings}
+        onDelete={(id) => void removeRecording(id)}
+      />
+    </div>
+  );
+}
+
+/// Recordings sharing a group_id render as one session block with a header;
+/// ungrouped recordings render as standalone rows. Blocks are ordered by
+/// their most recent recording.
+function GroupedRecordings({
+  recordings,
+  onDelete,
+}: {
+  recordings: TindeqRecordingMeta[];
+  onDelete: (id: string) => void;
+}) {
+  type Block =
+    | { kind: "single"; rec: TindeqRecordingMeta; latest: string }
+    | { kind: "group"; id: string; recs: TindeqRecordingMeta[]; latest: string };
+
+  const groups = new Map<string, TindeqRecordingMeta[]>();
+  const blocks: Block[] = [];
+  for (const rec of recordings) {
+    if (!rec.groupId) {
+      blocks.push({ kind: "single", rec, latest: rec.recordedAt });
+    } else if (groups.has(rec.groupId)) {
+      groups.get(rec.groupId)!.push(rec);
+    } else {
+      const recs = [rec];
+      groups.set(rec.groupId, recs);
+      blocks.push({ kind: "group", id: rec.groupId, recs, latest: rec.recordedAt });
+    }
+  }
+  blocks.sort((a, b) => b.latest.localeCompare(a.latest));
+
+  const fmtTime = (iso: string) => {
+    const d = new Date(iso);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  const fmtDate = (iso: string) => {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+
+  return (
+    <div>
+      {blocks.map((b) =>
+        b.kind === "single" ? (
+          <RecordingRow key={b.rec.id} rec={b.rec} onDelete={onDelete} />
+        ) : (
+          <div
+            key={b.id}
+            style={{
+              border: "1px solid #1e2d40",
+              borderRadius: 10,
+              padding: "10px 8px 2px",
+              marginBottom: 8,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "baseline",
+                gap: 8,
+                flexWrap: "wrap",
+                padding: "0 6px 8px",
+              }}
+            >
+              <span style={{ fontSize: 11, color: "#e2e8f0" }}>
+                {fmtDate(b.recs[b.recs.length - 1]!.recordedAt)}
+              </span>
+              <span style={{ fontSize: 10, color: "#4a5a70" }}>
+                {fmtTime(b.recs[b.recs.length - 1]!.recordedAt)}–
+                {fmtTime(b.recs[0]!.recordedAt)} · {b.recs.length} recording
+                {b.recs.length === 1 ? "" : "s"}
+              </span>
+              <span style={{ fontSize: 10, color: "#3a4a60" }}>
+                {[...new Set(b.recs.map((r) => r.tag).filter(Boolean))].join(
+                  " · ",
+                )}
+              </span>
+            </div>
+            {b.recs.map((rec) => (
+              <RecordingRow key={rec.id} rec={rec} onDelete={onDelete} />
+            ))}
+          </div>
+        ),
+      )}
     </div>
   );
 }
