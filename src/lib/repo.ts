@@ -17,7 +17,7 @@ type SessionRow = {
   type_label: string;
   duration_min: number;
   rpe: number;
-  load: number;
+  load: number | null; // generated column, only null in Postgres edge cases
   note: string;
   phase: string;
 };
@@ -30,7 +30,7 @@ function toSession(r: SessionRow): Session {
     typeLabel: r.type_label,
     duration: r.duration_min,
     rpe: r.rpe,
-    load: r.load,
+    load: r.load ?? r.duration_min * r.rpe,
     note: r.note,
     phase: r.phase as PhaseId,
   };

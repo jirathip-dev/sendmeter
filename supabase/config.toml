@@ -1,0 +1,8 @@
+project_id = "zznsqmcewtzlnfoiefkk"
+
+[auth]
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173", "http://localhost:4173"]
+
+[storage.vector]
+enabled = false
