@@ -29,7 +29,7 @@ targets:
         WKWatchOnly: true
         WKBackgroundModes:
           - workout-processing
-        NSHealthShareUsageDescription: Reads heart rate, energy, HRV, resting heart rate, sleep, and body weight to track workouts and compute daily recovery.
+        NSHealthShareUsageDescription: Reads heart rate, energy, HRV, resting heart rate, respiratory rate, sleep, and body weight to track workouts and compute daily recovery.
         NSHealthUpdateUsageDescription: Saves your climbing workouts to Health.
         NSMotionUsageDescription: Uses wrist motion and altitude to detect boulder attempts.
         NSBluetoothAlwaysUsageDescription: Connects to your Tindeq Progressor force gauge.

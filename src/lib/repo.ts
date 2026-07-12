@@ -386,7 +386,7 @@ export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
   const { data, error } = await supabase
     .from("health_metrics")
     .select(
-      "date, readiness, zone, hrv_sdnn_ms, resting_hr, sleep_hours, body_mass_kg",
+      "date, readiness, zone, hrv_sdnn_ms, resting_hr, sleep_hours, sleep_deep_hours, sleep_rem_hours, body_mass_kg, resp_rate_bpm",
     )
     .gte("date", cutoffStr)
     .order("date", { ascending: true });
@@ -398,7 +398,10 @@ export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
     hrvSdnnMs: r.hrv_sdnn_ms,
     restingHr: r.resting_hr,
     sleepHours: r.sleep_hours,
+    sleepDeepHours: r.sleep_deep_hours,
+    sleepRemHours: r.sleep_rem_hours,
     bodyMassKg: r.body_mass_kg,
+    respRateBpm: r.resp_rate_bpm,
   }));
 }
 

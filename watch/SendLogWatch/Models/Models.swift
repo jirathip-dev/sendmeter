@@ -175,7 +175,10 @@ struct HealthMetricsUpsert: Codable {
     var hrvSdnnMs: Double?
     var restingHr: Double?
     var sleepHours: Double?
+    var sleepDeepHours: Double?
+    var sleepRemHours: Double?
     var bodyMassKg: Double?
+    var respRateBpm: Double?
     var readiness: Int?
     var zone: String?
     var computedAt: Date
@@ -185,7 +188,10 @@ struct HealthMetricsUpsert: Codable {
         case hrvSdnnMs = "hrv_sdnn_ms"
         case restingHr = "resting_hr"
         case sleepHours = "sleep_hours"
+        case sleepDeepHours = "sleep_deep_hours"
+        case sleepRemHours = "sleep_rem_hours"
         case bodyMassKg = "body_mass_kg"
+        case respRateBpm = "resp_rate_bpm"
         case computedAt = "computed_at"
     }
 }

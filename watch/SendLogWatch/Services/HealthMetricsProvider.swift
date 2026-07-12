@@ -20,6 +20,7 @@ final class HealthKitMetricsProvider: HealthMetricsProviding {
             HKQuantityType(.heartRateVariabilitySDNN),
             HKQuantityType(.restingHeartRate),
             HKQuantityType(.bodyMass),
+            HKQuantityType(.respiratoryRate),
             HKCategoryType(.sleepAnalysis),
         ]
         try await store.requestAuthorization(toShare: [], read: read)
@@ -46,11 +47,15 @@ final class HealthKitMetricsProvider: HealthMetricsProviding {
             .restingHeartRate, in: DateInterval(start: cal.startOfDay(for: now), end: now),
             unit: .count().unitDivided(by: .minute())
         )
-        async let sleepToday = sleepHours(in: todayWindow)
+        async let sleepToday = sleepBreakdown(in: todayWindow)
         async let mass = latestQuantity(
             .bodyMass,
             in: DateInterval(start: cal.date(byAdding: .day, value: -30, to: now)!, end: now),
             unit: .gramUnit(with: .kilo)
+        )
+        async let respRateToday = meanQuantity(
+            .respiratoryRate, in: todayWindow,
+            unit: .count().unitDivided(by: .minute())
         )
 
         // Baselines: per-night aggregates over the trailing window (excluding today)
@@ -72,16 +77,20 @@ final class HealthKitMetricsProvider: HealthMetricsProviding {
             ) {
                 rhrBase.append(rhr)
             }
-            if let s = try? await sleepHours(in: w), s > 0 {
+            if let s = try? await sleepBreakdown(in: w).totalHours, s > 0 {
                 sleepBase.append(s)
             }
         }
 
+        let sleep = try await sleepToday
         return DailyHealthInputs(
             hrvSDNNms: try await hrvToday,
             restingHR: try await rhrToday,
-            sleepHours: try await sleepToday,
+            sleepHours: sleep.totalHours,
             bodyMassKg: try await mass,
+            sleepDeepHours: sleep.deepHours,
+            sleepRemHours: sleep.remHours,
+            respRateBpm: try await respRateToday,
             hrvLnBaseline: hrvBase,
             rhrBaseline: rhrBase,
             sleepBaseline: sleepBase
@@ -121,32 +130,49 @@ final class HealthKitMetricsProvider: HealthMetricsProviding {
         return (all.last as? HKQuantitySample)?.quantity.doubleValue(for: unit)
     }
 
-    /// Total asleep hours in the window, overlapping intervals merged
-    /// (multiple sources can double-report).
-    private func sleepHours(in window: DateInterval) async throws -> Double? {
-        let asleepValues: Set<Int> = [
+    private struct SleepBreakdown {
+        var totalHours: Double?
+        var deepHours: Double?
+        var remHours: Double?
+    }
+
+    /// Total asleep hours plus deep/REM stage breakdown. Stages are merged
+    /// independently (a source double-reporting the same stage shouldn't
+    /// double-count it), never merged across stages since they're mutually
+    /// exclusive. Stage data needs no new HealthKit permission — it's part
+    /// of the same sleepAnalysis samples already being read for the total.
+    private func sleepBreakdown(in window: DateInterval) async throws -> SleepBreakdown {
+        let allAsleepValues: Set<Int> = [
             HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
             HKCategoryValueSleepAnalysis.asleepCore.rawValue,
             HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
             HKCategoryValueSleepAnalysis.asleepREM.rawValue,
         ]
-        let intervals = try await samples(HKCategoryType(.sleepAnalysis), in: window)
-            .compactMap { s -> DateInterval? in
-                guard let cs = s as? HKCategorySample, asleepValues.contains(cs.value) else { return nil }
-                return DateInterval(start: cs.startDate, end: cs.endDate)
-            }
-            .sorted { $0.start < $1.start }
-        guard !intervals.isEmpty else { return nil }
+        let raw = try await samples(HKCategoryType(.sleepAnalysis), in: window)
+            .compactMap { $0 as? HKCategorySample }
 
-        var merged: [DateInterval] = []
-        for iv in intervals {
-            if let last = merged.last, iv.start <= last.end {
-                merged[merged.count - 1] = DateInterval(start: last.start, end: max(last.end, iv.end))
-            } else {
-                merged.append(iv)
+        func mergedHours(matching values: Set<Int>) -> Double? {
+            let intervals = raw
+                .filter { values.contains($0.value) }
+                .map { DateInterval(start: $0.startDate, end: $0.endDate) }
+                .sorted { $0.start < $1.start }
+            guard !intervals.isEmpty else { return nil }
+            var merged: [DateInterval] = []
+            for iv in intervals {
+                if let last = merged.last, iv.start <= last.end {
+                    merged[merged.count - 1] = DateInterval(start: last.start, end: max(last.end, iv.end))
+                } else {
+                    merged.append(iv)
+                }
             }
+            return merged.reduce(0) { $0 + $1.duration } / 3600
         }
-        return merged.reduce(0) { $0 + $1.duration } / 3600
+
+        return SleepBreakdown(
+            totalHours: mergedHours(matching: allAsleepValues),
+            deepHours: mergedHours(matching: [HKCategoryValueSleepAnalysis.asleepDeep.rawValue]),
+            remHours: mergedHours(matching: [HKCategoryValueSleepAnalysis.asleepREM.rawValue])
+        )
     }
 }
 
@@ -159,6 +185,9 @@ struct FakeHealthMetricsProvider: HealthMetricsProviding {
             restingHR: 52,
             sleepHours: 7.4,
             bodyMassKg: 71.2,
+            sleepDeepHours: 1.6,
+            sleepRemHours: 1.8,
+            respRateBpm: 14.2,
             hrvLnBaseline: (0..<30).map { log(60 + Double($0 % 7) * 3) },
             rhrBaseline: (0..<30).map { 54 + Double($0 % 5) - 2 },
             sleepBaseline: (0..<30).map { 7.0 + Double($0 % 4) * 0.3 - 0.4 }

@@ -164,8 +164,11 @@ export type Database = {
           date: string
           hrv_sdnn_ms: number | null
           readiness: number | null
+          resp_rate_bpm: number | null
           resting_hr: number | null
+          sleep_deep_hours: number | null
           sleep_hours: number | null
+          sleep_rem_hours: number | null
           user_id: string
           zone: string | null
         }
@@ -175,8 +178,11 @@ export type Database = {
           date: string
           hrv_sdnn_ms?: number | null
           readiness?: number | null
+          resp_rate_bpm?: number | null
           resting_hr?: number | null
+          sleep_deep_hours?: number | null
           sleep_hours?: number | null
+          sleep_rem_hours?: number | null
           user_id?: string
           zone?: string | null
         }
@@ -186,8 +192,11 @@ export type Database = {
           date?: string
           hrv_sdnn_ms?: number | null
           readiness?: number | null
+          resp_rate_bpm?: number | null
           resting_hr?: number | null
+          sleep_deep_hours?: number | null
           sleep_hours?: number | null
+          sleep_rem_hours?: number | null
           user_id?: string
           zone?: string | null
         }

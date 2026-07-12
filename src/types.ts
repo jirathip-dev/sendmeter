@@ -66,7 +66,10 @@ export interface HealthMetric {
   hrvSdnnMs: number | null;
   restingHr: number | null;
   sleepHours: number | null;
+  sleepDeepHours: number | null;
+  sleepRemHours: number | null;
   bodyMassKg: number | null;
+  respRateBpm: number | null;
 }
 
 export interface RpePair {

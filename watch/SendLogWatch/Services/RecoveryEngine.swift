@@ -5,6 +5,12 @@ struct DailyHealthInputs {
     var restingHR: Double?
     var sleepHours: Double?
     var bodyMassKg: Double?
+    // Additive metrics: stored and displayed, not yet folded into the
+    // readiness score (no baseline needed — see RecoveryStatsCard on web).
+    // Defaulted to nil so existing call sites (tests) don't need updating.
+    var sleepDeepHours: Double? = nil
+    var sleepRemHours: Double? = nil
+    var respRateBpm: Double? = nil
     // Baselines: one value per day over the trailing window.
     var hrvLnBaseline: [Double]   // per-day mean ln(SDNN)
     var rhrBaseline: [Double]

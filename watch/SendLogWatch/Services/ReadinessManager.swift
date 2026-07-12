@@ -44,7 +44,10 @@ final class ReadinessManager {
                 hrvSdnnMs: inputs.hrvSDNNms,
                 restingHr: inputs.restingHR,
                 sleepHours: inputs.sleepHours,
+                sleepDeepHours: inputs.sleepDeepHours,
+                sleepRemHours: inputs.sleepRemHours,
                 bodyMassKg: inputs.bodyMassKg,
+                respRateBpm: inputs.respRateBpm,
                 readiness: res.score,
                 zone: res.zone?.rawValue,
                 computedAt: Date()
@@ -56,14 +59,35 @@ final class ReadinessManager {
         }
     }
 
-    /// Same math as the web's computeAcwr: acute 7d load sum vs 28d sum / 4.
+    private static let ewmaLookbackDays = 90
+    private static let ewmaLambdaAcute = 2.0 / (7.0 + 1.0)   // 7-day time constant
+    private static let ewmaLambdaChronic = 2.0 / (28.0 + 1.0) // 28-day time constant
+
+    /// Same math as the web's ewmaAcwr: exponentially-weighted acute:chronic
+    /// ratio (Williams et al. 2016) rather than a plain rolling-average
+    /// ratio — see metrics.ts for the full rationale. Both EWMAs are seeded
+    /// with the 90-day mean load to shrink start-up bias.
     private func computeACWR() async throws -> Double? {
-        let rows = try await Repo.fetchSessionLoads(sinceDays: 28)
+        let rows = try await Repo.fetchSessionLoads(sinceDays: Self.ewmaLookbackDays)
+        var loadByDate: [String: Int] = [:]
+        for r in rows { loadByDate[r.date, default: 0] += (r.load ?? 0) }
+
         let cal = Calendar.gregorianLocal
-        let acuteCutoff = cal.date(byAdding: .day, value: -6, to: Date())!.localDateString
-        let acute = rows.filter { $0.date >= acuteCutoff }.reduce(0) { $0 + ($1.load ?? 0) }
-        let chronic = Double(rows.reduce(0) { $0 + ($1.load ?? 0) }) / 4.0
-        return chronic > 0 ? Double(acute) / chronic : nil
+        var dailyLoads: [Double] = []
+        for i in stride(from: Self.ewmaLookbackDays - 1, through: 0, by: -1) {
+            let day = cal.date(byAdding: .day, value: -i, to: Date())!
+            dailyLoads.append(Double(loadByDate[day.localDateString] ?? 0))
+        }
+        guard dailyLoads.contains(where: { $0 != 0 }) else { return nil }
+
+        let seed = dailyLoads.reduce(0, +) / Double(dailyLoads.count)
+        var emaAcute = seed
+        var emaChronic = seed
+        for load in dailyLoads {
+            emaAcute = load * Self.ewmaLambdaAcute + emaAcute * (1 - Self.ewmaLambdaAcute)
+            emaChronic = load * Self.ewmaLambdaChronic + emaChronic * (1 - Self.ewmaLambdaChronic)
+        }
+        return emaChronic > 0 ? emaAcute / emaChronic : nil
     }
 
     private static func updateCache(with row: HealthMetricsUpsert, keep: Int) -> [HealthMetricsUpsert] {

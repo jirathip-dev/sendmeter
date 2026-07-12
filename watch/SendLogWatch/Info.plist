@@ -23,7 +23,7 @@
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Connects to your Tindeq Progressor force gauge.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Reads heart rate, energy, HRV, resting heart rate, sleep, and body weight to track workouts and compute daily recovery.</string>
+	<string>Reads heart rate, energy, HRV, resting heart rate, respiratory rate, sleep, and body weight to track workouts and compute daily recovery.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Saves your climbing workouts to Health.</string>
 	<key>NSMotionUsageDescription</key>

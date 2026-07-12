@@ -16,7 +16,44 @@ export function getACWRStatus(acwr: number | null): AcwrStatus {
   return { label: "Danger", color: "#FF453A" };
 }
 
+const EWMA_LOOKBACK_DAYS = 90;
+const EWMA_LAMBDA_ACUTE = 2 / (7 + 1); // 7-day time constant
+const EWMA_LAMBDA_CHRONIC = 2 / (28 + 1); // 28-day time constant
+
+/// Exponentially-weighted acute:chronic ratio (Williams et al. 2016), which
+/// the literature now favors over the plain rolling-average ratio: it
+/// weights recent days more heavily and avoids "mathematical coupling"
+/// (the acute window being a literal subset of the chronic window), giving
+/// a more sensitive, more responsive signal. Both EWMAs are seeded with the
+/// window's mean load (not a raw first-day value) to shrink the start-up
+/// bias inherent to any EWMA — by 90 daily steps the seed's influence on
+/// the chronic term has decayed to under 1%.
+function ewmaAcwr(sessions: Session[]): number | null {
+  const loadByDate = new Map<string, number>();
+  for (const s of sessions) {
+    loadByDate.set(s.date, (loadByDate.get(s.date) ?? 0) + s.load);
+  }
+  const dailyLoads: number[] = [];
+  for (let i = EWMA_LOOKBACK_DAYS - 1; i >= 0; i--) {
+    dailyLoads.push(loadByDate.get(daysAgo(i)) ?? 0);
+  }
+  if (dailyLoads.every((v) => v === 0)) return null;
+
+  const seed = dailyLoads.reduce((s, v) => s + v, 0) / dailyLoads.length;
+  let emaAcute = seed;
+  let emaChronic = seed;
+  for (const load of dailyLoads) {
+    emaAcute = load * EWMA_LAMBDA_ACUTE + emaAcute * (1 - EWMA_LAMBDA_ACUTE);
+    emaChronic = load * EWMA_LAMBDA_CHRONIC + emaChronic * (1 - EWMA_LAMBDA_CHRONIC);
+  }
+  return emaChronic > 0 ? emaAcute / emaChronic : null;
+}
+
 export function computeAcwr(sessions: Session[]): AcwrData {
+  // acute/chronic stay simple rolling sums — they're shown as-is on the
+  // Load card ("Acute 7d", "Chronic avg") where a plain total is the
+  // intuitive read. Only the acwr ratio itself (and its risk zone) uses
+  // the more sensitive EWMA method.
   const acute = sessions
     .filter((s) => s.date >= daysAgo(6) && s.date <= today())
     .reduce((sum, s) => sum + s.load, 0);
@@ -24,7 +61,7 @@ export function computeAcwr(sessions: Session[]): AcwrData {
     sessions
       .filter((s) => s.date >= daysAgo(27) && s.date <= today())
       .reduce((sum, s) => sum + s.load, 0) / 4;
-  return { acute, chronic, acwr: chronic > 0 ? acute / chronic : null };
+  return { acute, chronic, acwr: ewmaAcwr(sessions) };
 }
 
 export interface TindeqStats {

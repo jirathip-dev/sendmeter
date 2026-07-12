@@ -1,10 +1,18 @@
 import { useEffect, useState } from "react";
 import { fetchHealthMetrics } from "../lib/repo";
 import { useChartHover } from "../hooks/useChartHover";
+import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import ChartTooltip from "./ChartTooltip";
 import type { HealthMetric } from "../types";
 
-type MetricKey = "hrvSdnnMs" | "restingHr" | "sleepHours" | "bodyMassKg";
+type MetricKey =
+  | "hrvSdnnMs"
+  | "restingHr"
+  | "sleepHours"
+  | "sleepDeepHours"
+  | "sleepRemHours"
+  | "respRateBpm"
+  | "bodyMassKg";
 
 interface MetricSpec {
   key: MetricKey;
@@ -16,7 +24,10 @@ interface MetricSpec {
 const METRICS: MetricSpec[] = [
   { key: "hrvSdnnMs", label: "HRV", unit: "ms", format: (v) => Math.round(v).toString() },
   { key: "restingHr", label: "Resting HR", unit: "bpm", format: (v) => Math.round(v).toString() },
+  { key: "respRateBpm", label: "Resp Rate", unit: "brpm", format: (v) => v.toFixed(1) },
   { key: "sleepHours", label: "Sleep", unit: "h", format: (v) => v.toFixed(1) },
+  { key: "sleepDeepHours", label: "Deep Sleep", unit: "h", format: (v) => v.toFixed(1) },
+  { key: "sleepRemHours", label: "REM Sleep", unit: "h", format: (v) => v.toFixed(1) },
   { key: "bodyMassKg", label: "Weight", unit: "kg", format: (v) => v.toFixed(1) },
 ];
 
@@ -25,6 +36,7 @@ const METRICS: MetricSpec[] = [
 export default function RecoveryStatsCard() {
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [hovered, hoverProps] = useChartHover<string>();
+  const realtimeVersion = useRealtimeVersion();
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +50,7 @@ export default function RecoveryStatsCard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [realtimeVersion]);
 
   const rows = METRICS.map((spec) => {
     const points = metrics.filter((m) => m[spec.key] != null) as (HealthMetric &
