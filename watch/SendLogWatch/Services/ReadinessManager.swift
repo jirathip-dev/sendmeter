@@ -59,7 +59,7 @@ final class ReadinessManager {
     /// Same math as the web's computeAcwr: acute 7d load sum vs 28d sum / 4.
     private func computeACWR() async throws -> Double? {
         let rows = try await Repo.fetchSessionLoads(sinceDays: 28)
-        let cal = Calendar.current
+        let cal = Calendar.gregorianLocal
         let acuteCutoff = cal.date(byAdding: .day, value: -6, to: Date())!.localDateString
         let acute = rows.filter { $0.date >= acuteCutoff }.reduce(0) { $0 + ($1.load ?? 0) }
         let chronic = Double(rows.reduce(0) { $0 + ($1.load ?? 0) }) / 4.0

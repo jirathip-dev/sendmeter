@@ -81,7 +81,7 @@ enum Repo {
     }
 
     static func fetchSessionLoads(sinceDays: Int) async throws -> [SessionLoadRow] {
-        let cutoff = Calendar.current.date(byAdding: .day, value: -sinceDays, to: Date())!
+        let cutoff = Calendar.gregorianLocal.date(byAdding: .day, value: -sinceDays, to: Date())!
         return try await client
             .from("sessions")
             .select("date, load")

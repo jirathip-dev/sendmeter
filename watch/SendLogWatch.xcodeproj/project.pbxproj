@@ -18,6 +18,7 @@
 		2D6FA645E8BEDF7E85CDFBFA /* RecoveryEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A50FFDAFB6A352CD40100A9F /* RecoveryEngine.swift */; };
 		3D74AD8D071B513A17042121 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B01D79DEA9FC0FB6AD3AE6E /* SignInView.swift */; };
 		4562D7A9729F5A7792B7F749 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = D058C07A276E53ABB60F2DF8 /* Supabase */; };
+		5028F92E3B5B9A64F82AE8E8 /* DateExtensionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6E73816AF34AC58B9CDFE9B /* DateExtensionsTests.swift */; };
 		5216527D9E3AF0A0B6815D14 /* WorkoutConfirmView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B0B6474C5FB03A0156D334D /* WorkoutConfirmView.swift */; };
 		535860619C7E8677AC8C2480 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 855CD08B40F873897AAA7B90 /* Models.swift */; };
 		546A8270C846F35AD13D2507 /* HealthMetricsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7ADA80317E5D2116D6EC84F0 /* HealthMetricsProvider.swift */; };
@@ -77,6 +78,7 @@
 		9A4DA8FD76F0ECCFCBDDE959 /* SendLogWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SendLogWatchApp.swift; sourceTree = "<group>"; };
 		9F809E106DA80CDC20895FE4 /* RecoveryEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryEngineTests.swift; sourceTree = "<group>"; };
 		A50FFDAFB6A352CD40100A9F /* RecoveryEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecoveryEngine.swift; sourceTree = "<group>"; };
+		A6E73816AF34AC58B9CDFE9B /* DateExtensionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DateExtensionsTests.swift; sourceTree = "<group>"; };
 		A88D1A4233F7DF2166F66F40 /* RPEModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RPEModel.swift; sourceTree = "<group>"; };
 		B47B37CF3F70FF5870FE554B /* ForceGaugeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceGaugeView.swift; sourceTree = "<group>"; };
 		BEEE8AAC40F4A723B23CC605 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -144,6 +146,7 @@
 			isa = PBXGroup;
 			children = (
 				0F0DCE2316940D4E2D59A507 /* AttemptDetectorTests.swift */,
+				A6E73816AF34AC58B9CDFE9B /* DateExtensionsTests.swift */,
 				9F809E106DA80CDC20895FE4 /* RecoveryEngineTests.swift */,
 				C700B5EA4076589938F9E7D1 /* RPEModelTests.swift */,
 				837E50DE195A86516756FA62 /* TindeqProtocolTests.swift */,
@@ -308,6 +311,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				00D403B5DFA758E1542F7199 /* AttemptDetectorTests.swift in Sources */,
+				5028F92E3B5B9A64F82AE8E8 /* DateExtensionsTests.swift in Sources */,
 				56B819F69D4DC0B1B53B63FF /* RPEModelTests.swift in Sources */,
 				67C302AD8C5E79AA8557C08B /* RecoveryEngineTests.swift in Sources */,
 				E19F80C1D6DFEFBA5C8F32D8 /* TindeqProtocolTests.swift in Sources */,

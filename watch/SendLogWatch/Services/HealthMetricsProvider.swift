@@ -28,7 +28,7 @@ final class HealthKitMetricsProvider: HealthMetricsProviding {
     func readToday() async throws -> DailyHealthInputs {
         try await requestAuthorization()
         let now = Date()
-        let cal = Calendar.current
+        let cal = Calendar.gregorianLocal
 
         func nightWindow(endingOn day: Date) -> DateInterval {
             let noon = cal.date(bySettingHour: 12, minute: 0, second: 0, of: day)!
