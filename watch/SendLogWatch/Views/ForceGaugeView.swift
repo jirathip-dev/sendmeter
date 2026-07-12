@@ -1,11 +1,31 @@
 import SwiftUI
 
+private let SIDE_OPTIONS: [(value: String, label: String)] = [
+    ("", "—"),
+    ("left", "Left"),
+    ("right", "Right"),
+    ("both", "Both"),
+]
+
 struct ForceGaugeView: View {
     @State private var tindeq = TindeqManager()
     @State private var pending: StoppedRecording?
     @State private var saving = false
     @State private var savedMsg: String?
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
+
+    // Exercise setup — set once, tweak side between reps (mirrors the web app)
+    @State private var tag = ""
+    @State private var side = ""
+    @State private var recentTags: [String] = []
+
+    // Gauge session: recordings saved while active share a group_id
+    @State private var session: (id: UUID, startedAt: Date)?
+    @State private var sessionCount = 0
+    @State private var showEndSheet = false
+    @State private var endDurationMin = 30
+    @State private var endRPE = 5
+    @State private var loggingSession = false
 
     private let sparkTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
@@ -32,6 +52,7 @@ struct ForceGaugeView: View {
                         .foregroundStyle(.secondary)
 
                 case .connected, .measuring:
+                    sessionBar
                     gaugeContent
                 }
 
@@ -49,8 +70,98 @@ struct ForceGaugeView: View {
                 sparkSamples = tindeq.recentSamples()
             }
         }
+        .task {
+            recentTags = (try? await Repo.fetchRecentTindeqTags()) ?? []
+        }
         .onDisappear { tindeq.disconnect() }
+        .sheet(isPresented: $showEndSheet) { endSessionSheet }
     }
+
+    // MARK: Session bar
+
+    @ViewBuilder
+    private var sessionBar: some View {
+        if let _ = session {
+            HStack {
+                Circle().fill(.blue).frame(width: 6, height: 6)
+                Text("Session · \(sessionCount)")
+                    .font(.footnote)
+                Spacer()
+                Button("End") { endSession() }
+                    .font(.footnote)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+            }
+        } else {
+            Button {
+                session = (id: UUID(), startedAt: Date())
+                sessionCount = 0
+            } label: {
+                Label("Start Session", systemImage: "square.stack.3d.up")
+                    .font(.footnote)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    private func endSession() {
+        guard let s = session else { return }
+        if sessionCount > 0 {
+            endDurationMin = max(1, Int((Date().timeIntervalSince(s.startedAt) / 60).rounded()))
+            endRPE = 5
+            showEndSheet = true
+        } else {
+            session = nil
+        }
+    }
+
+    @ViewBuilder
+    private var endSessionSheet: some View {
+        ScrollView {
+            VStack(spacing: 8) {
+                Text("Log session")
+                    .font(.headline)
+                Stepper(value: $endDurationMin, in: 1...600, step: 5) {
+                    VStack(alignment: .leading) {
+                        Text("DURATION").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text("\(endDurationMin) min").monospacedDigit()
+                    }
+                }
+                Stepper(value: $endRPE, in: 1...10) {
+                    VStack(alignment: .leading) {
+                        Text("RPE").font(.system(size: 10)).foregroundStyle(.secondary)
+                        Text("\(endRPE)").monospacedDigit()
+                    }
+                }
+                Button(loggingSession ? "Logging…" : "Log Session") {
+                    guard let s = session else { return }
+                    loggingSession = true
+                    Task {
+                        let note = "\(sessionCount) recording\(sessionCount == 1 ? "" : "s")"
+                        try? await Repo.logTindeqSession(
+                            durationMin: endDurationMin,
+                            rpe: endRPE,
+                            note: note,
+                            groupId: s.id
+                        )
+                        loggingSession = false
+                        session = nil
+                        showEndSheet = false
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(loggingSession)
+                Button("Skip") {
+                    session = nil
+                    showEndSheet = false
+                }
+                .font(.footnote)
+            }
+        }
+    }
+
+    // MARK: Gauge
 
     @ViewBuilder
     private var gaugeContent: some View {
@@ -66,6 +177,29 @@ struct ForceGaugeView: View {
                 Image(systemName: "battery.25")
                     .foregroundStyle(.yellow)
             }
+        }
+
+        // Exercise setup (hidden while measuring to save space)
+        if tindeq.status == .connected {
+            TextField("Tag (e.g. FDP)", text: $tag)
+                .font(.footnote)
+            if !recentTags.isEmpty {
+                Picker("Recent", selection: $tag) {
+                    Text("—").tag("")
+                    ForEach(recentTags, id: \.self) { t in
+                        Text(t).tag(t)
+                    }
+                }
+                .pickerStyle(.navigationLink)
+                .font(.footnote)
+            }
+            Picker("Side", selection: $side) {
+                ForEach(SIDE_OPTIONS, id: \.value) { o in
+                    Text(o.label).tag(o.value)
+                }
+            }
+            .pickerStyle(.navigationLink)
+            .font(.footnote)
         }
 
         Text(String(format: "%.1f", tindeq.currentKg))
@@ -108,6 +242,8 @@ struct ForceGaugeView: View {
             .foregroundStyle(.secondary)
     }
 
+    // MARK: Save card
+
     @ViewBuilder
     private func summaryCard(_ rec: StoppedRecording) -> some View {
         VStack(spacing: 4) {
@@ -126,15 +262,30 @@ struct ForceGaugeView: View {
                 Spacer()
                 Text(String(format: "%.1f kg", rec.avgKg))
             }
+            if !tag.isEmpty || !side.isEmpty {
+                HStack {
+                    Text("Tag")
+                    Spacer()
+                    Text("\(tag)\(side.isEmpty ? "" : " · \(side)")")
+                        .foregroundStyle(.blue)
+                }
+            }
             HStack {
                 Button("Discard") { pending = nil }
                 Button(saving ? "Saving…" : "Save") {
                     saving = true
                     Task {
                         do {
-                            try await Repo.insertTindeqRecording(rec, note: "")
+                            try await Repo.insertTindeqRecording(
+                                rec,
+                                note: "",
+                                tag: tag.trimmingCharacters(in: .whitespaces),
+                                side: side,
+                                groupId: session?.id
+                            )
                             pending = nil
                             savedMsg = "Saved"
+                            if session != nil { sessionCount += 1 }
                         } catch {
                             savedMsg = "Save failed: \(error.localizedDescription)"
                         }

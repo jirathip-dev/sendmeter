@@ -6,16 +6,67 @@ enum Repo {
 
     // MARK: Tindeq recordings (identical shape to the web app's inserts)
 
-    static func insertTindeqRecording(_ r: StoppedRecording, note: String) async throws {
+    static func insertTindeqRecording(
+        _ r: StoppedRecording,
+        note: String,
+        tag: String,
+        side: String,
+        groupId: UUID?
+    ) async throws {
         let row = TindeqRecordingInsert(
             durationMs: r.durationMs,
             peakKg: r.peakKg,
             avgKg: r.avgKg,
             sampleCount: r.samples.count,
             note: note,
+            tag: tag,
+            side: side,
+            groupId: groupId,
             samples: r.samples.map { [$0.t, $0.kg] }
         )
         try await client.from("tindeq_recordings").insert(row).execute()
+    }
+
+    /// Distinct tags from recent recordings, most recently used first.
+    static func fetchRecentTindeqTags() async throws -> [String] {
+        let rows: [TindeqTagRow] = try await client
+            .from("tindeq_recordings")
+            .select("tag")
+            .neq("tag", value: "")
+            .order("recorded_at", ascending: false)
+            .limit(100)
+            .execute()
+            .value
+        var seen = Set<String>()
+        var tags: [String] = []
+        for r in rows where !seen.contains(r.tag) {
+            seen.insert(r.tag)
+            tags.append(r.tag)
+        }
+        return tags
+    }
+
+    /// Log a finished gauge session into the training log (mirrors the web
+    /// app): type 'tindeq', load = duration × RPE feeds ACWR.
+    static func logTindeqSession(
+        durationMin: Int,
+        rpe: Int,
+        note: String,
+        groupId: UUID
+    ) async throws {
+        let phase = (try? await fetchCurrentPhase()) ?? "capacity"
+        let session = SessionInsert(
+            id: UUID(),
+            date: Date().localDateString,
+            type: "tindeq",
+            typeLabel: "Tindeq",
+            durationMin: max(1, min(600, durationMin)),
+            rpe: rpe,
+            note: note,
+            phase: phase,
+            groupId: groupId
+        )
+        try await client.from("sessions").insert(session).execute()
     }
 
     // MARK: Confirmed workout → sessions + climb_workouts + climb_attempts
@@ -91,7 +142,8 @@ enum Repo {
             durationMin: minutes,
             rpe: rpe,
             note: noteParts.joined(separator: " · "),
-            phase: phase
+            phase: phase,
+            groupId: nil
         )
         let workout = ClimbWorkoutInsert(
             id: workoutId,

@@ -49,11 +49,13 @@ struct SessionInsert: Codable {
     var rpe: Int
     var note: String
     var phase: String
+    var groupId: UUID?         // Tindeq gauge session link
 
     enum CodingKeys: String, CodingKey {
         case id, date, type, rpe, note, phase
         case typeLabel = "type_label"
         case durationMin = "duration_min"
+        case groupId = "group_id"
     }
 }
 
@@ -136,15 +138,23 @@ struct TindeqRecordingInsert: Codable {
     var avgKg: Double
     var sampleCount: Int
     var note: String
+    var tag: String
+    var side: String           // "", "left", "right", "both"
+    var groupId: UUID?         // gauge session
     var samples: [[Double]]
 
     enum CodingKeys: String, CodingKey {
-        case note, samples
+        case note, samples, tag, side
         case durationMs = "duration_ms"
         case peakKg = "peak_kg"
         case avgKg = "avg_kg"
         case sampleCount = "sample_count"
+        case groupId = "group_id"
     }
+}
+
+struct TindeqTagRow: Codable {
+    var tag: String
 }
 
 struct UserSettingsRow: Codable {

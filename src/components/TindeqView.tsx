@@ -131,6 +131,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
   const [listError, setListError] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [selectedSide, setSelectedSide] = useState<TindeqSide | null>(null);
+  const [showTrends, setShowTrends] = useState(false);
   const [gaugeTarget, setGaugeTarget] = useState<GaugeTarget | null>(null);
 
   // Every tag ever used, most frequent first; top 6 become one-tap chips,
@@ -698,34 +699,64 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         </div>
       )}
 
-      {/* Trend */}
-      <TindeqTrendChart
-        recordings={recordings}
-        selectedTag={selectedTag}
-        onSelectTag={setSelectedTag}
-        selectedSide={selectedSide}
-        onSelectSide={setSelectedSide}
-      />
+      {/* Trends & force curve live in a modal */}
+      {recordings.length >= 2 && (
+        <button
+          className="btn-ghost"
+          style={{ marginTop: 10 }}
+          onClick={() => setShowTrends(true)}
+        >
+          Trends &amp; Force Curve
+        </button>
+      )}
 
-      {/* Force–duration curve for the selected exercise (+side) */}
-      {selectedTag && (
-        <ForceCurveCard
-          key={`${selectedTag}|${selectedSide ?? "all"}`}
-          tag={
-            selectedSide
-              ? `${selectedTag} · ${selectedSide}`
-              : selectedTag
-          }
-          recordings={recordings.filter(
-            (r) =>
-              r.tag === selectedTag &&
-              (selectedSide === null || r.side === selectedSide),
-          )}
-          onUseTarget={(t) => {
-            setGaugeTarget(t);
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          }}
-        />
+      {showTrends && (
+        <div
+          className="modal-bg"
+          onClick={(e) => e.target === e.currentTarget && setShowTrends(false)}
+        >
+          <div className="modal-sheet">
+            <div className="modal-handle" />
+            <TindeqTrendChart
+              recordings={recordings}
+              selectedTag={selectedTag}
+              onSelectTag={setSelectedTag}
+              selectedSide={selectedSide}
+              onSelectSide={setSelectedSide}
+            />
+            {selectedTag && (
+              <ForceCurveCard
+                key={`${selectedTag}|${selectedSide ?? "all"}`}
+                tag={
+                  selectedSide
+                    ? `${selectedTag} · ${selectedSide}`
+                    : selectedTag
+                }
+                recordings={recordings.filter(
+                  (r) =>
+                    r.tag === selectedTag &&
+                    (selectedSide === null || r.side === selectedSide),
+                )}
+                onUseTarget={(t) => {
+                  setGaugeTarget(t);
+                  setShowTrends(false);
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+              />
+            )}
+            {!selectedTag && (
+              <div style={{ fontSize: 11, color: "#3a4a60", marginTop: 10 }}>
+                Select a tag above to see its force–duration curve and generate
+                training targets.
+              </div>
+            )}
+            <div style={{ marginTop: 12 }}>
+              <button className="btn-ghost" onClick={() => setShowTrends(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Past recordings */}
