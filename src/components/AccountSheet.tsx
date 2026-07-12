@@ -86,14 +86,17 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         >
           {done ? (
             <div style={{ fontSize: 12, color: "#34C759" }}>
-              Password set. Use it to sign in on your watch or iPhone app. Web
-              login keeps using magic links.
+              Password set. Use it to sign in on the iPhone app. Web login
+              keeps using magic links. The Watch app now signs in
+              automatically from your iPhone — this password is only a
+              fallback for it.
             </div>
           ) : (
             <div>
               <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>
-                Set a password for signing in on your Apple Watch or the
-                iPhone app.
+                Set a password for signing in on the iPhone app. The Watch
+                app signs in automatically from your iPhone once you're
+                signed in here — this password is only a fallback for it.
               </div>
               <span className="field-label">New password</span>
               <input
