@@ -248,7 +248,7 @@ textarea.field { resize: none; }
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 10px;
-    align-items: start;
+    align-items: stretch;
   }
   .grid-2-desktop > * + * { margin-top: 0; }
 

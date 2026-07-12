@@ -1,0 +1,147 @@
+import { useEffect, useState } from "react";
+import { fetchHealthMetrics } from "../lib/repo";
+import type { HealthMetric } from "../types";
+
+type MetricKey = "hrvSdnnMs" | "restingHr" | "sleepHours" | "bodyMassKg";
+
+interface MetricSpec {
+  key: MetricKey;
+  label: string;
+  unit: string;
+  format: (v: number) => string;
+}
+
+const METRICS: MetricSpec[] = [
+  { key: "hrvSdnnMs", label: "HRV", unit: "ms", format: (v) => Math.round(v).toString() },
+  { key: "restingHr", label: "Resting HR", unit: "bpm", format: (v) => Math.round(v).toString() },
+  { key: "sleepHours", label: "Sleep", unit: "h", format: (v) => v.toFixed(1) },
+  { key: "bodyMassKg", label: "Weight", unit: "kg", format: (v) => v.toFixed(1) },
+];
+
+/// Breaks the readiness score back down into the raw inputs it's computed
+/// from — a companion to ReadinessCard so "why is my score X" is visible.
+export default function RecoveryStatsCard() {
+  const [metrics, setMetrics] = useState<HealthMetric[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchHealthMetrics(14)
+      .then((m) => {
+        if (!cancelled) setMetrics(m);
+      })
+      .catch(() => {
+        // card falls back to its empty state on error
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const rows = METRICS.map((spec) => {
+    const points = metrics.filter((m) => m[spec.key] != null) as (HealthMetric &
+      Record<MetricKey, number>)[];
+    return { spec, points };
+  }).filter((r) => r.points.length > 0);
+
+  if (rows.length === 0) {
+    return (
+      <div className="card">
+        <div
+          style={{
+            fontSize: 9,
+            color: "var(--ink-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+            marginBottom: 8,
+          }}
+        >
+          Recovery Inputs
+        </div>
+        <div style={{ fontSize: 11, color: "var(--ink-muted)", lineHeight: 1.5 }}>
+          HRV, resting heart rate, sleep, and weight will show here once your
+          watch starts syncing overnight data.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card">
+      <div
+        style={{
+          fontSize: 9,
+          color: "var(--ink-muted)",
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          marginBottom: 10,
+        }}
+      >
+        Recovery Inputs
+      </div>
+      {rows.map(({ spec, points }, i) => {
+        const latest = points[points.length - 1]!;
+        const values = points.map((p) => p[spec.key]);
+        const max = Math.max(...values);
+        const min = Math.min(...values);
+        const range = max - min || 1;
+        return (
+          <div key={spec.key} style={{ marginTop: i === 0 ? 0 : 12 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "baseline",
+                marginBottom: 4,
+              }}
+            >
+              <span style={{ fontSize: 10, color: "var(--ink-muted)" }}>
+                {spec.label}
+              </span>
+              <span
+                style={{
+                  fontSize: 13,
+                  color: "var(--ink)",
+                  fontWeight: 700,
+                  fontFamily: "Inter, sans-serif",
+                }}
+              >
+                {spec.format(latest[spec.key])}
+                <span
+                  style={{
+                    fontSize: 9,
+                    color: "var(--ink-faint)",
+                    fontWeight: 400,
+                  }}
+                >
+                  {" "}
+                  {spec.unit}
+                </span>
+              </span>
+            </div>
+            <div
+              style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 20 }}
+            >
+              {points.map((p, j) => {
+                const v = p[spec.key];
+                const h = Math.max(2, ((v - min) / range) * 16 + 3);
+                return (
+                  <div
+                    key={p.date}
+                    title={`${p.date} · ${spec.format(v)} ${spec.unit}`}
+                    style={{
+                      flex: 1,
+                      height: h,
+                      background: "#5B5FC7",
+                      opacity: 0.3 + 0.7 * (j / Math.max(1, points.length - 1)),
+                      borderRadius: 1,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

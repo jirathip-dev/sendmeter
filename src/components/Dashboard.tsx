@@ -6,6 +6,7 @@ import type {
   WeeklyLoad,
 } from "../types";
 import ReadinessCard from "./ReadinessCard";
+import RecoveryStatsCard from "./RecoveryStatsCard";
 import RpeScatterCard from "./RpeScatterCard";
 import SessionRow from "./SessionRow";
 
@@ -257,11 +258,14 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Readiness + model quality */}
+      {/* Readiness + the raw inputs behind it */}
       <div className="grid-2-desktop" style={{ marginBottom: 10 }}>
         <ReadinessCard />
-        <RpeScatterCard />
+        <RecoveryStatsCard />
       </div>
+
+      {/* RPE model quality — only appears once you have enough confirmed workouts */}
+      <RpeScatterCard />
 
       {/* Log button */}
       <button
