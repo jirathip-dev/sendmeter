@@ -15,8 +15,8 @@ function StatRow({ label, value }: { label: string; value: string }) {
         marginBottom: 4,
       }}
     >
-      <span style={{ color: "#4a5a70" }}>{label}</span>
-      <span style={{ color: "#e2e8f0" }}>{value}</span>
+      <span style={{ color: "#6E6E73" }}>{label}</span>
+      <span style={{ color: "#1C1C1E" }}>{value}</span>
     </div>
   );
 }
@@ -32,7 +32,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
       style={{
         marginTop: 10,
         paddingTop: 10,
-        borderTop: "1px solid #1a2030",
+        borderTop: "1px solid #E5E5EA",
       }}
     >
       <div className="grid-2" style={{ gap: 16 }}>
@@ -73,7 +73,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
       </div>
 
       {detail.attempts.length === 0 ? (
-        <div style={{ fontSize: 10, color: "#3a4a60", marginTop: 8 }}>
+        <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 8 }}>
           No attempts detected
         </div>
       ) : (
@@ -81,7 +81,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
           <div
             style={{
               fontSize: 9,
-              color: "#4a5a70",
+              color: "#6E6E73",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               margin: "10px 0 6px",
@@ -111,7 +111,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
                   flex: 1,
                   maxWidth: 22,
                   height: Math.max(4, ((a.effortScore ?? 0) / 10) * 48),
-                  background: selectedIdx === i ? "#facc15" : "#4ade80",
+                  background: selectedIdx === i ? "#FFB800" : "#34C759",
                   borderRadius: 2,
                   cursor: "pointer",
                 }}
@@ -119,7 +119,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
             ))}
           </div>
           {selected && selectedIdx !== null && (
-            <div style={{ fontSize: 10, color: "#7a8a9a", marginTop: 6 }}>
+            <div style={{ fontSize: 10, color: "#6E6E73", marginTop: 6 }}>
               Attempt {selectedIdx + 1} — {Math.round(selected.durationS)}s ·
               effort {selected.effortScore?.toFixed(1) ?? "—"} · +
               {selected.elevationGainM.toFixed(1)}m

@@ -98,16 +98,16 @@ export default function LogForm({ form, setForm, onSubmit }: Props) {
       </div>
 
       <div className="load-preview">
-        <span style={{ fontSize: 11, color: "#4a5a70" }}>Session Load</span>
+        <span style={{ fontSize: 11, color: "#6E6E73" }}>Session Load</span>
         <span
           style={{
             fontSize: 24,
-            color: "#e2e8f0",
-            fontFamily: "'Syne', sans-serif",
+            color: "#1C1C1E",
+            fontFamily: "Inter, sans-serif",
             fontWeight: 800,
           }}
         >
-          {load} <span style={{ fontSize: 13, color: "#4a5a70" }}>AU</span>
+          {load} <span style={{ fontSize: 13, color: "#6E6E73" }}>AU</span>
         </span>
       </div>
 

@@ -56,7 +56,7 @@ export default function SessionRow({ s, onDelete }: Props) {
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div
           className="session-phase-bar"
-          style={{ background: ph?.color || "#334155" }}
+          style={{ background: ph?.color || "#C7C7CC" }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
@@ -68,31 +68,31 @@ export default function SessionRow({ s, onDelete }: Props) {
               flexWrap: "wrap",
             }}
           >
-            <span style={{ fontSize: 13, color: "#e2e8f0" }}>
+            <span style={{ fontSize: 13, color: "#1C1C1E" }}>
               {s.typeLabel}
             </span>
             <span
               className="tag"
               style={{
-                background: ph?.bg || "#1e2d40",
-                color: ph?.color || "#7a8a9a",
-                border: `1px solid ${ph?.border || "#1e2d40"}`,
+                background: ph?.bg || "#D8D8DC",
+                color: ph?.color || "#6E6E73",
+                border: `1px solid ${ph?.border || "#D8D8DC"}`,
               }}
             >
               {ph?.name || s.phase}
             </span>
             {expandable && (
-              <span style={{ fontSize: 10, color: "#4a5a70" }}>
+              <span style={{ fontSize: 10, color: "#6E6E73" }}>
                 {expanded ? "▾" : "▸"}
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: "#4a5a70" }}>
+          <div style={{ fontSize: 11, color: "#6E6E73" }}>
             {s.date} · {s.duration}min · RPE {s.rpe} ·{" "}
-            <span style={{ color: "#7a8a9a" }}>{s.load} AU</span>
+            <span style={{ color: "#6E6E73" }}>{s.load} AU</span>
           </div>
           {s.note && (
-            <div style={{ fontSize: 11, color: "#3a4a60", marginTop: 3 }}>
+            <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 3 }}>
               {s.note}
             </div>
           )}
@@ -111,17 +111,17 @@ export default function SessionRow({ s, onDelete }: Props) {
       {expanded && isAuto && (
         <>
           {detail === null && !loadError && (
-            <div style={{ fontSize: 10, color: "#3a4a60", marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 8 }}>
               Loading workout…
             </div>
           )}
           {loadError && (
-            <div style={{ fontSize: 10, color: "#f87171", marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: "#FF453A", marginTop: 8 }}>
               Failed to load workout
             </div>
           )}
           {detail === "missing" && (
-            <div style={{ fontSize: 10, color: "#3a4a60", marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 8 }}>
               No workout data
             </div>
           )}
@@ -136,21 +136,21 @@ export default function SessionRow({ s, onDelete }: Props) {
           style={{
             marginTop: 10,
             paddingTop: 10,
-            borderTop: "1px solid #1a2030",
+            borderTop: "1px solid #E5E5EA",
           }}
         >
           {tindeqRecs === null && !loadError && (
-            <div style={{ fontSize: 10, color: "#3a4a60" }}>
+            <div style={{ fontSize: 10, color: "#8E8E93" }}>
               Loading recordings…
             </div>
           )}
           {loadError && (
-            <div style={{ fontSize: 10, color: "#f87171" }}>
+            <div style={{ fontSize: 10, color: "#FF453A" }}>
               Failed to load recordings
             </div>
           )}
           {tindeqRecs !== null && tindeqRecs.length === 0 && (
-            <div style={{ fontSize: 10, color: "#3a4a60" }}>
+            <div style={{ fontSize: 10, color: "#8E8E93" }}>
               No recordings in this session
             </div>
           )}
@@ -162,22 +162,22 @@ export default function SessionRow({ s, onDelete }: Props) {
                 justifyContent: "space-between",
                 gap: 8,
                 fontSize: 11,
-                color: "#7a8a9a",
+                color: "#6E6E73",
                 marginBottom: 4,
               }}
             >
-              <span style={{ color: "#4a5a70" }}>
+              <span style={{ color: "#6E6E73" }}>
                 {new Date(r.recordedAt).toLocaleTimeString([], {
                   hour: "2-digit",
                   minute: "2-digit",
                 })}
-                {r.tag && <span style={{ color: "#60a5fa" }}> {r.tag}</span>}
+                {r.tag && <span style={{ color: "#7B83EB" }}> {r.tag}</span>}
                 {r.side && (
-                  <span style={{ color: "#facc15" }}> {sideLabel(r.side)}</span>
+                  <span style={{ color: "#FFB800" }}> {sideLabel(r.side)}</span>
                 )}
               </span>
               <span>
-                <span style={{ color: "#4ade80" }}>{r.peakKg.toFixed(1)}kg</span>{" "}
+                <span style={{ color: "#34C759" }}>{r.peakKg.toFixed(1)}kg</span>{" "}
                 · {(r.durationMs / 1000).toFixed(0)}s
               </span>
             </div>

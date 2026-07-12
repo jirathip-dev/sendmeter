@@ -18,11 +18,11 @@ function periodDays(p: PhasePeriod): number {
 }
 
 const ZONES = [
-  { range: "< 0.7", label: "Under-training", color: "#818cf8" },
-  { range: "0.7–0.8", label: "Low — build carefully", color: "#60a5fa" },
-  { range: "0.8–1.3", label: "Optimal — safe progression", color: "#4ade80" },
-  { range: "1.3–1.5", label: "Caution — monitor closely", color: "#facc15" },
-  { range: "> 1.5", label: "Danger — injury risk", color: "#f87171" },
+  { range: "< 0.7", label: "Under-training", color: "#7B83EB" },
+  { range: "0.7–0.8", label: "Low — build carefully", color: "#7B83EB" },
+  { range: "0.8–1.3", label: "Optimal — safe progression", color: "#34C759" },
+  { range: "1.3–1.5", label: "Caution — monitor closely", color: "#FFB800" },
+  { range: "> 1.5", label: "Danger — injury risk", color: "#FF453A" },
 ];
 
 export default function PhasesView({
@@ -76,7 +76,7 @@ export default function PhasesView({
               >
                 <span
                   style={{
-                    fontFamily: "'Syne', sans-serif",
+                    fontFamily: "Inter, sans-serif",
                     fontSize: 18,
                     fontWeight: 800,
                     color: p.color,
@@ -87,13 +87,13 @@ export default function PhasesView({
                 {currentPhase === p.id && (
                   <span
                     className="tag"
-                    style={{ background: p.color, color: "#0a0c10" }}
+                    style={{ background: p.color, color: "#1C1C1E" }}
                   >
                     Active
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: 11, color: "#7a8a9a", marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: "#6E6E73", marginBottom: 10 }}>
                 {p.desc}
               </div>
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
@@ -102,9 +102,9 @@ export default function PhasesView({
                     key={t}
                     className="tag"
                     style={{
-                      background: "#0a0c10",
-                      color: "#4a5a70",
-                      border: "1px solid #1e2d40",
+                      background: "#1C1C1E",
+                      color: "#6E6E73",
+                      border: "1px solid #D8D8DC",
                     }}
                   >
                     {t}
@@ -116,7 +116,7 @@ export default function PhasesView({
               <div
                 style={{
                   fontSize: 9,
-                  color: "#4a5a70",
+                  color: "#6E6E73",
                   textTransform: "uppercase",
                   marginBottom: 3,
                 }}
@@ -127,20 +127,20 @@ export default function PhasesView({
                 style={{
                   fontSize: 17,
                   color: p.color,
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                 }}
               >
                 {p.acwr}
               </div>
-              <div style={{ fontSize: 10, color: "#3a4a60", marginTop: 3 }}>
+              <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 3 }}>
                 {p.weeks}
               </div>
-              <div style={{ fontSize: 10, color: "#3a4a60" }}>
+              <div style={{ fontSize: 10, color: "#8E8E93" }}>
                 {p.intensity}
               </div>
               {phaseHistory(p.id) && (
-                <div style={{ fontSize: 9, color: "#4a5a70", marginTop: 4 }}>
+                <div style={{ fontSize: 9, color: "#6E6E73", marginTop: 4 }}>
                   {phaseHistory(p.id)}
                 </div>
               )}
@@ -155,7 +155,7 @@ export default function PhasesView({
           <div
             style={{
               fontSize: 10,
-              color: "#4a5a70",
+              color: "#6E6E73",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               marginBottom: 10,
@@ -183,7 +183,7 @@ export default function PhasesView({
                   style={{
                     width: `${(days / totalDays) * 100}%`,
                     minWidth: 4,
-                    background: info?.color ?? "#334155",
+                    background: info?.color ?? "#C7C7CC",
                     opacity: p.endedOn === null ? 1 : 0.65,
                   }}
                 />
@@ -195,7 +195,7 @@ export default function PhasesView({
               display: "flex",
               justifyContent: "space-between",
               fontSize: 9,
-              color: "#2a3a50",
+              color: "#8E8E93",
               marginTop: 5,
             }}
           >
@@ -209,7 +209,7 @@ export default function PhasesView({
         <div
           style={{
             fontSize: 10,
-            color: "#4a5a70",
+            color: "#6E6E73",
             textTransform: "uppercase",
             letterSpacing: "0.1em",
             marginBottom: 12,
@@ -220,10 +220,10 @@ export default function PhasesView({
         {ZONES.map((z) => (
           <div key={z.range} className="zone-row">
             <div className="zone-dot" style={{ background: z.color }} />
-            <span style={{ fontSize: 11, color: "#7a8a9a", width: 64 }}>
+            <span style={{ fontSize: 11, color: "#6E6E73", width: 64 }}>
               {z.range}
             </span>
-            <span style={{ fontSize: 11, color: "#4a5a70" }}>{z.label}</span>
+            <span style={{ fontSize: 11, color: "#6E6E73" }}>{z.label}</span>
           </div>
         ))}
       </div>

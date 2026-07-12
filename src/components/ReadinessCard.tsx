@@ -3,9 +3,9 @@ import { fetchHealthMetrics } from "../lib/repo";
 import type { HealthMetric } from "../types";
 
 const ZONE_COLORS: Record<string, string> = {
-  push: "#4ade80",
-  maintain: "#facc15",
-  recover: "#f87171",
+  push: "#34C759",
+  maintain: "#FFB800",
+  recover: "#FF453A",
 };
 
 export default function ReadinessCard() {
@@ -32,7 +32,7 @@ export default function ReadinessCard() {
         <div
           style={{
             fontSize: 9,
-            color: "#4a5a70",
+            color: "#6E6E73",
             textTransform: "uppercase",
             letterSpacing: "0.1em",
             marginBottom: 8,
@@ -42,17 +42,17 @@ export default function ReadinessCard() {
         </div>
         <div
           style={{
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "Inter, sans-serif",
             fontSize: 38,
             fontWeight: 800,
-            color: "#2a3a50",
+            color: "#8E8E93",
             letterSpacing: "-0.04em",
             lineHeight: 1,
           }}
         >
           —
         </div>
-        <div style={{ fontSize: 11, color: "#7a8a9a", marginTop: 10, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 11, color: "#6E6E73", marginTop: 10, lineHeight: 1.5 }}>
           Daily recovery score from HRV, resting heart rate, and sleep — blended
           with your climbing load. Wear your Apple Watch overnight and open the
           Send Log watch app to compute it.
@@ -62,7 +62,7 @@ export default function ReadinessCard() {
   }
 
   const latest = metrics[metrics.length - 1]!;
-  const color = latest.zone ? (ZONE_COLORS[latest.zone] ?? "#64748b") : "#64748b";
+  const color = latest.zone ? (ZONE_COLORS[latest.zone] ?? "#6E6E73") : "#6E6E73";
 
   // Build a date-indexed lookup for the last 14 days (gaps = missing)
   const byDate = new Map(metrics.map((m) => [m.date, m]));
@@ -85,7 +85,7 @@ export default function ReadinessCard() {
       <div
         style={{
           fontSize: 9,
-          color: "#4a5a70",
+          color: "#6E6E73",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
           marginBottom: 8,
@@ -95,7 +95,7 @@ export default function ReadinessCard() {
       </div>
       <div
         style={{
-          fontFamily: "'Syne', sans-serif",
+          fontFamily: "Inter, sans-serif",
           fontSize: 38,
           fontWeight: 800,
           color,
@@ -108,7 +108,7 @@ export default function ReadinessCard() {
       <div style={{ fontSize: 11, color, marginTop: 4, textTransform: "uppercase" }}>
         {latest.zone ?? "no score"}
         {latest.date !== days[days.length - 1]!.key && (
-          <span style={{ color: "#4a5a70", textTransform: "none" }}>
+          <span style={{ color: "#6E6E73", textTransform: "none" }}>
             {" "}
             · {latest.date}
           </span>
@@ -137,15 +137,15 @@ export default function ReadinessCard() {
                   : 2,
               background:
                 m?.zone && m.readiness != null
-                  ? (ZONE_COLORS[m.zone] ?? "#1e2d40")
-                  : "#1e2d40",
+                  ? (ZONE_COLORS[m.zone] ?? "#D8D8DC")
+                  : "#D8D8DC",
               borderRadius: 2,
             }}
           />
         ))}
       </div>
       {footerParts.length > 0 && (
-        <div style={{ fontSize: 10, color: "#4a5a70", marginTop: 8 }}>
+        <div style={{ fontSize: 10, color: "#6E6E73", marginTop: 8 }}>
           {footerParts.join(" · ")}
         </div>
       )}

@@ -28,7 +28,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
       <polyline
         points={points}
         fill="none"
-        stroke="#4ade80"
+        stroke="#5B5FC7"
         strokeWidth="1.5"
         vectorEffect="non-scaling-stroke"
       />
@@ -65,12 +65,12 @@ export default function RecordingRow({ rec, onDelete }: Props) {
         style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
         onClick={() => void toggle()}
       >
-        <div className="session-phase-bar" style={{ background: "#4ade80" }} />
+        <div className="session-phase-bar" style={{ background: "#34C759" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
               fontSize: 13,
-              color: "#e2e8f0",
+              color: "#1C1C1E",
               marginBottom: 4,
               display: "flex",
               alignItems: "center",
@@ -81,9 +81,9 @@ export default function RecordingRow({ rec, onDelete }: Props) {
             <span>
               <span
                 style={{
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
-                  color: "#4ade80",
+                  color: "#34C759",
                 }}
               >
                 {rec.peakKg.toFixed(1)} kg
@@ -94,9 +94,9 @@ export default function RecordingRow({ rec, onDelete }: Props) {
               <span
                 className="tag"
                 style={{
-                  background: "rgba(96,165,250,0.12)",
-                  color: "#60a5fa",
-                  border: "1px solid rgba(96,165,250,0.35)",
+                  background: "rgba(123,131,235,0.12)",
+                  color: "#7B83EB",
+                  border: "1px solid rgba(123,131,235,0.35)",
                 }}
               >
                 {rec.tag}
@@ -106,21 +106,21 @@ export default function RecordingRow({ rec, onDelete }: Props) {
               <span
                 className="tag"
                 style={{
-                  background: "rgba(250,204,21,0.10)",
-                  color: "#facc15",
-                  border: "1px solid rgba(250,204,21,0.3)",
+                  background: "rgba(255,184,0,0.10)",
+                  color: "#FFB800",
+                  border: "1px solid rgba(255,184,0,0.3)",
                 }}
               >
                 {rec.side === "both" ? "L+R" : rec.side === "left" ? "L" : "R"}
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: "#4a5a70" }}>
+          <div style={{ fontSize: 11, color: "#6E6E73" }}>
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s · avg{" "}
             {rec.avgKg.toFixed(1)} kg
           </div>
           {rec.note && (
-            <div style={{ fontSize: 11, color: "#3a4a60", marginTop: 3 }}>
+            <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 3 }}>
               {rec.note}
             </div>
           )}
@@ -139,7 +139,7 @@ export default function RecordingRow({ rec, onDelete }: Props) {
         (samples ? (
           <SamplesPreview samples={samples} />
         ) : (
-          <div style={{ fontSize: 10, color: "#3a4a60", marginTop: 8 }}>
+          <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 8 }}>
             {loadError ? "Failed to load trace" : "Loading trace…"}
           </div>
         ))}

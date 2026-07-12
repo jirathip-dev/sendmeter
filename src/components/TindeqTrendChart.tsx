@@ -31,11 +31,11 @@ function TagChip({
       onClick={onClick}
       className="tag"
       style={{
-        background: active ? "#4ade80" : "#0a0c10",
-        color: active ? "#0a0c10" : "#4a5a70",
-        border: `1px solid ${active ? "#4ade80" : "#1e2d40"}`,
+        background: active ? "#5B5FC7" : "#F5F5F7",
+        color: active ? "#ffffff" : "#6E6E73",
+        border: `1px solid ${active ? "#5B5FC7" : "#D8D8DC"}`,
         cursor: "pointer",
-        fontFamily: "'DM Mono', monospace",
+        fontFamily: "Inter, sans-serif",
       }}
     >
       {label}
@@ -73,16 +73,16 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
-      <text x={2} y={PAD_TOP + 3} fontSize={8} fill="#2a3a50">
+      <text x={2} y={PAD_TOP + 3} fontSize={8} fill="#8E8E93">
         {yMax.toFixed(0)}kg
       </text>
-      <text x={2} y={H - PAD_BOTTOM} fontSize={8} fill="#2a3a50">
+      <text x={2} y={H - PAD_BOTTOM} fontSize={8} fill="#8E8E93">
         {yMin.toFixed(0)}
       </text>
       <polyline
         points={points}
         fill="none"
-        stroke="#4ade80"
+        stroke="#5B5FC7"
         strokeWidth={1.5}
         vectorEffect="non-scaling-stroke"
       />
@@ -92,7 +92,7 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
           cx={px(xs[i]!)}
           cy={py(r.peakKg)}
           r={i === prIdx ? 4 : 2.5}
-          fill={i === prIdx ? "#facc15" : "#4ade80"}
+          fill={i === prIdx ? "#FFB800" : "#5B5FC7"}
         >
           <title>{`${fmtDate(xs[i]!)} · ${r.peakKg.toFixed(1)} kg${r.tag ? ` · ${r.tag}` : ""}`}</title>
         </circle>
@@ -102,19 +102,19 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
           x={Math.min(px(xs[prIdx]!), W - 18)}
           y={Math.max(py(sorted[prIdx]!.peakKg) - 8, 8)}
           fontSize={8}
-          fill="#facc15"
+          fill="#FFB800"
         >
           PR
         </text>
       )}
-      <text x={PAD_LEFT} y={H - 4} fontSize={8} fill="#2a3a50">
+      <text x={PAD_LEFT} y={H - 4} fontSize={8} fill="#8E8E93">
         {fmtDate(tMin)}
       </text>
       <text
         x={W - PAD_RIGHT}
         y={H - 4}
         fontSize={8}
-        fill="#2a3a50"
+        fill="#8E8E93"
         textAnchor="end"
       >
         {fmtDate(tMax)}
@@ -161,7 +161,7 @@ export default function TindeqTrendChart({
       <div
         style={{
           fontSize: 9,
-          color: "#4a5a70",
+          color: "#6E6E73",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
           marginBottom: 10,
@@ -216,44 +216,44 @@ export default function TindeqTrendChart({
             style={{ gridTemplateColumns: "1fr 1fr 1fr", marginBottom: 10 }}
           >
             <div>
-              <div style={{ fontSize: 9, color: "#4a5a70" }}>Best</div>
+              <div style={{ fontSize: 9, color: "#6E6E73" }}>Best</div>
               <div
                 style={{
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                   fontSize: 16,
-                  color: "#facc15",
+                  color: "#FFB800",
                 }}
               >
                 {stats.bestPeak.toFixed(1)}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 9, color: "#4a5a70" }}>Last</div>
+              <div style={{ fontSize: 9, color: "#6E6E73" }}>Last</div>
               <div
                 style={{
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                   fontSize: 16,
-                  color: "#e2e8f0",
+                  color: "#F5F5F7",
                 }}
               >
                 {stats.lastPeak.toFixed(1)}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 9, color: "#4a5a70" }}>vs 30d avg</div>
+              <div style={{ fontSize: 9, color: "#6E6E73" }}>vs 30d avg</div>
               <div
                 style={{
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                   fontSize: 16,
                   color:
                     stats.delta === null
-                      ? "#4a5a70"
+                      ? "#6E6E73"
                       : stats.delta >= 0
-                        ? "#4ade80"
-                        : "#f87171",
+                        ? "#34C759"
+                        : "#FF453A",
                 }}
               >
                 {stats.delta === null
@@ -265,7 +265,7 @@ export default function TindeqTrendChart({
           <Chart sorted={sorted} />
         </>
       ) : (
-        <div style={{ fontSize: 11, color: "#3a4a60", padding: "12px 0" }}>
+        <div style={{ fontSize: 11, color: "#8E8E93", padding: "12px 0" }}>
           Not enough recordings with this tag yet.
         </div>
       )}

@@ -37,7 +37,7 @@ export default function RpeScatterCard() {
       <div
         style={{
           fontSize: 9,
-          color: "#4a5a70",
+          color: "#6E6E73",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
           marginBottom: 8,
@@ -52,7 +52,7 @@ export default function RpeScatterCard() {
           y1={S - pos(1)}
           x2={pos(10)}
           y2={S - pos(10)}
-          stroke="#2a3a50"
+          stroke="#8E8E93"
           strokeDasharray="3 3"
           strokeWidth={1}
         />
@@ -62,29 +62,29 @@ export default function RpeScatterCard() {
             cx={pos(p.predicted)}
             cy={S - pos(p.confirmed)}
             r={3}
-            fill="#4ade80"
+            fill="#5B5FC7"
             opacity={0.35 + 0.65 * (i / Math.max(1, pairs.length - 1))}
           >
             <title>{`pred ${p.predicted.toFixed(1)} · you said ${p.confirmed}`}</title>
           </circle>
         ))}
-        <text x={S / 2} y={S - 1} fontSize={7} fill="#2a3a50" textAnchor="middle">
+        <text x={S / 2} y={S - 1} fontSize={7} fill="#8E8E93" textAnchor="middle">
           predicted →
         </text>
         <text
           x={5}
           y={S / 2}
           fontSize={7}
-          fill="#2a3a50"
+          fill="#8E8E93"
           textAnchor="middle"
           transform={`rotate(-90 5 ${S / 2})`}
         >
           confirmed →
         </text>
       </svg>
-      <div style={{ fontSize: 10, color: "#4a5a70", marginTop: 6 }}>
+      <div style={{ fontSize: 10, color: "#6E6E73", marginTop: 6 }}>
         {pairs.length} workouts · mean abs err{" "}
-        <span style={{ color: "#7a8a9a" }}>{mae.toFixed(1)}</span>
+        <span style={{ color: "#6E6E73" }}>{mae.toFixed(1)}</span>
       </div>
     </div>
   );

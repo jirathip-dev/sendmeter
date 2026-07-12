@@ -8,12 +8,12 @@ import type {
 import { daysAgo, today } from "./dates";
 
 export function getACWRStatus(acwr: number | null): AcwrStatus {
-  if (acwr === null) return { label: "No data", color: "#64748b" };
-  if (acwr < 0.7) return { label: "Under-training", color: "#818cf8" };
-  if (acwr <= 0.8) return { label: "Low", color: "#60a5fa" };
-  if (acwr <= 1.3) return { label: "Optimal", color: "#4ade80" };
-  if (acwr <= 1.5) return { label: "Caution", color: "#facc15" };
-  return { label: "Danger", color: "#f87171" };
+  if (acwr === null) return { label: "No data", color: "#6E6E73" };
+  if (acwr < 0.7) return { label: "Under-training", color: "#5B5FC7" };
+  if (acwr <= 0.8) return { label: "Low", color: "#7B83EB" };
+  if (acwr <= 1.3) return { label: "Optimal", color: "#34C759" };
+  if (acwr <= 1.5) return { label: "Caution", color: "#FFB800" };
+  return { label: "Danger", color: "#FF453A" };
 }
 
 export function computeAcwr(sessions: Session[]): AcwrData {

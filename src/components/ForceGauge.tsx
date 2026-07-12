@@ -47,7 +47,7 @@ function drawTrace(
     1.15;
 
   // gridlines
-  ctx.strokeStyle = "#1a2030";
+  ctx.strokeStyle = "#E5E5EA";
   ctx.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
     const y = (h / 4) * i;
@@ -61,10 +61,10 @@ function drawTrace(
   if (target) {
     const yLow = h - (target.lowKg / maxKg) * h;
     const yHigh = h - (target.highKg / maxKg) * h;
-    ctx.fillStyle = "rgba(74,222,128,0.10)";
+    ctx.fillStyle = "rgba(52,199,89,0.10)";
     ctx.fillRect(0, yHigh, w, yLow - yHigh);
     const yTarget = h - (target.kg / maxKg) * h;
-    ctx.strokeStyle = "rgba(74,222,128,0.6)";
+    ctx.strokeStyle = "rgba(52,199,89,0.6)";
     ctx.setLineDash([5, 4]);
     ctx.beginPath();
     ctx.moveTo(0, yTarget);
@@ -74,7 +74,7 @@ function drawTrace(
   }
 
   if (visible.length < 2) return;
-  ctx.strokeStyle = "#4ade80";
+  ctx.strokeStyle = "#5B5FC7";
   ctx.lineWidth = 2;
   ctx.lineJoin = "round";
   ctx.beginPath();
@@ -135,7 +135,7 @@ export default function ForceGauge({
           <div
             style={{
               fontSize: 9,
-              color: "#4a5a70",
+              color: "#6E6E73",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               marginBottom: 4,
@@ -145,27 +145,27 @@ export default function ForceGauge({
           </div>
           <div
             style={{
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "Inter, sans-serif",
               fontSize: 44,
               fontWeight: 800,
               lineHeight: 1,
-              color: inZone ? "#4ade80" : "#e2e8f0",
+              color: inZone ? "#34C759" : "#1C1C1E",
               letterSpacing: "-0.04em",
             }}
           >
             {current.toFixed(1)}
-            <span style={{ fontSize: 16, color: "#4a5a70", marginLeft: 4 }}>
+            <span style={{ fontSize: 16, color: "#6E6E73", marginLeft: 4 }}>
               kg
             </span>
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: "#7a8a9a" }}>
+          <div style={{ fontSize: 11, color: "#6E6E73" }}>
             peak{" "}
             <span
               style={{
-                color: "#4ade80",
-                fontFamily: "'Syne', sans-serif",
+                color: "#34C759",
+                fontFamily: "Inter, sans-serif",
                 fontWeight: 800,
                 fontSize: 15,
               }}
@@ -177,13 +177,13 @@ export default function ForceGauge({
           <div
             style={{
               fontSize: 11,
-              color: workDone ? "#4ade80" : "#4a5a70",
+              color: workDone ? "#34C759" : "#6E6E73",
               marginTop: 2,
             }}
           >
             {(elapsedMs / 1000).toFixed(1)}s
             {target && (
-              <span style={{ color: "#3a4a60" }}> / {target.workS}s</span>
+              <span style={{ color: "#8E8E93" }}> / {target.workS}s</span>
             )}
           </div>
         </div>
@@ -198,17 +198,17 @@ export default function ForceGauge({
             display: "flex",
             justifyContent: "space-between",
             fontSize: 10,
-            color: "#4a5a70",
+            color: "#6E6E73",
             marginTop: 6,
           }}
         >
           <span>
             target{" "}
-            <span style={{ color: "#4ade80" }}>{target.kg.toFixed(1)} kg</span>{" "}
+            <span style={{ color: "#34C759" }}>{target.kg.toFixed(1)} kg</span>{" "}
             ({target.lowKg.toFixed(1)}–{target.highKg.toFixed(1)}) ·{" "}
             {target.workS}s
           </span>
-          <span style={{ color: "#3a4a60" }}>{target.label}</span>
+          <span style={{ color: "#8E8E93" }}>{target.label}</span>
         </div>
       )}
     </div>

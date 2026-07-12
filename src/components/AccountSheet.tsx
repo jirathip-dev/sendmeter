@@ -53,7 +53,7 @@ export default function AccountSheet({ onClose }: Props) {
         <div className="modal-handle" />
         <div
           style={{
-            fontFamily: "'Syne', sans-serif",
+            fontFamily: "Inter, sans-serif",
             fontSize: 20,
             fontWeight: 800,
             marginBottom: 6,
@@ -64,13 +64,13 @@ export default function AccountSheet({ onClose }: Props) {
 
         {/* App / watch password */}
         {done ? (
-          <div style={{ fontSize: 12, color: "#4ade80", marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: "#34C759", marginBottom: 16 }}>
             Password set. Use it to sign in on your watch or iPhone app. Web
             login keeps using magic links.
           </div>
         ) : (
           <div>
-            <div style={{ fontSize: 12, color: "#7a8a9a", marginBottom: 4 }}>
+            <div style={{ fontSize: 12, color: "#6E6E73", marginBottom: 4 }}>
               Set a password for signing in on your Apple Watch or the iPhone
               app.
             </div>
@@ -104,13 +104,13 @@ export default function AccountSheet({ onClose }: Props) {
           style={{
             marginTop: 22,
             paddingTop: 14,
-            borderTop: "1px solid #1a2030",
+            borderTop: "1px solid #E5E5EA",
           }}
         >
           <div
             style={{
               fontSize: 10,
-              color: "#f87171",
+              color: "#FF453A",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               marginBottom: 8,
@@ -120,7 +120,7 @@ export default function AccountSheet({ onClose }: Props) {
           </div>
           {confirmingDelete ? (
             <div>
-              <div style={{ fontSize: 12, color: "#7a8a9a", marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: "#6E6E73", marginBottom: 12 }}>
                 This permanently deletes your account and every session,
                 recording, workout, and health metric. There is no undo.
               </div>
@@ -128,13 +128,13 @@ export default function AccountSheet({ onClose }: Props) {
                 disabled={deleting}
                 onClick={() => void runDelete()}
                 style={{
-                  background: "#f87171",
-                  color: "#0a0c10",
+                  background: "#FF453A",
+                  color: "#ffffff",
                   border: "none",
                   padding: "13px 20px",
                   borderRadius: 8,
                   width: "100%",
-                  fontFamily: "'DM Mono', monospace",
+                  fontFamily: "Inter, sans-serif",
                   fontSize: 13,
                   fontWeight: 500,
                   cursor: "pointer",
@@ -156,8 +156,8 @@ export default function AccountSheet({ onClose }: Props) {
             <button
               className="btn-ghost"
               style={{
-                borderColor: "rgba(248,113,113,0.35)",
-                color: "#f87171",
+                borderColor: "rgba(255,69,58,0.35)",
+                color: "#FF453A",
               }}
               onClick={() => setConfirmingDelete(true)}
             >
@@ -167,7 +167,7 @@ export default function AccountSheet({ onClose }: Props) {
         </div>
 
         {error && (
-          <div style={{ fontSize: 11, color: "#f87171", marginTop: 10 }}>
+          <div style={{ fontSize: 11, color: "#FF453A", marginTop: 10 }}>
             {error}
           </div>
         )}

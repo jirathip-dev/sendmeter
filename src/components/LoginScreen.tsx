@@ -76,7 +76,7 @@ export default function LoginScreen() {
             <div style={{ textAlign: "center", padding: "12px 0" }}>
               <div
                 style={{
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "Inter, sans-serif",
                   fontSize: 18,
                   fontWeight: 800,
                   marginBottom: 8,
@@ -84,7 +84,7 @@ export default function LoginScreen() {
               >
                 Check your email
               </div>
-              <div style={{ fontSize: 12, color: "#7a8a9a", marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: "#6E6E73", marginBottom: 16 }}>
                 We sent a sign-in link to {email.trim()}. Open it on this
                 device to continue.
               </div>
@@ -96,7 +96,7 @@ export default function LoginScreen() {
             <div>
               <div
                 style={{
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "Inter, sans-serif",
                   fontSize: 18,
                   fontWeight: 800,
                   marginBottom: 4,
@@ -104,7 +104,7 @@ export default function LoginScreen() {
               >
                 Sign in
               </div>
-              <div style={{ fontSize: 12, color: "#7a8a9a" }}>
+              <div style={{ fontSize: 12, color: "#6E6E73" }}>
                 {mode === "magic"
                   ? "Enter your email and we'll send you a magic link. No password needed."
                   : "Sign in with your email and password."}
@@ -136,7 +136,7 @@ export default function LoginScreen() {
                 </>
               )}
               {error && (
-                <div style={{ fontSize: 11, color: "#f87171", marginTop: 8 }}>
+                <div style={{ fontSize: 11, color: "#FF453A", marginTop: 8 }}>
                   {error}
                 </div>
               )}
@@ -168,10 +168,10 @@ export default function LoginScreen() {
                   style={{
                     background: "none",
                     border: "none",
-                    color: "#4a5a70",
+                    color: "#6E6E73",
                     fontSize: 11,
                     cursor: "pointer",
-                    fontFamily: "'DM Mono', monospace",
+                    fontFamily: "Inter, sans-serif",
                     textDecoration: "underline",
                   }}
                 >

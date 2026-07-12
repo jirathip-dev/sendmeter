@@ -27,7 +27,7 @@ export default function App() {
         className="app-shell"
         style={{ alignItems: "center", justifyContent: "center" }}
       >
-        <div style={{ fontSize: 11, color: "#4a5a70" }}>loading…</div>
+        <div style={{ fontSize: 11, color: "#6E6E73" }}>loading…</div>
       </div>
     );
   }
@@ -150,7 +150,7 @@ function AuthedApp({
               <div
                 style={{
                   fontSize: 9,
-                  color: "#4a5a70",
+                  color: "#6E6E73",
                   textTransform: "uppercase",
                   letterSpacing: "0.08em",
                 }}
@@ -161,7 +161,7 @@ function AuthedApp({
                 style={{
                   fontSize: 13,
                   color: phase.color,
-                  fontFamily: "'Syne', sans-serif",
+                  fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                 }}
               >
@@ -182,13 +182,13 @@ function AuthedApp({
             style={{
               background: "none",
               border: "none",
-              color: "#3a4a60",
+              color: "#8E8E93",
               fontSize: 9,
               textTransform: "uppercase",
               letterSpacing: "0.08em",
               cursor: "pointer",
               padding: 4,
-              fontFamily: "'DM Mono', monospace",
+              fontFamily: "Inter, sans-serif",
             }}
           >
             Account
@@ -198,13 +198,13 @@ function AuthedApp({
             style={{
               background: "none",
               border: "none",
-              color: "#3a4a60",
+              color: "#8E8E93",
               fontSize: 9,
               textTransform: "uppercase",
               letterSpacing: "0.08em",
               cursor: "pointer",
               padding: 4,
-              fontFamily: "'DM Mono', monospace",
+              fontFamily: "Inter, sans-serif",
             }}
           >
             Sign out
@@ -221,10 +221,10 @@ function AuthedApp({
             justifyContent: "space-between",
             gap: 8,
             padding: "8px 16px",
-            background: "rgba(248,113,113,0.12)",
-            borderBottom: "1px solid rgba(248,113,113,0.35)",
+            background: "rgba(255,69,58,0.12)",
+            borderBottom: "1px solid rgba(255,69,58,0.35)",
             fontSize: 11,
-            color: "#f87171",
+            color: "#FF453A",
           }}
         >
           <span>{error}</span>
@@ -233,7 +233,7 @@ function AuthedApp({
             style={{
               background: "none",
               border: "none",
-              color: "#f87171",
+              color: "#FF453A",
               fontSize: 16,
               cursor: "pointer",
             }}
@@ -249,7 +249,7 @@ function AuthedApp({
           <div
             style={{
               textAlign: "center",
-              color: "#2a3a50",
+              color: "#8E8E93",
               fontSize: 13,
               padding: "60px 0",
             }}
@@ -308,7 +308,7 @@ function AuthedApp({
             <div className="modal-handle" />
             <div
               style={{
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "Inter, sans-serif",
                 fontSize: 20,
                 fontWeight: 800,
                 marginBottom: 2,
@@ -316,7 +316,7 @@ function AuthedApp({
             >
               Log Session
             </div>
-            <div style={{ fontSize: 11, color: "#4a5a70", marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: "#6E6E73", marginBottom: 4 }}>
               Load = Duration × RPE
             </div>
             <LogForm form={form} setForm={setForm} onSubmit={submitSession} />
@@ -361,7 +361,7 @@ function AuthedApp({
             <div className="modal-handle" />
             <div
               style={{
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "Inter, sans-serif",
                 fontSize: 20,
                 fontWeight: 800,
                 marginBottom: 6,
@@ -369,7 +369,7 @@ function AuthedApp({
             >
               Import local data?
             </div>
-            <div style={{ fontSize: 12, color: "#7a8a9a", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: "#6E6E73", marginBottom: 16 }}>
               Found {legacy.sessions.length} session
               {legacy.sessions.length === 1 ? "" : "s"} saved on this device
               from before your account existed. Import them into your account?

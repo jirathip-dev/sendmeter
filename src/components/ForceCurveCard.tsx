@@ -55,7 +55,7 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
-      <text x={2} y={PAD.top + 4} fontSize={8} fill="#2a3a50">
+      <text x={2} y={PAD.top + 4} fontSize={8} fill="#8E8E93">
         {yMax.toFixed(0)}kg
       </text>
       {model.cf !== null && (
@@ -65,7 +65,7 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
             y1={py(model.cf)}
             x2={W - PAD.right}
             y2={py(model.cf)}
-            stroke="#f97316"
+            stroke="#FF9500"
             strokeWidth={1}
             strokeDasharray="4 3"
           />
@@ -73,7 +73,7 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
             x={W - PAD.right}
             y={py(model.cf) - 4}
             fontSize={8}
-            fill="#f97316"
+            fill="#FF9500"
             textAnchor="end"
           >
             CF {model.cf.toFixed(1)}kg
@@ -84,14 +84,14 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
         <polyline
           points={fitted}
           fill="none"
-          stroke="#4ade80"
+          stroke="#5B5FC7"
           strokeWidth={1.5}
           opacity={0.8}
           vectorEffect="non-scaling-stroke"
         />
       )}
       {pts.map((p) => (
-        <circle key={p.windowS} cx={px(p.windowS)} cy={py(p.kg)} r={3} fill="#60a5fa">
+        <circle key={p.windowS} cx={px(p.windowS)} cy={py(p.kg)} r={3} fill="#7B83EB">
           <title>{`${p.windowS}s · ${p.kg.toFixed(1)} kg`}</title>
         </circle>
       ))}
@@ -103,7 +103,7 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
             x={px(t)}
             y={H - 5}
             fontSize={8}
-            fill="#2a3a50"
+            fill="#8E8E93"
             textAnchor="middle"
           >
             {t}s
@@ -146,7 +146,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
       <div
         style={{
           fontSize: 9,
-          color: "#4a5a70",
+          color: "#6E6E73",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
           marginBottom: 10,
@@ -157,7 +157,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
 
       {!model ? (
         <div>
-          <div style={{ fontSize: 11, color: "#7a8a9a", marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: "#6E6E73", marginBottom: 10 }}>
             Builds your force–duration curve from the last{" "}
             {Math.min(recordings.length, MAX_RECORDINGS_FETCHED)} recordings of
             this exercise and fits the critical-force model F(t) = CF + W′/t.
@@ -170,7 +170,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
             {computing ? "Computing…" : "Compute Force Curve"}
           </button>
           {error && (
-            <div style={{ fontSize: 11, color: "#f87171", marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "#FF453A", marginTop: 8 }}>
               {error}
             </div>
           )}
@@ -185,9 +185,9 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
                 <div
                   style={{
                     fontSize: 10,
-                    color: "#facc15",
-                    background: "rgba(250,204,21,0.08)",
-                    border: "1px solid rgba(250,204,21,0.25)",
+                    color: "#FFB800",
+                    background: "rgba(255,184,0,0.08)",
+                    border: "1px solid rgba(255,184,0,0.25)",
                     borderRadius: 6,
                     padding: "7px 10px",
                     marginTop: 8,
@@ -204,7 +204,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
                 <div
                   style={{
                     fontSize: 10,
-                    color: "#4a5a70",
+                    color: "#6E6E73",
                     marginTop: 8,
                   }}
                 >
@@ -219,25 +219,25 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
               display: "flex",
               justifyContent: "space-between",
               fontSize: 10,
-              color: "#4a5a70",
+              color: "#6E6E73",
               margin: "6px 0 12px",
             }}
           >
             <span>
               max{" "}
-              <span style={{ color: "#e2e8f0" }}>
+              <span style={{ color: "#1C1C1E" }}>
                 {model.maxF.toFixed(1)} kg
               </span>
             </span>
             <span>
               CF{" "}
-              <span style={{ color: "#f97316" }}>
+              <span style={{ color: "#FF9500" }}>
                 {model.cf !== null ? `${model.cf.toFixed(1)} kg` : "—"}
               </span>
             </span>
             <span>
               W′{" "}
-              <span style={{ color: "#7a8a9a" }}>
+              <span style={{ color: "#6E6E73" }}>
                 {model.wPrime !== null ? `${model.wPrime.toFixed(0)} kg·s` : "—"}
               </span>
             </span>
@@ -251,11 +251,11 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
                 className="tag"
                 onClick={() => setQuality(q.id)}
                 style={{
-                  background: quality === q.id ? "#4ade80" : "#0a0c10",
-                  color: quality === q.id ? "#0a0c10" : "#4a5a70",
-                  border: `1px solid ${quality === q.id ? "#4ade80" : "#1e2d40"}`,
+                  background: quality === q.id ? "#5B5FC7" : "#F5F5F7",
+                  color: quality === q.id ? "#ffffff" : "#6E6E73",
+                  border: `1px solid ${quality === q.id ? "#5B5FC7" : "#D8D8DC"}`,
                   cursor: "pointer",
-                  fontFamily: "'DM Mono', monospace",
+                  fontFamily: "Inter, sans-serif",
                 }}
               >
                 {q.label}
@@ -270,23 +270,23 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
               >
                 <span
                   style={{
-                    fontFamily: "'Syne', sans-serif",
+                    fontFamily: "Inter, sans-serif",
                     fontSize: 26,
                     fontWeight: 800,
-                    color: "#4ade80",
+                    color: "#34C759",
                   }}
                 >
                   {target.targetKg.toFixed(1)} kg
                 </span>
-                <span style={{ fontSize: 11, color: "#4a5a70" }}>
+                <span style={{ fontSize: 11, color: "#6E6E73" }}>
                   ({target.lowKg.toFixed(1)}–{target.highKg.toFixed(1)}) ·{" "}
                   {target.workS}s work
                 </span>
               </div>
-              <div style={{ fontSize: 11, color: "#7a8a9a", marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: "#6E6E73", marginTop: 4 }}>
                 {target.protocol}
               </div>
-              <div style={{ fontSize: 10, color: "#3a4a60", marginTop: 2 }}>
+              <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 2 }}>
                 {target.basis}
               </div>
               <div style={{ marginTop: 10 }}>
@@ -307,7 +307,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
               </div>
             </div>
           ) : (
-            <div style={{ fontSize: 11, color: "#3a4a60" }}>
+            <div style={{ fontSize: 11, color: "#8E8E93" }}>
               Needs a critical-force fit — record some longer holds (30s+) with
               this tag to unlock this zone.
             </div>
