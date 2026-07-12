@@ -75,11 +75,14 @@ html, body { height: 100%; overflow: hidden; }
   overflow: hidden;
 }
 
-/* Top bar */
+/* Top bar — grows into the safe-area inset (notch/Dynamic Island/status
+   bar) instead of sitting behind it; the 52px bar itself stays put below. */
 .topbar {
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 16px; height: 52px;
+  padding: 0 16px; height: calc(52px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  box-sizing: border-box;
   border-bottom: 1px solid var(--hairline);
   background: var(--bg);
 }
@@ -91,6 +94,11 @@ html, body { height: 100%; overflow: hidden; }
   flex: 1; overflow-y: auto; overflow-x: hidden;
   padding: 16px 16px 8px;
   -webkit-overflow-scrolling: touch;
+}
+/* Only when nothing (no .topbar) precedes it — the login screen — does the
+   content area itself need to clear the safe-area inset. */
+.app-shell > .content-area:first-child {
+  padding-top: max(16px, env(safe-area-inset-top));
 }
 
 /* Bottom nav */
