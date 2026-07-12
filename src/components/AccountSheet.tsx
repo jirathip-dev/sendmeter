@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { deleteAccount } from "../lib/repo";
 import { supabase } from "../lib/supabase";
+import HelpSheet from "./HelpSheet";
 import ThemeSection from "./ThemeSection";
 
 interface Props {
@@ -17,6 +18,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   async function handleSignOut() {
     setSigningOut(true);
@@ -123,6 +125,19 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
           )}
         </div>
 
+        {/* Help & FAQ */}
+        <div
+          style={{
+            marginTop: 22,
+            paddingTop: 14,
+            borderTop: "1px solid var(--hairline)",
+          }}
+        >
+          <button className="btn-ghost" onClick={() => setShowHelp(true)}>
+            Help & FAQ
+          </button>
+        </div>
+
         {/* Sign out */}
         <div
           style={{
@@ -139,6 +154,8 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
             {signingOut ? "Signing out…" : "Sign out"}
           </button>
         </div>
+
+        {showHelp && <HelpSheet onClose={() => setShowHelp(false)} />}
 
         {/* Danger zone */}
         <div
