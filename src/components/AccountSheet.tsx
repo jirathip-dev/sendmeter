@@ -70,7 +70,7 @@ export default function AccountSheet({ onClose }: Props) {
           </div>
         ) : (
           <div>
-            <div style={{ fontSize: 12, color: "#6E6E73", marginBottom: 4 }}>
+            <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 4 }}>
               Set a password for signing in on your Apple Watch or the iPhone
               app.
             </div>
@@ -104,7 +104,7 @@ export default function AccountSheet({ onClose }: Props) {
           style={{
             marginTop: 22,
             paddingTop: 14,
-            borderTop: "1px solid #E5E5EA",
+            borderTop: "1px solid var(--hairline)",
           }}
         >
           <div
@@ -120,7 +120,7 @@ export default function AccountSheet({ onClose }: Props) {
           </div>
           {confirmingDelete ? (
             <div>
-              <div style={{ fontSize: 12, color: "#6E6E73", marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12 }}>
                 This permanently deletes your account and every session,
                 recording, workout, and health metric. There is no undo.
               </div>

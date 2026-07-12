@@ -70,7 +70,7 @@ export default function RecordingRow({ rec, onDelete }: Props) {
           <div
             style={{
               fontSize: 13,
-              color: "#1C1C1E",
+              color: "var(--ink)",
               marginBottom: 4,
               display: "flex",
               alignItems: "center",
@@ -115,12 +115,12 @@ export default function RecordingRow({ rec, onDelete }: Props) {
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: "#6E6E73" }}>
+          <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s · avg{" "}
             {rec.avgKg.toFixed(1)} kg
           </div>
           {rec.note && (
-            <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 3 }}>
+            <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 3 }}>
               {rec.note}
             </div>
           )}
@@ -139,7 +139,7 @@ export default function RecordingRow({ rec, onDelete }: Props) {
         (samples ? (
           <SamplesPreview samples={samples} />
         ) : (
-          <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 8 }}>
+          <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
             {loadError ? "Failed to load trace" : "Loading trace…"}
           </div>
         ))}

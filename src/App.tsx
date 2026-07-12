@@ -17,6 +17,7 @@ import LogForm from "./components/LogForm";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
 import AccountSheet from "./components/AccountSheet";
+import ThemeToggle from "./components/ThemeToggle";
 
 export default function App() {
   const { session, loading, signOut } = useAuth();
@@ -27,7 +28,7 @@ export default function App() {
         className="app-shell"
         style={{ alignItems: "center", justifyContent: "center" }}
       >
-        <div style={{ fontSize: 11, color: "#6E6E73" }}>loading…</div>
+        <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>loading…</div>
       </div>
     );
   }
@@ -150,7 +151,7 @@ function AuthedApp({
               <div
                 style={{
                   fontSize: 9,
-                  color: "#6E6E73",
+                  color: "var(--ink-muted)",
                   textTransform: "uppercase",
                   letterSpacing: "0.08em",
                 }}
@@ -177,12 +178,13 @@ function AuthedApp({
               }}
             />
           </div>
+          <ThemeToggle />
           <button
             onClick={() => setShowWatchSheet(true)}
             style={{
               background: "none",
               border: "none",
-              color: "#8E8E93",
+              color: "var(--ink-faint)",
               fontSize: 9,
               textTransform: "uppercase",
               letterSpacing: "0.08em",
@@ -198,7 +200,7 @@ function AuthedApp({
             style={{
               background: "none",
               border: "none",
-              color: "#8E8E93",
+              color: "var(--ink-faint)",
               fontSize: 9,
               textTransform: "uppercase",
               letterSpacing: "0.08em",
@@ -249,7 +251,7 @@ function AuthedApp({
           <div
             style={{
               textAlign: "center",
-              color: "#8E8E93",
+              color: "var(--ink-faint)",
               fontSize: 13,
               padding: "60px 0",
             }}
@@ -316,7 +318,7 @@ function AuthedApp({
             >
               Log Session
             </div>
-            <div style={{ fontSize: 11, color: "#6E6E73", marginBottom: 4 }}>
+            <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 4 }}>
               Load = Duration × RPE
             </div>
             <LogForm form={form} setForm={setForm} onSubmit={submitSession} />
@@ -369,7 +371,7 @@ function AuthedApp({
             >
               Import local data?
             </div>
-            <div style={{ fontSize: 12, color: "#6E6E73", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 16 }}>
               Found {legacy.sessions.length} session
               {legacy.sessions.length === 1 ? "" : "s"} saved on this device
               from before your account existed. Import them into your account?

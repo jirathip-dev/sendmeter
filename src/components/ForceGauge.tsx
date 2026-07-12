@@ -47,7 +47,7 @@ function drawTrace(
     1.15;
 
   // gridlines
-  ctx.strokeStyle = "#E5E5EA";
+  ctx.strokeStyle = "rgba(136,136,142,0.3)";
   ctx.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
     const y = (h / 4) * i;
@@ -135,7 +135,7 @@ export default function ForceGauge({
           <div
             style={{
               fontSize: 9,
-              color: "#6E6E73",
+              color: "var(--ink-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               marginBottom: 4,
@@ -149,18 +149,18 @@ export default function ForceGauge({
               fontSize: 44,
               fontWeight: 800,
               lineHeight: 1,
-              color: inZone ? "#34C759" : "#1C1C1E",
+              color: inZone ? "#34C759" : "var(--ink)",
               letterSpacing: "-0.04em",
             }}
           >
             {current.toFixed(1)}
-            <span style={{ fontSize: 16, color: "#6E6E73", marginLeft: 4 }}>
+            <span style={{ fontSize: 16, color: "var(--ink-muted)", marginLeft: 4 }}>
               kg
             </span>
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: "#6E6E73" }}>
+          <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
             peak{" "}
             <span
               style={{
@@ -177,13 +177,13 @@ export default function ForceGauge({
           <div
             style={{
               fontSize: 11,
-              color: workDone ? "#34C759" : "#6E6E73",
+              color: workDone ? "#34C759" : "var(--ink-muted)",
               marginTop: 2,
             }}
           >
             {(elapsedMs / 1000).toFixed(1)}s
             {target && (
-              <span style={{ color: "#8E8E93" }}> / {target.workS}s</span>
+              <span style={{ color: "var(--ink-faint)" }}> / {target.workS}s</span>
             )}
           </div>
         </div>
@@ -198,7 +198,7 @@ export default function ForceGauge({
             display: "flex",
             justifyContent: "space-between",
             fontSize: 10,
-            color: "#6E6E73",
+            color: "var(--ink-muted)",
             marginTop: 6,
           }}
         >
@@ -208,7 +208,7 @@ export default function ForceGauge({
             ({target.lowKg.toFixed(1)}–{target.highKg.toFixed(1)}) ·{" "}
             {target.workS}s
           </span>
-          <span style={{ color: "#8E8E93" }}>{target.label}</span>
+          <span style={{ color: "var(--ink-faint)" }}>{target.label}</span>
         </div>
       )}
     </div>

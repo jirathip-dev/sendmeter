@@ -80,7 +80,7 @@ export default function Dashboard({
             >
               {phase.name.toUpperCase()}
             </div>
-            <div style={{ fontSize: 11, color: "#6E6E73", marginTop: 5 }}>
+            <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 5 }}>
               {phase.desc}
             </div>
           </div>
@@ -88,7 +88,7 @@ export default function Dashboard({
             <div
               style={{
                 fontSize: 9,
-                color: "#6E6E73",
+                color: "var(--ink-muted)",
                 textTransform: "uppercase",
               }}
             >
@@ -114,7 +114,7 @@ export default function Dashboard({
           <div
             style={{
               fontSize: 9,
-              color: "#6E6E73",
+              color: "var(--ink-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               marginBottom: 8,
@@ -162,7 +162,7 @@ export default function Dashboard({
                   height: 12,
                   borderRadius: "50%",
                   background: status.color,
-                  border: "2px solid #1C1C1E",
+                  border: "2px solid var(--canvas)",
                   zIndex: 1,
                 }}
               />
@@ -173,7 +173,7 @@ export default function Dashboard({
               display: "flex",
               justifyContent: "space-between",
               fontSize: 9,
-              color: "#8E8E93",
+              color: "var(--ink-faint)",
             }}
           >
             <span>0</span>
@@ -187,7 +187,7 @@ export default function Dashboard({
           <div
             style={{
               fontSize: 9,
-              color: "#6E6E73",
+              color: "var(--ink-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               marginBottom: 10,
@@ -204,8 +204,8 @@ export default function Dashboard({
                 marginBottom: 5,
               }}
             >
-              <span style={{ color: "#6E6E73" }}>Acute 7d</span>
-              <span style={{ color: "#1C1C1E" }}>
+              <span style={{ color: "var(--ink-muted)" }}>Acute 7d</span>
+              <span style={{ color: "var(--ink)" }}>
                 {acwrData.acute.toFixed(0)}
               </span>
             </div>
@@ -216,8 +216,8 @@ export default function Dashboard({
                 fontSize: 11,
               }}
             >
-              <span style={{ color: "#6E6E73" }}>Chronic avg</span>
-              <span style={{ color: "#1C1C1E" }}>
+              <span style={{ color: "var(--ink-muted)" }}>Chronic avg</span>
+              <span style={{ color: "var(--ink)" }}>
                 {acwrData.chronic.toFixed(0)}
               </span>
             </div>
@@ -245,12 +245,12 @@ export default function Dashboard({
                   style={{
                     width: "100%",
                     height: Math.max((w.total / maxW) * 32, 2),
-                    background: i === 3 ? "#34C759" : "#D8D8DC",
+                    background: i === 3 ? "#34C759" : "var(--border)",
                     borderRadius: 2,
                     transition: "height 0.4s",
                   }}
                 />
-                <div style={{ fontSize: 8, color: "#8E8E93" }}>{w.label}</div>
+                <div style={{ fontSize: 8, color: "var(--ink-faint)" }}>{w.label}</div>
               </div>
             ))}
           </div>
@@ -276,7 +276,7 @@ export default function Dashboard({
       <div
         style={{
           fontSize: 10,
-          color: "#98989D",
+          color: "var(--ink-faint)",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
           marginBottom: 10,
@@ -288,7 +288,7 @@ export default function Dashboard({
         <div
           style={{
             textAlign: "center",
-            color: "#98989D",
+            color: "var(--ink-faint)",
             fontSize: 13,
             padding: "32px 0",
           }}

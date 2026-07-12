@@ -56,7 +56,7 @@ export default function SessionRow({ s, onDelete }: Props) {
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div
           className="session-phase-bar"
-          style={{ background: ph?.color || "#C7C7CC" }}
+          style={{ background: ph?.color || "var(--border)" }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
@@ -68,31 +68,31 @@ export default function SessionRow({ s, onDelete }: Props) {
               flexWrap: "wrap",
             }}
           >
-            <span style={{ fontSize: 13, color: "#1C1C1E" }}>
+            <span style={{ fontSize: 13, color: "var(--ink)" }}>
               {s.typeLabel}
             </span>
             <span
               className="tag"
               style={{
-                background: ph?.bg || "#D8D8DC",
-                color: ph?.color || "#6E6E73",
-                border: `1px solid ${ph?.border || "#D8D8DC"}`,
+                background: ph?.bg || "var(--border)",
+                color: ph?.color || "var(--ink-muted)",
+                border: `1px solid ${ph?.border || "var(--border)"}`,
               }}
             >
               {ph?.name || s.phase}
             </span>
             {expandable && (
-              <span style={{ fontSize: 10, color: "#6E6E73" }}>
+              <span style={{ fontSize: 10, color: "var(--ink-muted)" }}>
                 {expanded ? "▾" : "▸"}
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: "#6E6E73" }}>
+          <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
             {s.date} · {s.duration}min · RPE {s.rpe} ·{" "}
-            <span style={{ color: "#6E6E73" }}>{s.load} AU</span>
+            <span style={{ color: "var(--ink-muted)" }}>{s.load} AU</span>
           </div>
           {s.note && (
-            <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 3 }}>
+            <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 3 }}>
               {s.note}
             </div>
           )}
@@ -111,7 +111,7 @@ export default function SessionRow({ s, onDelete }: Props) {
       {expanded && isAuto && (
         <>
           {detail === null && !loadError && (
-            <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
               Loading workout…
             </div>
           )}
@@ -121,7 +121,7 @@ export default function SessionRow({ s, onDelete }: Props) {
             </div>
           )}
           {detail === "missing" && (
-            <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
               No workout data
             </div>
           )}
@@ -136,11 +136,11 @@ export default function SessionRow({ s, onDelete }: Props) {
           style={{
             marginTop: 10,
             paddingTop: 10,
-            borderTop: "1px solid #E5E5EA",
+            borderTop: "1px solid var(--hairline)",
           }}
         >
           {tindeqRecs === null && !loadError && (
-            <div style={{ fontSize: 10, color: "#8E8E93" }}>
+            <div style={{ fontSize: 10, color: "var(--ink-faint)" }}>
               Loading recordings…
             </div>
           )}
@@ -150,7 +150,7 @@ export default function SessionRow({ s, onDelete }: Props) {
             </div>
           )}
           {tindeqRecs !== null && tindeqRecs.length === 0 && (
-            <div style={{ fontSize: 10, color: "#8E8E93" }}>
+            <div style={{ fontSize: 10, color: "var(--ink-faint)" }}>
               No recordings in this session
             </div>
           )}
@@ -162,11 +162,11 @@ export default function SessionRow({ s, onDelete }: Props) {
                 justifyContent: "space-between",
                 gap: 8,
                 fontSize: 11,
-                color: "#6E6E73",
+                color: "var(--ink-muted)",
                 marginBottom: 4,
               }}
             >
-              <span style={{ color: "#6E6E73" }}>
+              <span style={{ color: "var(--ink-muted)" }}>
                 {new Date(r.recordedAt).toLocaleTimeString([], {
                   hour: "2-digit",
                   minute: "2-digit",

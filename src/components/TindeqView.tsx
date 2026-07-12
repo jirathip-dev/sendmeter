@@ -85,9 +85,9 @@ function TagSideEditor({
               className="tag"
               onClick={() => onTag(tag === t ? "" : t)}
               style={{
-                background: tag === t ? "#7B83EB" : "#F5F5F7",
-                color: tag === t ? "#ffffff" : "#6E6E73",
-                border: `1px solid ${tag === t ? "#7B83EB" : "#D8D8DC"}`,
+                background: tag === t ? "#7B83EB" : "var(--surface-1)",
+                color: tag === t ? "#ffffff" : "var(--ink-muted)",
+                border: `1px solid ${tag === t ? "#7B83EB" : "var(--border)"}`,
                 cursor: "pointer",
                 fontFamily: "Inter, sans-serif",
               }}
@@ -267,7 +267,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
             alignItems: "center",
             gap: 10,
             padding: "10px 14px",
-            background: "#FFFFFF",
+            background: "var(--canvas)",
             border: `1px solid ${gaugeSession ? "rgba(91,95,199,0.55)" : "transparent"}`,
             borderRadius: 10,
             boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
@@ -284,9 +284,9 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                   background: "#7B83EB",
                 }}
               />
-              <span style={{ fontSize: 12, color: "#1C1C1E", flex: 1 }}>
+              <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
                 Gauge session{" "}
-                <span style={{ color: "#6E6E73" }}>
+                <span style={{ color: "var(--ink-muted)" }}>
                   · {sessionCount} recording{sessionCount === 1 ? "" : "s"}
                 </span>
               </span>
@@ -294,8 +294,8 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 onClick={endSession}
                 style={{
                   background: "none",
-                  border: "1px solid #8E8E93",
-                  color: "#6E6E73",
+                  border: "1px solid var(--ink-faint)",
+                  color: "var(--ink-muted)",
                   padding: "6px 10px",
                   borderRadius: 6,
                   fontSize: 10,
@@ -308,7 +308,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
             </>
           ) : (
             <>
-              <span style={{ fontSize: 11, color: "#6E6E73", flex: 1 }}>
+              <span style={{ fontSize: 11, color: "var(--ink-muted)", flex: 1 }}>
                 Group recordings into a session
               </span>
               <button
@@ -320,8 +320,8 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 }
                 style={{
                   background: "none",
-                  border: "1px solid #8E8E93",
-                  color: "#6E6E73",
+                  border: "1px solid var(--ink-faint)",
+                  color: "var(--ink-muted)",
                   padding: "6px 10px",
                   borderRadius: 6,
                   fontSize: 10,
@@ -348,7 +348,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
           >
             Bluetooth not available
           </div>
-          <div style={{ fontSize: 12, color: "#6E6E73", lineHeight: 1.5 }}>
+          <div style={{ fontSize: 12, color: "var(--ink-muted)", lineHeight: 1.5 }}>
             {tindeq.secure
               ? "This browser doesn't support Web Bluetooth. Use Chrome or Edge on desktop or Android — iOS Safari can't connect to Bluetooth devices."
               : "Web Bluetooth requires a secure (HTTPS) connection."}
@@ -362,7 +362,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
           <div
             style={{
               fontSize: 9,
-              color: "#6E6E73",
+              color: "var(--ink-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               marginBottom: 10,
@@ -477,9 +477,9 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 background: status === "measuring" ? "#34C759" : "#7B83EB",
               }}
             />
-            <span style={{ fontSize: 12, color: "#1C1C1E", flex: 1 }}>
+            <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
               Progressor{" "}
-              <span style={{ color: "#6E6E73" }}>
+              <span style={{ color: "var(--ink-muted)" }}>
                 · {status === "measuring" ? "measuring" : "connected"}
               </span>
             </span>
@@ -499,8 +499,8 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
               onClick={tindeq.disconnect}
               style={{
                 background: "none",
-                border: "1px solid #8E8E93",
-                color: "#6E6E73",
+                border: "1px solid var(--ink-faint)",
+                color: "var(--ink-muted)",
                 padding: "6px 10px",
                 borderRadius: 6,
                 fontSize: 10,
@@ -520,7 +520,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 gap: 8,
                 marginBottom: 8,
                 fontSize: 10,
-                color: "#98989D",
+                color: "var(--ink-faint)",
               }}
             >
               <span style={{ flex: 1 }}>
@@ -531,7 +531,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 style={{
                   background: "none",
                   border: "none",
-                  color: "#98989D",
+                  color: "var(--ink-faint)",
                   fontSize: 10,
                   cursor: "pointer",
                   fontFamily: "Inter, sans-serif",
@@ -557,7 +557,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
               <div
                 style={{
                   fontSize: 9,
-                  color: "#6E6E73",
+                  color: "var(--ink-muted)",
                   textTransform: "uppercase",
                   letterSpacing: "0.1em",
                   marginBottom: 8,
@@ -607,7 +607,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
               <div
                 style={{
                   fontSize: 9,
-                  color: "#6E6E73",
+                  color: "var(--ink-muted)",
                   textTransform: "uppercase",
                   letterSpacing: "0.1em",
                   marginBottom: 10,
@@ -620,12 +620,12 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                   display: "flex",
                   justifyContent: "space-between",
                   fontSize: 12,
-                  color: "#6E6E73",
+                  color: "var(--ink-muted)",
                   marginBottom: 4,
                 }}
               >
                 <span>Duration</span>
-                <span style={{ color: "#1C1C1E" }}>
+                <span style={{ color: "var(--ink)" }}>
                   {(pending.durationMs / 1000).toFixed(1)}s
                 </span>
               </div>
@@ -634,7 +634,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                   display: "flex",
                   justifyContent: "space-between",
                   fontSize: 12,
-                  color: "#6E6E73",
+                  color: "var(--ink-muted)",
                   marginBottom: 4,
                 }}
               >
@@ -654,11 +654,11 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                   display: "flex",
                   justifyContent: "space-between",
                   fontSize: 12,
-                  color: "#6E6E73",
+                  color: "var(--ink-muted)",
                 }}
               >
                 <span>Average</span>
-                <span style={{ color: "#1C1C1E" }}>
+                <span style={{ color: "var(--ink)" }}>
                   {pending.avgKg.toFixed(1)} kg
                 </span>
               </div>
@@ -746,7 +746,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
               />
             )}
             {!selectedTag && (
-              <div style={{ fontSize: 11, color: "#8E8E93", marginTop: 10 }}>
+              <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 10 }}>
                 Select a tag above to see its force–duration curve and generate
                 training targets.
               </div>
@@ -764,7 +764,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
       <div
         style={{
           fontSize: 10,
-          color: "#98989D",
+          color: "var(--ink-faint)",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
           margin: "20px 0 10px",
@@ -781,7 +781,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         <div
           style={{
             textAlign: "center",
-            color: "#98989D",
+            color: "var(--ink-faint)",
             fontSize: 13,
             padding: "24px 0",
           }}
@@ -844,7 +844,7 @@ function GroupedRecordings({
           <div
             key={b.id}
             style={{
-              border: "1px solid #3A3A3E",
+              border: "1px solid var(--border)",
               borderRadius: 10,
               padding: "10px 8px 2px",
               marginBottom: 8,
@@ -859,15 +859,15 @@ function GroupedRecordings({
                 padding: "0 6px 8px",
               }}
             >
-              <span style={{ fontSize: 11, color: "#E5E5EA" }}>
+              <span style={{ fontSize: 11, color: "var(--ink)" }}>
                 {fmtDate(b.recs[b.recs.length - 1]!.recordedAt)}
               </span>
-              <span style={{ fontSize: 10, color: "#98989D" }}>
+              <span style={{ fontSize: 10, color: "var(--ink-faint)" }}>
                 {fmtTime(b.recs[b.recs.length - 1]!.recordedAt)}–
                 {fmtTime(b.recs[0]!.recordedAt)} · {b.recs.length} recording
                 {b.recs.length === 1 ? "" : "s"}
               </span>
-              <span style={{ fontSize: 10, color: "#98989D" }}>
+              <span style={{ fontSize: 10, color: "var(--ink-faint)" }}>
                 {[...new Set(b.recs.map((r) => r.tag).filter(Boolean))].join(
                   " · ",
                 )}

@@ -18,7 +18,7 @@ export default function HistoryView({ sessions, onDelete }: Props) {
         <div
           style={{
             textAlign: "center",
-            color: "#98989D",
+            color: "var(--ink-faint)",
             fontSize: 13,
             padding: "60px 0",
           }}

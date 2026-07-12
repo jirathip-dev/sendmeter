@@ -15,8 +15,8 @@ function StatRow({ label, value }: { label: string; value: string }) {
         marginBottom: 4,
       }}
     >
-      <span style={{ color: "#6E6E73" }}>{label}</span>
-      <span style={{ color: "#1C1C1E" }}>{value}</span>
+      <span style={{ color: "var(--ink-muted)" }}>{label}</span>
+      <span style={{ color: "var(--ink)" }}>{value}</span>
     </div>
   );
 }
@@ -32,7 +32,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
       style={{
         marginTop: 10,
         paddingTop: 10,
-        borderTop: "1px solid #E5E5EA",
+        borderTop: "1px solid var(--hairline)",
       }}
     >
       <div className="grid-2" style={{ gap: 16 }}>
@@ -73,7 +73,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
       </div>
 
       {detail.attempts.length === 0 ? (
-        <div style={{ fontSize: 10, color: "#8E8E93", marginTop: 8 }}>
+        <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
           No attempts detected
         </div>
       ) : (
@@ -81,7 +81,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
           <div
             style={{
               fontSize: 9,
-              color: "#6E6E73",
+              color: "var(--ink-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               margin: "10px 0 6px",
@@ -119,7 +119,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
             ))}
           </div>
           {selected && selectedIdx !== null && (
-            <div style={{ fontSize: 10, color: "#6E6E73", marginTop: 6 }}>
+            <div style={{ fontSize: 10, color: "var(--ink-muted)", marginTop: 6 }}>
               Attempt {selectedIdx + 1} — {Math.round(selected.durationS)}s ·
               effort {selected.effortScore?.toFixed(1) ?? "—"} · +
               {selected.elevationGainM.toFixed(1)}m

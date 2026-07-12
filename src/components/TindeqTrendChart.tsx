@@ -31,9 +31,9 @@ function TagChip({
       onClick={onClick}
       className="tag"
       style={{
-        background: active ? "#5B5FC7" : "#F5F5F7",
-        color: active ? "#ffffff" : "#6E6E73",
-        border: `1px solid ${active ? "#5B5FC7" : "#D8D8DC"}`,
+        background: active ? "#5B5FC7" : "var(--surface-1)",
+        color: active ? "#ffffff" : "var(--ink-muted)",
+        border: `1px solid ${active ? "#5B5FC7" : "var(--border)"}`,
         cursor: "pointer",
         fontFamily: "Inter, sans-serif",
       }}
@@ -73,10 +73,10 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
-      <text x={2} y={PAD_TOP + 3} fontSize={8} fill="#8E8E93">
+      <text x={2} y={PAD_TOP + 3} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
         {yMax.toFixed(0)}kg
       </text>
-      <text x={2} y={H - PAD_BOTTOM} fontSize={8} fill="#8E8E93">
+      <text x={2} y={H - PAD_BOTTOM} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
         {yMin.toFixed(0)}
       </text>
       <polyline
@@ -107,14 +107,14 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
           PR
         </text>
       )}
-      <text x={PAD_LEFT} y={H - 4} fontSize={8} fill="#8E8E93">
+      <text x={PAD_LEFT} y={H - 4} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
         {fmtDate(tMin)}
       </text>
       <text
         x={W - PAD_RIGHT}
         y={H - 4}
         fontSize={8}
-        fill="#8E8E93"
+        style={{ fill: "var(--ink-faint)" }}
         textAnchor="end"
       >
         {fmtDate(tMax)}
@@ -161,7 +161,7 @@ export default function TindeqTrendChart({
       <div
         style={{
           fontSize: 9,
-          color: "#6E6E73",
+          color: "var(--ink-muted)",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
           marginBottom: 10,
@@ -216,7 +216,7 @@ export default function TindeqTrendChart({
             style={{ gridTemplateColumns: "1fr 1fr 1fr", marginBottom: 10 }}
           >
             <div>
-              <div style={{ fontSize: 9, color: "#6E6E73" }}>Best</div>
+              <div style={{ fontSize: 9, color: "var(--ink-muted)" }}>Best</div>
               <div
                 style={{
                   fontFamily: "Inter, sans-serif",
@@ -229,20 +229,20 @@ export default function TindeqTrendChart({
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 9, color: "#6E6E73" }}>Last</div>
+              <div style={{ fontSize: 9, color: "var(--ink-muted)" }}>Last</div>
               <div
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                   fontSize: 16,
-                  color: "#F5F5F7",
+                  color: "var(--surface-1)",
                 }}
               >
                 {stats.lastPeak.toFixed(1)}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 9, color: "#6E6E73" }}>vs 30d avg</div>
+              <div style={{ fontSize: 9, color: "var(--ink-muted)" }}>vs 30d avg</div>
               <div
                 style={{
                   fontFamily: "Inter, sans-serif",
@@ -250,7 +250,7 @@ export default function TindeqTrendChart({
                   fontSize: 16,
                   color:
                     stats.delta === null
-                      ? "#6E6E73"
+                      ? "var(--ink-muted)"
                       : stats.delta >= 0
                         ? "#34C759"
                         : "#FF453A",
@@ -265,7 +265,7 @@ export default function TindeqTrendChart({
           <Chart sorted={sorted} />
         </>
       ) : (
-        <div style={{ fontSize: 11, color: "#8E8E93", padding: "12px 0" }}>
+        <div style={{ fontSize: 11, color: "var(--ink-faint)", padding: "12px 0" }}>
           Not enough recordings with this tag yet.
         </div>
       )}

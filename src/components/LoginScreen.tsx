@@ -84,7 +84,7 @@ export default function LoginScreen() {
               >
                 Check your email
               </div>
-              <div style={{ fontSize: 12, color: "#6E6E73", marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 16 }}>
                 We sent a sign-in link to {email.trim()}. Open it on this
                 device to continue.
               </div>
@@ -104,7 +104,7 @@ export default function LoginScreen() {
               >
                 Sign in
               </div>
-              <div style={{ fontSize: 12, color: "#6E6E73" }}>
+              <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>
                 {mode === "magic"
                   ? "Enter your email and we'll send you a magic link. No password needed."
                   : "Sign in with your email and password."}
@@ -168,7 +168,7 @@ export default function LoginScreen() {
                   style={{
                     background: "none",
                     border: "none",
-                    color: "#6E6E73",
+                    color: "var(--ink-muted)",
                     fontSize: 11,
                     cursor: "pointer",
                     fontFamily: "Inter, sans-serif",
