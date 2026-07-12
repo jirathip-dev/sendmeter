@@ -224,6 +224,7 @@ export type Database = {
         Row: {
           created_at: string
           date: string
+          deleted_at: string | null
           duration_min: number
           group_id: string | null
           id: string
@@ -238,6 +239,7 @@ export type Database = {
         Insert: {
           created_at?: string
           date: string
+          deleted_at?: string | null
           duration_min: number
           group_id?: string | null
           id?: string
@@ -252,6 +254,7 @@ export type Database = {
         Update: {
           created_at?: string
           date?: string
+          deleted_at?: string | null
           duration_min?: number
           group_id?: string | null
           id?: string
@@ -268,6 +271,7 @@ export type Database = {
       tindeq_recordings: {
         Row: {
           avg_kg: number
+          deleted_at: string | null
           duration_ms: number
           group_id: string | null
           id: string
@@ -282,6 +286,7 @@ export type Database = {
         }
         Insert: {
           avg_kg: number
+          deleted_at?: string | null
           duration_ms: number
           group_id?: string | null
           id?: string
@@ -296,6 +301,7 @@ export type Database = {
         }
         Update: {
           avg_kg?: number
+          deleted_at?: string | null
           duration_ms?: number
           group_id?: string | null
           id?: string

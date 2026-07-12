@@ -4,13 +4,42 @@ import SessionRow from "./SessionRow";
 interface Props {
   sessions: Session[];
   onDelete: (id: string) => void;
+  onOpenTrash: () => void;
 }
 
-export default function HistoryView({ sessions, onDelete }: Props) {
+export default function HistoryView({
+  sessions,
+  onDelete,
+  onOpenTrash,
+}: Props) {
   const total = sessions.reduce((s, x) => s + x.load, 0);
   return (
     <div>
-      <div className="section-head">HISTORY</div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+        }}
+      >
+        <div className="section-head">HISTORY</div>
+        <button
+          onClick={onOpenTrash}
+          style={{
+            background: "none",
+            border: "none",
+            color: "var(--ink-faint)",
+            fontSize: 9,
+            textTransform: "uppercase",
+            letterSpacing: "0.08em",
+            cursor: "pointer",
+            padding: 4,
+            fontFamily: "Inter, sans-serif",
+          }}
+        >
+          Trash
+        </button>
+      </div>
       <div className="section-sub">
         {sessions.length} sessions · {total.toLocaleString()} AU total
       </div>

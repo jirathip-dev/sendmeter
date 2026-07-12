@@ -17,6 +17,7 @@ import LogForm from "./components/LogForm";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
 import AccountSheet from "./components/AccountSheet";
+import TrashSheet from "./components/TrashSheet";
 
 export default function App() {
   const { session, loading, signOut } = useAuth();
@@ -63,6 +64,7 @@ function AuthedApp({
   const [showModal, setShowModal] = useState(false);
   const [showPhases, setShowPhases] = useState(false);
   const [showWatchSheet, setShowWatchSheet] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
   const [importDismissed, setImportDismissed] = useState(false);
   const [importing, setImporting] = useState(false);
   const [form, setForm] = useState<LogFormState>({
@@ -259,6 +261,7 @@ function AuthedApp({
               <HistoryView
                 sessions={sessions}
                 onDelete={(id) => void removeSession(id)}
+                onOpenTrash={() => setShowTrash(true)}
               />
             )}
             {view === "tindeq" && (
@@ -340,6 +343,14 @@ function AuthedApp({
         <AccountSheet
           onClose={() => setShowWatchSheet(false)}
           onSignOut={onSignOut}
+        />
+      )}
+
+      {/* Trash bottom sheet */}
+      {showTrash && (
+        <TrashSheet
+          onClose={() => setShowTrash(false)}
+          onSessionRestored={() => void reload()}
         />
       )}
 

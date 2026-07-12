@@ -40,6 +40,10 @@ export interface Session {
   groupId: string | null; // Tindeq gauge session this was logged from
 }
 
+export interface DeletedSession extends Session {
+  deletedAt: string;
+}
+
 export interface TrainingData {
   sessions: Session[];
   currentPhase: PhaseId;
@@ -112,6 +116,10 @@ export interface TindeqRecordingMeta {
   tag: string; // exercise, e.g. "FDP" — trends group by this
   side: TindeqSide;
   groupId: string | null; // gauge session this recording belongs to
+}
+
+export interface DeletedTindeqRecording extends TindeqRecordingMeta {
+  deletedAt: string;
 }
 
 export interface NewTindeqRecording {

@@ -1,5 +1,7 @@
 import { supabase } from "./supabase";
 import type {
+  DeletedSession,
+  DeletedTindeqRecording,
   HealthMetric,
   LogFormState,
   NewTindeqRecording,
@@ -50,10 +52,21 @@ export async function fetchSessions(): Promise<Session[]> {
   const { data, error } = await supabase
     .from("sessions")
     .select(SESSION_COLS)
+    .is("deleted_at", null)
     .order("date", { ascending: false })
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data.map(toSession);
+}
+
+export async function fetchDeletedSessions(): Promise<DeletedSession[]> {
+  const { data, error } = await supabase
+    .from("sessions")
+    .select(`${SESSION_COLS}, deleted_at`)
+    .not("deleted_at", "is", null)
+    .order("deleted_at", { ascending: false });
+  if (error) throw error;
+  return data.map((r) => ({ ...toSession(r), deletedAt: r.deleted_at! }));
 }
 
 export async function insertSession(form: LogFormState): Promise<Session> {
@@ -102,7 +115,25 @@ export async function insertTindeqSession(input: {
   return toSession(data);
 }
 
+/// Soft delete: sets deleted_at so the session can be recovered from Trash.
 export async function deleteSession(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("sessions")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function restoreSession(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("sessions")
+    .update({ deleted_at: null })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+/// Permanent delete — used only from the Trash view's "Delete forever".
+export async function purgeSession(id: string): Promise<void> {
   const { error } = await supabase.from("sessions").delete().eq("id", id);
   if (error) throw error;
 }
@@ -241,16 +272,22 @@ export async function switchPhase(
   };
 }
 
-export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
-  // samples deliberately excluded — the list view only needs metadata
-  const { data, error } = await supabase
-    .from("tindeq_recordings")
-    .select(
-      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id",
-    )
-    .order("recorded_at", { ascending: false });
-  if (error) throw error;
-  return data.map((r) => ({
+const RECORDING_COLS =
+  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id";
+
+function toRecording(r: {
+  id: string;
+  recorded_at: string;
+  duration_ms: number;
+  peak_kg: number;
+  avg_kg: number;
+  sample_count: number;
+  note: string;
+  tag: string;
+  side: string;
+  group_id: string | null;
+}): TindeqRecordingMeta {
+  return {
     id: r.id,
     recordedAt: r.recorded_at,
     durationMs: r.duration_ms,
@@ -261,7 +298,30 @@ export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
     tag: r.tag,
     side: r.side as TindeqSide,
     groupId: r.group_id,
-  }));
+  };
+}
+
+export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
+  // samples deliberately excluded — the list view only needs metadata
+  const { data, error } = await supabase
+    .from("tindeq_recordings")
+    .select(RECORDING_COLS)
+    .is("deleted_at", null)
+    .order("recorded_at", { ascending: false });
+  if (error) throw error;
+  return data.map(toRecording);
+}
+
+export async function fetchDeletedRecordings(): Promise<
+  DeletedTindeqRecording[]
+> {
+  const { data, error } = await supabase
+    .from("tindeq_recordings")
+    .select(`${RECORDING_COLS}, deleted_at`)
+    .not("deleted_at", "is", null)
+    .order("deleted_at", { ascending: false });
+  if (error) throw error;
+  return data.map((r) => ({ ...toRecording(r), deletedAt: r.deleted_at! }));
 }
 
 export async function fetchRecordingsByGroup(
@@ -269,24 +329,12 @@ export async function fetchRecordingsByGroup(
 ): Promise<TindeqRecordingMeta[]> {
   const { data, error } = await supabase
     .from("tindeq_recordings")
-    .select(
-      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id",
-    )
+    .select(RECORDING_COLS)
     .eq("group_id", groupId)
+    .is("deleted_at", null)
     .order("recorded_at", { ascending: true });
   if (error) throw error;
-  return data.map((r) => ({
-    id: r.id,
-    recordedAt: r.recorded_at,
-    durationMs: r.duration_ms,
-    peakKg: r.peak_kg,
-    avgKg: r.avg_kg,
-    sampleCount: r.sample_count,
-    note: r.note,
-    tag: r.tag,
-    side: r.side as TindeqSide,
-    groupId: r.group_id,
-  }));
+  return data.map(toRecording);
 }
 
 export async function fetchRecordingSamples(
@@ -317,23 +365,10 @@ export async function insertRecording(
       group_id: rec.groupId,
       samples: rec.samples.map((s) => [s.t, s.kg]),
     })
-    .select(
-      "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id",
-    )
+    .select(RECORDING_COLS)
     .single();
   if (error) throw error;
-  return {
-    id: data.id,
-    recordedAt: data.recorded_at,
-    durationMs: data.duration_ms,
-    peakKg: data.peak_kg,
-    avgKg: data.avg_kg,
-    sampleCount: data.sample_count,
-    note: data.note,
-    tag: data.tag,
-    side: data.side as TindeqSide,
-    groupId: data.group_id,
-  };
+  return toRecording(data);
 }
 
 /// Deletes the auth user; every table cascades from auth.users, so all data
@@ -416,7 +451,25 @@ export async function fetchWorkoutForSession(
   };
 }
 
+/// Soft delete: sets deleted_at so the recording can be recovered from Trash.
 export async function deleteRecording(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("tindeq_recordings")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+export async function restoreRecording(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("tindeq_recordings")
+    .update({ deleted_at: null })
+    .eq("id", id);
+  if (error) throw error;
+}
+
+/// Permanent delete — used only from the Trash view's "Delete forever".
+export async function purgeRecording(id: string): Promise<void> {
   const { error } = await supabase
     .from("tindeq_recordings")
     .delete()
