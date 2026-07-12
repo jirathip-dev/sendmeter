@@ -193,6 +193,21 @@ export default function RecoveryStatsCard() {
                   );
                 })}
               </div>
+              {/* x-axis: this row's own date range (rows can cover different days) */}
+              {points.length > 1 && (
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: 7.5,
+                    color: "var(--ink-faint)",
+                    marginTop: 2,
+                  }}
+                >
+                  <span>{points[0]!.date.slice(5)}</span>
+                  <span>{points[points.length - 1]!.date.slice(5)}</span>
+                </div>
+              )}
             </div>
           </div>
         );

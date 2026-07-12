@@ -117,100 +117,119 @@ export default function ReadinessCard() {
           </span>
         )}
       </div>
-      <div style={{ position: "relative", marginTop: 12 }}>
-        {/* zone-threshold gridlines (push/maintain/recover boundaries) */}
-        {[
-          { v: 70, label: "70" },
-          { v: 40, label: "40" },
-        ].map(({ v, label }) => (
-          <div
-            key={v}
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              top: 36 - (v / 100) * 32,
-              borderTop: "1px dashed var(--hairline)",
-            }}
-          >
+      <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+        {/* y-axis, reserved outside the plot/data area */}
+        <div style={{ position: "relative", width: 16, flexShrink: 0, height: 36 }}>
+          {[
+            { v: 70, label: "70" },
+            { v: 40, label: "40" },
+          ].map(({ v, label }) => (
             <span
+              key={v}
               style={{
                 position: "absolute",
-                left: 0,
-                top: -8,
+                top: 36 - (v / 100) * 32 - 5,
+                right: 0,
                 fontSize: 8,
                 color: "var(--ink-faint)",
-                background: "var(--surface-1)",
-                paddingRight: 3,
               }}
             >
               {label}
             </span>
-          </div>
-        ))}
-        {hoveredDay !== null && (
+          ))}
+        </div>
+        <div style={{ position: "relative", flex: 1 }}>
+          {/* zone-threshold gridlines (push/maintain/recover boundaries) */}
+          {[70, 40].map((v) => (
+            <div
+              key={v}
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: 36 - (v / 100) * 32,
+                borderTop: "1px dashed var(--hairline)",
+              }}
+            />
+          ))}
+          {hoveredDay !== null && (
+            <div
+              style={{
+                position: "absolute",
+                left: `${((hoveredDay + 0.5) / days.length) * 100}%`,
+                top: 0,
+                bottom: 0,
+                width: 0,
+                borderLeft: "1px dashed var(--ink-faint)",
+                pointerEvents: "none",
+              }}
+            />
+          )}
           <div
             style={{
-              position: "absolute",
-              left: `${((hoveredDay + 0.5) / days.length) * 100}%`,
-              top: 0,
-              bottom: 0,
-              width: 0,
-              borderLeft: "1px dashed var(--ink-faint)",
-              pointerEvents: "none",
+              display: "flex",
+              gap: 3,
+              alignItems: "flex-end",
+              height: 36,
             }}
-          />
-        )}
-        <div
-          style={{
-            display: "flex",
-            gap: 3,
-            alignItems: "flex-end",
-            height: 36,
-          }}
-        >
-          {days.map(({ key, m }, i) => (
-            <div
-              key={key}
-              style={{
-                flex: 1,
-                position: "relative",
-                height: "100%",
-                display: "flex",
-                alignItems: "flex-end",
-              }}
-            >
-              {hoveredDay === i && (
-                <ChartTooltip
-                  align={i < 2 ? "start" : i > days.length - 3 ? "end" : "center"}
-                >
-                  {key} ·{" "}
-                  {m?.readiness != null
-                    ? `${m.readiness} ${m.zone ?? ""}`.trim()
-                    : "no data"}
-                </ChartTooltip>
-              )}
+          >
+            {days.map(({ key, m }, i) => (
               <div
+                key={key}
                 style={{
-                  width: "100%",
-                  height:
-                    m?.readiness != null
-                      ? Math.max(3, (m.readiness / 100) * 32)
-                      : 2,
-                  background:
-                    m?.zone && m.readiness != null
-                      ? (ZONE_COLORS[m.zone] ?? "var(--border)")
-                      : "var(--border)",
-                  borderRadius: 2,
-                  opacity: hoveredDay === null || hoveredDay === i ? 1 : 0.5,
-                  boxShadow: hoveredDay === i ? "0 0 0 1.5px var(--ink)" : "none",
-                  cursor: "pointer",
-                  transition: "opacity 0.1s",
+                  flex: 1,
+                  position: "relative",
+                  height: "100%",
+                  display: "flex",
+                  alignItems: "flex-end",
                 }}
-                {...hoverDayProps(i)}
-              />
-            </div>
-          ))}
+              >
+                {hoveredDay === i && (
+                  <ChartTooltip
+                    align={i < 2 ? "start" : i > days.length - 3 ? "end" : "center"}
+                  >
+                    {key} ·{" "}
+                    {m?.readiness != null
+                      ? `${m.readiness} ${m.zone ?? ""}`.trim()
+                      : "no data"}
+                  </ChartTooltip>
+                )}
+                <div
+                  style={{
+                    width: "100%",
+                    height:
+                      m?.readiness != null
+                        ? Math.max(3, (m.readiness / 100) * 32)
+                        : 2,
+                    background:
+                      m?.zone && m.readiness != null
+                        ? (ZONE_COLORS[m.zone] ?? "var(--border)")
+                        : "var(--border)",
+                    borderRadius: 2,
+                    opacity: hoveredDay === null || hoveredDay === i ? 1 : 0.5,
+                    boxShadow: hoveredDay === i ? "0 0 0 1.5px var(--ink)" : "none",
+                    cursor: "pointer",
+                    transition: "opacity 0.1s",
+                  }}
+                  {...hoverDayProps(i)}
+                />
+              </div>
+            ))}
+          </div>
+          {/* x-axis: a few date ticks, not all 14 (too cramped) */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              fontSize: 8,
+              color: "var(--ink-faint)",
+              marginTop: 3,
+            }}
+          >
+            <span>{days[0]!.key.slice(5)}</span>
+            <span>{days[Math.floor((days.length - 1) / 2)]!.key.slice(5)}</span>
+            <span>{days[days.length - 1]!.key.slice(5)}</span>
+          </div>
         </div>
       </div>
       {footerParts.length > 0 && (

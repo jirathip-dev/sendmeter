@@ -225,93 +225,106 @@ export default function Dashboard({
               </span>
             </div>
           </div>
-          <div style={{ position: "relative" }}>
-            {/* axis gridline at the max of the visible weeks */}
-            <div
-              style={{
-                position: "absolute",
-                left: 0,
-                right: 0,
-                top: 8,
-                borderTop: "1px dashed var(--hairline)",
-              }}
-            >
+          <div style={{ display: "flex", gap: 6 }}>
+            {/* y-axis, reserved outside the plot/data area */}
+            <div style={{ position: "relative", width: 18, flexShrink: 0, height: 40 }}>
               <span
                 style={{
                   position: "absolute",
-                  left: 0,
-                  top: -8,
+                  top: 8 - 5,
+                  right: 0,
                   fontSize: 8,
                   color: "var(--ink-faint)",
-                  background: "var(--surface-1)",
-                  paddingRight: 3,
                 }}
               >
                 {Math.round(maxW)}
               </span>
+              <span
+                style={{
+                  position: "absolute",
+                  bottom: -5,
+                  right: 0,
+                  fontSize: 8,
+                  color: "var(--ink-faint)",
+                }}
+              >
+                0
+              </span>
             </div>
-            {hoveredWeek !== null && (
+            <div style={{ position: "relative", flex: 1 }}>
+              {/* gridline at the max of the visible weeks */}
               <div
                 style={{
                   position: "absolute",
-                  left: `${((hoveredWeek + 0.5) / weeklyLoads.length) * 100}%`,
-                  top: 0,
-                  bottom: 0,
-                  width: 0,
-                  borderLeft: "1px dashed var(--ink-faint)",
-                  pointerEvents: "none",
+                  left: 0,
+                  right: 0,
+                  top: 8,
+                  borderTop: "1px dashed var(--hairline)",
                 }}
               />
-            )}
-            <div
-              style={{
-                display: "flex",
-                gap: 4,
-                alignItems: "flex-end",
-                height: 40,
-              }}
-            >
-              {weeklyLoads.map((w, i) => (
+              {hoveredWeek !== null && (
                 <div
-                  key={i}
                   style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: 3,
-                    position: "relative",
+                    position: "absolute",
+                    left: `${((hoveredWeek + 0.5) / weeklyLoads.length) * 100}%`,
+                    top: 0,
+                    bottom: 0,
+                    width: 0,
+                    borderLeft: "1px dashed var(--ink-faint)",
+                    pointerEvents: "none",
                   }}
-                >
-                  {hoveredWeek === i && (
-                    <ChartTooltip
-                      align={
-                        i === 0
-                          ? "start"
-                          : i === weeklyLoads.length - 1
-                            ? "end"
-                            : "center"
-                      }
-                    >
-                      {w.label} · {w.total.toLocaleString()} AU
-                    </ChartTooltip>
-                  )}
+                />
+              )}
+              <div
+                style={{
+                  display: "flex",
+                  gap: 4,
+                  alignItems: "flex-end",
+                  height: 40,
+                }}
+              >
+                {weeklyLoads.map((w, i) => (
                   <div
+                    key={i}
                     style={{
-                      width: "100%",
-                      height: Math.max((w.total / maxW) * 32, 2),
-                      background: i === 3 ? "#34C759" : "var(--border)",
-                      borderRadius: 2,
-                      transition: "height 0.4s, opacity 0.1s",
-                      opacity: hoveredWeek === null || hoveredWeek === i ? 1 : 0.5,
-                      boxShadow: hoveredWeek === i ? "0 0 0 1.5px var(--ink)" : "none",
-                      cursor: "pointer",
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 3,
+                      position: "relative",
                     }}
-                    {...hoverWeekProps(i)}
-                  />
-                  <div style={{ fontSize: 8, color: "var(--ink-faint)" }}>{w.label}</div>
-                </div>
-              ))}
+                  >
+                    {hoveredWeek === i && (
+                      <ChartTooltip
+                        align={
+                          i === 0
+                            ? "start"
+                            : i === weeklyLoads.length - 1
+                              ? "end"
+                              : "center"
+                        }
+                      >
+                        {w.label} · {w.total.toLocaleString()} AU
+                      </ChartTooltip>
+                    )}
+                    <div
+                      style={{
+                        width: "100%",
+                        height: Math.max((w.total / maxW) * 32, 2),
+                        background: i === 3 ? "#34C759" : "var(--border)",
+                        borderRadius: 2,
+                        transition: "height 0.4s, opacity 0.1s",
+                        opacity: hoveredWeek === null || hoveredWeek === i ? 1 : 0.5,
+                        boxShadow: hoveredWeek === i ? "0 0 0 1.5px var(--ink)" : "none",
+                        cursor: "pointer",
+                      }}
+                      {...hoverWeekProps(i)}
+                    />
+                    <div style={{ fontSize: 8, color: "var(--ink-faint)" }}>{w.label}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>

@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { fetchRecordingSamples } from "../lib/repo";
+import { useChartHover } from "../hooks/useChartHover";
+import SvgChartTooltip from "./SvgChartTooltip";
 import type { TindeqRecordingMeta, TindeqSample } from "../types";
 
 interface Props {
@@ -7,24 +9,78 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
+const W = 300;
+const H = 80;
+const PAD_LEFT = 26;
+const PAD_RIGHT = 6;
+const PAD_TOP = 6;
+const PAD_BOTTOM = 14;
+
 function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
+  const [hovered, hoverProps] = useChartHover<number>();
   if (samples.length < 2) return null;
-  const w = 300;
-  const h = 60;
+
   const tMax = samples[samples.length - 1]!.t || 1;
-  const kgMax = Math.max(...samples.map((s) => s.kg), 1) * 1.1;
-  const points = samples
-    .map(
-      (s) =>
-        `${((s.t / tMax) * w).toFixed(1)},${(h - (s.kg / kgMax) * h).toFixed(1)}`,
-    )
-    .join(" ");
+  const kgMax = Math.max(...samples.map((s) => s.kg), 1) * 1.08;
+
+  const px = (t: number) => PAD_LEFT + (t / tMax) * (W - PAD_LEFT - PAD_RIGHT);
+  const py = (kg: number) =>
+    PAD_TOP + (1 - kg / kgMax) * (H - PAD_TOP - PAD_BOTTOM);
+
+  const points = samples.map((s) => `${px(s.t).toFixed(1)},${py(s.kg).toFixed(1)}`).join(" ");
+
+  const yTicks = [0, kgMax / 2, kgMax];
+  const xTicks = [0, tMax / 2, tMax];
+
+  // Downsample hover targets so we're not attaching handlers to hundreds of
+  // raw samples — pick ~40 evenly spaced indices across the trace.
+  const hoverStep = Math.max(1, Math.floor(samples.length / 40));
+  const hoverIndices: number[] = [];
+  for (let i = 0; i < samples.length; i += hoverStep) hoverIndices.push(i);
+  if (hoverIndices[hoverIndices.length - 1] !== samples.length - 1) {
+    hoverIndices.push(samples.length - 1);
+  }
+
+  const hoveredSample = hovered !== null ? samples[hovered] : undefined;
+
   return (
     <svg
-      viewBox={`0 0 ${w} ${h}`}
-      style={{ width: "100%", height: 60, display: "block", marginTop: 10 }}
-      preserveAspectRatio="none"
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ width: "100%", height: H, display: "block", marginTop: 10 }}
     >
+      {yTicks.map((v, i) => (
+        <g key={`y-${i}`}>
+          <line
+            x1={PAD_LEFT}
+            y1={py(v)}
+            x2={W - PAD_RIGHT}
+            y2={py(v)}
+            style={{ stroke: "var(--hairline)" }}
+            strokeWidth={1}
+          />
+          <text
+            x={2}
+            y={py(v) + (i === yTicks.length - 1 ? 4 : i === 0 ? -2 : 2.5)}
+            fontSize={7.5}
+            style={{ fill: "var(--ink-faint)" }}
+          >
+            {v.toFixed(0)}
+            {i === yTicks.length - 1 ? "kg" : ""}
+          </text>
+        </g>
+      ))}
+      {xTicks.map((t, i) => (
+        <text
+          key={`x-${i}`}
+          x={px(t)}
+          y={H - 3}
+          fontSize={7.5}
+          style={{ fill: "var(--ink-faint)" }}
+          textAnchor={i === 0 ? "start" : i === xTicks.length - 1 ? "end" : "middle"}
+        >
+          {t.toFixed(1)}s
+        </text>
+      ))}
       <polyline
         points={points}
         fill="none"
@@ -32,6 +88,43 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
         strokeWidth="1.5"
         vectorEffect="non-scaling-stroke"
       />
+      {hoverIndices.map((i) => (
+        <circle
+          key={i}
+          cx={px(samples[i]!.t)}
+          cy={py(samples[i]!.kg)}
+          r={7}
+          fill="transparent"
+          style={{ cursor: "pointer" }}
+          {...hoverProps(i)}
+        />
+      ))}
+      {hovered !== null && hoveredSample && (
+        <>
+          <line
+            x1={px(hoveredSample.t)}
+            y1={PAD_TOP}
+            x2={px(hoveredSample.t)}
+            y2={H - PAD_BOTTOM}
+            style={{ stroke: "var(--ink-faint)" }}
+            strokeDasharray="2 2"
+            strokeWidth={1}
+          />
+          <circle
+            cx={px(hoveredSample.t)}
+            cy={py(hoveredSample.kg)}
+            r={3}
+            fill="#5B5FC7"
+          />
+          <SvgChartTooltip
+            x={px(hoveredSample.t)}
+            y={py(hoveredSample.kg)}
+            viewW={W}
+            viewH={H}
+            lines={[`${hoveredSample.t.toFixed(1)}s`, `${hoveredSample.kg.toFixed(1)} kg`]}
+          />
+        </>
+      )}
     </svg>
   );
 }
