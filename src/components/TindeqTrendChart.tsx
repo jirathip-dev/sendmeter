@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 import { computeTindeqStats } from "../lib/metrics";
+import { useChartHover } from "../hooks/useChartHover";
+import SvgChartTooltip from "./SvgChartTooltip";
 import type { TindeqRecordingMeta, TindeqSide } from "../types";
 
 interface Props {
@@ -44,6 +46,7 @@ function TagChip({
 }
 
 function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
+  const [hovered, hoverProps] = useChartHover<number>();
   const xs = sorted.map((r) => Date.parse(r.recordedAt));
   const tMin = xs[0]!;
   const tMax = Math.max(xs[xs.length - 1]!, tMin + 1);
@@ -71,6 +74,8 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
     return `${d.getMonth() + 1}/${d.getDate()}`;
   };
 
+  const hoveredR = hovered !== null ? sorted[hovered] : undefined;
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
       <text x={2} y={PAD_TOP + 3} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
@@ -91,11 +96,11 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
           key={r.id}
           cx={px(xs[i]!)}
           cy={py(r.peakKg)}
-          r={i === prIdx ? 4 : 2.5}
+          r={hovered === i ? (i === prIdx ? 6 : 4.5) : i === prIdx ? 4 : 2.5}
           fill={i === prIdx ? "#FFB800" : "#5B5FC7"}
-        >
-          <title>{`${fmtDate(xs[i]!)} · ${r.peakKg.toFixed(1)} kg${r.tag ? ` · ${r.tag}` : ""}`}</title>
-        </circle>
+          style={{ cursor: "pointer", transition: "r 0.1s" }}
+          {...hoverProps(i)}
+        />
       ))}
       {sorted[prIdx] && (
         <text
@@ -119,6 +124,18 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
       >
         {fmtDate(tMax)}
       </text>
+      {hoveredR && hovered !== null && (
+        <SvgChartTooltip
+          x={px(xs[hovered]!)}
+          y={py(hoveredR.peakKg)}
+          viewW={W}
+          viewH={H}
+          lines={[
+            fmtDate(xs[hovered]!),
+            `${hoveredR.peakKg.toFixed(1)} kg${hoveredR.tag ? ` · ${hoveredR.tag}` : ""}`,
+          ]}
+        />
+      )}
     </svg>
   );
 }

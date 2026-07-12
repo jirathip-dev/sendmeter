@@ -8,6 +8,8 @@ import type {
 import ReadinessCard from "./ReadinessCard";
 import RecoveryStatsCard from "./RecoveryStatsCard";
 import SessionRow from "./SessionRow";
+import ChartTooltip from "./ChartTooltip";
+import { useChartHover } from "../hooks/useChartHover";
 
 interface Props {
   phase: Phase;
@@ -34,6 +36,7 @@ export default function Dashboard({
 }: Props) {
   const recent = sessions.slice(0, 6);
   const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
+  const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
 
   return (
     <div>
@@ -239,16 +242,34 @@ export default function Dashboard({
                   flexDirection: "column",
                   alignItems: "center",
                   gap: 3,
+                  position: "relative",
                 }}
               >
+                {hoveredWeek === i && (
+                  <ChartTooltip
+                    align={
+                      i === 0
+                        ? "start"
+                        : i === weeklyLoads.length - 1
+                          ? "end"
+                          : "center"
+                    }
+                  >
+                    {w.label} · {w.total.toLocaleString()} AU
+                  </ChartTooltip>
+                )}
                 <div
                   style={{
                     width: "100%",
                     height: Math.max((w.total / maxW) * 32, 2),
                     background: i === 3 ? "#34C759" : "var(--border)",
                     borderRadius: 2,
-                    transition: "height 0.4s",
+                    transition: "height 0.4s, opacity 0.1s",
+                    opacity: hoveredWeek === null || hoveredWeek === i ? 1 : 0.5,
+                    boxShadow: hoveredWeek === i ? "0 0 0 1.5px var(--ink)" : "none",
+                    cursor: "pointer",
                   }}
+                  {...hoverWeekProps(i)}
                 />
                 <div style={{ fontSize: 8, color: "var(--ink-faint)" }}>{w.label}</div>
               </div>

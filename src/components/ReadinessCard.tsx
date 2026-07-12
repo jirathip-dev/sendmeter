@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchHealthMetrics } from "../lib/repo";
+import { useChartHover } from "../hooks/useChartHover";
+import ChartTooltip from "./ChartTooltip";
 import type { HealthMetric } from "../types";
 
 const ZONE_COLORS: Record<string, string> = {
@@ -10,6 +12,7 @@ const ZONE_COLORS: Record<string, string> = {
 
 export default function ReadinessCard() {
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
+  const [hoveredDay, hoverDayProps] = useChartHover<number>();
 
   useEffect(() => {
     let cancelled = false;
@@ -123,25 +126,47 @@ export default function ReadinessCard() {
           marginTop: 12,
         }}
       >
-        {days.map(({ key, m }) => (
+        {days.map(({ key, m }, i) => (
           <div
             key={key}
-            title={
-              m?.readiness != null ? `${key} · ${m.readiness}` : `${key} · no data`
-            }
             style={{
               flex: 1,
-              height:
-                m?.readiness != null
-                  ? Math.max(3, (m.readiness / 100) * 32)
-                  : 2,
-              background:
-                m?.zone && m.readiness != null
-                  ? (ZONE_COLORS[m.zone] ?? "var(--border)")
-                  : "var(--border)",
-              borderRadius: 2,
+              position: "relative",
+              height: "100%",
+              display: "flex",
+              alignItems: "flex-end",
             }}
-          />
+          >
+            {hoveredDay === i && (
+              <ChartTooltip
+                align={i < 2 ? "start" : i > days.length - 3 ? "end" : "center"}
+              >
+                {key} ·{" "}
+                {m?.readiness != null
+                  ? `${m.readiness} ${m.zone ?? ""}`.trim()
+                  : "no data"}
+              </ChartTooltip>
+            )}
+            <div
+              style={{
+                width: "100%",
+                height:
+                  m?.readiness != null
+                    ? Math.max(3, (m.readiness / 100) * 32)
+                    : 2,
+                background:
+                  m?.zone && m.readiness != null
+                    ? (ZONE_COLORS[m.zone] ?? "var(--border)")
+                    : "var(--border)",
+                borderRadius: 2,
+                opacity: hoveredDay === null || hoveredDay === i ? 1 : 0.5,
+                boxShadow: hoveredDay === i ? "0 0 0 1.5px var(--ink)" : "none",
+                cursor: "pointer",
+                transition: "opacity 0.1s",
+              }}
+              {...hoverDayProps(i)}
+            />
+          </div>
         ))}
       </div>
       {footerParts.length > 0 && (

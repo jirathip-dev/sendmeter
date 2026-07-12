@@ -7,6 +7,8 @@ import {
 } from "../lib/force-curve";
 import type { ForceCurveModel, TrainingQuality } from "../lib/force-curve";
 import { fetchRecordingSamples } from "../lib/repo";
+import { useChartHover } from "../hooks/useChartHover";
+import SvgChartTooltip from "./SvgChartTooltip";
 import type { TindeqRecordingMeta } from "../types";
 
 export interface GaugeTarget {
@@ -29,6 +31,7 @@ const H = 130;
 const PAD = { top: 10, bottom: 18, left: 30, right: 8 };
 
 function CurvePlot({ model }: { model: ForceCurveModel }) {
+  const [hovered, hoverProps] = useChartHover<number>();
   const pts = model.points;
   const tMin = Math.log10(pts[0]!.windowS);
   const tMax = Math.log10(Math.max(pts[pts.length - 1]!.windowS, 10));
@@ -90,10 +93,16 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
           vectorEffect="non-scaling-stroke"
         />
       )}
-      {pts.map((p) => (
-        <circle key={p.windowS} cx={px(p.windowS)} cy={py(p.kg)} r={3} fill="#7B83EB">
-          <title>{`${p.windowS}s · ${p.kg.toFixed(1)} kg`}</title>
-        </circle>
+      {pts.map((p, i) => (
+        <circle
+          key={p.windowS}
+          cx={px(p.windowS)}
+          cy={py(p.kg)}
+          r={hovered === i ? 5 : 3}
+          fill="#7B83EB"
+          style={{ cursor: "pointer", transition: "r 0.1s" }}
+          {...hoverProps(i)}
+        />
       ))}
       {[1, 10, 60, 120]
         .filter((t) => Math.log10(t) <= tMax + 0.01)
@@ -109,6 +118,15 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
             {t}s
           </text>
         ))}
+      {hovered !== null && pts[hovered] && (
+        <SvgChartTooltip
+          x={px(pts[hovered]!.windowS)}
+          y={py(pts[hovered]!.kg)}
+          viewW={W}
+          viewH={H}
+          lines={[`${pts[hovered]!.windowS}s`, `${pts[hovered]!.kg.toFixed(1)} kg`]}
+        />
+      )}
     </svg>
   );
 }

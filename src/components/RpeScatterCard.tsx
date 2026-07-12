@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchRpePairs } from "../lib/repo";
+import { useChartHover } from "../hooks/useChartHover";
+import SvgChartTooltip from "./SvgChartTooltip";
 import type { RpePair } from "../types";
 
 const S = 140;
@@ -11,6 +13,7 @@ function pos(v: number): number {
 
 export default function RpeScatterCard() {
   const [pairs, setPairs] = useState<RpePair[]>([]);
+  const [hovered, hoverProps] = useChartHover<number>();
 
   useEffect(() => {
     let cancelled = false;
@@ -53,6 +56,8 @@ export default function RpeScatterCard() {
     pairs.reduce((s, p) => s + Math.abs(p.predicted - p.confirmed), 0) /
     pairs.length;
 
+  const hoveredPair = hovered !== null ? pairs[hovered] : undefined;
+
   return (
     <div className="card">
       <div
@@ -83,12 +88,16 @@ export default function RpeScatterCard() {
               key={i}
               cx={pos(p.predicted)}
               cy={S - pos(p.confirmed)}
-              r={3}
+              r={hovered === i ? 5 : 3}
               fill="#5B5FC7"
-              opacity={0.35 + 0.65 * (i / Math.max(1, pairs.length - 1))}
-            >
-              <title>{`pred ${p.predicted.toFixed(1)} · you said ${p.confirmed}`}</title>
-            </circle>
+              opacity={
+                hovered === null || hovered === i
+                  ? 0.35 + 0.65 * (i / Math.max(1, pairs.length - 1))
+                  : 0.2
+              }
+              style={{ cursor: "pointer", transition: "r 0.1s, opacity 0.1s" }}
+              {...hoverProps(i)}
+            />
           ))}
           <text x={S / 2} y={S - 1} fontSize={7} style={{ fill: "var(--ink-faint)" }} textAnchor="middle">
             predicted →
@@ -103,6 +112,18 @@ export default function RpeScatterCard() {
           >
             confirmed →
           </text>
+          {hoveredPair && (
+            <SvgChartTooltip
+              x={pos(hoveredPair.predicted)}
+              y={S - pos(hoveredPair.confirmed)}
+              viewW={S}
+              viewH={S}
+              lines={[
+                `pred ${hoveredPair.predicted.toFixed(1)}`,
+                `you said ${hoveredPair.confirmed}`,
+              ]}
+            />
+          )}
         </svg>
       </div>
       <div style={{ fontSize: 10, color: "var(--ink-muted)", marginTop: 6 }}>

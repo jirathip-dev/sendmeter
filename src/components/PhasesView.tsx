@@ -1,5 +1,7 @@
 import { PHASES } from "../constants";
 import { today } from "../lib/dates";
+import { useChartHover } from "../hooks/useChartHover";
+import ChartTooltip from "./ChartTooltip";
 import type { PhaseId, PhasePeriod } from "../types";
 
 interface Props {
@@ -30,10 +32,21 @@ export default function PhasesView({
   phasePeriods,
   onSetPhase,
 }: Props) {
+  const [hoveredPeriod, hoverPeriodProps] = useChartHover<number>();
   const chronological = [...phasePeriods].sort((a, b) =>
     a.startedOn.localeCompare(b.startedOn),
   );
   const totalDays = chronological.reduce((s, p) => s + periodDays(p), 0);
+
+  const segments = chronological.reduce<
+    { p: PhasePeriod; days: number; startPct: number; widthPct: number }[]
+  >((acc, p) => {
+    const days = periodDays(p);
+    const prevEnd = acc.length > 0 ? acc[acc.length - 1]!.startPct + acc[acc.length - 1]!.widthPct : 0;
+    const widthPct = totalDays > 0 ? (days / totalDays) * 100 : 0;
+    acc.push({ p, days, startPct: prevEnd, widthPct });
+    return acc;
+  }, []);
 
   function phaseHistory(id: PhaseId): string | null {
     const mine = phasePeriods.filter((p) => p.phase === id);
@@ -163,32 +176,55 @@ export default function PhasesView({
           >
             Phase Timeline
           </div>
-          <div
-            style={{
-              display: "flex",
-              height: 10,
-              borderRadius: 3,
-              overflow: "hidden",
-            }}
-          >
-            {chronological.map((p) => {
-              const info = PHASES.find((x) => x.id === p.phase);
-              const days = periodDays(p);
-              return (
-                <div
-                  key={p.id}
-                  title={`${info?.name ?? p.phase} · ${p.startedOn} → ${
-                    p.endedOn ?? "now"
-                  } · ${(days / 7).toFixed(1)} wks`}
-                  style={{
-                    width: `${(days / totalDays) * 100}%`,
-                    minWidth: 4,
-                    background: info?.color ?? "var(--border)",
-                    opacity: p.endedOn === null ? 1 : 0.65,
-                  }}
-                />
-              );
-            })}
+          <div style={{ position: "relative" }}>
+            {hoveredPeriod !== null &&
+              segments[hoveredPeriod] &&
+              (() => {
+                const seg = segments[hoveredPeriod]!;
+                const info = PHASES.find((x) => x.id === seg.p.phase);
+                return (
+                  <ChartTooltip
+                    align="center"
+                    style={{ left: `${seg.startPct + seg.widthPct / 2}%` }}
+                  >
+                    {info?.name ?? seg.p.phase} · {seg.p.startedOn} →{" "}
+                    {seg.p.endedOn ?? "now"} · {(seg.days / 7).toFixed(1)} wks
+                  </ChartTooltip>
+                );
+              })()}
+            <div
+              style={{
+                display: "flex",
+                height: 10,
+                borderRadius: 3,
+                overflow: "hidden",
+              }}
+            >
+              {segments.map(({ p, widthPct }, i) => {
+                const info = PHASES.find((x) => x.id === p.phase);
+                return (
+                  <div
+                    key={p.id}
+                    style={{
+                      width: `${widthPct}%`,
+                      minWidth: 4,
+                      background: info?.color ?? "var(--border)",
+                      opacity:
+                        hoveredPeriod === null
+                          ? p.endedOn === null
+                            ? 1
+                            : 0.65
+                          : hoveredPeriod === i
+                            ? 1
+                            : 0.3,
+                      cursor: "pointer",
+                      transition: "opacity 0.1s",
+                    }}
+                    {...hoverPeriodProps(i)}
+                  />
+                );
+              })}
+            </div>
           </div>
           <div
             style={{

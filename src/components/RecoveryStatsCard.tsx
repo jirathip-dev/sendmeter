@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchHealthMetrics } from "../lib/repo";
+import { useChartHover } from "../hooks/useChartHover";
+import ChartTooltip from "./ChartTooltip";
 import type { HealthMetric } from "../types";
 
 type MetricKey = "hrvSdnnMs" | "restingHr" | "sleepHours" | "bodyMassKg";
@@ -22,6 +24,7 @@ const METRICS: MetricSpec[] = [
 /// from — a companion to ReadinessCard so "why is my score X" is visible.
 export default function RecoveryStatsCard() {
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
+  const [hovered, hoverProps] = useChartHover<string>();
 
   useEffect(() => {
     let cancelled = false;
@@ -124,18 +127,46 @@ export default function RecoveryStatsCard() {
               {points.map((p, j) => {
                 const v = p[spec.key];
                 const h = Math.max(2, ((v - min) / range) * 16 + 3);
+                const hk = `${spec.key}-${j}`;
+                const baseOpacity = 0.3 + 0.7 * (j / Math.max(1, points.length - 1));
                 return (
                   <div
                     key={p.date}
-                    title={`${p.date} · ${spec.format(v)} ${spec.unit}`}
                     style={{
                       flex: 1,
-                      height: h,
-                      background: "#5B5FC7",
-                      opacity: 0.3 + 0.7 * (j / Math.max(1, points.length - 1)),
-                      borderRadius: 1,
+                      position: "relative",
+                      height: "100%",
+                      display: "flex",
+                      alignItems: "flex-end",
                     }}
-                  />
+                  >
+                    {hovered === hk && (
+                      <ChartTooltip
+                        align={
+                          j < 2
+                            ? "start"
+                            : j > points.length - 3
+                              ? "end"
+                              : "center"
+                        }
+                      >
+                        {p.date} · {spec.format(v)} {spec.unit}
+                      </ChartTooltip>
+                    )}
+                    <div
+                      style={{
+                        width: "100%",
+                        height: h,
+                        background: "#5B5FC7",
+                        opacity: hovered === null || hovered === hk ? baseOpacity : 0.15,
+                        borderRadius: 1,
+                        boxShadow: hovered === hk ? "0 0 0 1.5px var(--ink)" : "none",
+                        cursor: "pointer",
+                        transition: "opacity 0.1s",
+                      }}
+                      {...hoverProps(hk)}
+                    />
+                  </div>
                 );
               })}
             </div>
