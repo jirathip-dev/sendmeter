@@ -17,7 +17,6 @@ import LogForm from "./components/LogForm";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
 import AccountSheet from "./components/AccountSheet";
-import ThemeToggle from "./components/ThemeToggle";
 
 export default function App() {
   const { session, loading, signOut } = useAuth();
@@ -178,7 +177,6 @@ function AuthedApp({
               }}
             />
           </div>
-          <ThemeToggle />
           <button
             onClick={() => setShowWatchSheet(true)}
             style={{
@@ -194,22 +192,6 @@ function AuthedApp({
             }}
           >
             Account
-          </button>
-          <button
-            onClick={() => void onSignOut()}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--ink-faint)",
-              fontSize: 9,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              cursor: "pointer",
-              padding: 4,
-              fontFamily: "Inter, sans-serif",
-            }}
-          >
-            Sign out
           </button>
         </div>
       </div>
@@ -354,7 +336,12 @@ function AuthedApp({
       )}
 
       {/* Account bottom sheet */}
-      {showWatchSheet && <AccountSheet onClose={() => setShowWatchSheet(false)} />}
+      {showWatchSheet && (
+        <AccountSheet
+          onClose={() => setShowWatchSheet(false)}
+          onSignOut={onSignOut}
+        />
+      )}
 
       {/* Legacy import bottom sheet */}
       {importPrompt && legacy && (

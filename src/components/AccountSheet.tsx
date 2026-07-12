@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { deleteAccount } from "../lib/repo";
 import { supabase } from "../lib/supabase";
+import ThemeSection from "./ThemeSection";
 
 interface Props {
   onClose: () => void;
+  onSignOut: () => Promise<{ error: Error | null }>;
 }
 
-export default function AccountSheet({ onClose }: Props) {
+export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [saving, setSaving] = useState(false);
@@ -14,6 +16,14 @@ export default function AccountSheet({ onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    await onSignOut();
+    // auth gate unmounts this sheet once the session clears; no need to
+    // reset signingOut or call onClose.
+  }
 
   async function save() {
     if (password.length < 8) {
@@ -62,42 +72,73 @@ export default function AccountSheet({ onClose }: Props) {
           Account
         </div>
 
+        <ThemeSection />
+
         {/* App / watch password */}
-        {done ? (
-          <div style={{ fontSize: 12, color: "#34C759", marginBottom: 16 }}>
-            Password set. Use it to sign in on your watch or iPhone app. Web
-            login keeps using magic links.
-          </div>
-        ) : (
-          <div>
-            <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 4 }}>
-              Set a password for signing in on your Apple Watch or the iPhone
-              app.
+        <div
+          style={{
+            marginTop: 22,
+            paddingTop: 14,
+            borderTop: "1px solid var(--hairline)",
+          }}
+        >
+          {done ? (
+            <div style={{ fontSize: 12, color: "#34C759" }}>
+              Password set. Use it to sign in on your watch or iPhone app. Web
+              login keeps using magic links.
             </div>
-            <span className="field-label">New password</span>
-            <input
-              className="field"
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <span className="field-label">Confirm password</span>
-            <input
-              className="field"
-              type="password"
-              autoComplete="new-password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && save()}
-            />
-            <div style={{ marginTop: 14 }}>
-              <button className="btn-primary" disabled={saving} onClick={save}>
-                {saving ? "Saving…" : "Set Password"}
-              </button>
+          ) : (
+            <div>
+              <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>
+                Set a password for signing in on your Apple Watch or the
+                iPhone app.
+              </div>
+              <span className="field-label">New password</span>
+              <input
+                className="field"
+                type="password"
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <span className="field-label">Confirm password</span>
+              <input
+                className="field"
+                type="password"
+                autoComplete="new-password"
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && save()}
+              />
+              <div style={{ marginTop: 14 }}>
+                <button
+                  className="btn-primary"
+                  disabled={saving}
+                  onClick={save}
+                >
+                  {saving ? "Saving…" : "Set Password"}
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+
+        {/* Sign out */}
+        <div
+          style={{
+            marginTop: 22,
+            paddingTop: 14,
+            borderTop: "1px solid var(--hairline)",
+          }}
+        >
+          <button
+            className="btn-ghost"
+            disabled={signingOut}
+            onClick={() => void handleSignOut()}
+          >
+            {signingOut ? "Signing out…" : "Sign out"}
+          </button>
+        </div>
 
         {/* Danger zone */}
         <div
