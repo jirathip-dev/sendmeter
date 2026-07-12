@@ -11,6 +11,18 @@ html, body { height: 100%; overflow: hidden; }
   overflow: hidden;
 }
 
+/* Desktop: centered app column instead of a stretched phone layout */
+@media (min-width: 720px) {
+  body { background: #06080b; }
+  .app-shell {
+    max-width: 640px;
+    margin: 0 auto;
+    border-left: 1px solid #1a2030;
+    border-right: 1px solid #1a2030;
+  }
+  .content-area { padding: 20px 24px 12px; }
+}
+
 /* Top bar */
 .topbar {
   flex-shrink: 0;

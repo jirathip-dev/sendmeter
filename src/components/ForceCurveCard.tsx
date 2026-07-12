@@ -178,6 +178,42 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
       ) : (
         <div>
           <CurvePlot model={model} />
+          {(() => {
+            const longest = model.points[model.points.length - 1]!.windowS;
+            if (longest < 30) {
+              return (
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#facc15",
+                    background: "rgba(250,204,21,0.08)",
+                    border: "1px solid rgba(250,204,21,0.25)",
+                    borderRadius: 6,
+                    padding: "7px 10px",
+                    marginTop: 8,
+                  }}
+                >
+                  Longest effort so far: {longest}s. CF and W′ are
+                  extrapolated — do one all-out 30–60s hold with this tag to
+                  make them (and the Pow End / Endurance targets) trustworthy.
+                </div>
+              );
+            }
+            if (longest < 60) {
+              return (
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#4a5a70",
+                    marginTop: 8,
+                  }}
+                >
+                  Tip: an all-out 60s+ hold would sharpen the CF fit further.
+                </div>
+              );
+            }
+            return null;
+          })()}
           <div
             style={{
               display: "flex",
