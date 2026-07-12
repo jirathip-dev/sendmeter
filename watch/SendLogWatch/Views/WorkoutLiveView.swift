@@ -70,6 +70,10 @@ struct WorkoutLiveView: View {
                     Spacer()
                 }
 
+                // Rest timer between boulders — the workout clock above
+                // keeps running the whole time; this is a separate countdown.
+                RestTimer()
+
                 Button(ending ? "Ending…" : "End Workout") {
                     ending = true
                     Task {

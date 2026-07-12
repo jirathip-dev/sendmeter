@@ -32,6 +32,10 @@ struct ForceGaugeView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 8) {
+                if tindeq.status != .unsupported {
+                    sessionBar
+                }
+
                 switch tindeq.status {
                 case .unsupported:
                     Text(tindeq.errorMsg ?? "Bluetooth unavailable")
@@ -52,7 +56,6 @@ struct ForceGaugeView: View {
                         .foregroundStyle(.secondary)
 
                 case .connected, .measuring:
-                    sessionBar
                     gaugeContent
                 }
 
@@ -62,6 +65,10 @@ struct ForceGaugeView: View {
                 if let savedMsg {
                     Text(savedMsg).font(.footnote).foregroundStyle(.green)
                 }
+
+                // Rest timer: independent of the gauge session/workout clock
+                RestTimer()
+                    .padding(.top, 4)
             }
         }
         .navigationTitle("Force")
