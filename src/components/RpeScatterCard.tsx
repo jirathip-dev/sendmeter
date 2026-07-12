@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchRpePairs } from "../lib/repo";
 import { useChartHover } from "../hooks/useChartHover";
+import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import SvgChartTooltip from "./SvgChartTooltip";
 import type { RpePair } from "../types";
 
@@ -23,6 +24,7 @@ function py(v: number): number {
 export default function RpeScatterCard() {
   const [pairs, setPairs] = useState<RpePair[]>([]);
   const [hovered, hoverProps] = useChartHover<number>();
+  const realtimeVersion = useRealtimeVersion();
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +38,7 @@ export default function RpeScatterCard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [realtimeVersion]);
 
   // Empty state: the feature should be discoverable before enough data exists
   if (pairs.length < 3) {

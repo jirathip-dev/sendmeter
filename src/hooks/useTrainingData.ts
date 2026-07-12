@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { LogFormState, PhaseId, PhasePeriod, Session } from "../types";
 import { today } from "../lib/dates";
 import * as repo from "../lib/repo";
+import { useRealtimeVersion } from "./useRealtimeVersion";
 
 function sortSessions(list: Session[]): Session[] {
   return [...list].sort((a, b) => b.date.localeCompare(a.date));
@@ -14,6 +15,7 @@ export function useTrainingData(userId: string) {
   const [phasePeriods, setPhasePeriods] = useState<PhasePeriod[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const realtimeVersion = useRealtimeVersion();
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -61,7 +63,9 @@ export function useTrainingData(userId: string) {
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+    // realtimeVersion bumps on any watch-side write (sessions/tindeq/health) —
+    // refetch so the web/iOS app picks it up without a manual reload.
+  }, [userId, realtimeVersion]);
 
   async function addSession(form: LogFormState) {
     const temp: Session = {

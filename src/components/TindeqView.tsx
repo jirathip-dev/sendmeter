@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { useTindeq } from "../hooks/useTindeq";
 import type { StoppedRecording } from "../hooks/useTindeq";
+import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import {
   deleteRecording,
   fetchRecordings,
@@ -133,6 +134,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
   const [selectedSide, setSelectedSide] = useState<TindeqSide | null>(null);
   const [showTrends, setShowTrends] = useState(false);
   const [gaugeTarget, setGaugeTarget] = useState<GaugeTarget | null>(null);
+  const realtimeVersion = useRealtimeVersion();
 
   // Every tag ever used, most frequent first; top 6 become one-tap chips,
   // the full list feeds the input's autocomplete datalist.
@@ -198,7 +200,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [realtimeVersion]);
 
   async function handleStop() {
     const summary = await tindeq.stop();

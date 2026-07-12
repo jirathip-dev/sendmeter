@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchHealthMetrics } from "../lib/repo";
 import { useChartHover } from "../hooks/useChartHover";
+import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import ChartTooltip from "./ChartTooltip";
 import type { HealthMetric } from "../types";
 
@@ -13,6 +14,7 @@ const ZONE_COLORS: Record<string, string> = {
 export default function ReadinessCard() {
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [hoveredDay, hoverDayProps] = useChartHover<number>();
+  const realtimeVersion = useRealtimeVersion();
 
   useEffect(() => {
     let cancelled = false;
@@ -26,7 +28,7 @@ export default function ReadinessCard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [realtimeVersion]);
 
   // Empty state: the feature should be discoverable before any watch data
   if (metrics.length === 0) {

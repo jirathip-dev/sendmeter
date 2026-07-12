@@ -18,6 +18,7 @@ import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
 import AccountSheet from "./components/AccountSheet";
 import TrashSheet from "./components/TrashSheet";
+import RealtimeVersionProvider from "./components/RealtimeVersionProvider";
 
 export default function App() {
   const { session, loading, signOut } = useAuth();
@@ -35,7 +36,11 @@ export default function App() {
 
   if (!session) return <LoginScreen />;
 
-  return <AuthedApp userId={session.user.id} onSignOut={signOut} />;
+  return (
+    <RealtimeVersionProvider userId={session.user.id}>
+      <AuthedApp userId={session.user.id} onSignOut={signOut} />
+    </RealtimeVersionProvider>
+  );
 }
 
 function AuthedApp({
