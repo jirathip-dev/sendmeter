@@ -121,54 +121,78 @@ export default function RecoveryStatsCard() {
                 </span>
               </span>
             </div>
-            <div
-              style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 20 }}
-            >
-              {points.map((p, j) => {
-                const v = p[spec.key];
-                const h = Math.max(2, ((v - min) / range) * 16 + 3);
-                const hk = `${spec.key}-${j}`;
-                const baseOpacity = 0.3 + 0.7 * (j / Math.max(1, points.length - 1));
+            <div style={{ position: "relative" }}>
+              {(() => {
+                const prefix = `${spec.key}-`;
+                const hoveredIdx =
+                  hovered?.startsWith(prefix)
+                    ? Number(hovered.slice(prefix.length))
+                    : null;
                 return (
-                  <div
-                    key={p.date}
-                    style={{
-                      flex: 1,
-                      position: "relative",
-                      height: "100%",
-                      display: "flex",
-                      alignItems: "flex-end",
-                    }}
-                  >
-                    {hovered === hk && (
-                      <ChartTooltip
-                        align={
-                          j < 2
-                            ? "start"
-                            : j > points.length - 3
-                              ? "end"
-                              : "center"
-                        }
-                      >
-                        {p.date} · {spec.format(v)} {spec.unit}
-                      </ChartTooltip>
-                    )}
+                  hoveredIdx !== null && (
                     <div
                       style={{
-                        width: "100%",
-                        height: h,
-                        background: "#5B5FC7",
-                        opacity: hovered === null || hovered === hk ? baseOpacity : 0.15,
-                        borderRadius: 1,
-                        boxShadow: hovered === hk ? "0 0 0 1.5px var(--ink)" : "none",
-                        cursor: "pointer",
-                        transition: "opacity 0.1s",
+                        position: "absolute",
+                        left: `${((hoveredIdx + 0.5) / points.length) * 100}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: 0,
+                        borderLeft: "1px dashed var(--ink-faint)",
+                        pointerEvents: "none",
                       }}
-                      {...hoverProps(hk)}
                     />
-                  </div>
+                  )
                 );
-              })}
+              })()}
+              <div
+                style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 20 }}
+              >
+                {points.map((p, j) => {
+                  const v = p[spec.key];
+                  const h = Math.max(2, ((v - min) / range) * 16 + 3);
+                  const hk = `${spec.key}-${j}`;
+                  const baseOpacity = 0.3 + 0.7 * (j / Math.max(1, points.length - 1));
+                  return (
+                    <div
+                      key={p.date}
+                      style={{
+                        flex: 1,
+                        position: "relative",
+                        height: "100%",
+                        display: "flex",
+                        alignItems: "flex-end",
+                      }}
+                    >
+                      {hovered === hk && (
+                        <ChartTooltip
+                          align={
+                            j < 2
+                              ? "start"
+                              : j > points.length - 3
+                                ? "end"
+                                : "center"
+                          }
+                        >
+                          {p.date} · {spec.format(v)} {spec.unit}
+                        </ChartTooltip>
+                      )}
+                      <div
+                        style={{
+                          width: "100%",
+                          height: h,
+                          background: "#5B5FC7",
+                          opacity: hovered === null || hovered === hk ? baseOpacity : 0.15,
+                          borderRadius: 1,
+                          boxShadow: hovered === hk ? "0 0 0 1.5px var(--ink)" : "none",
+                          cursor: "pointer",
+                          transition: "opacity 0.1s",
+                        }}
+                        {...hoverProps(hk)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         );

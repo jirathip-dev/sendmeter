@@ -117,57 +117,101 @@ export default function ReadinessCard() {
           </span>
         )}
       </div>
-      <div
-        style={{
-          display: "flex",
-          gap: 3,
-          alignItems: "flex-end",
-          height: 36,
-          marginTop: 12,
-        }}
-      >
-        {days.map(({ key, m }, i) => (
+      <div style={{ position: "relative", marginTop: 12 }}>
+        {/* zone-threshold gridlines (push/maintain/recover boundaries) */}
+        {[
+          { v: 70, label: "70" },
+          { v: 40, label: "40" },
+        ].map(({ v, label }) => (
           <div
-            key={key}
+            key={v}
             style={{
-              flex: 1,
-              position: "relative",
-              height: "100%",
-              display: "flex",
-              alignItems: "flex-end",
+              position: "absolute",
+              left: 0,
+              right: 0,
+              top: 36 - (v / 100) * 32,
+              borderTop: "1px dashed var(--hairline)",
             }}
           >
-            {hoveredDay === i && (
-              <ChartTooltip
-                align={i < 2 ? "start" : i > days.length - 3 ? "end" : "center"}
-              >
-                {key} ·{" "}
-                {m?.readiness != null
-                  ? `${m.readiness} ${m.zone ?? ""}`.trim()
-                  : "no data"}
-              </ChartTooltip>
-            )}
-            <div
+            <span
               style={{
-                width: "100%",
-                height:
-                  m?.readiness != null
-                    ? Math.max(3, (m.readiness / 100) * 32)
-                    : 2,
-                background:
-                  m?.zone && m.readiness != null
-                    ? (ZONE_COLORS[m.zone] ?? "var(--border)")
-                    : "var(--border)",
-                borderRadius: 2,
-                opacity: hoveredDay === null || hoveredDay === i ? 1 : 0.5,
-                boxShadow: hoveredDay === i ? "0 0 0 1.5px var(--ink)" : "none",
-                cursor: "pointer",
-                transition: "opacity 0.1s",
+                position: "absolute",
+                left: 0,
+                top: -8,
+                fontSize: 8,
+                color: "var(--ink-faint)",
+                background: "var(--surface-1)",
+                paddingRight: 3,
               }}
-              {...hoverDayProps(i)}
-            />
+            >
+              {label}
+            </span>
           </div>
         ))}
+        {hoveredDay !== null && (
+          <div
+            style={{
+              position: "absolute",
+              left: `${((hoveredDay + 0.5) / days.length) * 100}%`,
+              top: 0,
+              bottom: 0,
+              width: 0,
+              borderLeft: "1px dashed var(--ink-faint)",
+              pointerEvents: "none",
+            }}
+          />
+        )}
+        <div
+          style={{
+            display: "flex",
+            gap: 3,
+            alignItems: "flex-end",
+            height: 36,
+          }}
+        >
+          {days.map(({ key, m }, i) => (
+            <div
+              key={key}
+              style={{
+                flex: 1,
+                position: "relative",
+                height: "100%",
+                display: "flex",
+                alignItems: "flex-end",
+              }}
+            >
+              {hoveredDay === i && (
+                <ChartTooltip
+                  align={i < 2 ? "start" : i > days.length - 3 ? "end" : "center"}
+                >
+                  {key} ·{" "}
+                  {m?.readiness != null
+                    ? `${m.readiness} ${m.zone ?? ""}`.trim()
+                    : "no data"}
+                </ChartTooltip>
+              )}
+              <div
+                style={{
+                  width: "100%",
+                  height:
+                    m?.readiness != null
+                      ? Math.max(3, (m.readiness / 100) * 32)
+                      : 2,
+                  background:
+                    m?.zone && m.readiness != null
+                      ? (ZONE_COLORS[m.zone] ?? "var(--border)")
+                      : "var(--border)",
+                  borderRadius: 2,
+                  opacity: hoveredDay === null || hoveredDay === i ? 1 : 0.5,
+                  boxShadow: hoveredDay === i ? "0 0 0 1.5px var(--ink)" : "none",
+                  cursor: "pointer",
+                  transition: "opacity 0.1s",
+                }}
+                {...hoverDayProps(i)}
+              />
+            </div>
+          ))}
+        </div>
       </div>
       {footerParts.length > 0 && (
         <div style={{ fontSize: 10, color: "var(--ink-muted)", marginTop: 8 }}>

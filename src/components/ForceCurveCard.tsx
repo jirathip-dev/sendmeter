@@ -56,11 +56,44 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
     fitted = parts.join(" ");
   }
 
+  const yTicks = [0, yMax / 2, yMax];
+  const xTicks = [1, 10, 60, 120].filter((t) => Math.log10(t) <= tMax + 0.01);
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
-      <text x={2} y={PAD.top + 4} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
-        {yMax.toFixed(0)}kg
-      </text>
+      {/* axis gridlines */}
+      {yTicks.map((v, i) => (
+        <g key={`y-${i}`}>
+          <line
+            x1={PAD.left}
+            y1={py(v)}
+            x2={W - PAD.right}
+            y2={py(v)}
+            style={{ stroke: "var(--hairline)" }}
+            strokeWidth={1}
+          />
+          <text
+            x={2}
+            y={py(v) + (i === yTicks.length - 1 ? 4 : i === 0 ? -2 : 2.5)}
+            fontSize={7.5}
+            style={{ fill: "var(--ink-faint)" }}
+          >
+            {v.toFixed(0)}
+            {i === yTicks.length - 1 ? "kg" : ""}
+          </text>
+        </g>
+      ))}
+      {xTicks.map((t) => (
+        <line
+          key={`x-${t}`}
+          x1={px(t)}
+          y1={PAD.top}
+          x2={px(t)}
+          y2={H - PAD.bottom}
+          style={{ stroke: "var(--hairline)" }}
+          strokeWidth={1}
+        />
+      ))}
       {model.cf !== null && (
         <>
           <line
@@ -104,20 +137,29 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
           {...hoverProps(i)}
         />
       ))}
-      {[1, 10, 60, 120]
-        .filter((t) => Math.log10(t) <= tMax + 0.01)
-        .map((t) => (
-          <text
-            key={t}
-            x={px(t)}
-            y={H - 5}
-            fontSize={8}
-            style={{ fill: "var(--ink-faint)" }}
-            textAnchor="middle"
-          >
-            {t}s
-          </text>
-        ))}
+      {xTicks.map((t) => (
+        <text
+          key={t}
+          x={px(t)}
+          y={H - 5}
+          fontSize={8}
+          style={{ fill: "var(--ink-faint)" }}
+          textAnchor="middle"
+        >
+          {t}s
+        </text>
+      ))}
+      {hovered !== null && pts[hovered] && (
+        <line
+          x1={px(pts[hovered]!.windowS)}
+          y1={PAD.top}
+          x2={px(pts[hovered]!.windowS)}
+          y2={H - PAD.bottom}
+          style={{ stroke: "var(--ink-faint)" }}
+          strokeDasharray="2 2"
+          strokeWidth={1}
+        />
+      )}
       {hovered !== null && pts[hovered] && (
         <SvgChartTooltip
           x={px(pts[hovered]!.windowS)}

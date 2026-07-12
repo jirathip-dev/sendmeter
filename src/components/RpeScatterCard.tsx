@@ -4,11 +4,20 @@ import { useChartHover } from "../hooks/useChartHover";
 import SvgChartTooltip from "./SvgChartTooltip";
 import type { RpePair } from "../types";
 
-const S = 140;
-const PAD = 14;
+const W = 150;
+const H = 150;
+const PAD_LEFT = 20;
+const PAD_RIGHT = 8;
+const PAD_TOP = 8;
+const PAD_BOTTOM = 18;
+const TICKS = [1, 4, 7, 10];
 
-function pos(v: number): number {
-  return PAD + ((v - 1) / 9) * (S - 2 * PAD);
+function px(v: number): number {
+  return PAD_LEFT + ((v - 1) / 9) * (W - PAD_LEFT - PAD_RIGHT);
+}
+
+function py(v: number): number {
+  return PAD_TOP + (1 - (v - 1) / 9) * (H - PAD_TOP - PAD_BOTTOM);
 }
 
 export default function RpeScatterCard() {
@@ -72,13 +81,53 @@ export default function RpeScatterCard() {
         RPE Model
       </div>
       <div style={{ maxWidth: 220 }}>
-        <svg viewBox={`0 0 ${S} ${S}`} style={{ width: "100%", display: "block" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+          {/* axis gridlines + ticks */}
+          {TICKS.map((v) => (
+            <g key={`grid-${v}`}>
+              <line
+                x1={PAD_LEFT}
+                y1={py(v)}
+                x2={W - PAD_RIGHT}
+                y2={py(v)}
+                style={{ stroke: "var(--hairline)" }}
+                strokeWidth={1}
+              />
+              <line
+                x1={px(v)}
+                y1={PAD_TOP}
+                x2={px(v)}
+                y2={H - PAD_BOTTOM}
+                style={{ stroke: "var(--hairline)" }}
+                strokeWidth={1}
+              />
+              <text
+                x={px(v)}
+                y={H - PAD_BOTTOM + 9}
+                fontSize={6.5}
+                style={{ fill: "var(--ink-faint)" }}
+                textAnchor="middle"
+              >
+                {v}
+              </text>
+              <text
+                x={PAD_LEFT - 4}
+                y={py(v) + 2}
+                fontSize={6.5}
+                style={{ fill: "var(--ink-faint)" }}
+                textAnchor="end"
+              >
+                {v}
+              </text>
+            </g>
+          ))}
+
           {/* perfect-prediction diagonal */}
           <line
-            x1={pos(1)}
-            y1={S - pos(1)}
-            x2={pos(10)}
-            y2={S - pos(10)}
+            x1={px(1)}
+            y1={py(1)}
+            x2={px(10)}
+            y2={py(10)}
             style={{ stroke: "var(--ink-faint)" }}
             strokeDasharray="3 3"
             strokeWidth={1}
@@ -86,8 +135,8 @@ export default function RpeScatterCard() {
           {pairs.map((p, i) => (
             <circle
               key={i}
-              cx={pos(p.predicted)}
-              cy={S - pos(p.confirmed)}
+              cx={px(p.predicted)}
+              cy={py(p.confirmed)}
               r={hovered === i ? 5 : 3}
               fill="#5B5FC7"
               opacity={
@@ -99,25 +148,31 @@ export default function RpeScatterCard() {
               {...hoverProps(i)}
             />
           ))}
-          <text x={S / 2} y={S - 1} fontSize={7} style={{ fill: "var(--ink-faint)" }} textAnchor="middle">
-            predicted →
+          <text
+            x={W - PAD_RIGHT}
+            y={H - 2}
+            fontSize={6.5}
+            style={{ fill: "var(--ink-faint)" }}
+            textAnchor="end"
+          >
+            predicted
           </text>
           <text
-            x={5}
-            y={S / 2}
-            fontSize={7}
+            x={4}
+            y={PAD_TOP + 2}
+            fontSize={6.5}
             style={{ fill: "var(--ink-faint)" }}
-            textAnchor="middle"
-            transform={`rotate(-90 5 ${S / 2})`}
+            textAnchor="start"
+            transform={`rotate(-90 4 ${PAD_TOP + 2})`}
           >
-            confirmed →
+            confirmed
           </text>
           {hoveredPair && (
             <SvgChartTooltip
-              x={pos(hoveredPair.predicted)}
-              y={S - pos(hoveredPair.confirmed)}
-              viewW={S}
-              viewH={S}
+              x={px(hoveredPair.predicted)}
+              y={py(hoveredPair.confirmed)}
+              viewW={W}
+              viewH={H}
               lines={[
                 `pred ${hoveredPair.predicted.toFixed(1)}`,
                 `you said ${hoveredPair.confirmed}`,

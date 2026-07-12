@@ -75,15 +75,33 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
   };
 
   const hoveredR = hovered !== null ? sorted[hovered] : undefined;
+  const yMid = (yMin + yMax) / 2;
+  const yTicks = [yMin, yMid, yMax];
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
-      <text x={2} y={PAD_TOP + 3} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
-        {yMax.toFixed(0)}kg
-      </text>
-      <text x={2} y={H - PAD_BOTTOM} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
-        {yMin.toFixed(0)}
-      </text>
+      {/* y-axis gridlines */}
+      {yTicks.map((v, i) => (
+        <g key={i}>
+          <line
+            x1={PAD_LEFT}
+            y1={py(v)}
+            x2={W - PAD_RIGHT}
+            y2={py(v)}
+            style={{ stroke: "var(--hairline)" }}
+            strokeWidth={1}
+          />
+          <text
+            x={2}
+            y={py(v) + (i === 0 ? -2 : i === yTicks.length - 1 ? 7 : 2.5)}
+            fontSize={7.5}
+            style={{ fill: "var(--ink-faint)" }}
+          >
+            {v.toFixed(0)}
+            {i === yTicks.length - 1 ? "kg" : ""}
+          </text>
+        </g>
+      ))}
       <polyline
         points={points}
         fill="none"
@@ -124,6 +142,17 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
       >
         {fmtDate(tMax)}
       </text>
+      {hovered !== null && (
+        <line
+          x1={px(xs[hovered]!)}
+          y1={PAD_TOP}
+          x2={px(xs[hovered]!)}
+          y2={H - PAD_BOTTOM}
+          style={{ stroke: "var(--ink-faint)" }}
+          strokeDasharray="2 2"
+          strokeWidth={1}
+        />
+      )}
       {hoveredR && hovered !== null && (
         <SvgChartTooltip
           x={px(xs[hovered]!)}
