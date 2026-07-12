@@ -26,14 +26,35 @@ export default function RpeScatterCard() {
     };
   }, []);
 
-  if (pairs.length < 3) return null;
+  // Empty state: the feature should be discoverable before enough data exists
+  if (pairs.length < 3) {
+    return (
+      <div className="card">
+        <div
+          style={{
+            fontSize: 9,
+            color: "var(--ink-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+            marginBottom: 8,
+          }}
+        >
+          RPE Model
+        </div>
+        <div style={{ fontSize: 11, color: "var(--ink-muted)", lineHeight: 1.5 }}>
+          Shows predicted vs. confirmed RPE for your auto-tracked workouts,
+          once you've confirmed at least 3 ({pairs.length}/3 so far).
+        </div>
+      </div>
+    );
+  }
 
   const mae =
     pairs.reduce((s, p) => s + Math.abs(p.predicted - p.confirmed), 0) /
     pairs.length;
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card">
       <div
         style={{
           fontSize: 9,

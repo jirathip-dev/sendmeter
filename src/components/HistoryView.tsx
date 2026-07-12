@@ -1,4 +1,6 @@
+import { useState, type CSSProperties } from "react";
 import type { Session } from "../types";
+import RpeScatterCard from "./RpeScatterCard";
 import SessionRow from "./SessionRow";
 
 interface Props {
@@ -7,11 +9,24 @@ interface Props {
   onOpenTrash: () => void;
 }
 
+const HEADER_BTN_STYLE: CSSProperties = {
+  background: "none",
+  border: "none",
+  color: "var(--ink-faint)",
+  fontSize: 9,
+  textTransform: "uppercase",
+  letterSpacing: "0.08em",
+  cursor: "pointer",
+  padding: 4,
+  fontFamily: "Inter, sans-serif",
+};
+
 export default function HistoryView({
   sessions,
   onDelete,
   onOpenTrash,
 }: Props) {
+  const [showRpeModel, setShowRpeModel] = useState(false);
   const total = sessions.reduce((s, x) => s + x.load, 0);
   return (
     <div>
@@ -23,22 +38,14 @@ export default function HistoryView({
         }}
       >
         <div className="section-head">HISTORY</div>
-        <button
-          onClick={onOpenTrash}
-          style={{
-            background: "none",
-            border: "none",
-            color: "var(--ink-faint)",
-            fontSize: 9,
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            cursor: "pointer",
-            padding: 4,
-            fontFamily: "Inter, sans-serif",
-          }}
-        >
-          Trash
-        </button>
+        <div style={{ display: "flex", gap: 4 }}>
+          <button style={HEADER_BTN_STYLE} onClick={() => setShowRpeModel(true)}>
+            RPE Model
+          </button>
+          <button style={HEADER_BTN_STYLE} onClick={onOpenTrash}>
+            Trash
+          </button>
+        </div>
       </div>
       <div className="section-sub">
         {sessions.length} sessions · {total.toLocaleString()} AU total
@@ -58,6 +65,33 @@ export default function HistoryView({
       {sessions.map((s) => (
         <SessionRow key={s.id} s={s} onDelete={onDelete} />
       ))}
+
+      {showRpeModel && (
+        <div
+          className="modal-bg"
+          onClick={(e) => e.target === e.currentTarget && setShowRpeModel(false)}
+        >
+          <div className="modal-sheet">
+            <div className="modal-handle" />
+            <div
+              style={{
+                fontFamily: "Inter, sans-serif",
+                fontSize: 20,
+                fontWeight: 800,
+                marginBottom: 12,
+              }}
+            >
+              RPE Model
+            </div>
+            <RpeScatterCard />
+            <div style={{ marginTop: 12 }}>
+              <button className="btn-ghost" onClick={() => setShowRpeModel(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

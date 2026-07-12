@@ -7,7 +7,6 @@ import type {
 } from "../types";
 import ReadinessCard from "./ReadinessCard";
 import RecoveryStatsCard from "./RecoveryStatsCard";
-import RpeScatterCard from "./RpeScatterCard";
 import SessionRow from "./SessionRow";
 
 interface Props {
@@ -263,9 +262,6 @@ export default function Dashboard({
         <ReadinessCard />
         <RecoveryStatsCard />
       </div>
-
-      {/* RPE model quality — only appears once you have enough confirmed workouts */}
-      <RpeScatterCard />
 
       {/* Log button */}
       <button
