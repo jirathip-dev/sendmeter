@@ -8,14 +8,16 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync": "cap sync ios"
   },
   "dependencies": {
     "@capacitor-community/bluetooth-le": "^8.2.0",
     "@capacitor/core": "^8.4.1",
     "@supabase/supabase-js": "^2.110.2",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "sendlog-auth-bridge": "file:native-plugins/sendlog-auth-bridge"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.1",
