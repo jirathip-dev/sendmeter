@@ -50,6 +50,11 @@ struct WorkoutLiveView: View {
                         .font(.title3).monospacedDigit()
                 }
 
+                // Rest timer between boulders, right under the header so it's
+                // reachable the instant you drop off the wall — no scrolling.
+                // It never touches the workout clock above.
+                RestTimer()
+
                 HStack {
                     VStack(alignment: .leading) {
                         Text("BOULDERS").font(.system(size: 10)).foregroundStyle(.secondary)
@@ -69,10 +74,6 @@ struct WorkoutLiveView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                     Spacer()
                 }
-
-                // Rest timer between boulders — the workout clock above
-                // keeps running the whole time; this is a separate countdown.
-                RestTimer()
 
                 Button(ending ? "Ending…" : "End Workout") {
                     ending = true
