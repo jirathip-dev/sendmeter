@@ -11,16 +11,62 @@ html, body { height: 100%; overflow: hidden; }
   overflow: hidden;
 }
 
-/* Desktop: centered app column instead of a stretched phone layout */
+/* Stacks on mobile, two columns on desktop */
+.grid-2-desktop > * + * { margin-top: 10px; }
+
+/* Desktop: proper web layout — nav moves to the top, content widens */
 @media (min-width: 720px) {
   body { background: #06080b; }
   .app-shell {
-    max-width: 640px;
+    max-width: 960px;
     margin: 0 auto;
-    border-left: 1px solid #1a2030;
-    border-right: 1px solid #1a2030;
+    border-left: 1px solid #141b26;
+    border-right: 1px solid #141b26;
   }
-  .content-area { padding: 20px 24px 12px; }
+  .content-area { padding: 24px 32px 16px; }
+
+  /* nav becomes a horizontal bar under the topbar */
+  .topbar { order: -2; }
+  .bottom-nav {
+    order: -1;
+    justify-content: flex-start;
+    gap: 2px;
+    padding: 0 20px;
+    padding-bottom: 0;
+    border-top: none;
+    border-bottom: 1px solid #1a2030;
+    background: #0a0c10;
+  }
+  .nav-item {
+    flex: none;
+    flex-direction: row;
+    gap: 7px;
+    padding: 12px 16px;
+    border-bottom: 2px solid transparent;
+  }
+  .nav-item.active { border-bottom-color: #4ade80; }
+  .nav-icon { font-size: 13px; }
+  .nav-label { font-size: 10px; }
+  .content-area { order: 0; }
+
+  .grid-2-desktop {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    align-items: start;
+  }
+  .grid-2-desktop > * + * { margin-top: 0; }
+
+  /* desktop modals: centered dialog instead of a phone bottom sheet */
+  .modal-bg { justify-content: center; align-items: center; }
+  .modal-sheet {
+    border: 1px solid #1e2d40;
+    border-radius: 14px;
+    max-width: 560px;
+    width: 100%;
+    max-height: 86vh;
+  }
+  .modal-handle { display: none; }
 }
 
 /* Top bar */

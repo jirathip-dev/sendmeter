@@ -14,7 +14,6 @@ import Dashboard from "./components/Dashboard";
 import HistoryView from "./components/HistoryView";
 import LoginScreen from "./components/LoginScreen";
 import LogForm from "./components/LogForm";
-import LogView from "./components/LogView";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
 import AccountSheet from "./components/AccountSheet";
@@ -62,6 +61,7 @@ function AuthedApp({
 
   const [view, setView] = useState<ViewId>("dashboard");
   const [showModal, setShowModal] = useState(false);
+  const [showPhases, setShowPhases] = useState(false);
   const [showWatchSheet, setShowWatchSheet] = useState(false);
   const [importDismissed, setImportDismissed] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -104,7 +104,6 @@ function AuthedApp({
 
   function openLog() {
     setForm((f) => ({ ...f, phase: currentPhase }));
-    if (view === "log") return;
     setShowModal(true);
   }
 
@@ -137,36 +136,47 @@ function AuthedApp({
           <div className="topbar-sub">Climbing Periodization</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ textAlign: "right" }}>
-            <div
-              style={{
-                fontSize: 9,
-                color: "#4a5a70",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-              }}
-            >
-              Phase / Day
-            </div>
-            <div
-              style={{
-                fontSize: 13,
-                color: phase.color,
-                fontFamily: "'Syne', sans-serif",
-                fontWeight: 800,
-              }}
-            >
-              {phase.name} · {phaseDays}
-            </div>
-          </div>
           <div
             style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: phase.color,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              cursor: "pointer",
             }}
-          />
+            title="Change training phase"
+            onClick={() => setShowPhases(true)}
+          >
+            <div style={{ textAlign: "right" }}>
+              <div
+                style={{
+                  fontSize: 9,
+                  color: "#4a5a70",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.08em",
+                }}
+              >
+                Phase / Day
+              </div>
+              <div
+                style={{
+                  fontSize: 13,
+                  color: phase.color,
+                  fontFamily: "'Syne', sans-serif",
+                  fontWeight: 800,
+                }}
+              >
+                {phase.name} · {phaseDays}
+              </div>
+            </div>
+            <div
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                background: phase.color,
+              }}
+            />
+          </div>
           <button
             onClick={() => setShowWatchSheet(true)}
             style={{
@@ -258,16 +268,7 @@ function AuthedApp({
                 sessions={sessions}
                 onDelete={(id) => void removeSession(id)}
                 onLog={openLog}
-              />
-            )}
-            {view === "log" && (
-              <LogView form={form} setForm={setForm} onSubmit={submitSession} />
-            )}
-            {view === "phases" && (
-              <PhasesView
-                currentPhase={currentPhase}
-                phasePeriods={phasePeriods}
-                onSetPhase={(id) => void setPhase(id)}
+                onOpenPhases={() => setShowPhases(true)}
               />
             )}
             {view === "history" && (
@@ -289,10 +290,7 @@ function AuthedApp({
           <button
             key={n.id}
             className={`nav-item ${view === n.id ? "active" : ""}`}
-            onClick={() => {
-              setView(n.id);
-              if (n.id === "log") setShowModal(false);
-            }}
+            onClick={() => setView(n.id)}
           >
             <span className="nav-icon">{n.icon}</span>
             <span className="nav-label">{n.label}</span>
@@ -325,6 +323,28 @@ function AuthedApp({
             <div style={{ marginTop: 10 }}>
               <button className="btn-ghost" onClick={() => setShowModal(false)}>
                 Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Phases bottom sheet */}
+      {showPhases && (
+        <div
+          className="modal-bg"
+          onClick={(e) => e.target === e.currentTarget && setShowPhases(false)}
+        >
+          <div className="modal-sheet">
+            <div className="modal-handle" />
+            <PhasesView
+              currentPhase={currentPhase}
+              phasePeriods={phasePeriods}
+              onSetPhase={(id) => void setPhase(id)}
+            />
+            <div style={{ marginTop: 10 }}>
+              <button className="btn-ghost" onClick={() => setShowPhases(false)}>
+                Close
               </button>
             </div>
           </div>

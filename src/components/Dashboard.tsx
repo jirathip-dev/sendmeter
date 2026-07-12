@@ -18,6 +18,7 @@ interface Props {
   sessions: Session[];
   onDelete: (id: string) => void;
   onLog: () => void;
+  onOpenPhases: () => void;
 }
 
 export default function Dashboard({
@@ -29,19 +30,23 @@ export default function Dashboard({
   sessions,
   onDelete,
   onLog,
+  onOpenPhases,
 }: Props) {
   const recent = sessions.slice(0, 6);
   const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
 
   return (
     <div>
-      {/* Phase strip */}
+      {/* Phase strip — tap to change phase */}
       <div
         className="phase-banner"
+        title="Change training phase"
+        onClick={onOpenPhases}
         style={{
           background: phase.bg,
           border: `1px solid ${phase.border}`,
           marginBottom: 10,
+          cursor: "pointer",
         }}
       >
         <div
@@ -252,11 +257,9 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Readiness + model quality (each hidden until data exists) */}
-      <div style={{ marginBottom: 10 }}>
+      {/* Readiness + model quality */}
+      <div className="grid-2-desktop" style={{ marginBottom: 10 }}>
         <ReadinessCard />
-      </div>
-      <div style={{ marginBottom: 10 }}>
         <RpeScatterCard />
       </div>
 

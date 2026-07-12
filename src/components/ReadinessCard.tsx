@@ -25,7 +25,41 @@ export default function ReadinessCard() {
     };
   }, []);
 
-  if (metrics.length === 0) return null;
+  // Empty state: the feature should be discoverable before any watch data
+  if (metrics.length === 0) {
+    return (
+      <div className="card">
+        <div
+          style={{
+            fontSize: 9,
+            color: "#4a5a70",
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+            marginBottom: 8,
+          }}
+        >
+          Readiness
+        </div>
+        <div
+          style={{
+            fontFamily: "'Syne', sans-serif",
+            fontSize: 38,
+            fontWeight: 800,
+            color: "#2a3a50",
+            letterSpacing: "-0.04em",
+            lineHeight: 1,
+          }}
+        >
+          —
+        </div>
+        <div style={{ fontSize: 11, color: "#7a8a9a", marginTop: 10, lineHeight: 1.5 }}>
+          Daily recovery score from HRV, resting heart rate, and sleep — blended
+          with your climbing load. Wear your Apple Watch overnight and open the
+          Send Log watch app to compute it.
+        </div>
+      </div>
+    );
+  }
 
   const latest = metrics[metrics.length - 1]!;
   const color = latest.zone ? (ZONE_COLORS[latest.zone] ?? "#64748b") : "#64748b";

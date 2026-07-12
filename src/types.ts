@@ -1,5 +1,5 @@
 export type PhaseId = "capacity" | "strength" | "power" | "execution";
-export type ViewId = "dashboard" | "log" | "phases" | "history" | "tindeq";
+export type ViewId = "dashboard" | "history" | "tindeq";
 
 export interface Phase {
   id: PhaseId;

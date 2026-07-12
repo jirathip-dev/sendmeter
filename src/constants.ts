@@ -80,8 +80,6 @@ export const SESSION_TYPES: SessionType[] = [
 
 export const NAV: NavItem[] = [
   { id: "dashboard", icon: "⬡", label: "Home" },
-  { id: "log", icon: "+", label: "Log" },
   { id: "tindeq", icon: "◉", label: "Tindeq" },
-  { id: "phases", icon: "◈", label: "Phases" },
   { id: "history", icon: "≡", label: "History" },
 ];
