@@ -8,6 +8,7 @@ import {
 import type { ForceCurveModel, TrainingQuality } from "../lib/force-curve";
 import { fetchRecordingSamples } from "../lib/repo";
 import { useChartHover } from "../hooks/useChartHover";
+import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
 import type { TindeqRecordingMeta } from "../types";
 
@@ -36,12 +37,13 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
   const tMin = Math.log10(pts[0]!.windowS);
   const tMax = Math.log10(Math.max(pts[pts.length - 1]!.windowS, 10));
   const yMax = model.maxF * 1.1;
+  // x is log-scaled (window size spans 1-120s) so it stays a custom
+  // function; useSvgScale only covers linear scales.
   const px = (w: number) =>
     PAD.left +
     ((Math.log10(w) - tMin) / Math.max(tMax - tMin, 0.01)) *
       (W - PAD.left - PAD.right);
-  const py = (kg: number) =>
-    PAD.top + (1 - kg / yMax) * (H - PAD.top - PAD.bottom);
+  const { y: py } = useSvgScale(W, H, PAD, 0, 1, 0, yMax);
 
   // fitted hyperbola sampled along the axis
   let fitted = "";
@@ -203,15 +205,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
-      <div
-        style={{
-          fontSize: 9,
-          color: "var(--ink-muted)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          marginBottom: 10,
-        }}
-      >
+      <div className="label-eyebrow" style={{ marginBottom: 10 }}>
         Force Curve · {tag}
       </div>
 
@@ -230,7 +224,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
             {computing ? "Computing…" : "Compute Force Curve"}
           </button>
           {error && (
-            <div style={{ fontSize: 11, color: "#FF453A", marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 8 }}>
               {error}
             </div>
           )}
@@ -245,7 +239,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
                 <div
                   style={{
                     fontSize: 10,
-                    color: "#FFB800",
+                    color: "var(--warning)",
                     background: "rgba(255,184,0,0.08)",
                     border: "1px solid rgba(255,184,0,0.25)",
                     borderRadius: 6,
@@ -291,7 +285,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
             </span>
             <span>
               CF{" "}
-              <span style={{ color: "#FF9500" }}>
+              <span style={{ color: "var(--orange)" }}>
                 {model.cf !== null ? `${model.cf.toFixed(1)} kg` : "—"}
               </span>
             </span>
@@ -311,9 +305,9 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
                 className="tag"
                 onClick={() => setQuality(q.id)}
                 style={{
-                  background: quality === q.id ? "#5B5FC7" : "var(--surface-1)",
+                  background: quality === q.id ? "var(--primary)" : "var(--surface-1)",
                   color: quality === q.id ? "#ffffff" : "var(--ink-muted)",
-                  border: `1px solid ${quality === q.id ? "#5B5FC7" : "var(--border)"}`,
+                  border: `1px solid ${quality === q.id ? "var(--primary)" : "var(--border)"}`,
                   cursor: "pointer",
                   fontFamily: "Inter, sans-serif",
                 }}
@@ -333,7 +327,7 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
                     fontFamily: "Inter, sans-serif",
                     fontSize: 26,
                     fontWeight: 800,
-                    color: "#34C759",
+                    color: "var(--success)",
                   }}
                 >
                   {target.targetKg.toFixed(1)} kg

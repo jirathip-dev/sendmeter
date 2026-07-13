@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { fetchRecordingSamples } from "../lib/repo";
 import { useChartHover } from "../hooks/useChartHover";
+import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
 import type { TindeqRecordingMeta, TindeqSample } from "../types";
 
@@ -11,21 +12,14 @@ interface Props {
 
 const W = 300;
 const H = 80;
-const PAD_LEFT = 26;
-const PAD_RIGHT = 6;
-const PAD_TOP = 6;
-const PAD_BOTTOM = 14;
+const PAD = { top: 6, right: 6, bottom: 14, left: 26 };
 
 function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
   const [hovered, hoverProps] = useChartHover<number>();
-  if (samples.length < 2) return null;
-
-  const tMax = samples[samples.length - 1]!.t || 1;
+  const tMax = (samples.length ? samples[samples.length - 1]!.t : 0) || 1;
   const kgMax = Math.max(...samples.map((s) => s.kg), 1) * 1.08;
-
-  const px = (t: number) => PAD_LEFT + (t / tMax) * (W - PAD_LEFT - PAD_RIGHT);
-  const py = (kg: number) =>
-    PAD_TOP + (1 - kg / kgMax) * (H - PAD_TOP - PAD_BOTTOM);
+  const { x: px, y: py } = useSvgScale(W, H, PAD, 0, tMax, 0, kgMax);
+  if (samples.length < 2) return null;
 
   const points = samples.map((s) => `${px(s.t).toFixed(1)},${py(s.kg).toFixed(1)}`).join(" ");
 
@@ -51,9 +45,9 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
       {yTicks.map((v, i) => (
         <g key={`y-${i}`}>
           <line
-            x1={PAD_LEFT}
+            x1={PAD.left}
             y1={py(v)}
-            x2={W - PAD_RIGHT}
+            x2={W - PAD.right}
             y2={py(v)}
             style={{ stroke: "var(--hairline)" }}
             strokeWidth={1}
@@ -103,9 +97,9 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
         <>
           <line
             x1={px(hoveredSample.t)}
-            y1={PAD_TOP}
+            y1={PAD.top}
             x2={px(hoveredSample.t)}
-            y2={H - PAD_BOTTOM}
+            y2={H - PAD.bottom}
             style={{ stroke: "var(--ink-faint)" }}
             strokeDasharray="2 2"
             strokeWidth={1}
@@ -158,7 +152,7 @@ export default function RecordingRow({ rec, onDelete }: Props) {
         style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
         onClick={() => void toggle()}
       >
-        <div className="session-phase-bar" style={{ background: "#34C759" }} />
+        <div className="session-phase-bar" style={{ background: "var(--success)" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
@@ -176,7 +170,7 @@ export default function RecordingRow({ rec, onDelete }: Props) {
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
-                  color: "#34C759",
+                  color: "var(--success)",
                 }}
               >
                 {rec.peakKg.toFixed(1)} kg
@@ -188,7 +182,7 @@ export default function RecordingRow({ rec, onDelete }: Props) {
                 className="tag"
                 style={{
                   background: "rgba(123,131,235,0.12)",
-                  color: "#7B83EB",
+                  color: "var(--info)",
                   border: "1px solid rgba(123,131,235,0.35)",
                 }}
               >
@@ -200,7 +194,7 @@ export default function RecordingRow({ rec, onDelete }: Props) {
                 className="tag"
                 style={{
                   background: "rgba(255,184,0,0.10)",
-                  color: "#FFB800",
+                  color: "var(--warning)",
                   border: "1px solid rgba(255,184,0,0.3)",
                 }}
               >

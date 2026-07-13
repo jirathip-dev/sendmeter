@@ -116,7 +116,7 @@ export default function SessionRow({ s, onDelete }: Props) {
             </div>
           )}
           {loadError && (
-            <div style={{ fontSize: 10, color: "#FF453A", marginTop: 8 }}>
+            <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 8 }}>
               Failed to load workout
             </div>
           )}
@@ -145,7 +145,7 @@ export default function SessionRow({ s, onDelete }: Props) {
             </div>
           )}
           {loadError && (
-            <div style={{ fontSize: 10, color: "#FF453A" }}>
+            <div style={{ fontSize: 10, color: "var(--danger)" }}>
               Failed to load recordings
             </div>
           )}
@@ -171,13 +171,13 @@ export default function SessionRow({ s, onDelete }: Props) {
                   hour: "2-digit",
                   minute: "2-digit",
                 })}
-                {r.tag && <span style={{ color: "#7B83EB" }}> {r.tag}</span>}
+                {r.tag && <span style={{ color: "var(--info)" }}> {r.tag}</span>}
                 {r.side && (
-                  <span style={{ color: "#FFB800" }}> {sideLabel(r.side)}</span>
+                  <span style={{ color: "var(--warning)" }}> {sideLabel(r.side)}</span>
                 )}
               </span>
               <span>
-                <span style={{ color: "#34C759" }}>{r.peakKg.toFixed(1)}kg</span>{" "}
+                <span style={{ color: "var(--success)" }}>{r.peakKg.toFixed(1)}kg</span>{" "}
                 · {(r.durationMs / 1000).toFixed(0)}s
               </span>
             </div>

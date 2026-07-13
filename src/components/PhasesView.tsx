@@ -20,11 +20,11 @@ function periodDays(p: PhasePeriod): number {
 }
 
 const ZONES = [
-  { range: "< 0.7", label: "Under-training", color: "#7B83EB" },
-  { range: "0.7–0.8", label: "Low — build carefully", color: "#7B83EB" },
-  { range: "0.8–1.3", label: "Optimal — safe progression", color: "#34C759" },
-  { range: "1.3–1.5", label: "Caution — monitor closely", color: "#FFB800" },
-  { range: "> 1.5", label: "Danger — injury risk", color: "#FF453A" },
+  { range: "< 0.7", label: "Under-training", color: "var(--info)" },
+  { range: "0.7–0.8", label: "Low — build carefully", color: "var(--info)" },
+  { range: "0.8–1.3", label: "Optimal — safe progression", color: "var(--success)" },
+  { range: "1.3–1.5", label: "Caution — monitor closely", color: "var(--warning)" },
+  { range: "> 1.5", label: "Danger — injury risk", color: "var(--danger)" },
 ];
 
 export default function PhasesView({

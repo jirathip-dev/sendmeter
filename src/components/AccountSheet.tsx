@@ -2,6 +2,7 @@ import { useState } from "react";
 import { deleteAccount } from "../lib/repo";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
+import Sheet from "./Sheet";
 import ThemeSection from "./ThemeSection";
 
 interface Props {
@@ -57,22 +58,17 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   }
 
   return (
-    <div
-      className="modal-bg"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="modal-sheet">
-        <div className="modal-handle" />
-        <div
-          style={{
-            fontFamily: "Inter, sans-serif",
-            fontSize: 20,
-            fontWeight: 800,
-            marginBottom: 6,
-          }}
-        >
-          Account
-        </div>
+    <Sheet onClose={onClose}>
+      <div
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: 20,
+          fontWeight: 800,
+          marginBottom: 6,
+        }}
+      >
+        Account
+      </div>
 
         <ThemeSection />
 
@@ -85,7 +81,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
           }}
         >
           {done ? (
-            <div style={{ fontSize: 12, color: "#34C759" }}>
+            <div style={{ fontSize: 12, color: "var(--success)" }}>
               Password set. Use it to sign in on the iPhone app. Web login
               keeps using magic links. The Watch app now signs in
               automatically from your iPhone — this password is only a
@@ -171,7 +167,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
           <div
             style={{
               fontSize: 10,
-              color: "#FF453A",
+              color: "var(--danger)",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               marginBottom: 8,
@@ -189,7 +185,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 disabled={deleting}
                 onClick={() => void runDelete()}
                 style={{
-                  background: "#FF453A",
+                  background: "var(--danger)",
                   color: "#ffffff",
                   border: "none",
                   padding: "13px 20px",
@@ -218,7 +214,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               className="btn-ghost"
               style={{
                 borderColor: "rgba(255,69,58,0.35)",
-                color: "#FF453A",
+                color: "var(--danger)",
               }}
               onClick={() => setConfirmingDelete(true)}
             >
@@ -228,17 +224,16 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         </div>
 
         {error && (
-          <div style={{ fontSize: 11, color: "#FF453A", marginTop: 10 }}>
+          <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 10 }}>
             {error}
           </div>
         )}
 
-        <div style={{ marginTop: 14 }}>
-          <button className="btn-ghost" onClick={onClose}>
-            Close
-          </button>
-        </div>
+      <div style={{ marginTop: 14 }}>
+        <button className="btn-ghost" onClick={onClose}>
+          Close
+        </button>
       </div>
-    </div>
+    </Sheet>
   );
 }

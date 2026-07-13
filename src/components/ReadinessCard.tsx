@@ -1,48 +1,30 @@
-import { useEffect, useState } from "react";
-import { fetchHealthMetrics } from "../lib/repo";
 import { useChartHover } from "../hooks/useChartHover";
+import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import { fetchHealthMetrics } from "../lib/repo";
 import ChartTooltip from "./ChartTooltip";
 import type { HealthMetric } from "../types";
 
 const ZONE_COLORS: Record<string, string> = {
-  push: "#34C759",
-  maintain: "#FFB800",
-  recover: "#FF453A",
+  push: "var(--success)",
+  maintain: "var(--warning)",
+  recover: "var(--danger)",
 };
 
 export default function ReadinessCard() {
-  const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [hoveredDay, hoverDayProps] = useChartHover<number>();
   const realtimeVersion = useRealtimeVersion();
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchHealthMetrics(14)
-      .then((m) => {
-        if (!cancelled) setMetrics(m);
-      })
-      .catch(() => {
-        // card stays hidden on error
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [realtimeVersion]);
+  const metrics = useCancellableFetch<HealthMetric[]>(
+    () => fetchHealthMetrics(14),
+    [],
+    realtimeVersion,
+  );
 
   // Empty state: the feature should be discoverable before any watch data
   if (metrics.length === 0) {
     return (
       <div className="card">
-        <div
-          style={{
-            fontSize: 9,
-            color: "var(--ink-muted)",
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-            marginBottom: 8,
-          }}
-        >
+        <div className="label-eyebrow" style={{ marginBottom: 8 }}>
           Readiness
         </div>
         <div
@@ -87,15 +69,7 @@ export default function ReadinessCard() {
 
   return (
     <div className="card">
-      <div
-        style={{
-          fontSize: 9,
-          color: "var(--ink-muted)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          marginBottom: 8,
-        }}
-      >
+      <div className="label-eyebrow" style={{ marginBottom: 8 }}>
         Readiness
       </div>
       <div

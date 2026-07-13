@@ -56,7 +56,7 @@ Put that email/password in the review notes.
 1. Join the Apple Developer Program ($99/yr) with your Apple ID.
 2. App Store Connect → New App ×2:
    - iOS: bundle id `com.jirathip.sendlog`
-   - watchOS: bundle id `com.jirathip.sendlog.SendLogWatch` (or embed the watch
+   - watchOS: bundle id `com.jirathip.sendlog.watchkitapp` (or embed the watch
      app in the iOS listing later — separate listing is simpler to start).
 3. Deploy the web app so the privacy-policy URL is live; paste the URL.
 4. Fill App Privacy per the table above.

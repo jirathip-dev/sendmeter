@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { computeTindeqStats } from "../lib/metrics";
 import { useChartHover } from "../hooks/useChartHover";
+import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
 import type { TindeqRecordingMeta, TindeqSide } from "../types";
 
@@ -14,10 +15,7 @@ interface Props {
 
 const W = 300;
 const H = 120;
-const PAD_TOP = 12;
-const PAD_BOTTOM = 16;
-const PAD_LEFT = 30;
-const PAD_RIGHT = 8;
+const PAD = { top: 12, right: 8, bottom: 16, left: 30 };
 
 function TagChip({
   label,
@@ -33,9 +31,9 @@ function TagChip({
       onClick={onClick}
       className="tag"
       style={{
-        background: active ? "#5B5FC7" : "var(--surface-1)",
+        background: active ? "var(--primary)" : "var(--surface-1)",
         color: active ? "#ffffff" : "var(--ink-muted)",
-        border: `1px solid ${active ? "#5B5FC7" : "var(--border)"}`,
+        border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`,
         cursor: "pointer",
         fontFamily: "Inter, sans-serif",
       }}
@@ -54,10 +52,7 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
   const yMin = Math.min(...peaks) * 0.9;
   const yMax = Math.max(...peaks) * 1.08 || 1;
 
-  const px = (t: number) =>
-    PAD_LEFT + ((t - tMin) / (tMax - tMin)) * (W - PAD_LEFT - PAD_RIGHT);
-  const py = (kg: number) =>
-    PAD_TOP + (1 - (kg - yMin) / (yMax - yMin)) * (H - PAD_TOP - PAD_BOTTOM);
+  const { x: px, y: py } = useSvgScale(W, H, PAD, tMin, tMax, yMin, yMax);
 
   const points = sorted
     .map((r, i) => `${px(xs[i]!).toFixed(1)},${py(r.peakKg).toFixed(1)}`)
@@ -84,9 +79,9 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
       {yTicks.map((v, i) => (
         <g key={i}>
           <line
-            x1={PAD_LEFT}
+            x1={PAD.left}
             y1={py(v)}
-            x2={W - PAD_RIGHT}
+            x2={W - PAD.right}
             y2={py(v)}
             style={{ stroke: "var(--hairline)" }}
             strokeWidth={1}
@@ -130,11 +125,11 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
           PR
         </text>
       )}
-      <text x={PAD_LEFT} y={H - 4} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
+      <text x={PAD.left} y={H - 4} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
         {fmtDate(tMin)}
       </text>
       <text
-        x={W - PAD_RIGHT}
+        x={W - PAD.right}
         y={H - 4}
         fontSize={8}
         style={{ fill: "var(--ink-faint)" }}
@@ -145,9 +140,9 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
       {hovered !== null && (
         <line
           x1={px(xs[hovered]!)}
-          y1={PAD_TOP}
+          y1={PAD.top}
           x2={px(xs[hovered]!)}
-          y2={H - PAD_BOTTOM}
+          y2={H - PAD.bottom}
           style={{ stroke: "var(--ink-faint)" }}
           strokeDasharray="2 2"
           strokeWidth={1}
@@ -204,15 +199,7 @@ export default function TindeqTrendChart({
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
-      <div
-        style={{
-          fontSize: 9,
-          color: "var(--ink-muted)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          marginBottom: 10,
-        }}
-      >
+      <div className="label-eyebrow" style={{ marginBottom: 10 }}>
         Peak Force Trend
       </div>
 
@@ -268,7 +255,7 @@ export default function TindeqTrendChart({
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                   fontSize: 16,
-                  color: "#FFB800",
+                  color: "var(--warning)",
                 }}
               >
                 {stats.bestPeak.toFixed(1)}
@@ -298,8 +285,8 @@ export default function TindeqTrendChart({
                     stats.delta === null
                       ? "var(--ink-muted)"
                       : stats.delta >= 0
-                        ? "#34C759"
-                        : "#FF453A",
+                        ? "var(--success)"
+                        : "var(--danger)",
                 }}
               >
                 {stats.delta === null

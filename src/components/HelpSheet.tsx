@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Sheet from "./Sheet";
 
 interface Props {
   onClose: () => void;
@@ -13,15 +14,7 @@ function Section({
 }) {
   return (
     <div style={{ marginTop: 20 }}>
-      <div
-        style={{
-          fontSize: 9,
-          color: "var(--ink-muted)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          marginBottom: 8,
-        }}
-      >
+      <div className="label-eyebrow" style={{ marginBottom: 8 }}>
         {title}
       </div>
       <div style={{ fontSize: 12, color: "var(--ink-muted)", lineHeight: 1.6 }}>
@@ -33,22 +26,17 @@ function Section({
 
 export default function HelpSheet({ onClose }: Props) {
   return (
-    <div
-      className="modal-bg"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="modal-sheet">
-        <div className="modal-handle" />
-        <div
-          style={{
-            fontFamily: "Inter, sans-serif",
-            fontSize: 20,
-            fontWeight: 800,
-            marginBottom: 4,
-          }}
-        >
-          Help & FAQ
-        </div>
+    <Sheet onClose={onClose}>
+      <div
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: 20,
+          fontWeight: 800,
+          marginBottom: 4,
+        }}
+      >
+        Help & FAQ
+      </div>
         <div style={{ fontSize: 12, color: "var(--ink-faint)" }}>
           How the numbers on your dashboard are actually computed.
         </div>
@@ -107,12 +95,11 @@ export default function HelpSheet({ onClose }: Props) {
           </p>
         </Section>
 
-        <div style={{ marginTop: 20 }}>
-          <button className="btn-ghost" onClick={onClose}>
-            Close
-          </button>
-        </div>
+      <div style={{ marginTop: 20 }}>
+        <button className="btn-ghost" onClick={onClose}>
+          Close
+        </button>
       </div>
-    </div>
+    </Sheet>
   );
 }

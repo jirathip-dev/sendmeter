@@ -136,7 +136,7 @@ export default function LoginScreen() {
                 </>
               )}
               {error && (
-                <div style={{ fontSize: 11, color: "#FF453A", marginTop: 8 }}>
+                <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 8 }}>
                   {error}
                 </div>
               )}

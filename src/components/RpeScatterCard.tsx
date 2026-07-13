@@ -1,58 +1,29 @@
-import { useEffect, useState } from "react";
-import { fetchRpePairs } from "../lib/repo";
 import { useChartHover } from "../hooks/useChartHover";
+import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import { useSvgScale } from "../hooks/useSvgScale";
+import { fetchRpePairs } from "../lib/repo";
 import SvgChartTooltip from "./SvgChartTooltip";
 import type { RpePair } from "../types";
 
 const W = 150;
 const H = 150;
-const PAD_LEFT = 20;
-const PAD_RIGHT = 8;
-const PAD_TOP = 8;
-const PAD_BOTTOM = 18;
+const PAD = { top: 8, right: 8, bottom: 18, left: 20 };
 const TICKS = [1, 4, 7, 10];
 
-function px(v: number): number {
-  return PAD_LEFT + ((v - 1) / 9) * (W - PAD_LEFT - PAD_RIGHT);
-}
-
-function py(v: number): number {
-  return PAD_TOP + (1 - (v - 1) / 9) * (H - PAD_TOP - PAD_BOTTOM);
-}
-
 export default function RpeScatterCard() {
-  const [pairs, setPairs] = useState<RpePair[]>([]);
   const [hovered, hoverProps] = useChartHover<number>();
   const realtimeVersion = useRealtimeVersion();
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchRpePairs()
-      .then((p) => {
-        if (!cancelled) setPairs(p);
-      })
-      .catch(() => {
-        // card simply stays hidden on error
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [realtimeVersion]);
+  // Fixed 1-10 RPE domain on both axes — called unconditionally since the
+  // empty-state early return below happens before any chart is rendered.
+  const { x: px, y: py } = useSvgScale(W, H, PAD, 1, 10, 1, 10);
+  const pairs = useCancellableFetch<RpePair[]>(fetchRpePairs, [], realtimeVersion);
 
   // Empty state: the feature should be discoverable before enough data exists
   if (pairs.length < 3) {
     return (
       <div className="card">
-        <div
-          style={{
-            fontSize: 9,
-            color: "var(--ink-muted)",
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-            marginBottom: 8,
-          }}
-        >
+        <div className="label-eyebrow" style={{ marginBottom: 8 }}>
           RPE Model
         </div>
         <div style={{ fontSize: 11, color: "var(--ink-muted)", lineHeight: 1.5 }}>
@@ -71,15 +42,7 @@ export default function RpeScatterCard() {
 
   return (
     <div className="card">
-      <div
-        style={{
-          fontSize: 9,
-          color: "var(--ink-muted)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          marginBottom: 8,
-        }}
-      >
+      <div className="label-eyebrow" style={{ marginBottom: 8 }}>
         RPE Model
       </div>
       <div style={{ maxWidth: 220 }}>
@@ -88,24 +51,24 @@ export default function RpeScatterCard() {
           {TICKS.map((v) => (
             <g key={`grid-${v}`}>
               <line
-                x1={PAD_LEFT}
+                x1={PAD.left}
                 y1={py(v)}
-                x2={W - PAD_RIGHT}
+                x2={W - PAD.right}
                 y2={py(v)}
                 style={{ stroke: "var(--hairline)" }}
                 strokeWidth={1}
               />
               <line
                 x1={px(v)}
-                y1={PAD_TOP}
+                y1={PAD.top}
                 x2={px(v)}
-                y2={H - PAD_BOTTOM}
+                y2={H - PAD.bottom}
                 style={{ stroke: "var(--hairline)" }}
                 strokeWidth={1}
               />
               <text
                 x={px(v)}
-                y={H - PAD_BOTTOM + 9}
+                y={H - PAD.bottom + 9}
                 fontSize={6.5}
                 style={{ fill: "var(--ink-faint)" }}
                 textAnchor="middle"
@@ -113,7 +76,7 @@ export default function RpeScatterCard() {
                 {v}
               </text>
               <text
-                x={PAD_LEFT - 4}
+                x={PAD.left - 4}
                 y={py(v) + 2}
                 fontSize={6.5}
                 style={{ fill: "var(--ink-faint)" }}
@@ -151,7 +114,7 @@ export default function RpeScatterCard() {
             />
           ))}
           <text
-            x={W - PAD_RIGHT}
+            x={W - PAD.right}
             y={H - 2}
             fontSize={6.5}
             style={{ fill: "var(--ink-faint)" }}
@@ -161,11 +124,11 @@ export default function RpeScatterCard() {
           </text>
           <text
             x={4}
-            y={PAD_TOP + 2}
+            y={PAD.top + 2}
             fontSize={6.5}
             style={{ fill: "var(--ink-faint)" }}
             textAnchor="start"
-            transform={`rotate(-90 4 ${PAD_TOP + 2})`}
+            transform={`rotate(-90 4 ${PAD.top + 2})`}
           >
             confirmed
           </text>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { LogFormState, PhaseId, PhasePeriod, Session } from "../types";
 import { today } from "../lib/dates";
 import * as repo from "../lib/repo";
@@ -16,56 +16,51 @@ export function useTrainingData(userId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const realtimeVersion = useRealtimeVersion();
+  // Guards against a stale in-flight reload clobbering a newer one's state
+  // (e.g. realtimeVersion bumping again before the first fetch resolves).
+  const generationRef = useRef(0);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
+  // No synchronous setState before the first `await` here — the mount/
+  // realtime-version effect below calls this directly (an effect calling
+  // something that sets state synchronously up front causes an avoidable
+  // cascading render).
+  const runFetch = useCallback(async () => {
+    const generation = ++generationRef.current;
     try {
       const [remoteSessions, settings, periods] = await Promise.all([
         repo.fetchSessions(),
         repo.fetchSettings(),
         repo.fetchPhasePeriods(),
       ]);
+      if (generation !== generationRef.current) return;
       setSessions(remoteSessions);
       setCurrentPhase(settings.currentPhase);
       setPhaseStartDate(settings.phaseStartDate);
       setPhasePeriods(periods);
       setError(null);
     } catch (e) {
+      if (generation !== generationRef.current) return;
       setError(e instanceof Error ? e.message : "Failed to load data");
     } finally {
-      setLoading(false);
+      if (generation === generationRef.current) setLoading(false);
     }
   }, []);
 
+  // Public reload, for explicit user-triggered refreshes (e.g. after a
+  // legacy-data import or restoring from Trash) — shows the loading state
+  // immediately rather than waiting on initial state alone.
+  const reload = useCallback(async () => {
+    setLoading(true);
+    await runFetch();
+  }, [runFetch]);
+
   useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      repo.fetchSessions(),
-      repo.fetchSettings(),
-      repo.fetchPhasePeriods(),
-    ])
-      .then(([remoteSessions, settings, periods]) => {
-        if (cancelled) return;
-        setSessions(remoteSessions);
-        setCurrentPhase(settings.currentPhase);
-        setPhaseStartDate(settings.phaseStartDate);
-        setPhasePeriods(periods);
-        setError(null);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to load data");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void (async () => {
+      await runFetch();
+    })();
     // realtimeVersion bumps on any watch-side write (sessions/tindeq/health) —
     // refetch so the web/iOS app picks it up without a manual reload.
-  }, [userId, realtimeVersion]);
+  }, [userId, realtimeVersion, runFetch]);
 
   async function addSession(form: LogFormState) {
     const temp: Session = {

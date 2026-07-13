@@ -17,6 +17,18 @@ import type {
 import { SESSION_TYPES } from "../constants";
 import { today } from "./dates";
 
+/// Throws on a Postgrest error, otherwise returns `data`. Safe for any
+/// query except `.maybeSingle()`, where `data: null` with no error is a
+/// legitimate "no row" result rather than something this cast should paper
+/// over — those call sites keep their own explicit error check.
+function unwrap<T>(result: {
+  data: T | null;
+  error: { message: string } | null;
+}): T {
+  if (result.error) throw result.error;
+  return result.data as T;
+}
+
 type SessionRow = {
   id: string;
   date: string;
@@ -49,42 +61,45 @@ function toSession(r: SessionRow): Session {
 }
 
 export async function fetchSessions(): Promise<Session[]> {
-  const { data, error } = await supabase
-    .from("sessions")
-    .select(SESSION_COLS)
-    .is("deleted_at", null)
-    .order("date", { ascending: false })
-    .order("created_at", { ascending: false });
-  if (error) throw error;
+  const data = unwrap(
+    await supabase
+      .from("sessions")
+      .select(SESSION_COLS)
+      .is("deleted_at", null)
+      .order("date", { ascending: false })
+      .order("created_at", { ascending: false }),
+  );
   return data.map(toSession);
 }
 
 export async function fetchDeletedSessions(): Promise<DeletedSession[]> {
-  const { data, error } = await supabase
-    .from("sessions")
-    .select(`${SESSION_COLS}, deleted_at`)
-    .not("deleted_at", "is", null)
-    .order("deleted_at", { ascending: false });
-  if (error) throw error;
+  const data = unwrap(
+    await supabase
+      .from("sessions")
+      .select(`${SESSION_COLS}, deleted_at`)
+      .not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false }),
+  );
   return data.map((r) => ({ ...toSession(r), deletedAt: r.deleted_at! }));
 }
 
 export async function insertSession(form: LogFormState): Promise<Session> {
   const typeInfo = SESSION_TYPES.find((t) => t.id === form.type);
-  const { data, error } = await supabase
-    .from("sessions")
-    .insert({
-      date: form.date,
-      type: form.type,
-      type_label: typeInfo?.label || form.type,
-      duration_min: form.duration,
-      rpe: form.rpe,
-      note: form.note,
-      phase: form.phase,
-    })
-    .select(SESSION_COLS)
-    .single();
-  if (error) throw error;
+  const data = unwrap<SessionRow>(
+    await supabase
+      .from("sessions")
+      .insert({
+        date: form.date,
+        type: form.type,
+        type_label: typeInfo?.label || form.type,
+        duration_min: form.duration,
+        rpe: form.rpe,
+        note: form.note,
+        phase: form.phase,
+      })
+      .select(SESSION_COLS)
+      .single(),
+  );
   return toSession(data);
 }
 
@@ -97,46 +112,55 @@ export async function insertTindeqSession(input: {
   note: string;
   groupId: string;
 }): Promise<Session> {
-  const { data, error } = await supabase
-    .from("sessions")
-    .insert({
-      date: today(),
-      type: "tindeq",
-      type_label: "Tindeq",
-      duration_min: Math.max(1, Math.min(600, input.durationMin)),
-      rpe: input.rpe,
-      note: input.note,
-      phase: input.phase,
-      group_id: input.groupId,
-    })
-    .select(SESSION_COLS)
-    .single();
-  if (error) throw error;
+  const data = unwrap<SessionRow>(
+    await supabase
+      .from("sessions")
+      .insert({
+        date: today(),
+        type: "tindeq",
+        type_label: "Tindeq",
+        duration_min: Math.max(1, Math.min(600, input.durationMin)),
+        rpe: input.rpe,
+        note: input.note,
+        phase: input.phase,
+        group_id: input.groupId,
+      })
+      .select(SESSION_COLS)
+      .single(),
+  );
   return toSession(data);
 }
 
-/// Soft delete: sets deleted_at so the session can be recovered from Trash.
-export async function deleteSession(id: string): Promise<void> {
-  const { error } = await supabase
-    .from("sessions")
-    .update({ deleted_at: new Date().toISOString() })
-    .eq("id", id);
-  if (error) throw error;
+/// Factory for the soft-delete/restore/purge triplet shared by `sessions`
+/// and `tindeq_recordings` — both tables follow the same `deleted_at`
+/// convention (see the soft_delete migration).
+function makeSoftDeleteOps(table: "sessions" | "tindeq_recordings") {
+  return {
+    /// Soft delete: sets deleted_at so the row can be recovered from Trash.
+    async remove(id: string): Promise<void> {
+      unwrap(
+        await supabase
+          .from(table)
+          .update({ deleted_at: new Date().toISOString() })
+          .eq("id", id),
+      );
+    },
+    async restore(id: string): Promise<void> {
+      unwrap(
+        await supabase.from(table).update({ deleted_at: null }).eq("id", id),
+      );
+    },
+    /// Permanent delete — used only from the Trash view's "Delete forever".
+    async purge(id: string): Promise<void> {
+      unwrap(await supabase.from(table).delete().eq("id", id));
+    },
+  };
 }
 
-export async function restoreSession(id: string): Promise<void> {
-  const { error } = await supabase
-    .from("sessions")
-    .update({ deleted_at: null })
-    .eq("id", id);
-  if (error) throw error;
-}
-
-/// Permanent delete — used only from the Trash view's "Delete forever".
-export async function purgeSession(id: string): Promise<void> {
-  const { error } = await supabase.from("sessions").delete().eq("id", id);
-  if (error) throw error;
-}
+const sessionSoftDelete = makeSoftDeleteOps("sessions");
+export const deleteSession = sessionSoftDelete.remove;
+export const restoreSession = sessionSoftDelete.restore;
+export const purgeSession = sessionSoftDelete.purge;
 
 export interface UserSettings {
   currentPhase: PhaseId;
@@ -156,23 +180,21 @@ export async function fetchSettings(): Promise<UserSettings> {
     };
   }
   const defaults = { current_phase: "capacity", phase_start_date: today() };
-  const { error: upsertError } = await supabase
-    .from("user_settings")
-    .upsert(defaults);
-  if (upsertError) throw upsertError;
+  unwrap(await supabase.from("user_settings").upsert(defaults));
   return { currentPhase: "capacity", phaseStartDate: defaults.phase_start_date };
 }
 
 export async function updateSettings(s: UserSettings): Promise<void> {
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError) throw userError;
-  const { error } = await supabase.from("user_settings").upsert({
-    user_id: userData.user.id,
-    current_phase: s.currentPhase,
-    phase_start_date: s.phaseStartDate,
-    updated_at: new Date().toISOString(),
-  });
-  if (error) throw error;
+  unwrap(
+    await supabase.from("user_settings").upsert({
+      user_id: userData.user.id,
+      current_phase: s.currentPhase,
+      phase_start_date: s.phaseStartDate,
+      updated_at: new Date().toISOString(),
+    }),
+  );
 }
 
 function toPhasePeriod(r: {
@@ -190,12 +212,13 @@ function toPhasePeriod(r: {
 }
 
 export async function fetchPhasePeriods(): Promise<PhasePeriod[]> {
-  const { data, error } = await supabase
-    .from("phase_periods")
-    .select("id, phase, started_on, ended_on")
-    .order("started_on", { ascending: false })
-    .order("created_at", { ascending: false });
-  if (error) throw error;
+  const data = unwrap(
+    await supabase
+      .from("phase_periods")
+      .select("id, phase, started_on, ended_on")
+      .order("started_on", { ascending: false })
+      .order("created_at", { ascending: false }),
+  );
   return data.map(toPhasePeriod);
 }
 
@@ -215,10 +238,11 @@ export async function switchPhase(
   }
 
   if (!open) {
-    const { error } = await supabase
-      .from("phase_periods")
-      .insert({ phase: newPhase, started_on: t });
-    if (error) throw error;
+    unwrap(
+      await supabase
+        .from("phase_periods")
+        .insert({ phase: newPhase, started_on: t }),
+    );
     await syncSettings(t);
   } else if (open.phase === newPhase) {
     // no-op
@@ -229,35 +253,37 @@ export async function switchPhase(
       .sort((a, b) => b.endedOn!.localeCompare(a.endedOn!))[0];
     if (prev && prev.phase === newPhase && prev.endedOn === t) {
       // Undo: delete the sliver first so the one-open index never sees two.
-      const { error: delError } = await supabase
-        .from("phase_periods")
-        .delete()
-        .eq("id", open.id);
-      if (delError) throw delError;
-      const { error: reopenError } = await supabase
-        .from("phase_periods")
-        .update({ ended_on: null })
-        .eq("id", prev.id);
-      if (reopenError) throw reopenError;
+      unwrap(
+        await supabase.from("phase_periods").delete().eq("id", open.id),
+      );
+      unwrap(
+        await supabase
+          .from("phase_periods")
+          .update({ ended_on: null })
+          .eq("id", prev.id),
+      );
       await syncSettings(prev.startedOn);
     } else {
-      const { error } = await supabase
-        .from("phase_periods")
-        .update({ phase: newPhase })
-        .eq("id", open.id);
-      if (error) throw error;
+      unwrap(
+        await supabase
+          .from("phase_periods")
+          .update({ phase: newPhase })
+          .eq("id", open.id),
+      );
       await syncSettings(open.startedOn);
     }
   } else {
-    const { error: closeError } = await supabase
-      .from("phase_periods")
-      .update({ ended_on: t })
-      .eq("id", open.id);
-    if (closeError) throw closeError;
-    const { error: insertError } = await supabase
-      .from("phase_periods")
-      .insert({ phase: newPhase, started_on: t });
-    if (insertError) throw insertError;
+    unwrap(
+      await supabase
+        .from("phase_periods")
+        .update({ ended_on: t })
+        .eq("id", open.id),
+    );
+    unwrap(
+      await supabase
+        .from("phase_periods")
+        .insert({ phase: newPhase, started_on: t }),
+    );
     await syncSettings(t);
   }
 
@@ -275,7 +301,7 @@ export async function switchPhase(
 const RECORDING_COLS =
   "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id";
 
-function toRecording(r: {
+type RecordingRow = {
   id: string;
   recorded_at: string;
   duration_ms: number;
@@ -286,7 +312,9 @@ function toRecording(r: {
   tag: string;
   side: string;
   group_id: string | null;
-}): TindeqRecordingMeta {
+};
+
+function toRecording(r: RecordingRow): TindeqRecordingMeta {
   return {
     id: r.id,
     recordedAt: r.recorded_at,
@@ -303,79 +331,79 @@ function toRecording(r: {
 
 export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
   // samples deliberately excluded — the list view only needs metadata
-  const { data, error } = await supabase
-    .from("tindeq_recordings")
-    .select(RECORDING_COLS)
-    .is("deleted_at", null)
-    .order("recorded_at", { ascending: false });
-  if (error) throw error;
+  const data = unwrap(
+    await supabase
+      .from("tindeq_recordings")
+      .select(RECORDING_COLS)
+      .is("deleted_at", null)
+      .order("recorded_at", { ascending: false }),
+  );
   return data.map(toRecording);
 }
 
 export async function fetchDeletedRecordings(): Promise<
   DeletedTindeqRecording[]
 > {
-  const { data, error } = await supabase
-    .from("tindeq_recordings")
-    .select(`${RECORDING_COLS}, deleted_at`)
-    .not("deleted_at", "is", null)
-    .order("deleted_at", { ascending: false });
-  if (error) throw error;
+  const data = unwrap(
+    await supabase
+      .from("tindeq_recordings")
+      .select(`${RECORDING_COLS}, deleted_at`)
+      .not("deleted_at", "is", null)
+      .order("deleted_at", { ascending: false }),
+  );
   return data.map((r) => ({ ...toRecording(r), deletedAt: r.deleted_at! }));
 }
 
 export async function fetchRecordingsByGroup(
   groupId: string,
 ): Promise<TindeqRecordingMeta[]> {
-  const { data, error } = await supabase
-    .from("tindeq_recordings")
-    .select(RECORDING_COLS)
-    .eq("group_id", groupId)
-    .is("deleted_at", null)
-    .order("recorded_at", { ascending: true });
-  if (error) throw error;
+  const data = unwrap(
+    await supabase
+      .from("tindeq_recordings")
+      .select(RECORDING_COLS)
+      .eq("group_id", groupId)
+      .is("deleted_at", null)
+      .order("recorded_at", { ascending: true }),
+  );
   return data.map(toRecording);
 }
 
 export async function fetchRecordingSamples(
   id: string,
 ): Promise<TindeqSample[]> {
-  const { data, error } = await supabase
-    .from("tindeq_recordings")
-    .select("samples")
-    .eq("id", id)
-    .single();
-  if (error) throw error;
-  return (data.samples as [number, number][]).map(([t, kg]) => ({ t, kg }));
+  const data = unwrap<{ samples: [number, number][] }>(
+    await supabase.from("tindeq_recordings").select("samples").eq("id", id).single(),
+  );
+  return data.samples.map(([t, kg]) => ({ t, kg }));
 }
 
 export async function insertRecording(
   rec: NewTindeqRecording,
 ): Promise<TindeqRecordingMeta> {
-  const { data, error } = await supabase
-    .from("tindeq_recordings")
-    .insert({
-      duration_ms: rec.durationMs,
-      peak_kg: rec.peakKg,
-      avg_kg: rec.avgKg,
-      sample_count: rec.samples.length,
-      note: rec.note,
-      tag: rec.tag,
-      side: rec.side,
-      group_id: rec.groupId,
-      samples: rec.samples.map((s) => [s.t, s.kg]),
-    })
-    .select(RECORDING_COLS)
-    .single();
-  if (error) throw error;
+  const data = unwrap<RecordingRow>(
+    await supabase
+      .from("tindeq_recordings")
+      .insert({
+        duration_ms: rec.durationMs,
+        peak_kg: rec.peakKg,
+        avg_kg: rec.avgKg,
+        sample_count: rec.samples.length,
+        note: rec.note,
+        tag: rec.tag,
+        side: rec.side,
+        group_id: rec.groupId,
+        samples: rec.samples.map((s) => [s.t, s.kg]),
+      })
+      .select(RECORDING_COLS)
+      .single(),
+  );
   return toRecording(data);
 }
 
 /// Deletes the auth user; every table cascades from auth.users, so all data
 /// goes with it. Required by App Store guideline 5.1.1(v).
 export async function deleteAccount(): Promise<void> {
-  const { error } = await supabase.rpc("delete_account");
-  if (error) throw error;
+  unwrap(await supabase.rpc("delete_account"));
   await supabase.auth.signOut();
 }
 
@@ -383,14 +411,15 @@ export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffStr = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
-  const { data, error } = await supabase
-    .from("health_metrics")
-    .select(
-      "date, readiness, zone, hrv_sdnn_ms, resting_hr, sleep_hours, sleep_deep_hours, sleep_rem_hours, body_mass_kg, resp_rate_bpm",
-    )
-    .gte("date", cutoffStr)
-    .order("date", { ascending: true });
-  if (error) throw error;
+  const data = unwrap(
+    await supabase
+      .from("health_metrics")
+      .select(
+        "date, readiness, zone, hrv_sdnn_ms, resting_hr, sleep_hours, sleep_deep_hours, sleep_rem_hours, body_mass_kg, resp_rate_bpm",
+      )
+      .gte("date", cutoffStr)
+      .order("date", { ascending: true }),
+  );
   return data.map((r) => ({
     date: r.date,
     readiness: r.readiness,
@@ -406,13 +435,14 @@ export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
 }
 
 export async function fetchRpePairs(): Promise<RpePair[]> {
-  const { data, error } = await supabase
-    .from("climb_workouts")
-    .select("rpe_predicted, rpe_confirmed, started_at")
-    .not("rpe_predicted", "is", null)
-    .not("rpe_confirmed", "is", null)
-    .order("started_at", { ascending: true });
-  if (error) throw error;
+  const data = unwrap(
+    await supabase
+      .from("climb_workouts")
+      .select("rpe_predicted, rpe_confirmed, started_at")
+      .not("rpe_predicted", "is", null)
+      .not("rpe_confirmed", "is", null)
+      .order("started_at", { ascending: true }),
+  );
   return data.map((r) => ({
     predicted: Number(r.rpe_predicted),
     confirmed: r.rpe_confirmed as number,
@@ -454,28 +484,7 @@ export async function fetchWorkoutForSession(
   };
 }
 
-/// Soft delete: sets deleted_at so the recording can be recovered from Trash.
-export async function deleteRecording(id: string): Promise<void> {
-  const { error } = await supabase
-    .from("tindeq_recordings")
-    .update({ deleted_at: new Date().toISOString() })
-    .eq("id", id);
-  if (error) throw error;
-}
-
-export async function restoreRecording(id: string): Promise<void> {
-  const { error } = await supabase
-    .from("tindeq_recordings")
-    .update({ deleted_at: null })
-    .eq("id", id);
-  if (error) throw error;
-}
-
-/// Permanent delete — used only from the Trash view's "Delete forever".
-export async function purgeRecording(id: string): Promise<void> {
-  const { error } = await supabase
-    .from("tindeq_recordings")
-    .delete()
-    .eq("id", id);
-  if (error) throw error;
-}
+const recordingSoftDelete = makeSoftDeleteOps("tindeq_recordings");
+export const deleteRecording = recordingSoftDelete.remove;
+export const restoreRecording = recordingSoftDelete.restore;
+export const purgeRecording = recordingSoftDelete.purge;

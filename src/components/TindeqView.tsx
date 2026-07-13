@@ -86,9 +86,9 @@ function TagSideEditor({
               className="tag"
               onClick={() => onTag(tag === t ? "" : t)}
               style={{
-                background: tag === t ? "#7B83EB" : "var(--surface-1)",
+                background: tag === t ? "var(--info)" : "var(--surface-1)",
                 color: tag === t ? "#ffffff" : "var(--ink-muted)",
-                border: `1px solid ${tag === t ? "#7B83EB" : "var(--border)"}`,
+                border: `1px solid ${tag === t ? "var(--info)" : "var(--border)"}`,
                 cursor: "pointer",
                 fontFamily: "Inter, sans-serif",
               }}
@@ -254,7 +254,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
       <div className="section-head">
         TINDEQ{" "}
         {tindeq.fakeMode && (
-          <span style={{ fontSize: 10, color: "#FFB800" }}>(fake mode)</span>
+          <span style={{ fontSize: 10, color: "var(--warning)" }}>(fake mode)</span>
         )}
       </div>
       <div className="section-sub">
@@ -283,7 +283,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                   width: 8,
                   height: 8,
                   borderRadius: "50%",
-                  background: "#7B83EB",
+                  background: "var(--info)",
                 }}
               />
               <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
@@ -361,15 +361,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
       {/* Log the just-ended gauge session into History / ACWR */}
       {endingSession && (
         <div className="card" style={{ marginBottom: 10 }}>
-          <div
-            style={{
-              fontSize: 9,
-              color: "var(--ink-muted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              marginBottom: 10,
-            }}
-          >
+          <div className="label-eyebrow" style={{ marginBottom: 10 }}>
             Log session to history
           </div>
           <span className="field-label" style={{ marginTop: 0 }}>
@@ -455,7 +447,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
       )}
 
       {tindeq.errorMsg && (
-        <div style={{ fontSize: 11, color: "#FF453A", marginTop: 10 }}>
+        <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 10 }}>
           {tindeq.errorMsg}
         </div>
       )}
@@ -476,7 +468,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 width: 8,
                 height: 8,
                 borderRadius: "50%",
-                background: status === "measuring" ? "#34C759" : "#7B83EB",
+                background: status === "measuring" ? "var(--success)" : "var(--info)",
               }}
             />
             <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
@@ -490,7 +482,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 className="tag"
                 style={{
                   background: "rgba(255,184,0,0.12)",
-                  color: "#FFB800",
+                  color: "var(--warning)",
                   border: "1px solid rgba(255,184,0,0.35)",
                 }}
               >
@@ -526,7 +518,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
               }}
             >
               <span style={{ flex: 1 }}>
-                Target set: <span style={{ color: "#34C759" }}>{gaugeTarget.label}</span>
+                Target set: <span style={{ color: "var(--success)" }}>{gaugeTarget.label}</span>
               </span>
               <button
                 onClick={() => setGaugeTarget(null)}
@@ -556,15 +548,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
           {/* Exercise setup before each measure */}
           {status === "connected" && !pending && (
             <div className="card" style={{ marginTop: 10 }}>
-              <div
-                style={{
-                  fontSize: 9,
-                  color: "var(--ink-muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.1em",
-                  marginBottom: 8,
-                }}
-              >
+              <div className="label-eyebrow" style={{ marginBottom: 8 }}>
                 Next recording
               </div>
               <TagSideEditor
@@ -606,15 +590,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
           {/* Save prompt after stop */}
           {pending && status !== "measuring" && (
             <div className="card" style={{ marginTop: 10 }}>
-              <div
-                style={{
-                  fontSize: 9,
-                  color: "var(--ink-muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.1em",
-                  marginBottom: 10,
-                }}
-              >
+              <div className="label-eyebrow" style={{ marginBottom: 10 }}>
                 Recording finished
               </div>
               <div
@@ -643,7 +619,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 <span>Peak</span>
                 <span
                   style={{
-                    color: "#34C759",
+                    color: "var(--success)",
                     fontFamily: "Inter, sans-serif",
                     fontWeight: 800,
                   }}
@@ -775,7 +751,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         Recordings
       </div>
       {listError && (
-        <div style={{ fontSize: 11, color: "#FF453A", marginBottom: 8 }}>
+        <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 8 }}>
           {listError}
         </div>
       )}

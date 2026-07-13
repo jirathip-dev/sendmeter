@@ -132,15 +132,7 @@ export default function ForceGauge({
         }}
       >
         <div>
-          <div
-            style={{
-              fontSize: 9,
-              color: "var(--ink-muted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              marginBottom: 4,
-            }}
-          >
+          <div className="label-eyebrow" style={{ marginBottom: 4 }}>
             Force
           </div>
           <div
@@ -149,7 +141,7 @@ export default function ForceGauge({
               fontSize: 44,
               fontWeight: 800,
               lineHeight: 1,
-              color: inZone ? "#34C759" : "var(--ink)",
+              color: inZone ? "var(--success)" : "var(--ink)",
               letterSpacing: "-0.04em",
             }}
           >
@@ -164,7 +156,7 @@ export default function ForceGauge({
             peak{" "}
             <span
               style={{
-                color: "#34C759",
+                color: "var(--success)",
                 fontFamily: "Inter, sans-serif",
                 fontWeight: 800,
                 fontSize: 15,
@@ -177,7 +169,7 @@ export default function ForceGauge({
           <div
             style={{
               fontSize: 11,
-              color: workDone ? "#34C759" : "var(--ink-muted)",
+              color: workDone ? "var(--success)" : "var(--ink-muted)",
               marginTop: 2,
             }}
           >
@@ -204,7 +196,7 @@ export default function ForceGauge({
         >
           <span>
             target{" "}
-            <span style={{ color: "#34C759" }}>{target.kg.toFixed(1)} kg</span>{" "}
+            <span style={{ color: "var(--success)" }}>{target.kg.toFixed(1)} kg</span>{" "}
             ({target.lowKg.toFixed(1)}–{target.highKg.toFixed(1)}) ·{" "}
             {target.workS}s
           </span>

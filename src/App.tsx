@@ -17,6 +17,7 @@ import LogForm from "./components/LogForm";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
 import AccountSheet from "./components/AccountSheet";
+import Sheet from "./components/Sheet";
 import TrashSheet from "./components/TrashSheet";
 import RealtimeVersionProvider from "./components/RealtimeVersionProvider";
 
@@ -215,7 +216,7 @@ function AuthedApp({
             background: "rgba(255,69,58,0.12)",
             borderBottom: "1px solid rgba(255,69,58,0.35)",
             fontSize: 11,
-            color: "#FF453A",
+            color: "var(--danger)",
           }}
         >
           <span>{error}</span>
@@ -224,7 +225,7 @@ function AuthedApp({
             style={{
               background: "none",
               border: "none",
-              color: "#FF453A",
+              color: "var(--danger)",
               fontSize: 16,
               cursor: "pointer",
             }}
@@ -292,55 +293,43 @@ function AuthedApp({
 
       {/* Log bottom sheet modal */}
       {showModal && (
-        <div
-          className="modal-bg"
-          onClick={(e) => e.target === e.currentTarget && setShowModal(false)}
-        >
-          <div className="modal-sheet">
-            <div className="modal-handle" />
-            <div
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: 20,
-                fontWeight: 800,
-                marginBottom: 2,
-              }}
-            >
-              Log Session
-            </div>
-            <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 4 }}>
-              Load = Duration × RPE
-            </div>
-            <LogForm form={form} setForm={setForm} onSubmit={submitSession} />
-            <div style={{ marginTop: 10 }}>
-              <button className="btn-ghost" onClick={() => setShowModal(false)}>
-                Cancel
-              </button>
-            </div>
+        <Sheet onClose={() => setShowModal(false)}>
+          <div
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: 20,
+              fontWeight: 800,
+              marginBottom: 2,
+            }}
+          >
+            Log Session
           </div>
-        </div>
+          <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 4 }}>
+            Load = Duration × RPE
+          </div>
+          <LogForm form={form} setForm={setForm} onSubmit={submitSession} />
+          <div style={{ marginTop: 10 }}>
+            <button className="btn-ghost" onClick={() => setShowModal(false)}>
+              Cancel
+            </button>
+          </div>
+        </Sheet>
       )}
 
       {/* Phases bottom sheet */}
       {showPhases && (
-        <div
-          className="modal-bg"
-          onClick={(e) => e.target === e.currentTarget && setShowPhases(false)}
-        >
-          <div className="modal-sheet">
-            <div className="modal-handle" />
-            <PhasesView
-              currentPhase={currentPhase}
-              phasePeriods={phasePeriods}
-              onSetPhase={(id) => void setPhase(id)}
-            />
-            <div style={{ marginTop: 10 }}>
-              <button className="btn-ghost" onClick={() => setShowPhases(false)}>
-                Close
-              </button>
-            </div>
+        <Sheet onClose={() => setShowPhases(false)}>
+          <PhasesView
+            currentPhase={currentPhase}
+            phasePeriods={phasePeriods}
+            onSetPhase={(id) => void setPhase(id)}
+          />
+          <div style={{ marginTop: 10 }}>
+            <button className="btn-ghost" onClick={() => setShowPhases(false)}>
+              Close
+            </button>
           </div>
-        </div>
+        </Sheet>
       )}
 
       {/* Account bottom sheet */}
@@ -361,44 +350,41 @@ function AuthedApp({
 
       {/* Legacy import bottom sheet */}
       {importPrompt && legacy && (
-        <div className="modal-bg">
-          <div className="modal-sheet">
-            <div className="modal-handle" />
-            <div
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: 20,
-                fontWeight: 800,
-                marginBottom: 6,
-              }}
-            >
-              Import local data?
-            </div>
-            <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 16 }}>
-              Found {legacy.sessions.length} session
-              {legacy.sessions.length === 1 ? "" : "s"} saved on this device
-              from before your account existed. Import them into your account?
-            </div>
-            <button
-              className="btn-primary"
-              disabled={importing}
-              onClick={() => void runImport()}
-            >
-              {importing
-                ? "Importing…"
-                : `Import ${legacy.sessions.length} sessions`}
-            </button>
-            <div style={{ marginTop: 10 }}>
-              <button
-                className="btn-ghost"
-                disabled={importing}
-                onClick={discardImport}
-              >
-                Discard local data
-              </button>
-            </div>
+        <Sheet>
+          <div
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: 20,
+              fontWeight: 800,
+              marginBottom: 6,
+            }}
+          >
+            Import local data?
           </div>
-        </div>
+          <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 16 }}>
+            Found {legacy.sessions.length} session
+            {legacy.sessions.length === 1 ? "" : "s"} saved on this device
+            from before your account existed. Import them into your account?
+          </div>
+          <button
+            className="btn-primary"
+            disabled={importing}
+            onClick={() => void runImport()}
+          >
+            {importing
+              ? "Importing…"
+              : `Import ${legacy.sessions.length} sessions`}
+          </button>
+          <div style={{ marginTop: 10 }}>
+            <button
+              className="btn-ghost"
+              disabled={importing}
+              onClick={discardImport}
+            >
+              Discard local data
+            </button>
+          </div>
+        </Sheet>
       )}
     </div>
   );

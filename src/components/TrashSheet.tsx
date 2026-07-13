@@ -7,6 +7,7 @@ import {
   restoreRecording,
   restoreSession,
 } from "../lib/repo";
+import Sheet from "./Sheet";
 import type { DeletedSession, DeletedTindeqRecording } from "../types";
 
 interface Props {
@@ -109,26 +110,21 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
   const isEmpty = !loading && sessions.length === 0 && recordings.length === 0;
 
   return (
-    <div
-      className="modal-bg"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="modal-sheet">
-        <div className="modal-handle" />
-        <div
-          style={{
-            fontFamily: "Inter, sans-serif",
-            fontSize: 20,
-            fontWeight: 800,
-            marginBottom: 6,
-          }}
-        >
-          Trash
-        </div>
-        <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 16 }}>
-          Deleted sessions and Tindeq recordings stay here until you restore
-          or permanently delete them.
-        </div>
+    <Sheet onClose={onClose}>
+      <div
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontSize: 20,
+          fontWeight: 800,
+          marginBottom: 6,
+        }}
+      >
+        Trash
+      </div>
+      <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 16 }}>
+        Deleted sessions and Tindeq recordings stay here until you restore
+        or permanently delete them.
+      </div>
 
         {loading && (
           <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>
@@ -144,15 +140,7 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
 
         {sessions !== null && sessions.length > 0 && (
           <div style={{ marginBottom: 18 }}>
-            <div
-              style={{
-                fontSize: 9,
-                color: "var(--ink-muted)",
-                textTransform: "uppercase",
-                letterSpacing: "0.1em",
-                marginBottom: 8,
-              }}
-            >
+            <div className="label-eyebrow" style={{ marginBottom: 8 }}>
               Sessions
             </div>
             {sessions.map((s) => (
@@ -191,7 +179,7 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
                   style={{
                     background: "none",
                     border: "none",
-                    color: "#FF453A",
+                    color: "var(--danger)",
                     fontSize: 18,
                     cursor: "pointer",
                     padding: 4,
@@ -207,15 +195,7 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
 
         {recordings !== null && recordings.length > 0 && (
           <div>
-            <div
-              style={{
-                fontSize: 9,
-                color: "var(--ink-muted)",
-                textTransform: "uppercase",
-                letterSpacing: "0.1em",
-                marginBottom: 8,
-              }}
-            >
+            <div className="label-eyebrow" style={{ marginBottom: 8 }}>
               Tindeq Recordings
             </div>
             {recordings.map((r) => (
@@ -259,7 +239,7 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
                   style={{
                     background: "none",
                     border: "none",
-                    color: "#FF453A",
+                    color: "var(--danger)",
                     fontSize: 18,
                     cursor: "pointer",
                     padding: 4,
@@ -296,7 +276,7 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
                 disabled={busyId === confirmPurge.id}
                 onClick={() => void handlePurge()}
                 style={{
-                  background: "#FF453A",
+                  background: "var(--danger)",
                   color: "#ffffff",
                   border: "none",
                   padding: "13px 20px",
@@ -315,17 +295,16 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
         )}
 
         {error && (
-          <div style={{ fontSize: 11, color: "#FF453A", marginTop: 10 }}>
+          <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 10 }}>
             {error}
           </div>
         )}
 
-        <div style={{ marginTop: 14 }}>
-          <button className="btn-ghost" onClick={onClose}>
-            Close
-          </button>
-        </div>
+      <div style={{ marginTop: 14 }}>
+        <button className="btn-ghost" onClick={onClose}>
+          Close
+        </button>
       </div>
-    </div>
+    </Sheet>
   );
 }

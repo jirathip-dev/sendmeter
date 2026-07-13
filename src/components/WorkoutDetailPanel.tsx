@@ -78,15 +78,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
         </div>
       ) : (
         <>
-          <div
-            style={{
-              fontSize: 9,
-              color: "var(--ink-muted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              margin: "10px 0 6px",
-            }}
-          >
+          <div className="label-eyebrow" style={{ margin: "10px 0 6px" }}>
             Attempts · effort
           </div>
           <div
@@ -111,7 +103,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
                   flex: 1,
                   maxWidth: 22,
                   height: Math.max(4, ((a.effortScore ?? 0) / 10) * 48),
-                  background: selectedIdx === i ? "#FFB800" : "#34C759",
+                  background: selectedIdx === i ? "var(--warning)" : "var(--success)",
                   borderRadius: 2,
                   cursor: "pointer",
                 }}

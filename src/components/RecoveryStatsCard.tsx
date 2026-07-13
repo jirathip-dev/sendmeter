@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { fetchHealthMetrics } from "../lib/repo";
 import { useChartHover } from "../hooks/useChartHover";
+import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import { fetchHealthMetrics } from "../lib/repo";
 import ChartTooltip from "./ChartTooltip";
 import type { HealthMetric } from "../types";
 
@@ -34,23 +34,13 @@ const METRICS: MetricSpec[] = [
 /// Breaks the readiness score back down into the raw inputs it's computed
 /// from — a companion to ReadinessCard so "why is my score X" is visible.
 export default function RecoveryStatsCard() {
-  const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [hovered, hoverProps] = useChartHover<string>();
   const realtimeVersion = useRealtimeVersion();
-
-  useEffect(() => {
-    let cancelled = false;
-    fetchHealthMetrics(14)
-      .then((m) => {
-        if (!cancelled) setMetrics(m);
-      })
-      .catch(() => {
-        // card falls back to its empty state on error
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [realtimeVersion]);
+  const metrics = useCancellableFetch<HealthMetric[]>(
+    () => fetchHealthMetrics(14),
+    [],
+    realtimeVersion,
+  );
 
   const rows = METRICS.map((spec) => {
     const points = metrics.filter((m) => m[spec.key] != null) as (HealthMetric &
@@ -61,15 +51,7 @@ export default function RecoveryStatsCard() {
   if (rows.length === 0) {
     return (
       <div className="card">
-        <div
-          style={{
-            fontSize: 9,
-            color: "var(--ink-muted)",
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-            marginBottom: 8,
-          }}
-        >
+        <div className="label-eyebrow" style={{ marginBottom: 8 }}>
           Recovery Inputs
         </div>
         <div style={{ fontSize: 11, color: "var(--ink-muted)", lineHeight: 1.5 }}>
@@ -82,15 +64,7 @@ export default function RecoveryStatsCard() {
 
   return (
     <div className="card">
-      <div
-        style={{
-          fontSize: 9,
-          color: "var(--ink-muted)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          marginBottom: 10,
-        }}
-      >
+      <div className="label-eyebrow" style={{ marginBottom: 10 }}>
         Recovery Inputs
       </div>
       {rows.map(({ spec, points }, i) => {
@@ -192,7 +166,7 @@ export default function RecoveryStatsCard() {
                         style={{
                           width: "100%",
                           height: h,
-                          background: "#5B5FC7",
+                          background: "var(--primary)",
                           opacity: hovered === null || hovered === hk ? baseOpacity : 0.15,
                           borderRadius: 1,
                           boxShadow: hovered === hk ? "0 0 0 1.5px var(--ink)" : "none",

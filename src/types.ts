@@ -44,12 +44,6 @@ export interface DeletedSession extends Session {
   deletedAt: string;
 }
 
-export interface TrainingData {
-  sessions: Session[];
-  currentPhase: PhaseId;
-  phaseStartDate: string; // YYYY-MM-DD
-}
-
 export interface LogFormState {
   date: string;
   type: string;

@@ -114,15 +114,7 @@ export default function Dashboard({
       {/* ACWR + Load grid */}
       <div className="grid-2" style={{ marginBottom: 10 }}>
         <div className="card">
-          <div
-            style={{
-              fontSize: 9,
-              color: "var(--ink-muted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              marginBottom: 8,
-            }}
-          >
+          <div className="label-eyebrow" style={{ marginBottom: 8 }}>
             ACWR
           </div>
           <div
@@ -149,7 +141,7 @@ export default function Dashboard({
                 width: "100%",
                 height: "100%",
                 background:
-                  "linear-gradient(to right, #7B83EB 0%,#7B83EB 15%,#34C759 30%,#34C759 68%,#FFB800 80%,#FF453A 100%)",
+                  "linear-gradient(to right, var(--info) 0%,var(--info) 15%,var(--success) 30%,var(--success) 68%,var(--warning) 80%,var(--danger) 100%)",
                 opacity: 0.55,
                 borderRadius: 3,
               }}
@@ -187,15 +179,7 @@ export default function Dashboard({
         </div>
 
         <div className="card">
-          <div
-            style={{
-              fontSize: 9,
-              color: "var(--ink-muted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              marginBottom: 10,
-            }}
-          >
+          <div className="label-eyebrow" style={{ marginBottom: 10 }}>
             Load (AU)
           </div>
           <div style={{ marginBottom: 12 }}>
@@ -312,7 +296,7 @@ export default function Dashboard({
                       style={{
                         width: "100%",
                         height: Math.max((w.total / maxW) * 32, 2),
-                        background: i === 3 ? "#34C759" : "var(--border)",
+                        background: i === 3 ? "var(--success)" : "var(--border)",
                         borderRadius: 2,
                         transition: "height 0.4s, opacity 0.1s",
                         opacity: hoveredWeek === null || hoveredWeek === i ? 1 : 0.5,

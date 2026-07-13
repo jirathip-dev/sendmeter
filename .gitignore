@@ -25,3 +25,9 @@ dist-ssr
 
 .env
 supabase/.temp/
+
+# Xcode user/build state (per-machine, not project config)
+xcuserdata/
+.swiftpm/
+DerivedData/
+*.xcuserstate
