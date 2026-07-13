@@ -2,11 +2,6 @@ import { useMemo, useState } from "react";
 import { NAV, PHASES } from "./constants";
 import { today } from "./lib/dates";
 import { computeAcwr, computeWeeklyLoads, getACWRStatus } from "./lib/metrics";
-import {
-  importLegacyData,
-  markLegacyImported,
-  readLegacyData,
-} from "./lib/import-legacy";
 import { useAuth } from "./hooks/useAuth";
 import { useTrainingData } from "./hooks/useTrainingData";
 import type { LogFormState, ViewId } from "./types";
@@ -71,8 +66,6 @@ function AuthedApp({
   const [showPhases, setShowPhases] = useState(false);
   const [showWatchSheet, setShowWatchSheet] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
-  const [importDismissed, setImportDismissed] = useState(false);
-  const [importing, setImporting] = useState(false);
   const [form, setForm] = useState<LogFormState>({
     date: today(),
     type: "fingerboard",
@@ -81,10 +74,6 @@ function AuthedApp({
     note: "",
     phase: "capacity",
   });
-
-  const legacy = useMemo(() => readLegacyData(), []);
-  const importPrompt =
-    !loading && !!legacy && sessions.length === 0 && !importDismissed;
 
   const acwrData = useMemo(() => computeAcwr(sessions), [sessions]);
   const weeklyLoads = useMemo(() => computeWeeklyLoads(sessions), [sessions]);
@@ -113,26 +102,6 @@ function AuthedApp({
   function openLog() {
     setForm((f) => ({ ...f, phase: currentPhase }));
     setShowModal(true);
-  }
-
-  async function runImport() {
-    if (!legacy) return;
-    setImporting(true);
-    try {
-      await importLegacyData(legacy);
-      markLegacyImported();
-      setImportDismissed(true);
-      await reload();
-    } catch {
-      // error banner comes from reload/fetch; keep prompt open so user can retry
-    } finally {
-      setImporting(false);
-    }
-  }
-
-  function discardImport() {
-    markLegacyImported();
-    setImportDismissed(true);
   }
 
   return (
@@ -348,44 +317,6 @@ function AuthedApp({
         />
       )}
 
-      {/* Legacy import bottom sheet */}
-      {importPrompt && legacy && (
-        <Sheet>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: 20,
-              fontWeight: 800,
-              marginBottom: 6,
-            }}
-          >
-            Import local data?
-          </div>
-          <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 16 }}>
-            Found {legacy.sessions.length} session
-            {legacy.sessions.length === 1 ? "" : "s"} saved on this device
-            from before your account existed. Import them into your account?
-          </div>
-          <button
-            className="btn-primary"
-            disabled={importing}
-            onClick={() => void runImport()}
-          >
-            {importing
-              ? "Importing…"
-              : `Import ${legacy.sessions.length} sessions`}
-          </button>
-          <div style={{ marginTop: 10 }}>
-            <button
-              className="btn-ghost"
-              disabled={importing}
-              onClick={discardImport}
-            >
-              Discard local data
-            </button>
-          </div>
-        </Sheet>
-      )}
     </div>
   );
 }
