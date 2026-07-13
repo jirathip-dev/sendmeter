@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { deleteAccount } from "../lib/repo";
+import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
+import { syncHealthNow } from "../lib/healthSync";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
 import Sheet from "./Sheet";
@@ -18,6 +19,9 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [cleared, setCleared] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
 
@@ -54,6 +58,23 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete account");
       setDeleting(false);
+    }
+  }
+
+  async function runClearHealth() {
+    setClearing(true);
+    setError(null);
+    try {
+      await deleteHealthMetrics();
+      // Ask the device to re-ingest correct data right away (no-op on web /
+      // until the native health plugin ships; the delete stands regardless).
+      await syncHealthNow();
+      setConfirmingClear(false);
+      setCleared(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to clear health data");
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -155,6 +176,66 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         </div>
 
         {showHelp && <HelpSheet onClose={() => setShowHelp(false)} />}
+
+        {/* Health data — clear & resync (destructive but recoverable, so
+            kept out of the account-deletion danger zone below) */}
+        <div
+          style={{
+            marginTop: 22,
+            paddingTop: 14,
+            borderTop: "1px solid var(--hairline)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--ink-muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: 8,
+            }}
+          >
+            Health data
+          </div>
+          {cleared ? (
+            <div style={{ fontSize: 12, color: "var(--success)" }}>
+              Health data cleared. Your device will re-sync fresh metrics from
+              Apple Health shortly.
+            </div>
+          ) : confirmingClear ? (
+            <div>
+              <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12 }}>
+                Deletes all stored daily health metrics (HRV, resting heart
+                rate, sleep, readiness). Your device re-reads them from Apple
+                Health afterward — use this if the wrong person's data got
+                recorded to your account.
+              </div>
+              <button
+                className="btn-primary"
+                disabled={clearing}
+                onClick={() => void runClearHealth()}
+              >
+                {clearing ? "Clearing…" : "Clear & resync"}
+              </button>
+              <div style={{ marginTop: 8 }}>
+                <button
+                  className="btn-ghost"
+                  disabled={clearing}
+                  onClick={() => setConfirmingClear(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="btn-ghost"
+              onClick={() => setConfirmingClear(true)}
+            >
+              Clear health data & resync…
+            </button>
+          )}
+        </div>
 
         {/* Danger zone */}
         <div

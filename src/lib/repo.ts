@@ -434,6 +434,24 @@ export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
   }));
 }
 
+/// Hard-deletes the signed-in user's health_metrics rows (RLS scopes to
+/// auth.uid()). Used by "Clear health data & resync" to recover from data
+/// polluted by e.g. the watch being worn by someone else. Defaults to all
+/// rows; pass `from`/`to` (YYYY-MM-DD) to limit to a date range. A lower
+/// date bound is always sent so PostgREST never sees an unfiltered delete.
+export async function deleteHealthMetrics(opts?: {
+  from?: string;
+  to?: string;
+}): Promise<void> {
+  let q = supabase
+    .from("health_metrics")
+    .delete()
+    .gte("date", opts?.from ?? "2000-01-01");
+  if (opts?.to) q = q.lte("date", opts.to);
+  const { error } = await q;
+  if (error) throw error;
+}
+
 export async function fetchRpePairs(): Promise<RpePair[]> {
   const data = unwrap(
     await supabase
