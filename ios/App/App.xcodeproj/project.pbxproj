@@ -7,16 +7,22 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		12574DD8CDB9DC854DF1002A /* TindeqProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		328AD2C63004617A00E07518 /* SendLogWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		498D2C0A73BE410711C4CD53 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 665354DA3AF13BA04D7AADA0 /* Supabase */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
+		4F9BA0DA906E18E88FCDFCA8 /* DateExtensionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 929803D573A0FA4074230787 /* DateExtensionsTests.swift */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */; };
+		CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
+		E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */; };
+		F82F9B26FD00DC3A6141DB15 /* RecoveryEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B57654700C906F3382652A22 /* RecoveryEngineTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,6 +47,13 @@
 			remoteGlobalIDString = 328AD0DB30045D4800E07518;
 			remoteInfo = "SendLogWatch Watch App";
 		};
+		F083A730EE0D89E5788A27C9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 328AD0DB30045D4800E07518;
+			remoteInfo = "SendLogWatch Watch App";
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -58,6 +71,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AttemptDetectorTests.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "SendLogWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
@@ -68,11 +82,27 @@
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RPEModelTests.swift; sourceTree = "<group>"; };
+		6CA278E81C6E14A40B4C9C69 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		929803D573A0FA4074230787 /* DateExtensionsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DateExtensionsTests.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TindeqProtocolTests.swift; sourceTree = "<group>"; };
+		9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendLogWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B57654700C906F3382652A22 /* RecoveryEngineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecoveryEngineTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		328AD0DD30045D4800E07518 /* SendLogWatch Watch App */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = "SendLogWatch Watch App"; sourceTree = "<group>"; };
+		328AD0DD30045D4800E07518 /* SendLogWatch Watch App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = "SendLogWatch Watch App";
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -92,12 +122,34 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D1A76B0B4CD0CE51D2771881 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		2111CB97DE6B0751E43A1190 /* SendLogWatchTests */ = {
+			isa = PBXGroup;
+			children = (
+				1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */,
+				929803D573A0FA4074230787 /* DateExtensionsTests.swift */,
+				553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */,
+				B57654700C906F3382652A22 /* RecoveryEngineTests.swift */,
+				9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */,
+			);
+			name = SendLogWatchTests;
+			path = SendLogWatchTests;
+			sourceTree = "<group>";
+		};
 		328AD2C53004617A00E07518 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				DB3DA785B7D88C5F8037E8F1 /* watchOS */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -110,6 +162,7 @@
 				328AD0DD30045D4800E07518 /* SendLogWatch Watch App */,
 				328AD2C53004617A00E07518 /* Frameworks */,
 				504EC3051FED79650016851F /* Products */,
+				2111CB97DE6B0751E43A1190 /* SendLogWatchTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -118,6 +171,7 @@
 			children = (
 				504EC3041FED79650016851F /* App.app */,
 				328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */,
+				9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -135,6 +189,14 @@
 				50B271D01FEDC1A000F3C39B /* public */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		DB3DA785B7D88C5F8037E8F1 /* watchOS */ = {
+			isa = PBXGroup;
+			children = (
+				6CA278E81C6E14A40B4C9C69 /* Foundation.framework */,
+			);
+			name = watchOS;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -187,6 +249,24 @@
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
 		};
+		60A19C964BD106A18093FF4D /* SendLogWatchTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9FCF4A54177F42DD8621C8C5 /* Build configuration list for PBXNativeTarget "SendLogWatchTests" */;
+			buildPhases = (
+				0A61D55DE84B6ED58B6BC48B /* Sources */,
+				D1A76B0B4CD0CE51D2771881 /* Frameworks */,
+				9B26B8D84898B697D0F26A16 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				13C2E30F42D1EAD88E275373 /* PBXTargetDependency */,
+			);
+			name = SendLogWatchTests;
+			productName = SendLogWatchTests;
+			productReference = 9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -225,6 +305,7 @@
 			targets = (
 				504EC3031FED79650016851F /* App */,
 				328AD0DB30045D4800E07518 /* SendLogWatch Watch App */,
+				60A19C964BD106A18093FF4D /* SendLogWatchTests */,
 			);
 		};
 /* End PBXProject section */
@@ -250,9 +331,28 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9B26B8D84898B697D0F26A16 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		0A61D55DE84B6ED58B6BC48B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */,
+				4F9BA0DA906E18E88FCDFCA8 /* DateExtensionsTests.swift in Sources */,
+				607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */,
+				F82F9B26FD00DC3A6141DB15 /* RecoveryEngineTests.swift in Sources */,
+				12574DD8CDB9DC854DF1002A /* TindeqProtocolTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		328AD0D830045D4800E07518 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -271,6 +371,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		13C2E30F42D1EAD88E275373 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = "SendLogWatch Watch App";
+			target = 328AD0DB30045D4800E07518 /* SendLogWatch Watch App */;
+			targetProxy = F083A730EE0D89E5788A27C9 /* PBXContainerItemProxy */;
+		};
 		328AD2C83004617A00E07518 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 328AD0DB30045D4800E07518 /* SendLogWatch Watch App */;
@@ -547,6 +653,41 @@
 			};
 			name = Release;
 		};
+		55FD554940444AAE280FC4AB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9244PWFYD7;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jirathip.sendlog.watchkitapp.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SendLogWatch Watch App.app/SendLogWatch Watch App";
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		D7DDED79B1081E4349A5150D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9244PWFYD7;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jirathip.sendlog.watchkitapp.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SendLogWatch Watch App.app/SendLogWatch Watch App";
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -573,6 +714,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		9FCF4A54177F42DD8621C8C5 /* Build configuration list for PBXNativeTarget "SendLogWatchTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D7DDED79B1081E4349A5150D /* Release */,
+				55FD554940444AAE280FC4AB /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
