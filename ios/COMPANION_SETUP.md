@@ -9,9 +9,13 @@ companion app**, built as a second target inside
 the iPhone relays the session to the watch automatically over
 WatchConnectivity — no separate watch login in normal use.
 
-`watch/` still exists as a rollback reference but is no longer the
-one to build from. Don't rebuild it to a device — see "Free Apple
-Developer team limits" below for why.
+The old standalone project at `watch/` has been deleted — every Swift
+file in it was confirmed byte-identical to the companion target before
+removal (except `AuthManager.swift`, which legitimately grew to add the
+WatchConnectivity relay), and its 5 test files were ported into a new
+`SendLogWatchTests` target in `ios/App/App.xcodeproj` first, so no test
+coverage was lost. Run them with `xcodebuild test -project
+ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatchTests`.
 
 ## How the auto-login actually works
 
@@ -175,12 +179,9 @@ watch app (re-checks for it).
 
 - Provisioning profiles expire every **7 days** — rebuild to the
   device weekly. A $99/year paid membership gives 1-year profiles.
-- Max **3 sideloaded app IDs** at a time. This project now uses 2
+- Max **3 sideloaded app IDs** at a time. This project uses 2
   (`com.jirathip.sendlog`, `com.jirathip.sendlog.watchkitapp`) via the
-  companion target. **Don't also rebuild the old standalone**
-  `watch/SendLogWatch.xcodeproj` (`com.jirathip.sendlog.SendLogWatch`)
-  **to a device** — that would use the 3rd slot concurrently for no
-  reason, since it's being retired.
+  companion target.
 - Device registration also has a cap (exact number unconfirmed) —
   if you hit it while adding another person's devices, that's the
   point where a paid membership becomes the practical unblock.
