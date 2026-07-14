@@ -22,7 +22,6 @@
 		607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */; };
 		CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
 		E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */; };
-		F82F9B26FD00DC3A6141DB15 /* RecoveryEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B57654700C906F3382652A22 /* RecoveryEngineTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -88,7 +87,6 @@
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TindeqProtocolTests.swift; sourceTree = "<group>"; };
 		9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendLogWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		B57654700C906F3382652A22 /* RecoveryEngineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecoveryEngineTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -139,10 +137,8 @@
 				1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */,
 				929803D573A0FA4074230787 /* DateExtensionsTests.swift */,
 				553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */,
-				B57654700C906F3382652A22 /* RecoveryEngineTests.swift */,
 				9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */,
 			);
-			name = SendLogWatchTests;
 			path = SendLogWatchTests;
 			sourceTree = "<group>";
 		};
@@ -348,7 +344,6 @@
 				E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */,
 				4F9BA0DA906E18E88FCDFCA8 /* DateExtensionsTests.swift in Sources */,
 				607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */,
-				F82F9B26FD00DC3A6141DB15 /* RecoveryEngineTests.swift in Sources */,
 				12574DD8CDB9DC854DF1002A /* TindeqProtocolTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -547,7 +542,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -598,7 +593,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -612,11 +607,12 @@
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9244PWFYD7;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -635,11 +631,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9244PWFYD7;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

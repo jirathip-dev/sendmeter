@@ -1,30 +1,28 @@
 import Foundation
 import Observation
 
-/// Orchestrates the daily readiness computation: HealthKit inputs → watch-side
-/// ACWR from own sessions → RecoveryEngine → local cache → idempotent upsert.
-/// Health rows are recomputed on every refresh, so no offline queue is needed:
-/// the last few days are kept in UserDefaults and re-upserted each time, which
-/// self-heals days the watch spent offline.
+/// Readiness zone for display (mirrors the values the iPhone writes to
+/// health_metrics.zone). Kept watch-local so the watch needn't depend on the
+/// health-core package — it only reads two fields back.
+enum ReadinessZone: String {
+    case recover, maintain, push
+}
+
+struct ReadinessDisplay {
+    let score: Int?
+    let zone: ReadinessZone?
+    let driver: String
+}
+
+/// The iPhone app now owns health ingestion and readiness computation (it can
+/// see third-party wearables in the merged HealthKit store; the watch's local
+/// store can't). The watch just reads the latest computed score back from
+/// Supabase for display — no HealthKit reads, no compute, no upsert here.
 @Observable
 final class ReadinessManager {
-    var result: ReadinessResult?
-    var bodyMassKg: Double?
+    var result: ReadinessDisplay?
     var loading = false
     var errorMsg: String?
-
-    private let provider: HealthMetricsProviding
-    private let t: RecoveryTunables
-    private static let cacheKey = "healthMetrics.recent"
-
-    init(tunables: RecoveryTunables = .default) {
-        self.t = tunables
-        #if targetEnvironment(simulator)
-        self.provider = FakeHealthMetricsProvider()
-        #else
-        self.provider = HealthKitMetricsProvider(tunables: tunables)
-        #endif
-    }
 
     @MainActor
     func refresh() async {
@@ -33,76 +31,20 @@ final class ReadinessManager {
         defer { loading = false }
         errorMsg = nil
         do {
-            let inputs = try await provider.readToday()
-            let acwr = try? await computeACWR()
-            let res = RecoveryEngine.compute(inputs: inputs, acwr: acwr, t: t)
-            result = res
-            bodyMassKg = inputs.bodyMassKg
-
-            let row = HealthMetricsUpsert(
-                date: Date().localDateString,
-                hrvSdnnMs: inputs.hrvSDNNms,
-                restingHr: inputs.restingHR,
-                sleepHours: inputs.sleepHours,
-                sleepDeepHours: inputs.sleepDeepHours,
-                sleepRemHours: inputs.sleepRemHours,
-                bodyMassKg: inputs.bodyMassKg,
-                respRateBpm: inputs.respRateBpm,
-                readiness: res.score,
-                zone: res.zone?.rawValue,
-                computedAt: Date()
-            )
-            let recent = Self.updateCache(with: row, keep: t.recentDaysKept)
-            try? await Repo.upsertHealthMetrics(recent)
+            if let row = try await Repo.fetchLatestHealthMetric(), row.readiness != nil {
+                result = ReadinessDisplay(
+                    score: row.readiness,
+                    zone: row.zone.flatMap(ReadinessZone.init(rawValue:)),
+                    driver: "Synced \(row.date)"
+                )
+            } else {
+                result = ReadinessDisplay(
+                    score: nil, zone: nil,
+                    driver: "Open the iPhone app to sync Health"
+                )
+            }
         } catch {
             errorMsg = error.localizedDescription
         }
-    }
-
-    private static let ewmaLookbackDays = 90
-    private static let ewmaLambdaAcute = 2.0 / (7.0 + 1.0)   // 7-day time constant
-    private static let ewmaLambdaChronic = 2.0 / (28.0 + 1.0) // 28-day time constant
-
-    /// Same math as the web's ewmaAcwr: exponentially-weighted acute:chronic
-    /// ratio (Williams et al. 2016) rather than a plain rolling-average
-    /// ratio — see metrics.ts for the full rationale. Both EWMAs are seeded
-    /// with the 90-day mean load to shrink start-up bias.
-    private func computeACWR() async throws -> Double? {
-        let rows = try await Repo.fetchSessionLoads(sinceDays: Self.ewmaLookbackDays)
-        var loadByDate: [String: Int] = [:]
-        for r in rows { loadByDate[r.date, default: 0] += (r.load ?? 0) }
-
-        let cal = Calendar.gregorianLocal
-        var dailyLoads: [Double] = []
-        for i in stride(from: Self.ewmaLookbackDays - 1, through: 0, by: -1) {
-            let day = cal.date(byAdding: .day, value: -i, to: Date())!
-            dailyLoads.append(Double(loadByDate[day.localDateString] ?? 0))
-        }
-        guard dailyLoads.contains(where: { $0 != 0 }) else { return nil }
-
-        let seed = dailyLoads.reduce(0, +) / Double(dailyLoads.count)
-        var emaAcute = seed
-        var emaChronic = seed
-        for load in dailyLoads {
-            emaAcute = load * Self.ewmaLambdaAcute + emaAcute * (1 - Self.ewmaLambdaAcute)
-            emaChronic = load * Self.ewmaLambdaChronic + emaChronic * (1 - Self.ewmaLambdaChronic)
-        }
-        return emaChronic > 0 ? emaAcute / emaChronic : nil
-    }
-
-    private static func updateCache(with row: HealthMetricsUpsert, keep: Int) -> [HealthMetricsUpsert] {
-        let decoder = JSONDecoder()
-        let encoder = JSONEncoder()
-        var rows: [HealthMetricsUpsert] =
-            (UserDefaults.standard.data(forKey: cacheKey)
-                .flatMap { try? decoder.decode([HealthMetricsUpsert].self, from: $0) }) ?? []
-        rows.removeAll { $0.date == row.date }
-        rows.append(row)
-        rows.sort { $0.date < $1.date }
-        if rows.count > keep { rows.removeFirst(rows.count - keep) }
-        if let data = try? encoder.encode(rows) {
-            UserDefaults.standard.set(data, forKey: cacheKey)
-        }
-        return rows
     }
 }

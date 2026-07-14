@@ -1,13 +1,18 @@
 import Foundation
 import HealthKit
+import SendLogHealthCore
 
 protocol HealthMetricsProviding {
     func readToday() async throws -> DailyHealthInputs
 }
 
-/// Reads last night's HRV / resting HR / sleep / body mass plus 30-day
-/// baselines from HealthKit. Night window: 18:00 yesterday → 12:00 today.
-final class HealthKitMetricsProvider: HealthMetricsProviding {
+/// Reads last night's HRV / resting HR / sleep / body mass / respiratory rate
+/// plus 30-day baselines from HealthKit. Night window: 18:00 yesterday →
+/// 12:00 today. Ported from the watch's HealthMetricsProvider — the only
+/// change is that it now runs on the **iPhone**, whose HealthKit store is the
+/// merged aggregate (Oura/Garmin/etc. write there via their companion apps),
+/// so third-party wearable data is captured.
+final class HealthKitReader: HealthMetricsProviding {
     private let store = HKHealthStore()
     private let t: RecoveryTunables
 
@@ -15,16 +20,24 @@ final class HealthKitMetricsProvider: HealthMetricsProviding {
         self.t = tunables
     }
 
-    func requestAuthorization() async throws {
-        let read: Set<HKObjectType> = [
+    static var readTypes: Set<HKObjectType> {
+        [
             HKQuantityType(.heartRateVariabilitySDNN),
             HKQuantityType(.restingHeartRate),
             HKQuantityType(.bodyMass),
             HKQuantityType(.respiratoryRate),
             HKCategoryType(.sleepAnalysis),
         ]
-        try await store.requestAuthorization(toShare: [], read: read)
     }
+
+    func requestAuthorization() async throws {
+        try await store.requestAuthorization(toShare: [], read: Self.readTypes)
+    }
+
+    /// HKObserverQuery background delivery needs an observed sample type; HRV
+    /// is the primary readiness driver so we observe it.
+    static let observedType = HKQuantityType(.heartRateVariabilitySDNN)
+    var healthStore: HKHealthStore { store }
 
     func readToday() async throws -> DailyHealthInputs {
         try await requestAuthorization()
@@ -139,8 +152,8 @@ final class HealthKitMetricsProvider: HealthMetricsProviding {
     /// Total asleep hours plus deep/REM stage breakdown. Stages are merged
     /// independently (a source double-reporting the same stage shouldn't
     /// double-count it), never merged across stages since they're mutually
-    /// exclusive. Stage data needs no new HealthKit permission — it's part
-    /// of the same sleepAnalysis samples already being read for the total.
+    /// exclusive. Stage data needs no new HealthKit permission — it's part of
+    /// the same sleepAnalysis samples already being read for the total.
     private func sleepBreakdown(in window: DateInterval) async throws -> SleepBreakdown {
         let allAsleepValues: Set<Int> = [
             HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
@@ -172,25 +185,6 @@ final class HealthKitMetricsProvider: HealthMetricsProviding {
             totalHours: mergedHours(matching: allAsleepValues),
             deepHours: mergedHours(matching: [HKCategoryValueSleepAnalysis.asleepDeep.rawValue]),
             remHours: mergedHours(matching: [HKCategoryValueSleepAnalysis.asleepREM.rawValue])
-        )
-    }
-}
-
-/// Plausible canned data for the simulator (it can't seed resting HR) and
-/// for exercising the UI without a real night of watch wear.
-struct FakeHealthMetricsProvider: HealthMetricsProviding {
-    func readToday() async throws -> DailyHealthInputs {
-        DailyHealthInputs(
-            hrvSDNNms: 72,
-            restingHR: 52,
-            sleepHours: 7.4,
-            bodyMassKg: 71.2,
-            sleepDeepHours: 1.6,
-            sleepRemHours: 1.8,
-            respRateBpm: 14.2,
-            hrvLnBaseline: (0..<30).map { log(60 + Double($0 % 7) * 3) },
-            rhrBaseline: (0..<30).map { 54 + Double($0 % 5) - 2 },
-            sleepBaseline: (0..<30).map { 7.0 + Double($0 % 4) * 0.3 - 0.4 }
         )
     }
 }

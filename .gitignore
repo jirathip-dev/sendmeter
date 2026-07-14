@@ -31,3 +31,5 @@ xcuserdata/
 .swiftpm/
 DerivedData/
 *.xcuserstate
+# SwiftPM build output (native-plugins/*/.build from `swift test`, etc.)
+.build/

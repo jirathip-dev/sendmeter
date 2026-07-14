@@ -90,14 +90,17 @@ enum Repo {
             .value
     }
 
-    static func upsertHealthMetrics(_ rows: [HealthMetricsUpsert]) async throws {
-        guard !rows.isEmpty else { return }
-        // Later computation wins (not ignoreDuplicates) — rows are recomputed
-        // from HealthKit on every refresh.
-        try await client
+    /// Latest computed readiness row, written by the iPhone app. The watch
+    /// only displays it — it no longer reads HealthKit or computes readiness.
+    static func fetchLatestHealthMetric() async throws -> HealthMetricRow? {
+        let rows: [HealthMetricRow] = try await client
             .from("health_metrics")
-            .upsert(rows, onConflict: "user_id,date")
+            .select("date, readiness, zone")
+            .order("date", ascending: false)
+            .limit(1)
             .execute()
+            .value
+        return rows.first
     }
 
     static func fetchLabeledWorkouts() async throws -> [LabeledWorkoutRow] {

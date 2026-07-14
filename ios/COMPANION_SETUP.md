@@ -223,3 +223,62 @@ watch app (re-checks for it).
   the same wizard flow and had to be added manually via App target →
   General → "Frameworks, Libraries, and Embedded Content" → "+" →
   select `SendLogWatch Watch App.app`.
+
+## iPhone health sync (HealthKit ingestion on the phone)
+
+The iPhone app — not the watch — now reads daily HealthKit metrics
+(HRV, resting HR, sleep, respiratory rate, body mass), computes the
+readiness score, and writes `health_metrics`. The watch only reads the
+latest score back for display (`ReadinessManager` → `Repo.fetchLatestHealthMetric`).
+This captures third-party wearables (Oura/Garmin/etc.) that write to
+the iPhone's merged HealthKit store — the watch's local store doesn't
+see them. See the plan file's "Part 3" for the full rationale.
+
+Architecture:
+- `native-plugins/sendlog-health-core/` — pure-Swift package (Foundation
+  only): `RecoveryEngine`, `RecoveryTunables`, the readiness models, and
+  `Acwr`. No HealthKit/Supabase/Capacitor, so its tests run on the host:
+  `cd native-plugins/sendlog-health-core && swift test` (12 tests).
+- `native-plugins/sendlog-health/` — the Capacitor plugin (`SendLogHealth`):
+  `HealthKitReader` (night-window `HKSampleQuery`s), `HealthSyncManager`
+  (its own Supabase client, ACWR from sessions, upsert, `HKObserverQuery`
+  + `enableBackgroundDelivery(.daily)`, clear+resync), `Plugin.swift`.
+  The web layer drives it from `src/lib/healthSync.ts`, wired into
+  `src/hooks/useAuth.ts` (session relay + `startBackgroundSync` after
+  sign-in) and the Account sheet's "Clear & resync".
+
+Build notes:
+- **Minimum iOS is 16.0** (project + App target deployment target). The
+  Supabase Swift SDK floors at iOS 16; Capacitor derives the CapApp-SPM
+  package platform from the pbxproj `IPHONEOS_DEPLOYMENT_TARGET` (first
+  occurrence — the *project-level* setting, not just the target), so that
+  had to be 16 for `cap sync` to regenerate CapApp-SPM at `.iOS(.v16)`.
+- The App target has HealthKit + Background Delivery entitlements
+  (`ios/App/App/App.entitlements`) and `NSHealthShareUsageDescription`
+  in its Info.plist. In Xcode, confirm the **HealthKit** capability (with
+  **Background Delivery** checked) is present on the App target under
+  Signing & Capabilities — automatic signing needs it in the provisioning
+  profile, so a first device build must be done with a signed configuration
+  (the CI compile-check uses `CODE_SIGNING_ALLOWED=NO`).
+
+**Device-test checklist** (none of this is verifiable in the simulator —
+HealthKit has no real HRV/sleep data there and background delivery needs
+a real device):
+1. `npm run build && npm run sync`, open `ios/App/App.xcodeproj`, select
+   the App target → Signing & Capabilities → set your Team; confirm the
+   HealthKit + Background Delivery capability is listed.
+2. Run to a physical iPhone that has real Health data (ideally with a
+   third-party wearable's app also writing to Health, e.g. Oura).
+3. On first launch after sign-in, grant the HealthKit permission sheet.
+   Confirm a `health_metrics` row appears in Supabase for today with a
+   non-null `readiness`, and that the numbers reflect the *merged* store
+   (i.e. include the third-party source, not just Apple Watch).
+4. On the paired watch, open the app → the readiness card shows the
+   iPhone-computed score ("Synced <date>"), not a locally-computed one.
+5. Background delivery: with the app backgrounded, let new Health data
+   land (or use Xcode's Debug → Simulate Background Fetch analog for
+   HealthKit observers) and confirm the row updates without opening the
+   app.
+6. Account → "Clear health data & resync": confirm the rows delete, the
+   web dashboard cards empty via realtime, then repopulate after the
+   native `syncNow()` re-ingests.

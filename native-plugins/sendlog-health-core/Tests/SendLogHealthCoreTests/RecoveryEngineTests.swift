@@ -1,5 +1,5 @@
 import XCTest
-@testable import SendLogWatch_Watch_App
+@testable import SendLogHealthCore
 
 final class RecoveryEngineTests: XCTestCase {
     private let t = RecoveryTunables.default
