@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { supabase } from "../lib/supabase";
-import { RealtimeVersionContext } from "../hooks/useRealtimeVersion";
+import {
+  RealtimeBumpContext,
+  RealtimeVersionContext,
+} from "../hooks/useRealtimeVersion";
 
 // Every table a watch write can touch. Kept in sync with the
 // `alter publication supabase_realtime add table ...` migration.
@@ -25,6 +28,7 @@ export default function RealtimeVersionProvider({
   children: ReactNode;
 }) {
   const [version, setVersion] = useState(0);
+  const bump = useCallback(() => setVersion((v) => v + 1), []);
 
   useEffect(() => {
     const channel = supabase.channel(`user-data-${userId}`);
@@ -43,7 +47,9 @@ export default function RealtimeVersionProvider({
 
   return (
     <RealtimeVersionContext.Provider value={version}>
-      {children}
+      <RealtimeBumpContext.Provider value={bump}>
+        {children}
+      </RealtimeBumpContext.Provider>
     </RealtimeVersionContext.Provider>
   );
 }

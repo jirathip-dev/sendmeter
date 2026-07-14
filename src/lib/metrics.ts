@@ -1,6 +1,7 @@
 import type {
   AcwrData,
   AcwrStatus,
+  Phase,
   Session,
   TindeqRecordingMeta,
   WeeklyLoad,
@@ -14,6 +15,24 @@ export function getACWRStatus(acwr: number | null): AcwrStatus {
   if (acwr <= 1.3) return { label: "Optimal", color: "#34C759" };
   if (acwr <= 1.5) return { label: "Caution", color: "#FFB800" };
   return { label: "Danger", color: "#FF453A" };
+}
+
+export type PhaseAcwrFit = "below" | "on" | "above";
+
+/// Whether the current ACWR sits below / within / above the target band the
+/// current phase is documented to aim for (Phase.acwrLow/acwrHigh). This is
+/// deliberately separate from getACWRStatus: that returns the *universal*
+/// injury-risk zone (independent of phase), whereas this says whether your
+/// load matches your phase's *intent* — a "power" phase aims lower/hotter
+/// than "capacity", so the same ratio reads differently against each.
+export function phaseAcwrFit(
+  acwr: number | null,
+  phase: Pick<Phase, "acwrLow" | "acwrHigh"> | undefined,
+): PhaseAcwrFit | null {
+  if (acwr === null || !phase) return null;
+  if (acwr < phase.acwrLow) return "below";
+  if (acwr > phase.acwrHigh) return "above";
+  return "on";
 }
 
 const EWMA_LOOKBACK_DAYS = 90;

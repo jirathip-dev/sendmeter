@@ -1,6 +1,6 @@
 {
-  "name": "Send Log — Climbing Tracker",
-  "short_name": "Send Log",
+  "name": "Sendmeter — Climbing Force Tracker",
+  "short_name": "Sendmeter",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#1C1C1E",

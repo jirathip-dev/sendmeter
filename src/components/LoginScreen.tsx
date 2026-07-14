@@ -66,7 +66,7 @@ export default function LoginScreen() {
             className="topbar-title"
             style={{ fontSize: 28, marginBottom: 4 }}
           >
-            SEND LOG
+            SENDMETER
           </div>
           <div className="topbar-sub">Climbing Periodization</div>
         </div>

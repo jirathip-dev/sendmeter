@@ -1,24 +1,15 @@
 import Combine
 import SwiftUI
 
-private let SIDE_OPTIONS: [(value: String, label: String)] = [
-    ("", "—"),
-    ("left", "Left"),
-    ("right", "Right"),
-    ("both", "Both"),
-]
-
 struct ForceGaugeView: View {
     @State private var tindeq = TindeqManager()
-    @State private var pending: StoppedRecording?
     @State private var saving = false
     @State private var savedMsg: String?
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
 
-    // Exercise setup — set once, tweak side between reps (mirrors the web app)
-    @State private var tag = ""
-    @State private var side = ""
-    @State private var recentTags: [String] = []
+    // The watch is a minimal one-tap capture: no tag/side/tare here (add those
+    // on the phone). A rep saves untagged the moment you stop; group it into a
+    // session for the phone to reconcile.
 
     // Gauge session: recordings saved while active share a group_id
     @State private var session: (id: UUID, startedAt: Date)?
@@ -60,16 +51,11 @@ struct ForceGaugeView: View {
                     gaugeContent
                 }
 
-                if let pending {
-                    summaryCard(pending)
-                }
                 if let savedMsg {
-                    Text(savedMsg).font(.footnote).foregroundStyle(.green)
+                    Text(savedMsg)
+                        .font(.footnote)
+                        .foregroundStyle(saving ? Color.secondary : Color.green)
                 }
-
-                // Rest timer: independent of the gauge session/workout clock
-                RestTimer()
-                    .padding(.top, 4)
             }
         }
         .navigationTitle("Force")
@@ -77,9 +63,6 @@ struct ForceGaugeView: View {
             if tindeq.status == .measuring {
                 sparkSamples = tindeq.recentSamples()
             }
-        }
-        .task {
-            recentTags = (try? await Repo.fetchRecentTindeqTags()) ?? []
         }
         .onDisappear { tindeq.disconnect() }
         .sheet(isPresented: $showEndSheet) { endSessionSheet }
@@ -187,29 +170,6 @@ struct ForceGaugeView: View {
             }
         }
 
-        // Exercise setup (hidden while measuring to save space)
-        if tindeq.status == .connected {
-            TextField("Tag (e.g. FDP)", text: $tag)
-                .font(.footnote)
-            if !recentTags.isEmpty {
-                Picker("Recent", selection: $tag) {
-                    Text("—").tag("")
-                    ForEach(recentTags, id: \.self) { t in
-                        Text(t).tag(t)
-                    }
-                }
-                .pickerStyle(.navigationLink)
-                .font(.footnote)
-            }
-            Picker("Side", selection: $side) {
-                ForEach(SIDE_OPTIONS, id: \.value) { o in
-                    Text(o.label).tag(o.value)
-                }
-            }
-            .pickerStyle(.navigationLink)
-            .font(.footnote)
-        }
-
         Text(String(format: "%.1f", tindeq.currentKg))
             .font(.system(size: 42, weight: .heavy, design: .rounded))
             .monospacedDigit()
@@ -226,84 +186,38 @@ struct ForceGaugeView: View {
         Sparkline(samples: sparkSamples)
             .frame(height: 50)
 
-        HStack {
-            Button("Tare") { tindeq.tare() }
-                .disabled(tindeq.status == .measuring)
-            if tindeq.status == .measuring {
-                Button("Stop") {
-                    pending = tindeq.stop()
-                    savedMsg = nil
-                }
-                .buttonStyle(.borderedProminent)
-            } else {
-                Button("Start") {
-                    pending = nil
-                    savedMsg = nil
-                    tindeq.start()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-
-        Button("Disconnect") { tindeq.disconnect() }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-    }
-
-    // MARK: Save card
-
-    @ViewBuilder
-    private func summaryCard(_ rec: StoppedRecording) -> some View {
-        VStack(spacing: 4) {
-            HStack {
-                Text("Duration")
-                Spacer()
-                Text(String(format: "%.1fs", Double(rec.durationMs) / 1000))
-            }
-            HStack {
-                Text("Peak")
-                Spacer()
-                Text(String(format: "%.1f kg", rec.peakKg)).foregroundStyle(.green)
-            }
-            HStack {
-                Text("Average")
-                Spacer()
-                Text(String(format: "%.1f kg", rec.avgKg))
-            }
-            if !tag.isEmpty || !side.isEmpty {
-                HStack {
-                    Text("Tag")
-                    Spacer()
-                    Text("\(tag)\(side.isEmpty ? "" : " · \(side)")")
-                        .foregroundStyle(.blue)
-                }
-            }
-            HStack {
-                Button("Discard") { pending = nil }
-                Button(saving ? "Saving…" : "Save") {
-                    saving = true
-                    Task {
-                        do {
-                            try await Repo.insertTindeqRecording(
-                                rec,
-                                note: "",
-                                tag: tag.trimmingCharacters(in: .whitespaces),
-                                side: side,
-                                groupId: session?.id
-                            )
-                            pending = nil
-                            savedMsg = "Saved"
-                            if session != nil { sessionCount += 1 }
-                        } catch {
-                            savedMsg = "Save failed: \(error.localizedDescription)"
-                        }
-                        saving = false
-                    }
-                }
+        if tindeq.status == .measuring {
+            Button(saving ? "Saving…" : "Stop & Save") { saveStop() }
                 .buttonStyle(.borderedProminent)
                 .disabled(saving)
+        } else {
+            Button("Start") {
+                savedMsg = nil
+                tindeq.start()
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(saving)
         }
-        .font(.footnote)
+    }
+
+    // Stop always saves — untagged, the moment you stop. A failure keeps the
+    // rep recoverable by reconnecting and pulling again (nothing is queued on
+    // the watch), and surfaces a friendly message instead of a DB error.
+    private func saveStop() {
+        guard let rec = tindeq.stop() else { return }
+        saving = true
+        savedMsg = "Saving…"
+        Task {
+            do {
+                try await Repo.insertTindeqRecording(
+                    rec, note: "", tag: "", side: "", groupId: session?.id
+                )
+                savedMsg = String(format: "Saved · %.1f kg", rec.peakKg)
+                if session != nil { sessionCount += 1 }
+            } catch {
+                savedMsg = ErrorText.friendly(error)
+            }
+            saving = false
+        }
     }
 }

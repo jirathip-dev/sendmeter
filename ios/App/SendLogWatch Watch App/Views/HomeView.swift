@@ -78,7 +78,7 @@ struct HomeView: View {
                     Text(readiness.result?.zone?.rawValue.uppercased() ?? "READINESS")
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(zoneColor)
-                    Text(readiness.result?.driver ?? "Tap to compute")
+                    Text(readiness.result?.driver ?? "Tap to refresh")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)

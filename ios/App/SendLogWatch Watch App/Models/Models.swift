@@ -40,7 +40,7 @@ struct StoppedRecording {
 
 // MARK: - Database rows (snake_case matches PostgREST)
 
-struct SessionInsert: Codable {
+nonisolated struct SessionInsert: Codable {
     var id: UUID
     var date: String           // YYYY-MM-DD
     var type: String
@@ -59,7 +59,7 @@ struct SessionInsert: Codable {
     }
 }
 
-struct ClimbWorkoutInsert: Codable {
+nonisolated struct ClimbWorkoutInsert: Codable {
     var id: UUID
     var startedAt: Date
     var endedAt: Date
@@ -94,7 +94,7 @@ struct ClimbWorkoutInsert: Codable {
     }
 }
 
-struct LabeledWorkoutRow: Codable {
+nonisolated struct LabeledWorkoutRow: Codable {
     var avgHr: Double?
     var meanEffort: Double?
     var attemptsPer10min: Double?
@@ -108,7 +108,7 @@ struct LabeledWorkoutRow: Codable {
     }
 }
 
-struct ClimbAttemptInsert: Codable {
+nonisolated struct ClimbAttemptInsert: Codable {
     var id: UUID
     var workoutId: UUID
     var startedAt: Date
@@ -132,7 +132,7 @@ struct ClimbAttemptInsert: Codable {
     }
 }
 
-struct TindeqRecordingInsert: Codable {
+nonisolated struct TindeqRecordingInsert: Codable {
     var durationMs: Int
     var peakKg: Double
     var avgKg: Double
@@ -153,11 +153,11 @@ struct TindeqRecordingInsert: Codable {
     }
 }
 
-struct TindeqTagRow: Codable {
+nonisolated struct TindeqTagRow: Codable {
     var tag: String
 }
 
-struct UserSettingsRow: Codable {
+nonisolated struct UserSettingsRow: Codable {
     var currentPhase: String
 
     enum CodingKeys: String, CodingKey {
@@ -165,39 +165,21 @@ struct UserSettingsRow: Codable {
     }
 }
 
-struct SessionLoadRow: Codable {
+nonisolated struct SessionLoadRow: Codable {
     var date: String
     var load: Int?
 }
 
-struct HealthMetricsUpsert: Codable {
-    var date: String // YYYY-MM-DD local
-    var hrvSdnnMs: Double?
-    var restingHr: Double?
-    var sleepHours: Double?
-    var sleepDeepHours: Double?
-    var sleepRemHours: Double?
-    var bodyMassKg: Double?
-    var respRateBpm: Double?
+/// Read-only projection of the latest health_metrics row — the iPhone writes
+/// the full row; the watch only reads the score/zone back for display.
+nonisolated struct HealthMetricRow: Codable {
+    var date: String
     var readiness: Int?
     var zone: String?
-    var computedAt: Date
-
-    enum CodingKeys: String, CodingKey {
-        case date, readiness, zone
-        case hrvSdnnMs = "hrv_sdnn_ms"
-        case restingHr = "resting_hr"
-        case sleepHours = "sleep_hours"
-        case sleepDeepHours = "sleep_deep_hours"
-        case sleepRemHours = "sleep_rem_hours"
-        case bodyMassKg = "body_mass_kg"
-        case respRateBpm = "resp_rate_bpm"
-        case computedAt = "computed_at"
-    }
 }
 
 /// One confirmed workout = three idempotent upserts, bundled for the offline queue.
-struct WorkoutSaveBundle: Codable {
+nonisolated struct WorkoutSaveBundle: Codable {
     var session: SessionInsert
     var workout: ClimbWorkoutInsert
     var attempts: [ClimbAttemptInsert]

@@ -1,0 +1,54 @@
+default_platform(:ios)
+
+APP_IDENTIFIER = "com.jirathip.sendlog".freeze
+XCODEPROJ = "ios/App/App.xcodeproj".freeze
+
+platform :ios do
+  desc "Build the web app, sync Capacitor, and ship a build to TestFlight"
+  lane :beta do
+    # App Store Connect API key — no Apple ID password / 2FA, works headless.
+    # Generate at App Store Connect → Users and Access → Integrations →
+    # App Store Connect API. See fastlane/.env.example.
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_KEY_PATH")
+    )
+
+    # 1. Fresh web assets into the native project (the easy-to-forget manual
+    #    step — the archive bundles ios/App/App/public).
+    sh("cd .. && npm run build && npx cap sync ios")
+
+    # 2. Next build number = latest on TestFlight + 1. Applied as a build
+    #    setting at archive time so it lands in BOTH the app and the embedded
+    #    watch app, without mutating the git-tracked project.
+    build = latest_testflight_build_number(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      initial_build_number: 0
+    ) + 1
+
+    # 3. Archive + export. Automatic signing; -allowProvisioningUpdates lets it
+    #    register/refresh the App ID capabilities (HealthKit, Background
+    #    Delivery) and provisioning as needed.
+    build_app(
+      project: XCODEPROJ,
+      scheme: "App",
+      configuration: "Release",
+      export_method: "app-store",
+      xcargs: "CURRENT_PROJECT_VERSION=#{build} -allowProvisioningUpdates",
+      export_options: { signingStyle: "automatic" }
+    )
+
+    # 4. Upload. Internal testers on your team get it automatically once
+    #    processing finishes (no App Review for internal testing).
+    upload_to_testflight(
+      api_key: api_key,
+      app_identifier: APP_IDENTIFIER,
+      skip_waiting_for_build_processing: true
+    )
+
+    UI.success("Uploaded build #{build} to TestFlight. It appears under " \
+               "Internal Testing once App Store Connect finishes processing.")
+  end
+end

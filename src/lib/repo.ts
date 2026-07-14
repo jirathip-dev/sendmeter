@@ -443,6 +443,14 @@ export async function deleteHealthMetrics(opts?: {
   from?: string;
   to?: string;
 }): Promise<void> {
+  // Guard: an unauthenticated DELETE isn't an error — RLS just matches zero
+  // rows and reports success, so the UI would claim "cleared" while nothing
+  // happened (seen when a revoked session fell back to anon). Fail loudly
+  // instead so the user knows to sign in again.
+  const { data, error: userError } = await supabase.auth.getUser();
+  if (userError || !data.user) {
+    throw new Error("Session expired — sign in again, then retry the clear.");
+  }
   let q = supabase
     .from("health_metrics")
     .delete()
