@@ -44,7 +44,7 @@ actor OfflineQueue {
             .sorted { lhs, rhs in
                 let l = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
                 let r = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-                return l ?? .distantPast < r ?? .distantPast
+                return l < r
             }
 
         let decoder = JSONDecoder()

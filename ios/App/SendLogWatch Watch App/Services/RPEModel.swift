@@ -3,7 +3,7 @@ import Foundation
 /// Ridge-regression RPE predictor fitted on-device from past workouts with a
 /// confirmed RPE. Features mirror AttemptDetector.predictRPE: session HR
 /// reserve, mean attempt effort, attempts per 10 minutes.
-struct RPEModel: Codable {
+nonisolated struct RPEModel: Codable {
     let weights: [Double]  // [w_h, w_e, w_d, bias] on standardized features
     let means: [Double]    // [μ_h, μ_e, μ_d]
     let stds: [Double]     // [σ_h, σ_e, σ_d]
@@ -20,14 +20,14 @@ struct RPEModel: Codable {
     }
 }
 
-struct LabeledWorkout {
+nonisolated struct LabeledWorkout {
     let sessionHRR: Double       // 0..1, 0 when HR unavailable
     let meanEffort: Double       // 0..10
     let attemptsPer10min: Double
     let rpe: Double              // confirmed label, 1..10
 }
 
-enum RPEModelFitter {
+nonisolated enum RPEModelFitter {
     /// Solve (XᵀX + λ·diag(1,1,1,0)) w = Xᵀy on standardized features with an
     /// unregularized bias. Returns nil below minSamples or on degenerate data.
     static func fit(rows: [LabeledWorkout], lambda: Double, minSamples: Int, now: Date = Date()) -> RPEModel? {
@@ -90,7 +90,7 @@ enum RPEModelFitter {
     }
 }
 
-enum RPEModelStore {
+nonisolated enum RPEModelStore {
     private static let key = "rpeModel.v1"
 
     static func load() -> RPEModel? {
