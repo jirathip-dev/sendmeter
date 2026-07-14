@@ -295,7 +295,9 @@ struct ForceGaugeView: View {
                             savedMsg = "Saved"
                             if session != nil { sessionCount += 1 }
                         } catch {
-                            savedMsg = "Save failed: \(error.localizedDescription)"
+                            // Keep `pending` set so the recording isn't lost —
+                            // the user can retry (e.g. after reconnecting).
+                            savedMsg = ErrorText.friendly(error)
                         }
                         saving = false
                     }

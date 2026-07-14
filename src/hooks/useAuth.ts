@@ -33,7 +33,23 @@ export function useAuth() {
       setLoading(false);
       onSession(s);
     });
-    return () => subscription.unsubscribe();
+
+    // Re-relay the (supabase-js keeps it fresh) session to the watch + health
+    // plugin whenever the app returns to the foreground. Those clients don't
+    // own the refresh cycle, so this keeps them supplied with a current token
+    // right when the user is likely to act (e.g. save a recording on the watch).
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void supabase.auth.getSession().then(({ data }) => {
+        if (data.session) onSession(data.session);
+      });
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      subscription.unsubscribe();
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   return {
