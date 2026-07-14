@@ -33,3 +33,12 @@ DerivedData/
 *.xcuserstate
 # SwiftPM build output (native-plugins/*/.build from `swift test`, etc.)
 .build/
+
+# Fastlane — secrets + generated output
+*.p8
+fastlane/.env
+fastlane/report.xml
+fastlane/README.md
+fastlane/test_output/
+*.ipa
+*.dSYM.zip
