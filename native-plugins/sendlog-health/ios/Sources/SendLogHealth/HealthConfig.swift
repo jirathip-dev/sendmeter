@@ -15,8 +15,16 @@ enum HealthConfig {
     /// Session (incl. refresh token) persists in the Keychain automatically —
     /// KeychainLocalStorage is the SDK default on Apple platforms, so a
     /// background wake reuses the last relayed session without a round-trip.
+    ///
+    /// `autoRefreshToken: false` — this client consumes the session relayed
+    /// from the WebView's supabase-js, which owns the refresh cycle. Refresh
+    /// tokens are single-use: if this client refreshed the shared token too,
+    /// whichever refreshed second would trip replay detection and revoke the
+    /// whole session family (breaking watch + web at once). Fresh tokens
+    /// arrive via relayHealthSession on every auth event + app foreground.
     static let client = SupabaseClient(
         supabaseURL: supabaseURL,
-        supabaseKey: supabaseAnonKey
+        supabaseKey: supabaseAnonKey,
+        options: SupabaseClientOptions(auth: .init(autoRefreshToken: false))
     )
 }

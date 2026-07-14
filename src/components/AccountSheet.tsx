@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { syncHealthNow } from "../lib/healthSync";
+import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
 import Sheet from "./Sheet";
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export default function AccountSheet({ onClose, onSignOut }: Props) {
+  const bumpRealtime = useRealtimeBump();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [saving, setSaving] = useState(false);
@@ -69,6 +71,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       // Ask the device to re-ingest correct data right away (no-op on web /
       // until the native health plugin ships; the delete stands regardless).
       await syncHealthNow();
+      // Force the readiness/recovery cards to refetch — the DELETE's own
+      // realtime echo doesn't reliably arrive (esp. in the native WebView),
+      // which left stale scores on screen after a clear.
+      bumpRealtime();
       setConfirmingClear(false);
       setCleared(true);
     } catch (e) {
