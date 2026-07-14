@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useTindeq } from "../hooks/useTindeq";
-import type { StoppedRecording } from "../hooks/useTindeq";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import {
   deleteRecording,
@@ -26,8 +25,10 @@ interface TindeqViewProps {
 
 export default function TindeqView({ onLogSession }: TindeqViewProps) {
   const tindeq = useTindeq();
-  const [pending, setPending] = useState<StoppedRecording | null>(null);
-  const [pendingNote, setPendingNote] = useState("");
+  // The just-auto-saved recording, shown as a confirmation so the user can
+  // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
+  // prompt — a rep now saves the moment you stop, using the tag set beforehand.
+  const [justSaved, setJustSaved] = useState<TindeqRecordingMeta | null>(null);
   const [pendingTag, setPendingTag] = useState("");
   const [pendingSide, setPendingSide] = useState<TindeqSide>("");
   const [gaugeSession, setGaugeSession] = useState<{
@@ -115,36 +116,40 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
     };
   }, [realtimeVersion]);
 
+  // Stop always saves — the tag was required before Start, so there's nothing
+  // to decide here. Show the saved rep as a confirmation (with an undo).
   async function handleStop() {
     const summary = await tindeq.stop();
-    if (summary) {
-      setPending(summary);
-      setPendingNote("");
-    }
-  }
-
-  async function savePending() {
-    if (!pending) return;
+    if (!summary) return;
     setSaving(true);
     try {
       const saved = await insertRecording({
-        durationMs: pending.durationMs,
-        peakKg: pending.peakKg,
-        avgKg: pending.avgKg,
-        note: pendingNote.trim(),
+        durationMs: summary.durationMs,
+        peakKg: summary.peakKg,
+        avgKg: summary.avgKg,
+        note: "",
         tag: pendingTag.trim(),
         side: pendingSide,
         groupId: gaugeSession?.id ?? null,
-        samples: pending.samples,
+        samples: summary.samples,
       });
       setRecordings((list) => [saved, ...list]);
-      setPending(null);
-      // keep tag and side — set them once, tweak side between reps
+      setJustSaved(saved);
+      // keep tag and side — set once, tweak side between reps
     } catch (e) {
       setListError(e instanceof Error ? e.message : "Failed to save recording");
     } finally {
       setSaving(false);
     }
+  }
+
+  // Undo a just-saved rep (mis-tagged, or a bad pull) — deletes it and clears
+  // the confirmation so the user can retag and pull again.
+  async function undoJustSaved() {
+    if (!justSaved) return;
+    const id = justSaved.id;
+    setJustSaved(null);
+    await removeRecording(id);
   }
 
   async function removeRecording(id: string) {
@@ -458,8 +463,9 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
             target={gaugeTarget}
           />
 
-          {/* Exercise setup before each measure */}
-          {status === "connected" && !pending && (
+          {/* Set the tag/side before each rep — a tag is required to Start,
+              so every recording is labelled without a post-stop decision. */}
+          {status === "connected" && (
             <div className="card" style={{ marginTop: 10 }}>
               <div className="label-eyebrow" style={{ marginBottom: 8 }}>
                 Next recording
@@ -472,6 +478,13 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 onTag={setPendingTag}
                 onSide={setPendingSide}
               />
+              {!pendingTag.trim() && (
+                <div
+                  style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 8 }}
+                >
+                  Add a tag to start recording.
+                </div>
+              )}
             </div>
           )}
 
@@ -484,14 +497,19 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
               Tare
             </button>
             {status === "measuring" ? (
-              <button className="btn-primary" onClick={() => void handleStop()}>
-                Stop
+              <button
+                className="btn-primary"
+                disabled={saving}
+                onClick={() => void handleStop()}
+              >
+                {saving ? "Saving…" : "Stop & Save"}
               </button>
             ) : (
               <button
                 className="btn-primary"
+                disabled={!pendingTag.trim()}
                 onClick={() => {
-                  setPending(null);
+                  setJustSaved(null);
                   void tindeq.start();
                 }}
               >
@@ -500,92 +518,49 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
             )}
           </div>
 
-          {/* Save prompt after stop */}
-          {pending && status !== "measuring" && (
-            <div className="card" style={{ marginTop: 10 }}>
-              <div className="label-eyebrow" style={{ marginBottom: 10 }}>
-                Recording finished
-              </div>
-              <div
+          {/* Confirmation of the auto-saved rep (tag shown so it can be
+              eyeballed; Undo deletes it for a retag + re-pull). */}
+          {justSaved && status !== "measuring" && (
+            <div
+              className="card"
+              style={{
+                marginTop: 10,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <span
+                style={{ fontSize: 12, color: "var(--success)", fontWeight: 700, flex: 1 }}
+              >
+                Saved · {justSaved.tag || "untagged"}
+                {justSaved.side ? ` · ${justSaved.side}` : ""}
+              </span>
+              <span
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
                   fontSize: 12,
-                  color: "var(--ink-muted)",
-                  marginBottom: 4,
+                  color: "var(--ink)",
+                  fontFamily: "Inter, sans-serif",
+                  fontWeight: 800,
                 }}
               >
-                <span>Duration</span>
-                <span style={{ color: "var(--ink)" }}>
-                  {(pending.durationMs / 1000).toFixed(1)}s
-                </span>
-              </div>
-              <div
+                {justSaved.peakKg.toFixed(1)} kg
+              </span>
+              <button
+                onClick={() => void undoJustSaved()}
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: 12,
+                  background: "none",
+                  border: "1px solid var(--ink-faint)",
                   color: "var(--ink-muted)",
-                  marginBottom: 4,
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  fontSize: 10,
+                  cursor: "pointer",
+                  fontFamily: "Inter, sans-serif",
                 }}
               >
-                <span>Peak</span>
-                <span
-                  style={{
-                    color: "var(--success)",
-                    fontFamily: "Inter, sans-serif",
-                    fontWeight: 800,
-                  }}
-                >
-                  {pending.peakKg.toFixed(1)} kg
-                </span>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  fontSize: 12,
-                  color: "var(--ink-muted)",
-                }}
-              >
-                <span>Average</span>
-                <span style={{ color: "var(--ink)" }}>
-                  {pending.avgKg.toFixed(1)} kg
-                </span>
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <TagSideEditor
-                  tag={pendingTag}
-                  side={pendingSide}
-                  recentTags={recentTags}
-                  allTags={allTags}
-                  onTag={setPendingTag}
-                  onSide={setPendingSide}
-                />
-              </div>
-              <span className="field-label">Note (optional)</span>
-              <input
-                className="field"
-                value={pendingNote}
-                onChange={(e) => setPendingNote(e.target.value)}
-                placeholder="e.g. half crimp 20mm"
-              />
-              <div className="grid-2" style={{ marginTop: 12 }}>
-                <button
-                  className="btn-ghost"
-                  disabled={saving}
-                  onClick={() => setPending(null)}
-                >
-                  Discard
-                </button>
-                <button
-                  className="btn-primary"
-                  disabled={saving}
-                  onClick={() => void savePending()}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
+                Undo
+              </button>
             </div>
           )}
         </div>

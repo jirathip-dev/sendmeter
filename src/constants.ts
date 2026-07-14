@@ -67,6 +67,7 @@ export const SESSION_TYPES: SessionType[] = [
     defaultDuration: 45,
   },
   { id: "board", label: "Board Climbing", defaultRpe: 8, defaultDuration: 60 },
+  { id: "gym", label: "Gym Session", defaultRpe: 6, defaultDuration: 90 },
   {
     id: "outdoor",
     label: "Outdoor / Projecting",
