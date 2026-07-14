@@ -41,9 +41,10 @@ diagnostics): **Not collected**. There are no analytics, ads, or trackers.
 > tap "Sign in with password instead" if the magic-link form shows).
 > The Tindeq tab connects to a physical Tindeq Progressor strain gauge over
 > Bluetooth; without the device it shows the connect screen only.
-> Health data (HRV, resting HR, sleep, weight) is read on the watch with
-> HealthKit permission to compute a daily recovery score; it is stored on the
-> user's own account row (see privacy policy) and never used for
+> Health data (HRV, resting HR, respiratory rate, sleep, weight) is read on the
+> iPhone with HealthKit permission — including data from any other apps/wearables
+> the user has connected to Apple Health — to compute a daily recovery score. It
+> is stored on the user's own account row (see privacy policy) and never used for
 > advertising.
 
 **Demo account**: create a throwaway user before submitting — sign up via
@@ -53,11 +54,11 @@ Put that email/password in the review notes.
 
 ## Remaining manual steps (App Store Connect / Xcode)
 
-1. Join the Apple Developer Program ($99/yr) with your Apple ID.
-2. App Store Connect → New App ×2:
-   - iOS: bundle id `com.jirathip.sendlog`
-   - watchOS: bundle id `com.jirathip.sendlog.watchkitapp` (or embed the watch
-     app in the iOS listing later — separate listing is simpler to start).
+1. ~~Join the Apple Developer Program ($99/yr).~~ **Done.**
+2. App Store Connect → New App → **one** iOS app record, bundle id
+   `com.jirathip.sendlog`. The watch app is an **embedded companion**
+   (`com.jirathip.sendlog.watchkitapp`) that ships inside the iOS app — it is
+   **not** a separate App Store record.
 3. Deploy the web app so the privacy-policy URL is live; paste the URL.
 4. Fill App Privacy per the table above.
 5. Screenshots: iPhone 6.9" and 6.5" (simulator screenshots fine), watch
