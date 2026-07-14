@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTindeq } from "../hooks/useTindeq";
 import type { StoppedRecording } from "../hooks/useTindeq";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
@@ -11,96 +11,9 @@ import type { TindeqRecordingMeta, TindeqSide } from "../types";
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import ForceGauge from "./ForceGauge";
-import RecordingRow from "./RecordingRow";
+import GroupedRecordings from "./GroupedRecordings";
+import TagSideEditor from "./TagSideEditor";
 import TindeqTrendChart from "./TindeqTrendChart";
-
-const SIDE_OPTIONS: { value: TindeqSide; label: string }[] = [
-  { value: "", label: "—" },
-  { value: "left", label: "Left" },
-  { value: "right", label: "Right" },
-  { value: "both", label: "Both" },
-];
-
-/// Shared exercise setup: used before starting a measure AND in the save
-/// card, editing the same state — set once, tweak between reps.
-function TagSideEditor({
-  tag,
-  side,
-  recentTags,
-  allTags,
-  onTag,
-  onSide,
-}: {
-  tag: string;
-  side: TindeqSide;
-  recentTags: string[];
-  allTags: string[];
-  onTag: (t: string) => void;
-  onSide: (s: TindeqSide) => void;
-}) {
-  const listId = useId();
-  return (
-    <div>
-      <div className="grid-2" style={{ gap: 10 }}>
-        <div>
-          <span className="field-label" style={{ marginTop: 0 }}>
-            Exercise tag
-          </span>
-          <input
-            className="field"
-            value={tag}
-            onChange={(e) => onTag(e.target.value)}
-            placeholder="e.g. FDP"
-            list={listId}
-          />
-          <datalist id={listId}>
-            {allTags.map((t) => (
-              <option key={t} value={t} />
-            ))}
-          </datalist>
-        </div>
-        <div>
-          <span className="field-label" style={{ marginTop: 0 }}>
-            Side
-          </span>
-          <select
-            className="field"
-            value={side}
-            onChange={(e) => onSide(e.target.value as TindeqSide)}
-          >
-            {SIDE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-      {recentTags.length > 0 && (
-        <div
-          style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 7 }}
-        >
-          {recentTags.map((t) => (
-            <button
-              key={t}
-              className="tag"
-              onClick={() => onTag(tag === t ? "" : t)}
-              style={{
-                background: tag === t ? "var(--info)" : "var(--surface-1)",
-                color: tag === t ? "#ffffff" : "var(--ink-muted)",
-                border: `1px solid ${tag === t ? "var(--info)" : "var(--border)"}`,
-                cursor: "pointer",
-                fontFamily: "Inter, sans-serif",
-              }}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 interface TindeqViewProps {
   onLogSession: (input: {
@@ -771,92 +684,6 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         recordings={recordings}
         onDelete={(id) => void removeRecording(id)}
       />
-    </div>
-  );
-}
-
-/// Recordings sharing a group_id render as one session block with a header;
-/// ungrouped recordings render as standalone rows. Blocks are ordered by
-/// their most recent recording.
-function GroupedRecordings({
-  recordings,
-  onDelete,
-}: {
-  recordings: TindeqRecordingMeta[];
-  onDelete: (id: string) => void;
-}) {
-  type Block =
-    | { kind: "single"; rec: TindeqRecordingMeta; latest: string }
-    | { kind: "group"; id: string; recs: TindeqRecordingMeta[]; latest: string };
-
-  const groups = new Map<string, TindeqRecordingMeta[]>();
-  const blocks: Block[] = [];
-  for (const rec of recordings) {
-    if (!rec.groupId) {
-      blocks.push({ kind: "single", rec, latest: rec.recordedAt });
-    } else if (groups.has(rec.groupId)) {
-      groups.get(rec.groupId)!.push(rec);
-    } else {
-      const recs = [rec];
-      groups.set(rec.groupId, recs);
-      blocks.push({ kind: "group", id: rec.groupId, recs, latest: rec.recordedAt });
-    }
-  }
-  blocks.sort((a, b) => b.latest.localeCompare(a.latest));
-
-  const fmtTime = (iso: string) => {
-    const d = new Date(iso);
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  };
-  const fmtDate = (iso: string) => {
-    const d = new Date(iso);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  };
-
-  return (
-    <div>
-      {blocks.map((b) =>
-        b.kind === "single" ? (
-          <RecordingRow key={b.rec.id} rec={b.rec} onDelete={onDelete} />
-        ) : (
-          <div
-            key={b.id}
-            style={{
-              border: "1px solid var(--border)",
-              borderRadius: 10,
-              padding: "10px 8px 2px",
-              marginBottom: 8,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: 8,
-                flexWrap: "wrap",
-                padding: "0 6px 8px",
-              }}
-            >
-              <span style={{ fontSize: 11, color: "var(--ink)" }}>
-                {fmtDate(b.recs[b.recs.length - 1]!.recordedAt)}
-              </span>
-              <span style={{ fontSize: 10, color: "var(--ink-faint)" }}>
-                {fmtTime(b.recs[b.recs.length - 1]!.recordedAt)}–
-                {fmtTime(b.recs[0]!.recordedAt)} · {b.recs.length} recording
-                {b.recs.length === 1 ? "" : "s"}
-              </span>
-              <span style={{ fontSize: 10, color: "var(--ink-faint)" }}>
-                {[...new Set(b.recs.map((r) => r.tag).filter(Boolean))].join(
-                  " · ",
-                )}
-              </span>
-            </div>
-            {b.recs.map((rec) => (
-              <RecordingRow key={rec.id} rec={rec} onDelete={onDelete} />
-            ))}
-          </div>
-        ),
-      )}
     </div>
   );
 }
