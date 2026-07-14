@@ -25,11 +25,12 @@ npm run lint       # eslint .
 npm run sync       # cap sync ios  (copies dist/ into the iOS app, regenerates CapApp-SPM)
 ```
 
-There is **no TS/web test runner** (no Vitest). The **Swift** side does have tests:
+Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic only
+(metrics/ACWR, force-curve, dates). The **Swift** side has tests too:
 - `cd native-plugins/sendlog-health-core && swift test` — pure readiness/ACWR math, runs on macOS.
 - `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."` — watch logic (attempt detection, RPE model, Tindeq protocol, dates).
 
-Always run `npm run typecheck && npm run lint && npm run build` after web changes.
+Always run `npm run typecheck && npm run lint && npm test && npm run build` after web changes.
 
 ## Architecture
 
@@ -68,6 +69,23 @@ Always run `npm run typecheck && npm run lint && npm run build` after web change
   `health_metrics` (it sees the merged HealthKit store incl. third-party wearables).
   The watch only *reads* the computed score back for display — it no longer reads
   HealthKit or writes health rows. Don't reintroduce watch-side health writes.
+- **One Supabase session, three clients — only supabase-js refreshes it.** The web
+  (supabase-js), the watch, and the iPhone health plugin all share the user's
+  session via relays. The watch + plugin clients set `autoRefreshToken: false` and
+  only *consume* tokens re-relayed on every auth event + app foreground (the
+  `useAuth` visibilitychange listener). With refresh-token rotation on, a second
+  client refreshing the shared token trips Supabase's replay detection and revokes
+  the whole session family — writes then fail RLS as anon. Don't re-enable
+  auto-refresh on the watch/plugin clients.
+- **Migrations aren't auto-applied.** Files in `supabase/migrations/` are just SQL
+  on disk — apply them to the remote DB via the Supabase MCP (`apply_migration`) or
+  the CLI, or the schema drifts from the code. (The `health_metrics` delete policy +
+  date-sanity constraints sat unapplied for a while: with no DELETE policy, a delete
+  silently matches zero rows, so "Clear health data" looked broken while succeeding.)
+- **Tindeq capture asymmetry (intentional).** The in-app gauge requires a **tag
+  before Start** and **auto-saves on Stop** (with an Undo); the watch Force Gauge is
+  a stripped one-tap page that **always saves untagged** on Stop. Don't restore the
+  old discard/save prompt or the watch tag/side/tare controls.
 - **`cap sync` before archiving.** The iOS archive bundles `ios/App/App/public`,
   which only updates on `npm run build && npm run sync`. Forgetting this ships stale UI.
 - **`CapApp-SPM/Package.swift` is Capacitor-managed** — never hand-edit; it's
@@ -84,13 +102,27 @@ Always run `npm run typecheck && npm run lint && npm run build` after web change
   bundle IDs `com.jirathip.sendlog*`, Xcode target/scheme names (`SendLogWatch Watch App`),
   plugin modules (`SendLogHealth`, `SendLogAuthBridge`), Swift file/dir names.
 
+## Deploy (TestFlight + Vercel)
+
+- **`fastlane beta` must run from an interactive Terminal.** The App Store export
+  needs an **Apple Distribution certificate + a signed-in Xcode account** in the
+  login keychain; the ASC API key only covers build-number lookup + the upload, not
+  the export signing cert. An automated/spawned shell that lacks the cert fails with
+  `exportArchive No Accounts` / `No signing certificate "iOS Distribution" found`.
+  Also run it with `LANG=en_US.UTF-8` — in a `C`-locale shell fastlane's xcpretty
+  formatter crashes on non-ASCII output. Signing troubleshooting: `ios/COMPANION_SETUP.md`.
+- **Commit as `jirathip.ku@gmail.com`** (`git config user.email`). Pushing `main`
+  triggers the Vercel web deploy, which **rejects commits from unrecognized authors**
+  — a machine-default `user@host` email silently blocks it. Redeploy the current
+  HEAD from the Vercel dashboard if it was pushed under the wrong identity.
+
 ## Working style here
 
 - This is a solo project moving fast. Match the surrounding code's style.
-- Commit only when asked; branch off `main` first. On the branch
-  `feature/iphone-health-sync` the iPhone health-sync + rename work is staged,
-  pending an on-device TestFlight test before merging.
-- Backlog + planning live in Notion (the "🧗 Send Log" page → Backlog database) and
+- Commit only when asked; branch off `main` first. The iPhone health-sync + rename
+  work (`feature/iphone-health-sync`) is **merged to `main`**; on-device TestFlight
+  verification of the HealthKit runtime + watch UX is still pending.
+- Backlog + planning live in Notion (the "Sendmeter" page → Backlog database) and
   in `~/.claude/plans/`. Native/HealthKit runtime behavior can't be verified in the
   simulator — flag device-only work rather than claiming it verified.
 - App Store submission state is tracked in `docs/app-store-checklist.md` and
