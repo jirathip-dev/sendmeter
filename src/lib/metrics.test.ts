@@ -4,6 +4,7 @@ import {
   computeAcwr,
   computeWeeklyLoads,
   computeTindeqStats,
+  phaseAcwrFit,
 } from "./metrics";
 import { today, daysAgo } from "./dates";
 import type { Session, TindeqRecordingMeta } from "../types";
@@ -92,6 +93,30 @@ describe("computeWeeklyLoads", () => {
     expect(r.find((b) => b.label === "Now")!.total).toBe(100);
     expect(r.find((b) => b.label === "1w")!.total).toBe(50);
     expect(r.find((b) => b.label === "3w")!.total).toBe(0);
+  });
+});
+
+describe("phaseAcwrFit", () => {
+  const capacity = { acwrLow: 0.9, acwrHigh: 1.1 }; // wider, high-volume base
+  const power = { acwrLow: 0.8, acwrHigh: 1.0 }; // aims lower/hotter
+
+  it("is null without an ACWR or a phase", () => {
+    expect(phaseAcwrFit(null, capacity)).toBeNull();
+    expect(phaseAcwrFit(1.0, undefined)).toBeNull();
+  });
+
+  it("classifies below / on / above the phase's target band (inclusive edges)", () => {
+    expect(phaseAcwrFit(0.85, capacity)).toBe("below");
+    expect(phaseAcwrFit(0.9, capacity)).toBe("on");
+    expect(phaseAcwrFit(1.0, capacity)).toBe("on");
+    expect(phaseAcwrFit(1.1, capacity)).toBe("on");
+    expect(phaseAcwrFit(1.2, capacity)).toBe("above");
+  });
+
+  it("the same ratio reads differently against different phases", () => {
+    // 1.05 is on-target in a capacity block but above a power block's ceiling
+    expect(phaseAcwrFit(1.05, capacity)).toBe("on");
+    expect(phaseAcwrFit(1.05, power)).toBe("above");
   });
 });
 

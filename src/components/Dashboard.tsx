@@ -10,6 +10,7 @@ import RecoveryStatsCard from "./RecoveryStatsCard";
 import SessionRow from "./SessionRow";
 import ChartTooltip from "./ChartTooltip";
 import { useChartHover } from "../hooks/useChartHover";
+import { phaseAcwrFit } from "../lib/metrics";
 
 interface Props {
   phase: Phase;
@@ -132,6 +133,19 @@ export default function Dashboard({
           <div style={{ fontSize: 11, color: status.color, marginTop: 4 }}>
             {status.label}
           </div>
+          {(() => {
+            const fit = phaseAcwrFit(acwrData.acwr, phase);
+            if (!fit) return null;
+            const text =
+              fit === "on"
+                ? `On target for ${phase.name}`
+                : `${fit === "below" ? "Below" : "Above"} ${phase.name} target (${phase.acwr})`;
+            return (
+              <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 2 }}>
+                {text}
+              </div>
+            );
+          })()}
           <div className="acwr-track">
             <div
               style={{

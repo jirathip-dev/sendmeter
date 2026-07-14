@@ -7,7 +7,9 @@ export interface Phase {
   color: string;
   bg: string;
   border: string;
-  acwr: string;
+  acwr: string; // display band, e.g. "0.9–1.1"
+  acwrLow: number; // structured target band bounds (match `acwr`)
+  acwrHigh: number;
   weeks: string;
   desc: string;
   tools: string[];
