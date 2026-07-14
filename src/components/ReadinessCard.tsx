@@ -41,8 +41,8 @@ export default function ReadinessCard() {
         </div>
         <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 10, lineHeight: 1.5 }}>
           Daily recovery score from HRV, resting heart rate, and sleep — blended
-          with your climbing load. Wear your Apple Watch overnight and open the
-          Send Log watch app to compute it.
+          with your climbing load. Wear your Apple Watch overnight, then open
+          Sendmeter on your iPhone to sync it from Apple Health.
         </div>
       </div>
     );

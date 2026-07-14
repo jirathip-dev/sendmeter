@@ -2,7 +2,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
   appId: "com.jirathip.sendlog",
-  appName: "Send Log",
+  appName: "Sendmeter",
   webDir: "dist",
   ios: {
     backgroundColor: "#0a0c10",

@@ -109,7 +109,7 @@ function AuthedApp({
       {/* Top bar */}
       <div className="topbar">
         <div>
-          <div className="topbar-title">SEND LOG</div>
+          <div className="topbar-title">SENDMETER</div>
           <div className="topbar-sub">Climbing Periodization</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
