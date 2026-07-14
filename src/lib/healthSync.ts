@@ -30,13 +30,26 @@ export async function startHealthBackgroundSync(): Promise<void> {
   }
 }
 
-/// Re-read HealthKit and re-upsert today's metrics now (e.g. right after a
-/// clear). No-op on web; the device otherwise picks data back up on its next
-/// background delivery, so a failure here is not fatal to the clear.
+/// Re-read HealthKit and re-upsert today's metrics now (e.g. app foreground).
+/// No-op on web; the device otherwise picks data back up on its next background
+/// delivery, so a failure here is not fatal.
 export async function syncHealthNow(): Promise<void> {
   if (!IS_NATIVE) return;
   try {
     await SendLogHealth.syncNow();
+  } catch {
+    // plugin unavailable — safe to ignore
+  }
+}
+
+/// Rebuild the whole recent health history from HealthKit (not just today) —
+/// the native side of "Clear & resync". No-op on web; there the DELETE alone
+/// stands and the device backfills on its next background delivery. A failure
+/// here is not fatal to the clear (the rows are already deleted).
+export async function resyncHealthHistory(): Promise<void> {
+  if (!IS_NATIVE) return;
+  try {
+    await SendLogHealth.clearAndResync();
   } catch {
     // plugin unavailable — safe to ignore
   }

@@ -110,6 +110,104 @@ final class HealthKitReader: HealthMetricsProviding {
         )
     }
 
+    /// One night's worth of aggregates, computed once and reused as both a
+    /// day's own values and (for later days) a baseline entry — so a history
+    /// backfill is O(days + baselineDays) night reads, not O(days × baseline).
+    private struct NightAggregate {
+        var hrv: Double?
+        var rhr: Double?
+        var sleepTotal: Double?
+        var sleepDeep: Double?
+        var sleepRem: Double?
+        var resp: Double?
+    }
+
+    private func nightAggregate(endingOn day: Date, capEnd: Date?) async throws -> NightAggregate {
+        let cal = Calendar.gregorianLocal
+        let noon = cal.date(bySettingHour: 12, minute: 0, second: 0, of: day)!
+        let night = DateInterval(
+            start: cal.date(byAdding: .hour, value: -18, to: noon)!, end: noon
+        )
+        let dayStart = cal.startOfDay(for: day)
+        let dayEndFull = cal.date(byAdding: .day, value: 1, to: dayStart)!
+        let dayEnd = capEnd.map { min(dayEndFull, $0) } ?? dayEndFull
+
+        async let hrv = meanQuantity(
+            .heartRateVariabilitySDNN, in: night, unit: .secondUnit(with: .milli)
+        )
+        async let rhr = latestQuantity(
+            .restingHeartRate, in: DateInterval(start: dayStart, end: dayEnd),
+            unit: .count().unitDivided(by: .minute())
+        )
+        async let sleep = sleepBreakdown(in: night)
+        async let resp = meanQuantity(
+            .respiratoryRate, in: night, unit: .count().unitDivided(by: .minute())
+        )
+
+        let s = try await sleep
+        return NightAggregate(
+            hrv: try await hrv, rhr: try await rhr,
+            sleepTotal: s.totalHours, sleepDeep: s.deepHours, sleepRem: s.remHours,
+            resp: try await resp
+        )
+    }
+
+    /// Rebuild the trailing `days` of daily inputs (newest first) from HealthKit
+    /// — each day computed against its own trailing baseline window, exactly as
+    /// `readToday` does for today, but for the whole span. Per-night aggregates
+    /// are computed once and shared across days' baselines to keep the query
+    /// count linear. Used by the "Clear & resync" full-history backfill.
+    func readHistory(days: Int) async throws -> [(date: String, inputs: DailyHealthInputs)] {
+        try await requestAuthorization()
+        let cal = Calendar.gregorianLocal
+        let now = Date()
+        let total = days + t.baselineDays
+
+        var agg: [NightAggregate] = []
+        agg.reserveCapacity(total)
+        for o in 0..<total {
+            let day = cal.date(byAdding: .day, value: -o, to: now)!
+            agg.append(try await nightAggregate(endingOn: day, capEnd: o == 0 ? now : nil))
+        }
+
+        var out: [(date: String, inputs: DailyHealthInputs)] = []
+        for o in 0..<days {
+            let day = cal.date(byAdding: .day, value: -o, to: now)!
+            var hrvBase: [Double] = []
+            var rhrBase: [Double] = []
+            var sleepBase: [Double] = []
+            for b in 1...t.baselineDays {
+                let a = agg[o + b]
+                if let h = a.hrv, h > 0 { hrvBase.append(log(h)) }
+                if let r = a.rhr { rhrBase.append(r) }
+                if let s = a.sleepTotal, s > 0 { sleepBase.append(s) }
+            }
+            let massWindow = DateInterval(
+                start: cal.date(byAdding: .day, value: -30, to: day)!, end: day
+            )
+            let mass = (try? await latestQuantity(
+                .bodyMass, in: massWindow, unit: .gramUnit(with: .kilo)
+            )) ?? nil
+            let a = agg[o]
+            out.append((
+                date: day.localDateString,
+                inputs: DailyHealthInputs(
+                    hrvSDNNms: a.hrv,
+                    restingHR: a.rhr,
+                    sleepHours: a.sleepTotal,
+                    bodyMassKg: mass,
+                    sleepDeepHours: a.sleepDeep,
+                    sleepRemHours: a.sleepRem,
+                    respRateBpm: a.resp,
+                    hrvLnBaseline: hrvBase,
+                    rhrBaseline: rhrBase,
+                    sleepBaseline: sleepBase
+                )
+            ))
+        }
+        return out
+    }
+
     // MARK: HealthKit query helpers
 
     private func samples(

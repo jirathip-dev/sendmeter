@@ -83,14 +83,77 @@ final class HealthSyncManager {
     }
 
     /// Hard-delete the user's health rows (RLS scopes to auth.uid()), then
-    /// re-ingest fresh — the native side of the Account "Clear & resync".
-    func clearAndResync() async throws {
+    /// rebuild the whole recent history from HealthKit — not just today — so a
+    /// clear recovers the full readiness trend, not a single day. Days with no
+    /// health signal are skipped rather than written as empty rows.
+    func clearAndResync(historyDays: Int = 90) async throws {
         try await client
             .from("health_metrics")
             .delete()
             .gte("date", value: "2000-01-01")
             .execute()
-        try await syncNow()
+
+        let history = try await reader.readHistory(days: historyDays)
+        let acwrByDate = (try? await acwrSeries(days: historyDays)) ?? [:]
+
+        var rows: [HealthMetricsUpsert] = []
+        for day in history {
+            let i = day.inputs
+            guard i.hrvSDNNms != nil || i.restingHR != nil || i.sleepHours != nil
+            else { continue }
+            let result = RecoveryEngine.compute(
+                inputs: i, acwr: acwrByDate[day.date], t: tunables
+            )
+            rows.append(HealthMetricsUpsert(
+                date: day.date,
+                hrvSdnnMs: i.hrvSDNNms,
+                restingHr: i.restingHR,
+                sleepHours: i.sleepHours,
+                sleepDeepHours: i.sleepDeepHours,
+                sleepRemHours: i.sleepRemHours,
+                bodyMassKg: i.bodyMassKg,
+                respRateBpm: i.respRateBpm,
+                readiness: result.score,
+                zone: result.zone?.rawValue,
+                computedAt: Date()
+            ))
+        }
+        guard !rows.isEmpty else { return }
+        try await client
+            .from("health_metrics")
+            .upsert(rows, onConflict: "user_id,date")
+            .execute()
+    }
+
+    /// ACWR as-of each of the trailing `days`, keyed by that day's date string.
+    /// One session-loads fetch spanning the whole window feeds a per-day EWMA,
+    /// so a backfilled history row gets the load ratio it would have had that
+    /// day (not today's) — the load penalty then reflects the real timeline.
+    private func acwrSeries(days: Int) async throws -> [String: Double] {
+        let rows: [SessionLoadRow] = try await client
+            .from("sessions")
+            .select("date, load")
+            .gte("date", value: cutoffDateString(daysAgo: days + Acwr.lookbackDays))
+            .execute()
+            .value
+
+        var loadByDate: [String: Int] = [:]
+        for r in rows { loadByDate[r.date, default: 0] += (r.load ?? 0) }
+
+        let cal = Calendar.gregorianLocal
+        var result: [String: Double] = [:]
+        for o in 0..<days {
+            let endDay = cal.date(byAdding: .day, value: -o, to: Date())!
+            var series: [Double] = []
+            for i in stride(from: Acwr.lookbackDays - 1, through: 0, by: -1) {
+                let d = cal.date(byAdding: .day, value: -i, to: endDay)!
+                series.append(Double(loadByDate[d.localDateString] ?? 0))
+            }
+            if let ratio = Acwr.ratio(dailyLoads: series) {
+                result[endDay.localDateString] = ratio
+            }
+        }
+        return result
     }
 
     private func computeAcwr() async throws -> Double? {

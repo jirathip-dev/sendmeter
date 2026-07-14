@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
-import { syncHealthNow } from "../lib/healthSync";
+import { resyncHealthHistory } from "../lib/healthSync";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
@@ -68,9 +68,9 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     setError(null);
     try {
       await deleteHealthMetrics();
-      // Ask the device to re-ingest correct data right away (no-op on web /
-      // until the native health plugin ships; the delete stands regardless).
-      await syncHealthNow();
+      // Rebuild the whole recent history from HealthKit (no-op on web; the
+      // delete stands regardless and the device backfills on next delivery).
+      await resyncHealthHistory();
       // Force the readiness/recovery cards to refetch — the DELETE's own
       // realtime echo doesn't reliably arrive (esp. in the native WebView),
       // which left stale scores on screen after a clear.
