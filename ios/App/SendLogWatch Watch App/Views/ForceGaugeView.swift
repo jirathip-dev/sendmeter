@@ -32,8 +32,10 @@ struct ForceGaugeView: View {
     private let sparkTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(spacing: 8) {
+                Color.clear.frame(height: 1).id("gaugeTop")
                 // Session controls hide while measuring — the live gauge owns
                 // the screen; they come back the moment the rep stops.
                 if tindeq.status != .unsupported && tindeq.status != .measuring {
@@ -69,6 +71,12 @@ struct ForceGaugeView: View {
                         .foregroundStyle(saving ? Color.secondary : Color.green)
                 }
             }
+        }
+        .onChange(of: tindeq.status) { _, _ in
+            // Controls show/hide on start/stop, shifting layout — snap back to
+            // the top so the live gauge stays in view instead of a blank scroll.
+            withAnimation { proxy.scrollTo("gaugeTop", anchor: .top) }
+        }
         }
         .navigationTitle("Force")
         .onReceive(sparkTimer) { _ in
