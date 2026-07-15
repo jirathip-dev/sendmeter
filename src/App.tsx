@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { NAV, PHASES } from "./constants";
+import { PHASES } from "./constants";
 import { today } from "./lib/dates";
 import { computeAcwr, computeWeeklyLoads, getACWRStatus } from "./lib/metrics";
 import { useAuth } from "./hooks/useAuth";
@@ -11,6 +11,7 @@ import LoginScreen from "./components/LoginScreen";
 import LogForm from "./components/LogForm";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
+import BottomNav from "./components/BottomNav";
 import AccountSheet from "./components/AccountSheet";
 import Sheet from "./components/Sheet";
 import TrashSheet from "./components/TrashSheet";
@@ -247,18 +248,7 @@ function AuthedApp({
       </div>
 
       {/* Bottom nav */}
-      <div className="bottom-nav">
-        {NAV.map((n) => (
-          <button
-            key={n.id}
-            className={`nav-item ${view === n.id ? "active" : ""}`}
-            onClick={() => setView(n.id)}
-          >
-            <span className="nav-icon">{n.icon}</span>
-            <span className="nav-label">{n.label}</span>
-          </button>
-        ))}
-      </div>
+      <BottomNav view={view} onChange={setView} />
 
       {/* Log bottom sheet modal */}
       {showModal && (
