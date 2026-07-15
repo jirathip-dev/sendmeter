@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
+import { authRedirectUrl } from "../lib/authRedirect";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
@@ -46,9 +47,11 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       setResetting(false);
       return;
     }
-    // No redirectTo — Supabase uses the project Site URL (sendmeter.app),
-    // which handles the PASSWORD_RECOVERY event.
-    const { error: err } = await supabase.auth.resetPasswordForEmail(email);
+    // Redirect back to wherever the reset was started — the native app (custom
+    // scheme) or the web origin — so app-initiated resets reopen the app.
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: authRedirectUrl(),
+    });
     setResetting(false);
     if (err) setError(err.message);
     else setResetEmail(email);

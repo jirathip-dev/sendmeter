@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { supabase } from "../lib/supabase";
+import { authRedirectUrl } from "../lib/authRedirect";
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  // Magic links can't redirect back into the native app shell, so the
-  // iPhone app defaults to password sign-in (same password as the watch).
+  // The iPhone app defaults to password sign-in, but magic links now reopen
+  // the app via its custom scheme (deepLinks.ts), so either works.
   const [mode, setMode] = useState<"magic" | "password">(
     IS_NATIVE ? "password" : "magic",
   );
@@ -22,7 +23,7 @@ export default function LoginScreen() {
     setError(null);
     const { error: err } = await supabase.auth.signInWithOtp({
       email: email.trim(),
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: authRedirectUrl() },
     });
     setBusy(false);
     if (err) {

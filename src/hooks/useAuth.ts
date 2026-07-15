@@ -50,9 +50,16 @@ export function useAuth() {
     };
     document.addEventListener("visibilitychange", onVisible);
 
+    // Native deep-link recovery: setSession (from a reset link) fires SIGNED_IN,
+    // not PASSWORD_RECOVERY, so deepLinks.ts dispatches this to trigger the
+    // set-new-password screen (the web recovery fires PASSWORD_RECOVERY above).
+    const onRecovery = () => setRecovery(true);
+    window.addEventListener("sendmeter:recovery", onRecovery);
+
     return () => {
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("sendmeter:recovery", onRecovery);
     };
   }, []);
 
