@@ -11,6 +11,7 @@ import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import ForceGauge from "./ForceGauge";
 import GroupedRecordings from "./GroupedRecordings";
+import SideAsymmetryCard from "./SideAsymmetryCard";
 import TagSideEditor from "./TagSideEditor";
 import TindeqTrendChart from "./TindeqTrendChart";
 
@@ -600,6 +601,11 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                   setShowTrends(false);
                   window.scrollTo({ top: 0, behavior: "smooth" });
                 }}
+              />
+            )}
+            {selectedTag && (
+              <SideAsymmetryCard
+                recordings={recordings.filter((r) => r.tag === selectedTag)}
               />
             )}
             {!selectedTag && (
