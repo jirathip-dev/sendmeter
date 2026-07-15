@@ -40,5 +40,8 @@ fastlane/.env
 fastlane/report.xml
 fastlane/README.md
 fastlane/test_output/
+fastlane/certs/
+*.p12
+*.mobileprovision
 *.ipa
 *.dSYM.zip

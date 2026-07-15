@@ -19,7 +19,39 @@ platform :ios do
     #    step — the archive bundles ios/App/App/public).
     sh("cd .. && npm run build && npx cap sync ios")
 
-    # 2. Next build number = latest on TestFlight + 1. Applied as a build
+    # 2. Headless signing. get_certificates creates/installs an Apple
+    #    Distribution certificate via the API key (no Xcode account, no match
+    #    repo). The -authenticationKey* flags below then let
+    #    -allowProvisioningUpdates create/refresh the app + watch provisioning
+    #    profiles the same way — without a signed-in Xcode account, which is
+    #    what "exportArchive No Accounts" was complaining about.
+    get_certificates(
+      api_key: api_key,
+      output_path: "fastlane/certs"
+    )
+    key_abs = File.expand_path(File.basename(ENV.fetch("ASC_KEY_PATH")), __dir__)
+    auth_args = "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} " \
+                "-authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')} " \
+                "-authenticationKeyPath #{key_abs} -allowProvisioningUpdates"
+
+    # App Store provisioning profiles that include the distribution cert above,
+    # for the app + its embedded watch app. force: true regenerates them so
+    # they carry the current cert (the account's auto "Team Store" profile
+    # referenced an older cert → "profile doesn't include signing certificate").
+    # Export then uses manual signing with these, avoiding Xcode cloud-managed
+    # signing, which the API key isn't permitted to drive.
+    profiles = {}
+    [APP_IDENTIFIER, "#{APP_IDENTIFIER}.watchkitapp"].each do |bundle_id|
+      get_provisioning_profile(
+        api_key: api_key,
+        app_identifier: bundle_id,
+        force: true,
+        output_path: "fastlane/certs"
+      )
+      profiles[bundle_id] = lane_context[SharedValues::SIGH_NAME]
+    end
+
+    # 3. Next build number = latest on TestFlight + 1. Applied as a build
     #    setting at archive time so it lands in BOTH the app and the embedded
     #    watch app, without mutating the git-tracked project.
     build = latest_testflight_build_number(
@@ -28,19 +60,24 @@ platform :ios do
       initial_build_number: 0
     ) + 1
 
-    # 3. Archive + export. Automatic signing; -allowProvisioningUpdates lets it
-    #    register/refresh the App ID capabilities (HealthKit, Background
-    #    Delivery) and provisioning as needed.
+    # 4. Archive + export, automatic signing. gym applies `xcargs` to BOTH the
+    #    archive and the export xcodebuild invocations, so the API-key auth
+    #    flags belong here only — repeating them in export_xcargs makes
+    #    xcodebuild reject "-authenticationKeyID may only be provided once".
     build_app(
       project: XCODEPROJ,
       scheme: "App",
       configuration: "Release",
       export_method: "app-store",
-      xcargs: "CURRENT_PROJECT_VERSION=#{build} -allowProvisioningUpdates",
-      export_options: { signingStyle: "automatic" }
+      xcargs: "CURRENT_PROJECT_VERSION=#{build} #{auth_args}",
+      export_options: {
+        signingStyle: "manual",
+        signingCertificate: "Apple Distribution",
+        provisioningProfiles: profiles
+      }
     )
 
-    # 4. Upload. Internal testers on your team get it automatically once
+    # 5. Upload. Internal testers on your team get it automatically once
     #    processing finishes (no App Review for internal testing).
     upload_to_testflight(
       api_key: api_key,
