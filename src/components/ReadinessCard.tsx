@@ -11,7 +11,7 @@ const ZONE_COLORS: Record<string, string> = {
   recover: "var(--danger)",
 };
 
-export default function ReadinessCard() {
+export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}) {
   const [hoveredDay, hoverDayProps] = useChartHover<number>();
   const realtimeVersion = useRealtimeVersion();
   const metrics = useCancellableFetch<HealthMetric[]>(
@@ -23,9 +23,10 @@ export default function ReadinessCard() {
   // Empty state: the feature should be discoverable before any watch data
   if (metrics.length === 0) {
     return (
-      <div className="card">
-        <div className="label-eyebrow" style={{ marginBottom: 8 }}>
-          Readiness
+      <div className="card" onClick={onClick} style={{ cursor: onClick ? "pointer" : undefined }}>
+        <div className="label-eyebrow" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span>Readiness</span>
+          {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
         </div>
         <div
           style={{
@@ -68,9 +69,10 @@ export default function ReadinessCard() {
   if (latest.bodyMassKg) footerParts.push(`${latest.bodyMassKg.toFixed(1)}kg`);
 
   return (
-    <div className="card">
-      <div className="label-eyebrow" style={{ marginBottom: 8 }}>
-        Readiness
+    <div className="card" onClick={onClick} style={{ cursor: onClick ? "pointer" : undefined }}>
+      <div className="label-eyebrow" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>Readiness</span>
+        {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
       </div>
       <div
         style={{

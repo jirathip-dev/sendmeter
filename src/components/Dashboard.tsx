@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type {
   AcwrData,
   AcwrStatus,
@@ -6,7 +7,8 @@ import type {
   WeeklyLoad,
 } from "../types";
 import ReadinessCard from "./ReadinessCard";
-import RecoveryStatsCard from "./RecoveryStatsCard";
+import LoadSheet from "./LoadSheet";
+import RecoverySheet from "./RecoverySheet";
 import SessionRow from "./SessionRow";
 import ChartTooltip from "./ChartTooltip";
 import { useChartHover } from "../hooks/useChartHover";
@@ -38,6 +40,7 @@ export default function Dashboard({
   const recent = sessions.slice(0, 6);
   const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
   const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
+  const [detail, setDetail] = useState<null | "load" | "recovery">(null);
 
   return (
     <div>
@@ -114,9 +117,17 @@ export default function Dashboard({
 
       {/* ACWR + Load grid */}
       <div className="grid-2" style={{ marginBottom: 10 }}>
-        <div className="card">
-          <div className="label-eyebrow" style={{ marginBottom: 8 }}>
-            ACWR
+        <div
+          className="card"
+          onClick={() => setDetail("load")}
+          style={{ cursor: "pointer" }}
+        >
+          <div
+            className="label-eyebrow"
+            style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}
+          >
+            <span>ACWR</span>
+            <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>
           </div>
           <div
             style={{
@@ -328,10 +339,9 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* Readiness + the raw inputs behind it */}
-      <div className="grid-2-desktop" style={{ marginBottom: 10 }}>
-        <ReadinessCard />
-        <RecoveryStatsCard />
+      {/* Readiness — taps through to the recovery inputs behind it */}
+      <div style={{ marginBottom: 10 }}>
+        <ReadinessCard onClick={() => setDetail("recovery")} />
       </div>
 
       {/* Log button */}
@@ -370,6 +380,16 @@ export default function Dashboard({
       {recent.map((s) => (
         <SessionRow key={s.id} s={s} onDelete={onDelete} />
       ))}
+
+      {detail === "load" && (
+        <LoadSheet
+          acwrData={acwrData}
+          status={status}
+          sessions={sessions}
+          onClose={() => setDetail(null)}
+        />
+      )}
+      {detail === "recovery" && <RecoverySheet onClose={() => setDetail(null)} />}
     </div>
   );
 }
