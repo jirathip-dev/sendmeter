@@ -82,10 +82,29 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
   the CLI, or the schema drifts from the code. (The `health_metrics` delete policy +
   date-sanity constraints sat unapplied for a while: with no DELETE policy, a delete
   silently matches zero rows, so "Clear health data" looked broken while succeeding.)
-- **Tindeq capture asymmetry (intentional).** The in-app gauge requires a **tag
-  before Start** and **auto-saves on Stop** (with an Undo); the watch Force Gauge is
-  a stripped one-tap page that **always saves untagged** on Stop. Don't restore the
-  old discard/save prompt or the watch tag/side/tare controls.
+- **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
+  **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
+  prompt (in-app has an Undo; the watch hides tag/side/session controls *while
+  measuring* so the live gauge fits one screen). End-session logs the **actual
+  wall-clock duration** (read-only); only RPE is asked. Don't reintroduce the
+  discard/save prompt or an editable duration.
+- **Recording samples store `t` in milliseconds.** `tindeq_recordings.samples`
+  time is ms — charts must divide by 1000 to show seconds (a mislabeled axis once
+  showed "25152.0s").
+- **`?fake-tindeq`** query param puts the web Tindeq view in fake mode (simulated
+  BLE + force stream) — the only way to exercise the connect→measure→save flow in
+  a browser (real Web Bluetooth needs a device).
+- **Chrome animates transform/opacity on the compositor**, so `getComputedStyle`
+  returns the *base* value mid-animation — you can't measure a ripple's scale or a
+  hidden bar's transform from JS in the browser tools; verify animations visually
+  (screenshot) instead of by reading computed style.
+- **`.card + .card` margin leaks into grid cells.** The stacked-card sibling rule
+  (`margin-top: 10px`) makes the 2nd card in a `.grid-2` shorter than its
+  stretched row; `.grid-2 > .card + .card { margin-top: 0 }` fixes equal heights.
+- **Auto-hiding chrome must overlay, not flex.** The floating header/nav are
+  `position: absolute` with the scroll area padded to clear them — translating a
+  flex-reserved bar off-screen leaves a blank strip. See `DESIGN.md` → Floating
+  glass chrome for the shell model.
 - **`cap sync` before archiving.** The iOS archive bundles `ios/App/App/public`,
   which only updates on `npm run build && npm run sync`. Forgetting this ships stale UI.
 - **`CapApp-SPM/Package.swift` is Capacitor-managed** — never hand-edit; it's
