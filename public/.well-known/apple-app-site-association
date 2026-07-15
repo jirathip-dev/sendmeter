@@ -1,0 +1,13 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["9244PWFYD7.com.jirathip.sendlog"],
+        "components": [{ "/": "/auth*", "comment": "auth email redirects open the app" }]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": ["9244PWFYD7.com.jirathip.sendlog"]
+  }
+}

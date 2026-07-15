@@ -2,6 +2,7 @@ import { useState } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
 import { authRedirectUrl } from "../lib/authRedirect";
+import { addPasskey, passkeysSupported } from "../lib/passkeys";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
@@ -17,6 +18,8 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const bumpRealtime = useRealtimeBump();
   const [resetting, setResetting] = useState(false);
   const [resetEmail, setResetEmail] = useState<string | null>(null);
+  const [addingPasskey, setAddingPasskey] = useState(false);
+  const [passkeyMsg, setPasskeyMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -31,6 +34,20 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     await onSignOut();
     // auth gate unmounts this sheet once the session clears; no need to
     // reset signingOut or call onClose.
+  }
+
+  async function runAddPasskey() {
+    setAddingPasskey(true);
+    setError(null);
+    try {
+      await addPasskey();
+      setPasskeyMsg("Passkey added. You can now sign in with it.");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Couldn't add passkey";
+      if (!/cancel|not allowed|aborted/i.test(msg)) setError(msg);
+    } finally {
+      setAddingPasskey(false);
+    }
   }
 
   // Email-based password reset: send a recovery link to the account email.
@@ -143,6 +160,48 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
             </div>
           )}
         </div>
+
+        {/* Passkeys */}
+        {passkeysSupported && (
+          <div
+            style={{
+              marginTop: 22,
+              paddingTop: 14,
+              borderTop: "1px solid var(--hairline)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--ink-muted)",
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                marginBottom: 8,
+              }}
+            >
+              Passkey
+            </div>
+            {passkeyMsg ? (
+              <div style={{ fontSize: 12, color: "var(--success)", lineHeight: 1.5 }}>
+                {passkeyMsg}
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
+                  Add a passkey to sign in with Face ID / Touch ID — no password
+                  or email needed.
+                </div>
+                <button
+                  className="btn-ghost"
+                  disabled={addingPasskey}
+                  onClick={() => void runAddPasskey()}
+                >
+                  {addingPasskey ? "Adding…" : "Add a passkey"}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Help & FAQ */}
         <div

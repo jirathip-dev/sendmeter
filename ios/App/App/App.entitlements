@@ -12,5 +12,10 @@
 	<array>
 		<string>Default</string>
 	</array>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:sendmeter.app</string>
+		<string>applinks:sendmeter.app</string>
+	</array>
 </dict>
 </plist>

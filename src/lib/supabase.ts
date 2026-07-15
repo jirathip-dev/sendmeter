@@ -10,4 +10,7 @@ const SUPABASE_ANON_KEY =
   import.meta.env.VITE_SUPABASE_ANON_KEY ??
   "sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY);
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  // Passkeys are experimental in supabase-js and require this explicit opt-in.
+  auth: { experimental: { passkey: true } },
+});

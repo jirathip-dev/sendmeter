@@ -3,6 +3,7 @@ import { Capacitor } from "@capacitor/core";
 import { supabase } from "../lib/supabase";
 import { authRedirectUrl } from "../lib/authRedirect";
 import { signInWithApple } from "../lib/appleAuth";
+import { passkeysSupported, signInWithPasskey } from "../lib/passkeys";
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -64,6 +65,20 @@ export default function LoginScreen() {
       const msg = e instanceof Error ? e.message : "Apple sign-in failed";
       // User-cancelled the native sheet — not an error worth showing.
       if (!/cancel/i.test(msg)) setError(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function passkeySignIn() {
+    setBusy(true);
+    setError(null);
+    try {
+      await signInWithPasskey();
+      // session set → onAuthStateChange routes to the app
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Passkey sign-in failed";
+      if (!/cancel|not allowed|aborted/i.test(msg)) setError(msg);
     } finally {
       setBusy(false);
     }
@@ -218,6 +233,16 @@ export default function LoginScreen() {
                 </svg>
                 {busy ? "…" : "Continue with Apple"}
               </button>
+              {passkeysSupported && (
+                <button
+                  className="btn-ghost"
+                  style={{ marginTop: 10 }}
+                  disabled={busy}
+                  onClick={passkeySignIn}
+                >
+                  Sign in with a passkey
+                </button>
+              )}
               <div style={{ marginTop: 12, textAlign: "center" }}>
                 <button
                   onClick={() => {
