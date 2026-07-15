@@ -8,6 +8,7 @@ import type { LogFormState, ViewId } from "./types";
 import Dashboard from "./components/Dashboard";
 import HistoryView from "./components/HistoryView";
 import LoginScreen from "./components/LoginScreen";
+import RecoveryScreen from "./components/RecoveryScreen";
 import LogForm from "./components/LogForm";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
@@ -18,7 +19,11 @@ import TrashSheet from "./components/TrashSheet";
 import RealtimeVersionProvider from "./components/RealtimeVersionProvider";
 
 export default function App() {
-  const { session, loading, signOut } = useAuth();
+  const { session, loading, recovery, clearRecovery, signOut } = useAuth();
+
+  // A password-reset email link takes priority — prompt for the new password
+  // before anything else, even though a (temporary) session now exists.
+  if (recovery) return <RecoveryScreen onDone={clearRecovery} />;
 
   if (loading) {
     return (

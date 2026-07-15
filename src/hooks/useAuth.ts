@@ -7,6 +7,9 @@ import { relayHealthSession, startHealthBackgroundSync } from "../lib/healthSync
 export function useAuth() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  // True after the user lands via a password-reset email link — the app then
+  // prompts for a new password instead of dropping them into the dashboard.
+  const [recovery, setRecovery] = useState(false);
 
   useEffect(() => {
     // Kick off HealthKit auth + background delivery once, after the first
@@ -28,7 +31,8 @@ export function useAuth() {
     });
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
+    } = supabase.auth.onAuthStateChange((event, s) => {
+      if (event === "PASSWORD_RECOVERY") setRecovery(true);
       setSession(s);
       setLoading(false);
       onSession(s);
@@ -55,6 +59,8 @@ export function useAuth() {
   return {
     session,
     loading,
+    recovery,
+    clearRecovery: () => setRecovery(false),
     signOut: () => supabase.auth.signOut(),
   };
 }

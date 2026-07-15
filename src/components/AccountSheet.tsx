@@ -14,11 +14,8 @@ interface Props {
 
 export default function AccountSheet({ onClose, onSignOut }: Props) {
   const bumpRealtime = useRealtimeBump();
-  const [editingPassword, setEditingPassword] = useState(false);
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [done, setDone] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetEmail, setResetEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -35,27 +32,26 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     // reset signingOut or call onClose.
   }
 
-  async function save() {
-    if (password.length < 8) {
-      setError("Use at least 8 characters.");
-      return;
-    }
-    if (password !== confirm) {
-      setError("Passwords don't match.");
-      return;
-    }
-    setSaving(true);
+  // Email-based password reset: send a recovery link to the account email.
+  // Following it opens RecoveryScreen to set the new password.
+  async function sendReset() {
+    setResetting(true);
     setError(null);
-    const { error: err } = await supabase.auth.updateUser({ password });
-    setSaving(false);
-    if (err) {
-      setError(err.message);
-    } else {
-      setDone(true);
-      setEditingPassword(false);
-      setPassword("");
-      setConfirm("");
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const email = user?.email;
+    if (!email) {
+      setError("No email on this account.");
+      setResetting(false);
+      return;
     }
+    // No redirectTo — Supabase uses the project Site URL (sendmeter.app),
+    // which handles the PASSWORD_RECOVERY event.
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email);
+    setResetting(false);
+    if (err) setError(err.message);
+    else setResetEmail(email);
   }
 
   async function runDelete() {
@@ -125,66 +121,21 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
           >
             Password
           </div>
-          {editingPassword ? (
-            <div>
-              <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 4 }}>
-                For signing in on the iPhone app. At least 8 characters.
-              </div>
-              <span className="field-label">New password</span>
-              <input
-                className="field"
-                type="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              <span className="field-label">Confirm password</span>
-              <input
-                className="field"
-                type="password"
-                autoComplete="new-password"
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && save()}
-              />
-              <div className="grid-2" style={{ marginTop: 14 }}>
-                <button
-                  className="btn-ghost"
-                  disabled={saving}
-                  onClick={() => {
-                    setEditingPassword(false);
-                    setPassword("");
-                    setConfirm("");
-                    setError(null);
-                  }}
-                >
-                  Cancel
-                </button>
-                <button className="btn-primary" disabled={saving} onClick={save}>
-                  {saving ? "Saving…" : "Update password"}
-                </button>
-              </div>
+          {resetEmail ? (
+            <div style={{ fontSize: 12, color: "var(--success)", lineHeight: 1.5 }}>
+              Reset link sent to {resetEmail}. Open it to set a new password.
             </div>
           ) : (
             <div>
-              {done && (
-                <div style={{ fontSize: 12, color: "var(--success)", marginBottom: 10 }}>
-                  Password updated.
-                </div>
-              )}
               <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
-                Web signs in with magic links. Set a password to also sign in on
-                the iPhone app (the Watch uses it as a fallback). You can change
-                it anytime.
+                Set or reset your password by email — we'll send a secure link.
               </div>
               <button
                 className="btn-ghost"
-                onClick={() => {
-                  setEditingPassword(true);
-                  setDone(false);
-                }}
+                disabled={resetting}
+                onClick={() => void sendReset()}
               >
-                Set or change password
+                {resetting ? "Sending…" : "Send password reset email"}
               </button>
             </div>
           )}
