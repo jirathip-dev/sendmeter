@@ -14,6 +14,7 @@ interface Props {
 
 export default function AccountSheet({ onClose, onSignOut }: Props) {
   const bumpRealtime = useRealtimeBump();
+  const [editingPassword, setEditingPassword] = useState(false);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [saving, setSaving] = useState(false);
@@ -47,8 +48,14 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     setError(null);
     const { error: err } = await supabase.auth.updateUser({ password });
     setSaving(false);
-    if (err) setError(err.message);
-    else setDone(true);
+    if (err) {
+      setError(err.message);
+    } else {
+      setDone(true);
+      setEditingPassword(false);
+      setPassword("");
+      setConfirm("");
+    }
   }
 
   async function runDelete() {
@@ -99,7 +106,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
 
         <ThemeSection />
 
-        {/* App / watch password */}
+        {/* Password — collapsed action; expand to set or change it anytime */}
         <div
           style={{
             marginTop: 22,
@@ -107,19 +114,21 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
             borderTop: "1px solid var(--hairline)",
           }}
         >
-          {done ? (
-            <div style={{ fontSize: 12, color: "var(--success)" }}>
-              Password set. Use it to sign in on the iPhone app. Web login
-              keeps using magic links. The Watch app now signs in
-              automatically from your iPhone — this password is only a
-              fallback for it.
-            </div>
-          ) : (
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--ink-muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: 8,
+            }}
+          >
+            Password
+          </div>
+          {editingPassword ? (
             <div>
-              <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>
-                Set a password for signing in on the iPhone app. The Watch
-                app signs in automatically from your iPhone once you're
-                signed in here — this password is only a fallback for it.
+              <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 4 }}>
+                For signing in on the iPhone app. At least 8 characters.
               </div>
               <span className="field-label">New password</span>
               <input
@@ -138,15 +147,45 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 onChange={(e) => setConfirm(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && save()}
               />
-              <div style={{ marginTop: 14 }}>
+              <div className="grid-2" style={{ marginTop: 14 }}>
                 <button
-                  className="btn-primary"
+                  className="btn-ghost"
                   disabled={saving}
-                  onClick={save}
+                  onClick={() => {
+                    setEditingPassword(false);
+                    setPassword("");
+                    setConfirm("");
+                    setError(null);
+                  }}
                 >
-                  {saving ? "Saving…" : "Set Password"}
+                  Cancel
+                </button>
+                <button className="btn-primary" disabled={saving} onClick={save}>
+                  {saving ? "Saving…" : "Update password"}
                 </button>
               </div>
+            </div>
+          ) : (
+            <div>
+              {done && (
+                <div style={{ fontSize: 12, color: "var(--success)", marginBottom: 10 }}>
+                  Password updated.
+                </div>
+              )}
+              <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
+                Web signs in with magic links. Set a password to also sign in on
+                the iPhone app (the Watch uses it as a fallback). You can change
+                it anytime.
+              </div>
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  setEditingPassword(true);
+                  setDone(false);
+                }}
+              >
+                Set or change password
+              </button>
             </div>
           )}
         </div>
