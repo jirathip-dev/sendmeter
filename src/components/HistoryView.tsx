@@ -2,6 +2,7 @@ import { useState, type CSSProperties } from "react";
 import type { Session } from "../types";
 import RpeScatterCard from "./RpeScatterCard";
 import SessionRow from "./SessionRow";
+import Sheet from "./Sheet";
 
 interface Props {
   sessions: Session[];
@@ -67,30 +68,24 @@ export default function HistoryView({
       ))}
 
       {showRpeModel && (
-        <div
-          className="modal-bg"
-          onClick={(e) => e.target === e.currentTarget && setShowRpeModel(false)}
-        >
-          <div className="modal-sheet">
-            <div className="modal-handle" />
-            <div
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: 20,
-                fontWeight: 800,
-                marginBottom: 12,
-              }}
-            >
-              RPE Model
-            </div>
-            <RpeScatterCard />
-            <div style={{ marginTop: 12 }}>
-              <button className="btn-ghost" onClick={() => setShowRpeModel(false)}>
-                Close
-              </button>
-            </div>
+        <Sheet onClose={() => setShowRpeModel(false)}>
+          <div
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: 20,
+              fontWeight: 800,
+              marginBottom: 12,
+            }}
+          >
+            RPE Model
           </div>
-        </div>
+          <RpeScatterCard />
+          <div style={{ marginTop: 12 }}>
+            <button className="btn-ghost" onClick={() => setShowRpeModel(false)}>
+              Close
+            </button>
+          </div>
+        </Sheet>
       )}
     </div>
   );

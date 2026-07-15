@@ -280,7 +280,11 @@ textarea.field { resize: none; }
 .modal-sheet.full { height: 92dvh; }
 .modal-sheet::-webkit-scrollbar-track { background: var(--canvas); }
 .modal-sheet::-webkit-scrollbar-thumb { background: var(--border); }
-.modal-handle { width: 36px; height: 4px; background: var(--border); border-radius: 2px; margin: 0 auto 18px; }
+.modal-handle { width: 36px; height: 5px; background: var(--border); border-radius: 3px; margin: 0 auto; }
+/* Drag-to-close grab area around the handle — touch-action:none so the drag
+   isn't stolen by the sheet's own scroll. */
+.modal-drag { touch-action: none; cursor: grab; padding: 2px 0 16px; margin-top: -4px; }
+.modal-drag:active { cursor: grabbing; }
 /* nested cards inside modals sit on the canvas — give them a well tint */
 .modal-sheet .card { background: var(--surface-1); border-color: transparent; box-shadow: none; }
 .modal-sheet .card .field, .modal-sheet .card .stepper { background: var(--canvas); }
@@ -363,6 +367,7 @@ textarea.field { resize: none; }
   }
   .modal-sheet.full { height: 86vh; }
   .modal-handle { display: none; }
+  .modal-drag { padding: 0; margin: 0; } /* no grab strip on the centered desktop dialog */
 }
 
 @media (prefers-reduced-motion: reduce) {

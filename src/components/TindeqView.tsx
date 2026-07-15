@@ -11,6 +11,7 @@ import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import ForceGauge from "./ForceGauge";
 import GroupedRecordings from "./GroupedRecordings";
+import Sheet from "./Sheet";
 import SideAsymmetryCard from "./SideAsymmetryCard";
 import TagSideEditor from "./TagSideEditor";
 import TindeqTrendChart from "./TindeqTrendChart";
@@ -570,12 +571,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
       )}
 
       {showTrends && (
-        <div
-          className="modal-bg"
-          onClick={(e) => e.target === e.currentTarget && setShowTrends(false)}
-        >
-          <div className="modal-sheet">
-            <div className="modal-handle" />
+        <Sheet onClose={() => setShowTrends(false)}>
             <TindeqTrendChart
               recordings={recordings}
               selectedTag={selectedTag}
@@ -619,8 +615,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
                 Close
               </button>
             </div>
-          </div>
-        </div>
+        </Sheet>
       )}
 
       {/* Past recordings */}
