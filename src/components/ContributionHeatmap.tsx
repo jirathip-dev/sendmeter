@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const WEEKDAYS = ["", "Mon", "", "Wed", "", "Fri", ""]; // Sun-start rows; label odd rows
-const CELL = 12;
-const GAP = 3;
-const STEP = CELL + GAP;
-const MONTH_ROW = 15;
+const WEEKDAY_ROWS = [1, 3, 5] as const; // Mon / Wed / Fri
+const WEEKDAY_NAMES = ["Mon", "Wed", "Fri"];
+const GAP = 2;
 
 // GitHub-style level colors — themed empty cell + 4 green intensities.
 const COLORS = [
@@ -29,6 +27,8 @@ interface Cell {
 
 /// Daily training-load heatmap in the GitHub-contribution style: one square per
 /// day, columns are Sun–Sat weeks oldest→newest, colored by that day's total AU.
+/// Cells are fluid (CSS grid, aspect-ratio 1) so the whole year always fits the
+/// container width — no horizontal scrolling, even on a phone.
 export default function ContributionHeatmap({
   values,
   weeks = 53,
@@ -38,7 +38,6 @@ export default function ContributionHeatmap({
   weeks?: number;
   unit?: string;
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
   const [sel, setSel] = useState<Cell | null>(null);
 
   const { columns, max } = useMemo(() => {
@@ -69,85 +68,106 @@ export default function ContributionHeatmap({
 
   const level = (v: number) => (v <= 0 ? 0 : Math.min(4, Math.ceil((v / max) * 4)));
 
-  // Month labels: mark a column when the month of its first (Sunday) cell changes.
+  // Month labels: mark a column when the month of its first (Sunday) cell
+  // changes; skip a label that would collide with the previous one.
   const monthLabels = useMemo(() => {
     const out: { col: number; label: string }[] = [];
     let last = -1;
+    let lastCol = -10;
     columns.forEach((col, i) => {
       const m = col[0]!.month;
       if (m !== last) {
-        out.push({ col: i, label: MONTHS[m]! });
+        if (i - lastCol >= 3) {
+          out.push({ col: i, label: MONTHS[m]! });
+          lastCol = i;
+        }
         last = m;
       }
     });
     return out;
   }, [columns]);
 
-  // Start scrolled to the most recent weeks.
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
-  }, [columns]);
-
   return (
     <div>
-      <div style={{ display: "flex", gap: 6 }}>
-        {/* Weekday labels */}
-        <div style={{ flexShrink: 0, paddingTop: MONTH_ROW }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: GAP }}>
-            {WEEKDAYS.map((w, i) => (
-              <div
-                key={i}
-                style={{ height: CELL, fontSize: 8, lineHeight: `${CELL}px`, color: "var(--ink-faint)" }}
-              >
-                {w}
-              </div>
-            ))}
-          </div>
+      <div style={{ display: "flex", gap: 5 }}>
+        {/* Weekday labels — pinned to rows 2/4/6 of the 7-row grid */}
+        <div
+          style={{
+            flexShrink: 0,
+            display: "grid",
+            gridTemplateRows: "repeat(7, 1fr)",
+            rowGap: GAP,
+            paddingTop: 14,
+          }}
+        >
+          {[0, 1, 2, 3, 4, 5, 6].map((r) => (
+            <div
+              key={r}
+              style={{
+                fontSize: 8,
+                color: "var(--ink-faint)",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              {WEEKDAY_ROWS.includes(r as 1 | 3 | 5)
+                ? WEEKDAY_NAMES[WEEKDAY_ROWS.indexOf(r as 1 | 3 | 5)]
+                : ""}
+            </div>
+          ))}
         </div>
 
-        {/* Scrollable grid */}
-        <div ref={scrollRef} style={{ overflowX: "auto", flex: 1 }}>
-          <div style={{ width: columns.length * STEP }}>
-            {/* Month labels */}
-            <div style={{ position: "relative", height: MONTH_ROW }}>
-              {monthLabels.map(({ col, label }) => (
-                <span
-                  key={col}
-                  style={{
-                    position: "absolute",
-                    left: col * STEP,
-                    fontSize: 9,
-                    color: "var(--ink-faint)",
-                  }}
-                >
-                  {label}
-                </span>
-              ))}
-            </div>
-            {/* Cells */}
-            <div style={{ display: "flex", gap: GAP }}>
-              {columns.map((col, ci) => (
-                <div key={ci} style={{ display: "flex", flexDirection: "column", gap: GAP }}>
-                  {col.map((cell) => (
-                    <div
-                      key={cell.key}
-                      onClick={() => !cell.future && setSel(cell)}
-                      title={cell.future ? "" : `${cell.key} · ${cell.value} ${unit}`}
-                      style={{
-                        width: CELL,
-                        height: CELL,
-                        borderRadius: 2,
-                        background: cell.future ? "transparent" : COLORS[level(cell.value)],
-                        outline:
-                          sel?.key === cell.key ? "1.5px solid var(--ink)" : "none",
-                        outlineOffset: 0,
-                        cursor: cell.future ? "default" : "pointer",
-                      }}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Month labels at their column's percentage position */}
+          <div style={{ position: "relative", height: 14 }}>
+            {monthLabels.map(({ col, label }) => (
+              <span
+                key={col}
+                style={{
+                  position: "absolute",
+                  left: `${(col / columns.length) * 100}%`,
+                  fontSize: 9,
+                  color: "var(--ink-faint)",
+                }}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+          {/* Fluid grid: 1 column per week, square cells, fills the width */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
+              columnGap: GAP,
+            }}
+          >
+            {columns.map((col, ci) => (
+              <div
+                key={ci}
+                style={{
+                  display: "grid",
+                  gridTemplateRows: "repeat(7, 1fr)",
+                  rowGap: GAP,
+                }}
+              >
+                {col.map((cell) => (
+                  <div
+                    key={cell.key}
+                    onClick={() => !cell.future && setSel(cell)}
+                    title={cell.future ? "" : `${cell.key} · ${cell.value} ${unit}`}
+                    style={{
+                      aspectRatio: "1",
+                      width: "100%",
+                      borderRadius: 2,
+                      background: cell.future ? "transparent" : COLORS[level(cell.value)],
+                      outline: sel?.key === cell.key ? "1.5px solid var(--ink)" : "none",
+                      cursor: cell.future ? "default" : "pointer",
+                    }}
+                  />
+                ))}
+              </div>
+            ))}
           </div>
         </div>
       </div>

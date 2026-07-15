@@ -10,8 +10,7 @@ import ReadinessCard from "./ReadinessCard";
 import LoadSheet from "./LoadSheet";
 import RecoverySheet from "./RecoverySheet";
 import SessionRow from "./SessionRow";
-import ChartTooltip from "./ChartTooltip";
-import { useChartHover } from "../hooks/useChartHover";
+import { useRipple } from "../hooks/useRipple";
 import { phaseAcwrFit } from "../lib/metrics";
 
 interface Props {
@@ -38,9 +37,8 @@ export default function Dashboard({
   onOpenPhases,
 }: Props) {
   const recent = sessions.slice(0, 6);
-  const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
-  const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
   const [detail, setDetail] = useState<null | "load" | "recovery">(null);
+  const { ripples: acwrRipples, spawnRipple: spawnAcwrRipple } = useRipple();
 
   return (
     <div>
@@ -115,13 +113,21 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* ACWR + Load grid */}
-      <div className="grid-2" style={{ marginBottom: 10 }}>
+      {/* ACWR + Readiness stacked full-width */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+          marginBottom: 10,
+        }}
+      >
         <div
-          className="card"
+          className="card tappable"
+          onPointerDown={spawnAcwrRipple}
           onClick={() => setDetail("load")}
-          style={{ cursor: "pointer" }}
         >
+          {acwrRipples}
           <div
             className="label-eyebrow"
             style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}
@@ -203,144 +209,8 @@ export default function Dashboard({
           </div>
         </div>
 
-        <div className="card">
-          <div className="label-eyebrow" style={{ marginBottom: 10 }}>
-            Load (AU)
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 11,
-                marginBottom: 5,
-              }}
-            >
-              <span style={{ color: "var(--ink-muted)" }}>Acute 7d</span>
-              <span style={{ color: "var(--ink)" }}>
-                {acwrData.acute.toFixed(0)}
-              </span>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: 11,
-              }}
-            >
-              <span style={{ color: "var(--ink-muted)" }}>Chronic avg</span>
-              <span style={{ color: "var(--ink)" }}>
-                {acwrData.chronic.toFixed(0)}
-              </span>
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 6 }}>
-            {/* y-axis, reserved outside the plot/data area */}
-            <div style={{ position: "relative", width: 18, flexShrink: 0, height: 40 }}>
-              <span
-                style={{
-                  position: "absolute",
-                  top: 8 - 5,
-                  right: 0,
-                  fontSize: 8,
-                  color: "var(--ink-faint)",
-                }}
-              >
-                {Math.round(maxW)}
-              </span>
-              <span
-                style={{
-                  position: "absolute",
-                  bottom: -5,
-                  right: 0,
-                  fontSize: 8,
-                  color: "var(--ink-faint)",
-                }}
-              >
-                0
-              </span>
-            </div>
-            <div style={{ position: "relative", flex: 1 }}>
-              {/* gridline at the max of the visible weeks */}
-              <div
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  top: 8,
-                  borderTop: "1px dashed var(--hairline)",
-                }}
-              />
-              {hoveredWeek !== null && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: `${((hoveredWeek + 0.5) / weeklyLoads.length) * 100}%`,
-                    top: 0,
-                    bottom: 0,
-                    width: 0,
-                    borderLeft: "1px dashed var(--ink-faint)",
-                    pointerEvents: "none",
-                  }}
-                />
-              )}
-              <div
-                style={{
-                  display: "flex",
-                  gap: 4,
-                  alignItems: "flex-end",
-                  height: 40,
-                }}
-              >
-                {weeklyLoads.map((w, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      gap: 3,
-                      position: "relative",
-                    }}
-                  >
-                    {hoveredWeek === i && (
-                      <ChartTooltip
-                        align={
-                          i === 0
-                            ? "start"
-                            : i === weeklyLoads.length - 1
-                              ? "end"
-                              : "center"
-                        }
-                      >
-                        {w.label} · {w.total.toLocaleString()} AU
-                      </ChartTooltip>
-                    )}
-                    <div
-                      style={{
-                        width: "100%",
-                        height: Math.max((w.total / maxW) * 32, 2),
-                        background: i === 3 ? "var(--success)" : "var(--border)",
-                        borderRadius: 2,
-                        transition: "height 0.4s, opacity 0.1s",
-                        opacity: hoveredWeek === null || hoveredWeek === i ? 1 : 0.5,
-                        boxShadow: hoveredWeek === i ? "0 0 0 1.5px var(--ink)" : "none",
-                        cursor: "pointer",
-                      }}
-                      {...hoverWeekProps(i)}
-                    />
-                    <div style={{ fontSize: 8, color: "var(--ink-faint)" }}>{w.label}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Readiness — taps through to the recovery inputs behind it */}
-      <div style={{ marginBottom: 10 }}>
+        {/* Readiness below ACWR; acute/chronic numbers live in the
+            Training Load page the ACWR card drills into */}
         <ReadinessCard onClick={() => setDetail("recovery")} />
       </div>
 
@@ -386,6 +256,7 @@ export default function Dashboard({
           acwrData={acwrData}
           status={status}
           sessions={sessions}
+          weeklyLoads={weeklyLoads}
           onClose={() => setDetail(null)}
         />
       )}

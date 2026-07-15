@@ -88,6 +88,8 @@ function AuthedApp({
     const el = contentRef.current;
     if (!el) return;
     function onScroll() {
+      // Desktop keeps its in-flow nav — auto-hide is a mobile behavior.
+      if (window.innerWidth >= 720) return;
       const y = el!.scrollTop;
       const dy = y - lastScrollY.current;
       if (y < 48) setChromeHidden(false);
@@ -127,75 +129,21 @@ function AuthedApp({
 
   return (
     <div className={`app-shell${chromeHidden ? " chrome-hidden" : ""}`}>
-      {/* Top bar */}
-      <div className="topbar">
-        <div>
-          <div className="topbar-title">SENDMETER</div>
-          <div className="topbar-sub">Climbing Periodization</div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              cursor: "pointer",
-            }}
-            title="Change training phase"
-            onClick={() => setShowPhases(true)}
-          >
-            <div style={{ textAlign: "right" }}>
-              <div
-                style={{
-                  fontSize: 9,
-                  color: "var(--ink-muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                }}
-              >
-                Phase / Day
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  color: phase.color,
-                  fontFamily: "Inter, sans-serif",
-                  fontWeight: 800,
-                }}
-              >
-                {phase.name} · {phaseDays}
-              </div>
-            </div>
-            <div
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: phase.color,
-              }}
-            />
-          </div>
-          <button
-            onClick={() => setShowWatchSheet(true)}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--ink-faint)",
-              fontSize: 9,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              cursor: "pointer",
-              padding: 4,
-              fontFamily: "Inter, sans-serif",
-            }}
-          >
-            Account
-          </button>
-        </div>
-      </div>
+      {/* Floating account button — the whole header is just this circle;
+          branding and phase info live in the content (phase banner). */}
+      <button
+        className="account-fab"
+        aria-label="Account"
+        onClick={() => setShowWatchSheet(true)}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="8.2" r="3.4" />
+          <path d="M5 20c1.2-3.4 3.8-5 7-5s5.8 1.6 7 5" />
+        </svg>
+      </button>
 
       {/* Content */}
-      <div className="content-area" ref={contentRef}>
+      <div className="content-area with-chrome" ref={contentRef}>
         {/* Error banner (scrolls with content; the chrome overlays above it) */}
         {error && (
           <div
@@ -268,8 +216,13 @@ function AuthedApp({
         )}
       </div>
 
-      {/* Bottom nav */}
-      <BottomNav view={view} onChange={setView} />
+      {/* Bottom nav — collapses to the active tab's icon while scroll-hidden */}
+      <BottomNav
+        view={view}
+        onChange={setView}
+        collapsed={chromeHidden}
+        onExpand={() => setChromeHidden(false)}
+      />
 
       {/* Log bottom sheet modal */}
       {showModal && (
@@ -298,7 +251,7 @@ function AuthedApp({
 
       {/* Phases bottom sheet */}
       {showPhases && (
-        <Sheet onClose={() => setShowPhases(false)}>
+        <Sheet fullHeight onClose={() => setShowPhases(false)}>
           <PhasesView
             currentPhase={currentPhase}
             phasePeriods={phasePeriods}

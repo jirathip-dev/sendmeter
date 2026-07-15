@@ -282,33 +282,24 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
           <div className="label-eyebrow" style={{ marginBottom: 10 }}>
             Log session to history
           </div>
-          <span className="field-label" style={{ marginTop: 0 }}>
-            Duration (minutes)
-          </span>
-          <div className="stepper">
-            <button
-              className="stepper-btn"
-              onClick={() =>
-                setEndingSession((s) =>
-                  s ? { ...s, durationMin: Math.max(1, s.durationMin - 5) } : s,
-                )
-              }
-            >
-              −
-            </button>
-            <span className="stepper-val">{endingSession.durationMin}</span>
-            <button
-              className="stepper-btn"
-              onClick={() =>
-                setEndingSession((s) =>
-                  s
-                    ? { ...s, durationMin: Math.min(600, s.durationMin + 5) }
-                    : s,
-                )
-              }
-            >
-              +
-            </button>
+          {/* Duration is the actual session wall-clock time — only RPE is asked */}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+              padding: "10px 2px",
+            }}
+          >
+            <span className="field-label" style={{ margin: 0 }}>
+              Duration
+            </span>
+            <span style={{ fontSize: 15, fontWeight: 700 }}>
+              {endingSession.durationMin} min{" "}
+              <span style={{ fontSize: 10, color: "var(--ink-faint)", fontWeight: 400 }}>
+                actual time
+              </span>
+            </span>
           </div>
           <span className="field-label">RPE (1–10)</span>
           <div className="stepper">

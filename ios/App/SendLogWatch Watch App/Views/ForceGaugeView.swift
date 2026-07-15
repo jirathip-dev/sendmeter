@@ -1,15 +1,25 @@
 import Combine
 import SwiftUI
 
+private let SIDE_OPTIONS: [(value: String, label: String)] = [
+    ("", "—"),
+    ("left", "Left"),
+    ("right", "Right"),
+    ("both", "Both"),
+]
+
 struct ForceGaugeView: View {
     @State private var tindeq = TindeqManager()
     @State private var saving = false
     @State private var savedMsg: String?
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
 
-    // The watch is a minimal one-tap capture: no tag/side/tare here (add those
-    // on the phone). A rep saves untagged the moment you stop; group it into a
-    // session for the phone to reconcile.
+    // Exercise setup — set once before the first rep, tweak side between reps.
+    // Hidden while measuring so the live gauge fits one screen; Stop always
+    // saves with whatever tag/side is set (no post-stop decision).
+    @State private var tag = ""
+    @State private var side = ""
+    @State private var recentTags: [String] = []
 
     // Gauge session: recordings saved while active share a group_id
     @State private var session: (id: UUID, startedAt: Date)?
@@ -24,7 +34,9 @@ struct ForceGaugeView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 8) {
-                if tindeq.status != .unsupported {
+                // Session controls hide while measuring — the live gauge owns
+                // the screen; they come back the moment the rep stops.
+                if tindeq.status != .unsupported && tindeq.status != .measuring {
                     sessionBar
                 }
 
@@ -64,6 +76,9 @@ struct ForceGaugeView: View {
                 sparkSamples = tindeq.recentSamples()
             }
         }
+        .task {
+            recentTags = (try? await Repo.fetchRecentTindeqTags()) ?? []
+        }
         .onDisappear { tindeq.disconnect() }
         .sheet(isPresented: $showEndSheet) { endSessionSheet }
     }
@@ -99,6 +114,8 @@ struct ForceGaugeView: View {
     private func endSession() {
         guard let s = session else { return }
         if sessionCount > 0 {
+            // Duration is the actual session wall-clock time — not editable;
+            // the sheet only asks for RPE.
             endDurationMin = max(1, Int((Date().timeIntervalSince(s.startedAt) / 60).rounded()))
             endRPE = 5
             showEndSheet = true
@@ -113,11 +130,15 @@ struct ForceGaugeView: View {
             VStack(spacing: 8) {
                 Text("Log session")
                     .font(.headline)
-                Stepper(value: $endDurationMin, in: 1...600, step: 5) {
+                HStack {
                     VStack(alignment: .leading) {
                         Text("DURATION").font(.system(size: 10)).foregroundStyle(.secondary)
                         Text("\(endDurationMin) min").monospacedDigit()
                     }
+                    Spacer()
+                    Text("actual time")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
                 }
                 Stepper(value: $endRPE, in: 1...10) {
                     VStack(alignment: .leading) {
@@ -170,18 +191,47 @@ struct ForceGaugeView: View {
             }
         }
 
+        // Exercise setup (hidden while measuring to keep the gauge one-screen)
+        if tindeq.status == .connected {
+            TextField("Tag (e.g. FDP)", text: $tag)
+                .font(.footnote)
+            if !recentTags.isEmpty {
+                Picker("Recent", selection: $tag) {
+                    Text("—").tag("")
+                    ForEach(recentTags, id: \.self) { t in
+                        Text(t).tag(t)
+                    }
+                }
+                .pickerStyle(.navigationLink)
+                .font(.footnote)
+            }
+            Picker("Side", selection: $side) {
+                ForEach(SIDE_OPTIONS, id: \.value) { o in
+                    Text(o.label).tag(o.value)
+                }
+            }
+            .pickerStyle(.navigationLink)
+            .font(.footnote)
+        }
+
         Text(String(format: "%.1f", tindeq.currentKg))
             .font(.system(size: 42, weight: .heavy, design: .rounded))
             .monospacedDigit()
         + Text(" kg").font(.footnote).foregroundStyle(.secondary)
 
-        HStack {
+        // Hold time — the primary live number after force, so it reads at a
+        // glance mid-hang (much larger than the old footnote).
+        HStack(alignment: .firstTextBaseline) {
             Text("peak \(String(format: "%.1f", tindeq.peakKg))")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             Spacer()
-            Text(String(format: "%.1fs", tindeq.elapsedMs / 1000))
+            Text(String(format: "%.1f", tindeq.elapsedMs / 1000))
+                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(tindeq.status == .measuring ? .primary : .secondary)
+            + Text(" s").font(.footnote).foregroundStyle(.secondary)
         }
-        .font(.footnote)
-        .foregroundStyle(.secondary)
 
         Sparkline(samples: sparkSamples)
             .frame(height: 50)
@@ -200,9 +250,9 @@ struct ForceGaugeView: View {
         }
     }
 
-    // Stop always saves — untagged, the moment you stop. A failure keeps the
-    // rep recoverable by reconnecting and pulling again (nothing is queued on
-    // the watch), and surfaces a friendly message instead of a DB error.
+    // Stop always saves — with the tag/side set before the rep. A failure keeps
+    // the rep recoverable by pulling again, and surfaces a friendly message
+    // instead of a DB error.
     private func saveStop() {
         guard let rec = tindeq.stop() else { return }
         saving = true
@@ -210,9 +260,14 @@ struct ForceGaugeView: View {
         Task {
             do {
                 try await Repo.insertTindeqRecording(
-                    rec, note: "", tag: "", side: "", groupId: session?.id
+                    rec,
+                    note: "",
+                    tag: tag.trimmingCharacters(in: .whitespaces),
+                    side: side,
+                    groupId: session?.id
                 )
-                savedMsg = String(format: "Saved · %.1f kg", rec.peakKg)
+                let tagLabel = tag.isEmpty ? "" : " · \(tag)"
+                savedMsg = String(format: "Saved · %.1f kg%@", rec.peakKg, tagLabel)
                 if session != nil { sessionCount += 1 }
             } catch {
                 savedMsg = ErrorText.friendly(error)

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchRecordingSamples } from "../lib/repo";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
@@ -10,12 +10,24 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
-const W = 300;
 const H = 80;
 const PAD = { top: 6, right: 6, bottom: 14, left: 26 };
 
 function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
   const [hovered, hoverProps] = useChartHover<number>();
+  // The trace spans the full card width: measure the container and use its
+  // real width as the viewBox width (a fixed 300px viewBox letterboxed
+  // inside wide desktop cards).
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(300);
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setW(Math.max(200, el.clientWidth)));
+    ro.observe(el);
+    setW(Math.max(200, el.clientWidth));
+    return () => ro.disconnect();
+  }, []);
   const tMax = (samples.length ? samples[samples.length - 1]!.t : 0) || 1;
   const kgMax = Math.max(...samples.map((s) => s.kg), 1) * 1.08;
   const { x: px, y: py } = useSvgScale(W, H, PAD, 0, tMax, 0, kgMax);
@@ -38,6 +50,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
   const hoveredSample = hovered !== null ? samples[hovered] : undefined;
 
   return (
+    <div ref={hostRef} style={{ width: "100%" }}>
     <svg
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", height: H, display: "block", marginTop: 10 }}
@@ -72,7 +85,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
           style={{ fill: "var(--ink-faint)" }}
           textAnchor={i === 0 ? "start" : i === xTicks.length - 1 ? "end" : "middle"}
         >
-          {t.toFixed(1)}s
+          {(t / 1000).toFixed(1)}s
         </text>
       ))}
       <polyline
@@ -115,11 +128,12 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
             y={py(hoveredSample.kg)}
             viewW={W}
             viewH={H}
-            lines={[`${hoveredSample.t.toFixed(1)}s`, `${hoveredSample.kg.toFixed(1)} kg`]}
+            lines={[`${(hoveredSample.t / 1000).toFixed(1)}s`, `${hoveredSample.kg.toFixed(1)} kg`]}
           />
         </>
       )}
     </svg>
+    </div>
   );
 }
 

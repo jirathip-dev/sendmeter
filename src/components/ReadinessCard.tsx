@@ -1,6 +1,7 @@
 import { useChartHover } from "../hooks/useChartHover";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import { useRipple } from "../hooks/useRipple";
 import { fetchHealthMetrics } from "../lib/repo";
 import ChartTooltip from "./ChartTooltip";
 import type { HealthMetric } from "../types";
@@ -13,6 +14,7 @@ const ZONE_COLORS: Record<string, string> = {
 
 export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}) {
   const [hoveredDay, hoverDayProps] = useChartHover<number>();
+  const { ripples, spawnRipple } = useRipple();
   const realtimeVersion = useRealtimeVersion();
   const metrics = useCancellableFetch<HealthMetric[]>(
     () => fetchHealthMetrics(14),
@@ -23,7 +25,12 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
   // Empty state: the feature should be discoverable before any watch data
   if (metrics.length === 0) {
     return (
-      <div className="card" onClick={onClick} style={{ cursor: onClick ? "pointer" : undefined }}>
+      <div
+        className={`card${onClick ? " tappable" : ""}`}
+        onClick={onClick}
+        onPointerDown={onClick ? spawnRipple : undefined}
+      >
+        {onClick && ripples}
         <div className="label-eyebrow" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Readiness</span>
           {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
@@ -69,7 +76,12 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
   if (latest.bodyMassKg) footerParts.push(`${latest.bodyMassKg.toFixed(1)}kg`);
 
   return (
-    <div className="card" onClick={onClick} style={{ cursor: onClick ? "pointer" : undefined }}>
+    <div
+      className={`card${onClick ? " tappable" : ""}`}
+      onClick={onClick}
+      onPointerDown={onClick ? spawnRipple : undefined}
+    >
+      {onClick && ripples}
       <div className="label-eyebrow" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span>Readiness</span>
         {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
@@ -95,6 +107,16 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
           </span>
         )}
       </div>
+      {/* Metrics synced but no score yet — explain the baseline requirement
+          instead of leaving a bare "no score" (the engine needs ~7 days of
+          HRV or resting-HR history before z-scores are meaningful). */}
+      {latest.readiness == null && (
+        <div style={{ fontSize: 10, color: "var(--ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
+          Your metrics are syncing, but the score needs about a week of
+          overnight HRV / resting-HR history in Apple Health to build a
+          baseline. It appears automatically once there's enough.
+        </div>
+      )}
       <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
         {/* y-axis, reserved outside the plot/data area */}
         <div style={{ position: "relative", width: 16, flexShrink: 0, height: 36 }}>

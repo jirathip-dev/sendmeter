@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
-import type { ReactNode, PointerEvent } from "react";
+import type { ReactNode } from "react";
 import { NAV } from "../constants";
+import { useRipple } from "../hooks/useRipple";
 import type { ViewId } from "../types";
 
 // Clean line icons keyed by view — replaces the old glyphs (⬡ ◉ ≡).
@@ -27,12 +27,6 @@ const ICONS: Record<ViewId, ReactNode> = {
   ),
 };
 
-interface Ripple {
-  id: number;
-  x: number;
-  y: number;
-}
-
 function NavButton({
   view,
   label,
@@ -44,30 +38,17 @@ function NavButton({
   active: boolean;
   onSelect: () => void;
 }) {
-  const [ripples, setRipples] = useState<Ripple[]>([]);
-  const seq = useRef(0);
-
-  // Spawn an iridescent "droplet" from the touch point that expands and fades.
-  function spawn(e: PointerEvent<HTMLButtonElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const id = ++seq.current;
-    setRipples((r) => [...r, { id, x: e.clientX - rect.left, y: e.clientY - rect.top }]);
-    window.setTimeout(() => {
-      setRipples((r) => r.filter((rip) => rip.id !== id));
-    }, 650);
-  }
+  const { ripples, spawnRipple } = useRipple();
 
   return (
     <button
       className={`nav-item ${active ? "active" : ""}`}
-      onPointerDown={spawn}
+      onPointerDown={spawnRipple}
       onClick={onSelect}
       aria-label={label}
       aria-current={active ? "page" : undefined}
     >
-      {ripples.map((r) => (
-        <span key={r.id} className="nav-ripple" style={{ left: r.x, top: r.y }} />
-      ))}
+      {ripples}
       <span className="nav-icon">{ICONS[view]}</span>
       <span className="nav-label">{label}</span>
     </button>
@@ -77,10 +58,31 @@ function NavButton({
 export default function BottomNav({
   view,
   onChange,
+  collapsed = false,
+  onExpand,
 }: {
   view: ViewId;
   onChange: (v: ViewId) => void;
+  /// Scroll-hidden state: shrink to a single circle showing the active tab's
+  /// icon; tapping it re-reveals the full chrome.
+  collapsed?: boolean;
+  onExpand?: () => void;
 }) {
+  if (collapsed) {
+    const active = NAV.find((n) => n.id === view) ?? NAV[0]!;
+    return (
+      <nav className="bottom-nav collapsed">
+        <button
+          className="nav-item active"
+          onClick={onExpand}
+          aria-label={`${active.label} — show navigation`}
+        >
+          <span className="nav-icon">{ICONS[active.id]}</span>
+        </button>
+      </nav>
+    );
+  }
+
   return (
     <nav className="bottom-nav">
       {NAV.map((n) => (
