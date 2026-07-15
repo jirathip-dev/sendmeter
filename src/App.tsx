@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PHASES } from "./constants";
 import { today } from "./lib/dates";
 import { computeAcwr, computeWeeklyLoads, getACWRStatus } from "./lib/metrics";
@@ -79,6 +79,26 @@ function AuthedApp({
   const acwrData = useMemo(() => computeAcwr(sessions), [sessions]);
   const weeklyLoads = useMemo(() => computeWeeklyLoads(sessions), [sessions]);
 
+  // Auto-hide the topbar + bottom nav on scroll-down, reveal on scroll-up
+  // (modern app chrome). Both overlay the content, so hiding frees the screen.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [chromeHidden, setChromeHidden] = useState(false);
+  const lastScrollY = useRef(0);
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    function onScroll() {
+      const y = el!.scrollTop;
+      const dy = y - lastScrollY.current;
+      if (y < 48) setChromeHidden(false);
+      else if (dy > 6) setChromeHidden(true);
+      else if (dy < -6) setChromeHidden(false);
+      lastScrollY.current = y;
+    }
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
   const phase = PHASES.find((p) => p.id === currentPhase) || PHASES[0]!;
   const status = getACWRStatus(acwrData.acwr);
   const phaseDays =
@@ -106,7 +126,7 @@ function AuthedApp({
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${chromeHidden ? " chrome-hidden" : ""}`}>
       {/* Top bar */}
       <div className="topbar">
         <div>
@@ -174,39 +194,40 @@ function AuthedApp({
         </div>
       </div>
 
-      {/* Error banner */}
-      {error && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-            padding: "8px 16px",
-            background: "rgba(255,69,58,0.12)",
-            borderBottom: "1px solid rgba(255,69,58,0.35)",
-            fontSize: 11,
-            color: "var(--danger)",
-          }}
-        >
-          <span>{error}</span>
-          <button
-            onClick={dismissError}
+      {/* Content */}
+      <div className="content-area" ref={contentRef}>
+        {/* Error banner (scrolls with content; the chrome overlays above it) */}
+        {error && (
+          <div
             style={{
-              background: "none",
-              border: "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+              padding: "10px 14px",
+              marginBottom: 10,
+              background: "rgba(255,69,58,0.12)",
+              border: "1px solid rgba(255,69,58,0.35)",
+              borderRadius: 10,
+              fontSize: 11,
               color: "var(--danger)",
-              fontSize: 16,
-              cursor: "pointer",
             }}
           >
-            ×
-          </button>
-        </div>
-      )}
-
-      {/* Content */}
-      <div className="content-area">
+            <span>{error}</span>
+            <button
+              onClick={dismissError}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--danger)",
+                fontSize: 16,
+                cursor: "pointer",
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
         {loading ? (
           <div
             style={{
