@@ -67,6 +67,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [passkeys, setPasskeys] = useState<PasskeyListItem[] | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showDanger, setShowDanger] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
@@ -327,9 +328,8 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               <div>
                 <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
                   Deletes all stored daily health metrics (HRV, resting heart
-                  rate, sleep, readiness). Your device re-reads them from Apple
-                  Health afterward — use this if the wrong person's data got
-                  recorded to your account.
+                  rate, sleep, readiness). Your device re-reads them fresh from
+                  Apple Health afterward.
                 </div>
                 <button
                   className="btn-primary"
@@ -351,8 +351,8 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
             ) : (
               <div>
                 <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
-                  Recorded the wrong person's metrics? Clear them and re-sync
-                  fresh from Apple Health.
+                  Clear all stored health metrics and re-sync them fresh from
+                  Apple Health.
                 </div>
                 <button className="btn-ghost" onClick={() => setConfirmingClear(true)}>
                   Clear health data & resync…
@@ -382,7 +382,15 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
 
             <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
               {eyebrow("Danger zone", true)}
-              {confirmingDelete ? (
+              {!showDanger ? (
+                <button
+                  className="btn-ghost btn-inline"
+                  style={{ color: "var(--ink-muted)", fontSize: 12 }}
+                  onClick={() => setShowDanger(true)}
+                >
+                  Reveal delete option
+                </button>
+              ) : confirmingDelete ? (
                 <div>
                   <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
                     This permanently deletes your account and every session,
