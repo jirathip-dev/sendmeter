@@ -16,6 +16,7 @@ import PresetManager from "./PresetManager";
 import SideAsymmetryCard from "./SideAsymmetryCard";
 import TagSideEditor from "./TagSideEditor";
 import TargetZonesCard from "./TargetZonesCard";
+import type { ZoneSelection } from "./TargetZonesCard";
 import TindeqFullscreen from "./TindeqFullscreen";
 import TindeqTrendChart from "./TindeqTrendChart";
 
@@ -49,7 +50,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
   const [saving, setSaving] = useState(false);
   const [recordings, setRecordings] = useState<TindeqRecordingMeta[]>([]);
   const [listError, setListError] = useState<string | null>(null);
-  const [gaugeTarget, setGaugeTarget] = useState<GaugeTarget | null>(null);
+  const [zoneSel, setZoneSel] = useState<ZoneSelection | null>(null);
   const [preset, setPreset] = useState<TindeqPreset | null>(null);
   // Force-curve model for the selected tag/side — auto-computed (no button)
   // and shared by the curve card + the target-zones picker.
@@ -213,6 +214,21 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
   const curveReady = curveComputedFor === curveKey;
   const model = canComputeCurve && curveReady ? curveModel : null;
   const curveComputing = canComputeCurve && !curveReady;
+
+  // One guided-timer path: a custom preset wins; else an armed zone runs its
+  // prescription. The chart band comes from the preset's own target weight
+  // when set, else from the zone.
+  const activeProtocol: TindeqPreset | null = preset ?? zoneSel?.protocol ?? null;
+  const bandTarget: GaugeTarget | null =
+    preset?.targetKg != null
+      ? {
+          kg: preset.targetKg,
+          lowKg: preset.targetKg * 0.9,
+          highKg: preset.targetKg * 1.1,
+          workS: preset.holdS,
+          label: preset.name,
+        }
+      : (zoneSel?.target ?? null);
 
   // Pop the gauge fullscreen the moment the Progressor connects (only on the
   // connecting→connected transition — a stop→connected change must not
@@ -473,27 +489,28 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         </button>
       )}
 
-      {/* Tag/side for the next rep — set here in the tab; the fullscreen
-          gauge stays clean */}
-      {(status === "connected" || status === "measuring") && (
-        <div className="card" style={{ marginTop: 10 }}>
-          <div className="label-eyebrow" style={{ marginBottom: 8 }}>
-            Exercise &amp; Side
-          </div>
-          <TagSideEditor
-            tag={pendingTag}
-            side={pendingSide}
-            recentTags={recentTags}
-            allTags={allTags}
-            onTag={setPendingTag}
-            onSide={setPendingSide}
-          />
-          {!pendingTag.trim() && (
+      {/* GLOBAL exercise + side: labels the next recording AND drives the
+          target zones, trend and curve below. Always visible — this is also
+          the only place a brand-new tag can be typed. */}
+      <div className="card" style={{ marginTop: 10 }}>
+        <div className="label-eyebrow" style={{ marginBottom: 8 }}>
+          Exercise &amp; Side
+        </div>
+        <TagSideEditor
+          tag={pendingTag}
+          side={pendingSide}
+          recentTags={recentTags}
+          allTags={allTags}
+          onTag={setPendingTag}
+          onSide={setPendingSide}
+        />
+        {!pendingTag.trim() &&
+          (status === "connected" || status === "measuring") && (
             <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 8 }}>
               Add a tag to start recording.
             </div>
           )}
-          {justSaved && status !== "measuring" && (
+        {justSaved && status === "connected" && (
             <div
               style={{
                 marginTop: 10,
@@ -528,8 +545,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
               </button>
             </div>
           )}
-        </div>
-      )}
+      </div>
 
       {listError && (
         <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 10 }}>
@@ -542,8 +558,8 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         <TargetZonesCard
           tag={chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag}
           model={model}
-          selected={gaugeTarget}
-          onSelect={setGaugeTarget}
+          selected={zoneSel}
+          onSelect={setZoneSel}
         />
       )}
 
@@ -557,9 +573,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
             <TindeqTrendChart
               recordings={recordings}
               selectedTag={effectiveTag}
-              onSelectTag={(t) => setPendingTag(t ?? "")}
               selectedSide={chartSide}
-              onSelectSide={(s) => setPendingSide(s ?? "")}
             />
             {effectiveTag && (
               <ForceCurveCard
@@ -591,8 +605,9 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
       {(status === "connected" || status === "measuring") && !gaugeMinimized && (
         <TindeqFullscreen
           tindeq={tindeq}
-          preset={preset}
-          gaugeTarget={gaugeTarget}
+          protocol={activeProtocol}
+          target={bandTarget}
+          globalSide={pendingSide}
           canStart={!!pendingTag.trim()}
           saving={saving}
           onStop={() => void handleStop()}

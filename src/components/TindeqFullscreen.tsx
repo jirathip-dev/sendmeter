@@ -1,15 +1,21 @@
 import { useEffect, useRef } from "react";
 import type { useTindeq } from "../hooks/useTindeq";
 import { protocolDurationS, protocolPhaseAt, repSide } from "../lib/protocol";
-import type { TindeqPreset } from "../types";
+import type { TindeqPreset, TindeqSide } from "../types";
 import ForceGauge from "./ForceGauge";
 import type { GaugeTarget } from "./ForceCurveCard";
 
 interface Props {
   tindeq: ReturnType<typeof useTindeq>;
-  preset: TindeqPreset | null;
-  gaugeTarget: GaugeTarget | null;
-  /// Tag is set outside (Next recording card); Start stays disabled without it.
+  /// The active guided protocol: a custom preset, or the armed zone's
+  /// prescription (resolved by the parent). Null = free hold.
+  protocol: TindeqPreset | null;
+  /// The load band drawn on the live chart (preset target or zone band).
+  target: GaugeTarget | null;
+  /// The tab-global side — shown during holds when the protocol doesn't
+  /// alternate.
+  globalSide: TindeqSide;
+  /// Tag is set outside (Exercise card); Start stays disabled without it.
   canStart: boolean;
   saving: boolean;
   onStart: () => void;
@@ -34,8 +40,9 @@ function fmt(sec: number): string {
 /// preset — over the fullscreen live force chart.
 export default function TindeqFullscreen({
   tindeq,
-  preset,
-  gaugeTarget,
+  protocol,
+  target,
+  globalSide,
   canStart,
   saving,
   onStart,
@@ -44,7 +51,7 @@ export default function TindeqFullscreen({
 }: Props) {
   const measuring = tindeq.status === "measuring";
   const tS = tindeq.elapsedMs / 1000;
-  const phase = preset && measuring ? protocolPhaseAt(preset, tS) : null;
+  const phase = protocol && measuring ? protocolPhaseAt(protocol, tS) : null;
   const meta = phase ? PHASE_META[phase.phase] : null;
 
   // Beep + haptic on protocol phase transitions (AudioContext primed on the
@@ -94,29 +101,21 @@ export default function TindeqFullscreen({
 
   const bannerColor = meta?.color ?? (measuring ? "var(--success)" : "var(--primary)");
 
-  // Which hand this rep uses (only when the preset alternates sides).
+  // Which hand this rep uses: alternate per rep when the protocol says so,
+  // otherwise the tab-global side (if one is picked).
   const side =
-    preset?.alternateSides && phase && phase.phase !== "done"
-      ? repSide(phase.rep)
+    phase && phase.phase !== "done"
+      ? protocol?.alternateSides
+        ? repSide(phase.rep)
+        : globalSide === "left" || globalSide === "right"
+          ? globalSide
+          : null
       : null;
-  // During a rest with alternation, show the side for the NEXT rep — that's
-  // the hand you should be moving to.
+  // During a rest with alternation, cue the hand for the NEXT rep.
   const nextSide =
-    preset?.alternateSides && phase && (phase.phase === "rest" || phase.phase === "setRest")
+    protocol?.alternateSides && phase && (phase.phase === "rest" || phase.phase === "setRest")
       ? repSide(phase.phase === "setRest" ? 1 : phase.rep + 1)
       : null;
-
-  // A preset's own target weight beats the zone-derived gauge target.
-  const effectiveTarget: GaugeTarget | null =
-    preset?.targetKg != null
-      ? {
-          kg: preset.targetKg,
-          lowKg: preset.targetKg * 0.9,
-          highKg: preset.targetKg * 1.1,
-          workS: preset.holdS,
-          label: preset.name,
-        }
-      : gaugeTarget;
 
   return (
     <div
@@ -225,7 +224,7 @@ export default function TindeqFullscreen({
             transition: "background 0.25s, border-color 0.25s",
           }}
         >
-          {phase && meta && preset ? (
+          {phase && meta && protocol ? (
             <>
               <div
                 style={{
@@ -251,7 +250,7 @@ export default function TindeqFullscreen({
                 {phase.phase === "done" ? "✓" : fmt(phase.remaining)}
               </div>
               <div style={{ fontSize: 13, color: "var(--ink-muted)", marginTop: 4 }}>
-                rep {phase.rep}/{preset.reps} · set {phase.set}/{preset.sets}
+                rep {phase.rep}/{protocol.reps} · set {phase.set}/{protocol.sets}
                 {phase.phase === "done" && " — Stop & Save"}
                 {nextSide && (
                   <span style={{ color: "var(--warning)", fontWeight: 700 }}>
@@ -301,17 +300,17 @@ export default function TindeqFullscreen({
                 READY
               </div>
               <div style={{ fontSize: 12, color: "var(--ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
-                {preset ? (
+                {protocol ? (
                   <>
-                    <span style={{ color: "var(--ink)", fontWeight: 600 }}>{preset.name}</span>{" "}
-                    · {preset.holdS}s × {preset.reps} × {preset.sets} · ~
-                    {Math.round(protocolDurationS(preset) / 60)}min
+                    <span style={{ color: "var(--ink)", fontWeight: 600 }}>{protocol.name}</span>{" "}
+                    · {protocol.holdS}s × {protocol.reps} × {protocol.sets} · ~
+                    {Math.round(protocolDurationS(protocol) / 60)}min
                     <br />
                     guided timer starts with Start
                   </>
-                ) : effectiveTarget ? (
+                ) : target ? (
                   <>
-                    Target: <span style={{ color: "var(--success)" }}>{effectiveTarget.label}</span>
+                    Target: <span style={{ color: "var(--success)" }}>{target.label}</span>
                   </>
                 ) : (
                   "Free hold — pick a preset or target in the tab for a guided timer."
@@ -329,7 +328,7 @@ export default function TindeqFullscreen({
             elapsedMs={tindeq.elapsedMs}
             samplesRef={tindeq.samplesRef}
             live={measuring}
-            target={effectiveTarget}
+            target={target}
             chartHeight={280}
           />
         </div>

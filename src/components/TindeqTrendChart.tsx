@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { computeTindeqStats } from "../lib/metrics";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
@@ -7,41 +6,15 @@ import type { TindeqRecordingMeta, TindeqSide } from "../types";
 
 interface Props {
   recordings: TindeqRecordingMeta[];
+  /// Follows the tab's GLOBAL exercise/side (set in the Exercise card) —
+  /// this chart has no filters of its own.
   selectedTag: string | null;
-  onSelectTag: (tag: string | null) => void;
   selectedSide: TindeqSide | null;
-  onSelectSide: (side: TindeqSide | null) => void;
 }
 
 const W = 300;
 const H = 120;
 const PAD = { top: 12, right: 8, bottom: 16, left: 30 };
-
-function TagChip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="tag"
-      style={{
-        background: active ? "var(--primary)" : "var(--surface-1)",
-        color: active ? "#ffffff" : "var(--ink-muted)",
-        border: `1px solid ${active ? "var(--primary)" : "var(--border)"}`,
-        cursor: "pointer",
-        fontFamily: "Inter, sans-serif",
-      }}
-    >
-      {label}
-    </button>
-  );
-}
 
 function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
   const [hovered, hoverProps] = useChartHover<number>();
@@ -167,23 +140,8 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
 export default function TindeqTrendChart({
   recordings,
   selectedTag,
-  onSelectTag,
   selectedSide,
-  onSelectSide,
 }: Props) {
-  // Tags ordered by frequency, so the exercises you measure most come first
-  const tags = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const r of recordings) {
-      if (r.tag) counts.set(r.tag, (counts.get(r.tag) ?? 0) + 1);
-    }
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([tag]) => tag);
-  }, [recordings]);
-
-  const hasSides = recordings.some((r) => r.side !== "");
-
   const filtered = recordings.filter(
     (r) =>
       (selectedTag === null || r.tag === selectedTag) &&
@@ -201,43 +159,14 @@ export default function TindeqTrendChart({
     <div className="card" style={{ marginTop: 10 }}>
       <div className="label-eyebrow" style={{ marginBottom: 10 }}>
         Peak Force Trend
+        {selectedTag && (
+          <span style={{ color: "var(--ink-faint)" }}>
+            {" "}
+            · {selectedTag}
+            {selectedSide ? ` · ${selectedSide}` : ""}
+          </span>
+        )}
       </div>
-
-      {/* One tag is always selected — trends compare like-for-like holds,
-          so an "All" mix isn't meaningful. */}
-      {tags.length > 0 && (
-        <div
-          style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}
-        >
-          {tags.map((t) => (
-            <TagChip
-              key={t}
-              label={t}
-              active={selectedTag === t}
-              onClick={() => onSelectTag(t)}
-            />
-          ))}
-        </div>
-      )}
-      {hasSides && (
-        <div
-          style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12 }}
-        >
-          <TagChip
-            label="Both sides"
-            active={selectedSide === null}
-            onClick={() => onSelectSide(null)}
-          />
-          {(["left", "right"] as const).map((s) => (
-            <TagChip
-              key={s}
-              label={s === "left" ? "Left" : "Right"}
-              active={selectedSide === s}
-              onClick={() => onSelectSide(selectedSide === s ? null : s)}
-            />
-          ))}
-        </div>
-      )}
 
       {stats && sorted.length >= 2 ? (
         <>

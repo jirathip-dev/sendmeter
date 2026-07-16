@@ -143,6 +143,19 @@ export const QUALITIES: { id: TrainingQuality; label: string }[] = [
   { id: "endurance", label: "Endurance" },
 ];
 
+/// Timer prescription per zone (matches the protocol strings in zoneTarget):
+/// pull time, rest between reps, reps, sets, rest between sets. Drives the
+/// guided fullscreen countdown when a zone target is armed.
+export const ZONE_PROTOCOLS: Record<
+  TrainingQuality,
+  { holdS: number; restRepsS: number; reps: number; sets: number; restSetsS: number }
+> = {
+  power: { holdS: 5, restRepsS: 150, reps: 6, sets: 1, restSetsS: 0 },
+  strength: { holdS: 10, restRepsS: 150, reps: 5, sets: 1, restSetsS: 0 },
+  "power-endurance": { holdS: 7, restRepsS: 3, reps: 6, sets: 4, restSetsS: 120 },
+  endurance: { holdS: 30, restRepsS: 30, reps: 8, sets: 1, restSetsS: 0 },
+};
+
 export function zoneTarget(
   model: ForceCurveModel,
   quality: TrainingQuality,
