@@ -394,6 +394,8 @@ textarea.field { resize: none; }
 
 /* Loading spinner + centered layout */
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Live-workout heartbeat dot */
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .spinner {
   width: 26px; height: 26px; border-radius: 50%;
   border: 3px solid var(--surface-2);

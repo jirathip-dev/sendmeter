@@ -1,5 +1,5 @@
 export type PhaseId = "capacity" | "strength" | "power" | "execution";
-export type ViewId = "dashboard" | "history" | "tindeq";
+export type ViewId = "dashboard" | "workout" | "history" | "tindeq";
 
 export interface Phase {
   id: PhaseId;
@@ -181,4 +181,32 @@ export interface WorkoutDetail {
 export interface WorkoutHrSample {
   t: number;
   hr: number | null;
+}
+
+/// Row of the Workout tab's recent-workouts list (metadata only — the
+/// expanded detail lazy-loads via fetchWorkoutById).
+export interface WorkoutListItem {
+  id: string;
+  sessionId: string | null;
+  startedAt: string;
+  endedAt: string;
+  avgHr: number | null;
+  attemptsConfirmed: number;
+  attemptsDetected: number;
+  rpeConfirmed: number | null;
+  source: WorkoutSource;
+}
+
+/// The single live_workouts heartbeat row the watch upserts every ~5s
+/// while a workout is running (SL-41 live mirror).
+export interface LiveWorkout {
+  workoutId: string;
+  status: "live" | "ended";
+  startedAt: string;
+  hr: number | null;
+  attemptCount: number;
+  activeKcal: number | null;
+  elevationGainM: number | null;
+  climbing: boolean;
+  updatedAt: string;
 }

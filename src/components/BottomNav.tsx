@@ -12,6 +12,13 @@ const ICONS: Record<ViewId, ReactNode> = {
       <path d="M9.5 21v-6h5v6" />
     </svg>
   ),
+  workout: (
+    // A boulder/mountain with a route line — the climb-workout tab.
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 20 10 6l4 7 3-4 4 11z" />
+      <path d="M10 13.5 12 17" />
+    </svg>
+  ),
   tindeq: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 15a8 8 0 0 1 16 0" />

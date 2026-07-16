@@ -3,6 +3,7 @@ import type {
   DeletedSession,
   DeletedTindeqRecording,
   HealthMetric,
+  LiveWorkout,
   LogFormState,
   NewTindeqRecording,
   PhaseId,
@@ -16,6 +17,7 @@ import type {
   WorkoutAttempt,
   WorkoutDetail,
   WorkoutHrSample,
+  WorkoutListItem,
 } from "../types";
 import { SESSION_TYPES } from "../constants";
 import { today } from "./dates";
@@ -526,19 +528,34 @@ export async function fetchRpePairs(): Promise<RpePair[]> {
   }));
 }
 
-export async function fetchWorkoutForSession(
-  sessionId: string,
-): Promise<WorkoutDetail | null> {
-  const { data, error } = await supabase
-    .from("climb_workouts")
-    .select(
-      "id, started_at, ended_at, source, avg_hr, max_hr, active_kcal, elevation_gain_m, attempts_detected, attempts_confirmed, rpe_predicted, rpe_confirmed, climb_attempts(started_at, duration_s, elevation_gain_m, avg_hr, peak_hr, effort_score, source)",
-    )
-    .eq("session_id", sessionId)
-    .order("started_at", { referencedTable: "climb_attempts", ascending: true })
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return null;
+const WORKOUT_DETAIL_COLS =
+  "id, started_at, ended_at, source, avg_hr, max_hr, active_kcal, elevation_gain_m, attempts_detected, attempts_confirmed, rpe_predicted, rpe_confirmed, climb_attempts(started_at, duration_s, elevation_gain_m, avg_hr, peak_hr, effort_score, source)";
+
+type WorkoutDetailRow = {
+  id: string;
+  started_at: string;
+  ended_at: string;
+  source: string;
+  avg_hr: number | null;
+  max_hr: number | null;
+  active_kcal: number | null;
+  elevation_gain_m: number;
+  attempts_detected: number;
+  attempts_confirmed: number;
+  rpe_predicted: number | null;
+  rpe_confirmed: number | null;
+  climb_attempts: {
+    started_at: string;
+    duration_s: number;
+    elevation_gain_m: number;
+    avg_hr: number | null;
+    peak_hr: number | null;
+    effort_score: number | null;
+    source: string;
+  }[];
+};
+
+function toWorkoutDetail(data: WorkoutDetailRow): WorkoutDetail {
   return {
     id: data.id,
     startedAt: data.started_at,
@@ -562,6 +579,153 @@ export async function fetchWorkoutForSession(
       source: a.source as WorkoutAttempt["source"],
     })),
   };
+}
+
+export async function fetchWorkoutForSession(
+  sessionId: string,
+): Promise<WorkoutDetail | null> {
+  const { data, error } = await supabase
+    .from("climb_workouts")
+    .select(WORKOUT_DETAIL_COLS)
+    .eq("session_id", sessionId)
+    .order("started_at", { referencedTable: "climb_attempts", ascending: true })
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toWorkoutDetail(data) : null;
+}
+
+export async function fetchWorkoutById(
+  id: string,
+): Promise<WorkoutDetail | null> {
+  const { data, error } = await supabase
+    .from("climb_workouts")
+    .select(WORKOUT_DETAIL_COLS)
+    .eq("id", id)
+    .order("started_at", { referencedTable: "climb_attempts", ascending: true })
+    .maybeSingle();
+  if (error) throw error;
+  return data ? toWorkoutDetail(data) : null;
+}
+
+/// Recent workouts for the Workout tab (metadata only; detail lazy-loads).
+export async function fetchWorkouts(limit = 30): Promise<WorkoutListItem[]> {
+  const data = unwrap(
+    await supabase
+      .from("climb_workouts")
+      .select(
+        "id, session_id, started_at, ended_at, avg_hr, attempts_confirmed, attempts_detected, rpe_confirmed, source",
+      )
+      .order("started_at", { ascending: false })
+      .limit(limit),
+  );
+  return data.map((r) => ({
+    id: r.id,
+    sessionId: r.session_id,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    avgHr: r.avg_hr,
+    attemptsConfirmed: r.attempts_confirmed,
+    attemptsDetected: r.attempts_detected,
+    rpeConfirmed: r.rpe_confirmed,
+    source: r.source as WorkoutListItem["source"],
+  }));
+}
+
+/// The current live-workout heartbeat row, if any (the useLiveWorkout hook
+/// applies the status/staleness rules).
+export async function fetchLiveWorkout(): Promise<LiveWorkout | null> {
+  const { data, error } = await supabase
+    .from("live_workouts")
+    .select(
+      "workout_id, status, started_at, hr, attempt_count, active_kcal, elevation_gain_m, climbing, updated_at",
+    )
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    workoutId: data.workout_id,
+    status: data.status as LiveWorkout["status"],
+    startedAt: data.started_at,
+    hr: data.hr,
+    attemptCount: data.attempt_count,
+    activeKcal: data.active_kcal,
+    elevationGainM: data.elevation_gain_m,
+    climbing: data.climbing,
+    updatedAt: data.updated_at,
+  };
+}
+
+/// Save a phone-logged workout (SL-41): a sessions row (feeds ACWR/History,
+/// workout_source='phone'), the climb_workouts row (source='phone', no HR /
+/// raw trace), and one manual climb_attempts row per logged boulder.
+/// Sequential inserts — on a mid-flight failure the session may exist
+/// without its workout; acceptable for v1 (retrying save is idempotent-ish
+/// via the user just re-saving, and rows are user-deletable).
+export async function insertPhoneWorkout(input: {
+  startedAt: string;
+  endedAt: string;
+  attempts: { startedAt: string; durationS: number }[];
+  type: string;
+  typeLabel: string;
+  rpe: number;
+  phase: PhaseId;
+}): Promise<void> {
+  const durationMin = Math.max(
+    1,
+    Math.min(
+      600,
+      Math.round(
+        (new Date(input.endedAt).getTime() -
+          new Date(input.startedAt).getTime()) /
+          60000,
+      ),
+    ),
+  );
+  const n = input.attempts.length;
+  const session = unwrap<{ id: string }>(
+    await supabase
+      .from("sessions")
+      .insert({
+        date: today(),
+        type: input.type,
+        type_label: input.typeLabel,
+        duration_min: durationMin,
+        rpe: input.rpe,
+        note: `${n} boulder${n === 1 ? "" : "s"}`,
+        phase: input.phase,
+        workout_source: "phone",
+      })
+      .select("id")
+      .single(),
+  );
+  const workout = unwrap<{ id: string }>(
+    await supabase
+      .from("climb_workouts")
+      .insert({
+        started_at: input.startedAt,
+        ended_at: input.endedAt,
+        attempts_detected: 0,
+        attempts_confirmed: n,
+        rpe_confirmed: input.rpe,
+        session_id: session.id,
+        source: "phone",
+      })
+      .select("id")
+      .single(),
+  );
+  if (n > 0) {
+    unwrap(
+      await supabase.from("climb_attempts").insert(
+        input.attempts.map((a) => ({
+          workout_id: workout.id,
+          started_at: a.startedAt,
+          duration_s: a.durationS,
+          elevation_gain_m: 0,
+          source: "manual",
+        })),
+      ),
+    );
+  }
 }
 
 /// The workout's 1Hz HR trace, from climb_workouts.raw

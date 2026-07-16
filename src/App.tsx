@@ -13,6 +13,7 @@ import RecoveryScreen from "./components/RecoveryScreen";
 import LogForm from "./components/LogForm";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
+import WorkoutView from "./components/WorkoutView";
 import BottomNav from "./components/BottomNav";
 import PasskeyPrompt from "./components/PasskeyPrompt";
 import AccountSheet from "./components/AccountSheet";
@@ -197,6 +198,9 @@ function AuthedApp({
                 onEdit={setEditingSession}
                 onOpenTrash={() => setShowTrash(true)}
               />
+            )}
+            {view === "workout" && (
+              <WorkoutView userId={userId} currentPhase={currentPhase} />
             )}
             {view === "tindeq" && (
               <TindeqView onLogSession={addTindeqSession} />
