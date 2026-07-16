@@ -26,24 +26,36 @@ export function useTrainingData(userId: string) {
   // cascading render).
   const runFetch = useCallback(async () => {
     const generation = ++generationRef.current;
-    try {
-      const [remoteSessions, settings, periods] = await Promise.all([
-        repo.fetchSessions(),
-        repo.fetchSettings(),
-        repo.fetchPhasePeriods(),
-      ]);
-      if (generation !== generationRef.current) return;
-      setSessions(remoteSessions);
-      setCurrentPhase(settings.currentPhase);
-      setPhaseStartDate(settings.phaseStartDate);
-      setPhasePeriods(periods);
-      setError(null);
-    } catch (e) {
-      if (generation !== generationRef.current) return;
-      setError(e instanceof Error ? e.message : "Failed to load data");
-    } finally {
-      if (generation === generationRef.current) setLoading(false);
+    // Retry transient failures (Supabase cold start, a brief network blip)
+    // with backoff before surfacing an error — this is why a manual refresh
+    // used to "fix" it. Only the final attempt shows the error banner.
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const [remoteSessions, settings, periods] = await Promise.all([
+          repo.fetchSessions(),
+          repo.fetchSettings(),
+          repo.fetchPhasePeriods(),
+        ]);
+        if (generation !== generationRef.current) return;
+        setSessions(remoteSessions);
+        setCurrentPhase(settings.currentPhase);
+        setPhaseStartDate(settings.phaseStartDate);
+        setPhasePeriods(periods);
+        setError(null);
+        setLoading(false);
+        return;
+      } catch (e) {
+        lastError = e;
+        if (generation !== generationRef.current) return;
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
     }
+    if (generation !== generationRef.current) return;
+    setError(lastError instanceof Error ? lastError.message : "Failed to load data");
+    setLoading(false);
   }, []);
 
   // Public reload, for explicit user-triggered refreshes (e.g. after a

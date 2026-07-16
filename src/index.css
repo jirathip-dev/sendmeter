@@ -380,3 +380,39 @@ textarea.field { resize: none; }
   text-transform: uppercase;
   letter-spacing: 0.1em;
 }
+
+/* Loading spinner + centered layout */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 3px solid var(--surface-2);
+  border-top-color: var(--primary);
+  animation: spin 0.7s linear infinite;
+}
+.loading-center {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; color: var(--ink-faint); font-size: 12px;
+}
+
+/* Error banner with retry */
+.error-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 12px 11px 14px; margin-bottom: 12px;
+  background: color-mix(in srgb, var(--danger) 12%, var(--canvas));
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: 12px;
+}
+.error-banner .msg { flex: 1; font-size: 12px; color: var(--danger); font-weight: 500; }
+.error-retry {
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border: none; color: var(--danger); font-weight: 700; font-size: 11px;
+  padding: 6px 12px; border-radius: 7px; cursor: pointer; font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.error-x {
+  flex-shrink: 0;
+  background: none; border: none; color: var(--danger);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; opacity: 0.7;
+  -webkit-tap-highlight-color: transparent;
+}

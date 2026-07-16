@@ -32,7 +32,10 @@ export default function App() {
         className="app-shell"
         style={{ alignItems: "center", justifyContent: "center" }}
       >
-        <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>loading…</div>
+        <div className="loading-center">
+          <div className="topbar-title" style={{ fontSize: 22 }}>SENDMETER</div>
+          <div className="spinner" />
+        </div>
       </div>
     );
   }
@@ -152,46 +155,20 @@ function AuthedApp({
       <div className="content-area with-chrome" ref={contentRef}>
         {/* Error banner (scrolls with content; the chrome overlays above it) */}
         {error && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 8,
-              padding: "10px 14px",
-              marginBottom: 10,
-              background: "rgba(255,69,58,0.12)",
-              border: "1px solid rgba(255,69,58,0.35)",
-              borderRadius: 10,
-              fontSize: 11,
-              color: "var(--danger)",
-            }}
-          >
-            <span>{error}</span>
-            <button
-              onClick={dismissError}
-              style={{
-                background: "none",
-                border: "none",
-                color: "var(--danger)",
-                fontSize: 16,
-                cursor: "pointer",
-              }}
-            >
+          <div className="error-banner">
+            <span className="msg">{error}</span>
+            <button className="error-retry" onClick={() => void reload()}>
+              Retry
+            </button>
+            <button className="error-x" onClick={dismissError} aria-label="Dismiss">
               ×
             </button>
           </div>
         )}
         {loading ? (
-          <div
-            style={{
-              textAlign: "center",
-              color: "var(--ink-faint)",
-              fontSize: 13,
-              padding: "60px 0",
-            }}
-          >
-            loading…
+          <div className="loading-center" style={{ padding: "72px 0" }}>
+            <div className="spinner" />
+            <span>Loading your training…</span>
           </div>
         ) : (
           <>
