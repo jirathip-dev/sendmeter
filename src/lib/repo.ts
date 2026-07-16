@@ -13,7 +13,9 @@ import type {
   TindeqRecordingMeta,
   TindeqSample,
   TindeqSide,
+  WorkoutAttempt,
   WorkoutDetail,
+  WorkoutHrSample,
 } from "../types";
 import { SESSION_TYPES } from "../constants";
 import { today } from "./dates";
@@ -530,7 +532,7 @@ export async function fetchWorkoutForSession(
   const { data, error } = await supabase
     .from("climb_workouts")
     .select(
-      "id, avg_hr, max_hr, active_kcal, elevation_gain_m, attempts_detected, attempts_confirmed, rpe_predicted, rpe_confirmed, climb_attempts(started_at, duration_s, elevation_gain_m, avg_hr, peak_hr, effort_score)",
+      "id, started_at, ended_at, source, avg_hr, max_hr, active_kcal, elevation_gain_m, attempts_detected, attempts_confirmed, rpe_predicted, rpe_confirmed, climb_attempts(started_at, duration_s, elevation_gain_m, avg_hr, peak_hr, effort_score, source)",
     )
     .eq("session_id", sessionId)
     .order("started_at", { referencedTable: "climb_attempts", ascending: true })
@@ -539,6 +541,9 @@ export async function fetchWorkoutForSession(
   if (!data) return null;
   return {
     id: data.id,
+    startedAt: data.started_at,
+    endedAt: data.ended_at,
+    source: data.source as WorkoutDetail["source"],
     avgHr: data.avg_hr,
     maxHr: data.max_hr,
     activeKcal: data.active_kcal,
@@ -554,8 +559,27 @@ export async function fetchWorkoutForSession(
       avgHr: a.avg_hr,
       peakHr: a.peak_hr,
       effortScore: a.effort_score,
+      source: a.source as WorkoutAttempt["source"],
     })),
   };
+}
+
+/// The workout's 1Hz HR trace, from climb_workouts.raw
+/// ([[t_s, alt_m, motion_rms, hr], ...] — only t + hr survive the mapping).
+/// Returns null when the workout kept no raw trace (older builds, phone
+/// workouts) — the HR chart just doesn't render then.
+export async function fetchWorkoutRaw(
+  workoutId: string,
+): Promise<WorkoutHrSample[] | null> {
+  const data = unwrap<{ raw: [number, number, number, number | null][] | null }>(
+    await supabase
+      .from("climb_workouts")
+      .select("raw")
+      .eq("id", workoutId)
+      .single(),
+  );
+  if (!data.raw || data.raw.length === 0) return null;
+  return data.raw.map((s) => ({ t: s[0], hr: s[3] ?? null }));
 }
 
 const recordingSoftDelete = makeSoftDeleteOps("tindeq_recordings");

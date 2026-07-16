@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { WorkoutDetail } from "../types";
+import WorkoutHrChart from "./WorkoutHrChart";
 
 interface Props {
   detail: WorkoutDetail;
@@ -71,6 +72,14 @@ export default function WorkoutDetailPanel({ detail }: Props) {
           />
         </div>
       </div>
+
+      {/* Continuous HR timeline with climb/rest segments (SL-42); renders
+          nothing when the workout kept no raw trace */}
+      <WorkoutHrChart
+        workoutId={detail.id}
+        startedAt={detail.startedAt}
+        attempts={detail.attempts}
+      />
 
       {detail.attempts.length === 0 ? (
         <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>

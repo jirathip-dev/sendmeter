@@ -156,10 +156,14 @@ export interface WorkoutAttempt {
   avgHr: number | null;
   peakHr: number | null;
   effortScore: number | null;
+  source: "auto" | "manual";
 }
 
 export interface WorkoutDetail {
   id: string;
+  startedAt: string;
+  endedAt: string;
+  source: WorkoutSource;
   avgHr: number | null;
   maxHr: number | null;
   activeKcal: number | null;
@@ -169,4 +173,12 @@ export interface WorkoutDetail {
   rpePredicted: number | null;
   rpeConfirmed: number | null;
   attempts: WorkoutAttempt[];
+}
+
+/// One point of the workout-level 1Hz HR trace (sliced from
+/// climb_workouts.raw). t is seconds from workout start; hr may be null
+/// where the sensor lagged.
+export interface WorkoutHrSample {
+  t: number;
+  hr: number | null;
 }
