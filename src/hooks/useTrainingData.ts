@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { LogFormState, PhaseId, PhasePeriod, Session } from "../types";
 import { today } from "../lib/dates";
 import * as repo from "../lib/repo";
+import { supabase } from "../lib/supabase";
 import { useRealtimeVersion } from "./useRealtimeVersion";
 
 function sortSessions(list: Session[]): Session[] {
@@ -49,6 +50,10 @@ export function useTrainingData(userId: string) {
         lastError = e;
         if (generation !== generationRef.current) return;
         if (attempt < 2) {
+          // A stale/expired access token is the usual cause a full page reload
+          // "fixes" — force a refresh before retrying so an in-app Retry
+          // actually recovers (the client keeps a fresh token going forward).
+          await supabase.auth.refreshSession().catch(() => {});
           await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
         }
       }

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
-import { addPasskey, passkeysSupported } from "../lib/passkeys";
+import { addPasskey, passkeyCount, passkeysSupported } from "../lib/passkeys";
 
 const KEY = "sendmeter:passkey-prompt";
 
@@ -9,17 +9,34 @@ const KEY = "sendmeter:passkey-prompt";
 /// now — native passkeys depend on the Associated Domains bridge and aren't
 /// verified yet, so we don't offer a flow that might fail there.
 export default function PasskeyPrompt() {
-  const [hidden, setHidden] = useState(
-    () => typeof localStorage !== "undefined" && localStorage.getItem(KEY) === "done",
+  // Start hidden while we check for an existing passkey — a user who already
+  // enrolled one (e.g. on another device) shouldn't be nudged again. Fail open
+  // (show) only after confirming they have none.
+  const disabled = !passkeysSupported || Capacitor.isNativePlatform();
+  const [state, setState] = useState<"checking" | "show" | "hidden">(() =>
+    disabled || (typeof localStorage !== "undefined" && localStorage.getItem(KEY) === "done")
+      ? "hidden"
+      : "checking",
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (hidden || !passkeysSupported || Capacitor.isNativePlatform()) return null;
+  useEffect(() => {
+    if (state !== "checking") return;
+    let alive = true;
+    passkeyCount()
+      .then((n) => alive && setState(n > 0 ? "hidden" : "show"))
+      .catch(() => alive && setState("show"));
+    return () => {
+      alive = false;
+    };
+  }, [state]);
+
+  if (state !== "show") return null;
 
   function finish() {
     localStorage.setItem(KEY, "done");
-    setHidden(true);
+    setState("hidden");
   }
 
   async function create() {

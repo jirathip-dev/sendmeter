@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
 import { authRedirectUrl } from "../lib/authRedirect";
-import { addPasskey, passkeysSupported } from "../lib/passkeys";
+import { addPasskey, passkeyCount, passkeysSupported } from "../lib/passkeys";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
@@ -20,6 +20,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [resetEmail, setResetEmail] = useState<string | null>(null);
   const [addingPasskey, setAddingPasskey] = useState(false);
   const [passkeyMsg, setPasskeyMsg] = useState<string | null>(null);
+  // null = still checking; number = enrolled count. Drives whether we show
+  // "Add a passkey" or an "enabled ✓" state, so a user who already has one
+  // isn't nudged to add again.
+  const [passkeys, setPasskeys] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -28,6 +32,17 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [cleared, setCleared] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+
+  useEffect(() => {
+    if (!passkeysSupported) return;
+    let alive = true;
+    passkeyCount()
+      .then((n) => alive && setPasskeys(n))
+      .catch(() => alive && setPasskeys(0));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   async function handleSignOut() {
     setSigningOut(true);
@@ -41,6 +56,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     setError(null);
     try {
       await addPasskey();
+      setPasskeys((n) => (n ?? 0) + 1);
       setPasskeyMsg("Passkey added. You can now sign in with it.");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Couldn't add passkey";
@@ -181,9 +197,27 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
             >
               Passkey
             </div>
-            {passkeyMsg ? (
-              <div style={{ fontSize: 12, color: "var(--success)", lineHeight: 1.5 }}>
+            {passkeyMsg && (
+              <div style={{ fontSize: 12, color: "var(--success)", lineHeight: 1.5, marginBottom: 10 }}>
                 {passkeyMsg}
+              </div>
+            )}
+            {passkeys === null ? (
+              <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>Checking…</div>
+            ) : passkeys > 0 ? (
+              <div>
+                {!passkeyMsg && (
+                  <div style={{ fontSize: 12, color: "var(--success)", marginBottom: 10, lineHeight: 1.5 }}>
+                    ✓ Passkey enabled — sign in with Face ID / Touch ID.
+                  </div>
+                )}
+                <button
+                  className="btn-ghost"
+                  disabled={addingPasskey}
+                  onClick={() => void runAddPasskey()}
+                >
+                  {addingPasskey ? "Adding…" : "Add another passkey"}
+                </button>
               </div>
             ) : (
               <div>
