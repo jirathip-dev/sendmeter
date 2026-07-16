@@ -13,6 +13,7 @@ import LogForm from "./components/LogForm";
 import PhasesView from "./components/PhasesView";
 import TindeqView from "./components/TindeqView";
 import BottomNav from "./components/BottomNav";
+import PasskeyPrompt from "./components/PasskeyPrompt";
 import AccountSheet from "./components/AccountSheet";
 import Sheet from "./components/Sheet";
 import TrashSheet from "./components/TrashSheet";
@@ -194,6 +195,7 @@ function AuthedApp({
           </div>
         ) : (
           <>
+            <PasskeyPrompt />
             {view === "dashboard" && (
               <Dashboard
                 phase={phase}
