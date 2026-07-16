@@ -9,6 +9,7 @@ import type {
   PhasePeriod,
   RpePair,
   Session,
+  SessionPatch,
   TindeqRecordingMeta,
   TindeqSample,
   TindeqSide,
@@ -40,10 +41,11 @@ type SessionRow = {
   note: string;
   phase: string;
   group_id: string | null;
+  workout_source: string | null;
 };
 
 const SESSION_COLS =
-  "id, date, type, type_label, duration_min, rpe, load, note, phase, group_id";
+  "id, date, type, type_label, duration_min, rpe, load, note, phase, group_id, workout_source";
 
 function toSession(r: SessionRow): Session {
   return {
@@ -57,6 +59,11 @@ function toSession(r: SessionRow): Session {
     note: r.note,
     phase: r.phase as PhaseId,
     groupId: r.group_id,
+    // Fallback for rows written by watch builds that predate workout_source:
+    // they still mark themselves with type='auto'.
+    workoutSource:
+      (r.workout_source as Session["workoutSource"]) ??
+      (r.type === "auto" ? "watch" : null),
   };
 }
 
@@ -97,6 +104,30 @@ export async function insertSession(form: LogFormState): Promise<Session> {
         note: form.note,
         phase: form.phase,
       })
+      .select(SESSION_COLS)
+      .single(),
+  );
+  return toSession(data);
+}
+
+/// Edit a session's user-facing fields (SL-43). Deliberately narrow: date,
+/// phase, group_id, and workout_source are not editable — the last is the
+/// immutable auto-tracked provenance badge.
+export async function updateSession(
+  id: string,
+  patch: SessionPatch,
+): Promise<Session> {
+  const data = unwrap<SessionRow>(
+    await supabase
+      .from("sessions")
+      .update({
+        type: patch.type,
+        type_label: patch.typeLabel,
+        duration_min: patch.duration,
+        rpe: patch.rpe,
+        note: patch.note,
+      })
+      .eq("id", id)
       .select(SESSION_COLS)
       .single(),
   );

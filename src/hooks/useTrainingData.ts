@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { LogFormState, PhaseId, PhasePeriod, Session } from "../types";
+import type {
+  LogFormState,
+  PhaseId,
+  PhasePeriod,
+  Session,
+  SessionPatch,
+} from "../types";
 import { today } from "../lib/dates";
 import * as repo from "../lib/repo";
 import { supabase } from "../lib/supabase";
@@ -91,6 +97,7 @@ export function useTrainingData(userId: string) {
       note: form.note,
       phase: form.phase,
       groupId: null,
+      workoutSource: null,
     };
     setSessions((list) => sortSessions([...list, temp]));
     try {
@@ -118,6 +125,26 @@ export function useTrainingData(userId: string) {
       setSessions((list) => sortSessions([...list, saved]));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to log session");
+    }
+  }
+
+  async function editSession(id: string, patch: SessionPatch) {
+    const prev = sessions;
+    // Optimistic: apply the patch locally (load = duration × rpe mirrors the
+    // DB's generated column), roll back on failure.
+    setSessions((list) =>
+      list.map((s) =>
+        s.id === id
+          ? { ...s, ...patch, load: patch.duration * patch.rpe }
+          : s,
+      ),
+    );
+    try {
+      const saved = await repo.updateSession(id, patch);
+      setSessions((list) => list.map((s) => (s.id === id ? saved : s)));
+    } catch (e) {
+      setSessions(prev);
+      setError(e instanceof Error ? e.message : "Failed to update session");
     }
   }
 
@@ -160,6 +187,7 @@ export function useTrainingData(userId: string) {
     dismissError: () => setError(null),
     addSession,
     addTindeqSession,
+    editSession,
     removeSession,
     setPhase,
     reload,

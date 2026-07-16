@@ -22,6 +22,7 @@ function session(date: string, load: number): Session {
     note: "",
     phase: "capacity",
     groupId: null,
+    workoutSource: null,
   };
 }
 

@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       climb_attempts: {
@@ -49,6 +24,7 @@ export type Database = {
           id: string
           motion_intensity: number | null
           peak_hr: number | null
+          source: string
           started_at: string
           user_id: string
           workout_id: string
@@ -62,6 +38,7 @@ export type Database = {
           id?: string
           motion_intensity?: number | null
           peak_hr?: number | null
+          source?: string
           started_at: string
           user_id?: string
           workout_id: string
@@ -75,6 +52,7 @@ export type Database = {
           id?: string
           motion_intensity?: number | null
           peak_hr?: number | null
+          source?: string
           started_at?: string
           user_id?: string
           workout_id?: string
@@ -106,6 +84,7 @@ export type Database = {
           rpe_confirmed: number | null
           rpe_predicted: number | null
           session_id: string | null
+          source: string
           started_at: string
           user_id: string
         }
@@ -125,6 +104,7 @@ export type Database = {
           rpe_confirmed?: number | null
           rpe_predicted?: number | null
           session_id?: string | null
+          source?: string
           started_at: string
           user_id?: string
         }
@@ -144,6 +124,7 @@ export type Database = {
           rpe_confirmed?: number | null
           rpe_predicted?: number | null
           session_id?: string | null
+          source?: string
           started_at?: string
           user_id?: string
         }
@@ -202,6 +183,45 @@ export type Database = {
         }
         Relationships: []
       }
+      live_workouts: {
+        Row: {
+          active_kcal: number | null
+          attempt_count: number
+          climbing: boolean
+          elevation_gain_m: number | null
+          hr: number | null
+          started_at: string
+          status: string
+          updated_at: string
+          user_id: string
+          workout_id: string
+        }
+        Insert: {
+          active_kcal?: number | null
+          attempt_count?: number
+          climbing?: boolean
+          elevation_gain_m?: number | null
+          hr?: number | null
+          started_at: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          workout_id: string
+        }
+        Update: {
+          active_kcal?: number | null
+          attempt_count?: number
+          climbing?: boolean
+          elevation_gain_m?: number | null
+          hr?: number | null
+          started_at?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          workout_id?: string
+        }
+        Relationships: []
+      }
       phase_periods: {
         Row: {
           created_at: string
@@ -244,6 +264,7 @@ export type Database = {
           type: string
           type_label: string
           user_id: string
+          workout_source: string | null
         }
         Insert: {
           created_at?: string
@@ -259,6 +280,7 @@ export type Database = {
           type: string
           type_label: string
           user_id?: string
+          workout_source?: string | null
         }
         Update: {
           created_at?: string
@@ -274,6 +296,7 @@ export type Database = {
           type?: string
           type_label?: string
           user_id?: string
+          workout_source?: string | null
         }
         Relationships: []
       }
@@ -480,9 +503,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {},
   },

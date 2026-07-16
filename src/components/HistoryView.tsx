@@ -7,6 +7,7 @@ import Sheet from "./Sheet";
 interface Props {
   sessions: Session[];
   onDelete: (id: string) => void;
+  onEdit: (s: Session) => void;
   onOpenTrash: () => void;
 }
 
@@ -25,6 +26,7 @@ const HEADER_BTN_STYLE: CSSProperties = {
 export default function HistoryView({
   sessions,
   onDelete,
+  onEdit,
   onOpenTrash,
 }: Props) {
   const [showRpeModel, setShowRpeModel] = useState(false);
@@ -64,7 +66,7 @@ export default function HistoryView({
         </div>
       )}
       {sessions.map((s) => (
-        <SessionRow key={s.id} s={s} onDelete={onDelete} />
+        <SessionRow key={s.id} s={s} onDelete={onDelete} onEdit={onEdit} />
       ))}
 
       {showRpeModel && (

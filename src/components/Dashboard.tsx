@@ -21,6 +21,7 @@ interface Props {
   status: AcwrStatus;
   sessions: Session[];
   onDelete: (id: string) => void;
+  onEdit: (s: Session) => void;
   onLog: () => void;
   onOpenPhases: () => void;
 }
@@ -33,6 +34,7 @@ export default function Dashboard({
   status,
   sessions,
   onDelete,
+  onEdit,
   onLog,
   onOpenPhases,
 }: Props) {
@@ -248,7 +250,7 @@ export default function Dashboard({
         </div>
       )}
       {recent.map((s) => (
-        <SessionRow key={s.id} s={s} onDelete={onDelete} />
+        <SessionRow key={s.id} s={s} onDelete={onDelete} onEdit={onEdit} />
       ))}
 
       {detail === "load" && (

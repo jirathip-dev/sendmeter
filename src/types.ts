@@ -29,6 +29,8 @@ export interface NavItem {
   label: string;
 }
 
+export type WorkoutSource = "watch" | "phone";
+
 export interface Session {
   id: string;
   date: string; // YYYY-MM-DD
@@ -40,6 +42,21 @@ export interface Session {
   note: string;
   phase: PhaseId;
   groupId: string | null; // Tindeq gauge session this was logged from
+  // Immutable provenance: set when a device workout created this session
+  // (drives the AUTO/PHONE badge + workout-detail expansion). The edit UI
+  // never touches it, so editing `type` can't erase the auto-tracked marker.
+  workoutSource: WorkoutSource | null;
+}
+
+/// Editable subset of a session (SL-43). Date and phase stay fixed — moving
+/// an auto-tracked session's date would desync it from its workout's
+/// started_at.
+export interface SessionPatch {
+  type: string;
+  typeLabel: string;
+  duration: number;
+  rpe: number;
+  note: string;
 }
 
 export interface DeletedSession extends Session {

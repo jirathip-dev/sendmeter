@@ -4,8 +4,9 @@ import { today } from "./lib/dates";
 import { computeAcwr, computeWeeklyLoads, getACWRStatus } from "./lib/metrics";
 import { useAuth } from "./hooks/useAuth";
 import { useTrainingData } from "./hooks/useTrainingData";
-import type { LogFormState, ViewId } from "./types";
+import type { LogFormState, Session, ViewId } from "./types";
 import Dashboard from "./components/Dashboard";
+import EditSessionSheet from "./components/EditSessionSheet";
 import HistoryView from "./components/HistoryView";
 import LoginScreen from "./components/LoginScreen";
 import RecoveryScreen from "./components/RecoveryScreen";
@@ -66,6 +67,7 @@ function AuthedApp({
     dismissError,
     addSession,
     addTindeqSession,
+    editSession,
     removeSession,
     setPhase,
     reload,
@@ -73,6 +75,7 @@ function AuthedApp({
 
   const [view, setView] = useState<ViewId>("dashboard");
   const [showModal, setShowModal] = useState(false);
+  const [editingSession, setEditingSession] = useState<Session | null>(null);
   const [showPhases, setShowPhases] = useState(false);
   const [showWatchSheet, setShowWatchSheet] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
@@ -182,6 +185,7 @@ function AuthedApp({
                 status={status}
                 sessions={sessions}
                 onDelete={(id) => void removeSession(id)}
+                onEdit={setEditingSession}
                 onLog={openLog}
                 onOpenPhases={() => setShowPhases(true)}
               />
@@ -190,6 +194,7 @@ function AuthedApp({
               <HistoryView
                 sessions={sessions}
                 onDelete={(id) => void removeSession(id)}
+                onEdit={setEditingSession}
                 onOpenTrash={() => setShowTrash(true)}
               />
             )}
@@ -254,6 +259,15 @@ function AuthedApp({
         <AccountSheet
           onClose={() => setShowWatchSheet(false)}
           onSignOut={onSignOut}
+        />
+      )}
+
+      {/* Edit session bottom sheet */}
+      {editingSession && (
+        <EditSessionSheet
+          session={editingSession}
+          onSave={(patch) => void editSession(editingSession.id, patch)}
+          onClose={() => setEditingSession(null)}
         />
       )}
 

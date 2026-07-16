@@ -7,17 +7,20 @@ import WorkoutDetailPanel from "./WorkoutDetailPanel";
 interface Props {
   s: Session;
   onDelete: (id: string) => void;
+  onEdit?: (s: Session) => void;
 }
 
 function sideLabel(side: TindeqRecordingMeta["side"]): string {
   return side === "both" ? "L+R" : side === "left" ? "L" : side === "right" ? "R" : "";
 }
 
-export default function SessionRow({ s, onDelete }: Props) {
+export default function SessionRow({ s, onDelete, onEdit }: Props) {
   const ph = PHASES.find((p) => p.id === s.phase);
-  const isAuto = s.type === "auto";
+  // workoutSource (not type) marks a device workout — it survives type edits
+  // (SL-43), so an auto-tracked session re-typed to "Board" still expands.
+  const isWorkout = s.workoutSource !== null;
   const isTindeq = s.type === "tindeq" && s.groupId !== null;
-  const expandable = isAuto || isTindeq;
+  const expandable = isWorkout || isTindeq;
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<WorkoutDetail | null | "missing">(null);
   const [tindeqRecs, setTindeqRecs] = useState<TindeqRecordingMeta[] | null>(
@@ -31,7 +34,7 @@ export default function SessionRow({ s, onDelete }: Props) {
     setExpanded(next);
     if (!next || loadError) return;
     try {
-      if (isAuto && detail === null) {
+      if (isWorkout && detail === null) {
         const d = await fetchWorkoutForSession(s.id);
         setDetail(d ?? "missing");
       } else if (isTindeq && tindeqRecs === null) {
@@ -81,6 +84,24 @@ export default function SessionRow({ s, onDelete }: Props) {
             >
               {ph?.name || s.phase}
             </span>
+            {/* Immutable provenance badge — survives type edits */}
+            {isWorkout && (
+              <span
+                className="tag"
+                title={
+                  s.workoutSource === "watch"
+                    ? "Auto-tracked by the watch"
+                    : "Logged manually on the phone"
+                }
+                style={{
+                  background: "transparent",
+                  color: "var(--ink-faint)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                {s.workoutSource === "watch" ? "AUTO" : "PHONE"}
+              </span>
+            )}
             {expandable && (
               <span style={{ fontSize: 10, color: "var(--ink-muted)" }}>
                 {expanded ? "▾" : "▸"}
@@ -97,8 +118,24 @@ export default function SessionRow({ s, onDelete }: Props) {
             </div>
           )}
         </div>
+        {onEdit && (
+          <button
+            className="del-btn"
+            aria-label="Edit session"
+            style={{ fontSize: 13 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(s);
+            }}
+          >
+            ✎
+          </button>
+        )}
         <button
           className="del-btn"
+          // The pencil (when present) already carries the push-right auto
+          // margin from .del-btn; a second auto margin would split the gap.
+          style={onEdit ? { marginLeft: 0 } : undefined}
           onClick={(e) => {
             e.stopPropagation();
             onDelete(s.id);
@@ -108,7 +145,7 @@ export default function SessionRow({ s, onDelete }: Props) {
         </button>
       </div>
 
-      {expanded && isAuto && (
+      {expanded && isWorkout && (
         <>
           {detail === null && !loadError && (
             <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
