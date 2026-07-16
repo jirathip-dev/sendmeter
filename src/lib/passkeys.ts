@@ -1,4 +1,7 @@
+import type { PasskeyListItem } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+
+export type { PasskeyListItem };
 
 /// WebAuthn availability. Passkeys work reliably on the web (origin =
 /// sendmeter.app = the RP ID). In the native WebView the origin is
@@ -29,12 +32,18 @@ export async function addPasskey(): Promise<void> {
   if (error) throw error;
 }
 
-/// How many passkeys the signed-in user has enrolled — so the UI can show
-/// "enabled" instead of a stale "Add a passkey" after one exists.
-export async function passkeyCount(): Promise<number> {
+/// The signed-in user's enrolled passkeys — so the UI can list them (and offer
+/// removal) instead of showing a stale "Add a passkey" after one exists.
+export async function listPasskeys(): Promise<PasskeyListItem[]> {
   const { data, error } = await supabase.auth.passkey.list();
   if (error) throw error;
-  return data?.length ?? 0;
+  return data ?? [];
+}
+
+/// Remove one enrolled passkey by id.
+export async function removePasskey(passkeyId: string): Promise<void> {
+  const { error } = await supabase.auth.passkey.delete({ passkeyId });
+  if (error) throw error;
 }
 
 /// Sign in with a discoverable passkey — the OS shows the account picker, so

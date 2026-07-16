@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
-import { addPasskey, passkeyCount, passkeysSupported } from "../lib/passkeys";
+import { addPasskey, listPasskeys, passkeysSupported } from "../lib/passkeys";
 
 const KEY = "sendmeter:passkey-prompt";
 
@@ -24,8 +24,8 @@ export default function PasskeyPrompt() {
   useEffect(() => {
     if (state !== "checking") return;
     let alive = true;
-    passkeyCount()
-      .then((n) => alive && setState(n > 0 ? "hidden" : "show"))
+    listPasskeys()
+      .then((list) => alive && setState(list.length > 0 ? "hidden" : "show"))
       .catch(() => alive && setState("show"));
     return () => {
       alive = false;

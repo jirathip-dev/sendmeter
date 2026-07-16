@@ -2,7 +2,13 @@ import { useEffect, useState } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
 import { authRedirectUrl } from "../lib/authRedirect";
-import { addPasskey, passkeyCount, passkeysSupported } from "../lib/passkeys";
+import {
+  addPasskey,
+  listPasskeys,
+  passkeysSupported,
+  removePasskey,
+  type PasskeyListItem,
+} from "../lib/passkeys";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
@@ -20,10 +26,11 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [resetEmail, setResetEmail] = useState<string | null>(null);
   const [addingPasskey, setAddingPasskey] = useState(false);
   const [passkeyMsg, setPasskeyMsg] = useState<string | null>(null);
-  // null = still checking; number = enrolled count. Drives whether we show
-  // "Add a passkey" or an "enabled ✓" state, so a user who already has one
-  // isn't nudged to add again.
-  const [passkeys, setPasskeys] = useState<number | null>(null);
+  // null = still checking; array = enrolled passkeys. Drives whether we show
+  // "Add a passkey" or the enrolled list (with per-key Remove), so a user who
+  // already has one isn't nudged to add again.
+  const [passkeys, setPasskeys] = useState<PasskeyListItem[] | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -36,13 +43,27 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   useEffect(() => {
     if (!passkeysSupported) return;
     let alive = true;
-    passkeyCount()
-      .then((n) => alive && setPasskeys(n))
-      .catch(() => alive && setPasskeys(0));
+    listPasskeys()
+      .then((list) => alive && setPasskeys(list))
+      .catch(() => alive && setPasskeys([]));
     return () => {
       alive = false;
     };
   }, []);
+
+  async function runRemovePasskey(id: string) {
+    setRemovingId(id);
+    setError(null);
+    try {
+      await removePasskey(id);
+      setPasskeys((list) => (list ?? []).filter((p) => p.id !== id));
+      setPasskeyMsg(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't remove passkey");
+    } finally {
+      setRemovingId(null);
+    }
+  }
 
   async function handleSignOut() {
     setSigningOut(true);
@@ -56,8 +77,12 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     setError(null);
     try {
       await addPasskey();
-      setPasskeys((n) => (n ?? 0) + 1);
+      // Reflect the new key immediately, then reconcile with the server list
+      // (which has the real id/name needed for a later Remove).
       setPasskeyMsg("Passkey added. You can now sign in with it.");
+      listPasskeys()
+        .then(setPasskeys)
+        .catch(() => {});
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Couldn't add passkey";
       if (!/cancel|not allowed|aborted/i.test(msg)) setError(msg);
@@ -204,17 +229,49 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
             )}
             {passkeys === null ? (
               <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>Checking…</div>
-            ) : passkeys > 0 ? (
+            ) : passkeys.length > 0 ? (
               <div>
-                {!passkeyMsg && (
-                  <div style={{ fontSize: 12, color: "var(--success)", marginBottom: 10, lineHeight: 1.5 }}>
-                    ✓ Passkey enabled — sign in with Face ID / Touch ID.
+                {passkeys.map((p) => (
+                  <div
+                    key={p.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      padding: "8px 0",
+                      borderBottom: "1px solid var(--hairline)",
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>
+                        {p.friendly_name || "Passkey"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
+                        Added {new Date(p.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <button
+                      className="btn-ghost"
+                      disabled={removingId === p.id}
+                      onClick={() => void runRemovePasskey(p.id)}
+                      style={{
+                        flexShrink: 0,
+                        padding: "6px 12px",
+                        fontSize: 12,
+                        color: "var(--danger)",
+                        borderColor: "rgba(255,69,58,0.35)",
+                      }}
+                    >
+                      {removingId === p.id ? "Removing…" : "Remove"}
+                    </button>
                   </div>
-                )}
+                ))}
                 <button
                   className="btn-ghost"
                   disabled={addingPasskey}
                   onClick={() => void runAddPasskey()}
+                  style={{ marginTop: 10 }}
                 >
                   {addingPasskey ? "Adding…" : "Add another passkey"}
                 </button>
