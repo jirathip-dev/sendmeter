@@ -21,7 +21,7 @@ interface Props {
   onSignOut: () => Promise<{ error: Error | null }>;
 }
 
-type TabId = "appearance" | "security" | "health" | "account";
+type TabId = "appearance" | "health" | "account";
 
 const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
   {
@@ -31,16 +31,6 @@ const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="9" />
         <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
-      </svg>
-    ),
-  },
-  {
-    id: "security",
-    label: "Security",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="4" y="10" width="16" height="10" rx="2" />
-        <path d="M8 10V7a4 4 0 0 1 8 0v3" />
       </svg>
     ),
   },
@@ -236,7 +226,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       <div style={{ paddingTop: 12, minHeight: 180 }}>
         {tab === "appearance" && <ThemeSection />}
 
-        {tab === "security" && (
+        {tab === "account" && (
           <div>
             {/* Password */}
             {eyebrow("Password")}
@@ -373,7 +363,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         )}
 
         {tab === "account" && (
-          <div>
+          <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
             {eyebrow("Help")}
             <button className="btn-ghost" onClick={() => setShowHelp(true)}>
               Help & FAQ
