@@ -1,0 +1,48 @@
+<!-- Supabase Auth → Email Templates → Reset Password (Recovery)
+     Subject: Reset your Sendmeter password -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;margin:0;padding:32px 12px;">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="440" cellpadding="0" cellspacing="0" style="width:100%;max-width:440px;background:#ffffff;border:1px solid #e5e5ea;border-radius:16px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+        <tr>
+          <td style="padding:32px 32px 0;text-align:center;">
+            <div style="font-size:22px;font-weight:800;letter-spacing:-0.02em;color:#1c1c1e;">SENDMETER</div>
+            <div style="font-size:10px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;color:#8e8e93;margin-top:5px;">Climbing Periodization</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:26px 32px 0;">
+            <h1 style="font-size:20px;font-weight:800;color:#1c1c1e;margin:0 0 8px;">Reset your password</h1>
+            <p style="font-size:14px;line-height:1.6;color:#6e6e73;margin:0 0 24px;">Tap the button below to choose a new password. The link works once and expires shortly for your security.</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 32px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td align="center" bgcolor="#5B5FC7" style="border-radius:10px;">
+                  <a href="{{ .ConfirmationURL }}" target="_blank" style="display:block;padding:14px 24px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;">Reset password</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:22px 32px 0;">
+            <p style="font-size:12px;line-height:1.6;color:#8e8e93;margin:0;">Or paste this link into your browser:<br>
+              <a href="{{ .ConfirmationURL }}" target="_blank" style="color:#5B5FC7;word-break:break-all;">{{ .ConfirmationURL }}</a>
+            </p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:24px 32px;">
+            <div style="border-top:1px solid #f0f0f2;padding-top:20px;">
+              <p style="font-size:11px;line-height:1.5;color:#a0a0a5;margin:0;">If you didn't request a password reset, you can safely ignore this email — your password stays the same.</p>
+            </div>
+          </td>
+        </tr>
+      </table>
+      <div style="font-size:11px;color:#a0a0a5;margin-top:16px;font-family:Inter,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">Sendmeter · your climbing training tracker</div>
+    </td>
+  </tr>
+</table>
