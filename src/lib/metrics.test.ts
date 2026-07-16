@@ -4,6 +4,7 @@ import {
   computeAcwr,
   computeWeeklyLoads,
   computeTindeqStats,
+  ewma,
   phaseAcwrFit,
 } from "./metrics";
 import { today, daysAgo } from "./dates";
@@ -50,6 +51,40 @@ describe("getACWRStatus", () => {
     expect(getACWRStatus(1.4).label).toBe("Caution");
     expect(getACWRStatus(1.5).label).toBe("Caution");
     expect(getACWRStatus(1.6).label).toBe("Danger");
+  });
+});
+
+describe("ewma", () => {
+  it("is the identity for a constant series", () => {
+    expect(ewma([5, 5, 5, 5], 7)).toEqual([5, 5, 5, 5]);
+  });
+
+  it("converges toward a step and never overshoots", () => {
+    const out = ewma([0, 10, 10, 10, 10, 10, 10, 10, 10, 10], 3) as number[];
+    for (let i = 1; i < out.length; i++) {
+      expect(out[i]!).toBeGreaterThan(out[i - 1]!); // monotone rise
+      expect(out[i]!).toBeLessThanOrEqual(10);
+    }
+    expect(out[out.length - 1]!).toBeCloseTo(10, 1);
+  });
+
+  it("carries the EMA through interior nulls unchanged", () => {
+    const out = ewma([4, null, null, 4], 7);
+    expect(out).toEqual([4, 4, 4, 4]);
+    const stepped = ewma([0, 10, null, 10], 3) as number[];
+    expect(stepped[2]).toBe(stepped[1]); // null day = no update
+  });
+
+  it("leaves leading nulls null and seeds at the first value", () => {
+    const out = ewma([null, null, 8, 8], 7);
+    expect(out[0]).toBeNull();
+    expect(out[1]).toBeNull();
+    expect(out[2]).toBe(8);
+    expect(out[3]).toBe(8);
+  });
+
+  it("span 1 tracks the input exactly (lambda = 1)", () => {
+    expect(ewma([1, 9, 2, 7], 1)).toEqual([1, 9, 2, 7]);
   });
 });
 

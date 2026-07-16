@@ -36,8 +36,27 @@ export function phaseAcwrFit(
 }
 
 const EWMA_LOOKBACK_DAYS = 90;
-const EWMA_LAMBDA_ACUTE = 2 / (7 + 1); // 7-day time constant
-const EWMA_LAMBDA_CHRONIC = 2 / (28 + 1); // 28-day time constant
+
+/// Exponentially-weighted moving average over a daily series, null-aware:
+/// leading nulls stay null (nothing to average yet — the EMA seeds at the
+/// first non-null value), and interior nulls carry the previous EMA forward
+/// unchanged (a missing day is "no new information", not a zero). Used for
+/// the short/long trend overlays on the recovery-inputs chart; ewmaAcwr
+/// below shares the same recurrence on a dense (non-null) series.
+export function ewma(
+  values: (number | null)[],
+  span: number,
+): (number | null)[] {
+  const lambda = 2 / (span + 1);
+  const out: (number | null)[] = new Array<number | null>(values.length);
+  let ema: number | null = null;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i] ?? null;
+    if (v !== null) ema = ema === null ? v : v * lambda + ema * (1 - lambda);
+    out[i] = ema;
+  }
+  return out;
+}
 
 /// Exponentially-weighted acute:chronic ratio (Williams et al. 2016), which
 /// the literature now favors over the plain rolling-average ratio: it
@@ -58,13 +77,12 @@ function ewmaAcwr(sessions: Session[]): number | null {
   }
   if (dailyLoads.every((v) => v === 0)) return null;
 
+  // Seeding: ewma() seeds at the series' first value, so prepending the
+  // window mean reproduces the original mean-seeded recurrence exactly.
   const seed = dailyLoads.reduce((s, v) => s + v, 0) / dailyLoads.length;
-  let emaAcute = seed;
-  let emaChronic = seed;
-  for (const load of dailyLoads) {
-    emaAcute = load * EWMA_LAMBDA_ACUTE + emaAcute * (1 - EWMA_LAMBDA_ACUTE);
-    emaChronic = load * EWMA_LAMBDA_CHRONIC + emaChronic * (1 - EWMA_LAMBDA_CHRONIC);
-  }
+  const series = [seed, ...dailyLoads];
+  const emaAcute = ewma(series, 7)[series.length - 1]!;
+  const emaChronic = ewma(series, 28)[series.length - 1]!;
   return emaChronic > 0 ? emaAcute / emaChronic : null;
 }
 

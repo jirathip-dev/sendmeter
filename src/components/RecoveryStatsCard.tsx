@@ -2,6 +2,8 @@ import { useChartHover } from "../hooks/useChartHover";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { fetchHealthMetrics } from "../lib/repo";
+import { ewma } from "../lib/metrics";
+import { daysAgo } from "../lib/dates";
 import ChartTooltip from "./ChartTooltip";
 import type { HealthMetric } from "../types";
 
@@ -31,22 +33,49 @@ const METRICS: MetricSpec[] = [
   { key: "bodyMassKg", label: "Weight", unit: "kg", format: (v) => v.toFixed(1) },
 ];
 
+// Fetch a longer window than we show so the EWMA trends are warmed up by the
+// time they enter the visible range (a 28-day EMA seeded inside the visible
+// window would just chase the bars).
+const FETCH_DAYS = 60;
+const VISIBLE_DAYS = 14;
+
+// Row chart geometry (SVG viewBox units; width scales to the card).
+const W = 300;
+const H = 30;
+const SLOT = W / VISIBLE_DAYS;
+const Y_TOP = 2;
+const Y_BASE = 28;
+
 /// Breaks the readiness score back down into the raw inputs it's computed
 /// from — a companion to ReadinessCard so "why is my score X" is visible.
+/// All rows share one X axis (the same last-14-days range, gaps included);
+/// each row overlays short (7d, solid) and long (28d, dashed) EWMA trends.
 export default function RecoveryStatsCard() {
   const [hovered, hoverProps] = useChartHover<string>();
   const realtimeVersion = useRealtimeVersion();
   const metrics = useCancellableFetch<HealthMetric[]>(
-    () => fetchHealthMetrics(14),
+    () => fetchHealthMetrics(FETCH_DAYS),
     [],
     realtimeVersion,
   );
 
+  // Shared day slots: oldest → newest, identical for every row.
+  const allDays = Array.from({ length: FETCH_DAYS }, (_, i) =>
+    daysAgo(FETCH_DAYS - 1 - i),
+  );
+  const visibleDays = allDays.slice(FETCH_DAYS - VISIBLE_DAYS);
+  const byDate = new Map(metrics.map((m) => [m.date, m]));
+
   const rows = METRICS.map((spec) => {
-    const points = metrics.filter((m) => m[spec.key] != null) as (HealthMetric &
-      Record<MetricKey, number>)[];
-    return { spec, points };
-  }).filter((r) => r.points.length > 0);
+    const dense = allDays.map((d) => byDate.get(d)?.[spec.key] ?? null);
+    const short = ewma(dense, 7).slice(FETCH_DAYS - VISIBLE_DAYS);
+    const long = ewma(dense, 28).slice(FETCH_DAYS - VISIBLE_DAYS);
+    const values = dense.slice(FETCH_DAYS - VISIBLE_DAYS);
+    return { spec, values, short, long };
+  }).filter((r) => r.values.some((v) => v !== null));
+
+  // Hovering any day highlights that column across every row (shared X).
+  const hoveredDay = hovered !== null ? Number(hovered.split(":")[1]) : null;
 
   if (rows.length === 0) {
     return (
@@ -64,17 +93,63 @@ export default function RecoveryStatsCard() {
 
   return (
     <div className="card">
-      <div className="label-eyebrow" style={{ marginBottom: 10 }}>
-        Recovery Inputs
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          marginBottom: 10,
+        }}
+      >
+        <div className="label-eyebrow">Recovery Inputs</div>
+        {/* Trend legend */}
+        <div style={{ fontSize: 8.5, color: "var(--ink-faint)", display: "flex", gap: 8 }}>
+          <span>
+            <svg width="14" height="6" style={{ verticalAlign: "middle" }}>
+              <line x1="0" y1="3" x2="14" y2="3" stroke="var(--primary)" strokeWidth="1.5" />
+            </svg>{" "}
+            7d
+          </span>
+          <span>
+            <svg width="14" height="6" style={{ verticalAlign: "middle" }}>
+              <line x1="0" y1="3" x2="14" y2="3" stroke="var(--ink-muted)" strokeWidth="1.2" strokeDasharray="3 2" />
+            </svg>{" "}
+            28d
+          </span>
+        </div>
       </div>
-      {rows.map(({ spec, points }, i) => {
-        const latest = points[points.length - 1]!;
-        const values = points.map((p) => p[spec.key]);
-        const max = Math.max(...values);
-        const min = Math.min(...values);
+
+      {rows.map(({ spec, values, short, long }, rowIdx) => {
+        // Latest = newest non-null day in the visible window.
+        let latest: number | null = null;
+        for (let i = values.length - 1; i >= 0; i--) {
+          const v = values[i];
+          if (v != null) {
+            latest = v;
+            break;
+          }
+        }
+        // Y range spans bars AND trend overlays so lines never clip.
+        const present = [
+          ...values.filter((v): v is number => v !== null),
+          ...short.filter((v): v is number => v !== null),
+          ...long.filter((v): v is number => v !== null),
+        ];
+        const max = Math.max(...present);
+        const min = Math.min(...present);
         const range = max - min || 1;
+        const yOf = (v: number) =>
+          Y_BASE - ((v - min) / range) * (Y_BASE - Y_TOP - 4);
+        const linePoints = (series: (number | null)[]) =>
+          series
+            .map((v, i) =>
+              v === null ? null : `${(i + 0.5) * SLOT},${yOf(v).toFixed(2)}`,
+            )
+            .filter((p): p is string => p !== null)
+            .join(" ");
+
         return (
-          <div key={spec.key} style={{ marginTop: i === 0 ? 0 : 12 }}>
+          <div key={spec.key} style={{ marginTop: rowIdx === 0 ? 0 : 12 }}>
             <div
               style={{
                 display: "flex",
@@ -94,110 +169,125 @@ export default function RecoveryStatsCard() {
                   fontFamily: "Inter, sans-serif",
                 }}
               >
-                {spec.format(latest[spec.key])}
-                <span
-                  style={{
-                    fontSize: 9,
-                    color: "var(--ink-faint)",
-                    fontWeight: 400,
-                  }}
-                >
+                {latest !== null ? spec.format(latest) : "—"}
+                <span style={{ fontSize: 9, color: "var(--ink-faint)", fontWeight: 400 }}>
                   {" "}
                   {spec.unit}
                 </span>
               </span>
             </div>
             <div style={{ position: "relative" }}>
-              {(() => {
-                const prefix = `${spec.key}-`;
-                const hoveredIdx =
-                  hovered?.startsWith(prefix)
-                    ? Number(hovered.slice(prefix.length))
-                    : null;
-                return (
-                  hoveredIdx !== null && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: `${((hoveredIdx + 0.5) / points.length) * 100}%`,
-                        top: 0,
-                        bottom: 0,
-                        width: 0,
-                        borderLeft: "1px dashed var(--ink-faint)",
-                        pointerEvents: "none",
-                      }}
-                    />
-                  )
-                );
-              })()}
-              <div
-                style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 20 }}
+              {/* Tooltip for this row's hovered day */}
+              {hovered?.startsWith(`${spec.key}:`) && hoveredDay !== null && (
+                <ChartTooltip
+                  align={
+                    hoveredDay < 2
+                      ? "start"
+                      : hoveredDay > VISIBLE_DAYS - 3
+                        ? "end"
+                        : "center"
+                  }
+                >
+                  {visibleDays[hoveredDay]} ·{" "}
+                  {values[hoveredDay] !== null
+                    ? `${spec.format(values[hoveredDay]!)} ${spec.unit}`
+                    : short[hoveredDay] !== null
+                      ? `7d ${spec.format(short[hoveredDay]!)} ${spec.unit}`
+                      : "no data"}
+                </ChartTooltip>
+              )}
+              <svg
+                viewBox={`0 0 ${W} ${H}`}
+                style={{ width: "100%", display: "block" }}
               >
-                {points.map((p, j) => {
-                  const v = p[spec.key];
-                  const h = Math.max(2, ((v - min) / range) * 16 + 3);
-                  const hk = `${spec.key}-${j}`;
-                  const baseOpacity = 0.3 + 0.7 * (j / Math.max(1, points.length - 1));
+                {/* Shared-X hover crosshair (mirrors across all rows) */}
+                {hoveredDay !== null && (
+                  <line
+                    x1={(hoveredDay + 0.5) * SLOT}
+                    x2={(hoveredDay + 0.5) * SLOT}
+                    y1={0}
+                    y2={H}
+                    stroke="var(--ink-faint)"
+                    strokeWidth="1"
+                    strokeDasharray="2 2"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )}
+                {/* Day bars (gaps stay empty) */}
+                {values.map((v, i) => {
+                  if (v === null) return null;
+                  const hk = `${spec.key}:${i}`;
+                  const y = yOf(v);
                   return (
-                    <div
-                      key={p.date}
-                      style={{
-                        flex: 1,
-                        position: "relative",
-                        height: "100%",
-                        display: "flex",
-                        alignItems: "flex-end",
-                      }}
-                    >
-                      {hovered === hk && (
-                        <ChartTooltip
-                          align={
-                            j < 2
-                              ? "start"
-                              : j > points.length - 3
-                                ? "end"
-                                : "center"
-                          }
-                        >
-                          {p.date} · {spec.format(v)} {spec.unit}
-                        </ChartTooltip>
-                      )}
-                      <div
-                        style={{
-                          width: "100%",
-                          height: h,
-                          background: "var(--primary)",
-                          opacity: hovered === null || hovered === hk ? baseOpacity : 0.15,
-                          borderRadius: 1,
-                          boxShadow: hovered === hk ? "0 0 0 1.5px var(--ink)" : "none",
-                          cursor: "pointer",
-                          transition: "opacity 0.1s",
-                        }}
-                        {...hoverProps(hk)}
-                      />
-                    </div>
+                    <rect
+                      key={i}
+                      x={(i + 0.2) * SLOT}
+                      width={SLOT * 0.6}
+                      y={y}
+                      height={Y_BASE + 2 - y}
+                      rx="1"
+                      fill="var(--primary)"
+                      opacity={
+                        hovered === hk
+                          ? 0.9
+                          : hoveredDay !== null && hoveredDay === i
+                            ? 0.7
+                            : 0.3
+                      }
+                    />
                   );
                 })}
-              </div>
-              {/* x-axis: this row's own date range (rows can cover different days) */}
-              {points.length > 1 && (
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontSize: 7.5,
-                    color: "var(--ink-faint)",
-                    marginTop: 2,
-                  }}
-                >
-                  <span>{points[0]!.date.slice(5)}</span>
-                  <span>{points[points.length - 1]!.date.slice(5)}</span>
-                </div>
-              )}
+                {/* Long trend (28d) — dashed, faint */}
+                <polyline
+                  points={linePoints(long)}
+                  fill="none"
+                  stroke="var(--ink-muted)"
+                  strokeWidth="1.2"
+                  strokeDasharray="3 2"
+                  vectorEffect="non-scaling-stroke"
+                  opacity="0.7"
+                />
+                {/* Short trend (7d) — solid */}
+                <polyline
+                  points={linePoints(short)}
+                  fill="none"
+                  stroke="var(--primary)"
+                  strokeWidth="1.5"
+                  vectorEffect="non-scaling-stroke"
+                />
+                {/* Full-height transparent hover targets, one per day slot */}
+                {visibleDays.map((_, i) => (
+                  <rect
+                    key={`h-${i}`}
+                    x={i * SLOT}
+                    width={SLOT}
+                    y={0}
+                    height={H}
+                    fill="transparent"
+                    style={{ cursor: "pointer" }}
+                    {...hoverProps(`${spec.key}:${i}`)}
+                  />
+                ))}
+              </svg>
             </div>
           </div>
         );
       })}
+
+      {/* Shared x-axis labels — rendered once for every row above */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          fontSize: 7.5,
+          color: "var(--ink-faint)",
+          marginTop: 4,
+        }}
+      >
+        <span>{visibleDays[0]!.slice(5)}</span>
+        <span>{visibleDays[Math.floor(VISIBLE_DAYS / 2)]!.slice(5)}</span>
+        <span>{visibleDays[VISIBLE_DAYS - 1]!.slice(5)}</span>
+      </div>
     </div>
   );
 }
