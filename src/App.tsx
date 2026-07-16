@@ -185,9 +185,6 @@ function AuthedApp({
                 weeklyLoads={weeklyLoads}
                 status={status}
                 sessions={sessions}
-                onDelete={(id) => void removeSession(id)}
-                onEdit={setEditingSession}
-                onLog={openLog}
                 onOpenPhases={() => setShowPhases(true)}
               />
             )}
@@ -200,7 +197,11 @@ function AuthedApp({
               />
             )}
             {view === "workout" && (
-              <WorkoutView userId={userId} currentPhase={currentPhase} />
+              <WorkoutView
+                userId={userId}
+                currentPhase={currentPhase}
+                onLog={openLog}
+              />
             )}
             {view === "tindeq" && (
               <TindeqView onLogSession={addTindeqSession} />

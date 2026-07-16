@@ -90,6 +90,8 @@ export const SESSION_TYPES: SessionType[] = [
 export const NAV: NavItem[] = [
   { id: "dashboard", icon: "⬡", label: "Home" },
   { id: "workout", icon: "▲", label: "Workout" },
-  { id: "tindeq", icon: "◉", label: "Tindeq" },
+  // Display name only — the ViewId stays "tindeq" (internal ids don't churn;
+  // the tab may host other force gauges later).
+  { id: "tindeq", icon: "◉", label: "Force" },
   { id: "history", icon: "≡", label: "History" },
 ];

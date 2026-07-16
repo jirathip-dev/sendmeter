@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type {
   AcwrData,
   AcwrStatus,
@@ -6,11 +6,10 @@ import type {
   Session,
   WeeklyLoad,
 } from "../types";
+import ContributionHeatmap from "./ContributionHeatmap";
+import InfoDot from "./InfoDot";
 import ReadinessCard from "./ReadinessCard";
-import LoadSheet from "./LoadSheet";
 import RecoverySheet from "./RecoverySheet";
-import SessionRow from "./SessionRow";
-import { useRipple } from "../hooks/useRipple";
 import { phaseAcwrFit } from "../lib/metrics";
 
 interface Props {
@@ -20,12 +19,12 @@ interface Props {
   weeklyLoads: WeeklyLoad[];
   status: AcwrStatus;
   sessions: Session[];
-  onDelete: (id: string) => void;
-  onEdit: (s: Session) => void;
-  onLog: () => void;
   onOpenPhases: () => void;
 }
 
+/// Home: phase banner + ACWR with the full training-load detail inline
+/// (acute/chronic, weekly totals, daily heatmap — formerly the LoadSheet
+/// drill-in) + readiness. Sessions live in History; logging lives in Workout.
 export default function Dashboard({
   phase,
   phaseDays,
@@ -33,14 +32,15 @@ export default function Dashboard({
   weeklyLoads,
   status,
   sessions,
-  onDelete,
-  onEdit,
-  onLog,
   onOpenPhases,
 }: Props) {
-  const recent = sessions.slice(0, 6);
-  const [detail, setDetail] = useState<null | "load" | "recovery">(null);
-  const { ripples: acwrRipples, spawnRipple: spawnAcwrRipple } = useRipple();
+  const [showRecovery, setShowRecovery] = useState(false);
+  const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
+  const daily = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of sessions) m.set(s.date, (m.get(s.date) ?? 0) + s.load);
+    return m;
+  }, [sessions]);
 
   return (
     <div>
@@ -115,27 +115,26 @@ export default function Dashboard({
         </div>
       </div>
 
-      {/* ACWR + Readiness stacked full-width */}
       <div
         style={{
           display: "flex",
           flexDirection: "column",
           gap: 10,
-          marginBottom: 10,
         }}
       >
-        <div
-          className="card tappable"
-          onPointerDown={spawnAcwrRipple}
-          onClick={() => setDetail("load")}
-        >
-          {acwrRipples}
+        {/* ACWR — the load detail now lives right below, no drill-in */}
+        <div className="card">
           <div
             className="label-eyebrow"
-            style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}
+            style={{
+              marginBottom: 8,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
           >
             <span>ACWR</span>
-            <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>
+            <InfoDot topic="acwr" />
           </div>
           <div
             style={{
@@ -209,60 +208,78 @@ export default function Dashboard({
             <span>1.5</span>
             <span>2</span>
           </div>
+
+          {/* Acute / chronic (formerly the LoadSheet drill-in) */}
+          <div
+            style={{
+              display: "flex",
+              gap: 24,
+              marginTop: 12,
+              paddingTop: 10,
+              borderTop: "1px solid var(--hairline)",
+              fontSize: 12,
+            }}
+          >
+            <span>
+              <span style={{ color: "var(--ink-muted)" }}>Acute 7d </span>
+              <span style={{ color: "var(--ink)", fontWeight: 600 }}>
+                {acwrData.acute.toFixed(0)}
+              </span>
+            </span>
+            <span>
+              <span style={{ color: "var(--ink-muted)" }}>Chronic avg </span>
+              <span style={{ color: "var(--ink)", fontWeight: 600 }}>
+                {acwrData.chronic.toFixed(0)}
+              </span>
+            </span>
+          </div>
         </div>
 
-        {/* Readiness below ACWR; acute/chronic numbers live in the
-            Training Load page the ACWR card drills into */}
-        <ReadinessCard onClick={() => setDetail("recovery")} />
-      </div>
-
-      {/* Log button */}
-      <button
-        className="btn-primary"
-        style={{ marginBottom: 16 }}
-        onClick={onLog}
-      >
-        + Log Session
-      </button>
-
-      {/* Recent */}
-      <div
-        style={{
-          fontSize: 10,
-          color: "var(--ink-faint)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          marginBottom: 10,
-        }}
-      >
-        Recent Sessions
-      </div>
-      {recent.length === 0 && (
-        <div
-          style={{
-            textAlign: "center",
-            color: "var(--ink-faint)",
-            fontSize: 13,
-            padding: "32px 0",
-          }}
-        >
-          No sessions yet. Tap + Log Session to start.
+        {/* Weekly totals */}
+        <div className="card">
+          <div className="label-eyebrow" style={{ marginBottom: 12 }}>Weekly load</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 72 }}>
+            {weeklyLoads.map((w, i) => (
+              <div
+                key={i}
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 4,
+                  height: "100%",
+                  justifyContent: "flex-end",
+                }}
+              >
+                <span style={{ fontSize: 9, color: "var(--ink-muted)" }}>
+                  {w.total.toLocaleString()}
+                </span>
+                <div
+                  style={{
+                    width: "100%",
+                    height: Math.max((w.total / maxW) * 48, 2),
+                    background: i === weeklyLoads.length - 1 ? "var(--success)" : "var(--border)",
+                    borderRadius: 3,
+                  }}
+                />
+                <span style={{ fontSize: 8, color: "var(--ink-faint)" }}>{w.label}</span>
+              </div>
+            ))}
+          </div>
         </div>
-      )}
-      {recent.map((s) => (
-        <SessionRow key={s.id} s={s} onDelete={onDelete} onEdit={onEdit} />
-      ))}
 
-      {detail === "load" && (
-        <LoadSheet
-          acwrData={acwrData}
-          status={status}
-          sessions={sessions}
-          weeklyLoads={weeklyLoads}
-          onClose={() => setDetail(null)}
-        />
-      )}
-      {detail === "recovery" && <RecoverySheet onClose={() => setDetail(null)} />}
+        {/* Daily AU heatmap */}
+        <div className="card">
+          <div className="label-eyebrow" style={{ marginBottom: 12 }}>Daily load</div>
+          <ContributionHeatmap values={daily} />
+        </div>
+
+        {/* Readiness (still drills into the recovery detail) */}
+        <ReadinessCard onClick={() => setShowRecovery(true)} />
+      </div>
+
+      {showRecovery && <RecoverySheet onClose={() => setShowRecovery(false)} />}
     </div>
   );
 }

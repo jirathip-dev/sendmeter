@@ -19,6 +19,8 @@ interface Props {
   samplesRef: RefObject<TindeqSample[]>;
   live: boolean;
   target?: GaugeTargetZone | null;
+  /// Trace height in px (fullscreen passes a taller chart).
+  chartHeight?: number;
 }
 
 function drawTrace(
@@ -95,6 +97,7 @@ export default function ForceGauge({
   samplesRef,
   live,
   target,
+  chartHeight = 140,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -182,7 +185,7 @@ export default function ForceGauge({
       </div>
       <canvas
         ref={canvasRef}
-        style={{ width: "100%", height: 140, display: "block" }}
+        style={{ width: "100%", height: chartHeight, display: "block" }}
       />
       {target && (
         <div

@@ -1,27 +1,24 @@
 import { useState } from "react";
-import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveWorkout } from "../hooks/useLiveWorkout";
 import { usePhoneWorkout } from "../hooks/usePhoneWorkout";
-import {
-  useRealtimeBump,
-  useRealtimeVersion,
-} from "../hooks/useRealtimeVersion";
-import { fetchWorkouts, insertPhoneWorkout } from "../lib/repo";
-import type { PhaseId, WorkoutListItem } from "../types";
+import { useRealtimeBump } from "../hooks/useRealtimeVersion";
+import { insertPhoneWorkout } from "../lib/repo";
+import type { PhaseId } from "../types";
 import LiveWorkoutCard from "./LiveWorkoutCard";
 import PhoneWorkoutCard from "./PhoneWorkoutCard";
 import PhoneWorkoutFullscreen from "./PhoneWorkoutFullscreen";
-import WorkoutRow from "./WorkoutRow";
 
 interface Props {
   userId: string;
   currentPhase: PhaseId;
+  /// Opens the manual Log Session sheet (moved here from Home).
+  onLog: () => void;
 }
 
-/// The Workout tab (SL-41): a live mirror of the in-progress watch workout,
-/// phone-only workout logging, and the recent-workouts list.
-export default function WorkoutView({ userId, currentPhase }: Props) {
-  const realtimeVersion = useRealtimeVersion();
+/// The Workout tab: start/track a workout (live watch mirror or phone
+/// full-screen timer) and manually log a session. Past workouts live in
+/// History.
+export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
   const bumpRealtime = useRealtimeBump();
   const live = useLiveWorkout(userId);
   const [phone, dispatch] = usePhoneWorkout();
@@ -32,12 +29,6 @@ export default function WorkoutView({ userId, currentPhase }: Props) {
   // a workout resumed from localStorage on load doesn't hijack the screen —
   // the Start/Resume buttons open it.
   const [minimized, setMinimized] = useState(true);
-
-  const workouts = useCancellableFetch<WorkoutListItem[]>(
-    () => fetchWorkouts(30),
-    [],
-    realtimeVersion,
-  );
 
   async function savePhoneWorkout(meta: {
     type: string;
@@ -107,23 +98,22 @@ export default function WorkoutView({ userId, currentPhase }: Props) {
         </div>
       )}
 
-      <div className="label-eyebrow" style={{ margin: "18px 0 10px" }}>
-        Recent workouts
-      </div>
-      {workouts.length === 0 ? (
-        <div
-          style={{
-            textAlign: "center",
-            color: "var(--ink-faint)",
-            fontSize: 13,
-            padding: "40px 0",
-          }}
-        >
-          No workouts yet. Track one on your watch or log one above.
+      {/* Manual entry — the Log Session sheet (moved from Home) */}
+      <div className="card" style={{ marginTop: 2 }}>
+        <div className="label-eyebrow" style={{ marginBottom: 8 }}>
+          Already trained?
         </div>
-      ) : (
-        workouts.map((w) => <WorkoutRow key={w.id} w={w} />)
-      )}
+        <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
+          Log a finished session manually — date, type, duration and RPE.
+        </div>
+        <button className="btn-ghost" onClick={onLog}>
+          + Log Session
+        </button>
+      </div>
+
+      <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 16, textAlign: "center" }}>
+        Past workouts and sessions live in History.
+      </div>
     </div>
   );
 }

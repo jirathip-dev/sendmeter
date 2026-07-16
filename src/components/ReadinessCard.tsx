@@ -4,6 +4,7 @@ import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { useRipple } from "../hooks/useRipple";
 import { fetchHealthMetrics } from "../lib/repo";
 import ChartTooltip from "./ChartTooltip";
+import InfoDot from "./InfoDot";
 import type { HealthMetric } from "../types";
 
 const ZONE_COLORS: Record<string, string> = {
@@ -33,7 +34,10 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
         {onClick && ripples}
         <div className="label-eyebrow" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>Readiness</span>
-          {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <InfoDot topic="readiness" />
+            {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
+          </span>
         </div>
         <div
           style={{
@@ -84,7 +88,10 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
       {onClick && ripples}
       <div className="label-eyebrow" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span>Readiness</span>
-        {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <InfoDot topic="readiness" />
+          {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
+        </span>
       </div>
       <div
         style={{

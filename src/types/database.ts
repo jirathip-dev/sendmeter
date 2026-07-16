@@ -300,6 +300,48 @@ export type Database = {
         }
         Relationships: []
       }
+      tindeq_presets: {
+        Row: {
+          alternate_sides: boolean
+          created_at: string
+          hold_s: number
+          id: string
+          name: string
+          reps: number
+          rest_reps_s: number
+          rest_sets_s: number
+          sets: number
+          target_kg: number | null
+          user_id: string
+        }
+        Insert: {
+          alternate_sides?: boolean
+          created_at?: string
+          hold_s: number
+          id?: string
+          name?: string
+          reps: number
+          rest_reps_s: number
+          rest_sets_s: number
+          sets: number
+          target_kg?: number | null
+          user_id?: string
+        }
+        Update: {
+          alternate_sides?: boolean
+          created_at?: string
+          hold_s?: number
+          id?: string
+          name?: string
+          reps?: number
+          rest_reps_s?: number
+          rest_sets_s?: number
+          sets?: number
+          target_kg?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       tindeq_recordings: {
         Row: {
           avg_kg: number

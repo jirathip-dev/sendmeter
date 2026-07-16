@@ -11,6 +11,7 @@ import type {
   RpePair,
   Session,
   SessionPatch,
+  TindeqPreset,
   TindeqRecordingMeta,
   TindeqSample,
   TindeqSide,
@@ -433,6 +434,73 @@ export async function insertRecording(
       .single(),
   );
   return toRecording(data);
+}
+
+// MARK: Tindeq presets (hang protocols for the guided gauge timer)
+
+const PRESET_COLS =
+  "id, name, hold_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, alternate_sides";
+
+type PresetRow = {
+  id: string;
+  name: string;
+  hold_s: number;
+  reps: number;
+  sets: number;
+  rest_reps_s: number;
+  rest_sets_s: number;
+  target_kg: number | null;
+  alternate_sides: boolean;
+};
+
+function toPreset(r: PresetRow): TindeqPreset {
+  return {
+    id: r.id,
+    name: r.name,
+    holdS: r.hold_s,
+    reps: r.reps,
+    sets: r.sets,
+    restRepsS: r.rest_reps_s,
+    restSetsS: r.rest_sets_s,
+    targetKg: r.target_kg,
+    alternateSides: r.alternate_sides,
+  };
+}
+
+export async function fetchPresets(): Promise<TindeqPreset[]> {
+  const data = unwrap(
+    await supabase
+      .from("tindeq_presets")
+      .select(PRESET_COLS)
+      .order("created_at", { ascending: false }),
+  );
+  return data.map(toPreset);
+}
+
+export async function insertPreset(
+  p: Omit<TindeqPreset, "id">,
+): Promise<TindeqPreset> {
+  const data = unwrap<PresetRow>(
+    await supabase
+      .from("tindeq_presets")
+      .insert({
+        name: p.name,
+        hold_s: p.holdS,
+        reps: p.reps,
+        sets: p.sets,
+        rest_reps_s: p.restRepsS,
+        rest_sets_s: p.restSetsS,
+        target_kg: p.targetKg,
+        alternate_sides: p.alternateSides,
+      })
+      .select(PRESET_COLS)
+      .single(),
+  );
+  return toPreset(data);
+}
+
+export async function deletePreset(id: string): Promise<void> {
+  unwrap(await supabase.from("tindeq_presets").delete().eq("id", id));
 }
 
 /// Assign an ungrouped recording to an existing gauge-session group (SL-44).

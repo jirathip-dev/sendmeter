@@ -134,6 +134,22 @@ export interface TindeqRecordingMeta {
   groupId: string | null; // gauge session this recording belongs to
 }
 
+/// A saved hang protocol (hold / reps / sets / rests) — drives the guided
+/// timer in the fullscreen gauge.
+export interface TindeqPreset {
+  id: string;
+  name: string;
+  holdS: number;
+  reps: number;
+  sets: number;
+  restRepsS: number;
+  restSetsS: number;
+  /// Optional target load — drawn as the target band on the live chart.
+  targetKg: number | null;
+  /// Alternate left/right each rep (switch hands during the rep rest).
+  alternateSides: boolean;
+}
+
 export interface DeletedTindeqRecording extends TindeqRecordingMeta {
   deletedAt: string;
 }

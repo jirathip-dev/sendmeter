@@ -1,21 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTindeq } from "../hooks/useTindeq";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import {
   deleteRecording,
   fetchRecordings,
+  fetchRecordingSamples,
   insertRecording,
-  updateRecordingGroup,
 } from "../lib/repo";
-import type { TindeqRecordingMeta, TindeqSide } from "../types";
-import AssignRecordingSheet from "./AssignRecordingSheet";
+import { computeForceCurve } from "../lib/force-curve";
+import type { ForceCurveModel } from "../lib/force-curve";
+import type { TindeqPreset, TindeqRecordingMeta, TindeqSide } from "../types";
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
-import ForceGauge from "./ForceGauge";
-import GroupedRecordings from "./GroupedRecordings";
-import Sheet from "./Sheet";
+import PresetManager from "./PresetManager";
 import SideAsymmetryCard from "./SideAsymmetryCard";
 import TagSideEditor from "./TagSideEditor";
+import TargetZonesCard from "./TargetZonesCard";
+import TindeqFullscreen from "./TindeqFullscreen";
 import TindeqTrendChart from "./TindeqTrendChart";
 
 interface TindeqViewProps {
@@ -48,11 +49,16 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
   const [saving, setSaving] = useState(false);
   const [recordings, setRecordings] = useState<TindeqRecordingMeta[]>([]);
   const [listError, setListError] = useState<string | null>(null);
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [selectedSide, setSelectedSide] = useState<TindeqSide | null>(null);
-  const [showTrends, setShowTrends] = useState(false);
   const [gaugeTarget, setGaugeTarget] = useState<GaugeTarget | null>(null);
-  const [assigning, setAssigning] = useState<TindeqRecordingMeta | null>(null);
+  const [preset, setPreset] = useState<TindeqPreset | null>(null);
+  // Force-curve model for the selected tag/side — auto-computed (no button)
+  // and shared by the curve card + the target-zones picker.
+  const [curveModel, setCurveModel] = useState<ForceCurveModel | null>(null);
+  const [curveComputedFor, setCurveComputedFor] = useState<string | null>(null);
+  const [curveError, setCurveError] = useState<string | null>(null);
+  // The gauge takes over fullscreen while connected; minimize drops back to
+  // this tab with a compact resume bar.
+  const [gaugeMinimized, setGaugeMinimized] = useState(false);
   const realtimeVersion = useRealtimeVersion();
 
   // Every tag ever used, most frequent first; top 6 become one-tap chips,
@@ -157,22 +163,68 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
     await removeRecording(id);
   }
 
-  // Assign an ungrouped recording to an existing session group (SL-44) —
-  // optimistic, rolls back on failure.
-  async function assignRecording(id: string, groupId: string) {
-    const prev = recordings;
-    setRecordings((list) =>
-      list.map((r) => (r.id === id ? { ...r, groupId } : r)),
-    );
-    try {
-      await updateRecordingGroup(id, groupId);
-    } catch (e) {
-      setRecordings(prev);
-      setListError(
-        e instanceof Error ? e.message : "Failed to assign recording",
-      );
+  // The tag + side set in the Exercise card are GLOBAL for this tab: they
+  // label the next recording AND drive the target zones, trend and curve.
+  // Charts fall back to the most-recorded tag while the input doesn't match
+  // an existing one (mid-typing / brand-new tag).
+  const trimmedTag = pendingTag.trim();
+  const effectiveTag = allTags.includes(trimmedTag)
+    ? trimmedTag
+    : (allTags[0] ?? null);
+  const chartSide: TindeqSide | null =
+    pendingSide === "left" || pendingSide === "right" ? pendingSide : null;
+
+  // Auto-compute the force curve for the active tag/side (default show — no
+  // "Compute" button). All state writes happen in async callbacks; "which key
+  // the model belongs to" is tracked so computing/model are derived, not
+  // synced.
+  const curveRecordings = recordings.filter(
+    (r) =>
+      effectiveTag !== null &&
+      r.tag === effectiveTag &&
+      (chartSide === null || r.side === chartSide),
+  );
+  const curveKey = `${effectiveTag ?? ""}|${chartSide ?? "all"}|${curveRecordings.length}`;
+  const canComputeCurve = effectiveTag !== null && curveRecordings.length > 0;
+  useEffect(() => {
+    if (!canComputeCurve) return;
+    let cancelled = false;
+    const recs = curveRecordings.slice(0, 15);
+    Promise.all(recs.map((r) => fetchRecordingSamples(r.id)))
+      .then((all) => {
+        if (cancelled) return;
+        const m = computeForceCurve(all);
+        setCurveModel(m);
+        setCurveError(m ? null : "No usable samples in these recordings.");
+        setCurveComputedFor(curveKey);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setCurveError(e instanceof Error ? e.message : "Failed to compute curve");
+        setCurveModel(null);
+        setCurveComputedFor(curveKey);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // curveKey encodes tag/side/count — the actual deps of this computation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [curveKey, canComputeCurve]);
+  const curveReady = curveComputedFor === curveKey;
+  const model = canComputeCurve && curveReady ? curveModel : null;
+  const curveComputing = canComputeCurve && !curveReady;
+
+  // Pop the gauge fullscreen the moment the Progressor connects (only on the
+  // connecting→connected transition — a stop→connected change must not
+  // override a user's minimize).
+  const { status } = tindeq;
+  const prevStatusRef = useRef(status);
+  useEffect(() => {
+    if (status === "connected" && prevStatusRef.current === "connecting") {
+      setGaugeMinimized(false);
     }
-  }
+    prevStatusRef.current = status;
+  }, [status]);
 
   async function removeRecording(id: string) {
     const prev = recordings;
@@ -187,18 +239,16 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
     }
   }
 
-  const { status } = tindeq;
-
   return (
     <div>
       <div className="section-head">
-        TINDEQ{" "}
+        FORCE{" "}
         {tindeq.fakeMode && (
           <span style={{ fontSize: 10, color: "var(--warning)" }}>(fake mode)</span>
         )}
       </div>
       <div className="section-sub">
-        Live force from your Progressor via Bluetooth.
+        Grip-force analysis &amp; training — Tindeq Progressor via Bluetooth.
       </div>
 
       {/* Gauge session bar */}
@@ -383,180 +433,82 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         </div>
       )}
 
+      {/* Connected: the gauge lives fullscreen; this is the resume bar */}
       {(status === "connected" || status === "measuring") && (
-        <div>
-          {/* Device status row */}
+        <button
+          onClick={() => setGaugeMinimized(false)}
+          style={{
+            width: "100%",
+            textAlign: "left",
+            cursor: "pointer",
+            background: "var(--canvas)",
+            border: `1px solid color-mix(in srgb, ${status === "measuring" ? "var(--success)" : "var(--info)"} 45%, transparent)`,
+            borderRadius: 12,
+            padding: 16,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            fontFamily: "inherit",
+          }}
+        >
           <div
+            aria-hidden="true"
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginBottom: 10,
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: status === "measuring" ? "var(--success)" : "var(--info)",
+              animation: status === "measuring" ? "pulse 1.6s ease-in-out infinite" : undefined,
             }}
-          >
-            <div
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                background: status === "measuring" ? "var(--success)" : "var(--info)",
-              }}
-            />
-            <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
-              Progressor{" "}
-              <span style={{ color: "var(--ink-muted)" }}>
-                · {status === "measuring" ? "measuring" : "connected"}
-              </span>
-            </span>
-            {tindeq.lowBattery && (
-              <span
-                className="tag"
-                style={{
-                  background: "rgba(255,184,0,0.12)",
-                  color: "var(--warning)",
-                  border: "1px solid rgba(255,184,0,0.35)",
-                }}
-              >
-                Low battery
-              </span>
-            )}
-            <button
-              onClick={tindeq.disconnect}
-              style={{
-                background: "none",
-                border: "1px solid var(--ink-faint)",
-                color: "var(--ink-muted)",
-                padding: "6px 10px",
-                borderRadius: 6,
-                fontSize: 10,
-                cursor: "pointer",
-                fontFamily: "Inter, sans-serif",
-              }}
-            >
-              Disconnect
-            </button>
-          </div>
-
-          {gaugeTarget && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 8,
-                fontSize: 10,
-                color: "var(--ink-faint)",
-              }}
-            >
-              <span style={{ flex: 1 }}>
-                Target set: <span style={{ color: "var(--success)" }}>{gaugeTarget.label}</span>
-              </span>
-              <button
-                onClick={() => setGaugeTarget(null)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--ink-faint)",
-                  fontSize: 10,
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                  textDecoration: "underline",
-                }}
-              >
-                clear
-              </button>
-            </div>
-          )}
-          <ForceGauge
-            current={tindeq.current}
-            peak={tindeq.peak}
-            elapsedMs={tindeq.elapsedMs}
-            samplesRef={tindeq.samplesRef}
-            live={status === "measuring"}
-            target={gaugeTarget}
           />
+          <span style={{ fontSize: 13, color: "var(--ink)", flex: 1 }}>
+            Progressor{" "}
+            <span style={{ color: "var(--ink-muted)" }}>
+              · {status === "measuring" ? "measuring" : "connected"}
+            </span>
+          </span>
+          <span style={{ color: "var(--primary)", fontWeight: 700, fontSize: 13 }}>
+            Open gauge ›
+          </span>
+        </button>
+      )}
 
-          {/* Set the tag/side before each rep — a tag is required to Start,
-              so every recording is labelled without a post-stop decision. */}
-          {status === "connected" && (
-            <div className="card" style={{ marginTop: 10 }}>
-              <div className="label-eyebrow" style={{ marginBottom: 8 }}>
-                Next recording
-              </div>
-              <TagSideEditor
-                tag={pendingTag}
-                side={pendingSide}
-                recentTags={recentTags}
-                allTags={allTags}
-                onTag={setPendingTag}
-                onSide={setPendingSide}
-              />
-              {!pendingTag.trim() && (
-                <div
-                  style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 8 }}
-                >
-                  Add a tag to start recording.
-                </div>
-              )}
+      {/* Tag/side for the next rep — set here in the tab; the fullscreen
+          gauge stays clean */}
+      {(status === "connected" || status === "measuring") && (
+        <div className="card" style={{ marginTop: 10 }}>
+          <div className="label-eyebrow" style={{ marginBottom: 8 }}>
+            Exercise &amp; Side
+          </div>
+          <TagSideEditor
+            tag={pendingTag}
+            side={pendingSide}
+            recentTags={recentTags}
+            allTags={allTags}
+            onTag={setPendingTag}
+            onSide={setPendingSide}
+          />
+          {!pendingTag.trim() && (
+            <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 8 }}>
+              Add a tag to start recording.
             </div>
           )}
-
-          <div className="grid-2" style={{ marginTop: 10 }}>
-            <button
-              className="btn-ghost"
-              disabled={status === "measuring"}
-              onClick={() => void tindeq.tare()}
-            >
-              Tare
-            </button>
-            {status === "measuring" ? (
-              <button
-                className="btn-primary"
-                disabled={saving}
-                onClick={() => void handleStop()}
-              >
-                {saving ? "Saving…" : "Stop & Save"}
-              </button>
-            ) : (
-              <button
-                className="btn-primary"
-                disabled={!pendingTag.trim()}
-                onClick={() => {
-                  setJustSaved(null);
-                  void tindeq.start();
-                }}
-              >
-                Start
-              </button>
-            )}
-          </div>
-
-          {/* Confirmation of the auto-saved rep (tag shown so it can be
-              eyeballed; Undo deletes it for a retag + re-pull). */}
           {justSaved && status !== "measuring" && (
             <div
-              className="card"
               style={{
                 marginTop: 10,
+                paddingTop: 10,
+                borderTop: "1px solid var(--hairline)",
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
               }}
             >
-              <span
-                style={{ fontSize: 12, color: "var(--success)", fontWeight: 700, flex: 1 }}
-              >
+              <span style={{ fontSize: 12, color: "var(--success)", fontWeight: 700, flex: 1 }}>
                 Saved · {justSaved.tag || "untagged"}
                 {justSaved.side ? ` · ${justSaved.side}` : ""}
               </span>
-              <span
-                style={{
-                  fontSize: 12,
-                  color: "var(--ink)",
-                  fontFamily: "Inter, sans-serif",
-                  fontWeight: 800,
-                }}
-              >
+              <span style={{ fontSize: 12, color: "var(--ink)", fontFamily: "Inter, sans-serif", fontWeight: 800 }}>
                 {justSaved.peakKg.toFixed(1)} kg
               </span>
               <button
@@ -579,107 +531,76 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         </div>
       )}
 
-      {/* Trends & force curve live in a modal */}
-      {recordings.length >= 2 && (
-        <button
-          className="btn-ghost"
-          style={{ marginTop: 10 }}
-          onClick={() => setShowTrends(true)}
-        >
-          Trends &amp; Force Curve
-        </button>
-      )}
-
-      {showTrends && (
-        <Sheet onClose={() => setShowTrends(false)}>
-            <TindeqTrendChart
-              recordings={recordings}
-              selectedTag={selectedTag}
-              onSelectTag={setSelectedTag}
-              selectedSide={selectedSide}
-              onSelectSide={setSelectedSide}
-            />
-            {selectedTag && (
-              <ForceCurveCard
-                key={`${selectedTag}|${selectedSide ?? "all"}`}
-                tag={
-                  selectedSide
-                    ? `${selectedTag} · ${selectedSide}`
-                    : selectedTag
-                }
-                recordings={recordings.filter(
-                  (r) =>
-                    r.tag === selectedTag &&
-                    (selectedSide === null || r.side === selectedSide),
-                )}
-                onUseTarget={(t) => {
-                  setGaugeTarget(t);
-                  setShowTrends(false);
-                  window.scrollTo({ top: 0, behavior: "smooth" });
-                }}
-              />
-            )}
-            {selectedTag && (
-              <SideAsymmetryCard
-                recordings={recordings.filter((r) => r.tag === selectedTag)}
-              />
-            )}
-            {!selectedTag && (
-              <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 10 }}>
-                Select a tag above to see its force–duration curve and generate
-                training targets.
-              </div>
-            )}
-            <div style={{ marginTop: 12 }}>
-              <button className="btn-ghost" onClick={() => setShowTrends(false)}>
-                Close
-              </button>
-            </div>
-        </Sheet>
-      )}
-
-      {/* Past recordings */}
-      <div
-        style={{
-          fontSize: 10,
-          color: "var(--ink-faint)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          margin: "20px 0 10px",
-        }}
-      >
-        Recordings
-      </div>
       {listError && (
-        <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 8 }}>
+        <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 10 }}>
           {listError}
         </div>
       )}
-      {recordings.length === 0 && !listError && (
-        <div
-          style={{
-            textAlign: "center",
-            color: "var(--ink-faint)",
-            fontSize: 13,
-            padding: "24px 0",
-          }}
-        >
-          No recordings yet.
-        </div>
-      )}
-      <GroupedRecordings
-        recordings={recordings}
-        onDelete={(id) => void removeRecording(id)}
-        onAssign={setAssigning}
-      />
 
-      {/* Assign-to-session sheet (ungrouped recordings only) */}
-      {assigning && (
-        <AssignRecordingSheet
-          recording={assigning}
-          recordings={recordings}
-          onAssign={(groupId) => void assignRecording(assigning.id, groupId)}
-          onClose={() => setAssigning(null)}
+      {/* Training-zone gauge target (from the force-curve fit) */}
+      {effectiveTag && (
+        <TargetZonesCard
+          tag={chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag}
+          model={model}
+          selected={gaugeTarget}
+          onSelect={setGaugeTarget}
+        />
+      )}
+
+      {/* Hang protocol presets — drive the fullscreen guided timer */}
+      <PresetManager selectedId={preset?.id ?? null} onSelect={setPreset} />
+
+      {/* Peak force trend + force curve — always visible */}
+      <div style={{ marginTop: 16 }}>
+        {recordings.length >= 2 ? (
+          <>
+            <TindeqTrendChart
+              recordings={recordings}
+              selectedTag={effectiveTag}
+              onSelectTag={(t) => setPendingTag(t ?? "")}
+              selectedSide={chartSide}
+              onSelectSide={(s) => setPendingSide(s ?? "")}
+            />
+            {effectiveTag && (
+              <ForceCurveCard
+                tag={
+                  chartSide
+                    ? `${effectiveTag} · ${chartSide}`
+                    : effectiveTag
+                }
+                model={model}
+                computing={curveComputing}
+                error={curveError}
+              />
+            )}
+            {effectiveTag && (
+              <SideAsymmetryCard
+                recordings={recordings.filter((r) => r.tag === effectiveTag)}
+              />
+            )}
+          </>
+        ) : (
+          <div style={{ fontSize: 11, color: "var(--ink-faint)" }}>
+            Peak force trend and the force–duration curve appear here after a
+            couple of recordings. Recordings themselves live in History.
+          </div>
+        )}
+      </div>
+
+      {/* Immersive fullscreen gauge (overlays everything while connected) */}
+      {(status === "connected" || status === "measuring") && !gaugeMinimized && (
+        <TindeqFullscreen
+          tindeq={tindeq}
+          preset={preset}
+          gaugeTarget={gaugeTarget}
+          canStart={!!pendingTag.trim()}
+          saving={saving}
+          onStop={() => void handleStop()}
+          onStart={() => {
+            setJustSaved(null);
+            void tindeq.start();
+          }}
+          onMinimize={() => setGaugeMinimized(true)}
         />
       )}
     </div>

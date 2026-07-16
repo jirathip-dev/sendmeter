@@ -1,17 +1,18 @@
 import { useState } from "react";
 import { PHASES } from "../constants";
-import { fetchRecordingsByGroup, fetchWorkoutForSession } from "../lib/repo";
+import {
+  deleteRecording,
+  fetchRecordingsByGroup,
+  fetchWorkoutForSession,
+} from "../lib/repo";
 import type { Session, TindeqRecordingMeta, WorkoutDetail } from "../types";
+import RecordingRow from "./RecordingRow";
 import WorkoutDetailPanel from "./WorkoutDetailPanel";
 
 interface Props {
   s: Session;
   onDelete: (id: string) => void;
   onEdit?: (s: Session) => void;
-}
-
-function sideLabel(side: TindeqRecordingMeta["side"]): string {
-  return side === "both" ? "L+R" : side === "left" ? "L" : side === "right" ? "R" : "";
 }
 
 export default function SessionRow({ s, onDelete, onEdit }: Props) {
@@ -170,10 +171,14 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
 
       {expanded && isTindeq && (
         <div
+          // Recording rows have their own expand/collapse — don't let their
+          // clicks bubble up and toggle the whole session row.
+          onClick={(e) => e.stopPropagation()}
           style={{
             marginTop: 10,
             paddingTop: 10,
             borderTop: "1px solid var(--hairline)",
+            cursor: "default",
           }}
         >
           {tindeqRecs === null && !loadError && (
@@ -191,33 +196,18 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
               No recordings in this session
             </div>
           )}
+          {/* Full recording rows — expand each for its force-trace chart */}
           {tindeqRecs?.map((r) => (
-            <div
+            <RecordingRow
               key={r.id}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 8,
-                fontSize: 11,
-                color: "var(--ink-muted)",
-                marginBottom: 4,
+              rec={r}
+              onDelete={(id) => {
+                setTindeqRecs((list) =>
+                  list ? list.filter((x) => x.id !== id) : list,
+                );
+                void deleteRecording(id);
               }}
-            >
-              <span style={{ color: "var(--ink-muted)" }}>
-                {new Date(r.recordedAt).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-                {r.tag && <span style={{ color: "var(--info)" }}> {r.tag}</span>}
-                {r.side && (
-                  <span style={{ color: "var(--warning)" }}> {sideLabel(r.side)}</span>
-                )}
-              </span>
-              <span>
-                <span style={{ color: "var(--success)" }}>{r.peakKg.toFixed(1)}kg</span>{" "}
-                · {(r.durationMs / 1000).toFixed(0)}s
-              </span>
-            </div>
+            />
           ))}
         </div>
       )}

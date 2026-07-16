@@ -1,16 +1,9 @@
-import { useState } from "react";
-import {
-  computeForceCurve,
-  predictForce,
-  QUALITIES,
-  zoneTarget,
-} from "../lib/force-curve";
-import type { ForceCurveModel, TrainingQuality } from "../lib/force-curve";
-import { fetchRecordingSamples } from "../lib/repo";
+import { predictForce } from "../lib/force-curve";
+import type { ForceCurveModel } from "../lib/force-curve";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import InfoDot from "./InfoDot";
 import SvgChartTooltip from "./SvgChartTooltip";
-import type { TindeqRecordingMeta } from "../types";
 
 export interface GaugeTarget {
   kg: number;
@@ -22,11 +15,12 @@ export interface GaugeTarget {
 
 interface Props {
   tag: string;
-  recordings: TindeqRecordingMeta[]; // already filtered to this tag
-  onUseTarget: (t: GaugeTarget) => void;
+  /// Computed by the parent (TindeqView auto-computes per selected tag).
+  model: ForceCurveModel | null;
+  computing: boolean;
+  error: string | null;
 }
 
-const MAX_RECORDINGS_FETCHED = 15;
 const W = 300;
 const H = 130;
 const PAD = { top: 10, bottom: 18, left: 30, right: 8 };
@@ -175,59 +169,30 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
   );
 }
 
-export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) {
-  const [model, setModel] = useState<ForceCurveModel | null>(null);
-  const [computing, setComputing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [quality, setQuality] = useState<TrainingQuality>("strength");
-
-  // parent remounts this card per tag via key={tag}, so state resets naturally
-
-  async function compute() {
-    setComputing(true);
-    setError(null);
-    try {
-      const recent = recordings.slice(0, MAX_RECORDINGS_FETCHED);
-      const all = await Promise.all(
-        recent.map((r) => fetchRecordingSamples(r.id)),
-      );
-      const m = computeForceCurve(all);
-      if (!m) setError("No usable samples in these recordings.");
-      setModel(m);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to compute curve");
-    } finally {
-      setComputing(false);
-    }
-  }
-
-  const target = model ? zoneTarget(model, quality) : null;
-
+export default function ForceCurveCard({ tag, model, computing, error }: Props) {
   return (
     <div className="card" style={{ marginTop: 10 }}>
-      <div className="label-eyebrow" style={{ marginBottom: 10 }}>
-        Force Curve · {tag}
+      <div
+        className="label-eyebrow"
+        style={{
+          marginBottom: 10,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <span>Force Curve · {tag}</span>
+        <InfoDot topic="forceCurve" />
       </div>
 
       {!model ? (
         <div>
-          <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 10 }}>
-            Builds your force–duration curve from the last{" "}
-            {Math.min(recordings.length, MAX_RECORDINGS_FETCHED)} recordings of
-            this exercise and fits the critical-force model F(t) = CF + W′/t.
+          <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
+            {computing
+              ? "Computing your force–duration curve…"
+              : error ??
+                "The force–duration curve builds from this tag's recordings and fits the critical-force model F(t) = CF + W′/t."}
           </div>
-          <button
-            className="btn-ghost"
-            disabled={computing || recordings.length === 0}
-            onClick={() => void compute()}
-          >
-            {computing ? "Computing…" : "Compute Force Curve"}
-          </button>
-          {error && (
-            <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 8 }}>
-              {error}
-            </div>
-          )}
         </div>
       ) : (
         <div>
@@ -297,75 +262,8 @@ export default function ForceCurveCard({ tag, recordings, onUseTarget }: Props) 
             </span>
           </div>
 
-          {/* quality selector */}
-          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
-            {QUALITIES.map((q) => (
-              <button
-                key={q.id}
-                className="tag"
-                onClick={() => setQuality(q.id)}
-                style={{
-                  background: quality === q.id ? "var(--primary)" : "var(--surface-1)",
-                  color: quality === q.id ? "#ffffff" : "var(--ink-muted)",
-                  border: `1px solid ${quality === q.id ? "var(--primary)" : "var(--border)"}`,
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                }}
-              >
-                {q.label}
-              </button>
-            ))}
-          </div>
-
-          {target ? (
-            <div>
-              <div
-                style={{ display: "flex", alignItems: "baseline", gap: 8 }}
-              >
-                <span
-                  style={{
-                    fontFamily: "Inter, sans-serif",
-                    fontSize: 26,
-                    fontWeight: 800,
-                    color: "var(--success)",
-                  }}
-                >
-                  {target.targetKg.toFixed(1)} kg
-                </span>
-                <span style={{ fontSize: 11, color: "var(--ink-muted)" }}>
-                  ({target.lowKg.toFixed(1)}–{target.highKg.toFixed(1)}) ·{" "}
-                  {target.workS}s work
-                </span>
-              </div>
-              <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 4 }}>
-                {target.protocol}
-              </div>
-              <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 2 }}>
-                {target.basis}
-              </div>
-              <div style={{ marginTop: 10 }}>
-                <button
-                  className="btn-primary"
-                  onClick={() =>
-                    onUseTarget({
-                      kg: target.targetKg,
-                      lowKg: target.lowKg,
-                      highKg: target.highKg,
-                      workS: target.workS,
-                      label: `${target.label} · ${tag}`,
-                    })
-                  }
-                >
-                  Use as Gauge Target
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div style={{ fontSize: 11, color: "var(--ink-faint)" }}>
-              Needs a critical-force fit — record some longer holds (30s+) with
-              this tag to unlock this zone.
-            </div>
-          )}
+          {/* Training zones live in the Gauge Target card up top — this card
+              is the analysis view (curve + CF/W′) only. */}
         </div>
       )}
     </div>

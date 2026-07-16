@@ -203,21 +203,18 @@ export default function TindeqTrendChart({
         Peak Force Trend
       </div>
 
+      {/* One tag is always selected — trends compare like-for-like holds,
+          so an "All" mix isn't meaningful. */}
       {tags.length > 0 && (
         <div
           style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}
         >
-          <TagChip
-            label="All"
-            active={selectedTag === null}
-            onClick={() => onSelectTag(null)}
-          />
           {tags.map((t) => (
             <TagChip
               key={t}
               label={t}
               active={selectedTag === t}
-              onClick={() => onSelectTag(selectedTag === t ? null : t)}
+              onClick={() => onSelectTag(t)}
             />
           ))}
         </div>
