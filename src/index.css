@@ -253,6 +253,17 @@ textarea.field { resize: none; }
 /* Load preview */
 .load-preview { background: var(--surface-2); border-radius: 8px; padding: 14px 16px; margin-top: 14px; display: flex; justify-content: space-between; align-items: center; }
 
+/* Account sheet — tab bar (segmented, icon over label) */
+.acct-tabs { display: flex; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 3px; margin: 16px 0 6px; }
+.acct-tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 2px; border: none; border-radius: 7px; background: transparent; color: var(--ink-muted); font-family: inherit; font-size: 10px; font-weight: 600; cursor: pointer; transition: background 0.15s, color 0.15s; -webkit-tap-highlight-color: transparent; }
+.acct-tab svg { width: 18px; height: 18px; }
+.acct-tab.active { background: var(--canvas); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
+/* Small inline button (overrides .btn-ghost full-width for in-row actions) */
+.btn-inline { width: auto; padding: 7px 14px; font-size: 12px; }
+/* Passkey list row */
+.pk-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.pk-row:last-of-type { border-bottom: none; }
+
 /* ACWR bar */
 .acwr-track { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: visible; position: relative; margin: 12px 0 6px; }
 
