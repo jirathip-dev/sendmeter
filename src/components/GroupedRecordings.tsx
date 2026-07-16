@@ -7,9 +7,11 @@ import RecordingRow from "./RecordingRow";
 export default function GroupedRecordings({
   recordings,
   onDelete,
+  onAssign,
 }: {
   recordings: TindeqRecordingMeta[];
   onDelete: (id: string) => void;
+  onAssign?: (rec: TindeqRecordingMeta) => void;
 }) {
   type Block =
     | { kind: "single"; rec: TindeqRecordingMeta; latest: string }
@@ -43,7 +45,12 @@ export default function GroupedRecordings({
     <div>
       {blocks.map((b) =>
         b.kind === "single" ? (
-          <RecordingRow key={b.rec.id} rec={b.rec} onDelete={onDelete} />
+          <RecordingRow
+            key={b.rec.id}
+            rec={b.rec}
+            onDelete={onDelete}
+            onAssign={onAssign}
+          />
         ) : (
           <div
             key={b.id}

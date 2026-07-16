@@ -5,8 +5,10 @@ import {
   deleteRecording,
   fetchRecordings,
   insertRecording,
+  updateRecordingGroup,
 } from "../lib/repo";
 import type { TindeqRecordingMeta, TindeqSide } from "../types";
+import AssignRecordingSheet from "./AssignRecordingSheet";
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import ForceGauge from "./ForceGauge";
@@ -50,6 +52,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
   const [selectedSide, setSelectedSide] = useState<TindeqSide | null>(null);
   const [showTrends, setShowTrends] = useState(false);
   const [gaugeTarget, setGaugeTarget] = useState<GaugeTarget | null>(null);
+  const [assigning, setAssigning] = useState<TindeqRecordingMeta | null>(null);
   const realtimeVersion = useRealtimeVersion();
 
   // Every tag ever used, most frequent first; top 6 become one-tap chips,
@@ -152,6 +155,23 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
     const id = justSaved.id;
     setJustSaved(null);
     await removeRecording(id);
+  }
+
+  // Assign an ungrouped recording to an existing session group (SL-44) —
+  // optimistic, rolls back on failure.
+  async function assignRecording(id: string, groupId: string) {
+    const prev = recordings;
+    setRecordings((list) =>
+      list.map((r) => (r.id === id ? { ...r, groupId } : r)),
+    );
+    try {
+      await updateRecordingGroup(id, groupId);
+    } catch (e) {
+      setRecordings(prev);
+      setListError(
+        e instanceof Error ? e.message : "Failed to assign recording",
+      );
+    }
   }
 
   async function removeRecording(id: string) {
@@ -650,7 +670,18 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
       <GroupedRecordings
         recordings={recordings}
         onDelete={(id) => void removeRecording(id)}
+        onAssign={setAssigning}
       />
+
+      {/* Assign-to-session sheet (ungrouped recordings only) */}
+      {assigning && (
+        <AssignRecordingSheet
+          recording={assigning}
+          recordings={recordings}
+          onAssign={(groupId) => void assignRecording(assigning.id, groupId)}
+          onClose={() => setAssigning(null)}
+        />
+      )}
     </div>
   );
 }

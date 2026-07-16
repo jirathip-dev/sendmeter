@@ -8,6 +8,9 @@ import type { TindeqRecordingMeta, TindeqSample } from "../types";
 interface Props {
   rec: TindeqRecordingMeta;
   onDelete: (id: string) => void;
+  /// Offered only for ungrouped recordings — opens the assign-to-session
+  /// sheet (SL-44).
+  onAssign?: (rec: TindeqRecordingMeta) => void;
 }
 
 const H = 80;
@@ -137,7 +140,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
   );
 }
 
-export default function RecordingRow({ rec, onDelete }: Props) {
+export default function RecordingRow({ rec, onDelete, onAssign }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [samples, setSamples] = useState<TindeqSample[] | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -219,6 +222,30 @@ export default function RecordingRow({ rec, onDelete }: Props) {
           <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s · avg{" "}
             {rec.avgKg.toFixed(1)} kg
+            {onAssign && rec.groupId === null && (
+              <>
+                {" · "}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAssign(rec);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    fontFamily: "inherit",
+                    fontSize: 11,
+                    color: "var(--info)",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                  }}
+                >
+                  assign to session
+                </button>
+              </>
+            )}
           </div>
           {rec.note && (
             <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 3 }}>

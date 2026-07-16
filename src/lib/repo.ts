@@ -431,6 +431,23 @@ export async function insertRecording(
   return toRecording(data);
 }
 
+/// Assign an ungrouped recording to an existing gauge-session group (SL-44).
+/// Grouping-only: the linked session's note/duration/RPE are left as logged.
+export async function updateRecordingGroup(
+  id: string,
+  groupId: string,
+): Promise<TindeqRecordingMeta> {
+  const data = unwrap<RecordingRow>(
+    await supabase
+      .from("tindeq_recordings")
+      .update({ group_id: groupId })
+      .eq("id", id)
+      .select(RECORDING_COLS)
+      .single(),
+  );
+  return toRecording(data);
+}
+
 /// Deletes the auth user; every table cascades from auth.users, so all data
 /// goes with it. Required by App Store guideline 5.1.1(v).
 export async function deleteAccount(): Promise<void> {
