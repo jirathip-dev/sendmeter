@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { SESSION_TYPES } from "../constants";
 import type {
   PhoneWorkoutAction,
@@ -10,6 +10,8 @@ interface Props {
   dispatch: (action: PhoneWorkoutAction) => void;
   saving: boolean;
   onSave: (input: { type: string; typeLabel: string; rpe: number }) => void;
+  /// Open the full-screen immersive view (fresh start, or resume from the bar).
+  onOpen: () => void;
 }
 
 // Loggable types for a phone workout — real training types only.
@@ -17,34 +19,19 @@ const TYPE_OPTIONS = SESSION_TYPES.filter(
   (t) => t.id !== "auto" && t.id !== "tindeq",
 );
 
-function fmtElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return h > 0
-    ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
-    : `${m}:${String(sec).padStart(2, "0")}`;
-}
-
-/// Phone-only workout logging (SL-41): start → tap Start boulder / Done
-/// (rest) per attempt → end → pick type + RPE → save. No HR without the
-/// watch — attempts store timing only.
+/// Phone-only workout logging (SL-41): Start opens the immersive full-screen
+/// timer (PhoneWorkoutFullscreen). This card shows the idle prompt, a
+/// minimized "resume" bar while a workout runs, and the log/confirm form.
 export default function PhoneWorkoutCard({
   state,
   dispatch,
   saving,
   onSave,
+  onOpen,
 }: Props) {
   const [type, setType] = useState("gym");
   const [rpe, setRpe] = useState(6);
-  const [now, setNow] = useState(() => Date.now());
-  const running = state.phase === "running";
-  useEffect(() => {
-    if (!running) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [running]);
+  const onResume = onOpen;
 
   if (state.phase === "idle") {
     return (
@@ -58,9 +45,10 @@ export default function PhoneWorkoutCard({
         </div>
         <button
           className="btn-primary"
-          onClick={() =>
-            dispatch({ type: "start", at: new Date().toISOString() })
-          }
+          onClick={() => {
+            onOpen();
+            dispatch({ type: "start", at: new Date().toISOString() });
+          }}
         >
           Start Workout
         </button>
@@ -69,94 +57,40 @@ export default function PhoneWorkoutCard({
   }
 
   if (state.phase === "running") {
+    // The immersive full-screen view owns the running workout; this is just
+    // the "minimized" resume bar shown behind it in the tab.
     const climbing = state.climbingSince !== null;
-    const elapsed = now - new Date(state.startedAt).getTime();
-    const attemptElapsed = climbing
-      ? now - new Date(state.climbingSince!).getTime()
-      : 0;
     return (
-      <div
-        className="card"
+      <button
+        onClick={onResume}
         style={{
+          width: "100%",
+          textAlign: "left",
+          cursor: "pointer",
           marginBottom: 12,
+          background: "var(--canvas)",
           border: `1px solid color-mix(in srgb, ${climbing ? "var(--success)" : "var(--primary)"} 45%, transparent)`,
+          borderRadius: 12,
+          padding: 16,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          fontFamily: "inherit",
         }}
       >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 10,
-          }}
-        >
-          <span className="label-eyebrow">Phone workout</span>
-          <span
-            className="tag"
-            style={{
-              background: climbing
-                ? "color-mix(in srgb, var(--success) 16%, transparent)"
-                : "transparent",
-              color: climbing ? "var(--success)" : "var(--ink-muted)",
-              border: `1px solid ${climbing ? "var(--success)" : "var(--border)"}`,
-            }}
-          >
-            {climbing ? "CLIMBING" : "RESTING"}
-          </span>
+        <div>
+          <div className="label-eyebrow" style={{ marginBottom: 4 }}>
+            Workout in progress
+          </div>
+          <div style={{ fontSize: 13, color: "var(--ink-muted)" }}>
+            {state.attempts.length} boulder{state.attempts.length === 1 ? "" : "s"} ·{" "}
+            {climbing ? "climbing" : "resting"}
+          </div>
         </div>
-
-        <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
-          <span
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontWeight: 800,
-              fontSize: 32,
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {fmtElapsed(elapsed)}
-          </span>
-          <span style={{ fontSize: 13, color: "var(--ink-muted)" }}>
-            {state.attempts.length} boulder
-            {state.attempts.length === 1 ? "" : "s"}
-            {climbing && (
-              <span style={{ color: "var(--success)" }}>
-                {" "}
-                · on the wall {fmtElapsed(attemptElapsed)}
-              </span>
-            )}
-          </span>
-        </div>
-
-        {climbing ? (
-          <button
-            className="btn-primary"
-            style={{ background: "var(--success)" }}
-            onClick={() =>
-              dispatch({ type: "endBoulder", at: new Date().toISOString() })
-            }
-          >
-            Done — resting
-          </button>
-        ) : (
-          <button
-            className="btn-primary"
-            onClick={() =>
-              dispatch({ type: "beginBoulder", at: new Date().toISOString() })
-            }
-          >
-            Start boulder
-          </button>
-        )}
-        <div style={{ marginTop: 8 }}>
-          <button
-            className="btn-ghost"
-            onClick={() => dispatch({ type: "end", at: new Date().toISOString() })}
-          >
-            End Workout
-          </button>
-        </div>
-      </div>
+        <span style={{ color: climbing ? "var(--success)" : "var(--primary)", fontWeight: 700, fontSize: 13 }}>
+          Resume ›
+        </span>
+      </button>
     );
   }
 

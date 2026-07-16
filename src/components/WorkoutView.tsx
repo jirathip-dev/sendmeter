@@ -10,6 +10,7 @@ import { fetchWorkouts, insertPhoneWorkout } from "../lib/repo";
 import type { PhaseId, WorkoutListItem } from "../types";
 import LiveWorkoutCard from "./LiveWorkoutCard";
 import PhoneWorkoutCard from "./PhoneWorkoutCard";
+import PhoneWorkoutFullscreen from "./PhoneWorkoutFullscreen";
 import WorkoutRow from "./WorkoutRow";
 
 interface Props {
@@ -26,6 +27,11 @@ export default function WorkoutView({ userId, currentPhase }: Props) {
   const [phone, dispatch] = usePhoneWorkout();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A running phone workout takes over full-screen; "minimize" drops back to
+  // a resume bar so the rest of the tab is reachable. Defaults to minimized so
+  // a workout resumed from localStorage on load doesn't hijack the screen —
+  // the Start/Resume buttons open it.
+  const [minimized, setMinimized] = useState(true);
 
   const workouts = useCancellableFetch<WorkoutListItem[]>(
     () => fetchWorkouts(30),
@@ -81,6 +87,17 @@ export default function WorkoutView({ userId, currentPhase }: Props) {
           dispatch={dispatch}
           saving={saving}
           onSave={(meta) => void savePhoneWorkout(meta)}
+          onOpen={() => setMinimized(false)}
+        />
+      )}
+
+      {/* Immersive full-screen timer (overlays everything) while running and
+          not minimized. */}
+      {!live && phone.phase === "running" && !minimized && (
+        <PhoneWorkoutFullscreen
+          state={phone}
+          dispatch={dispatch}
+          onMinimize={() => setMinimized(true)}
         />
       )}
 
