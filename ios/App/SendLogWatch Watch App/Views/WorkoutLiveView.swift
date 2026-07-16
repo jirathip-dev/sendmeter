@@ -50,6 +50,15 @@ struct WorkoutLiveView: View {
                         .font(.title3).monospacedDigit()
                 }
 
+                // Manual boulder logging alongside auto-detection: tap when
+                // you get on the wall, tap again when you drop off. Auto
+                // detection is suspended while a manual attempt is open.
+                Button(workout.manualClimbing ? "Stop" : "Boulder") {
+                    workout.toggleManualAttempt()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(workout.manualClimbing ? .orange : .green)
+
                 // Rest timer between boulders, right under the header so it's
                 // reachable the instant you drop off the wall — no scrolling.
                 // It never touches the workout clock above.

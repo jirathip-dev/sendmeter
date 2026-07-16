@@ -9,6 +9,11 @@ struct MotionSample {
     let hr: Double?            // bpm, may lag
 }
 
+enum AttemptSource: String, Codable {
+    case auto    // altimeter/motion state machine
+    case manual  // logged via the Boulder/Stop button
+}
+
 struct Attempt {
     let startedAt: Date
     let durationS: Double
@@ -17,9 +22,11 @@ struct Attempt {
     let peakHR: Double?
     let motionIntensity: Double
     let effortScore: Double
+    let source: AttemptSource
 }
 
 struct WorkoutSummary {
+    let workoutId: UUID    // generated at start; matches live_workouts + the final row
     let startedAt: Date
     let endedAt: Date
     let avgHR: Double?
@@ -50,12 +57,14 @@ nonisolated struct SessionInsert: Codable {
     var note: String
     var phase: String
     var groupId: UUID?         // Tindeq gauge session link
+    var workoutSource: String? // immutable provenance badge (SL-43): "watch" for auto workouts, nil otherwise
 
     enum CodingKeys: String, CodingKey {
         case id, date, type, rpe, note, phase
         case typeLabel = "type_label"
         case durationMin = "duration_min"
         case groupId = "group_id"
+        case workoutSource = "workout_source"
     }
 }
 
@@ -118,9 +127,10 @@ nonisolated struct ClimbAttemptInsert: Codable {
     var peakHr: Double?
     var motionIntensity: Double
     var effortScore: Double
+    var source: String         // "auto" | "manual"
 
     enum CodingKeys: String, CodingKey {
-        case id
+        case id, source
         case workoutId = "workout_id"
         case startedAt = "started_at"
         case durationS = "duration_s"
@@ -176,6 +186,32 @@ nonisolated struct HealthMetricRow: Codable {
     var date: String
     var readiness: Int?
     var zone: String?
+}
+
+/// Live workout heartbeat (SL-41). One row per user (PK user_id), upserted
+/// every ~5s while a workout runs so the web Workout tab can mirror it.
+nonisolated struct LiveWorkoutUpsert: Codable {
+    var userId: UUID
+    var workoutId: UUID
+    var status: String         // "live" | "ended"
+    var startedAt: Date
+    var hr: Double?
+    var attemptCount: Int
+    var activeKcal: Double?
+    var elevationGainM: Double?
+    var climbing: Bool
+    var updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case status, hr, climbing
+        case userId = "user_id"
+        case workoutId = "workout_id"
+        case startedAt = "started_at"
+        case attemptCount = "attempt_count"
+        case activeKcal = "active_kcal"
+        case elevationGainM = "elevation_gain_m"
+        case updatedAt = "updated_at"
+    }
 }
 
 /// One confirmed workout = three idempotent upserts, bundled for the offline queue.

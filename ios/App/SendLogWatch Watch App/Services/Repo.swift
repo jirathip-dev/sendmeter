@@ -64,7 +64,8 @@ enum Repo {
             rpe: rpe,
             note: note,
             phase: phase,
-            groupId: groupId
+            groupId: groupId,
+            workoutSource: nil
         )
         try await client.from("sessions").insert(session).execute()
     }
@@ -123,7 +124,9 @@ enum Repo {
         tunables: Tunables
     ) -> WorkoutSaveBundle {
         let sessionId = UUID()
-        let workoutId = UUID()
+        // Reuse the id generated at workout start so the live_workouts row and
+        // the final climb_workouts row share one id (web correlation).
+        let workoutId = summary.workoutId
         let durationS = summary.endedAt.timeIntervalSince(summary.startedAt)
         let minutes = max(1, min(600, Int((durationS / 60).rounded())))
         let meanEffort = summary.attempts.isEmpty
@@ -146,7 +149,8 @@ enum Repo {
             rpe: rpe,
             note: noteParts.joined(separator: " · "),
             phase: phase,
-            groupId: nil
+            groupId: nil,
+            workoutSource: "watch"
         )
         let workout = ClimbWorkoutInsert(
             id: workoutId,
@@ -175,7 +179,8 @@ enum Repo {
                 avgHr: a.avgHR,
                 peakHr: a.peakHR,
                 motionIntensity: a.motionIntensity,
-                effortScore: a.effortScore
+                effortScore: a.effortScore,
+                source: a.source.rawValue
             )
         }
         return WorkoutSaveBundle(session: session, workout: workout, attempts: attempts)

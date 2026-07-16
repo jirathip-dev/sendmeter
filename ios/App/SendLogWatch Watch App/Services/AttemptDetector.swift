@@ -6,13 +6,21 @@ final class AttemptDetector {
     private enum Phase {
         case rest
         case climbing(startTick: Int, startDate: Date, baselineAtStart: Double, maxAlt: Double)
+        // A manually-logged boulder (Boulder/Stop button). Auto detection is
+        // suspended while one is open, so manual and auto never overlap.
+        case manual(startTick: Int, startDate: Date, baselineAtStart: Double, maxAlt: Double)
     }
+
+    private typealias RawAttempt = (
+        startTick: Int, endTick: Int, startDate: Date,
+        baselineAtStart: Double, maxAlt: Double, source: AttemptSource
+    )
 
     private let t: Tunables
     private var phase: Phase = .rest
     private var baseline: Double?
     private var ticks: [MotionSample] = []
-    private var rawAttempts: [(startTick: Int, endTick: Int, startDate: Date, baselineAtStart: Double, maxAlt: Double)] = []
+    private var rawAttempts: [RawAttempt] = []
     private var workoutStart: Date?
 
     init(tunables: Tunables) {
@@ -22,6 +30,12 @@ final class AttemptDetector {
     /// Live count for the workout UI (post-processing applied incrementally).
     var liveAttemptCount: Int {
         processedAttempts().count
+    }
+
+    /// True while a manual boulder is open — drives the Boulder/Stop toggle.
+    var isManualAttemptOpen: Bool {
+        if case .manual = phase { return true }
+        return false
     }
 
     func ingest(_ sample: MotionSample, at date: Date) {
@@ -56,18 +70,49 @@ final class AttemptDetector {
             if hasReturnedToGround(at: i, baseline: baselineAtStart)
                 || hasGoneQuiet(at: i)
                 || duration > t.maxAttemptS {
-                rawAttempts.append((startTick, i, startDate, baselineAtStart, maxAlt))
+                rawAttempts.append((startTick, i, startDate, baselineAtStart, maxAlt, .auto))
                 phase = .rest
             }
+
+        case .manual(let startTick, let startDate, let baselineAtStart, var maxAlt):
+            // No auto start/end predicates while manual — just track maxAlt for
+            // the elevation gain. Ends only via endManualAttempt().
+            maxAlt = max(maxAlt, sample.altitude)
+            phase = .manual(startTick: startTick, startDate: startDate, baselineAtStart: baselineAtStart, maxAlt: maxAlt)
         }
     }
 
-    func finalize() -> [Attempt] {
-        // Flush an open attempt
-        if case .climbing(let startTick, let startDate, let baselineAtStart, let maxAlt) = phase {
-            rawAttempts.append((startTick, ticks.count - 1, startDate, baselineAtStart, maxAlt))
-            phase = .rest
+    /// Open a manual boulder attempt. Suspends auto detection; if an auto
+    /// attempt was already open it's closed and kept first (no overlap).
+    func beginManualAttempt(at date: Date) {
+        if workoutStart == nil { workoutStart = date }
+        if case .climbing(let s, let sd, let b, let m) = phase {
+            rawAttempts.append((s, max(s, ticks.count - 1), sd, b, m, .auto))
         }
+        let i = max(0, ticks.count - 1)
+        let base = baseline ?? ticks.last?.altitude ?? 0
+        let alt = ticks.last?.altitude ?? base
+        phase = .manual(startTick: i, startDate: date, baselineAtStart: base, maxAlt: alt)
+    }
+
+    /// Close the open manual attempt (Stop). No-op if none is open.
+    func endManualAttempt(at date: Date) {
+        guard case .manual(let s, let sd, let b, let m) = phase else { return }
+        rawAttempts.append((s, ticks.count - 1, sd, b, m, .manual))
+        phase = .rest
+    }
+
+    func finalize() -> [Attempt] {
+        // Flush an open attempt (auto or manual)
+        switch phase {
+        case .climbing(let s, let sd, let b, let m):
+            rawAttempts.append((s, ticks.count - 1, sd, b, m, .auto))
+        case .manual(let s, let sd, let b, let m):
+            rawAttempts.append((s, ticks.count - 1, sd, b, m, .manual))
+        case .rest:
+            break
+        }
+        phase = .rest
         return processedAttempts()
     }
 
@@ -75,20 +120,30 @@ final class AttemptDetector {
 
     private func processedAttempts() -> [Attempt] {
         var open = rawAttempts
-        if case .climbing(let startTick, let startDate, let baselineAtStart, let maxAlt) = phase {
-            open.append((startTick, ticks.count - 1, startDate, baselineAtStart, maxAlt))
+        switch phase {
+        case .climbing(let s, let sd, let b, let m):
+            open.append((s, ticks.count - 1, sd, b, m, .auto))
+        case .manual(let s, let sd, let b, let m):
+            open.append((s, ticks.count - 1, sd, b, m, .manual))
+        case .rest:
+            break
         }
         guard !open.isEmpty else { return [] }
 
-        // Merge attempts separated by < mergeGapS
-        var merged: [(startTick: Int, endTick: Int, startDate: Date, baselineAtStart: Double, maxAlt: Double)] = []
+        // Merge attempts separated by < mergeGapS. Only same-source, adjacent
+        // attempts merge — a manual attempt never absorbs an auto one (auto is
+        // suspended during manual, so they can't actually be adjacent, but the
+        // guard keeps the sources honest).
+        var merged: [RawAttempt] = []
         for a in open {
             if let last = merged.last,
+               last.source == a.source,
                Double(a.startTick - last.endTick) / t.tickHz < t.mergeGapS {
                 merged[merged.count - 1] = (
                     last.startTick, a.endTick, last.startDate,
                     min(last.baselineAtStart, a.baselineAtStart),
-                    max(last.maxAlt, a.maxAlt)
+                    max(last.maxAlt, a.maxAlt),
+                    last.source
                 )
             } else {
                 merged.append(a)
@@ -98,7 +153,11 @@ final class AttemptDetector {
         return merged.compactMap { a in
             let duration = Double(a.endTick - a.startTick) / t.tickHz
             let gain = a.maxAlt - a.baselineAtStart
-            guard duration >= t.minAttemptS, gain >= t.minGainM else { return nil }
+            // Manual attempts are exempt from the min duration/gain filters —
+            // the user explicitly logged them (e.g. a low-angle traverse).
+            if a.source == .auto {
+                guard duration >= t.minAttemptS, gain >= t.minGainM else { return nil }
+            }
 
             // HR window extended past the end to absorb sensor lag
             let hrEnd = min(ticks.count - 1, a.endTick + Int(t.hrLagS * t.tickHz))
@@ -116,7 +175,8 @@ final class AttemptDetector {
                 avgHR: avgHR,
                 peakHR: peakHR,
                 motionIntensity: motionIntensity,
-                effortScore: effortScore(durationS: duration, gainM: gain, peakHR: peakHR)
+                effortScore: effortScore(durationS: duration, gainM: gain, peakHR: peakHR),
+                source: a.source
             )
         }
     }

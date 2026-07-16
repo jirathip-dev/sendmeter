@@ -14,6 +14,8 @@ final class WorkoutManager: NSObject {
     var elapsed: TimeInterval = 0
     var relativeAltitude: Double = 0
     var liveAttempts = 0
+    /// True while a manual boulder is open (Boulder/Stop button).
+    var manualClimbing = false
     var errorMsg: String?
 
     private let tunables: Tunables
@@ -29,6 +31,11 @@ final class WorkoutManager: NSObject {
     private var maxAltitudeSeen: Double = 0
     private var minAltitudeSeen: Double = 0
     private var rawTrace: [[Double?]] = []
+    // Generated at start so the live_workouts heartbeat and the final
+    // climb_workouts row share one id (web correlation).
+    private var workoutId = UUID()
+    private var liveSync: LiveWorkoutSync?
+    private var fusionTick = 0
 
     init(tunables: Tunables = .default) {
         self.tunables = tunables
@@ -56,8 +63,11 @@ final class WorkoutManager: NSObject {
         elapsed = 0
         relativeAltitude = 0
         liveAttempts = 0
+        manualClimbing = false
         maxAltitudeSeen = 0
         minAltitudeSeen = 0
+        fusionTick = 0
+        workoutId = UUID()
 
         do {
             try await requestAuthorization()
@@ -79,6 +89,7 @@ final class WorkoutManager: NSObject {
             self.session = session
             self.builder = builder
             self.startDate = start
+            self.liveSync = LiveWorkoutSync(workoutId: workoutId, startedAt: start)
 
             startAltimeter()
             startMotion()
@@ -88,6 +99,19 @@ final class WorkoutManager: NSObject {
         } catch {
             errorMsg = error.localizedDescription
         }
+    }
+
+    /// Toggle a manual boulder attempt (Boulder ⇄ Stop). Auto detection is
+    /// suspended while one is open.
+    @MainActor
+    func toggleManualAttempt() {
+        if detector.isManualAttemptOpen {
+            detector.endManualAttempt(at: Date())
+        } else {
+            detector.beginManualAttempt(at: Date())
+        }
+        manualClimbing = detector.isManualAttemptOpen
+        liveAttempts = detector.liveAttemptCount
     }
 
     /// Refit the ridge RPE model in the background if it's stale. Fitting at
@@ -146,6 +170,11 @@ final class WorkoutManager: NSObject {
             .sumQuantity()?
             .doubleValue(for: .kilocalorie())
 
+        // Mark the live row ended — this runs before the confirm screen, so it
+        // covers both Save and Discard (no separate Discard hook needed).
+        await liveSync?.markEnded()
+        liveSync = nil
+
         self.session = nil
         self.builder = nil
         self.startDate = nil
@@ -171,6 +200,7 @@ final class WorkoutManager: NSObject {
         }
 
         return WorkoutSummary(
+            workoutId: workoutId,
             startedAt: startDate,
             endedAt: endDate,
             avgHR: avgHR,
@@ -234,6 +264,17 @@ final class WorkoutManager: NSObject {
 
             if self.tunables.keepRawTrace {
                 self.rawTrace.append([t.rounded(), (alt * 100).rounded() / 100, (rms * 1000).rounded() / 1000, self.heartRate])
+            }
+
+            // Live heartbeat every 5th tick (~5s) — best-effort, off the timer.
+            self.fusionTick += 1
+            if self.fusionTick % 5 == 0, let sync = self.liveSync {
+                let hr = self.heartRate
+                let count = self.liveAttempts
+                let kcal = self.activeKcal
+                let gain = max(0, self.maxAltitudeSeen - self.minAltitudeSeen)
+                let climbing = self.detector.isManualAttemptOpen
+                Task { await sync.beat(hr: hr, attemptCount: count, activeKcal: kcal, elevationGainM: gain, climbing: climbing) }
             }
         }
     }

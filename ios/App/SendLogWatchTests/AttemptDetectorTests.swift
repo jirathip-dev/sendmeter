@@ -77,6 +77,67 @@ final class AttemptDetectorTests: XCTestCase {
         XCTAssertEqual(run(trace).count, 0)
     }
 
+    // MARK: Manual attempts (Boulder/Stop button)
+
+    /// A manually-logged boulder is recorded with source .manual and real HR
+    /// metrics, even with little altitude gain (exempt from the auto filters).
+    func testManualAttemptLogged() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<5 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        d.beginManualAttempt(at: start.addingTimeInterval(5))
+        XCTAssertTrue(d.isManualAttemptOpen)
+        for i in 5..<15 { // low-angle traverse: barely any altitude change
+            d.ingest(MotionSample(t: Double(i), altitude: 0.3, motionRMS: 0.2, hr: 150), at: start.addingTimeInterval(Double(i)))
+        }
+        d.endManualAttempt(at: start.addingTimeInterval(15))
+        XCTAssertFalse(d.isManualAttemptOpen)
+        let attempts = d.finalize()
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertEqual(attempts[0].source, .manual)
+        XCTAssertNotNil(attempts[0].peakHR)
+    }
+
+    /// While a manual attempt is open, a big altitude rise does NOT spawn a
+    /// separate auto attempt — auto detection is suspended.
+    func testManualSuppressesAuto() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<5 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        d.beginManualAttempt(at: start.addingTimeInterval(5))
+        for i in 5..<20 { // a rise that would normally auto-trigger
+            d.ingest(MotionSample(t: Double(i), altitude: Double(i - 5) * 0.5, motionRMS: 0.2, hr: 150), at: start.addingTimeInterval(Double(i)))
+        }
+        d.endManualAttempt(at: start.addingTimeInterval(20))
+        let attempts = d.finalize()
+        XCTAssertEqual(attempts.count, 1, "manual window must not also produce an auto attempt")
+        XCTAssertEqual(attempts[0].source, .manual)
+    }
+
+    /// Opening a manual attempt while an auto attempt is in progress closes
+    /// and keeps the auto one first (both survive, no overlap).
+    func testManualClosesOpenAuto() {
+        let d = AttemptDetector(tunables: .default)
+        var t: [(Double, Double, Double?)] = []
+        t += Array(repeating: (0.0, 0.02, 80.0), count: 30)
+        for i in 0..<12 { t.append((Double(i) * 0.25, 0.15, 120)) } // auto climb to +3m
+        t += Array(repeating: (3.0, 0.12, 130.0), count: 10)         // still up when we tap
+        for (i, s) in t.enumerated() {
+            d.ingest(MotionSample(t: Double(i), altitude: s.0, motionRMS: s.1, hr: s.2), at: start.addingTimeInterval(Double(i)))
+        }
+        d.beginManualAttempt(at: start.addingTimeInterval(Double(t.count)))
+        for i in t.count..<(t.count + 10) {
+            d.ingest(MotionSample(t: Double(i), altitude: 3.0, motionRMS: 0.2, hr: 150), at: start.addingTimeInterval(Double(i)))
+        }
+        d.endManualAttempt(at: start.addingTimeInterval(Double(t.count + 10)))
+        let attempts = d.finalize()
+        XCTAssertEqual(attempts.count, 2)
+        XCTAssertEqual(attempts.filter { $0.source == .auto }.count, 1)
+        XCTAssertEqual(attempts.filter { $0.source == .manual }.count, 1)
+    }
+
     func testPredictRPEBounds() {
         let rpe = AttemptDetector.predictRPE(attempts: [], avgHR: nil, durationS: 3600, tunables: .default)
         XCTAssertGreaterThanOrEqual(rpe, 1)
@@ -84,7 +145,7 @@ final class AttemptDetectorTests: XCTestCase {
 
         let hard = AttemptDetector.predictRPE(
             attempts: (0..<30).map { _ in
-                Attempt(startedAt: start, durationS: 60, elevationGainM: 4, avgHR: 165, peakHR: 185, motionIntensity: 0.2, effortScore: 9)
+                Attempt(startedAt: start, durationS: 60, elevationGainM: 4, avgHR: 165, peakHR: 185, motionIntensity: 0.2, effortScore: 9, source: .auto)
             },
             avgHR: 165,
             durationS: 3600,
