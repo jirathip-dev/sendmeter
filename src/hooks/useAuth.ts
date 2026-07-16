@@ -44,8 +44,15 @@ export function useAuth() {
     // right when the user is likely to act (e.g. save a recording on the watch).
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
+      // getSession() auto-refreshes a merely-expired session; a null result
+      // means the stored session is gone/revoked (refresh-token rotation can
+      // revoke the family across instances). Reflect that so the UI drops to
+      // the login screen instead of a zombie authed state — auth-js removes an
+      // invalid stored session *without* emitting SIGNED_OUT, so nothing else
+      // would catch it.
       void supabase.auth.getSession().then(({ data }) => {
-        if (data.session) onSession(data.session);
+        setSession(data.session);
+        onSession(data.session);
       });
     };
     document.addEventListener("visibilitychange", onVisible);

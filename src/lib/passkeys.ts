@@ -8,9 +8,23 @@ import { supabase } from "./supabase";
 export const passkeysSupported =
   typeof window !== "undefined" && !!window.PublicKeyCredential;
 
+/// Ensure there's a live session before an authenticated passkey call.
+/// getSession() auto-refreshes a merely-expired session; a null result means
+/// the stored session is gone/revoked, so registerPasskey/list would fail with
+/// the opaque "Auth session missing!" — surface an actionable message instead.
+async function requireSession() {
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) {
+    throw new Error(
+      "Your session has expired. Please sign out and sign in again, then add a passkey.",
+    );
+  }
+}
+
 /// Enroll a passkey for the signed-in user (runs the full WebAuthn create
 /// ceremony via Supabase). Call from Account settings.
 export async function addPasskey(): Promise<void> {
+  await requireSession();
   const { error } = await supabase.auth.registerPasskey();
   if (error) throw error;
 }
