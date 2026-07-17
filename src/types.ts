@@ -155,6 +155,24 @@ export interface TindeqPreset {
   alternateSides: boolean;
 }
 
+/// One timed step of a guided routine. (A type alias, not an interface, so it
+/// stays assignable to the Supabase Json column type.)
+export type RoutineStep = {
+  label: string;
+  /// Optional coaching hint shown under the step name.
+  detail?: string;
+  /// Duration in seconds.
+  s: number;
+};
+
+/// User-defined guided routine (Workout tab) — an ordered list of timed steps
+/// (warm-up, conditioning circuit, mobility flow, …). Mirrors TindeqPreset.
+export interface RoutinePreset {
+  id: string;
+  name: string;
+  steps: RoutineStep[];
+}
+
 export interface DeletedTindeqRecording extends TindeqRecordingMeta {
   deletedAt: string;
 }
@@ -229,5 +247,10 @@ export interface LiveWorkout {
   activeKcal: number | null;
   elevationGainM: number | null;
   climbing: boolean;
+  /// Phase timestamps (absolute, so the mirror renders exact timers even
+  /// though heartbeats are ~5s apart). Null on rows from old watch builds.
+  climbingSince: string | null;
+  restStartedAt: string | null;
+  restTargetS: number | null;
   updatedAt: string;
 }

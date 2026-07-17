@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import {
   useRealtimeBump,
@@ -12,9 +12,7 @@ import {
 } from "../lib/repo";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
 import RecordingRow from "./RecordingRow";
-import RpeScatterCard from "./RpeScatterCard";
 import SessionRow from "./SessionRow";
-import Sheet from "./Sheet";
 
 interface Props {
   sessions: Session[];
@@ -23,18 +21,6 @@ interface Props {
   onEdit: (s: Session) => void;
   onOpenTrash: () => void;
 }
-
-const HEADER_BTN_STYLE: CSSProperties = {
-  background: "none",
-  border: "none",
-  color: "var(--ink-faint)",
-  fontSize: 9,
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
-  cursor: "pointer",
-  padding: 4,
-  fontFamily: "Inter, sans-serif",
-};
 
 type TimelineItem =
   | { kind: "session"; key: string; sortKey: string; s: Session }
@@ -50,7 +36,6 @@ export default function HistoryView({
   onEdit,
   onOpenTrash,
 }: Props) {
-  const [showRpeModel, setShowRpeModel] = useState(false);
   const realtimeVersion = useRealtimeVersion();
   const bumpRealtime = useRealtimeBump();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
@@ -149,14 +134,9 @@ export default function HistoryView({
         }}
       >
         <div className="section-head">HISTORY</div>
-        <div style={{ display: "flex", gap: 4 }}>
-          <button style={HEADER_BTN_STYLE} onClick={() => setShowRpeModel(true)}>
-            RPE Model
-          </button>
-          <button style={HEADER_BTN_STYLE} onClick={onOpenTrash}>
-            Trash
-          </button>
-        </div>
+        <button className="header-btn" onClick={onOpenTrash}>
+          Trash
+        </button>
       </div>
       <div className="section-sub">
         {sessions.length} sessions · {total.toLocaleString()} AU total
@@ -217,26 +197,6 @@ export default function HistoryView({
         </div>
       )}
 
-      {showRpeModel && (
-        <Sheet onClose={() => setShowRpeModel(false)}>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: 20,
-              fontWeight: 800,
-              marginBottom: 12,
-            }}
-          >
-            RPE Model
-          </div>
-          <RpeScatterCard />
-          <div style={{ marginTop: 12 }}>
-            <button className="btn-ghost" onClick={() => setShowRpeModel(false)}>
-              Close
-            </button>
-          </div>
-        </Sheet>
-      )}
     </div>
   );
 }

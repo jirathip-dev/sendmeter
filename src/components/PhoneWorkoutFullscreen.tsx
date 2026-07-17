@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import type { PhoneWorkoutAction, PhoneWorkoutState } from "../lib/phoneWorkout";
 
 type Running = Extract<PhoneWorkoutState, { phase: "running" }>;
@@ -96,12 +97,10 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
   const R = 54;
   const C = 2 * Math.PI * R;
 
-  return (
+  return createPortal(
     <div
+      className="fullscreen-overlay"
       style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 900,
         // Whole screen takes the phase color, Timer-Plus style.
         background: `color-mix(in srgb, ${accent} 12%, var(--canvas))`,
         transition: "background 0.3s",
@@ -119,27 +118,23 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         boxSizing: "border-box",
       }}
     >
-      {/* Top bar */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <button
-          onClick={onMinimize}
-          aria-label="Minimize"
-          style={{ background: "none", border: "none", color: "var(--ink-muted)", cursor: "pointer", padding: 8 }}
-        >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* Top bar — glass chip (minimize) · centered timer · glass pill (End) */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <button onClick={onMinimize} aria-label="Minimize" className="glass-chip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 9l6 6 6-6" />
           </svg>
         </button>
         <div style={{ textAlign: "center" }}>
           <div className="label-eyebrow">Workout</div>
-          <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, fontVariantNumeric: "tabular-nums", fontSize: 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-0.02em" }}>
             {fmt(totalElapsed)}
           </div>
         </div>
         <button
-          className="btn-ghost btn-inline"
+          className="glass-pill"
           onClick={() => dispatch({ type: "end", at: new Date().toISOString() })}
-          style={{ color: "var(--danger)", borderColor: "rgba(255,69,58,0.35)" }}
+          style={{ "--pill-tint": "var(--danger)" } as CSSProperties}
         >
           End
         </button>
@@ -283,6 +278,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
 
       </div>
     </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

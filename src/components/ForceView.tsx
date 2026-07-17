@@ -322,13 +322,16 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
 
   // Per-rep recorder: as the measurement clock passes each hold segment,
   // slice it out of the sample buffer and save it as its own recording.
+  // Reset happens on the measuring rising edge (not on measuring→false) so an
+  // involuntary disconnect can still flush the un-saved holds without
+  // double-saving the ones this effect already wrote.
   const savedThroughRef = useRef(0);
+  const wasMeasuringRef = useRef(false);
   const measuring = tindeq.status === "measuring";
   useEffect(() => {
-    if (!measuring || !timeline) {
-      savedThroughRef.current = 0;
-      return;
-    }
+    if (measuring && !wasMeasuringRef.current) savedThroughRef.current = 0;
+    wasMeasuringRef.current = measuring;
+    if (!measuring || !timeline) return;
     const tS = tindeq.elapsedMs / 1000;
     let idx = timeline.findIndex((s) => tS < s.startS + s.durS);
     if (idx === -1) idx = timeline.length;
@@ -341,6 +344,22 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     // time); depending on it would re-run every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measuring, timeline, tindeq.elapsedMs]);
+
+  // Connection dropped mid-measurement (device died, walked out of range,
+  // phone locked): the samples survive in samplesRef, so run the exact same
+  // stop/save path a manual Stop would — the interrupted recording is saved
+  // instead of lost. Deferred to a task so no state writes happen
+  // synchronously inside the effect.
+  const handledInterruptionsRef = useRef(tindeq.interruptions);
+  useEffect(() => {
+    if (tindeq.interruptions === handledInterruptionsRef.current) return;
+    handledInterruptionsRef.current = tindeq.interruptions;
+    const t = setTimeout(() => void handleStop(), 0);
+    return () => clearTimeout(t);
+    // handleStop reads current state/refs at call time; depending on it
+    // would re-arm this effect every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tindeq.interruptions]);
 
   // Pop the gauge fullscreen the moment the Progressor connects (only on the
   // connecting→connected transition — a stop→connected change must not

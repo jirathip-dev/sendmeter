@@ -16,7 +16,24 @@ final class WorkoutManager: NSObject {
     var liveAttempts = 0
     /// True while a manual boulder is open (Boulder/Stop button).
     var manualClimbing = false
+    /// When the current manual boulder started (nil while resting).
+    var climbingSince: Date?
+    /// When the current rest began — workout start, or the last boulder's end.
+    /// The rest countdown starts automatically (phone-workout logic).
+    var restStartedAt: Date?
+    /// Rest countdown target in seconds — persisted, same chips as the phone.
+    var restTargetS: Int = WorkoutManager.loadRestTarget() {
+        didSet {
+            UserDefaults.standard.set(restTargetS, forKey: "restTargetS")
+            pushBeat() // phone mirror should see the new target promptly
+        }
+    }
     var errorMsg: String?
+
+    private static func loadRestTarget() -> Int {
+        let v = UserDefaults.standard.integer(forKey: "restTargetS")
+        return [60, 120, 180, 300].contains(v) ? v : 180
+    }
 
     private let tunables: Tunables
     private var detector: AttemptDetector
@@ -64,6 +81,8 @@ final class WorkoutManager: NSObject {
         relativeAltitude = 0
         liveAttempts = 0
         manualClimbing = false
+        climbingSince = nil
+        restStartedAt = nil
         maxAltitudeSeen = 0
         minAltitudeSeen = 0
         fusionTick = 0
@@ -90,6 +109,9 @@ final class WorkoutManager: NSObject {
             self.builder = builder
             self.startDate = start
             self.liveSync = LiveWorkoutSync(workoutId: workoutId, startedAt: start)
+            // Phone-workout logic: a workout begins RESTING — the countdown
+            // runs until the first boulder starts.
+            self.restStartedAt = start
 
             startAltimeter()
             startMotion()
@@ -102,16 +124,44 @@ final class WorkoutManager: NSObject {
     }
 
     /// Toggle a manual boulder attempt (Boulder ⇄ Stop). Auto detection is
-    /// suspended while one is open.
+    /// suspended while one is open. Stopping drops straight into the rest
+    /// countdown (phone-workout logic); both transitions beat immediately so
+    /// the phone mirror flips without waiting for the 5 s heartbeat.
     @MainActor
     func toggleManualAttempt() {
+        let now = Date()
         if detector.isManualAttemptOpen {
-            detector.endManualAttempt(at: Date())
+            detector.endManualAttempt(at: now)
+            climbingSince = nil
+            restStartedAt = now
         } else {
-            detector.beginManualAttempt(at: Date())
+            detector.beginManualAttempt(at: now)
+            climbingSince = now
+            restStartedAt = nil
         }
         manualClimbing = detector.isManualAttemptOpen
         liveAttempts = detector.liveAttemptCount
+        pushBeat()
+    }
+
+    /// Snapshot state and fire one best-effort live heartbeat.
+    private func pushBeat() {
+        guard let sync = liveSync else { return }
+        let hr = heartRate
+        let count = liveAttempts
+        let kcal = activeKcal
+        let gain = max(0, maxAltitudeSeen - minAltitudeSeen)
+        let climbing = detector.isManualAttemptOpen
+        let cs = climbingSince
+        let rs = restStartedAt
+        let rt = restTargetS
+        Task {
+            await sync.beat(
+                hr: hr, attemptCount: count, activeKcal: kcal,
+                elevationGainM: gain, climbing: climbing,
+                climbingSince: cs, restStartedAt: rs, restTargetS: rt
+            )
+        }
     }
 
     /// Refit the ridge RPE model in the background if it's stale. Fitting at
@@ -268,13 +318,8 @@ final class WorkoutManager: NSObject {
 
             // Live heartbeat every 5th tick (~5s) — best-effort, off the timer.
             self.fusionTick += 1
-            if self.fusionTick % 5 == 0, let sync = self.liveSync {
-                let hr = self.heartRate
-                let count = self.liveAttempts
-                let kcal = self.activeKcal
-                let gain = max(0, self.maxAltitudeSeen - self.minAltitudeSeen)
-                let climbing = self.detector.isManualAttemptOpen
-                Task { await sync.beat(hr: hr, attemptCount: count, activeKcal: kcal, elevationGainM: gain, climbing: climbing) }
+            if self.fusionTick % 5 == 0 {
+                self.pushBeat()
             }
         }
     }

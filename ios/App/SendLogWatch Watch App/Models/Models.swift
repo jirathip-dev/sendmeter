@@ -200,6 +200,11 @@ nonisolated struct LiveWorkoutUpsert: Codable {
     var activeKcal: Double?
     var elevationGainM: Double?
     var climbing: Bool
+    // Phase timestamps so the phone mirror can render exact timers:
+    // climbing → climbingSince set; resting → restStartedAt (+ restTargetS).
+    var climbingSince: Date?
+    var restStartedAt: Date?
+    var restTargetS: Int?
     var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
@@ -210,6 +215,9 @@ nonisolated struct LiveWorkoutUpsert: Codable {
         case attemptCount = "attempt_count"
         case activeKcal = "active_kcal"
         case elevationGainM = "elevation_gain_m"
+        case climbingSince = "climbing_since"
+        case restStartedAt = "rest_started_at"
+        case restTargetS = "rest_target_s"
         case updatedAt = "updated_at"
     }
 }

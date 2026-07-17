@@ -86,6 +86,9 @@ struct ForceGaugeView: View {
         }
         .task {
             recentTags = (try? await Repo.fetchRecentTindeqTags()) ?? []
+            // Pick-only tag: default to the most-recent exercise so Start
+            // works immediately (mirror of the web tab's default).
+            if tag.isEmpty, let first = recentTags.first { tag = first }
         }
         .onDisappear { tindeq.disconnect() }
         .sheet(isPresented: $showEndSheet) { endSessionSheet }
@@ -199,13 +202,17 @@ struct ForceGaugeView: View {
             }
         }
 
-        // Exercise setup (hidden while measuring to keep the gauge one-screen)
+        // Exercise setup (hidden while measuring to keep the gauge one-screen).
+        // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
+        // free text drifts from the app's tag set. New tags are created in the
+        // iPhone/web Force tab; the watch selects from what already exists.
         if tindeq.status == .connected {
-            TextField("Tag (e.g. FDP)", text: $tag)
-                .font(.footnote)
-            if !recentTags.isEmpty {
-                Picker("Recent", selection: $tag) {
-                    Text("—").tag("")
+            if recentTags.isEmpty {
+                Text("No exercise tags yet — record once in the iPhone app to create one.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Picker("Exercise", selection: $tag) {
                     ForEach(recentTags, id: \.self) { t in
                         Text(t).tag(t)
                     }

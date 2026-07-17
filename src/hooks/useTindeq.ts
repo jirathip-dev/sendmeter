@@ -60,6 +60,10 @@ export function useTindeq() {
   const [current, setCurrent] = useState(0);
   const [peak, setPeak] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
+  // Bumped when the connection drops MID-MEASUREMENT — the samples are still
+  // in samplesRef, and the owner (ForceView) must run its stop/save path so
+  // the interrupted recording isn't lost.
+  const [interruptions, setInterruptions] = useState(0);
 
   const deviceIdRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
@@ -146,9 +150,12 @@ export function useTindeq() {
       });
       await BleClient.connect(device.deviceId, () => {
         // keep samples so an interrupted recording can still be saved
+        const wasMeasuring = measuringRef.current;
         cleanupDevice();
         setStatus("idle");
         setErrorMsg("Device disconnected");
+        // Tell the owner to save the in-flight recording (samplesRef intact).
+        if (wasMeasuring) setInterruptions((n) => n + 1);
       });
       await BleClient.startNotifications(
         device.deviceId,
@@ -255,6 +262,7 @@ export function useTindeq() {
     current,
     peak,
     elapsedMs,
+    interruptions,
     samplesRef,
     connect,
     disconnect,

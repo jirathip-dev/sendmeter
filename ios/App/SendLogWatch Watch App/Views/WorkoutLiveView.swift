@@ -1,9 +1,13 @@
 import SwiftUI
+import WatchKit
 
 struct WorkoutLiveView: View {
     @State private var workout = WorkoutManager()
     @State private var summary: WorkoutSummary?
     @State private var ending = false
+    @State private var restAlarmTask: Task<Void, Never>?
+
+    private let restTargets = [60, 120, 180, 300]
 
     var body: some View {
         Group {
@@ -37,65 +41,142 @@ struct WorkoutLiveView: View {
         }
     }
 
+    // Same logic as the phone fullscreen: CLIMBING counts up from the boulder
+    // start; stopping drops straight into a RESTING countdown toward the
+    // persisted target. One screen, no scrolling — End lives in the toolbar.
     @ViewBuilder
     private var liveContent: some View {
-        ScrollView {
-            VStack(spacing: 6) {
-                HStack {
-                    Image(systemName: "heart.fill").foregroundStyle(.red)
-                    Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
-                        .font(.title2).monospacedDigit()
-                    Spacer()
-                    Text(timeString(workout.elapsed))
+        VStack(spacing: 4) {
+            HStack {
+                Image(systemName: "heart.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
+                    .font(.body).monospacedDigit()
+                Spacer()
+                Text(timeString(workout.elapsed))
+                    .font(.footnote).monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+
+            phaseTimer
+
+            Spacer(minLength: 0)
+
+            HStack {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("BOULDERS").font(.system(size: 9)).foregroundStyle(.secondary)
+                    Text("\(workout.liveAttempts)")
                         .font(.title3).monospacedDigit()
                 }
-
-                // Manual boulder logging alongside auto-detection: tap when
-                // you get on the wall, tap again when you drop off. Auto
-                // detection is suspended while a manual attempt is open.
-                Button(workout.manualClimbing ? "Stop" : "Boulder") {
-                    workout.toggleManualAttempt()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(workout.manualClimbing ? .orange : .green)
-
-                // Rest timer between boulders, right under the header so it's
-                // reachable the instant you drop off the wall — no scrolling.
-                // It never touches the workout clock above.
-                RestTimer()
-
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("BOULDERS").font(.system(size: 10)).foregroundStyle(.secondary)
-                        Text("\(workout.liveAttempts)")
-                            .font(.title2).monospacedDigit()
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing) {
-                        Text("Δ ALT").font(.system(size: 10)).foregroundStyle(.secondary)
-                        Text(String(format: "%+.1fm", workout.relativeAltitude))
-                            .font(.title3).monospacedDigit()
-                    }
-                }
-
-                HStack {
+                Spacer()
+                VStack(alignment: .trailing, spacing: 0) {
                     Text("\(Int(workout.activeKcal)) kcal")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Spacer()
+                        .font(.system(size: 11)).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Text(String(format: "%+.1fm", workout.relativeAltitude))
+                        .font(.system(size: 11)).monospacedDigit()
+                        .foregroundStyle(.secondary)
                 }
+            }
 
-                Button(ending ? "Ending…" : "End Workout") {
+            Button(workout.manualClimbing ? "Stop" : "Boulder") {
+                workout.toggleManualAttempt()
+                if workout.manualClimbing {
+                    cancelRestAlarm()
+                } else {
+                    scheduleRestAlarm()
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(workout.manualClimbing ? .orange : .green)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(ending ? "…" : "End") {
                     ending = true
+                    cancelRestAlarm()
                     Task {
                         summary = await workout.end()
                         ending = false
                     }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                .font(.footnote)
+                .foregroundStyle(.red)
                 .disabled(ending)
             }
         }
+        .onAppear { scheduleRestAlarm() }
+        .onDisappear { cancelRestAlarm() }
+    }
+
+    // CLIMBING count-up / RESTING countdown, colored like the phone. The
+    // TimelineView re-evaluates each second so "rest over" flips to red
+    // without any stored state.
+    @ViewBuilder
+    private var phaseTimer: some View {
+        if workout.manualClimbing, let since = workout.climbingSince {
+            VStack(spacing: 0) {
+                Text("CLIMBING")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.green)
+                Text(timerInterval: since...since.addingTimeInterval(3600), countsDown: false)
+                    .font(.system(size: 40, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .multilineTextAlignment(.center)
+            }
+        } else if let rest = workout.restStartedAt {
+            let end = rest.addingTimeInterval(Double(workout.restTargetS))
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let over = context.date >= end
+                VStack(spacing: 0) {
+                    Text(over ? "REST OVER" : "RESTING")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(over ? .red : .blue)
+                    Text(timerInterval: rest...end, countsDown: true)
+                        .font(.system(size: 40, weight: .heavy, design: .rounded))
+                        .monospacedDigit()
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(over ? .red : .primary)
+                    // Tap cycles the rest target (1/2/3/5m) — persisted, and
+                    // mirrored to the phone via the live heartbeat.
+                    Button {
+                        let i = restTargets.firstIndex(of: workout.restTargetS) ?? 2
+                        workout.restTargetS = restTargets[(i + 1) % restTargets.count]
+                        scheduleRestAlarm()
+                    } label: {
+                        Text("target \(workout.restTargetS / 60)m")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// Double haptic when the rest countdown hits zero — cuts through gym
+    /// noise, same as the old manual RestTimer.
+    private func scheduleRestAlarm() {
+        cancelRestAlarm()
+        guard let rest = workout.restStartedAt else { return }
+        let end = rest.addingTimeInterval(Double(workout.restTargetS))
+        let interval = end.timeIntervalSinceNow
+        guard interval > 0 else { return }
+        restAlarmTask = Task {
+            try? await Task.sleep(for: .seconds(interval))
+            guard !Task.isCancelled else { return }
+            WKInterfaceDevice.current().play(.notification)
+            try? await Task.sleep(for: .seconds(0.6))
+            WKInterfaceDevice.current().play(.notification)
+        }
+    }
+
+    private func cancelRestAlarm() {
+        restAlarmTask?.cancel()
+        restAlarmTask = nil
     }
 
     private func timeString(_ t: TimeInterval) -> String {

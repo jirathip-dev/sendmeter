@@ -73,6 +73,16 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
     pure Foundation (unit-tested); the plugin adds HealthKit + Supabase.
   - `sendlog-auth-bridge` — relays the Supabase session from the WebView to the
     watch over WatchConnectivity.
+  - `sendlog-passkey` — runs the WebAuthn passkey ceremony natively via
+    `ASAuthorization` (Face ID). Needed because the WebView origin is
+    `capacitor://localhost`, which the browser WebAuthn API won't accept for the
+    `sendmeter.app` RP ID (and Capacitor rejects `iosScheme: "https"` — WKWebView
+    reserves that scheme — so you can't give the WebView a real https origin).
+    `src/lib/passkeys.ts` branches: web uses supabase-js's browser flow; native
+    drives the **two-step** Supabase flow itself (`passkey.startRegistration` →
+    plugin `register` → `passkey.verifyRegistration`, and the auth equivalent),
+    passing all binary fields as base64url. Relies on the already-configured
+    `webcredentials:sendmeter.app` associated domain + AASA. Device-only to verify.
 - **`supabase/migrations/`** — 18 migrations. Tables: `sessions` (incl.
   `workout_source` = immutable auto/phone badge that survives type edits),
   `user_settings`, `phase_periods`, `tindeq_recordings`, `tindeq_presets`
@@ -178,13 +188,27 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
 
 ## Deploy (TestFlight + Vercel)
 
-- **`fastlane beta` must run from an interactive Terminal.** The App Store export
-  needs an **Apple Distribution certificate + a signed-in Xcode account** in the
-  login keychain; the ASC API key only covers build-number lookup + the upload, not
-  the export signing cert. An automated/spawned shell that lacks the cert fails with
-  `exportArchive No Accounts` / `No signing certificate "iOS Distribution" found`.
-  Also run it with `LANG=en_US.UTF-8` — in a `C`-locale shell fastlane's xcpretty
-  formatter crashes on non-ASCII output. Signing troubleshooting: `ios/COMPANION_SETUP.md`.
+- **`fastlane beta` runs fully headless via the ASC API key** — `cd` to repo root
+  (or `ios/`) and run `LANG=en_US.UTF-8 fastlane beta`; it works from a
+  spawned/non-interactive shell, no signed-in Xcode account required. The lane
+  (`fastlane/Fastfile`) does everything: `npm run build && cap sync ios`, then
+  `get_certificates` (installs/creates the Apple Distribution cert via the API key),
+  `get_provisioning_profile force:true` for the app + `.watchkitapp` (regenerated so
+  they carry the current cert), `latest_testflight_build_number + 1` (so **never
+  hand-bump `CURRENT_PROJECT_VERSION`** — the lane injects it via `xcargs` at archive
+  time into both app + watch), then `build_app` with **manual** signing +
+  `-allowProvisioningUpdates` (the auth-key flags go in `xcargs` only, not
+  `export_xcargs`), then `upload_to_testflight`. Config lives in `fastlane/.env`
+  (`ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_PATH`) + `fastlane/asc_api_key.p8`
+  (git-ignored) — fastlane auto-loads `.env`.
+  - **Two hard requirements:** (1) the Apple Distribution cert must be installable —
+    `get_certificates` reuses it if already in the login keychain, else creates it
+    via the API key (a key with Admin/App Manager access); (2) `LANG=en_US.UTF-8`,
+    or in a `C`-locale shell fastlane's xcpretty formatter crashes on non-ASCII output.
+  - The old "must run from an interactive Terminal / `exportArchive No Accounts`"
+    failure predates this API-key rewrite — that was manual/automatic-signing export
+    needing a signed-in Xcode account. The current lane sidesteps it. Deeper signing
+    troubleshooting still lives in `ios/COMPANION_SETUP.md`.
 - **Commit as `jirathip.ku@gmail.com`** (`git config user.email`). Pushing `main`
   triggers the Vercel web deploy, which **rejects commits from unrecognized authors**
   — a machine-default `user@host` email silently blocks it. Redeploy the current

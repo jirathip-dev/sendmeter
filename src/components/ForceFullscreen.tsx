@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import type { useTindeq } from "../hooks/useTindeq";
 import { presetTargetKg, timelineAt, timelineDurationS } from "../lib/protocol";
 import type { ProtocolSegment } from "../lib/protocol";
@@ -157,12 +158,10 @@ export default function ForceFullscreen({
         }
       : target;
 
-  return (
+  return createPortal(
     <div
+      className="fullscreen-overlay"
       style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 900,
         // The whole screen takes the phase color, Timer-Plus style.
         background: `color-mix(in srgb, ${bannerColor} ${pos || done ? 13 : 6}%, var(--canvas))`,
         transition: "background 0.3s",
@@ -184,12 +183,8 @@ export default function ForceFullscreen({
       >
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button
-            onClick={onMinimize}
-            aria-label="Minimize"
-            style={{ background: "none", border: "none", color: "var(--ink-muted)", cursor: "pointer", padding: 6 }}
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <button onClick={onMinimize} aria-label="Minimize" className="glass-chip">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 9l6 6 6-6" />
             </svg>
           </button>
@@ -224,32 +219,15 @@ export default function ForceFullscreen({
           <button
             onClick={() => void tindeq.tare()}
             disabled={measuring}
-            style={{
-              background: "none",
-              border: "1px solid var(--ink-faint)",
-              color: "var(--ink-muted)",
-              padding: "6px 10px",
-              borderRadius: 6,
-              fontSize: 10,
-              cursor: measuring ? "default" : "pointer",
-              opacity: measuring ? 0.4 : 1,
-              fontFamily: "Inter, sans-serif",
-            }}
+            className="glass-pill"
+            style={{ padding: "7px 13px", fontSize: 10 }}
           >
             Tare
           </button>
           <button
             onClick={tindeq.disconnect}
-            style={{
-              background: "none",
-              border: "1px solid var(--ink-faint)",
-              color: "var(--ink-muted)",
-              padding: "6px 10px",
-              borderRadius: 6,
-              fontSize: 10,
-              cursor: "pointer",
-              fontFamily: "Inter, sans-serif",
-            }}
+            className="glass-pill"
+            style={{ padding: "7px 13px", fontSize: 10, "--pill-tint": "var(--danger)" } as CSSProperties}
           >
             Disconnect
           </button>
@@ -486,6 +464,7 @@ export default function ForceFullscreen({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

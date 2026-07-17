@@ -36,6 +36,11 @@ export default function Dashboard({
 }: Props) {
   const [showRecovery, setShowRecovery] = useState(false);
   const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
+  // Week-over-week delta: the windows are rolling 7-day sums, so "Now" vs
+  // "1w" is a fair full-window comparison. No baseline (prev 0) hides it.
+  const curWeek = weeklyLoads[weeklyLoads.length - 1]?.total ?? 0;
+  const prevWeek = weeklyLoads[weeklyLoads.length - 2]?.total ?? 0;
+  const weekDeltaPct = prevWeek > 0 ? ((curWeek - prevWeek) / prevWeek) * 100 : null;
   const daily = useMemo(() => {
     const m = new Map<string, number>();
     for (const s of sessions) m.set(s.date, (m.get(s.date) ?? 0) + s.load);
@@ -237,7 +242,34 @@ export default function Dashboard({
 
         {/* Weekly totals */}
         <div className="card">
-          <div className="label-eyebrow" style={{ marginBottom: 12 }}>Weekly load</div>
+          <div
+            className="label-eyebrow"
+            style={{
+              marginBottom: 12,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "baseline",
+            }}
+          >
+            <span>Weekly load</span>
+            {weekDeltaPct !== null && (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontVariantNumeric: "tabular-nums",
+                  color:
+                    Math.abs(weekDeltaPct) < 1
+                      ? "var(--ink-muted)"
+                      : weekDeltaPct > 0
+                        ? "var(--success)"
+                        : "var(--danger)",
+                }}
+              >
+                {weekDeltaPct > 0 ? "▲" : weekDeltaPct < 0 ? "▼" : ""}{" "}
+                {Math.abs(weekDeltaPct).toFixed(0)}% vs prior wk
+              </span>
+            )}
+          </div>
           <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 72 }}>
             {weeklyLoads.map((w, i) => (
               <div

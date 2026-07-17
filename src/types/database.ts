@@ -188,8 +188,11 @@ export type Database = {
           active_kcal: number | null
           attempt_count: number
           climbing: boolean
+          climbing_since: string | null
           elevation_gain_m: number | null
           hr: number | null
+          rest_started_at: string | null
+          rest_target_s: number | null
           started_at: string
           status: string
           updated_at: string
@@ -200,8 +203,11 @@ export type Database = {
           active_kcal?: number | null
           attempt_count?: number
           climbing?: boolean
+          climbing_since?: string | null
           elevation_gain_m?: number | null
           hr?: number | null
+          rest_started_at?: string | null
+          rest_target_s?: number | null
           started_at: string
           status?: string
           updated_at?: string
@@ -212,8 +218,11 @@ export type Database = {
           active_kcal?: number | null
           attempt_count?: number
           climbing?: boolean
+          climbing_since?: string | null
           elevation_gain_m?: number | null
           hr?: number | null
+          rest_started_at?: string | null
+          rest_target_s?: number | null
           started_at?: string
           status?: string
           updated_at?: string
@@ -413,6 +422,30 @@ export type Database = {
           current_phase?: string
           phase_start_date?: string
           updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      routine_presets: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          steps: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name?: string
+          steps: Json
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          steps?: Json
           user_id?: string
         }
         Relationships: []

@@ -32,7 +32,10 @@ actor LiveWorkoutSync {
         attemptCount: Int,
         activeKcal: Double?,
         elevationGainM: Double,
-        climbing: Bool
+        climbing: Bool,
+        climbingSince: Date?,
+        restStartedAt: Date?,
+        restTargetS: Int?
     ) async {
         if inFlight { return }
         guard let uid = await resolveUserId() else { return }
@@ -49,6 +52,9 @@ actor LiveWorkoutSync {
                 activeKcal: activeKcal,
                 elevationGainM: elevationGainM,
                 climbing: climbing,
+                climbingSince: climbingSince,
+                restStartedAt: restStartedAt,
+                restTargetS: restTargetS,
                 updatedAt: Date()
             )
         )
@@ -69,6 +75,9 @@ actor LiveWorkoutSync {
                 activeKcal: nil,
                 elevationGainM: nil,
                 climbing: false,
+                climbingSince: nil,
+                restStartedAt: nil,
+                restTargetS: nil,
                 updatedAt: Date()
             )
         )

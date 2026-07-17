@@ -5,8 +5,12 @@ import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { insertPhoneWorkout } from "../lib/repo";
 import type { PhaseId } from "../types";
 import LiveWorkoutCard from "./LiveWorkoutCard";
+import LiveWorkoutFullscreen from "./LiveWorkoutFullscreen";
 import PhoneWorkoutCard from "./PhoneWorkoutCard";
 import PhoneWorkoutFullscreen from "./PhoneWorkoutFullscreen";
+import RoutineCard from "./RoutineCard";
+import RpeScatterCard from "./RpeScatterCard";
+import Sheet from "./Sheet";
 
 interface Props {
   userId: string;
@@ -29,6 +33,9 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
   // a workout resumed from localStorage on load doesn't hijack the screen —
   // the Start/Resume buttons open it.
   const [minimized, setMinimized] = useState(true);
+  const [showRpeModel, setShowRpeModel] = useState(false);
+  // Fullscreen mirror of a live WATCH workout (read-only; watch owns it).
+  const [liveOpen, setLiveOpen] = useState(false);
 
   async function savePhoneWorkout(meta: {
     type: string;
@@ -63,12 +70,26 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
 
   return (
     <div>
-      <div className="section-head">WORKOUT</div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+        }}
+      >
+        <div className="section-head">WORKOUT</div>
+        <button className="header-btn" onClick={() => setShowRpeModel(true)}>
+          RPE Model
+        </button>
+      </div>
       <div className="section-sub">
         Live watch tracking, phone logging, and your recent climbs.
       </div>
 
-      {live && <LiveWorkoutCard live={live} />}
+      {live && <LiveWorkoutCard live={live} onOpen={() => setLiveOpen(true)} />}
+      {live && liveOpen && (
+        <LiveWorkoutFullscreen live={live} onMinimize={() => setLiveOpen(false)} />
+      )}
 
       {/* Hide the phone-logging card while a watch workout is live — one
           active workout at a time avoids double-logging the same session. */}
@@ -98,6 +119,9 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
         </div>
       )}
 
+      {/* Guided routine presets (warm-ups, circuits) — utility, saves nothing */}
+      <RoutineCard />
+
       {/* Manual entry — the Log Session sheet (moved from Home) */}
       <div className="card" style={{ marginTop: 2 }}>
         <div className="label-eyebrow" style={{ marginBottom: 8 }}>
@@ -114,6 +138,29 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
       <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 16, textAlign: "center" }}>
         Past workouts and sessions live in History.
       </div>
+
+      {/* RPE Model sheet — predicted vs confirmed effort (moved from History;
+          it's about how workouts feel, which belongs with "do"). */}
+      {showRpeModel && (
+        <Sheet onClose={() => setShowRpeModel(false)}>
+          <div
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: 20,
+              fontWeight: 800,
+              marginBottom: 12,
+            }}
+          >
+            RPE Model
+          </div>
+          <RpeScatterCard />
+          <div style={{ marginTop: 12 }}>
+            <button className="btn-ghost" onClick={() => setShowRpeModel(false)}>
+              Close
+            </button>
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }

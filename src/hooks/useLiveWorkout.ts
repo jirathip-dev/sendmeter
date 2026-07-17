@@ -17,6 +17,9 @@ function rowToLive(row: Record<string, unknown>): LiveWorkout {
     activeKcal: row.active_kcal as number | null,
     elevationGainM: row.elevation_gain_m as number | null,
     climbing: row.climbing as boolean,
+    climbingSince: (row.climbing_since as string | null) ?? null,
+    restStartedAt: (row.rest_started_at as string | null) ?? null,
+    restTargetS: (row.rest_target_s as number | null) ?? null,
     updatedAt: row.updated_at as string,
   };
 }

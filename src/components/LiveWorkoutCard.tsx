@@ -13,7 +13,14 @@ function fmtElapsed(ms: number): string {
 
 /// Live mirror of the in-progress watch workout (SL-41) — heartbeat data
 /// from the live_workouts row, re-rendered every second for the clock.
-export default function LiveWorkoutCard({ live }: { live: LiveWorkout }) {
+/// Tapping opens the fullscreen mirror (same timer screen as phone workouts).
+export default function LiveWorkoutCard({
+  live,
+  onOpen,
+}: {
+  live: LiveWorkout;
+  onOpen: () => void;
+}) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -24,7 +31,8 @@ export default function LiveWorkoutCard({ live }: { live: LiveWorkout }) {
 
   return (
     <div
-      className="card"
+      className="card tappable"
+      onClick={onOpen}
       style={{
         marginBottom: 12,
         border: "1px solid color-mix(in srgb, var(--success) 45%, transparent)",
@@ -63,6 +71,7 @@ export default function LiveWorkoutCard({ live }: { live: LiveWorkout }) {
         >
           {live.climbing ? "CLIMBING" : "RESTING"}
         </span>
+        <span aria-hidden="true" style={{ color: "var(--ink-faint)", fontSize: 15 }}>›</span>
       </div>
 
       <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>

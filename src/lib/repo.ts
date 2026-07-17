@@ -13,6 +13,8 @@ import type {
   SessionPatch,
   TindeqPreset,
   TindeqRecordingMeta,
+  RoutinePreset,
+  RoutineStep,
   TindeqSample,
   TindeqSide,
   WorkoutAttempt,
@@ -531,6 +533,54 @@ export async function deletePreset(id: string): Promise<void> {
   unwrap(await supabase.from("tindeq_presets").delete().eq("id", id));
 }
 
+// ---- Routine presets (Workout tab guided routine timer) ----
+
+const ROUTINE_COLS = "id, name, steps";
+
+type RoutineRow = { id: string; name: string; steps: RoutineStep[] };
+
+export async function fetchRoutinePresets(): Promise<RoutinePreset[]> {
+  const data = unwrap(
+    await supabase
+      .from("routine_presets")
+      .select(ROUTINE_COLS)
+      .order("created_at", { ascending: false }),
+  );
+  return data as RoutineRow[];
+}
+
+export async function insertRoutinePreset(
+  p: Omit<RoutinePreset, "id">,
+): Promise<RoutinePreset> {
+  const data = unwrap<RoutineRow>(
+    await supabase
+      .from("routine_presets")
+      .insert({ name: p.name, steps: p.steps })
+      .select(ROUTINE_COLS)
+      .single(),
+  );
+  return data;
+}
+
+export async function updateRoutinePreset(
+  id: string,
+  p: Omit<RoutinePreset, "id">,
+): Promise<RoutinePreset> {
+  const data = unwrap<RoutineRow>(
+    await supabase
+      .from("routine_presets")
+      .update({ name: p.name, steps: p.steps })
+      .eq("id", id)
+      .select(ROUTINE_COLS)
+      .single(),
+  );
+  return data;
+}
+
+export async function deleteRoutinePreset(id: string): Promise<void> {
+  unwrap(await supabase.from("routine_presets").delete().eq("id", id));
+}
+
 /// Assign an ungrouped recording to an existing gauge-session group (SL-44).
 /// Grouping-only: the linked session's note/duration/RPE are left as logged.
 export async function updateRecordingGroup(
@@ -733,7 +783,7 @@ export async function fetchLiveWorkout(): Promise<LiveWorkout | null> {
   const { data, error } = await supabase
     .from("live_workouts")
     .select(
-      "workout_id, status, started_at, hr, attempt_count, active_kcal, elevation_gain_m, climbing, updated_at",
+      "workout_id, status, started_at, hr, attempt_count, active_kcal, elevation_gain_m, climbing, climbing_since, rest_started_at, rest_target_s, updated_at",
     )
     .maybeSingle();
   if (error) throw error;
@@ -747,6 +797,9 @@ export async function fetchLiveWorkout(): Promise<LiveWorkout | null> {
     activeKcal: data.active_kcal,
     elevationGainM: data.elevation_gain_m,
     climbing: data.climbing,
+    climbingSince: data.climbing_since,
+    restStartedAt: data.rest_started_at,
+    restTargetS: data.rest_target_s,
     updatedAt: data.updated_at,
   };
 }
