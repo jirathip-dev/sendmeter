@@ -147,12 +147,15 @@ export async function insertTindeqSession(input: {
   phase: PhaseId;
   note: string;
   groupId: string;
+  /// Defaults to today — History's create-from-recordings passes the
+  /// recordings' own date.
+  date?: string;
 }): Promise<Session> {
   const data = unwrap<SessionRow>(
     await supabase
       .from("sessions")
       .insert({
-        date: today(),
+        date: input.date ?? today(),
         type: "tindeq",
         type_label: "Tindeq",
         duration_min: Math.max(1, Math.min(600, input.durationMin)),

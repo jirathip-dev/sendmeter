@@ -102,7 +102,9 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         position: "fixed",
         inset: 0,
         zIndex: 900,
-        background: "var(--canvas)",
+        // Whole screen takes the phase color, Timer-Plus style.
+        background: `color-mix(in srgb, ${accent} 12%, var(--canvas))`,
+        transition: "background 0.3s",
         display: "flex",
         justifyContent: "center",
       }}
@@ -134,10 +136,13 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
             {fmt(totalElapsed)}
           </div>
         </div>
-        <div style={{ fontSize: 13, color: "var(--ink-muted)", width: 38, textAlign: "right" }}>
-          {boulders}
-          <span style={{ fontSize: 9, display: "block", color: "var(--ink-faint)" }}>SENT</span>
-        </div>
+        <button
+          className="btn-ghost btn-inline"
+          onClick={() => dispatch({ type: "end", at: new Date().toISOString() })}
+          style={{ color: "var(--danger)", borderColor: "rgba(255,69,58,0.35)" }}
+        >
+          End
+        </button>
       </div>
 
       {/* Phase banner + big timer */}
@@ -173,6 +178,10 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         </div>
         <div style={{ fontSize: 13, color: "var(--ink-muted)" }}>
           {climbing ? "on the wall" : `rest target ${fmt(restTarget)}`}
+          {" · "}
+          <span style={{ color: "var(--ink)", fontWeight: 600 }}>
+            {boulders} attempt{boulders === 1 ? "" : "s"}
+          </span>
         </div>
 
         {/* Rest target chips — only while resting */}
@@ -205,16 +214,8 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         )}
       </div>
 
-      {/* Controls: End · big action w/ ring · minimize-hint spacing */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <button
-          className="btn-ghost btn-inline"
-          onClick={() => dispatch({ type: "end", at: new Date().toISOString() })}
-          style={{ color: "var(--danger)", borderColor: "rgba(255,69,58,0.35)" }}
-        >
-          End
-        </button>
-
+      {/* Big centered action — End lives in the top bar */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
         {/* Big circular action button — ring shows rest progress */}
         <button
           onClick={() => {
@@ -280,7 +281,6 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
           </span>
         </button>
 
-        <div style={{ width: 52 }} aria-hidden="true" />
       </div>
     </div>
     </div>

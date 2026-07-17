@@ -6,9 +6,10 @@ import type { TindeqPreset } from "../types";
 ///
 /// Alternating mode ("switch hands during the rest"): each preset rep is a
 /// LEFT+RIGHT pair — hold L, a short SWITCH window, hold R (eating into the
-/// rest), then whatever rest remains. If the rest is too short to fit the
-/// switch + the other hand's hold, it's automatically extended so the pair
-/// always fits: effectiveRest = max(rest, switchS + holdS).
+/// rest), the remaining rest, then a SWITCH back to L before the next pair
+/// (so BOTH hand changes get a countdown). If the rest is too short to fit
+/// the switches + the other hand's hold, it's automatically extended:
+/// effectiveRest = max(rest, switchS + holdS + switchS).
 
 export interface ProtocolSegment {
   phase: "prepare" | "hold" | "switch" | "rest" | "setRest";
@@ -70,14 +71,20 @@ export function buildTimeline(
         push("hold", "left", rep, set, p.holdS);
         push("switch", "right", rep, set, switchS);
         push("hold", "right", rep, set, p.holdS);
-        // The other hand's hold ate into the rest; the remainder is what's
-        // left of an auto-extended rest window.
-        if (!lastRep) {
-          const eff = Math.max(p.restRepsS, switchS + p.holdS);
-          push("rest", null, rep, set, eff - switchS - p.holdS);
-        } else if (!lastSet) {
-          const eff = Math.max(p.restSetsS, switchS + p.holdS);
-          push("setRest", null, rep, set, eff - switchS - p.holdS);
+        // The other hand's hold ate into the rest; what's left of the
+        // (auto-extended) rest window plays out, ending with a switch back
+        // to LEFT so the return change gets a countdown too.
+        if (!(lastRep && lastSet)) {
+          const nominal = lastRep ? p.restSetsS : p.restRepsS;
+          const eff = Math.max(nominal, switchS + p.holdS + switchS);
+          push(
+            lastRep ? "setRest" : "rest",
+            null,
+            rep,
+            set,
+            eff - switchS - p.holdS - switchS,
+          );
+          push("switch", "left", rep, set, switchS);
         }
       } else {
         push("hold", null, rep, set, p.holdS);

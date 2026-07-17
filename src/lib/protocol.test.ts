@@ -90,7 +90,7 @@ describe("buildTimeline — single side", () => {
 });
 
 describe("buildTimeline — alternating sides", () => {
-  // 5s hold / 30s rest: L 5s → switch 3s → R 5s → remaining rest 22s
+  // 5s hold / 30s rest: L 5s → switch 3s → R 5s → rest 19s → switch back 3s
   const tl = buildTimeline(alt, { switchS: 3 });
 
   it("runs L hold, switch, R hold inside the rest, then the remainder", () => {
@@ -101,37 +101,43 @@ describe("buildTimeline — alternating sides", () => {
     expect(timelineAt(tl, 8)!.seg).toMatchObject({ phase: "hold", side: "right", rep: 1 });
     const rest = timelineAt(tl, 13)!;
     expect(rest.seg.phase).toBe("rest");
-    expect(rest.remaining).toBe(22); // 30 - 3 - 5
+    expect(rest.remaining).toBe(19); // 30 - 3 - 5 - 3 (switch back)
   });
 
-  it("next pair starts after the remainder; no trailing rest at the end", () => {
+  it("counts down the switch BACK to left before the next pair", () => {
+    const back = timelineAt(tl, 32)!;
+    expect(back.seg).toMatchObject({ phase: "switch", side: "left" });
+    expect(back.remaining).toBe(3);
     expect(timelineAt(tl, 35)!.seg).toMatchObject({ phase: "hold", side: "left", rep: 2 });
-    // rep 2: L 35-40, switch 40-43, R 43-48, done
+    // rep 2: L 35-40, switch 40-43, R 43-48, done — total unchanged
     expect(timelineDurationS(tl)).toBe(48);
     expect(timelineAt(tl, 48)).toBeNull();
   });
 
-  it("auto-extends a rest too short for the other hand's hold", () => {
-    // 7:3 repeaters alternating: rest 3 < switch 3 + hold 7 → effective rest
-    // 10 → remainder 0 → continuous L/switch/R/L…
+  it("auto-extends a rest too short for the other hand's hold + switches", () => {
+    // 7:3 repeaters alternating: rest 3 < 3+7+3 → effective rest 13 →
+    // zero idle rest, continuous L/switch/R/switch/L…
     const cont = buildTimeline(
       { ...repeaters, sets: 1, reps: 2, alternateSides: true },
       { switchS: 3 },
     );
-    // L 0-7, switch 7-10, R 10-17, (rest remainder 0), L 17-24 …
-    expect(timelineAt(cont, 17)!.seg).toMatchObject({ phase: "hold", side: "left", rep: 2 });
-    expect(timelineDurationS(cont)).toBe(34);
+    // L 0-7, switch 7-10, R 10-17, switch-back 17-20, L 20-27 …
+    expect(timelineAt(cont, 17)!.seg).toMatchObject({ phase: "switch", side: "left" });
+    expect(timelineAt(cont, 20)!.seg).toMatchObject({ phase: "hold", side: "left", rep: 2 });
+    expect(timelineDurationS(cont)).toBe(37);
   });
 
-  it("set rest also fits the pair and keeps the remainder", () => {
+  it("set rest also fits the pair and ends with a switch back", () => {
     const twoSets = buildTimeline(
       { ...alt, sets: 2, restSetsS: 60 },
       { switchS: 3 },
     );
-    // set 1 ends after rep2 R hold at 48; setRest remainder = 60-3-5 = 52
+    // set 1 ends after rep2 R hold at 48; setRest = 60-3-5-3 = 49, then
+    // switch back 3 → set 2 starts at 100
     const pos = timelineAt(twoSets, 48)!;
     expect(pos.seg.phase).toBe("setRest");
-    expect(pos.remaining).toBe(52);
+    expect(pos.remaining).toBe(49);
+    expect(timelineAt(twoSets, 98)!.seg).toMatchObject({ phase: "switch", side: "left" });
     expect(timelineAt(twoSets, 100)!.seg).toMatchObject({
       phase: "hold",
       side: "left",

@@ -715,6 +715,10 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
           timeline={timeline}
           target={bandTarget}
           globalSide={pendingSide}
+          tag={pendingTag}
+          allTags={allTags}
+          onTag={setPendingTag}
+          onSide={setPendingSide}
           canStart={!!pendingTag.trim()}
           saving={saving}
           prepare={prepare}

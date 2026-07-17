@@ -8,9 +8,11 @@ import type { TindeqRecordingMeta, TindeqSample } from "../types";
 interface Props {
   rec: TindeqRecordingMeta;
   onDelete: (id: string) => void;
-  /// Offered only for ungrouped recordings — opens the assign-to-session
-  /// sheet (SL-44).
-  onAssign?: (rec: TindeqRecordingMeta) => void;
+  /// Multi-select mode (History): loose recordings can be ticked and turned
+  /// into a session together.
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
 const H = 80;
@@ -140,7 +142,13 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
   );
 }
 
-export default function RecordingRow({ rec, onDelete, onAssign }: Props) {
+export default function RecordingRow({
+  rec,
+  onDelete,
+  selectable,
+  selected,
+  onToggleSelect,
+}: Props) {
   const [expanded, setExpanded] = useState(false);
   const [samples, setSamples] = useState<TindeqSample[] | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -169,6 +177,33 @@ export default function RecordingRow({ rec, onDelete, onAssign }: Props) {
         style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
         onClick={() => void toggle()}
       >
+        {selectable && (
+          <button
+            aria-label={selected ? "Deselect recording" : "Select recording"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSelect?.(rec.id);
+            }}
+            style={{
+              width: 20,
+              height: 20,
+              borderRadius: "50%",
+              flexShrink: 0,
+              border: `2px solid ${selected ? "var(--primary)" : "var(--border)"}`,
+              background: selected ? "var(--primary)" : "transparent",
+              color: "#ffffff",
+              fontSize: 12,
+              lineHeight: 1,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+            }}
+          >
+            {selected ? "✓" : ""}
+          </button>
+        )}
         <div className="session-phase-bar" style={{ background: "var(--success)" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
@@ -222,30 +257,6 @@ export default function RecordingRow({ rec, onDelete, onAssign }: Props) {
           <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s · avg{" "}
             {rec.avgKg.toFixed(1)} kg
-            {onAssign && rec.groupId === null && (
-              <>
-                {" · "}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onAssign(rec);
-                  }}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    padding: 0,
-                    fontFamily: "inherit",
-                    fontSize: 11,
-                    color: "var(--info)",
-                    cursor: "pointer",
-                    textDecoration: "underline",
-                    textUnderlineOffset: 2,
-                  }}
-                >
-                  assign to session
-                </button>
-              </>
-            )}
           </div>
           {rec.note && (
             <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 3 }}>

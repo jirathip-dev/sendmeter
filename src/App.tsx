@@ -191,6 +191,7 @@ function AuthedApp({
             {view === "history" && (
               <HistoryView
                 sessions={sessions}
+                currentPhase={currentPhase}
                 onDelete={(id) => void removeSession(id)}
                 onEdit={setEditingSession}
                 onOpenTrash={() => setShowTrash(true)}

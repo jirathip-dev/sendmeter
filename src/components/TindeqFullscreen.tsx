@@ -17,6 +17,12 @@ interface Props {
   target: GaugeTarget | null;
   /// Tab-global side — shown during holds when the protocol doesn't alternate.
   globalSide: TindeqSide;
+  /// Tab-global tag + existing tags, so a free hold can be armed right here
+  /// (new tags are still typed in the tab).
+  tag: string;
+  allTags: string[];
+  onTag: (t: string) => void;
+  onSide: (s: TindeqSide) => void;
   canStart: boolean;
   saving: boolean;
   /// Get-ready countdown before the first hold (persisted preference).
@@ -50,6 +56,10 @@ export default function TindeqFullscreen({
   timeline,
   target,
   globalSide,
+  tag,
+  allTags,
+  onTag,
+  onSide,
   canStart,
   saving,
   prepare,
@@ -131,7 +141,9 @@ export default function TindeqFullscreen({
         position: "fixed",
         inset: 0,
         zIndex: 900,
-        background: "var(--canvas)",
+        // The whole screen takes the phase color, Timer-Plus style.
+        background: `color-mix(in srgb, ${bannerColor} ${pos || done ? 13 : 6}%, var(--canvas))`,
+        transition: "background 0.3s",
         display: "flex",
         justifyContent: "center",
         overflowY: "auto",
@@ -335,6 +347,39 @@ export default function TindeqFullscreen({
           )}
         </div>
 
+        {/* Quick exercise + side pickers — arm a free hold without leaving
+            the gauge (brand-new tags are typed in the tab). */}
+        {!measuring && (
+          <div style={{ display: "flex", gap: 8 }}>
+            <select
+              className="field"
+              value={allTags.includes(tag.trim()) ? tag.trim() : ""}
+              onChange={(e) => onTag(e.target.value)}
+              style={{ padding: "9px 10px", fontSize: 13, flex: 2 }}
+            >
+              <option value="" disabled>
+                {allTags.length ? "exercise…" : "no tags yet"}
+              </option>
+              {allTags.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+            <select
+              className="field"
+              value={globalSide}
+              onChange={(e) => onSide(e.target.value as TindeqSide)}
+              style={{ padding: "9px 10px", fontSize: 13, flex: 1 }}
+            >
+              <option value="">— side</option>
+              <option value="left">Left</option>
+              <option value="right">Right</option>
+              <option value="both">Both</option>
+            </select>
+          </div>
+        )}
+
         {/* Fullscreen live force chart */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <ForceGauge
@@ -412,7 +457,9 @@ export default function TindeqFullscreen({
           )}
           {!canStart && !measuring && (
             <div style={{ fontSize: 10, color: "var(--ink-faint)", textAlign: "center" }}>
-              Set the exercise tag in the tab first (minimize ⌄).
+              {allTags.length
+                ? "Pick an exercise above to start."
+                : "Type your first exercise tag in the tab (minimize ⌄)."}
             </div>
           )}
         </div>

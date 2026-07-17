@@ -1,13 +1,16 @@
 import { useState, type CSSProperties } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
-import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import {
+  useRealtimeBump,
+  useRealtimeVersion,
+} from "../hooks/useRealtimeVersion";
 import {
   deleteRecording,
   fetchRecordings,
+  insertTindeqSession,
   updateRecordingGroup,
 } from "../lib/repo";
-import type { Session, TindeqRecordingMeta } from "../types";
-import AssignRecordingSheet from "./AssignRecordingSheet";
+import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
 import RecordingRow from "./RecordingRow";
 import RpeScatterCard from "./RpeScatterCard";
 import SessionRow from "./SessionRow";
@@ -15,6 +18,7 @@ import Sheet from "./Sheet";
 
 interface Props {
   sessions: Session[];
+  currentPhase: PhaseId;
   onDelete: (id: string) => void;
   onEdit: (s: Session) => void;
   onOpenTrash: () => void;
@@ -41,15 +45,19 @@ type TimelineItem =
 /// plus ungrouped Tindeq recordings interleaved by date.
 export default function HistoryView({
   sessions,
+  currentPhase,
   onDelete,
   onEdit,
   onOpenTrash,
 }: Props) {
   const [showRpeModel, setShowRpeModel] = useState(false);
-  const [assigning, setAssigning] = useState<TindeqRecordingMeta | null>(null);
   const realtimeVersion = useRealtimeVersion();
+  const bumpRealtime = useRealtimeBump();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [assignedIds, setAssignedIds] = useState<Set<string>>(new Set());
+  // Multi-select of loose recordings → one new session.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
 
   const allRecordings = useCancellableFetch<TindeqRecordingMeta[]>(
     fetchRecordings,
@@ -62,6 +70,57 @@ export default function HistoryView({
   );
 
   const total = sessions.reduce((s, x) => s + x.load, 0);
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Group the ticked recordings under a new session: the session takes the
+  // recordings' own date and time span; RPE defaults to 5 (editable via the
+  // pencil afterwards).
+  async function createSessionFromSelection() {
+    const recs = ungrouped
+      .filter((r) => selectedIds.has(r.id))
+      .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
+    if (recs.length === 0) return;
+    setCreating(true);
+    try {
+      const groupId = crypto.randomUUID();
+      for (const r of recs) {
+        await updateRecordingGroup(r.id, groupId);
+      }
+      const first = recs[0]!;
+      const last = recs[recs.length - 1]!;
+      const spanMs =
+        Date.parse(last.recordedAt) + last.durationMs - Date.parse(first.recordedAt);
+      const tags = [...new Set(recs.map((r) => r.tag).filter(Boolean))];
+      await insertTindeqSession({
+        durationMin: Math.max(1, Math.round(spanMs / 60000)),
+        rpe: 5,
+        phase: currentPhase,
+        note: [
+          `${recs.length} recording${recs.length === 1 ? "" : "s"}`,
+          ...(tags.length ? [tags.join(", ")] : []),
+        ].join(" · "),
+        groupId,
+        date: first.recordedAt.slice(0, 10),
+      });
+      setAssignedIds((prev) => {
+        const next = new Set(prev);
+        for (const r of recs) next.add(r.id);
+        return next;
+      });
+      setSelectedIds(new Set());
+      bumpRealtime(); // refresh sessions + recordings everywhere
+    } finally {
+      setCreating(false);
+    }
+  }
 
   // Interleave: sessions carry a date (YYYY-MM-DD); recordings a timestamp.
   // Sort by date desc; same-day sessions come before loose recordings.
@@ -127,22 +186,48 @@ export default function HistoryView({
               setRemovedIds((prev) => new Set(prev).add(id));
               void deleteRecording(id);
             }}
-            onAssign={setAssigning}
+            selectable
+            selected={selectedIds.has(it.rec.id)}
+            onToggleSelect={toggleSelect}
           />
         ),
       )}
 
-      {assigning && (
-        <AssignRecordingSheet
-          recording={assigning}
-          recordings={allRecordings}
-          onAssign={(groupId) => {
-            const id = assigning.id;
-            setAssignedIds((prev) => new Set(prev).add(id));
-            void updateRecordingGroup(id, groupId);
+      {/* Floating action bar while loose recordings are ticked */}
+      {selectedIds.size > 0 && (
+        <div
+          style={{
+            position: "sticky",
+            bottom: "calc(64px + env(safe-area-inset-bottom))",
+            display: "flex",
+            gap: 8,
+            padding: 10,
+            background: "var(--canvas)",
+            border: "1px solid var(--card-border)",
+            borderRadius: 12,
+            boxShadow: "0 4px 18px rgba(0,0,0,0.35)",
+            zIndex: 10,
           }}
-          onClose={() => setAssigning(null)}
-        />
+        >
+          <button
+            className="btn-primary"
+            disabled={creating}
+            onClick={() => void createSessionFromSelection()}
+            style={{ flex: 2 }}
+          >
+            {creating
+              ? "Creating…"
+              : `Create session (${selectedIds.size})`}
+          </button>
+          <button
+            className="btn-ghost"
+            disabled={creating}
+            onClick={() => setSelectedIds(new Set())}
+            style={{ flex: 1 }}
+          >
+            Cancel
+          </button>
+        </div>
       )}
 
       {showRpeModel && (
