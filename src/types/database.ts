@@ -307,11 +307,13 @@ export type Database = {
           hold_s: number
           id: string
           name: string
+          pct_step: number
           reps: number
           rest_reps_s: number
           rest_sets_s: number
           sets: number
           target_kg: number | null
+          target_pct: number | null
           user_id: string
         }
         Insert: {
@@ -320,11 +322,13 @@ export type Database = {
           hold_s: number
           id?: string
           name?: string
+          pct_step?: number
           reps: number
           rest_reps_s: number
           rest_sets_s: number
           sets: number
           target_kg?: number | null
+          target_pct?: number | null
           user_id?: string
         }
         Update: {
@@ -333,11 +337,13 @@ export type Database = {
           hold_s?: number
           id?: string
           name?: string
+          pct_step?: number
           reps?: number
           rest_reps_s?: number
           rest_sets_s?: number
           sets?: number
           target_kg?: number | null
+          target_pct?: number | null
           user_id?: string
         }
         Relationships: []

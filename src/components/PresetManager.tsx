@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { deletePreset, fetchPresets, insertPreset } from "../lib/repo";
+import {
+  deletePreset,
+  fetchPresets,
+  insertPreset,
+  updatePreset,
+} from "../lib/repo";
 import { buildTimeline, timelineDurationS } from "../lib/protocol";
 import type { TindeqPreset } from "../types";
 
@@ -55,6 +60,8 @@ function NumField({
 export default function PresetManager({ selectedId, onSelect }: Props) {
   const [presets, setPresets] = useState<TindeqPreset[]>([]);
   const [adding, setAdding] = useState(false);
+  // Non-null while the form edits an existing preset (pencil).
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -64,7 +71,24 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
   const [restRepsS, setRestRepsS] = useState(3);
   const [restSetsS, setRestSetsS] = useState(180);
   const [targetKg, setTargetKg] = useState(0); // 0 = no target
+  const [targetPct, setTargetPct] = useState(0); // 0 = off; overrides kg
+  const [pctStep, setPctStep] = useState(0); // +% per set
   const [alternateSides, setAlternateSides] = useState(false);
+
+  function openEdit(p: TindeqPreset) {
+    setEditingId(p.id);
+    setName(p.name);
+    setHoldS(p.holdS);
+    setReps(p.reps);
+    setSets(p.sets);
+    setRestRepsS(p.restRepsS);
+    setRestSetsS(p.restSetsS);
+    setTargetKg(p.targetKg ?? 0);
+    setTargetPct(p.targetPct ?? 0);
+    setPctStep(p.pctStep);
+    setAlternateSides(p.alternateSides);
+    setAdding(true);
+  }
 
   useEffect(() => {
     let alive = true;
@@ -81,19 +105,29 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
   async function save() {
     setSaving(true);
     setError(null);
+    const fields: Omit<TindeqPreset, "id"> = {
+      name: name.trim() || `${holdS}s × ${reps} × ${sets}`,
+      holdS,
+      reps,
+      sets,
+      restRepsS,
+      restSetsS,
+      targetKg: targetKg > 0 ? targetKg : null,
+      targetPct: targetPct > 0 ? targetPct : null,
+      pctStep: targetPct > 0 ? pctStep : 0,
+      alternateSides,
+    };
     try {
-      const saved = await insertPreset({
-        name: name.trim() || `${holdS}s × ${reps} × ${sets}`,
-        holdS,
-        reps,
-        sets,
-        restRepsS,
-        restSetsS,
-        targetKg: targetKg > 0 ? targetKg : null,
-        alternateSides,
-      });
-      setPresets((list) => [saved, ...list]);
+      if (editingId) {
+        const saved = await updatePreset(editingId, fields);
+        setPresets((list) => list.map((p) => (p.id === editingId ? saved : p)));
+        if (selectedId === editingId) onSelect(saved); // refresh armed copy
+      } else {
+        const saved = await insertPreset(fields);
+        setPresets((list) => [saved, ...list]);
+      }
       setAdding(false);
+      setEditingId(null);
       setName("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save preset");
@@ -164,8 +198,18 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
                 hold {fmt(p.holdS)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
                 {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total{" "}
                 {fmt(timelineDurationS(buildTimeline(p, { switchS: 3 })))}
-                {p.targetKg !== null && (
-                  <span style={{ color: "var(--success)" }}> · {p.targetKg.toFixed(1)} kg</span>
+                {p.targetPct !== null ? (
+                  <span style={{ color: "var(--success)" }}>
+                    {" "}
+                    · {p.targetPct}
+                    {p.pctStep > 0 &&
+                      `→${Math.min(150, p.targetPct + (p.sets - 1) * p.pctStep)}`}
+                    % PR
+                  </span>
+                ) : (
+                  p.targetKg !== null && (
+                    <span style={{ color: "var(--success)" }}> · {p.targetKg.toFixed(1)} kg</span>
+                  )
                 )}
                 {p.alternateSides && (
                   <span style={{ color: "var(--warning)" }}> · L⇄R</span>
@@ -174,6 +218,18 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
             </div>
             <button
               className="del-btn"
+              aria-label="Edit preset"
+              style={{ fontSize: 13 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                openEdit(p);
+              }}
+            >
+              ✎
+            </button>
+            <button
+              className="del-btn"
+              style={{ marginLeft: 0 }}
               onClick={(e) => {
                 e.stopPropagation();
                 void remove(p.id);
@@ -202,8 +258,26 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <NumField label="Rest / rep s" value={restRepsS} onChange={setRestRepsS} min={0} max={600} />
             <NumField label="Rest / set s" value={restSetsS} onChange={setRestSetsS} min={0} max={1200} />
-            <NumField label="Target kg (0 = off)" value={targetKg} onChange={setTargetKg} min={0} max={200} />
           </div>
+          {/* Target: absolute kg, or % of the exercise's PR (overrides kg)
+              with an optional per-set ramp — 50% + 10%/set ⇒ 50/60/70/80%. */}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <NumField label="Target kg (0 = off)" value={targetKg} onChange={setTargetKg} min={0} max={200} />
+            <NumField label="% of PR (0 = off)" value={targetPct} onChange={setTargetPct} min={0} max={150} />
+            {targetPct > 0 && (
+              <NumField label="+% / set" value={pctStep} onChange={setPctStep} min={0} max={50} />
+            )}
+          </div>
+          {targetPct > 0 && (
+            <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 6 }}>
+              % of PR uses your best recorded peak for the selected exercise
+              (and side){pctStep > 0 && ` — sets run ${targetPct}%${Array.from(
+                { length: Math.min(sets, 4) - 1 },
+                (_, i) => ` → ${Math.min(150, targetPct + (i + 1) * pctStep)}%`,
+              ).join("")}${sets > 4 ? " → …" : ""}`}
+              .
+            </div>
+          )}
           <label
             style={{
               display: "flex",
@@ -224,11 +298,18 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
           </label>
           <div style={{ marginTop: 14 }}>
             <button className="btn-primary" disabled={saving} onClick={() => void save()}>
-              {saving ? "Saving…" : "Save Preset"}
+              {saving ? "Saving…" : editingId ? "Save Changes" : "Save Preset"}
             </button>
           </div>
           <div style={{ marginTop: 8 }}>
-            <button className="btn-ghost" disabled={saving} onClick={() => setAdding(false)}>
+            <button
+              className="btn-ghost"
+              disabled={saving}
+              onClick={() => {
+                setAdding(false);
+                setEditingId(null);
+              }}
+            >
               Cancel
             </button>
           </div>

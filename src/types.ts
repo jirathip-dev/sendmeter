@@ -146,6 +146,11 @@ export interface TindeqPreset {
   restSetsS: number;
   /// Optional target load — drawn as the target band on the live chart.
   targetKg: number | null;
+  /// Optional target as % of the exercise's PR (best recorded peak).
+  /// Overrides targetKg when set.
+  targetPct: number | null;
+  /// Per-set ramp: set N targets (targetPct + (N-1)·pctStep)% of PR.
+  pctStep: number;
   /// Alternate left/right each rep (switch hands during the rep rest).
   alternateSides: boolean;
 }

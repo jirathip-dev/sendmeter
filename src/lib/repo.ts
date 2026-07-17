@@ -442,7 +442,7 @@ export async function insertRecording(
 // MARK: Tindeq presets (hang protocols for the guided gauge timer)
 
 const PRESET_COLS =
-  "id, name, hold_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, alternate_sides";
+  "id, name, hold_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_step, alternate_sides";
 
 type PresetRow = {
   id: string;
@@ -453,6 +453,8 @@ type PresetRow = {
   rest_reps_s: number;
   rest_sets_s: number;
   target_kg: number | null;
+  target_pct: number | null;
+  pct_step: number;
   alternate_sides: boolean;
 };
 
@@ -466,7 +468,24 @@ function toPreset(r: PresetRow): TindeqPreset {
     restRepsS: r.rest_reps_s,
     restSetsS: r.rest_sets_s,
     targetKg: r.target_kg,
+    targetPct: r.target_pct,
+    pctStep: r.pct_step,
     alternateSides: r.alternate_sides,
+  };
+}
+
+function presetToRow(p: Omit<TindeqPreset, "id">) {
+  return {
+    name: p.name,
+    hold_s: p.holdS,
+    reps: p.reps,
+    sets: p.sets,
+    rest_reps_s: p.restRepsS,
+    rest_sets_s: p.restSetsS,
+    target_kg: p.targetKg,
+    target_pct: p.targetPct,
+    pct_step: p.pctStep,
+    alternate_sides: p.alternateSides,
   };
 }
 
@@ -486,16 +505,22 @@ export async function insertPreset(
   const data = unwrap<PresetRow>(
     await supabase
       .from("tindeq_presets")
-      .insert({
-        name: p.name,
-        hold_s: p.holdS,
-        reps: p.reps,
-        sets: p.sets,
-        rest_reps_s: p.restRepsS,
-        rest_sets_s: p.restSetsS,
-        target_kg: p.targetKg,
-        alternate_sides: p.alternateSides,
-      })
+      .insert(presetToRow(p))
+      .select(PRESET_COLS)
+      .single(),
+  );
+  return toPreset(data);
+}
+
+export async function updatePreset(
+  id: string,
+  p: Omit<TindeqPreset, "id">,
+): Promise<TindeqPreset> {
+  const data = unwrap<PresetRow>(
+    await supabase
+      .from("tindeq_presets")
+      .update(presetToRow(p))
+      .eq("id", id)
       .select(PRESET_COLS)
       .single(),
   );

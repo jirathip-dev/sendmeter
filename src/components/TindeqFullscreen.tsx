@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { useTindeq } from "../hooks/useTindeq";
-import { timelineAt, timelineDurationS } from "../lib/protocol";
+import { presetTargetKg, timelineAt, timelineDurationS } from "../lib/protocol";
 import type { ProtocolSegment } from "../lib/protocol";
 import type { TindeqPreset, TindeqSide } from "../types";
 import ForceGauge from "./ForceGauge";
@@ -13,8 +13,11 @@ interface Props {
   /// display always agree. Null = free hold.
   protocol: TindeqPreset | null;
   timeline: ProtocolSegment[] | null;
-  /// The load band drawn on the live chart.
+  /// Fallback load band for the live chart (zone band / set-1 preset band —
+  /// with a %-of-PR ramp the band is re-derived here per CURRENT set).
   target: GaugeTarget | null;
+  /// Best recorded peak for the active exercise (+side) — %PR anchor.
+  prKg: number | null;
   /// Tab-global side — shown during holds when the protocol doesn't alternate.
   globalSide: TindeqSide;
   /// Tab-global tag + existing tags, so a free hold can be armed right here
@@ -55,6 +58,7 @@ export default function TindeqFullscreen({
   protocol,
   timeline,
   target,
+  prKg,
   globalSide,
   tag,
   allTags,
@@ -134,6 +138,24 @@ export default function TindeqFullscreen({
       ? (pos.seg.side ??
         (globalSide === "left" || globalSide === "right" ? globalSide : null))
       : null;
+
+  // Per-set target band: a %-of-PR preset ramps up each set; the chart band
+  // follows the CURRENT set live (set 1 while idle, last set once done).
+  const currentSet = pos?.seg.set ?? (done ? (protocol?.sets ?? 1) : 1);
+  const protocolKg = protocol ? presetTargetKg(protocol, prKg, currentSet) : null;
+  const band: GaugeTarget | null =
+    protocol && protocolKg != null
+      ? {
+          kg: protocolKg,
+          lowKg: protocolKg * 0.9,
+          highKg: protocolKg * 1.1,
+          workS: protocol.holdS,
+          label:
+            protocol.targetPct != null && protocol.sets > 1
+              ? `${protocol.name} · set ${currentSet}: ${protocolKg.toFixed(1)} kg`
+              : protocol.name,
+        }
+      : target;
 
   return (
     <div
@@ -335,9 +357,9 @@ export default function TindeqFullscreen({
                     <br />
                     each rep saves as its own recording
                   </>
-                ) : target ? (
+                ) : band ? (
                   <>
-                    Target: <span style={{ color: "var(--success)" }}>{target.label}</span>
+                    Target: <span style={{ color: "var(--success)" }}>{band.label}</span>
                   </>
                 ) : (
                   "Free hold — pick a zone or preset in the tab for a guided timer."
@@ -388,7 +410,7 @@ export default function TindeqFullscreen({
             elapsedMs={tindeq.elapsedMs}
             samplesRef={tindeq.samplesRef}
             live={measuring}
-            target={target}
+            target={band}
             chartHeight={240}
           />
         </div>

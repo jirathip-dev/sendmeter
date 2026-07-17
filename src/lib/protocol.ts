@@ -41,6 +41,24 @@ export function protocolDurationS(p: TindeqPreset): number {
   return p.sets * setWork + (p.sets - 1) * p.restSetsS;
 }
 
+/// The target load for a given set: %-of-PR mode ramps per set
+/// ((targetPct + (set-1)·pctStep)% of prKg, capped at 150%), otherwise the
+/// absolute targetKg; null when the preset has no target (or %PR is set but
+/// no PR exists yet for the exercise).
+export function presetTargetKg(
+  p: TindeqPreset,
+  prKg: number | null,
+  set: number,
+): number | null {
+  if (p.targetPct != null) {
+    if (prKg == null || prKg <= 0) return null;
+    const clampedSet = Math.max(1, Math.min(p.sets, set));
+    const pct = Math.min(150, p.targetPct + (clampedSet - 1) * p.pctStep);
+    return Math.round(((pct / 100) * prKg) * 10) / 10;
+  }
+  return p.targetKg;
+}
+
 export function buildTimeline(
   p: TindeqPreset,
   opts: { switchS?: number; prepareS?: number } = {},

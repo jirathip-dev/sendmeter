@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildTimeline,
+  presetTargetKg,
   protocolDurationS,
   repSide,
   timelineAt,
@@ -18,6 +19,8 @@ const repeaters: TindeqPreset = {
   restRepsS: 3,
   restSetsS: 180,
   targetKg: null,
+  targetPct: null,
+  pctStep: 0,
   alternateSides: false,
 };
 
@@ -31,8 +34,38 @@ const alt: TindeqPreset = {
   restRepsS: 30,
   restSetsS: 0,
   targetKg: null,
+  targetPct: null,
+  pctStep: 0,
   alternateSides: true,
 };
+
+describe("presetTargetKg", () => {
+  const ramp: TindeqPreset = {
+    ...repeaters,
+    sets: 4,
+    targetKg: 20,
+    targetPct: 50,
+    pctStep: 10,
+  };
+
+  it("ramps % of PR per set (50/60/70/80 of a 30kg PR)", () => {
+    expect(presetTargetKg(ramp, 30, 1)).toBe(15);
+    expect(presetTargetKg(ramp, 30, 2)).toBe(18);
+    expect(presetTargetKg(ramp, 30, 3)).toBe(21);
+    expect(presetTargetKg(ramp, 30, 4)).toBe(24);
+  });
+
+  it("clamps the set to the preset's range and the pct to 150", () => {
+    expect(presetTargetKg(ramp, 30, 99)).toBe(24); // set clamped to 4
+    expect(presetTargetKg({ ...ramp, targetPct: 140, pctStep: 20 }, 30, 4)).toBe(45); // 150% cap
+  });
+
+  it("%PR mode needs a PR; falls back to absolute kg when pct unset", () => {
+    expect(presetTargetKg(ramp, null, 1)).toBeNull();
+    expect(presetTargetKg({ ...ramp, targetPct: null }, null, 1)).toBe(20);
+    expect(presetTargetKg({ ...ramp, targetPct: null, targetKg: null }, 30, 1)).toBeNull();
+  });
+});
 
 describe("repSide", () => {
   it("alternates left/right per rep", () => {

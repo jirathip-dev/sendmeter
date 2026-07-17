@@ -9,7 +9,7 @@ import {
 } from "../lib/repo";
 import { computeForceCurve } from "../lib/force-curve";
 import type { ForceCurveModel } from "../lib/force-curve";
-import { buildTimeline, timelineAt } from "../lib/protocol";
+import { buildTimeline, presetTargetKg, timelineAt } from "../lib/protocol";
 import type { ProtocolSegment } from "../lib/protocol";
 import type { TindeqPreset, TindeqRecordingMeta, TindeqSide } from "../types";
 import ForceCurveCard from "./ForceCurveCard";
@@ -270,16 +270,23 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
   const model = canComputeCurve && curveReady ? curveModel : null;
   const curveComputing = canComputeCurve && !curveReady;
 
+  // PR for the active exercise (+side) — the same best-peak the trend chart
+  // marks as PR. Anchors presets whose target is a % of PR.
+  const prKg = curveRecordings.length
+    ? Math.max(...curveRecordings.map((r) => r.peakKg))
+    : null;
+
   // One guided-timer path: a custom preset wins; else an armed zone runs its
-  // prescription. The chart band comes from the preset's own target weight
-  // when set, else from the zone.
+  // prescription. The chart band comes from the preset's target (absolute kg
+  // or %-of-PR, set 1 here — the fullscreen ramps it per set), else the zone.
   const activeProtocol: TindeqPreset | null = preset ?? zoneSel?.protocol ?? null;
+  const presetKgSet1 = preset ? presetTargetKg(preset, prKg, 1) : null;
   const bandTarget: GaugeTarget | null =
-    preset?.targetKg != null
+    preset && presetKgSet1 != null
       ? {
-          kg: preset.targetKg,
-          lowKg: preset.targetKg * 0.9,
-          highKg: preset.targetKg * 1.1,
+          kg: presetKgSet1,
+          lowKg: presetKgSet1 * 0.9,
+          highKg: presetKgSet1 * 1.1,
           workS: preset.holdS,
           label: preset.name,
         }
@@ -714,6 +721,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
           protocol={activeProtocol}
           timeline={timeline}
           target={bandTarget}
+          prKg={prKg}
           globalSide={pendingSide}
           tag={pendingTag}
           allTags={allTags}

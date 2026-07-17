@@ -34,9 +34,32 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
 
 ## Architecture
 
+- **Four tabs, one job each** (ViewIds in `src/types.ts`; labels in
+  `src/constants.ts` — the "tindeq" ViewId displays as **Force**):
+  - **Home** (`Dashboard.tsx`) = status: phase banner, ACWR + full load detail
+    inline (weekly bars, daily heatmap), readiness. No logging here.
+  - **Workout** (`WorkoutView.tsx`) = do: live watch mirror (`useLiveWorkout`,
+    dedicated realtime channel), phone-only fullscreen timer
+    (`PhoneWorkoutFullscreen`, reducer in `lib/phoneWorkout.ts` persisted to
+    localStorage), and the manual + Log Session sheet.
+  - **Force** (`TindeqView.tsx`) = measure: global Exercise&Side card drives
+    everything below it (recording labels, zone targets, trend, curve);
+    `TindeqFullscreen` auto-opens on connect and runs guided protocols.
+  - **History** (`HistoryView.tsx`) = review: the single combined timeline —
+    sessions (workouts expand to HR chart, tindeq sessions to recording
+    charts) + loose recordings interleaved with multi-select → create session.
+- **Guided protocol engine** — `src/lib/protocol.ts` (pure, vitest-covered):
+  `buildTimeline(preset, {switchS, prepareS})` expands a preset into flat
+  timed segments (prepare/hold/switch/rest/setRest, alternating L/R pairs
+  with auto-extended rests); the fullscreen countdown AND the per-rep
+  recorder in TindeqView walk the same segments. Each hold saves as its own
+  recording (sliced from `samplesRef`) with the correct side.
+  `presetTargetKg` resolves %-of-PR targets with per-set ramps.
 - **`src/`** — the React app. `lib/` = data/logic (repo.ts = all Supabase queries,
-  metrics.ts = ACWR/EWMA, force-curve.ts = critical-force fit, healthSync.ts +
-  watchAuthRelay.ts = native bridges). `components/` = UI. `hooks/` = data hooks.
+  metrics.ts = ACWR/EWMA + exported `ewma()`, force-curve.ts = critical-force
+  fit + `ZONE_PROTOCOLS`, protocol.ts = guided timelines, healthSync.ts +
+  watchAuthRelay.ts = native bridges). `components/` = UI (`InfoDot.tsx` =
+  the "?" explainer sheets). `hooks/` = data hooks.
 - **`ios/App/App.xcodeproj`** — two targets: the Capacitor iOS **App** and the
   **SendLogWatch Watch App** companion (SwiftUI; workout/attempt tracking, force
   gauge, readiness display). Plus a `SendLogWatchTests` unit-test target.
@@ -50,10 +73,14 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
     pure Foundation (unit-tested); the plugin adds HealthKit + Supabase.
   - `sendlog-auth-bridge` — relays the Supabase session from the WebView to the
     watch over WatchConnectivity.
-- **`supabase/migrations/`** — 14 migrations. Tables: `sessions`, `user_settings`,
-  `phase_periods`, `tindeq_recordings`, `climb_workouts`, `climb_attempts`,
-  `health_metrics`. RLS scopes everything to `auth.uid()`; realtime publishes the
-  watch-writable tables.
+- **`supabase/migrations/`** — 18 migrations. Tables: `sessions` (incl.
+  `workout_source` = immutable auto/phone badge that survives type edits),
+  `user_settings`, `phase_periods`, `tindeq_recordings`, `tindeq_presets`
+  (hold/reps/sets/rests + target kg or %-of-PR + per-set % step + alternate
+  sides), `climb_workouts`/`climb_attempts` (both with `source` provenance),
+  `health_metrics`, `live_workouts` (one row per user, watch-heartbeat for
+  the live workout mirror). RLS scopes everything to `auth.uid()`; realtime
+  publishes the watch-writable tables + `live_workouts`.
 
 ## Non-obvious things that will bite you
 
@@ -91,9 +118,37 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
 - **Recording samples store `t` in milliseconds.** `tindeq_recordings.samples`
   time is ms — charts must divide by 1000 to show seconds (a mislabeled axis once
   showed "25152.0s").
-- **`?fake-tindeq`** query param puts the web Tindeq view in fake mode (simulated
+- **`?fake-tindeq`** query param puts the web Force view in fake mode (simulated
   BLE + force stream) — the only way to exercise the connect→measure→save flow in
   a browser (real Web Bluetooth needs a device).
+- **Never add `live_workouts` to `WATCHED_TABLES`** in
+  `RealtimeVersionProvider.tsx` — the watch heartbeats it every ~5s, which
+  would refetch every card in the app every 5s. The Workout tab subscribes to
+  it on its own payload-reading channel (`useLiveWorkout`).
+- **React-compiler lint is strict**: no `Date.now()`/impure calls in render
+  (hold `now` in state ticked by an interval), no synchronous `setState` in
+  effect bodies (derive instead, or write state only inside async callbacks —
+  see the curve auto-compute in `TindeqView` for the pattern), manual
+  `useMemo` that the compiler can't preserve gets rejected (just compute).
+- **Guided protocols save PER REP** — during a protocol, `handleStop` and the
+  autosave effect in `TindeqView` slice each hold out of the live buffer as
+  its own recording (side per rep when alternating); the whole-session
+  recording is only saved for free holds. Don't re-add a full-session insert
+  to the protocol path or every rep gets double-counted.
+- **InfoDot must swallow clicks** — it renders inside tappable cards
+  (ReadinessCard opens its detail sheet on card click); the
+  `display:contents` wrapper with `stopPropagation` is load-bearing, as is
+  the `textTransform: none` reset (the dot lives inside uppercase eyebrow
+  labels).
+- **Design tokens live in `index.css`**: semantic colors are deliberately
+  desaturated (no stock iOS neons), `--iris` is the shared iridescent
+  hairline gradient (cards get it via a masked `::before` ring — suppressed
+  inside `.modal-sheet`), `--shadow-card` is layered + has an inset top
+  highlight, and floating chrome (`.bottom-nav`, `.account-fab`,
+  `.glass-bar`) shares the translucent blur-glass recipe.
+- **localStorage keys** are prefixed `sendmeter:` — `phone-workout` (resumable
+  workout state machine), `rest-target-s`, `gauge-prepare`, `passkey-prompt`,
+  `theme`.
 - **Chrome animates transform/opacity on the compositor**, so `getComputedStyle`
   returns the *base* value mid-animation — you can't measure a ripple's scale or a
   hidden bar's transform from JS in the browser tools; verify animations visually

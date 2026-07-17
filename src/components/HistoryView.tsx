@@ -193,22 +193,9 @@ export default function HistoryView({
         ),
       )}
 
-      {/* Floating action bar while loose recordings are ticked */}
+      {/* Floating glass action bar while loose recordings are ticked */}
       {selectedIds.size > 0 && (
-        <div
-          style={{
-            position: "sticky",
-            bottom: "calc(64px + env(safe-area-inset-bottom))",
-            display: "flex",
-            gap: 8,
-            padding: 10,
-            background: "var(--canvas)",
-            border: "1px solid var(--card-border)",
-            borderRadius: 12,
-            boxShadow: "0 4px 18px rgba(0,0,0,0.35)",
-            zIndex: 10,
-          }}
-        >
+        <div className="glass-bar">
           <button
             className="btn-primary"
             disabled={creating}
