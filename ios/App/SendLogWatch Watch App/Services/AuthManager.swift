@@ -44,10 +44,16 @@ final class AuthManager: NSObject {
                 return
             }
         }
-        do {
-            let session = try await client.auth.session
+        // Fall back to the Keychain session WITHOUT refreshing it
+        // (`auth.session` refreshes when expired — with a refresh token the
+        // phone has since rotated, that trips replay detection and revokes
+        // the whole session family; that's how the watch "randomly" signed
+        // itself out after an app update). An expired local session just
+        // waits: the next phone-app foreground relays fresh tokens.
+        if let session = client.auth.currentSession,
+           session.expiresAt > Date().timeIntervalSince1970 + 60 {
             state = .signedIn(userId: session.user.id)
-        } catch {
+        } else {
             state = .signedOut
         }
     }
@@ -67,6 +73,15 @@ final class AuthManager: NSObject {
                 let accessToken = context["accessToken"] as? String,
                 let refreshToken = context["refreshToken"] as? String
             else { return false }
+            // receivedApplicationContext is PERSISTED — on a cold launch this
+            // payload can be hours old. setSession with an expired access
+            // token immediately refreshes using the relayed refresh token,
+            // which the phone's supabase-js has since rotated → Supabase's
+            // replay detection revokes the whole session family. Only consume
+            // a still-fresh pair; a stale one is ignored and the next phone
+            // foreground re-relays a live session.
+            let expiresAt = (context["expiresAt"] as? Double) ?? 0
+            guard expiresAt > Date().timeIntervalSince1970 + 60 else { return false }
             do {
                 let session = try await client.auth.setSession(
                     accessToken: accessToken, refreshToken: refreshToken

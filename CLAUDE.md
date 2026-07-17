@@ -114,6 +114,13 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
   client refreshing the shared token trips Supabase's replay detection and revokes
   the whole session family — writes then fail RLS as anon. Don't re-enable
   auto-refresh on the watch/plugin clients.
+  - The refresh trap is **indirect too**: `receivedApplicationContext` is
+    persisted, so on a cold watch launch the last relayed payload may be hours
+    old — `auth.setSession` with an expired access token *refreshes* with the
+    (long-rotated) relayed refresh token → family revoked → watch logged out
+    (this bit after a TestFlight update). AuthManager therefore ignores relays
+    whose `expiresAt` is past and reads the Keychain fallback via the
+    non-refreshing `auth.currentSession` only. Keep both guards.
 - **Migrations aren't auto-applied.** Files in `supabase/migrations/` are just SQL
   on disk — apply them to the remote DB via the Supabase MCP (`apply_migration`) or
   the CLI, or the schema drifts from the code. (The `health_metrics` delete policy +
