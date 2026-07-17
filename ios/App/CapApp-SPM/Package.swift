@@ -16,7 +16,8 @@ let package = Package(
         .package(name: "CapacitorCommunityBluetoothLe", path: "../../../node_modules/@capacitor-community/bluetooth-le"),
         .package(name: "CapacitorApp", path: "../../../node_modules/@capacitor/app"),
         .package(name: "SendlogAuthBridge", path: "../../../native-plugins/sendlog-auth-bridge"),
-        .package(name: "SendlogHealth", path: "../../../native-plugins/sendlog-health")
+        .package(name: "SendlogHealth", path: "../../../native-plugins/sendlog-health"),
+        .package(name: "SendlogPasskey", path: "../../../native-plugins/sendlog-passkey")
     ],
     targets: [
         .target(
@@ -28,7 +29,8 @@ let package = Package(
                 .product(name: "CapacitorCommunityBluetoothLe", package: "CapacitorCommunityBluetoothLe"),
                 .product(name: "CapacitorApp", package: "CapacitorApp"),
                 .product(name: "SendlogAuthBridge", package: "SendlogAuthBridge"),
-                .product(name: "SendlogHealth", package: "SendlogHealth")
+                .product(name: "SendlogHealth", package: "SendlogHealth"),
+                .product(name: "SendlogPasskey", package: "SendlogPasskey")
             ]
         )
     ]

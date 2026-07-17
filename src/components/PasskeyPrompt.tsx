@@ -1,18 +1,16 @@
 import { useEffect, useState } from "react";
-import { Capacitor } from "@capacitor/core";
 import { addPasskey, listPasskeys, passkeysSupported } from "../lib/passkeys";
 
 const KEY = "sendmeter:passkey-prompt";
 
 /// One-time post-login upsell: "add a passkey for faster sign-in". Dismisses
-/// itself (persisted) once the user creates one or taps Not now. Web-only for
-/// now — native passkeys depend on the Associated Domains bridge and aren't
-/// verified yet, so we don't offer a flow that might fail there.
+/// itself (persisted) once the user creates one or taps Not now. Works on web
+/// (browser WebAuthn) and native (the SendLogPasskey ASAuthorization plugin).
 export default function PasskeyPrompt() {
   // Start hidden while we check for an existing passkey — a user who already
   // enrolled one (e.g. on another device) shouldn't be nudged again. Fail open
   // (show) only after confirming they have none.
-  const disabled = !passkeysSupported || Capacitor.isNativePlatform();
+  const disabled = !passkeysSupported;
   const [state, setState] = useState<"checking" | "show" | "hidden">(() =>
     disabled || (typeof localStorage !== "undefined" && localStorage.getItem(KEY) === "done")
       ? "hidden"

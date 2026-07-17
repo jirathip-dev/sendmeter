@@ -21,7 +21,8 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "sendlog-auth-bridge": "file:native-plugins/sendlog-auth-bridge",
-    "sendlog-health": "file:native-plugins/sendlog-health"
+    "sendlog-health": "file:native-plugins/sendlog-health",
+    "sendlog-passkey": "file:native-plugins/sendlog-passkey"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.1",
