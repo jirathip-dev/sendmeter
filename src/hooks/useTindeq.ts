@@ -59,6 +59,7 @@ export function useTindeq() {
   const [lowBattery, setLowBattery] = useState(false);
   const [current, setCurrent] = useState(0);
   const [peak, setPeak] = useState(0);
+  const [avg, setAvg] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   // Bumped when the connection drops MID-MEASUREMENT — the samples are still
   // in samplesRef, and the owner (ForceView) must run its stop/save path so
@@ -71,6 +72,9 @@ export function useTindeq() {
   const t0Ref = useRef<number | null>(null);
   const measuringRef = useRef(false);
   const latestRef = useRef({ kg: 0, t: 0 });
+  // Running mean of the current pull (sum/count over all samples) — flushed
+  // to `avg` state once per frame alongside current/peak.
+  const sumRef = useRef({ sum: 0, count: 0 });
   const rafRef = useRef(0);
   const fakeTimerRef = useRef(0);
 
@@ -86,6 +90,8 @@ export function useTindeq() {
       setCurrent(kg);
       setElapsedMs(t);
       setPeak((p) => Math.max(p, kg));
+      const { sum, count } = sumRef.current;
+      if (count > 0) setAvg(sum / count);
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -99,6 +105,8 @@ export function useTindeq() {
         const t = (s.us - t0Ref.current) / 1000;
         samplesRef.current.push({ t, kg: s.kg });
         latestRef.current = { kg: s.kg, t };
+        sumRef.current.sum += s.kg;
+        sumRef.current.count += 1;
       }
     },
     [],
@@ -201,8 +209,10 @@ export function useTindeq() {
     samplesRef.current = [];
     t0Ref.current = null;
     latestRef.current = { kg: 0, t: 0 };
+    sumRef.current = { sum: 0, count: 0 };
     setCurrent(0);
     setPeak(0);
+    setAvg(0);
     setElapsedMs(0);
     setErrorMsg(null);
     try {
@@ -261,6 +271,7 @@ export function useTindeq() {
     lowBattery,
     current,
     peak,
+    avg,
     elapsedMs,
     interruptions,
     samplesRef,

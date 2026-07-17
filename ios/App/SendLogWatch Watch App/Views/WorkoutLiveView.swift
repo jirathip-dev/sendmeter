@@ -82,13 +82,19 @@ struct WorkoutLiveView: View {
                 }
             }
 
-            Button(workout.manualClimbing ? "Stop" : "Boulder") {
+            // Play = start a boulder, stop = drop off into the rest countdown
+            // (phone-workout logic; icons instead of words).
+            Button {
                 workout.toggleManualAttempt()
                 if workout.manualClimbing {
                     cancelRestAlarm()
                 } else {
                     scheduleRestAlarm()
                 }
+            } label: {
+                Image(systemName: workout.manualClimbing ? "stop.fill" : "play.fill")
+                    .font(.system(size: 20, weight: .bold))
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(workout.manualClimbing ? .orange : .green)
@@ -103,8 +109,10 @@ struct WorkoutLiveView: View {
                         ending = false
                     }
                 }
-                .font(.footnote)
-                .foregroundStyle(.red)
+                .font(.system(size: 12, weight: .semibold))
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .tint(.red)
                 .disabled(ending)
             }
         }
@@ -140,18 +148,22 @@ struct WorkoutLiveView: View {
                         .monospacedDigit()
                         .multilineTextAlignment(.center)
                         .foregroundStyle(over ? .red : .primary)
-                    // Tap cycles the rest target (1/2/3/5m) — persisted, and
-                    // mirrored to the phone via the live heartbeat.
-                    Button {
-                        let i = restTargets.firstIndex(of: workout.restTargetS) ?? 2
-                        workout.restTargetS = restTargets[(i + 1) % restTargets.count]
-                        scheduleRestAlarm()
-                    } label: {
-                        Text("target \(workout.restTargetS / 60)m")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
+                    // Rest-target chips (1/2/3/5m) — obvious selector like the
+                    // phone's; persisted + mirrored via the live heartbeat.
+                    HStack(spacing: 4) {
+                        ForEach(restTargets, id: \.self) { t in
+                            let selected = workout.restTargetS == t
+                            Button("\(t / 60)m") {
+                                workout.restTargetS = t
+                                scheduleRestAlarm()
+                            }
+                            .font(.system(size: 11, weight: selected ? .bold : .regular))
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            .tint(selected ? .blue : .gray)
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .padding(.top, 2)
                 }
             }
         }

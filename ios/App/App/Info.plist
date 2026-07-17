@@ -28,6 +28,10 @@
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Connects to your Tindeq Progressor force gauge.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Reads heart rate variability, resting heart rate, respiratory rate, sleep, and body weight to compute your daily training readiness.</string>
 	<key>NSHealthUpdateUsageDescription</key>

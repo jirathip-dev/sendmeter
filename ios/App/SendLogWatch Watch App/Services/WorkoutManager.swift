@@ -2,6 +2,7 @@ import CoreMotion
 import Foundation
 import HealthKit
 import Observation
+import WatchConnectivity
 
 /// Runs an HKWorkoutSession (climbing, indoor) with live HR from
 /// HKLiveWorkoutBuilder, fused at 1 Hz with CMAltimeter relative altitude and
@@ -144,7 +145,9 @@ final class WorkoutManager: NSObject {
         pushBeat()
     }
 
-    /// Snapshot state and fire one best-effort live heartbeat.
+    /// Snapshot state and fire one best-effort live heartbeat — over Supabase
+    /// (web mirror + fallback) AND, when the phone is reachable, directly over
+    /// WatchConnectivity for a sub-second in-app mirror (no network hop).
     private func pushBeat() {
         guard let sync = liveSync else { return }
         let hr = heartRate
@@ -155,12 +158,34 @@ final class WorkoutManager: NSObject {
         let cs = climbingSince
         let rs = restStartedAt
         let rt = restTargetS
+        let started = startDate ?? Date()
         Task {
             await sync.beat(
                 hr: hr, attemptCount: count, activeKcal: kcal,
                 elevationGainM: gain, climbing: climbing,
                 climbingSince: cs, restStartedAt: rs, restTargetS: rt
             )
+        }
+        // Bluetooth-fast path: same shape as the live_workouts row (dates as
+        // epoch seconds). Fire-and-forget; the phone plugin forwards it to
+        // the WebView, which keeps whichever source is newest.
+        let session = WCSession.default
+        if session.activationState == .activated, session.isReachable {
+            var msg: [String: Any] = [
+                "kind": "liveWorkout",
+                "status": "live",
+                "started_at": started.timeIntervalSince1970,
+                "attempt_count": count,
+                "climbing": climbing,
+                "elevation_gain_m": gain,
+                "rest_target_s": rt,
+                "updated_at": Date().timeIntervalSince1970,
+            ]
+            if let hr { msg["hr"] = hr }
+            msg["active_kcal"] = kcal
+            if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
+            if let rs { msg["rest_started_at"] = rs.timeIntervalSince1970 }
+            session.sendMessage(msg, replyHandler: nil, errorHandler: nil)
         }
     }
 
@@ -198,6 +223,15 @@ final class WorkoutManager: NSObject {
         fusionTimer = nil
         altimeter.stopRelativeAltitudeUpdates()
         motion.stopDeviceMotionUpdates()
+        // Close the phone's WC mirror immediately (Supabase markEnded follows).
+        let wc = WCSession.default
+        if wc.activationState == .activated, wc.isReachable {
+            wc.sendMessage(
+                ["kind": "liveWorkout", "status": "ended",
+                 "updated_at": Date().timeIntervalSince1970],
+                replyHandler: nil, errorHandler: nil
+            )
+        }
 
         let endDate = Date()
         session.end()

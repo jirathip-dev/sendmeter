@@ -385,6 +385,7 @@ export default function ForceFullscreen({
           <ForceGauge
             current={tindeq.current}
             peak={tindeq.peak}
+            avg={tindeq.avg}
             elapsedMs={tindeq.elapsedMs}
             samplesRef={tindeq.samplesRef}
             live={measuring}

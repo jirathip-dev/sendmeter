@@ -15,6 +15,8 @@ export interface GaugeTargetZone {
 interface Props {
   current: number;
   peak: number;
+  /// Running mean of the current pull (0 while idle).
+  avg?: number;
   elapsedMs: number;
   samplesRef: RefObject<TindeqSample[]>;
   live: boolean;
@@ -93,6 +95,7 @@ function drawTrace(
 export default function ForceGauge({
   current,
   peak,
+  avg = 0,
   elapsedMs,
   samplesRef,
   live,
@@ -169,6 +172,22 @@ export default function ForceGauge({
             </span>{" "}
             kg
           </div>
+          {avg > 0 && (
+            <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
+              avg{" "}
+              <span
+                style={{
+                  color: "var(--ink)",
+                  fontFamily: "Inter, sans-serif",
+                  fontWeight: 700,
+                  fontSize: 13,
+                }}
+              >
+                {avg.toFixed(1)}
+              </span>{" "}
+              kg
+            </div>
+          )}
           <div
             style={{
               fontSize: 11,

@@ -39,18 +39,20 @@ struct WorkoutConfirmView: View {
                 }
 
                 Stepper(value: $boulders, in: 0...200) {
-                    VStack(alignment: .leading) {
+                    VStack(alignment: .center) {
                         Text("BOULDERS").font(.system(size: 10)).foregroundStyle(.secondary)
                         Text("\(boulders)").monospacedDigit()
                     }
+                    .frame(maxWidth: .infinity)
                 }
 
                 Stepper(value: $rpe, in: 1...10) {
-                    VStack(alignment: .leading) {
+                    VStack(alignment: .center) {
                         Text("RPE (predicted \(String(format: "%.1f", summary.predictedRPE)))")
                             .font(.system(size: 10)).foregroundStyle(.secondary)
                         Text("\(rpe)").monospacedDigit()
                     }
+                    .frame(maxWidth: .infinity)
                 }
 
                 if let errorMsg {

@@ -77,4 +77,17 @@ extension SendLogAuthBridge: WCSessionDelegate {
     public func sessionDidDeactivate(_ session: WCSession) {
         session.activate()
     }
+
+    /// Watch → phone messages. The workout live-beat rides this session as a
+    /// Bluetooth-fast mirror path (sub-second, no network hop) alongside the
+    /// Supabase heartbeat; the WebView keeps whichever source is newest.
+    public func session(
+        _ session: WCSession,
+        didReceiveMessage message: [String: Any]
+    ) {
+        guard let kind = message["kind"] as? String, kind == "liveWorkout" else { return }
+        var payload = message
+        payload.removeValue(forKey: "kind")
+        notifyListeners("liveWorkout", data: payload as [String: Any])
+    }
 }

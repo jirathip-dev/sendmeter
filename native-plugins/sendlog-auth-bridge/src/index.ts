@@ -8,4 +8,4 @@ export const SendLogAuthBridge = registerPlugin<SendLogAuthBridgePlugin>(
   },
 );
 
-export type { SendLogAuthBridgePlugin } from "./definitions";
+export type { LiveWorkoutMessage, SendLogAuthBridgePlugin } from "./definitions";
