@@ -9,6 +9,8 @@ import {
 } from "../lib/repo";
 import { computeForceCurve } from "../lib/force-curve";
 import type { ForceCurveModel } from "../lib/force-curve";
+import { buildTimeline, timelineAt } from "../lib/protocol";
+import type { ProtocolSegment } from "../lib/protocol";
 import type { TindeqPreset, TindeqRecordingMeta, TindeqSide } from "../types";
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
@@ -128,9 +130,62 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
     };
   }, [realtimeVersion]);
 
+  // Save one hold segment of a guided protocol as its OWN recording — sliced
+  // from the live sample buffer, with the segment's hand (L/R when
+  // alternating) so per-side analysis stays honest.
+  async function saveHoldSlice(seg: ProtocolSegment, endMsOverride?: number) {
+    const startMs = seg.startS * 1000;
+    const endMs = endMsOverride ?? (seg.startS + seg.durS) * 1000;
+    const slice = tindeq.samplesRef.current
+      .filter((s) => s.t >= startMs && s.t <= endMs)
+      .map((s) => ({ t: Math.round((s.t - startMs) * 10) / 10, kg: s.kg }));
+    if (slice.length < 2) return;
+    const kgs = slice.map((s) => s.kg);
+    try {
+      const saved = await insertRecording({
+        durationMs: Math.max(1, Math.round(slice[slice.length - 1]!.t)),
+        peakKg: Math.max(...kgs),
+        avgKg: Math.round((kgs.reduce((a, b) => a + b, 0) / kgs.length) * 100) / 100,
+        note: "",
+        tag: pendingTag.trim(),
+        side: seg.side ?? pendingSide,
+        groupId: gaugeSession?.id ?? null,
+        samples: slice,
+      });
+      setRecordings((list) => [saved, ...list]);
+      setJustSaved(saved);
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : "Failed to save recording");
+    }
+  }
+
   // Stop always saves — the tag was required before Start, so there's nothing
-  // to decide here. Show the saved rep as a confirmation (with an undo).
+  // to decide here. Guided protocols save PER REP (each hold is already its
+  // own recording); a free hold saves the whole pull as one recording.
   async function handleStop() {
+    if (timeline) {
+      const tMs = tindeq.elapsedMs;
+      setSaving(true);
+      try {
+        // Flush any completed-but-unflushed holds, then a ≥1s partial hold.
+        const tS = tMs / 1000;
+        let idx = timeline.findIndex((s) => tS < s.startS + s.durS);
+        if (idx === -1) idx = timeline.length;
+        for (let i = savedThroughRef.current; i < idx; i++) {
+          const seg = timeline[i]!;
+          if (seg.phase === "hold") await saveHoldSlice(seg);
+        }
+        savedThroughRef.current = idx;
+        const pos = timelineAt(timeline, tS);
+        if (pos && pos.seg.phase === "hold" && tMs - pos.seg.startS * 1000 >= 1000) {
+          await saveHoldSlice(pos.seg, tMs);
+        }
+      } finally {
+        setSaving(false);
+      }
+      await tindeq.stop();
+      return;
+    }
     const summary = await tindeq.stop();
     if (!summary) return;
     setSaving(true);
@@ -229,6 +284,47 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
           label: preset.name,
         }
       : (zoneSel?.target ?? null);
+
+  // Get-ready countdown preference (5s PREPARE before the first hold).
+  const [prepare, setPrepare] = useState(
+    () => localStorage.getItem("sendmeter:gauge-prepare") !== "0",
+  );
+  function togglePrepare(on: boolean) {
+    setPrepare(on);
+    localStorage.setItem("sendmeter:gauge-prepare", on ? "1" : "0");
+  }
+
+  // The expanded protocol timeline — built here (not in the fullscreen) so
+  // the per-rep recorder below and the countdown display walk the SAME
+  // segments and can never disagree. Cheap to rebuild per render.
+  const timeline = activeProtocol
+    ? buildTimeline(activeProtocol, {
+        switchS: 3,
+        prepareS: prepare ? 5 : 0,
+      })
+    : null;
+
+  // Per-rep recorder: as the measurement clock passes each hold segment,
+  // slice it out of the sample buffer and save it as its own recording.
+  const savedThroughRef = useRef(0);
+  const measuring = tindeq.status === "measuring";
+  useEffect(() => {
+    if (!measuring || !timeline) {
+      savedThroughRef.current = 0;
+      return;
+    }
+    const tS = tindeq.elapsedMs / 1000;
+    let idx = timeline.findIndex((s) => tS < s.startS + s.durS);
+    if (idx === -1) idx = timeline.length;
+    for (let i = savedThroughRef.current; i < idx; i++) {
+      const seg = timeline[i]!;
+      if (seg.phase === "hold") void saveHoldSlice(seg);
+    }
+    if (idx > savedThroughRef.current) savedThroughRef.current = idx;
+    // saveHoldSlice is stable enough for this use (reads refs/state at call
+    // time); depending on it would re-run every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measuring, timeline, tindeq.elapsedMs]);
 
   // Pop the gauge fullscreen the moment the Progressor connects (only on the
   // connecting→connected transition — a stop→connected change must not
@@ -553,7 +649,19 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         </div>
       )}
 
-      {/* Training-zone gauge target (from the force-curve fit) */}
+      {/* Protocols: the zone target is the recommended/default protocol
+          (from your force curve); custom presets follow. */}
+      <div
+        style={{
+          fontSize: 10,
+          color: "var(--ink-faint)",
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+          margin: "20px 0 10px",
+        }}
+      >
+        Protocol presets
+      </div>
       {effectiveTag && (
         <TargetZonesCard
           tag={chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag}
@@ -562,8 +670,6 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
           onSelect={setZoneSel}
         />
       )}
-
-      {/* Hang protocol presets — drive the fullscreen guided timer */}
       <PresetManager selectedId={preset?.id ?? null} onSelect={setPreset} />
 
       {/* Peak force trend + force curve — always visible */}
@@ -606,10 +712,13 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
         <TindeqFullscreen
           tindeq={tindeq}
           protocol={activeProtocol}
+          timeline={timeline}
           target={bandTarget}
           globalSide={pendingSide}
           canStart={!!pendingTag.trim()}
           saving={saving}
+          prepare={prepare}
+          onTogglePrepare={togglePrepare}
           onStop={() => void handleStop()}
           onStart={() => {
             setJustSaved(null);

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { QUALITIES, ZONE_PROTOCOLS, zoneTarget } from "../lib/force-curve";
 import type { ForceCurveModel, TrainingQuality } from "../lib/force-curve";
-import { protocolDurationS } from "../lib/protocol";
+import { buildTimeline, timelineDurationS } from "../lib/protocol";
 import type { TindeqPreset } from "../types";
 import type { GaugeTarget } from "./ForceCurveCard";
 import InfoDot from "./InfoDot";
@@ -77,7 +77,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
           alignItems: "center",
         }}
       >
-        <span>Gauge target · {tag}</span>
+        <span>Recommended · {tag}</span>
         <InfoDot topic="gaugeTarget" />
       </div>
       {!model ? (
@@ -139,7 +139,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                 {fmt(selected.protocol.restRepsS)} × {selected.protocol.reps} reps
                 {selected.protocol.sets > 1 &&
                   ` · ${selected.protocol.sets} sets (${fmt(selected.protocol.restSetsS)} between)`}{" "}
-                · total {fmt(protocolDurationS(selected.protocol))}
+                · total {fmt(timelineDurationS(buildTimeline(selected.protocol, { switchS: 3 })))}
               </div>
               <label
                 style={{
@@ -160,7 +160,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                     if (quality) onSelect(build(quality, e.target.checked));
                   }}
                 />
-                Alternate left ⇄ right each rep (otherwise the global side applies)
+                Alternate left ⇄ right each rep (otherwise uses the selected side)
               </label>
             </div>
           ) : (

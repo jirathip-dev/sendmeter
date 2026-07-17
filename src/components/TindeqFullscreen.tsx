@@ -1,33 +1,38 @@
 import { useEffect, useRef } from "react";
 import type { useTindeq } from "../hooks/useTindeq";
-import { protocolDurationS, protocolPhaseAt, repSide } from "../lib/protocol";
+import { timelineAt, timelineDurationS } from "../lib/protocol";
+import type { ProtocolSegment } from "../lib/protocol";
 import type { TindeqPreset, TindeqSide } from "../types";
 import ForceGauge from "./ForceGauge";
 import type { GaugeTarget } from "./ForceCurveCard";
 
 interface Props {
   tindeq: ReturnType<typeof useTindeq>;
-  /// The active guided protocol: a custom preset, or the armed zone's
-  /// prescription (resolved by the parent). Null = free hold.
+  /// The active guided protocol (custom preset or zone prescription) and its
+  /// expanded timeline — built by the parent so the per-rep recorder and this
+  /// display always agree. Null = free hold.
   protocol: TindeqPreset | null;
-  /// The load band drawn on the live chart (preset target or zone band).
+  timeline: ProtocolSegment[] | null;
+  /// The load band drawn on the live chart.
   target: GaugeTarget | null;
-  /// The tab-global side — shown during holds when the protocol doesn't
-  /// alternate.
+  /// Tab-global side — shown during holds when the protocol doesn't alternate.
   globalSide: TindeqSide;
-  /// Tag is set outside (Exercise card); Start stays disabled without it.
   canStart: boolean;
   saving: boolean;
+  /// Get-ready countdown before the first hold (persisted preference).
+  prepare: boolean;
+  onTogglePrepare: (on: boolean) => void;
   onStart: () => void;
   onStop: () => void;
   onMinimize: () => void;
 }
 
 const PHASE_META = {
+  prepare: { label: "GET READY", color: "var(--warning)" },
   hold: { label: "HOLD", color: "var(--success)" },
+  switch: { label: "SWITCH HANDS", color: "var(--warning)" },
   rest: { label: "REST", color: "var(--primary)" },
   setRest: { label: "SET REST", color: "var(--info)" },
-  done: { label: "DONE", color: "var(--warning)" },
 } as const;
 
 function fmt(sec: number): string {
@@ -35,29 +40,34 @@ function fmt(sec: number): string {
   return s >= 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : `${s}`;
 }
 
-/// Immersive fullscreen gauge (Timer-Plus style): a big color-coded phase
-/// banner — HOLD / REST / SET REST countdowns from the selected protocol
-/// preset — over the fullscreen live force chart.
+/// Immersive fullscreen gauge (Timer-Plus style): a big color-coded banner
+/// walks the protocol timeline — GET READY / HOLD·LEFT / SWITCH HANDS /
+/// REST — over the fullscreen live force chart, with a big circular
+/// start/stop like the workout timer.
 export default function TindeqFullscreen({
   tindeq,
   protocol,
+  timeline,
   target,
   globalSide,
   canStart,
   saving,
+  prepare,
+  onTogglePrepare,
   onStart,
   onStop,
   onMinimize,
 }: Props) {
   const measuring = tindeq.status === "measuring";
   const tS = tindeq.elapsedMs / 1000;
-  const phase = protocol && measuring ? protocolPhaseAt(protocol, tS) : null;
-  const meta = phase ? PHASE_META[phase.phase] : null;
+  const pos = timeline && measuring ? timelineAt(timeline, tS) : null;
+  const done = timeline !== null && measuring && pos === null;
+  const meta = pos ? PHASE_META[pos.seg.phase] : null;
 
-  // Beep + haptic on protocol phase transitions (AudioContext primed on the
-  // Start tap so iOS allows playback).
+  // Beep + haptic on segment transitions (AudioContext primed on the Start
+  // tap so iOS allows playback).
   const audioRef = useRef<AudioContext | null>(null);
-  const lastPhaseKeyRef = useRef<string | null>(null);
+  const lastKeyRef = useRef<string | null>(null);
   function primeAudio() {
     try {
       if (!audioRef.current) audioRef.current = new AudioContext();
@@ -67,27 +77,32 @@ export default function TindeqFullscreen({
     }
   }
   useEffect(() => {
-    if (!phase) {
-      lastPhaseKeyRef.current = null;
+    if (!measuring || !timeline) {
+      lastKeyRef.current = null;
       return;
     }
-    const key = `${phase.phase}-${phase.set}-${phase.rep}`;
-    if (lastPhaseKeyRef.current === key) return;
-    const isFirst = lastPhaseKeyRef.current === null;
-    lastPhaseKeyRef.current = key;
+    const key = done
+      ? "done"
+      : pos
+        ? `${pos.seg.phase}-${pos.seg.set}-${pos.seg.rep}-${pos.seg.side ?? ""}`
+        : null;
+    if (key === null || lastKeyRef.current === key) return;
+    const isFirst = lastKeyRef.current === null;
+    lastKeyRef.current = key;
     if (isFirst) return;
     const ctx = audioRef.current;
+    const phase = done ? "done" : pos!.seg.phase;
     if (ctx) {
       try {
-        const freq = phase.phase === "hold" ? 990 : phase.phase === "done" ? 660 : 440;
-        const beeps = phase.phase === "done" ? 3 : 1;
+        const freq = phase === "hold" ? 990 : phase === "done" ? 660 : 440;
+        const beeps = phase === "done" ? 3 : phase === "switch" ? 2 : 1;
         for (let i = 0; i < beeps; i++) {
           const o = ctx.createOscillator();
           const g = ctx.createGain();
           o.connect(g);
           g.connect(ctx.destination);
           o.frequency.value = freq;
-          const t0 = ctx.currentTime + i * 0.25;
+          const t0 = ctx.currentTime + i * 0.22;
           g.gain.setValueAtTime(0.25, t0);
           o.start(t0);
           o.stop(t0 + 0.15);
@@ -96,25 +111,18 @@ export default function TindeqFullscreen({
         // ignore
       }
     }
-    navigator.vibrate?.(phase.phase === "hold" ? 150 : [80, 60, 80]);
-  }, [phase]);
+    navigator.vibrate?.(phase === "hold" ? 150 : [80, 60, 80]);
+  }, [measuring, timeline, pos, done]);
 
-  const bannerColor = meta?.color ?? (measuring ? "var(--success)" : "var(--primary)");
+  const bannerColor = done
+    ? "var(--warning)"
+    : (meta?.color ?? (measuring ? "var(--success)" : "var(--primary)"));
 
-  // Which hand this rep uses: alternate per rep when the protocol says so,
-  // otherwise the tab-global side (if one is picked).
-  const side =
-    phase && phase.phase !== "done"
-      ? protocol?.alternateSides
-        ? repSide(phase.rep)
-        : globalSide === "left" || globalSide === "right"
-          ? globalSide
-          : null
-      : null;
-  // During a rest with alternation, cue the hand for the NEXT rep.
-  const nextSide =
-    protocol?.alternateSides && phase && (phase.phase === "rest" || phase.phase === "setRest")
-      ? repSide(phase.phase === "setRest" ? 1 : phase.rep + 1)
+  // Side shown on a hold: the segment's own hand, else the global pick.
+  const holdSide =
+    pos?.seg.phase === "hold"
+      ? (pos.seg.side ??
+        (globalSide === "left" || globalSide === "right" ? globalSide : null))
       : null;
 
   return (
@@ -218,13 +226,32 @@ export default function TindeqFullscreen({
           style={{
             borderRadius: 18,
             padding: "18px 16px",
-            background: `color-mix(in srgb, ${bannerColor} ${phase ? 22 : 12}%, var(--surface-1))`,
+            background: `color-mix(in srgb, ${bannerColor} ${pos || done ? 22 : 12}%, var(--surface-1))`,
             border: `1px solid color-mix(in srgb, ${bannerColor} 50%, transparent)`,
             textAlign: "center",
             transition: "background 0.25s, border-color 0.25s",
           }}
         >
-          {phase && meta && protocol ? (
+          {done && protocol ? (
+            <>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: 17, color: bannerColor }}>
+                DONE
+              </div>
+              <div
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontWeight: 800,
+                  fontSize: "clamp(56px, 18vw, 96px)",
+                  lineHeight: 1,
+                }}
+              >
+                ✓
+              </div>
+              <div style={{ fontSize: 13, color: "var(--ink-muted)", marginTop: 4 }}>
+                protocol complete — Stop to finish
+              </div>
+            </>
+          ) : pos && meta && protocol ? (
             <>
               <div
                 style={{
@@ -236,7 +263,8 @@ export default function TindeqFullscreen({
                 }}
               >
                 {meta.label}
-                {side && phase.phase === "hold" && ` · ${side.toUpperCase()}`}
+                {holdSide && ` · ${holdSide.toUpperCase()}`}
+                {pos.seg.phase === "switch" && pos.seg.side && ` → ${pos.seg.side.toUpperCase()}`}
               </div>
               <div
                 style={{
@@ -247,30 +275,24 @@ export default function TindeqFullscreen({
                   lineHeight: 1,
                 }}
               >
-                {phase.phase === "done" ? "✓" : fmt(phase.remaining)}
+                {fmt(pos.remaining)}
               </div>
               <div style={{ fontSize: 13, color: "var(--ink-muted)", marginTop: 4 }}>
-                rep {phase.rep}/{protocol.reps} · set {phase.set}/{protocol.sets}
-                {phase.phase === "done" && " — Stop & Save"}
-                {nextSide && (
-                  <span style={{ color: "var(--warning)", fontWeight: 700 }}>
-                    {" "}
-                    · switch to {nextSide.toUpperCase()}
-                  </span>
-                )}
+                {pos.seg.phase === "prepare"
+                  ? "get on the hold…"
+                  : `rep ${pos.seg.rep}/${protocol.reps} · set ${pos.seg.set}/${protocol.sets}`}
+                {(pos.seg.phase === "rest" || pos.seg.phase === "setRest") &&
+                  protocol.alternateSides && (
+                    <span style={{ color: "var(--warning)", fontWeight: 700 }}>
+                      {" "}
+                      · next: LEFT
+                    </span>
+                  )}
               </div>
             </>
           ) : measuring ? (
             <>
-              <div
-                style={{
-                  fontFamily: "Inter, sans-serif",
-                  fontWeight: 800,
-                  letterSpacing: "0.12em",
-                  fontSize: 17,
-                  color: bannerColor,
-                }}
-              >
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: 17, color: bannerColor }}>
                 MEASURING
               </div>
               <div
@@ -288,39 +310,32 @@ export default function TindeqFullscreen({
             </>
           ) : (
             <>
-              <div
-                style={{
-                  fontFamily: "Inter, sans-serif",
-                  fontWeight: 800,
-                  letterSpacing: "0.12em",
-                  fontSize: 17,
-                  color: bannerColor,
-                }}
-              >
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: 17, color: bannerColor }}>
                 READY
               </div>
               <div style={{ fontSize: 12, color: "var(--ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
-                {protocol ? (
+                {protocol && timeline ? (
                   <>
                     <span style={{ color: "var(--ink)", fontWeight: 600 }}>{protocol.name}</span>{" "}
-                    · {protocol.holdS}s × {protocol.reps} × {protocol.sets} · ~
-                    {Math.round(protocolDurationS(protocol) / 60)}min
+                    · {protocol.holdS}s × {protocol.reps} × {protocol.sets}
+                    {protocol.alternateSides && " · L⇄R"} · ~
+                    {Math.round(timelineDurationS(timeline) / 60)}min
                     <br />
-                    guided timer starts with Start
+                    each rep saves as its own recording
                   </>
                 ) : target ? (
                   <>
                     Target: <span style={{ color: "var(--success)" }}>{target.label}</span>
                   </>
                 ) : (
-                  "Free hold — pick a preset or target in the tab for a guided timer."
+                  "Free hold — pick a zone or preset in the tab for a guided timer."
                 )}
               </div>
             </>
           )}
         </div>
 
-        {/* Fullscreen live force chart (preset target beats zone target) */}
+        {/* Fullscreen live force chart */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
           <ForceGauge
             current={tindeq.current}
@@ -329,38 +344,78 @@ export default function TindeqFullscreen({
             samplesRef={tindeq.samplesRef}
             live={measuring}
             target={target}
-            chartHeight={280}
+            chartHeight={240}
           />
         </div>
 
-        {/* One big action */}
-        {measuring ? (
+        {/* Big circular action (like the workout timer) */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
           <button
-            className="btn-primary"
-            disabled={saving}
-            onClick={onStop}
-            style={{ background: "var(--danger)", padding: "16px 20px", fontSize: 15 }}
-          >
-            {saving ? "Saving…" : "Stop & Save"}
-          </button>
-        ) : (
-          <button
-            className="btn-primary"
-            disabled={!canStart}
             onClick={() => {
-              primeAudio();
-              onStart();
+              if (measuring) {
+                onStop();
+              } else {
+                primeAudio();
+                onStart();
+              }
             }}
-            style={{ background: "var(--success)", padding: "16px 20px", fontSize: 15 }}
+            disabled={measuring ? saving : !canStart}
+            style={{
+              width: 118,
+              height: 118,
+              borderRadius: "50%",
+              border: `3px solid ${measuring ? "var(--danger)" : "var(--success)"}`,
+              background: `color-mix(in srgb, ${measuring ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
+              color: measuring ? "var(--danger)" : "var(--success)",
+              cursor: "pointer",
+              fontFamily: "Inter, sans-serif",
+              fontWeight: 800,
+              fontSize: 15,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 3,
+              opacity: (measuring ? saving : !canStart) ? 0.45 : 1,
+            }}
           >
-            Start
+            {measuring ? (
+              <>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+                {saving ? "SAVING…" : "STOP"}
+              </>
+            ) : (
+              <>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                START
+              </>
+            )}
           </button>
-        )}
-        {!canStart && !measuring && (
-          <div style={{ fontSize: 10, color: "var(--ink-faint)", textAlign: "center" }}>
-            Set the exercise tag in the tab first (minimize ⌄).
-          </div>
-        )}
+          {!measuring && (
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 11,
+                color: "var(--ink-muted)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={prepare}
+                onChange={(e) => onTogglePrepare(e.target.checked)}
+              />
+              5s get-ready countdown
+            </label>
+          )}
+          {!canStart && !measuring && (
+            <div style={{ fontSize: 10, color: "var(--ink-faint)", textAlign: "center" }}>
+              Set the exercise tag in the tab first (minimize ⌄).
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

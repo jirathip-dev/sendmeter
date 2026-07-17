@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { deletePreset, fetchPresets, insertPreset } from "../lib/repo";
-import { protocolDurationS } from "../lib/protocol";
+import { buildTimeline, timelineDurationS } from "../lib/protocol";
 import type { TindeqPreset } from "../types";
 
 interface Props {
@@ -114,19 +114,7 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
   }
 
   return (
-    <div>
-      <div
-        style={{
-          fontSize: 10,
-          color: "var(--ink-faint)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
-          margin: "20px 0 10px",
-        }}
-      >
-        Protocol presets
-      </div>
-
+    <div style={{ marginTop: 8 }}>
       {error && (
         <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 8 }}>{error}</div>
       )}
@@ -174,7 +162,8 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
               </div>
               <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
                 hold {fmt(p.holdS)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
-                {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total {fmt(protocolDurationS(p))}
+                {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total{" "}
+                {fmt(timelineDurationS(buildTimeline(p, { switchS: 3 })))}
                 {p.targetKg !== null && (
                   <span style={{ color: "var(--success)" }}> · {p.targetKg.toFixed(1)} kg</span>
                 )}
@@ -231,7 +220,7 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
               checked={alternateSides}
               onChange={(e) => setAlternateSides(e.target.checked)}
             />
-            Alternate left ⇄ right each rep (switch hands during the rest)
+            Alternate left ⇄ right each rep (otherwise uses the selected side)
           </label>
           <div style={{ marginTop: 14 }}>
             <button className="btn-primary" disabled={saving} onClick={() => void save()}>
