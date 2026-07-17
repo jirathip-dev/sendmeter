@@ -15,7 +15,7 @@ export interface GaugeTarget {
 
 interface Props {
   tag: string;
-  /// Computed by the parent (TindeqView auto-computes per selected tag).
+  /// Computed by the parent (ForceView auto-computes per selected tag).
   model: ForceCurveModel | null;
   computing: boolean;
   error: string | null;

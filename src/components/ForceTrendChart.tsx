@@ -137,7 +137,7 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
   );
 }
 
-export default function TindeqTrendChart({
+export default function ForceTrendChart({
   recordings,
   selectedTag,
   selectedSide,

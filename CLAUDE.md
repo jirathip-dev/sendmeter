@@ -42,9 +42,9 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
     dedicated realtime channel), phone-only fullscreen timer
     (`PhoneWorkoutFullscreen`, reducer in `lib/phoneWorkout.ts` persisted to
     localStorage), and the manual + Log Session sheet.
-  - **Force** (`TindeqView.tsx`) = measure: global Exercise&Side card drives
+  - **Force** (`ForceView.tsx`) = measure: global Exercise&Side card drives
     everything below it (recording labels, zone targets, trend, curve);
-    `TindeqFullscreen` auto-opens on connect and runs guided protocols.
+    `ForceFullscreen` auto-opens on connect and runs guided protocols.
   - **History** (`HistoryView.tsx`) = review: the single combined timeline —
     sessions (workouts expand to HR chart, tindeq sessions to recording
     charts) + loose recordings interleaved with multi-select → create session.
@@ -52,7 +52,7 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
   `buildTimeline(preset, {switchS, prepareS})` expands a preset into flat
   timed segments (prepare/hold/switch/rest/setRest, alternating L/R pairs
   with auto-extended rests); the fullscreen countdown AND the per-rep
-  recorder in TindeqView walk the same segments. Each hold saves as its own
+  recorder in ForceView walk the same segments. Each hold saves as its own
   recording (sliced from `samplesRef`) with the correct side.
   `presetTargetKg` resolves %-of-PR targets with per-set ramps.
 - **`src/`** — the React app. `lib/` = data/logic (repo.ts = all Supabase queries,
@@ -128,10 +128,10 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
 - **React-compiler lint is strict**: no `Date.now()`/impure calls in render
   (hold `now` in state ticked by an interval), no synchronous `setState` in
   effect bodies (derive instead, or write state only inside async callbacks —
-  see the curve auto-compute in `TindeqView` for the pattern), manual
+  see the curve auto-compute in `ForceView` for the pattern), manual
   `useMemo` that the compiler can't preserve gets rejected (just compute).
 - **Guided protocols save PER REP** — during a protocol, `handleStop` and the
-  autosave effect in `TindeqView` slice each hold out of the live buffer as
+  autosave effect in `ForceView` slice each hold out of the live buffer as
   its own recording (side per rep when alternating); the whole-session
   recording is only saved for free holds. Don't re-add a full-session insert
   to the protocol path or every rep gets double-counted.

@@ -53,7 +53,7 @@ function fmt(sec: number): string {
 /// walks the protocol timeline — GET READY / HOLD·LEFT / SWITCH HANDS /
 /// REST — over the fullscreen live force chart, with a big circular
 /// start/stop like the workout timer.
-export default function TindeqFullscreen({
+export default function ForceFullscreen({
   tindeq,
   protocol,
   timeline,

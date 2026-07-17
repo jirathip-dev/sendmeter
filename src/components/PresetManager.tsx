@@ -47,7 +47,12 @@ function NumField({
         max={max}
         onChange={(e) => {
           const v = Number(e.target.value);
-          if (Number.isFinite(v)) onChange(Math.max(min, Math.min(max, v)));
+          if (!Number.isFinite(v)) return;
+          const clamped = Math.max(min, Math.min(max, v));
+          // Normalize the DOM text too — otherwise typed leading zeros
+          // ("080") stick, since React sees 80 === 80 and won't rewrite.
+          if (e.target.value !== String(clamped)) e.target.value = String(clamped);
+          onChange(clamped);
         }}
         style={{ padding: "9px 10px", fontSize: 14 }}
       />

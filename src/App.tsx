@@ -12,7 +12,7 @@ import LoginScreen from "./components/LoginScreen";
 import RecoveryScreen from "./components/RecoveryScreen";
 import LogForm from "./components/LogForm";
 import PhasesView from "./components/PhasesView";
-import TindeqView from "./components/TindeqView";
+import ForceView from "./components/ForceView";
 import WorkoutView from "./components/WorkoutView";
 import BottomNav from "./components/BottomNav";
 import PasskeyPrompt from "./components/PasskeyPrompt";
@@ -205,7 +205,7 @@ function AuthedApp({
               />
             )}
             {view === "tindeq" && (
-              <TindeqView onLogSession={addTindeqSession} />
+              <ForceView onLogSession={addTindeqSession} />
             )}
           </>
         )}

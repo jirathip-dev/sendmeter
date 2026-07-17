@@ -160,6 +160,8 @@ html, body { height: 100%; overflow: hidden; background: var(--bg); }
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
   pointer-events: none;
 }
+/* A straight hairline across a circle looks wrong — drop it while collapsed */
+.bottom-nav.collapsed::after { content: none; }
 
 /* Floating glass action bar (e.g. History's create-session bar) */
 .glass-bar {

@@ -19,10 +19,10 @@ import SideAsymmetryCard from "./SideAsymmetryCard";
 import TagSideEditor from "./TagSideEditor";
 import TargetZonesCard from "./TargetZonesCard";
 import type { ZoneSelection } from "./TargetZonesCard";
-import TindeqFullscreen from "./TindeqFullscreen";
-import TindeqTrendChart from "./TindeqTrendChart";
+import ForceFullscreen from "./ForceFullscreen";
+import ForceTrendChart from "./ForceTrendChart";
 
-interface TindeqViewProps {
+interface ForceViewProps {
   onLogSession: (input: {
     durationMin: number;
     rpe: number;
@@ -31,7 +31,7 @@ interface TindeqViewProps {
   }) => Promise<void>;
 }
 
-export default function TindeqView({ onLogSession }: TindeqViewProps) {
+export default function ForceView({ onLogSession }: ForceViewProps) {
   const tindeq = useTindeq();
   // The just-auto-saved recording, shown as a confirmation so the user can
   // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
@@ -116,7 +116,16 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
     let cancelled = false;
     fetchRecordings()
       .then((list) => {
-        if (!cancelled) setRecordings(list);
+        if (cancelled) return;
+        setRecordings(list);
+        // Default the tag input to the most-recorded exercise so the input
+        // matches what the charts below already show (they fall back to it).
+        const counts = new Map<string, number>();
+        for (const r of list) {
+          if (r.tag) counts.set(r.tag, (counts.get(r.tag) ?? 0) + 1);
+        }
+        const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        if (top) setPendingTag((prev) => (prev.trim() ? prev : top));
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -683,7 +692,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
       <div style={{ marginTop: 16 }}>
         {recordings.length >= 2 ? (
           <>
-            <TindeqTrendChart
+            <ForceTrendChart
               recordings={recordings}
               selectedTag={effectiveTag}
               selectedSide={chartSide}
@@ -716,7 +725,7 @@ export default function TindeqView({ onLogSession }: TindeqViewProps) {
 
       {/* Immersive fullscreen gauge (overlays everything while connected) */}
       {(status === "connected" || status === "measuring") && !gaugeMinimized && (
-        <TindeqFullscreen
+        <ForceFullscreen
           tindeq={tindeq}
           protocol={activeProtocol}
           timeline={timeline}
