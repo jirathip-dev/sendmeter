@@ -41,81 +41,93 @@ export default function Dashboard({
   const curWeek = weeklyLoads[weeklyLoads.length - 1]?.total ?? 0;
   const prevWeek = weeklyLoads[weeklyLoads.length - 2]?.total ?? 0;
   const weekDeltaPct = prevWeek > 0 ? ((curWeek - prevWeek) / prevWeek) * 100 : null;
+  // Per-day total load AND the day's dominant activity type (most load) — the
+  // heatmap hues each cell by type (SL-60).
   const daily = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const s of sessions) m.set(s.date, (m.get(s.date) ?? 0) + s.load);
-    return m;
+    const acc = new Map<string, { total: number; byType: Map<string, number> }>();
+    for (const s of sessions) {
+      let e = acc.get(s.date);
+      if (!e) {
+        e = { total: 0, byType: new Map() };
+        acc.set(s.date, e);
+      }
+      e.total += s.load;
+      e.byType.set(s.type, (e.byType.get(s.type) ?? 0) + s.load);
+    }
+    const out = new Map<string, { total: number; type: string }>();
+    for (const [date, e] of acc) {
+      let type = "";
+      let best = -1;
+      for (const [t, load] of e.byType) {
+        if (load > best) {
+          best = load;
+          type = t;
+        }
+      }
+      out.set(date, { total: e.total, type });
+    }
+    return out;
   }, [sessions]);
 
   return (
     <div>
-      {/* Phase strip — tap to change phase */}
+      {/* Phase strip — slim + neutral context (SL-60): only the phase name
+          carries color; it no longer fills the screen as a big colored box. */}
       <div
         className="phase-banner"
         title="Change training phase"
         onClick={onOpenPhases}
         style={{
-          background: phase.bg,
-          border: `1px solid ${phase.border}`,
           marginBottom: 10,
+          padding: "10px 14px",
           cursor: "pointer",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 10,
         }}
       >
-        <div
-          style={{
-            fontSize: 9,
-            color: phase.color,
-            textTransform: "uppercase",
-            letterSpacing: "0.12em",
-            marginBottom: 4,
-          }}
-        >
-          Current Phase — Day {phaseDays}
-        </div>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: 26,
-                fontWeight: 800,
-                color: phase.color,
-                letterSpacing: "-0.02em",
-                lineHeight: 1,
-              }}
-            >
-              {phase.name.toUpperCase()}
-            </div>
-            <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 5 }}>
-              {phase.desc}
-            </div>
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 9,
+              color: "var(--ink-muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+            }}
+          >
+            Current phase · Day {phaseDays}
           </div>
-          <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 12 }}>
-            <div
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 2 }}>
+            <span
               style={{
-                fontSize: 9,
-                color: "var(--ink-muted)",
-                textTransform: "uppercase",
-              }}
-            >
-              Target ACWR
-            </div>
-            <div
-              style={{
-                fontSize: 20,
+                fontSize: 15,
+                fontWeight: 700,
                 color: phase.color,
-                fontFamily: "Inter, sans-serif",
-                fontWeight: 800,
+                letterSpacing: "-0.01em",
               }}
             >
-              {phase.acwr}
-            </div>
+              {phase.name}
+            </span>
+            <span
+              style={{
+                fontSize: 10,
+                color: "var(--ink-faint)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {phase.desc}
+            </span>
+          </div>
+        </div>
+        <div style={{ textAlign: "right", flexShrink: 0 }}>
+          <div style={{ fontSize: 9, color: "var(--ink-muted)", textTransform: "uppercase" }}>
+            Target
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+            {phase.acwr}
           </div>
         </div>
       </div>
@@ -127,10 +139,13 @@ export default function Dashboard({
           gap: 10,
         }}
       >
+        {/* Readiness is the hero (SL-60): the day's actionable number leads. */}
+        <ReadinessCard onClick={() => setShowRecovery(true)} />
+
         {/* ACWR — the load detail now lives right below, no drill-in */}
         <div className="card">
           <div
-            className="label-eyebrow"
+            className="card-title"
             style={{
               marginBottom: 8,
               display: "flex",
@@ -243,7 +258,7 @@ export default function Dashboard({
         {/* Weekly totals */}
         <div className="card">
           <div
-            className="label-eyebrow"
+            className="card-title"
             style={{
               marginBottom: 12,
               display: "flex",
@@ -270,7 +285,7 @@ export default function Dashboard({
               </span>
             )}
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 72 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 88 }}>
             {weeklyLoads.map((w, i) => (
               <div
                 key={i}
@@ -290,7 +305,7 @@ export default function Dashboard({
                 <div
                   style={{
                     width: "100%",
-                    height: Math.max((w.total / maxW) * 48, 2),
+                    height: Math.max((w.total / maxW) * 64, 2),
                     background: i === weeklyLoads.length - 1 ? "var(--success)" : "var(--border)",
                     borderRadius: 3,
                   }}
@@ -303,12 +318,9 @@ export default function Dashboard({
 
         {/* Daily AU heatmap */}
         <div className="card">
-          <div className="label-eyebrow" style={{ marginBottom: 12 }}>Daily load</div>
+          <div className="card-title" style={{ marginBottom: 12 }}>Daily load</div>
           <ContributionHeatmap values={daily} />
         </div>
-
-        {/* Readiness (still drills into the recovery detail) */}
-        <ReadinessCard onClick={() => setShowRecovery(true)} />
       </div>
 
       {showRecovery && <RecoverySheet onClose={() => setShowRecovery(false)} />}

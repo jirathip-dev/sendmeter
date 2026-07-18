@@ -83,7 +83,7 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
           cx={px(xs[i]!)}
           cy={py(r.peakKg)}
           r={hovered === i ? (i === prIdx ? 6 : 4.5) : i === prIdx ? 4 : 2.5}
-          fill={i === prIdx ? "#FFB800" : "#5B5FC7"}
+          fill={i === prIdx ? "#DDB13A" : "#5B5FC7"}
           style={{ cursor: "pointer", transition: "r 0.1s" }}
           {...hoverProps(i)}
         />
@@ -93,7 +93,7 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
           x={Math.min(px(xs[prIdx]!), W - 18)}
           y={Math.max(py(sorted[prIdx]!.peakKg) - 8, 8)}
           fontSize={8}
-          fill="#FFB800"
+          fill="#DDB13A"
         >
           PR
         </text>

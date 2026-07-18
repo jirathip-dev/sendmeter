@@ -9,12 +9,14 @@ import type {
 import { daysAgo, today } from "./dates";
 
 export function getACWRStatus(acwr: number | null): AcwrStatus {
-  if (acwr === null) return { label: "No data", color: "#6E6E73" };
-  if (acwr < 0.7) return { label: "Under-training", color: "#5B5FC7" };
-  if (acwr <= 0.8) return { label: "Low", color: "#7B83EB" };
-  if (acwr <= 1.3) return { label: "Optimal", color: "#34C759" };
-  if (acwr <= 1.5) return { label: "Caution", color: "#FFB800" };
-  return { label: "Danger", color: "#FF453A" };
+  // Colors are CSS-var strings — applied via inline style, they track the
+  // theme's health scale (cool = good) and light/dark automatically.
+  if (acwr === null) return { label: "No data", color: "var(--ink-muted)" };
+  if (acwr < 0.7) return { label: "Under-training", color: "var(--primary)" };
+  if (acwr <= 0.8) return { label: "Low", color: "var(--info)" };
+  if (acwr <= 1.3) return { label: "Optimal", color: "var(--success)" };
+  if (acwr <= 1.5) return { label: "Caution", color: "var(--warning)" };
+  return { label: "Danger", color: "var(--danger)" };
 }
 
 export type PhaseAcwrFit = "below" | "on" | "above";

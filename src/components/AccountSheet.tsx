@@ -280,7 +280,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                           style={{
                             flexShrink: 0,
                             color: "var(--danger)",
-                            borderColor: "rgba(255,69,58,0.35)",
+                            borderColor: "rgba(229,116,58,0.35)",
                           }}
                         >
                           {removingId === p.id ? "Removing…" : "Remove"}
@@ -427,7 +427,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               ) : (
                 <button
                   className="btn-ghost"
-                  style={{ borderColor: "rgba(255,69,58,0.35)", color: "var(--danger)" }}
+                  style={{ borderColor: "rgba(229,116,58,0.35)", color: "var(--danger)" }}
                   onClick={() => setConfirmingDelete(true)}
                 >
                   Delete account…

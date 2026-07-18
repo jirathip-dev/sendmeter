@@ -98,7 +98,7 @@ export default function EditRecordingSheet({ rec, recentTags, onSaved, onClose }
               fontWeight: 600,
               cursor: "pointer",
               border: `1px solid ${side === s.value ? "var(--warning)" : "var(--border)"}`,
-              background: side === s.value ? "rgba(255,184,0,0.12)" : "transparent",
+              background: side === s.value ? "rgba(221,177,58,0.12)" : "transparent",
               color: side === s.value ? "var(--ink)" : "var(--ink-muted)",
             }}
           >

@@ -135,7 +135,7 @@ export default function RoutineCard() {
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
-      <div className="label-eyebrow" style={{ marginBottom: 8 }}>
+      <div className="card-title" style={{ marginBottom: 8 }}>
         Routines
       </div>
       {error && (
@@ -273,7 +273,7 @@ export default function RoutineCard() {
             style={{ marginBottom: 10 }}
             onClick={() => setSteps((list) => [...list, { label: "", s: 60 }])}
           >
-            + Add step
+            + Add Step
           </button>
           <button className="btn-primary" disabled={saving} onClick={() => void save()}>
             {saving ? "Saving…" : editingId ? "Save Changes" : "Save Routine"}
@@ -287,20 +287,20 @@ export default function RoutineCard() {
       ) : selected ? (
         <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
           <button className="btn-primary" style={{ flex: 1 }} onClick={() => setRunning(true)}>
-            Start
+            Start Routine
           </button>
           <button
             className="btn-ghost"
             style={{ width: "auto", flexShrink: 0, whiteSpace: "nowrap" }}
             onClick={() => setAdding(true)}
           >
-            + New
+            + New Routine
           </button>
         </div>
       ) : (
         <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
           <button className="btn-primary" style={{ flex: 1 }} onClick={() => setAdding(true)}>
-            + New routine
+            + New Routine
           </button>
           <button
             className="btn-ghost"
@@ -308,7 +308,7 @@ export default function RoutineCard() {
             disabled={seeding}
             onClick={() => void addExample()}
           >
-            {seeding ? "Adding…" : "Add example"}
+            {seeding ? "Adding…" : "Add Example"}
           </button>
         </div>
       )}

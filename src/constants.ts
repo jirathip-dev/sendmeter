@@ -4,9 +4,9 @@ export const PHASES: Phase[] = [
   {
     id: "capacity",
     name: "Capacity",
-    color: "#34C759",
-    bg: "rgba(52,199,89,0.12)",
-    border: "rgba(52,199,89,0.35)",
+    color: "#2E96F0",
+    bg: "rgba(46,150,240,0.12)",
+    border: "rgba(46,150,240,0.35)",
     acwr: "0.9–1.1",
     acwrLow: 0.9,
     acwrHigh: 1.1,
@@ -18,9 +18,9 @@ export const PHASES: Phase[] = [
   {
     id: "strength",
     name: "Strength",
-    color: "#FFB800",
-    bg: "rgba(255,184,0,0.12)",
-    border: "rgba(255,184,0,0.35)",
+    color: "#DDB13A",
+    bg: "rgba(221,177,58,0.12)",
+    border: "rgba(221,177,58,0.35)",
     acwr: "0.8–1.0",
     acwrLow: 0.8,
     acwrHigh: 1.0,
@@ -32,9 +32,9 @@ export const PHASES: Phase[] = [
   {
     id: "power",
     name: "Power",
-    color: "#FF9500",
-    bg: "rgba(255,149,0,0.12)",
-    border: "rgba(255,149,0,0.35)",
+    color: "#E5743A",
+    bg: "rgba(229,116,58,0.12)",
+    border: "rgba(229,116,58,0.35)",
     acwr: "0.8–1.0",
     acwrLow: 0.8,
     acwrHigh: 1.0,
@@ -47,8 +47,8 @@ export const PHASES: Phase[] = [
     id: "execution",
     name: "Execution",
     color: "#7B83EB",
-    bg: "rgba(91,95,199,0.12)",
-    border: "rgba(91,95,199,0.35)",
+    bg: "rgba(123,131,235,0.12)",
+    border: "rgba(123,131,235,0.35)",
     acwr: "0.7–0.9",
     acwrLow: 0.7,
     acwrHigh: 0.9,
@@ -88,7 +88,7 @@ export const SESSION_TYPES: SessionType[] = [
 ];
 
 export const NAV: NavItem[] = [
-  { id: "dashboard", icon: "⬡", label: "Home" },
+  { id: "dashboard", icon: "⬡", label: "Dashboard" },
   { id: "workout", icon: "▲", label: "Workout" },
   // Display name only — the ViewId stays "tindeq" (internal ids don't churn;
   // the tab may host other force gauges later).

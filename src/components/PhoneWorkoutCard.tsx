@@ -36,7 +36,7 @@ export default function PhoneWorkoutCard({
   if (state.phase === "idle") {
     return (
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="label-eyebrow" style={{ marginBottom: 8 }}>
+        <div className="card-title" style={{ marginBottom: 8 }}>
           Phone workout
         </div>
         <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
@@ -79,7 +79,7 @@ export default function PhoneWorkoutCard({
         }}
       >
         <div>
-          <div className="label-eyebrow" style={{ marginBottom: 4 }}>
+          <div className="card-title" style={{ marginBottom: 4 }}>
             Workout in progress
           </div>
           <div style={{ fontSize: 13, color: "var(--ink-muted)" }}>
@@ -105,7 +105,7 @@ export default function PhoneWorkoutCard({
   );
   return (
     <div className="card" style={{ marginBottom: 12 }}>
-      <div className="label-eyebrow" style={{ marginBottom: 8 }}>
+      <div className="card-title" style={{ marginBottom: 8 }}>
         Log workout
       </div>
       <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 4 }}>

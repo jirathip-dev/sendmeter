@@ -46,7 +46,7 @@ export default function LiveWorkoutCard({
           marginBottom: 10,
         }}
       >
-        <span className="label-eyebrow" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span className="card-title" style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span
             aria-hidden="true"
             style={{

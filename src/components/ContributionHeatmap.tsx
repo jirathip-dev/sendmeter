@@ -1,18 +1,37 @@
 import { useMemo, useState } from "react";
+import { SESSION_TYPES } from "../constants";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAY_ROWS = [1, 3, 5] as const; // Mon / Wed / Fri
 const WEEKDAY_NAMES = ["Mon", "Wed", "Fri"];
 const GAP = 2;
 
-// GitHub-style level colors — themed empty cell + 4 green intensities.
-const COLORS = [
-  "var(--surface-2)",
-  "rgba(52,199,89,0.32)",
-  "rgba(52,199,89,0.52)",
-  "rgba(52,199,89,0.74)",
-  "rgba(52,199,89,0.96)",
-];
+// Each day is colored by its dominant activity type (SL-60); load magnitude
+// modulates the opacity (the 4 GitHub-style intensity levels). Hues stay in the
+// theme scale — cool blues/teals/purples + warm orange/amber, no red or green.
+const TYPE_COLORS: Record<string, string> = {
+  board: "#2E96F0",       // electric blue
+  fingerboard: "#7B83EB", // violet
+  gym: "#5B5FC7",         // indigo
+  outdoor: "#2FB6C0",     // teal
+  arc: "#56C2E6",         // sky
+  antagonist: "#9B6BE0",  // purple
+  campus: "#E5743A",      // orange (high intensity)
+  tindeq: "#E0913D",      // amber
+  auto: "#3DA5F4",        // azure
+  custom: "#8E8E93",      // neutral
+};
+const DEFAULT_TYPE_COLOR = "#8E8E93";
+const LEVEL_ALPHA = [0, 0.34, 0.55, 0.78, 1]; // index by level 0..4
+const TYPE_LABEL: Record<string, string> = Object.fromEntries(
+  SESSION_TYPES.map((t) => [t.id, t.label]),
+);
+
+/// #RRGGBB → rgba() at the given alpha (CSS vars can't take a runtime alpha).
+function withAlpha(hex: string, a: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
 
 function fmt(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -22,19 +41,21 @@ interface Cell {
   key: string;
   month: number;
   value: number;
+  type: string;
   future: boolean;
 }
 
 /// Daily training-load heatmap in the GitHub-contribution style: one square per
-/// day, columns are Sun–Sat weeks oldest→newest, colored by that day's total AU.
-/// Cells are fluid (CSS grid, aspect-ratio 1) so the whole year always fits the
-/// container width — no horizontal scrolling, even on a phone.
+/// day, columns are Sun–Sat weeks oldest→newest. Each day is hued by its
+/// dominant activity type and shaded by total AU (SL-60). Cells are fluid (CSS
+/// grid, aspect-ratio 1) so the whole year always fits the container width — no
+/// horizontal scrolling, even on a phone.
 export default function ContributionHeatmap({
   values,
   weeks = 53,
   unit = "AU",
 }: {
-  values: Map<string, number>;
+  values: Map<string, { total: number; type: string }>;
   weeks?: number;
   unit?: string;
 }) {
@@ -56,9 +77,16 @@ export default function ContributionHeatmap({
       const col: Cell[] = [];
       for (let d = 0; d < 7; d++) {
         const key = fmt(cur);
-        const value = values.get(key) ?? 0;
+        const entry = values.get(key);
+        const value = entry?.total ?? 0;
         if (value > mx) mx = value;
-        col.push({ key, month: cur.getMonth(), value, future: cur > today });
+        col.push({
+          key,
+          month: cur.getMonth(),
+          value,
+          type: entry?.type ?? "",
+          future: cur > today,
+        });
         cur.setDate(cur.getDate() + 1);
       }
       cols.push(col);
@@ -67,6 +95,17 @@ export default function ContributionHeatmap({
   }, [values, weeks]);
 
   const level = (v: number) => (v <= 0 ? 0 : Math.min(4, Math.ceil((v / max) * 4)));
+  const cellColor = (cell: Cell) =>
+    cell.value <= 0
+      ? "var(--surface-2)"
+      : withAlpha(TYPE_COLORS[cell.type] ?? DEFAULT_TYPE_COLOR, LEVEL_ALPHA[level(cell.value)]!);
+
+  // Activity types that actually appear (for the legend), in the palette order.
+  const presentTypes = useMemo(() => {
+    const seen = new Set<string>();
+    for (const v of values.values()) if (v.total > 0) seen.add(v.type);
+    return Object.keys(TYPE_COLORS).filter((t) => seen.has(t));
+  }, [values]);
 
   // Month labels: mark a column when the month of its first (Sunday) cell
   // changes; skip a label that would collide with the previous one.
@@ -160,7 +199,7 @@ export default function ContributionHeatmap({
                       aspectRatio: "1",
                       width: "100%",
                       borderRadius: 2,
-                      background: cell.future ? "transparent" : COLORS[level(cell.value)],
+                      background: cell.future ? "transparent" : cellColor(cell),
                       outline: sel?.key === cell.key ? "1.5px solid var(--ink)" : "none",
                       cursor: cell.future ? "default" : "pointer",
                     }}
@@ -172,28 +211,40 @@ export default function ContributionHeatmap({
         </div>
       </div>
 
-      {/* Selected day readout + legend */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginTop: 10,
-          fontSize: 10,
-          color: "var(--ink-faint)",
-        }}
-      >
-        <span style={{ color: "var(--ink-muted)" }}>
-          {sel ? `${sel.key} · ${sel.value} ${unit}` : "Tap a day for its load"}
-        </span>
-        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          Less
-          {COLORS.map((c, i) => (
-            <span key={i} style={{ width: 10, height: 10, borderRadius: 2, background: c }} />
-          ))}
-          More
-        </span>
+      {/* Selected day readout — includes the day's dominant activity type */}
+      <div style={{ marginTop: 10, fontSize: 10, color: "var(--ink-muted)" }}>
+        {sel
+          ? `${sel.key} · ${sel.value} ${unit}${sel.type ? ` · ${TYPE_LABEL[sel.type] ?? sel.type}` : ""}`
+          : "Tap a day for its load"}
       </div>
+
+      {/* Per-activity-type legend (only the types that appear) */}
+      {presentTypes.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "6px 12px",
+            marginTop: 8,
+            fontSize: 9,
+            color: "var(--ink-faint)",
+          }}
+        >
+          {presentTypes.map((t) => (
+            <span key={t} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span
+                style={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: 2,
+                  background: TYPE_COLORS[t],
+                }}
+              />
+              {TYPE_LABEL[t] ?? t}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

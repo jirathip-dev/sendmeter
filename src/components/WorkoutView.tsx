@@ -124,14 +124,14 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
 
       {/* Manual entry — the Log Session sheet (moved from Home) */}
       <div className="card" style={{ marginTop: 2 }}>
-        <div className="label-eyebrow" style={{ marginBottom: 8 }}>
-          Already trained?
+        <div className="card-title" style={{ marginBottom: 8 }}>
+          Log a past workout
         </div>
         <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
           Log a finished session manually — date, type, duration and RPE.
         </div>
         <button className="btn-ghost" onClick={onLog}>
-          + Log Session
+          Log Session
         </button>
       </div>
 

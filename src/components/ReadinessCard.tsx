@@ -86,7 +86,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
       onPointerDown={onClick ? spawnRipple : undefined}
     >
       {onClick && ripples}
-      <div className="label-eyebrow" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="card-title" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span>Readiness</span>
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <InfoDot topic="readiness" />
@@ -96,7 +96,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
       <div
         style={{
           fontFamily: "Inter, sans-serif",
-          fontSize: 38,
+          fontSize: 52,
           fontWeight: 800,
           color,
           letterSpacing: "-0.04em",
@@ -126,7 +126,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
       )}
       <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
         {/* y-axis, reserved outside the plot/data area */}
-        <div style={{ position: "relative", width: 16, flexShrink: 0, height: 36 }}>
+        <div style={{ position: "relative", width: 16, flexShrink: 0, height: 56 }}>
           {[
             { v: 70, label: "70" },
             { v: 40, label: "40" },
@@ -135,7 +135,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
               key={v}
               style={{
                 position: "absolute",
-                top: 36 - (v / 100) * 32 - 5,
+                top: 56 - (v / 100) * 50 - 5,
                 right: 0,
                 fontSize: 8,
                 color: "var(--ink-faint)",
@@ -154,7 +154,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
                 position: "absolute",
                 left: 0,
                 right: 0,
-                top: 36 - (v / 100) * 32,
+                top: 56 - (v / 100) * 50,
                 borderTop: "1px dashed var(--hairline)",
               }}
             />
@@ -177,7 +177,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
               display: "flex",
               gap: 3,
               alignItems: "flex-end",
-              height: 36,
+              height: 56,
             }}
           >
             {days.map(({ key, m }, i) => (
@@ -206,7 +206,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
                     width: "100%",
                     height:
                       m?.readiness != null
-                        ? Math.max(3, (m.readiness / 100) * 32)
+                        ? Math.max(3, (m.readiness / 100) * 50)
                         : 2,
                     background:
                       m?.zone && m.readiness != null

@@ -65,10 +65,10 @@ function drawTrace(
   if (target) {
     const yLow = h - (target.lowKg / maxKg) * h;
     const yHigh = h - (target.highKg / maxKg) * h;
-    ctx.fillStyle = "rgba(52,199,89,0.10)";
+    ctx.fillStyle = "rgba(46,150,240,0.10)";
     ctx.fillRect(0, yHigh, w, yLow - yHigh);
     const yTarget = h - (target.kg / maxKg) * h;
-    ctx.strokeStyle = "rgba(52,199,89,0.6)";
+    ctx.strokeStyle = "rgba(46,150,240,0.6)";
     ctx.setLineDash([5, 4]);
     ctx.beginPath();
     ctx.moveTo(0, yTarget);

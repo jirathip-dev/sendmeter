@@ -97,7 +97,7 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
             y1={py(model.cf)}
             x2={W - PAD.right}
             y2={py(model.cf)}
-            stroke="#FF9500"
+            stroke="#E0913D"
             strokeWidth={1}
             strokeDasharray="4 3"
           />
@@ -105,7 +105,7 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
             x={W - PAD.right}
             y={py(model.cf) - 4}
             fontSize={8}
-            fill="#FF9500"
+            fill="#E0913D"
             textAnchor="end"
           >
             CF {model.cf.toFixed(1)}kg
@@ -205,8 +205,8 @@ export default function ForceCurveCard({ tag, model, computing, error }: Props) 
                   style={{
                     fontSize: 10,
                     color: "var(--warning)",
-                    background: "rgba(255,184,0,0.08)",
-                    border: "1px solid rgba(255,184,0,0.25)",
+                    background: "rgba(221,177,58,0.08)",
+                    border: "1px solid rgba(221,177,58,0.25)",
                     borderRadius: 6,
                     padding: "7px 10px",
                     marginTop: 8,

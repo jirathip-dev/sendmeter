@@ -208,9 +208,9 @@ export default function ForceFullscreen({
             <span
               className="tag"
               style={{
-                background: "rgba(255,184,0,0.12)",
+                background: "rgba(221,177,58,0.12)",
                 color: "var(--warning)",
-                border: "1px solid rgba(255,184,0,0.35)",
+                border: "1px solid rgba(221,177,58,0.35)",
               }}
             >
               Low battery

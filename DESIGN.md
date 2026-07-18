@@ -46,25 +46,31 @@ the one exception; they can't resolve CSS vars, so charts use literal hex).
 | `--primary-hover` | `#4A4EB3` | `#6A6ED6` | Hover state |
 | `--primary-accent` | `#5B5FC7` | `#9296EE` | Primary used as text/underline (readable on the theme bg) |
 | `--info` | `#7B83EB` | `#7B83EB` | Tags, secondary data series |
-| `--success` | `#34C759` | Readiness *Push*, optimal ACWR, heatmap load, positive deltas |
-| `--warning` | `#FFB800` | Readiness *Maintain*, ACWR caution, PR markers |
-| `--danger` | `#FF453A` | Readiness *Recover*, ACWR danger, delete, negative deltas |
-| `--orange` | `#FF9500` | Critical-force line, power phase |
+| `--success` | `#2E96F0` | `#4FB0FF` | Readiness *Push*, optimal ACWR, in-zone force, positive deltas (electric blue) |
+| `--warning` | `#DDB13A` | `#E8C24E` | Readiness *Maintain*, ACWR caution, PR markers (yellow) |
+| `--danger` | `#E5743A` | `#F0864C` | Readiness *Recover*, ACWR danger, delete, negative deltas (orange) |
+| `--orange` | `#E0913D` | `#E8A24D` | Critical-force line, power phase (amber accent) |
 | `--shadow-card` / `--overlay` | — | — | Card shadow / modal backdrop (theme-tuned) |
 
-**Health-semantic rule:** green / amber / red are reserved for *physiological
-state* (readiness zones, ACWR bands, deltas). They never decorate. Purple is
-never a health signal — it marks *interaction and live data*. This separation
-is the health-app equivalent of Descript's "purple = where the audio is."
+**Health-semantic rule (cool = good):** the health scale runs **electric-blue →
+yellow → orange** (optimal → caution → alert) — *no red, no green*. These hues are
+reserved for *physiological state* (readiness zones, ACWR bands, deltas) and the
+in-zone force target; they never decorate. Blue/purple now carry health meaning
+(optimal, and low/under-training via `--primary`/`--info`), so the old "purple is
+never a health signal" rule no longer holds — purple still marks interaction/live
+data, but the palette is deliberately unified around the cool-to-warm scale.
 
 ### Phase palette (training periodization identity)
 
+Drawn from the same scale (no green); the phase banner is a slim neutral strip, so
+these only tint small text/chips.
+
 | Phase | Color | On-white bg | Border |
 |---|---|---|---|
-| Capacity | `#34C759` | `rgba(52,199,89,0.10)` | `rgba(52,199,89,0.35)` |
-| Strength | `#FFB800` | `rgba(255,184,0,0.10)` | `rgba(255,184,0,0.35)` |
-| Power | `#FF9500` | `rgba(255,149,0,0.10)` | `rgba(255,149,0,0.35)` |
-| Execution | `#5B5FC7` | `rgba(91,95,199,0.10)` | `rgba(91,95,199,0.35)` |
+| Capacity | `#2E96F0` | `rgba(46,150,240,0.12)` | `rgba(46,150,240,0.35)` |
+| Strength | `#DDB13A` | `rgba(221,177,58,0.12)` | `rgba(221,177,58,0.35)` |
+| Power | `#E5743A` | `rgba(229,116,58,0.12)` | `rgba(229,116,58,0.35)` |
+| Execution | `#7B83EB` | `rgba(123,131,235,0.12)` | `rgba(123,131,235,0.35)` |
 
 ## Typography
 

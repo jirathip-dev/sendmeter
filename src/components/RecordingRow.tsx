@@ -248,9 +248,9 @@ export default function RecordingRow({
               <span
                 className="tag"
                 style={{
-                  background: "rgba(255,184,0,0.10)",
+                  background: "rgba(221,177,58,0.10)",
                   color: "var(--warning)",
-                  border: "1px solid rgba(255,184,0,0.3)",
+                  border: "1px solid rgba(221,177,58,0.3)",
                 }}
               >
                 {rec.side === "both" ? "L+R" : rec.side === "left" ? "L" : "R"}
