@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useTindeq } from "../hooks/useTindeq";
+import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import {
   deleteRecording,
@@ -37,17 +37,23 @@ interface ForceViewProps {
 }
 
 export default function ForceView({ onLogSession }: ForceViewProps) {
-  const tindeq = useTindeq();
+  // Connection + active gauge session live in an app-level provider so the
+  // Progressor stays connected and the session survives leaving fullscreen /
+  // changing tabs (SL-58 #5). The session is minted lazily on the first save.
+  const {
+    tindeq,
+    session: gaugeSession,
+    ensureSession,
+    clearSession,
+    minimized: gaugeMinimized,
+    setMinimized: setGaugeMinimized,
+  } = useTindeqSession();
   // The just-auto-saved recording, shown as a confirmation so the user can
   // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
   // prompt — a rep now saves the moment you stop, using the tag set beforehand.
   const [justSaved, setJustSaved] = useState<TindeqRecordingMeta | null>(null);
   const [pendingTag, setPendingTag] = useState("");
   const [pendingSide, setPendingSide] = useState<TindeqSide>("");
-  const [gaugeSession, setGaugeSession] = useState<{
-    id: string;
-    startedAt: number;
-  } | null>(null);
   const [endingSession, setEndingSession] = useState<{
     id: string;
     durationMin: number;
@@ -64,9 +70,6 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   const [curveModel, setCurveModel] = useState<ForceCurveModel | null>(null);
   const [curveComputedFor, setCurveComputedFor] = useState<string | null>(null);
   const [curveError, setCurveError] = useState<string | null>(null);
-  // The gauge takes over fullscreen while connected; minimize drops back to
-  // this tab with a compact resume bar.
-  const [gaugeMinimized, setGaugeMinimized] = useState(false);
   const realtimeVersion = useRealtimeVersion();
 
   // Every tag ever used, most frequent first; top 6 become one-tap chips,
@@ -83,7 +86,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   const recentTags = allTags.slice(0, 6);
 
   const sessionCount = gaugeSession
-    ? recordings.filter((r) => r.groupId === gaugeSession.id).length
+    ? recordings.filter((r) => r.groupId === gaugeSession.groupId).length
     : 0;
 
   function endSession() {
@@ -92,10 +95,12 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       1,
       Math.round((Date.now() - gaugeSession.startedAt) / 60000),
     );
-    if (sessionCount > 0) {
-      setEndingSession({ id: gaugeSession.id, durationMin, rpe: 5 });
-    }
-    setGaugeSession(null);
+    // A session only exists because a recording created it (lazy mint), so
+    // there's always ≥1 recording to log — always open the RPE prompt. The
+    // sheet re-fetches the group's recordings itself, so it doesn't depend on
+    // ForceView's (possibly not-yet-loaded) `recordings` state.
+    setEndingSession({ id: gaugeSession.groupId, durationMin, rpe: 5 });
+    clearSession();
   }
 
   async function logEndedSession() {
@@ -179,7 +184,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         note: "",
         tag: pendingTag.trim(),
         side: seg.side ?? pendingSide,
-        groupId: gaugeSession?.id ?? null,
+        groupId: ensureSession(),
         samples: slice,
       });
       setRecordings((list) => [saved, ...list]);
@@ -246,7 +251,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         note: "",
         tag: pendingTag.trim(),
         side: pendingSide,
-        groupId: gaugeSession?.id ?? null,
+        groupId: ensureSession(),
         samples: summary.samples,
       });
       setRecordings((list) => [saved, ...list]);
@@ -424,14 +429,26 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
 
   // Pop the gauge fullscreen the moment the Progressor connects (only on the
   // connecting→connected transition — a stop→connected change must not
-  // override a user's minimize).
+  // override a user's minimize). And when it DISCONNECTS with an active
+  // session, prompt to finish it (SL-58 #5) — the connection now persists
+  // across tabs, so a disconnect is a deliberate end (or the device dying).
   const { status } = tindeq;
   const prevStatusRef = useRef(status);
   useEffect(() => {
-    if (status === "connected" && prevStatusRef.current === "connecting") {
+    const prev = prevStatusRef.current;
+    prevStatusRef.current = status;
+    if (status === "connected" && prev === "connecting") {
       setGaugeMinimized(false);
     }
-    prevStatusRef.current = status;
+    if (status === "idle" && (prev === "connected" || prev === "measuring")) {
+      // Defer so any interrupted-save from the same disconnect lands first,
+      // and to avoid a synchronous setState in the effect body.
+      const t = setTimeout(() => endSession(), 150);
+      return () => clearTimeout(t);
+    }
+    // endSession/setGaugeMinimized read current state at call time; depending
+    // on them would re-run this transition effect every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
   async function removeRecording(id: string) {
@@ -459,8 +476,9 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         Grip-force analysis &amp; training — Tindeq Progressor via Bluetooth.
       </div>
 
-      {/* Gauge session bar */}
-      {status !== "unsupported" && (
+      {/* Gauge session bar — appears once the first recording auto-creates a
+          session (SL-58 #5, no manual Start). Finish logs it (RPE prompt). */}
+      {gaugeSession && (
         <div
           style={{
             display: "flex",
@@ -468,71 +486,41 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
             gap: 10,
             padding: "10px 14px",
             background: "var(--canvas)",
-            border: `1px solid ${gaugeSession ? "rgba(91,95,199,0.55)" : "transparent"}`,
+            border: "1px solid rgba(91,95,199,0.55)",
             borderRadius: 10,
             boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
             marginBottom: 10,
           }}
         >
-          {gaugeSession ? (
-            <>
-              <div
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: "var(--info)",
-                }}
-              />
-              <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
-                Gauge session{" "}
-                <span style={{ color: "var(--ink-muted)" }}>
-                  · {sessionCount} recording{sessionCount === 1 ? "" : "s"}
-                </span>
-              </span>
-              <button
-                onClick={endSession}
-                style={{
-                  background: "none",
-                  border: "1px solid var(--ink-faint)",
-                  color: "var(--ink-muted)",
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  fontSize: 10,
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                }}
-              >
-                End Session
-              </button>
-            </>
-          ) : (
-            <>
-              <span style={{ fontSize: 11, color: "var(--ink-muted)", flex: 1 }}>
-                Group recordings into a session
-              </span>
-              <button
-                onClick={() =>
-                  setGaugeSession({
-                    id: crypto.randomUUID(),
-                    startedAt: Date.now(),
-                  })
-                }
-                style={{
-                  background: "none",
-                  border: "1px solid var(--ink-faint)",
-                  color: "var(--ink-muted)",
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  fontSize: 10,
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                }}
-              >
-                Start Session
-              </button>
-            </>
-          )}
+          <div
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "var(--info)",
+            }}
+          />
+          <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
+            Gauge session{" "}
+            <span style={{ color: "var(--ink-muted)" }}>
+              · {sessionCount} recording{sessionCount === 1 ? "" : "s"}
+            </span>
+          </span>
+          <button
+            onClick={endSession}
+            style={{
+              background: "none",
+              border: "1px solid var(--ink-faint)",
+              color: "var(--ink-muted)",
+              padding: "6px 10px",
+              borderRadius: 6,
+              fontSize: 10,
+              cursor: "pointer",
+              fontFamily: "Inter, sans-serif",
+            }}
+          >
+            Finish
+          </button>
         </div>
       )}
 

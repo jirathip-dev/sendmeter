@@ -9,7 +9,9 @@ private let SIDE_OPTIONS: [(value: String, label: String)] = [
 ]
 
 struct ForceGaugeView: View {
-    @State private var tindeq = TindeqManager()
+    // App-level so the connection + gauge session survive leaving this screen
+    // (SL-58 #5). The finish prompt is presented from RootView.
+    @Environment(TindeqManager.self) private var tindeq
     @State private var saving = false
     @State private var savedMsg: String?
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
@@ -20,14 +22,6 @@ struct ForceGaugeView: View {
     @State private var tag = ""
     @State private var side = ""
     @State private var recentTags: [String] = []
-
-    // Gauge session: recordings saved while active share a group_id
-    @State private var session: (id: UUID, startedAt: Date)?
-    @State private var sessionCount = 0
-    @State private var showEndSheet = false
-    @State private var endDurationMin = 30
-    @State private var endRPE = 5
-    @State private var loggingSession = false
 
     private let sparkTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
@@ -90,97 +84,37 @@ struct ForceGaugeView: View {
             // works immediately (mirror of the web tab's default).
             if tag.isEmpty, let first = recentTags.first { tag = first }
         }
-        .onDisappear { tindeq.disconnect() }
-        .sheet(isPresented: $showEndSheet) { endSessionSheet }
+        // No .onDisappear disconnect — the connection persists across navigation
+        // (SL-58 #5); it drops only on a real BLE loss, which prompts to finish.
     }
 
     // MARK: Session bar
 
     @ViewBuilder
     private var sessionBar: some View {
-        if let _ = session {
+        // Only shown once a rep has minted the session (auto-group). Before the
+        // first save there's nothing to end, so no bar — the gauge just records.
+        if tindeq.sessionId != nil {
             HStack {
                 Circle().fill(.blue).frame(width: 6, height: 6)
-                Text("Session · \(sessionCount)")
+                Text("Session · \(tindeq.sessionCount)")
                     .font(.footnote)
                 Spacer()
-                Button("End") { endSession() }
+                Button("Finish") { finish() }
                     .font(.footnote)
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
             }
-        } else {
-            Button {
-                session = (id: UUID(), startedAt: Date())
-                sessionCount = 0
-            } label: {
-                Label("Start Session", systemImage: "square.stack.3d.up")
-                    .font(.footnote)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
     }
 
-    private func endSession() {
-        guard let s = session else { return }
-        if sessionCount > 0 {
-            // Duration is the actual session wall-clock time — not editable;
-            // the sheet only asks for RPE.
-            endDurationMin = max(1, Int((Date().timeIntervalSince(s.startedAt) / 60).rounded()))
-            endRPE = 5
-            showEndSheet = true
+    private func finish() {
+        // A session only exists after ≥1 saved rep, so there's always something
+        // to log — hand off to the root-level GaugeFinishSheet via the manager.
+        if tindeq.sessionCount > 0 {
+            tindeq.pendingFinish = true
         } else {
-            session = nil
-        }
-    }
-
-    @ViewBuilder
-    private var endSessionSheet: some View {
-        ScrollView {
-            VStack(spacing: 8) {
-                Text("Log session")
-                    .font(.headline)
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("DURATION").font(.system(size: 10)).foregroundStyle(.secondary)
-                        Text("\(endDurationMin) min").monospacedDigit()
-                    }
-                    Spacer()
-                    Text("actual time")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
-                Stepper(value: $endRPE, in: 1...10) {
-                    VStack(alignment: .leading) {
-                        Text("RPE").font(.system(size: 10)).foregroundStyle(.secondary)
-                        Text("\(endRPE)").monospacedDigit()
-                    }
-                }
-                Button(loggingSession ? "Logging…" : "Log Session") {
-                    guard let s = session else { return }
-                    loggingSession = true
-                    Task {
-                        let note = "\(sessionCount) recording\(sessionCount == 1 ? "" : "s")"
-                        try? await Repo.logTindeqSession(
-                            durationMin: endDurationMin,
-                            rpe: endRPE,
-                            note: note,
-                            groupId: s.id
-                        )
-                        loggingSession = false
-                        session = nil
-                        showEndSheet = false
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(loggingSession)
-                Button("Skip") {
-                    session = nil
-                    showEndSheet = false
-                }
-                .font(.footnote)
-            }
+            tindeq.clearSession()
         }
     }
 
@@ -272,6 +206,10 @@ struct ForceGaugeView: View {
         guard let rec = tindeq.stop() else { return }
         saving = true
         savedMsg = "Saving…"
+        // Auto-group: the first saved rep mints the session so every rep of this
+        // connect shares a group_id (SL-58 #5). Mint synchronously before the
+        // async insert so the group id is stable for this and later reps.
+        let groupId = tindeq.ensureSession()
         Task {
             do {
                 try await Repo.insertTindeqRecording(
@@ -279,11 +217,11 @@ struct ForceGaugeView: View {
                     note: "",
                     tag: tag.trimmingCharacters(in: .whitespaces),
                     side: side,
-                    groupId: session?.id
+                    groupId: groupId
                 )
                 let tagLabel = tag.isEmpty ? "" : " · \(tag)"
                 savedMsg = String(format: "Saved · %.1f kg%@", rec.peakKg, tagLabel)
-                if session != nil { sessionCount += 1 }
+                tindeq.sessionCount += 1
             } catch {
                 savedMsg = ErrorText.friendly(error)
             }

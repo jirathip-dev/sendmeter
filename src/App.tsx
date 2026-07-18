@@ -20,6 +20,7 @@ import AccountSheet from "./components/AccountSheet";
 import Sheet from "./components/Sheet";
 import TrashSheet from "./components/TrashSheet";
 import RealtimeVersionProvider from "./components/RealtimeVersionProvider";
+import { TindeqProvider } from "./hooks/TindeqProvider";
 
 export default function App() {
   const { session, loading, recovery, clearRecovery, signOut } = useAuth();
@@ -46,7 +47,9 @@ export default function App() {
 
   return (
     <RealtimeVersionProvider userId={session.user.id}>
-      <AuthedApp userId={session.user.id} onSignOut={signOut} />
+      <TindeqProvider>
+        <AuthedApp userId={session.user.id} onSignOut={signOut} />
+      </TindeqProvider>
     </RealtimeVersionProvider>
   );
 }

@@ -19,6 +19,18 @@ final class TindeqManager: NSObject {
     var peakKg: Double = 0
     var elapsedMs: Double = 0
 
+    // Gauge session grouping (SL-58 #5): every rep saved during one connect
+    // shares a group_id, minted lazily on the first save. Lives on the manager
+    // (which is owned app-level) — not on the view — so it survives navigating
+    // away from the Force screen while the Progressor stays connected.
+    var sessionId: UUID?
+    var sessionStartedAt: Date?
+    var sessionCount = 0
+    /// Set when an unplanned disconnect (or the Finish button) should surface
+    /// the "log this session?" prompt. Presented at the root so it shows even
+    /// after the user has navigated away from the Force screen.
+    var pendingFinish = false
+
     private static let maxRecordingMs: Double = 120_000
 
     private var central: CBCentralManager?
@@ -28,6 +40,29 @@ final class TindeqManager: NSObject {
     private var t0us: UInt32?
     private var samples: [(t: Double, kg: Double)] = []
     private var uiTimer: Timer?
+    // Distinguishes an app-initiated disconnect from a real BLE drop, so only
+    // the latter triggers the finish-on-disconnect prompt.
+    private var intentionalDisconnect = false
+
+    // MARK: Session
+
+    /// Return the active session's group id, minting it (and its start time) on
+    /// the first call. Called synchronously at save time so this rep and later
+    /// reps of the same connect land in one group.
+    func ensureSession() -> UUID {
+        if let id = sessionId { return id }
+        let id = UUID()
+        sessionId = id
+        sessionStartedAt = Date()
+        return id
+    }
+
+    func clearSession() {
+        sessionId = nil
+        sessionStartedAt = nil
+        sessionCount = 0
+        pendingFinish = false
+    }
 
     // MARK: Controls
 
@@ -44,7 +79,12 @@ final class TindeqManager: NSObject {
     func disconnect() {
         stopUITimer()
         measuring = false
-        if let p = peripheral { central?.cancelPeripheralConnection(p) }
+        if let p = peripheral {
+            // Flag only when a delegate callback will follow, so it can't go
+            // stale and mask a later real drop.
+            intentionalDisconnect = true
+            central?.cancelPeripheralConnection(p)
+        }
         peripheral = nil
         controlChar = nil
         status = .idle
@@ -203,7 +243,14 @@ extension TindeqManager: CBCentralManagerDelegate {
         self.peripheral = nil
         controlChar = nil
         status = .idle
+        let wasIntentional = intentionalDisconnect
+        intentionalDisconnect = false
         if error != nil { errorMsg = "Device disconnected" }
+        // Finish-on-disconnect: an unplanned drop mid-session with saved reps
+        // surfaces the log prompt (mirrors the web status→idle effect). SL-58 #5.
+        if !wasIntentional, sessionId != nil, sessionCount > 0 {
+            pendingFinish = true
+        }
     }
 }
 
