@@ -22,6 +22,7 @@
     "react-dom": "^19.2.6",
     "sendlog-auth-bridge": "file:native-plugins/sendlog-auth-bridge",
     "sendlog-health": "file:native-plugins/sendlog-health",
+    "sendlog-live-activity": "file:native-plugins/sendlog-live-activity",
     "sendlog-passkey": "file:native-plugins/sendlog-passkey"
   },
   "devDependencies": {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import { syncWorkoutActivity } from "../lib/liveActivity";
 import type { PhoneWorkoutAction, PhoneWorkoutState } from "../lib/phoneWorkout";
 
 type Running = Extract<PhoneWorkoutState, { phase: "running" }>;
@@ -189,6 +190,8 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
                   setRestTarget(s);
                   localStorage.setItem(REST_KEY, String(s));
                   alertedForRef.current = null; // allow a fresh alert for the new target
+                  // Lock-screen card reads the target from state — re-sync it.
+                  void syncWorkoutActivity(state);
                 }}
                 style={{
                   padding: "5px 11px",

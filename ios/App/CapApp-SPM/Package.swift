@@ -4,7 +4,7 @@ import PackageDescription
 // DO NOT MODIFY THIS FILE - managed by Capacitor CLI commands
 let package = Package(
     name: "CapApp-SPM",
-    platforms: [.iOS(.v16)],
+    platforms: [.iOS(.v17)],
     products: [
         .library(
             name: "CapApp-SPM",
@@ -17,6 +17,7 @@ let package = Package(
         .package(name: "CapacitorApp", path: "../../../node_modules/@capacitor/app"),
         .package(name: "SendlogAuthBridge", path: "../../../native-plugins/sendlog-auth-bridge"),
         .package(name: "SendlogHealth", path: "../../../native-plugins/sendlog-health"),
+        .package(name: "SendlogLiveActivity", path: "../../../native-plugins/sendlog-live-activity"),
         .package(name: "SendlogPasskey", path: "../../../native-plugins/sendlog-passkey")
     ],
     targets: [
@@ -30,6 +31,7 @@ let package = Package(
                 .product(name: "CapacitorApp", package: "CapacitorApp"),
                 .product(name: "SendlogAuthBridge", package: "SendlogAuthBridge"),
                 .product(name: "SendlogHealth", package: "SendlogHealth"),
+                .product(name: "SendlogLiveActivity", package: "SendlogLiveActivity"),
                 .product(name: "SendlogPasskey", package: "SendlogPasskey")
             ]
         )

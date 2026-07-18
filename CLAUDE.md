@@ -60,19 +60,47 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
   fit + `ZONE_PROTOCOLS`, protocol.ts = guided timelines, healthSync.ts +
   watchAuthRelay.ts = native bridges). `components/` = UI (`InfoDot.tsx` =
   the "?" explainer sheets). `hooks/` = data hooks.
-- **`ios/App/App.xcodeproj`** — two targets: the Capacitor iOS **App** and the
-  **SendLogWatch Watch App** companion (SwiftUI; workout/attempt tracking, force
-  gauge, readiness display). Plus a `SendLogWatchTests` unit-test target.
-  - The watch target is a `PBXFileSystemSynchronizedRootGroup`: files are included
-    by **filesystem presence**, so add/remove Swift files by touching the dir, not
-    the pbxproj. The test target is a normal target (edit pbxproj to add files there
-    — use the `xcodeproj` Ruby gem, available via cocoapods: `GEM_PATH=/opt/homebrew/Cellar/cocoapods/*/libexec /opt/homebrew/opt/ruby/bin/ruby`).
+- **`ios/App/App.xcodeproj`** — three product targets: the Capacitor iOS **App**,
+  the **SendLogWatch Watch App** companion (SwiftUI; workout/attempt tracking,
+  force gauge, readiness display), and **SendmeterWidgets** (WidgetKit app
+  extension = the Live Activities). Plus a `SendLogWatchTests` unit-test target.
+  - The watch AND widget targets are `PBXFileSystemSynchronizedRootGroup`s: files
+    are included by **filesystem presence**, so add/remove Swift files by touching
+    the dir, not the pbxproj. The test target is a normal target (edit pbxproj to
+    add files there — use the `xcodeproj` Ruby gem, available via cocoapods:
+    `GEM_PATH=/opt/homebrew/Cellar/cocoapods/*/libexec /opt/homebrew/opt/ruby/bin/ruby`).
+    The widget target itself was created by `scripts/add_widget_target.rb` (same
+    gem); re-running is a no-op. `SendmeterWidgets-Info.plist` sits *outside* the
+    synced `SendmeterWidgets/` dir (watch-target convention) so it isn't compiled.
+  - **Live Activities need iOS 17** (interactive `Button(intent:)`); the widget
+    target is min iOS 17 while the App stays 16.0 (the appex is simply inert
+    below 17). `LiveActivityIntent.perform()` runs in the **App process**, so the
+    intent implementations live in `ios/App/App/LiveActivityIntents.swift` (App
+    target) and the widget only has no-op stubs so `Button(intent:)` compiles —
+    no App Group is needed (the pending-action queue is `UserDefaults.standard`,
+    shared because it's the same process).
 - **`native-plugins/`** — local Swift/Capacitor plugins (npm `file:` deps):
   - `sendlog-health` + `sendlog-health-core` — HealthKit read on the **iPhone**,
     readiness compute, `health_metrics` upsert, background delivery. `-core` is
     pure Foundation (unit-tested); the plugin adds HealthKit + Supabase.
   - `sendlog-auth-bridge` — relays the Supabase session from the WebView to the
-    watch over WatchConnectivity.
+    watch over WatchConnectivity; also **receives** watch→phone live-workout
+    beats (`didReceiveMessage`) and forwards them to the WebView via
+    `notifyListeners("liveWorkout")` (the Bluetooth-fast mirror path — works even
+    while the WebView is suspended).
+  - `sendlog-live-activity` — lock-screen **Live Activities** (ActivityKit) for
+    the phone workout (CLIMBING/RESTING timers + tappable Boulder/Stop) and the
+    Tindeq guided protocol (per-segment countdown). `LiveActivityManager` owns
+    activity start/update/end, the pending-action queue, the rest-over
+    `UNUserNotificationCenter` alert, and the Tindeq segment stepper. Timers
+    render natively via `Text(timerInterval:)` (no per-tick updates). Lock-screen
+    Boulder/Stop → App-process intents queue `{type,at}` into
+    `UserDefaults.standard`; `src/hooks/usePhoneWorkout.ts` drains + replays them
+    into the reducer (its phase guards make replay idempotent) on mount /
+    `appStateChange` / the plugin's `liveActivityAction` event.
+    `ActivityModels.swift` is **duplicated** (widget copy + plugin copy, KEEP-IN-
+    SYNC comment) — ActivityKit matches by type name + Codable shape, so drift
+    makes the card render as a placeholder. iOS-17-gated; device-only to verify.
   - `sendlog-passkey` — runs the WebAuthn passkey ceremony natively via
     `ASAuthorization` (Face ID). Needed because the WebView origin is
     `capacitor://localhost`, which the browser WebAuthn API won't accept for the
@@ -200,10 +228,12 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
   spawned/non-interactive shell, no signed-in Xcode account required. The lane
   (`fastlane/Fastfile`) does everything: `npm run build && cap sync ios`, then
   `get_certificates` (installs/creates the Apple Distribution cert via the API key),
-  `get_provisioning_profile force:true` for the app + `.watchkitapp` (regenerated so
-  they carry the current cert), `latest_testflight_build_number + 1` (so **never
-  hand-bump `CURRENT_PROJECT_VERSION`** — the lane injects it via `xcargs` at archive
-  time into both app + watch), then `build_app` with **manual** signing +
+  `get_provisioning_profile force:true` for the app + `.watchkitapp` + `.widgets`
+  (regenerated so they carry the current cert; the lane first creates the
+  `.widgets` App ID via `Spaceship::ConnectAPI::BundleId.create` since sigh won't),
+  `latest_testflight_build_number + 1` (so **never hand-bump
+  `CURRENT_PROJECT_VERSION`** — the lane injects it via `xcargs` at archive time
+  into app + watch + widget), then `build_app` with **manual** signing +
   `-allowProvisioningUpdates` (the auth-key flags go in `xcargs` only, not
   `export_xcargs`), then `upload_to_testflight`. Config lives in `fastlane/.env`
   (`ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_PATH`) + `fastlane/asc_api_key.p8`

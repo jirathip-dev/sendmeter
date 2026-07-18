@@ -32,6 +32,8 @@
 	<array>
 		<string>bluetooth-central</string>
 	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Reads heart rate variability, resting heart rate, respiratory rate, sleep, and body weight to compute your daily training readiness.</string>
 	<key>NSHealthUpdateUsageDescription</key>

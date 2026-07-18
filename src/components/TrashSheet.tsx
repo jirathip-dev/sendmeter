@@ -109,6 +109,53 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
   const loading = sessions === null || recordings === null;
   const isEmpty = !loading && sessions.length === 0 && recordings.length === 0;
 
+  // Inline "delete forever?" confirmation, rendered directly under the row
+  // whose × was tapped — no more hunting at the bottom of the sheet.
+  function purgeConfirm(id: string) {
+    if (confirmPurge?.id !== id) return null;
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 0 12px",
+          borderBottom: "1px solid var(--hairline)",
+        }}
+      >
+        <span style={{ flex: 1, fontSize: 12, color: "var(--danger)" }}>
+          Delete forever? No undo.
+        </span>
+        <button
+          className="btn-ghost"
+          style={{ width: "auto", padding: "8px 12px", fontSize: 11 }}
+          disabled={busyId === id}
+          onClick={() => setConfirmPurge(null)}
+        >
+          Cancel
+        </button>
+        <button
+          disabled={busyId === id}
+          onClick={() => void handlePurge()}
+          style={{
+            background: "var(--danger)",
+            color: "#ffffff",
+            border: "none",
+            padding: "8px 14px",
+            borderRadius: 8,
+            fontFamily: "Inter, sans-serif",
+            fontSize: 11,
+            fontWeight: 600,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {busyId === id ? "Deleting…" : "Delete forever"}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <Sheet onClose={onClose}>
       <div
@@ -144,50 +191,52 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
               Sessions
             </div>
             {sessions.map((s) => (
-              <div
-                key={s.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "10px 0",
-                  borderBottom: "1px solid var(--hairline)",
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: "var(--ink)" }}>
-                    {s.typeLabel}{" "}
-                    <span style={{ color: "var(--ink-muted)" }}>
-                      · {s.date}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--ink-faint)" }}>
-                    deleted {timeAgo(s.deletedAt)}
-                  </div>
-                </div>
-                <button
-                  className="btn-ghost"
-                  style={{ width: "auto", padding: "8px 12px", fontSize: 11 }}
-                  disabled={busyId === s.id}
-                  onClick={() => void handleRestoreSession(s.id)}
-                >
-                  Restore
-                </button>
-                <button
-                  onClick={() => setConfirmPurge({ kind: "session", id: s.id })}
-                  disabled={busyId === s.id}
+              <div key={s.id}>
+                <div
                   style={{
-                    background: "none",
-                    border: "none",
-                    color: "var(--danger)",
-                    fontSize: 18,
-                    cursor: "pointer",
-                    padding: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "10px 0",
+                    borderBottom: confirmPurge?.id === s.id ? "none" : "1px solid var(--hairline)",
                   }}
-                  title="Delete forever"
                 >
-                  ×
-                </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: "var(--ink)" }}>
+                      {s.typeLabel}{" "}
+                      <span style={{ color: "var(--ink-muted)" }}>
+                        · {s.date}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 10, color: "var(--ink-faint)" }}>
+                      deleted {timeAgo(s.deletedAt)}
+                    </div>
+                  </div>
+                  <button
+                    className="btn-ghost"
+                    style={{ width: "auto", padding: "8px 12px", fontSize: 11 }}
+                    disabled={busyId === s.id}
+                    onClick={() => void handleRestoreSession(s.id)}
+                  >
+                    Restore
+                  </button>
+                  <button
+                    onClick={() => setConfirmPurge({ kind: "session", id: s.id })}
+                    disabled={busyId === s.id}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "var(--danger)",
+                      fontSize: 18,
+                      cursor: "pointer",
+                      padding: 4,
+                    }}
+                    title="Delete forever"
+                  >
+                    ×
+                  </button>
+                </div>
+                {purgeConfirm(s.id)}
               </div>
             ))}
           </div>
@@ -199,98 +248,59 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
               Tindeq Recordings
             </div>
             {recordings.map((r) => (
-              <div
-                key={r.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "10px 0",
-                  borderBottom: "1px solid var(--hairline)",
-                }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: "var(--ink)" }}>
-                    {r.peakKg.toFixed(1)} kg
-                    {r.tag && (
-                      <span style={{ color: "var(--ink-muted)" }}>
-                        {" "}
-                        · {r.tag}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--ink-faint)" }}>
-                    deleted {timeAgo(r.deletedAt)}
-                  </div>
-                </div>
-                <button
-                  className="btn-ghost"
-                  style={{ width: "auto", padding: "8px 12px", fontSize: 11 }}
-                  disabled={busyId === r.id}
-                  onClick={() => void handleRestoreRecording(r.id)}
-                >
-                  Restore
-                </button>
-                <button
-                  onClick={() =>
-                    setConfirmPurge({ kind: "recording", id: r.id })
-                  }
-                  disabled={busyId === r.id}
+              <div key={r.id}>
+                <div
                   style={{
-                    background: "none",
-                    border: "none",
-                    color: "var(--danger)",
-                    fontSize: 18,
-                    cursor: "pointer",
-                    padding: 4,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "10px 0",
+                    borderBottom: confirmPurge?.id === r.id ? "none" : "1px solid var(--hairline)",
                   }}
-                  title="Delete forever"
                 >
-                  ×
-                </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: "var(--ink)" }}>
+                      {r.peakKg.toFixed(1)} kg
+                      {r.tag && (
+                        <span style={{ color: "var(--ink-muted)" }}>
+                          {" "}
+                          · {r.tag}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 10, color: "var(--ink-faint)" }}>
+                      deleted {timeAgo(r.deletedAt)}
+                    </div>
+                  </div>
+                  <button
+                    className="btn-ghost"
+                    style={{ width: "auto", padding: "8px 12px", fontSize: 11 }}
+                    disabled={busyId === r.id}
+                    onClick={() => void handleRestoreRecording(r.id)}
+                  >
+                    Restore
+                  </button>
+                  <button
+                    onClick={() =>
+                      setConfirmPurge({ kind: "recording", id: r.id })
+                    }
+                    disabled={busyId === r.id}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "var(--danger)",
+                      fontSize: 18,
+                      cursor: "pointer",
+                      padding: 4,
+                    }}
+                    title="Delete forever"
+                  >
+                    ×
+                  </button>
+                </div>
+                {purgeConfirm(r.id)}
               </div>
             ))}
-          </div>
-        )}
-
-        {confirmPurge && (
-          <div
-            style={{
-              marginTop: 16,
-              paddingTop: 14,
-              borderTop: "1px solid var(--hairline)",
-            }}
-          >
-            <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12 }}>
-              Delete this {confirmPurge.kind} forever? There is no undo.
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="btn-ghost"
-                disabled={busyId === confirmPurge.id}
-                onClick={() => setConfirmPurge(null)}
-              >
-                Cancel
-              </button>
-              <button
-                disabled={busyId === confirmPurge.id}
-                onClick={() => void handlePurge()}
-                style={{
-                  background: "var(--danger)",
-                  color: "#ffffff",
-                  border: "none",
-                  padding: "13px 20px",
-                  borderRadius: 8,
-                  width: "100%",
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: 13,
-                  fontWeight: 500,
-                  cursor: "pointer",
-                }}
-              >
-                {busyId === confirmPurge.id ? "Deleting…" : "Delete forever"}
-              </button>
-            </div>
           </div>
         )}
 

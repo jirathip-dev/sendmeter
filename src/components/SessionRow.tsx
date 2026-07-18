@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PHASES } from "../constants";
+import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import {
   deleteRecording,
   fetchRecordingsByGroup,
   fetchWorkoutForSession,
 } from "../lib/repo";
 import type { Session, TindeqRecordingMeta, WorkoutDetail } from "../types";
+import EditRecordingSheet from "./EditRecordingSheet";
 import RecordingRow from "./RecordingRow";
 import WorkoutDetailPanel from "./WorkoutDetailPanel";
 
@@ -27,6 +29,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
   const [tindeqRecs, setTindeqRecs] = useState<TindeqRecordingMeta[] | null>(
     null,
   );
+  const [editingRec, setEditingRec] = useState<TindeqRecordingMeta | null>(null);
   const [loadError, setLoadError] = useState(false);
 
   async function toggle() {
@@ -45,6 +48,33 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
       setLoadError(true);
     }
   }
+
+  // Refetch the expanded content when data changes elsewhere (e.g. a recording
+  // assigned into this session's group, or a watch write) — without this the
+  // cached recordings only refresh on remount, so a just-moved recording
+  // wouldn't show until you left and re-entered History.
+  const realtimeVersion = useRealtimeVersion();
+  useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        if (isWorkout) {
+          const d = await fetchWorkoutForSession(s.id);
+          if (!cancelled) setDetail(d ?? "missing");
+        } else if (isTindeq) {
+          const recs = await fetchRecordingsByGroup(s.groupId!);
+          if (!cancelled) setTindeqRecs(recs);
+        }
+      } catch {
+        /* keep the stale view rather than flashing an error */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [realtimeVersion]);
 
   return (
     <div
@@ -201,6 +231,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
             <RecordingRow
               key={r.id}
               rec={r}
+              onEdit={setEditingRec}
               onDelete={(id) => {
                 setTindeqRecs((list) =>
                   list ? list.filter((x) => x.id !== id) : list,
@@ -210,6 +241,18 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
             />
           ))}
         </div>
+      )}
+      {editingRec && (
+        <EditRecordingSheet
+          rec={editingRec}
+          recentTags={[...new Set((tindeqRecs ?? []).map((r) => r.tag).filter(Boolean))]}
+          onSaved={(saved) =>
+            setTindeqRecs((list) =>
+              list ? list.map((x) => (x.id === saved.id ? saved : x)) : list,
+            )
+          }
+          onClose={() => setEditingRec(null)}
+        />
       )}
     </div>
   );

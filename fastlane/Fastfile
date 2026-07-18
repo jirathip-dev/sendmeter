@@ -34,14 +34,27 @@ platform :ios do
                 "-authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')} " \
                 "-authenticationKeyPath #{key_abs} -allowProvisioningUpdates"
 
+    # The widget-extension App ID must exist before sigh can fetch a profile
+    # for it — sigh does NOT create App IDs, and `produce`'s API-key support
+    # is unreliable, so hit the ASC API directly (idempotent).
+    widgets_id = "#{APP_IDENTIFIER}.widgets"
+    existing = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: widgets_id })
+    unless existing.any? { |b| b.identifier == widgets_id }
+      Spaceship::ConnectAPI::BundleId.create(
+        name: "Sendmeter Widgets", identifier: widgets_id, platform: "IOS"
+      )
+      UI.message("Registered App ID #{widgets_id}")
+    end
+
     # App Store provisioning profiles that include the distribution cert above,
-    # for the app + its embedded watch app. force: true regenerates them so
-    # they carry the current cert (the account's auto "Team Store" profile
-    # referenced an older cert → "profile doesn't include signing certificate").
-    # Export then uses manual signing with these, avoiding Xcode cloud-managed
-    # signing, which the API key isn't permitted to drive.
+    # for the app + its embedded watch app + the widget extension. force: true
+    # regenerates them so they carry the current cert (the account's auto
+    # "Team Store" profile referenced an older cert → "profile doesn't include
+    # signing certificate"). Export then uses manual signing with these,
+    # avoiding Xcode cloud-managed signing, which the API key isn't permitted
+    # to drive.
     profiles = {}
-    [APP_IDENTIFIER, "#{APP_IDENTIFIER}.watchkitapp"].each do |bundle_id|
+    [APP_IDENTIFIER, "#{APP_IDENTIFIER}.watchkitapp", widgets_id].each do |bundle_id|
       get_provisioning_profile(
         api_key: api_key,
         app_identifier: bundle_id,

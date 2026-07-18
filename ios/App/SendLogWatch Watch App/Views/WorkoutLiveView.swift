@@ -83,7 +83,9 @@ struct WorkoutLiveView: View {
             }
 
             // Play = start a boulder, stop = drop off into the rest countdown
-            // (phone-workout logic; icons instead of words).
+            // (phone-workout logic; icons instead of words). Compact circular
+            // button so the whole screen fits a 40mm watch without scrolling
+            // (SL-59) — still the biggest tap target on screen.
             Button {
                 workout.toggleManualAttempt()
                 if workout.manualClimbing {
@@ -93,11 +95,13 @@ struct WorkoutLiveView: View {
                 }
             } label: {
                 Image(systemName: workout.manualClimbing ? "stop.fill" : "play.fill")
-                    .font(.system(size: 20, weight: .bold))
-                    .frame(maxWidth: .infinity)
+                    .font(.system(size: 17, weight: .bold))
+                    .frame(width: 46, height: 46)
             }
             .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.circle)
             .tint(workout.manualClimbing ? .orange : .green)
+            .frame(maxWidth: .infinity)
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

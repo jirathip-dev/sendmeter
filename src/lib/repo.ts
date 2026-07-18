@@ -404,7 +404,9 @@ export async function fetchRecordingsByGroup(
       .select(RECORDING_COLS)
       .eq("group_id", groupId)
       .is("deleted_at", null)
-      .order("recorded_at", { ascending: true }),
+      // Newest-first, matching the outer History timeline (SL-58) — a session's
+      // reps read top-to-bottom the same way loose recordings do.
+      .order("recorded_at", { ascending: false }),
   );
   return data.map(toRecording);
 }
@@ -591,6 +593,23 @@ export async function updateRecordingGroup(
     await supabase
       .from("tindeq_recordings")
       .update({ group_id: groupId })
+      .eq("id", id)
+      .select(RECORDING_COLS)
+      .single(),
+  );
+  return toRecording(data);
+}
+
+/// Edit a recording's label fields after the fact (SL-58: users forget to set
+/// tag/side before a rep). Only tag/side/note — never the samples.
+export async function updateRecordingMeta(
+  id: string,
+  patch: { tag: string; side: TindeqSide; note: string },
+): Promise<TindeqRecordingMeta> {
+  const data = unwrap<RecordingRow>(
+    await supabase
+      .from("tindeq_recordings")
+      .update({ tag: patch.tag, side: patch.side, note: patch.note })
       .eq("id", id)
       .select(RECORDING_COLS)
       .single(),

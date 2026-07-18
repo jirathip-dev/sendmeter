@@ -8,6 +8,8 @@ import type { TindeqRecordingMeta, TindeqSample } from "../types";
 interface Props {
   rec: TindeqRecordingMeta;
   onDelete: (id: string) => void;
+  /// Edit tag/side/note (pencil). Omitted where editing isn't offered.
+  onEdit?: (rec: TindeqRecordingMeta) => void;
   /// Multi-select mode (History): loose recordings can be ticked and turned
   /// into a session together.
   selectable?: boolean;
@@ -145,6 +147,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
 export default function RecordingRow({
   rec,
   onDelete,
+  onEdit,
   selectable,
   selected,
   onToggleSelect,
@@ -264,6 +267,19 @@ export default function RecordingRow({
             </div>
           )}
         </div>
+        {onEdit && (
+          <button
+            className="del-btn"
+            aria-label="Edit recording"
+            style={{ fontSize: 13 }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(rec);
+            }}
+          >
+            ✎
+          </button>
+        )}
         <button
           className="del-btn"
           onClick={(e) => {

@@ -11,8 +11,10 @@ import {
   updateRecordingGroup,
 } from "../lib/repo";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
+import EditRecordingSheet from "./EditRecordingSheet";
 import RecordingRow from "./RecordingRow";
 import SessionRow from "./SessionRow";
+import Sheet from "./Sheet";
 
 interface Props {
   sessions: Session[];
@@ -43,18 +45,59 @@ export default function HistoryView({
   // Multi-select of loose recordings → one new session.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
+  // Edit tag/side/note of a single recording (SL-58).
+  const [editingRec, setEditingRec] = useState<TindeqRecordingMeta | null>(null);
+  // Local overrides so an edit shows immediately, before the realtime refetch.
+  const [editedRecs, setEditedRecs] = useState<Map<string, TindeqRecordingMeta>>(new Map());
+  // "Assign to existing session" picker for the ticked recordings (SL-58).
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
 
   const allRecordings = useCancellableFetch<TindeqRecordingMeta[]>(
     fetchRecordings,
     [],
     realtimeVersion,
   );
-  // Optimistic local hides (delete/assign) until the realtime refetch lands.
-  const ungrouped = allRecordings.filter(
-    (r) => r.groupId === null && !removedIds.has(r.id) && !assignedIds.has(r.id),
-  );
+  // Optimistic local hides (delete/assign) until the realtime refetch lands,
+  // and local edits (tag/side/note) applied over the fetched rows.
+  const ungrouped = allRecordings
+    .filter((r) => r.groupId === null && !removedIds.has(r.id) && !assignedIds.has(r.id))
+    .map((r) => editedRecs.get(r.id) ?? r);
 
   const total = sessions.reduce((s, x) => s + x.load, 0);
+
+  // Existing exercise tags, for the edit sheet's quick-pick chips.
+  const recentTags = [
+    ...new Set(allRecordings.map((r) => r.tag).filter(Boolean)),
+  ];
+
+  // Tindeq sessions the ticked recordings can be assigned into (SL-58).
+  const tindeqSessions = sessions.filter(
+    (s) => s.type === "tindeq" && s.groupId,
+  );
+
+  async function assignSelectionToSession(groupId: string) {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setAssigning(true);
+    setAssignError(null);
+    try {
+      for (const id of ids) await updateRecordingGroup(id, groupId);
+      setAssignedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of ids) next.add(id);
+        return next;
+      });
+      setSelectedIds(new Set());
+      setAssignOpen(false);
+      bumpRealtime();
+    } catch (e) {
+      setAssignError(e instanceof Error ? e.message : "Failed to assign");
+    } finally {
+      setAssigning(false);
+    }
+  }
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => {
@@ -166,6 +209,7 @@ export default function HistoryView({
               setRemovedIds((prev) => new Set(prev).add(id));
               void deleteRecording(id);
             }}
+            onEdit={setEditingRec}
             selectable
             selected={selectedIds.has(it.rec.id)}
             onToggleSelect={toggleSelect}
@@ -175,28 +219,95 @@ export default function HistoryView({
 
       {/* Floating glass action bar while loose recordings are ticked */}
       {selectedIds.size > 0 && (
-        <div className="glass-bar">
+        <div className="glass-bar" style={{ flexWrap: "wrap" }}>
           <button
             className="btn-primary"
             disabled={creating}
             onClick={() => void createSessionFromSelection()}
-            style={{ flex: 2 }}
+            style={{ flex: 2, minWidth: 130 }}
           >
-            {creating
-              ? "Creating…"
-              : `Create session (${selectedIds.size})`}
+            {creating ? "Creating…" : `New session (${selectedIds.size})`}
           </button>
+          {tindeqSessions.length > 0 && (
+            <button
+              className="btn-ghost"
+              disabled={creating}
+              onClick={() => setAssignOpen(true)}
+              style={{ flex: 1, minWidth: 90, whiteSpace: "nowrap" }}
+            >
+              Assign…
+            </button>
+          )}
           <button
             className="btn-ghost"
             disabled={creating}
             onClick={() => setSelectedIds(new Set())}
-            style={{ flex: 1 }}
+            style={{ flex: 1, minWidth: 70 }}
           >
             Cancel
           </button>
         </div>
       )}
 
+      {/* Edit a single recording's tag/side/note */}
+      {editingRec && (
+        <EditRecordingSheet
+          rec={editingRec}
+          recentTags={recentTags}
+          onSaved={(saved) =>
+            setEditedRecs((prev) => new Map(prev).set(saved.id, saved))
+          }
+          onClose={() => setEditingRec(null)}
+        />
+      )}
+
+      {/* Assign ticked recordings into an existing Tindeq session */}
+      {assignOpen && (
+        <Sheet onClose={() => setAssignOpen(false)}>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 20, fontWeight: 800, marginBottom: 2 }}>
+            Assign to session
+          </div>
+          <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 12 }}>
+            Move {selectedIds.size} recording{selectedIds.size === 1 ? "" : "s"} into an existing Tindeq session.
+          </div>
+          {assignError && (
+            <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 8 }}>{assignError}</div>
+          )}
+          {tindeqSessions.map((s) => (
+            <button
+              key={s.id}
+              disabled={assigning}
+              onClick={() => void assignSelectionToSession(s.groupId!)}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "12px 14px",
+                marginBottom: 8,
+                background: "var(--canvas)",
+                border: "1px solid var(--card-border)",
+                borderRadius: 10,
+                cursor: assigning ? "default" : "pointer",
+                boxShadow: "var(--shadow-card)",
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
+                {s.date} · {s.duration}min · RPE {s.rpe}
+              </div>
+              {s.note && (
+                <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
+                  {s.note}
+                </div>
+              )}
+            </button>
+          ))}
+          <div style={{ marginTop: 8 }}>
+            <button className="btn-ghost" disabled={assigning} onClick={() => setAssignOpen(false)}>
+              Cancel
+            </button>
+          </div>
+        </Sheet>
+      )}
     </div>
   );
 }

@@ -11,6 +11,11 @@ import { computeForceCurve } from "../lib/force-curve";
 import type { ForceCurveModel } from "../lib/force-curve";
 import { buildTimeline, presetTargetKg, timelineAt } from "../lib/protocol";
 import type { ProtocolSegment } from "../lib/protocol";
+import {
+  endTindeqLiveActivity,
+  startTindeqLiveActivity,
+  updateTindeqLivePeak,
+} from "../lib/liveActivity";
 import type { TindeqPreset, TindeqRecordingMeta, TindeqSide } from "../types";
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
@@ -142,13 +147,29 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   // Save one hold segment of a guided protocol as its OWN recording — sliced
   // from the live sample buffer, with the segment's hand (L/R when
   // alternating) so per-side analysis stays honest.
-  async function saveHoldSlice(seg: ProtocolSegment, endMsOverride?: number) {
+  //
+  // `segIdx` makes the save IDEMPOTENT: the per-rep autosave effect and
+  // handleStop can both reach a hold near its boundary, and without this
+  // guard both would slice+insert it (one full segment, one partial-at-stop)
+  // → the duplicate recordings seen in the wild. The index is claimed
+  // synchronously before the async insert so whichever path runs first wins.
+  const savedSegsRef = useRef<Set<number>>(new Set());
+  async function saveHoldSlice(
+    seg: ProtocolSegment,
+    segIdx: number,
+    endMsOverride?: number,
+  ) {
+    if (savedSegsRef.current.has(segIdx)) return;
+    savedSegsRef.current.add(segIdx);
     const startMs = seg.startS * 1000;
     const endMs = endMsOverride ?? (seg.startS + seg.durS) * 1000;
     const slice = tindeq.samplesRef.current
       .filter((s) => s.t >= startMs && s.t <= endMs)
       .map((s) => ({ t: Math.round((s.t - startMs) * 10) / 10, kg: s.kg }));
-    if (slice.length < 2) return;
+    if (slice.length < 2) {
+      savedSegsRef.current.delete(segIdx); // nothing saved — allow a retry
+      return;
+    }
     const kgs = slice.map((s) => s.kg);
     try {
       const saved = await insertRecording({
@@ -164,6 +185,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       setRecordings((list) => [saved, ...list]);
       setJustSaved(saved);
     } catch (e) {
+      savedSegsRef.current.delete(segIdx); // insert failed — allow a retry
       setListError(e instanceof Error ? e.message : "Failed to save recording");
     }
   }
@@ -171,7 +193,21 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   // Stop always saves — the tag was required before Start, so there's nothing
   // to decide here. Guided protocols save PER REP (each hold is already its
   // own recording); a free hold saves the whole pull as one recording.
+  // Re-entrancy guard: a manual Stop and the BLE-disconnect auto-save (or a
+  // double tap) could both call this — the first claim wins so a free hold is
+  // never inserted twice.
+  const stopInFlightRef = useRef(false);
   async function handleStop() {
+    if (stopInFlightRef.current) return;
+    stopInFlightRef.current = true;
+    try {
+      await runStop();
+    } finally {
+      stopInFlightRef.current = false;
+    }
+  }
+
+  async function runStop() {
     if (timeline) {
       const tMs = tindeq.elapsedMs;
       setSaving(true);
@@ -182,20 +218,24 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         if (idx === -1) idx = timeline.length;
         for (let i = savedThroughRef.current; i < idx; i++) {
           const seg = timeline[i]!;
-          if (seg.phase === "hold") await saveHoldSlice(seg);
+          if (seg.phase === "hold") await saveHoldSlice(seg, i);
         }
         savedThroughRef.current = idx;
         const pos = timelineAt(timeline, tS);
+        // idx is the current (in-progress) segment — same key the autosave
+        // effect would use, so the guard dedupes the two paths.
         if (pos && pos.seg.phase === "hold" && tMs - pos.seg.startS * 1000 >= 1000) {
-          await saveHoldSlice(pos.seg, tMs);
+          await saveHoldSlice(pos.seg, idx, tMs);
         }
       } finally {
         setSaving(false);
       }
       await tindeq.stop();
+      void endTindeqLiveActivity();
       return;
     }
     const summary = await tindeq.stop();
+    void endTindeqLiveActivity();
     if (!summary) return;
     setSaving(true);
     try {
@@ -329,7 +369,10 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   const wasMeasuringRef = useRef(false);
   const measuring = tindeq.status === "measuring";
   useEffect(() => {
-    if (measuring && !wasMeasuringRef.current) savedThroughRef.current = 0;
+    if (measuring && !wasMeasuringRef.current) {
+      savedThroughRef.current = 0;
+      savedSegsRef.current = new Set();
+    }
     wasMeasuringRef.current = measuring;
     if (!measuring || !timeline) return;
     const tS = tindeq.elapsedMs / 1000;
@@ -337,7 +380,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     if (idx === -1) idx = timeline.length;
     for (let i = savedThroughRef.current; i < idx; i++) {
       const seg = timeline[i]!;
-      if (seg.phase === "hold") void saveHoldSlice(seg);
+      if (seg.phase === "hold") void saveHoldSlice(seg, i);
     }
     if (idx > savedThroughRef.current) savedThroughRef.current = idx;
     // saveHoldSlice is stable enough for this use (reads refs/state at call
@@ -360,6 +403,24 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     // would re-arm this effect every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tindeq.interruptions]);
+
+  // Feed the session peak to the lock-screen card, throttled — the card's
+  // timers render natively; only the number needs occasional refreshes.
+  const lastPeakSentRef = useRef(0);
+  useEffect(() => {
+    if (!measuring || tindeq.peak <= 0) return;
+    const now = Date.now();
+    if (now - lastPeakSentRef.current < 5000) return;
+    lastPeakSentRef.current = now;
+    void updateTindeqLivePeak(tindeq.peak);
+  }, [measuring, tindeq.peak]);
+
+  // Never leave a stale lock-screen card behind when the tab unmounts.
+  useEffect(() => {
+    return () => {
+      void endTindeqLiveActivity();
+    };
+  }, []);
 
   // Pop the gauge fullscreen the moment the Progressor connects (only on the
   // connecting→connected transition — a stop→connected change must not
@@ -763,6 +824,18 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
           onStart={() => {
             setJustSaved(null);
             void tindeq.start();
+            // Lock-screen card for guided runs: hand the whole segment
+            // schedule to native up front — the countdown renders from
+            // timestamps with no further JS involvement.
+            if (timeline && activeProtocol) {
+              const tag = pendingTag.trim();
+              void startTindeqLiveActivity(
+                tag ? `${activeProtocol.name} · ${tag}` : activeProtocol.name,
+                presetKgSet1 ?? bandTarget?.kg ?? null,
+                Date.now(),
+                timeline,
+              );
+            }
           }}
           onMinimize={() => setGaugeMinimized(true)}
         />
