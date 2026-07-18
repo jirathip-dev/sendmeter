@@ -112,8 +112,18 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       `${recs.length} recording${recs.length === 1 ? "" : "s"}`,
       ...(tags.length ? [tags.join(", ")] : []),
     ].join(" · ");
+    // Total time = the recordings' actual span (first rep start → last rep end),
+    // not the raw wall-clock, so idle time before/after reps doesn't inflate it.
+    // Falls back to the wall-clock estimate if the recordings aren't loaded yet.
+    const spanMs = recs.length
+      ? Math.max(...recs.map((r) => Date.parse(r.recordedAt) + r.durationMs)) -
+        Math.min(...recs.map((r) => Date.parse(r.recordedAt)))
+      : 0;
+    const durationMin = recs.length
+      ? Math.max(1, Math.round(spanMs / 60000))
+      : endingSession.durationMin;
     await onLogSession({
-      durationMin: endingSession.durationMin,
+      durationMin,
       rpe: endingSession.rpe,
       note,
       groupId: endingSession.id,

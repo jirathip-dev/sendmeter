@@ -8,6 +8,7 @@ import {
   deleteRecording,
   fetchRecordings,
   insertTindeqSession,
+  recalcTindeqSessionDuration,
   updateRecordingGroup,
 } from "../lib/repo";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
@@ -84,6 +85,9 @@ export default function HistoryView({
     setAssignError(null);
     try {
       for (const id of ids) await updateRecordingGroup(id, groupId);
+      // The target session's span just grew — recompute its total time so the
+      // duration/load reflect the newly-added recordings, not the stale value.
+      await recalcTindeqSessionDuration(groupId);
       setAssignedIds((prev) => {
         const next = new Set(prev);
         for (const id of ids) next.add(id);

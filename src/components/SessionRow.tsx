@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { PHASES } from "../constants";
-import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import {
+  useRealtimeBump,
+  useRealtimeVersion,
+} from "../hooks/useRealtimeVersion";
 import {
   deleteRecording,
   fetchRecordingsByGroup,
   fetchWorkoutForSession,
+  recalcTindeqSessionDuration,
 } from "../lib/repo";
 import type { Session, TindeqRecordingMeta, WorkoutDetail } from "../types";
 import EditRecordingSheet from "./EditRecordingSheet";
@@ -37,11 +41,13 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
     const next = !expanded;
     setExpanded(next);
     if (!next || loadError) return;
+    // Always refetch on open (not just when the cache is empty) so a recording
+    // assigned into this group while it was collapsed shows on re-expand.
     try {
-      if (isWorkout && detail === null) {
+      if (isWorkout) {
         const d = await fetchWorkoutForSession(s.id);
         setDetail(d ?? "missing");
-      } else if (isTindeq && tindeqRecs === null) {
+      } else if (isTindeq) {
         setTindeqRecs(await fetchRecordingsByGroup(s.groupId!));
       }
     } catch {
@@ -54,6 +60,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
   // cached recordings only refresh on remount, so a just-moved recording
   // wouldn't show until you left and re-entered History.
   const realtimeVersion = useRealtimeVersion();
+  const bumpRealtime = useRealtimeBump();
   useEffect(() => {
     if (!expanded) return;
     let cancelled = false;
@@ -236,7 +243,13 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
                 setTindeqRecs((list) =>
                   list ? list.filter((x) => x.id !== id) : list,
                 );
-                void deleteRecording(id);
+                // Removing a rep shrinks the session's span — recompute its
+                // total time, then bump so the header duration/load refresh.
+                void (async () => {
+                  await deleteRecording(id);
+                  if (s.groupId) await recalcTindeqSessionDuration(s.groupId);
+                  bumpRealtime();
+                })();
               }}
             />
           ))}

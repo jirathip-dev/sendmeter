@@ -600,6 +600,32 @@ export async function updateRecordingGroup(
   return toRecording(data);
 }
 
+/// Recompute a Tindeq session's duration from its recordings' actual time span
+/// (first rep's start → last rep's end) and persist it. Keeps the session's
+/// "total time" — and the load/ACWR it drives — honest as recordings are
+/// assigned in or removed, instead of frozen at the wall-clock value from when
+/// it was logged. No-op if the group has no live recordings. Returns the
+/// minutes written (or null when nothing to compute).
+export async function recalcTindeqSessionDuration(
+  groupId: string,
+): Promise<number | null> {
+  const recs = await fetchRecordingsByGroup(groupId);
+  if (recs.length === 0) return null;
+  const starts = recs.map((r) => Date.parse(r.recordedAt));
+  const ends = recs.map((r) => Date.parse(r.recordedAt) + r.durationMs);
+  const spanMs = Math.max(...ends) - Math.min(...starts);
+  const durationMin = Math.max(1, Math.round(spanMs / 60000));
+  unwrap(
+    await supabase
+      .from("sessions")
+      .update({ duration_min: durationMin })
+      .eq("group_id", groupId)
+      .is("deleted_at", null)
+      .select("id"),
+  );
+  return durationMin;
+}
+
 /// Edit a recording's label fields after the fact (SL-58: users forget to set
 /// tag/side before a rep). Only tag/side/note — never the samples.
 export async function updateRecordingMeta(
