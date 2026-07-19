@@ -173,6 +173,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
             />
           )}
           <div
+            className="chart-scrub"
             style={{
               display: "flex",
               gap: 3,

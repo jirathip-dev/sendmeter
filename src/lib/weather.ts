@@ -13,11 +13,21 @@ export interface SendConditions {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-/// Peak friction ≈ 6°C and low humidity; falls off as it warms or gets muggy.
+/// Temperature sub-score: peak friction ≈ 6°C, falling off ~6 pts per °C away.
+export function tempFrictionScore(tempC: number): number {
+  return clamp(100 - Math.abs(tempC - 6) * 6, 0, 100);
+}
+
+/// Humidity sub-score: drier = better (0% → 100, ~90% → 0).
+export function humidityFrictionScore(humidity: number): number {
+  return clamp(100 - humidity * 1.1, 0, 100);
+}
+
+/// Overall send score: 60% temperature, 40% humidity.
 export function computeSendScore(tempC: number, humidity: number): number {
-  const tempScore = clamp(100 - Math.abs(tempC - 6) * 6, 0, 100);
-  const humScore = clamp(100 - humidity * 1.1, 0, 100);
-  return Math.round(0.6 * tempScore + 0.4 * humScore);
+  return Math.round(
+    0.6 * tempFrictionScore(tempC) + 0.4 * humidityFrictionScore(humidity),
+  );
 }
 
 function scoreLabel(score: number): SendConditions["label"] {

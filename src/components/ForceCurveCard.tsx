@@ -56,7 +56,7 @@ function CurvePlot({ model }: { model: ForceCurveModel }) {
   const xTicks = [1, 10, 60, 120].filter((t) => Math.log10(t) <= tMax + 0.01);
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+    <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
       {/* axis gridlines */}
       {yTicks.map((v, i) => (
         <g key={`y-${i}`}>

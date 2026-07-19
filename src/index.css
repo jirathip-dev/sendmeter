@@ -503,6 +503,10 @@ textarea.field { resize: none; }
   letter-spacing: 0.1em;
 }
 
+/* Chart interaction areas: a horizontal finger drag scrubs the tooltip instead
+   of being claimed as a page scroll; vertical drags still scroll the page. */
+.chart-scrub { touch-action: pan-y; }
+
 /* Card heading — larger/heavier than the 9px eyebrow so the metric a card
    carries reads as important at a glance (SL-60 / SL-64). */
 .card-title {

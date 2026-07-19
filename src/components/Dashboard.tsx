@@ -91,6 +91,10 @@ export default function Dashboard({
             flexDirection: "column",
             justifyContent: "space-between",
             gap: 6,
+            // Tinted with the current phase's color, matching the phase cards
+            // in the info sheet.
+            background: phase.bg,
+            border: `1px solid ${phase.border}`,
           }}
         >
           <div style={{ minWidth: 0 }}>

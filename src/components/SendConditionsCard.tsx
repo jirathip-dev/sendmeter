@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchSendConditions, type SendConditions } from "../lib/weather";
+import SendConditionsSheet from "./SendConditionsSheet";
 
 const KEY = "sendmeter:send-conditions";
 const FRESH_MS = 30 * 60 * 1000;
@@ -23,6 +24,7 @@ export default function SendConditionsCard() {
   const [cond, setCond] = useState<SendConditions | null>(loadCached);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [showSheet, setShowSheet] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -65,9 +67,10 @@ export default function SendConditionsCard() {
   );
 
   return (
+    <>
     <div
       className="card"
-      onClick={() => void refresh()}
+      onClick={() => setShowSheet(true)}
       style={{
         // 1/3-width column next to the 2/3 phase card — vertical layout.
         flex: 1,
@@ -112,5 +115,15 @@ export default function SendConditionsCard() {
         </div>
       )}
     </div>
+    {showSheet && (
+      <SendConditionsSheet
+        cond={cond}
+        loading={loading}
+        failed={failed}
+        onRefresh={() => void refresh()}
+        onClose={() => setShowSheet(false)}
+      />
+    )}
+    </>
   );
 }

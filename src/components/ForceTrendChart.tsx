@@ -47,7 +47,7 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
   const yTicks = [yMin, yMid, yMax];
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+    <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
       {/* y-axis gridlines */}
       {yTicks.map((v, i) => (
         <g key={i}>

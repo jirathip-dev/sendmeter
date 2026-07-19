@@ -198,6 +198,7 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
                 );
               })()}
             <div
+              className="chart-scrub"
               style={{
                 display: "flex",
                 height: 10,

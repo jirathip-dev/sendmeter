@@ -130,7 +130,7 @@ export default function WorkoutHrChart({ workoutId, startedAt, attempts }: Props
         </span>
       </div>
       <div ref={hostRef} style={{ width: "100%" }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+        <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
           {/* Attempt segments (rest stays unshaded) */}
           {windows.map((w, i) => (
             <rect

@@ -213,6 +213,7 @@ export default function RecoveryStatsCard() {
                 </ChartTooltip>
               )}
               <svg
+                className="chart-scrub"
                 viewBox={`0 0 ${W} ${H}`}
                 style={{ width: "100%", display: "block" }}
               >

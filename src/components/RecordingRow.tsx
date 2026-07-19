@@ -59,6 +59,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
   return (
     <div ref={hostRef} style={{ width: "100%" }}>
     <svg
+      className="chart-scrub"
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", height: H, display: "block", marginTop: 10 }}
     >

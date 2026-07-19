@@ -46,7 +46,7 @@ export default function RpeScatterCard() {
         RPE Model
       </div>
       <div style={{ maxWidth: 220 }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+        <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
           {/* axis gridlines + ticks */}
           {TICKS.map((v) => (
             <g key={`grid-${v}`}>
