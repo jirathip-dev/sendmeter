@@ -60,10 +60,12 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
   fit + `ZONE_PROTOCOLS`, protocol.ts = guided timelines, healthSync.ts +
   watchAuthRelay.ts = native bridges). `components/` = UI (`InfoDot.tsx` =
   the "?" explainer sheets). `hooks/` = data hooks.
-- **`ios/App/App.xcodeproj`** — three product targets: the Capacitor iOS **App**,
+- **`ios/App/App.xcodeproj`** — four product targets: the Capacitor iOS **App**,
   the **SendLogWatch Watch App** companion (SwiftUI; workout/attempt tracking,
-  force gauge, readiness display), and **SendmeterWidgets** (WidgetKit app
-  extension = the Live Activities). Plus a `SendLogWatchTests` unit-test target.
+  force gauge, readiness display), **SendmeterWidgets** (WidgetKit app
+  extension = the phone Live Activities), and **SendLogWatchWidgets** (WidgetKit
+  extension embedded in the watch app = watch-face complications + Smart-Stack
+  widgets). Plus a `SendLogWatchTests` unit-test target.
   - The watch AND widget targets are `PBXFileSystemSynchronizedRootGroup`s: files
     are included by **filesystem presence**, so add/remove Swift files by touching
     the dir, not the pbxproj. The test target is a normal target (edit pbxproj to
@@ -79,6 +81,25 @@ Always run `npm run typecheck && npm run lint && npm test && npm run build` afte
     target) and the widget only has no-op stubs so `Button(intent:)` compiles —
     no App Group is needed (the pending-action queue is `UserDefaults.standard`,
     shared because it's the same process).
+  - **`SendLogWatchWidgets`** (watch complications + Smart-Stack widgets) is a
+    separate process from the watch app, so it **needs an App Group**
+    (`group.com.jirathip.sendlog`) to share data. The watch app is the source of
+    truth: `WidgetBridge` writes a `WidgetSnapshot` (readiness + on-watch-computed
+    ACWR + live-workout state) to the App Group and calls
+    `WidgetCenter.reloadAllTimelines()` on sync/foreground/workout-start/boulder-
+    toggle/end. `WidgetShared.swift` is **duplicated** (watch-app copy + widget
+    copy, KEEP-IN-SYNC) since each target is its own synced group. Created by
+    `scripts/add_watch_widget_target.rb` (min watchOS 10, bundle id
+    `…watchkitapp.widgets`, `SendLogWatchWidgets-Info.plist` outside the synced
+    dir). Quick-launch complications deep-link via `sendmeter://workout|force`
+    → `RootView.onOpenURL` → the `NavigationStack` path.
+    - **One-time manual portal step (App Group):** the App Group must exist and
+      be enabled on the `…watchkitapp` **and** `…watchkitapp.widgets` App IDs in
+      developer.apple.com → Certificates, IDs & Profiles, or `fastlane beta`'s
+      `get_provisioning_profile` fails for the widget appex. The Fastfile
+      registers the widget App ID + fetches its profile but can't toggle the
+      capability. Device-only to verify (complications/Smart-Stack don't run in
+      the simulator gallery here).
 - **`native-plugins/`** — local Swift/Capacitor plugins (npm `file:` deps):
   - `sendlog-health` + `sendlog-health-core` — HealthKit read on the **iPhone**,
     readiness compute, `health_metrics` upsert, background delivery. `-core` is
