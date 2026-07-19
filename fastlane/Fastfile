@@ -75,21 +75,6 @@ platform :ios do
       profiles[bundle_id] = lane_context[SharedValues::SIGH_NAME]
     end
 
-    # `xcodebuild archive` signs every target with automatic signing = the local
-    # Development cert/profile, and the embedded appex must match its parent's
-    # cert. The older App IDs have a cached Development profile from prior Xcode
-    # use; the brand-new watch-widgets App ID does NOT, so the archive would try
-    # (and fail) to create one via the API key. Pre-fetch + install a Development
-    # profile for it here so automatic signing finds it locally. Not added to the
-    # export `profiles` map — export re-signs with the App Store profile above.
-    get_provisioning_profile(
-      api_key: api_key,
-      app_identifier: watch_widgets_id,
-      development: true,
-      force: true,
-      output_path: "fastlane/certs"
-    )
-
     # 3. Next build number = latest on TestFlight + 1. Applied as a build
     #    setting at archive time so it lands in BOTH the app and the embedded
     #    watch app, without mutating the git-tracked project.
