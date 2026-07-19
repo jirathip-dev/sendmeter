@@ -779,7 +779,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
           onSelect={setZoneSel}
         />
       )}
-      <PresetManager selectedId={preset?.id ?? null} onSelect={setPreset} />
+      <PresetManager selectedId={preset?.id ?? null} onSelect={setPreset} presetRefs={presetRefs} />
 
       {/* Peak force trend + force curve — always visible */}
       <div style={{ marginTop: 16 }}>

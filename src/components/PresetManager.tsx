@@ -5,12 +5,16 @@ import {
   insertPreset,
   updatePreset,
 } from "../lib/repo";
-import { buildTimeline, timelineDurationS } from "../lib/protocol";
+import { buildTimeline, presetTargetKg, timelineDurationS } from "../lib/protocol";
+import type { PresetRefs } from "../lib/protocol";
 import type { TindeqPreset } from "../types";
 
 interface Props {
   selectedId: string | null;
   onSelect: (preset: TindeqPreset | null) => void;
+  /// Force references for the active exercise, so each row can show the load
+  /// its %/curve target resolves to right now.
+  presetRefs: PresetRefs;
 }
 
 function fmt(sec: number): string {
@@ -62,7 +66,7 @@ function NumField({
 
 /// Hang-protocol presets (hold / reps / sets / rests). Saved to Supabase;
 /// selecting one arms the guided timer in the fullscreen gauge.
-export default function PresetManager({ selectedId, onSelect }: Props) {
+export default function PresetManager({ selectedId, onSelect, presetRefs }: Props) {
   const [presets, setPresets] = useState<TindeqPreset[]>([]);
   const [adding, setAdding] = useState(false);
   // Non-null while the form edits an existing preset (pencil).
@@ -175,6 +179,12 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
 
       {presets.map((p) => {
         const selected = p.id === selectedId;
+        // The load this preset's %/curve target resolves to for the active
+        // exercise right now (null when the curve/PR isn't computed yet).
+        const resolvedKg =
+          p.targetCurve || p.targetPct !== null
+            ? presetTargetKg(p, presetRefs, 1)
+            : null;
         return (
           <div
             key={p.id}
@@ -212,7 +222,11 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
                 {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total{" "}
                 {fmt(timelineDurationS(buildTimeline(p, { switchS: 3 })))}
                 {p.targetCurve ? (
-                  <span style={{ color: "var(--success)" }}> · auto CF @ {fmt(p.holdS)}</span>
+                  <span style={{ color: "var(--success)" }}>
+                    {" "}
+                    · auto CF @ {fmt(p.holdS)}
+                    {resolvedKg !== null && ` · ${resolvedKg.toFixed(1)} kg`}
+                  </span>
                 ) : p.targetPct !== null ? (
                   <span style={{ color: "var(--success)" }}>
                     {" "}
@@ -220,6 +234,7 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
                     {p.pctStep > 0 &&
                       `→${Math.min(150, p.targetPct + (p.sets - 1) * p.pctStep)}`}
                     % {p.pctBasis === "cf" ? "CF" : "PR"}
+                    {resolvedKg !== null && ` · ${resolvedKg.toFixed(1)} kg`}
                   </span>
                 ) : (
                   p.targetKg !== null && (
