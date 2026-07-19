@@ -89,16 +89,22 @@ struct WorkoutLiveView: View {
     @ViewBuilder
     private var liveContent: some View {
         VStack(spacing: 4) {
-            HStack {
-                Image(systemName: "heart.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
-                    .font(.body).monospacedDigit()
+            // HR + total elapsed stacked on the LEFT — the elapsed time used to
+            // sit top-right, where it collided with the End toolbar button.
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "heart.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                        Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
+                            .font(.body).monospacedDigit()
+                    }
+                    Text(timeString(workout.elapsed))
+                        .font(.footnote).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                Text(timeString(workout.elapsed))
-                    .font(.footnote).monospacedDigit()
-                    .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 0)
