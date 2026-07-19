@@ -62,10 +62,24 @@ export default function HistoryView({
     [],
     realtimeVersion,
   );
+  // A recording belongs to a session only if its groupId matches a session
+  // that actually exists. A gauge run that was never "finished"/logged leaves
+  // recordings stamped with a groupId but no session row — those are orphans,
+  // not grouped, so treat them as loose (otherwise they'd show nowhere: not
+  // under a session, and excluded from the loose list — the "PR missing from
+  // History" bug).
+  const sessionGroupIds = new Set(
+    sessions.map((s) => s.groupId).filter((g): g is string => !!g),
+  );
   // Optimistic local hides (delete/assign) until the realtime refetch lands,
   // and local edits (tag/side/note) applied over the fetched rows.
   const ungrouped = allRecordings
-    .filter((r) => r.groupId === null && !removedIds.has(r.id) && !assignedIds.has(r.id))
+    .filter(
+      (r) =>
+        (r.groupId === null || !sessionGroupIds.has(r.groupId)) &&
+        !removedIds.has(r.id) &&
+        !assignedIds.has(r.id),
+    )
     .map((r) => editedRecs.get(r.id) ?? r);
 
   const total = sessions.reduce((s, x) => s + x.load, 0);
