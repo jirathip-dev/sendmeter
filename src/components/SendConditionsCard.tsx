@@ -69,49 +69,46 @@ export default function SendConditionsCard() {
       className="card"
       onClick={() => void refresh()}
       style={{
+        // 1/3-width column next to the 2/3 phase card — vertical layout.
         flex: 1,
         minWidth: 0,
         margin: 0,
-        padding: "10px 14px",
+        padding: "10px 12px",
         cursor: "pointer",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 10,
+        flexDirection: "column",
+        justifyContent: "center",
+        gap: 3,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+      <div
+        style={{
+          fontSize: 9,
+          color: "var(--ink-muted)",
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
+        }}
+      >
+        Conditions
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
         {dot(cond ? scoreColor(cond.score) : "var(--ink-faint)")}
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 9,
-              color: "var(--ink-muted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-            }}
-          >
-            Send conditions
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)", marginTop: 1 }}>
-            {loading
-              ? "Checking…"
-              : cond
-                ? cond.label
-                : failed
-                  ? "Unavailable"
-                  : "Tap to check"}
-          </div>
-        </div>
+        <span
+          style={{
+            fontSize: 13,
+            fontWeight: 700,
+            color: cond ? scoreColor(cond.score) : "var(--ink)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {loading ? "Checking…" : cond ? cond.label : failed ? "N/A" : "Check"}
+        </span>
       </div>
       {cond && !loading && (
-        <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: scoreColor(cond.score) }}>
-            {Math.round(cond.tempC)}°C
-          </div>
-          <div style={{ fontSize: 10, color: "var(--ink-muted)" }}>
-            {Math.round(cond.humidity)}% RH
-          </div>
+        <div style={{ fontSize: 10, color: "var(--ink-muted)" }}>
+          {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}%
         </div>
       )}
     </div>

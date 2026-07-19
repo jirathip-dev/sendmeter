@@ -74,17 +74,15 @@ export default function Dashboard({
 
   return (
     <div>
-      {/* Send conditions (SL-69) + phase strip (SL-60), side by side in one
-          row. Both are slim/neutral context; the phase name carries the color. */}
+      {/* Phase strip (SL-60, 2/3) + send conditions (SL-69, 1/3), side by side.
+          Both are slim/neutral context; the phase name carries the color. */}
       <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "stretch" }}>
-        <SendConditionsCard />
-
         <div
           className="phase-banner"
           title="Phase details"
           onClick={onOpenPhases}
           style={{
-            flex: 1,
+            flex: 2,
             minWidth: 0,
             margin: 0,
             padding: "10px 14px",
@@ -156,6 +154,8 @@ export default function Dashboard({
             </button>
           </div>
         </div>
+
+        <SendConditionsCard />
       </div>
 
       <div
