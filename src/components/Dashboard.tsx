@@ -74,90 +74,87 @@ export default function Dashboard({
 
   return (
     <div>
-      {/* Send conditions (SL-69) — weather-driven friction score up top. */}
-      <SendConditionsCard />
+      {/* Send conditions (SL-69) + phase strip (SL-60), side by side in one
+          row. Both are slim/neutral context; the phase name carries the color. */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "stretch" }}>
+        <SendConditionsCard />
 
-      {/* Phase strip — slim + neutral context (SL-60): only the phase name
-          carries color; it no longer fills the screen as a big colored box. */}
-      <div
-        className="phase-banner"
-        title="Phase details"
-        onClick={onOpenPhases}
-        style={{
-          marginBottom: 10,
-          padding: "10px 14px",
-          cursor: "pointer",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 9,
-              color: "var(--ink-muted)",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-            }}
-          >
-            Current phase · Day {phaseDays}
-          </div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 2 }}>
-            <span
+        <div
+          className="phase-banner"
+          title="Phase details"
+          onClick={onOpenPhases}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            margin: 0,
+            padding: "10px 14px",
+            cursor: "pointer",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            gap: 6,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: 9,
+                color: "var(--ink-muted)",
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+              }}
+            >
+              Phase · Day {phaseDays}
+            </div>
+            <div
               style={{
                 fontSize: 15,
                 fontWeight: 700,
                 color: phase.color,
                 letterSpacing: "-0.01em",
-              }}
-            >
-              {phase.name}
-            </span>
-            <span
-              style={{
-                fontSize: 10,
-                color: "var(--ink-faint)",
+                marginTop: 2,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
               }}
             >
-              {phase.desc}
-            </span>
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 9, color: "var(--ink-muted)", textTransform: "uppercase" }}>
-              Target
-            </div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
-              {phase.acwr}
+              {phase.name}
             </div>
           </div>
-          {/* The actual phase switcher — the strip/sheet are reference only. */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onChangePhase();
-            }}
+          <div
             style={{
-              flexShrink: 0,
-              background: "var(--surface-1)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              padding: "6px 10px",
-              fontFamily: "Inter, sans-serif",
-              fontSize: 10,
-              fontWeight: 600,
-              color: "var(--ink-muted)",
-              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
             }}
           >
-            Change
-          </button>
+            <span style={{ fontSize: 10, color: "var(--ink-muted)", whiteSpace: "nowrap" }}>
+              Target{" "}
+              <span style={{ color: "var(--ink)", fontWeight: 700 }}>{phase.acwr}</span>
+            </span>
+            {/* The actual phase switcher — the strip/sheet are reference only. */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onChangePhase();
+              }}
+              style={{
+                flexShrink: 0,
+                background: "var(--surface-1)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "5px 9px",
+                fontFamily: "Inter, sans-serif",
+                fontSize: 10,
+                fontWeight: 600,
+                color: "var(--ink-muted)",
+                cursor: "pointer",
+              }}
+            >
+              Change
+            </button>
+          </div>
         </div>
       </div>
 

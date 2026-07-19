@@ -69,7 +69,9 @@ export default function SendConditionsCard() {
       className="card"
       onClick={() => void refresh()}
       style={{
-        marginBottom: 10,
+        flex: 1,
+        minWidth: 0,
+        margin: 0,
         padding: "10px 14px",
         cursor: "pointer",
         display: "flex",
