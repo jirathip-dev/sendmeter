@@ -10,25 +10,25 @@ PROJ = File.expand_path("../ios/App/App.xcodeproj", __dir__)
 proj = Xcodeproj::Project.open(PROJ)
 
 TARGET = "SendLogWatchWidgets"
-if proj.targets.any? { |t| t.name == TARGET }
-  puts "#{TARGET} target already exists — nothing to do"
-  exit 0
-end
-
 watch = proj.targets.find { |t| t.name == "SendLogWatch Watch App" } \
   or abort "watch app target not found"
 
-# 1. The watchOS extension target (creates configs + product ref + phases).
-widget = proj.new_target(:app_extension, TARGET, :watchos, "10.0")
+widget = proj.targets.find { |t| t.name == TARGET }
+new_target = widget.nil?
+if new_target
+  # 1. The watchOS extension target (creates configs + product ref + phases).
+  widget = proj.new_target(:app_extension, TARGET, :watchos, "10.0")
 
-# 2. Filesystem-synced sources — add/remove Swift files by touching the dir.
-grp = proj.new(Xcodeproj::Project::Object::PBXFileSystemSynchronizedRootGroup)
-grp.path = TARGET
-grp.source_tree = "<group>"
-proj.main_group << grp
-widget.file_system_synchronized_groups << grp
+  # 2. Filesystem-synced sources — add/remove Swift files by touching the dir.
+  grp = proj.new(Xcodeproj::Project::Object::PBXFileSystemSynchronizedRootGroup)
+  grp.path = TARGET
+  grp.source_tree = "<group>"
+  proj.main_group << grp
+  widget.file_system_synchronized_groups << grp
+end
 
-# 3. Build settings (watchOS widget extension).
+# 3. Build settings (watchOS widget extension). Re-applied on every run so
+#    signing fixes land even when the target already exists.
 widget.build_configurations.each do |config|
   s = config.build_settings
   s["PRODUCT_BUNDLE_IDENTIFIER"] = "com.jirathip.sendlog.watchkitapp.widgets"
@@ -37,7 +37,14 @@ widget.build_configurations.each do |config|
   s["GENERATE_INFOPLIST_FILE"] = "YES"
   s["INFOPLIST_KEY_CFBundleDisplayName"] = "Sendmeter"
   s["CODE_SIGN_ENTITLEMENTS"] = "SendLogWatchWidgets/SendLogWatchWidgets.entitlements"
-  s["CODE_SIGN_STYLE"] = "Automatic"
+  # MANUAL signing (not Automatic): the `fastlane beta` API key cannot drive
+  # Xcode's automatic signing, and a brand-new App ID has no cached Development
+  # profile, so archive fails with "Authentication failed / no iOS App
+  # Development profile". The lane fetches this App Store profile by its
+  # convention name; sign against it directly.
+  s["CODE_SIGN_STYLE"] = "Manual"
+  s["CODE_SIGN_IDENTITY"] = "Apple Distribution"
+  s["PROVISIONING_PROFILE_SPECIFIER"] = "com.jirathip.sendlog.watchkitapp.widgets AppStore"
   s["DEVELOPMENT_TEAM"] = "9244PWFYD7"
   s["SDKROOT"] = "watchos"
   s["WATCHOS_DEPLOYMENT_TARGET"] = "10.0"
@@ -52,13 +59,17 @@ widget.build_configurations.each do |config|
   ]
 end
 
-# 4. Embed into the watch app: dependency + PlugIns copy phase.
-watch.add_dependency(widget)
-embed = watch.new_copy_files_build_phase("Embed Foundation Extensions")
-embed.dst_subfolder_spec = "13" # PlugIns
-embed.dst_path = ""
-bf = embed.add_file_reference(widget.product_reference)
-bf.settings = { "ATTRIBUTES" => ["RemoveHeadersOnCopy"] }
+# 4. Embed into the watch app: dependency + PlugIns copy phase (creation only).
+if new_target
+  watch.add_dependency(widget)
+  embed = watch.new_copy_files_build_phase("Embed Foundation Extensions")
+  embed.dst_subfolder_spec = "13" # PlugIns
+  embed.dst_path = ""
+  bf = embed.add_file_reference(widget.product_reference)
+  bf.settings = { "ATTRIBUTES" => ["RemoveHeadersOnCopy"] }
+end
 
 proj.save
-puts "Added #{TARGET} watchOS widget target + embedded into SendLogWatch Watch App"
+puts new_target \
+  ? "Added #{TARGET} watchOS widget target + embedded into SendLogWatch Watch App" \
+  : "Updated #{TARGET} build settings (manual signing)"
