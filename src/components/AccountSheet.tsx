@@ -11,6 +11,7 @@ import {
   type PasskeyListItem,
 } from "../lib/passkeys";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
+import { useToast } from "../hooks/useToast";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
 import Sheet from "./Sheet";
@@ -57,6 +58,7 @@ const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
 
 export default function AccountSheet({ onClose, onSignOut }: Props) {
   const bumpRealtime = useRealtimeBump();
+  const toast = useToast();
   const [tab, setTab] = useState<TabId>("appearance");
   const [resetting, setResetting] = useState(false);
   const [resetEmail, setResetEmail] = useState<string | null>(null);
@@ -176,6 +178,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       bumpRealtime();
       setConfirmingClear(false);
       setCleared(true);
+      toast("Health data cleared · resyncing");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to clear health data");
     } finally {

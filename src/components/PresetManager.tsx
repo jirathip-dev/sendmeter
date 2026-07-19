@@ -7,6 +7,7 @@ import {
 } from "../lib/repo";
 import { buildTimeline, presetTargetKg, timelineDurationS } from "../lib/protocol";
 import type { PresetRefs } from "../lib/protocol";
+import { useToast } from "../hooks/useToast";
 import type { TindeqPreset } from "../types";
 
 interface Props {
@@ -67,6 +68,7 @@ function NumField({
 /// Hang-protocol presets (hold / reps / sets / rests). Saved to Supabase;
 /// selecting one arms the guided timer in the fullscreen gauge.
 export default function PresetManager({ selectedId, onSelect, presetRefs }: Props) {
+  const toast = useToast();
   const [presets, setPresets] = useState<TindeqPreset[]>([]);
   const [adding, setAdding] = useState(false);
   // Non-null while the form edits an existing preset (pencil).
@@ -143,6 +145,7 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
         const saved = await insertPreset(fields);
         setPresets((list) => [saved, ...list]);
       }
+      toast(editingId ? "Preset updated" : "Preset saved");
       setAdding(false);
       setEditingId(null);
       setName("");
@@ -156,6 +159,7 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
   async function remove(id: string) {
     setPresets((list) => list.filter((p) => p.id !== id));
     if (selectedId === id) onSelect(null);
+    toast("Preset deleted");
     try {
       await deletePreset(id);
     } catch {

@@ -230,6 +230,7 @@ export default function HistoryView({
             onDelete={(id) => {
               setRemovedIds((prev) => new Set(prev).add(id));
               void deleteRecording(id);
+              toast("Recording deleted");
             }}
             onEdit={setEditingRec}
             selectable
@@ -276,9 +277,10 @@ export default function HistoryView({
         <EditRecordingSheet
           rec={editingRec}
           recentTags={recentTags}
-          onSaved={(saved) =>
-            setEditedRecs((prev) => new Map(prev).set(saved.id, saved))
-          }
+          onSaved={(saved) => {
+            setEditedRecs((prev) => new Map(prev).set(saved.id, saved));
+            toast("Recording updated");
+          }}
           onClose={() => setEditingRec(null)}
         />
       )}

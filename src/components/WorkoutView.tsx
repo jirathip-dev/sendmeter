@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLiveWorkout } from "../hooks/useLiveWorkout";
 import { usePhoneWorkout } from "../hooks/usePhoneWorkout";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
+import { useToast } from "../hooks/useToast";
 import { insertPhoneWorkout } from "../lib/repo";
 import type { PhaseId } from "../types";
 import LiveWorkoutCard from "./LiveWorkoutCard";
@@ -24,6 +25,7 @@ interface Props {
 /// History.
 export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
   const bumpRealtime = useRealtimeBump();
+  const toast = useToast();
   const live = useLiveWorkout(userId);
   const [phone, dispatch] = usePhoneWorkout();
   const [saving, setSaving] = useState(false);
@@ -56,6 +58,7 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
         phase: currentPhase,
       });
       dispatch({ type: "reset" });
+      toast(`Workout saved · ${meta.typeLabel}`);
       // Silent refetch of the workout list + the training data (Dashboard/
       // History/ACWR) — NOT reload(), which flips the global loading spinner
       // and would unmount this view mid-save, dropping the reset above. The

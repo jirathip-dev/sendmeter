@@ -371,7 +371,10 @@ function AuthedApp({
       {editingSession && (
         <EditSessionSheet
           session={editingSession}
-          onSave={(patch) => void editSession(editingSession.id, patch)}
+          onSave={(patch) => {
+            void editSession(editingSession.id, patch);
+            toast("Session updated");
+          }}
           onClose={() => setEditingSession(null)}
         />
       )}
