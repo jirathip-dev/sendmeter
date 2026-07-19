@@ -351,7 +351,8 @@ final class WorkoutManager: NSObject {
             self.detector.ingest(sample, at: now)
             self.liveAttempts = self.detector.liveAttemptCount
 
-            if self.tunables.keepRawTrace {
+            if self.tunables.keepRawTrace
+                && self.fusionTick % self.tunables.rawTraceStride == 0 {
                 self.rawTrace.append([t.rounded(), (alt * 100).rounded() / 100, (rms * 1000).rounded() / 1000, self.heartRate])
             }
 

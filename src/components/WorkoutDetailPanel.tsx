@@ -79,6 +79,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
         workoutId={detail.id}
         startedAt={detail.startedAt}
         attempts={detail.attempts}
+        source={detail.source}
       />
 
       {detail.attempts.length === 0 ? (

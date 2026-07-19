@@ -4,13 +4,17 @@ import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
-import type { WorkoutAttempt, WorkoutHrSample } from "../types";
+import type { WorkoutAttempt, WorkoutHrSample, WorkoutSource } from "../types";
 
 interface Props {
   workoutId: string;
   /// Workout start (ISO) — attempt windows are placed relative to it.
   startedAt: string;
   attempts: WorkoutAttempt[];
+  /// Provenance — a watch workout is expected to have an HR trace, so if it's
+  /// missing we show a "still syncing" note (the watch uploads it in the
+  /// background); a phone workout never has one, so we render nothing.
+  source: WorkoutSource;
 }
 
 const H = 90;
@@ -27,7 +31,7 @@ function fmtMinSec(tS: number): string {
 /// (manual attempts in the warning color), rest = the unshaded gaps.
 /// Renders nothing when the workout kept no raw trace (older builds, phone
 /// workouts without HR).
-export default function WorkoutHrChart({ workoutId, startedAt, attempts }: Props) {
+export default function WorkoutHrChart({ workoutId, startedAt, attempts, source }: Props) {
   const [hovered, hoverProps] = useChartHover<number>();
   const samples = useCancellableFetch<WorkoutHrSample[] | null>(
     () => fetchWorkoutRaw(workoutId),
@@ -64,7 +68,26 @@ export default function WorkoutHrChart({ workoutId, startedAt, attempts }: Props
     hrMax + yPad,
   );
 
-  if (!samples || hrSamples.length < 2) return null;
+  if (!samples || hrSamples.length < 2) {
+    // A watch workout is expected to have a trace — if it's not here yet it's
+    // still uploading from the watch (background sync), so reassure rather than
+    // show nothing. Phone workouts never have a trace, so render nothing.
+    return source === "watch" ? (
+      <div
+        style={{
+          fontSize: "var(--t-2xs)",
+          color: "var(--ink-faint)",
+          marginTop: 8,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <span aria-hidden="true">⟳</span>
+        Heart-rate trace still syncing from your watch…
+      </div>
+    ) : null;
+  }
 
   // Contiguous non-null HR runs → one line + area sub-path each (a null gap
   // means the sensor lagged; drawing across it would invent data).

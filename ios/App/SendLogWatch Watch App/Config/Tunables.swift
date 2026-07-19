@@ -48,7 +48,11 @@ struct Tunables {
     var rpeModelMaxAgeS: Double = 86_400
 
     // Debug
-    var keepRawTrace: Bool = true        // store 1Hz trace on climb_workouts.raw
+    var keepRawTrace: Bool = true        // store the trace on climb_workouts.raw
+    // Downsample the raw HR/motion trace: keep 1 sample every N ticks (tickHz=1
+    // → every 3s). A 2-hour session drops from ~7200 rows to ~2400 — a much
+    // smaller upload — while HR still reads smoothly on the phone's chart.
+    var rawTraceStride: Int = 3
 
     static let `default` = Tunables()
 }
