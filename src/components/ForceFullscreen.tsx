@@ -33,6 +33,13 @@ interface Props {
   /// Get-ready countdown before the first hold (persisted preference).
   prepare: boolean;
   onTogglePrepare: (on: boolean) => void;
+  /// Guided-protocol clock: PROTOCOL seconds (physical clock + Pause/Skip
+  /// shift) and whether it's frozen. The parent owns the shift so the recorder
+  /// and this display stay in lockstep.
+  protoTS: number;
+  paused: boolean;
+  onPause: () => void;
+  onSkip: () => void;
   onStart: () => void;
   onStop: () => void;
   onMinimize: () => void;
@@ -70,13 +77,17 @@ export default function ForceFullscreen({
   saving,
   prepare,
   onTogglePrepare,
+  protoTS,
+  paused,
+  onPause,
+  onSkip,
   onStart,
   onStop,
   onMinimize,
 }: Props) {
   const measuring = tindeq.status === "measuring";
-  const tS = tindeq.elapsedMs / 1000;
-  const pos = timeline && measuring ? timelineAt(timeline, tS) : null;
+  // Walk the timeline in protocol time (parent-owned; freezes while paused).
+  const pos = timeline && measuring ? timelineAt(timeline, protoTS) : null;
   const done = timeline !== null && measuring && pos === null;
   const meta = pos ? PHASE_META[pos.seg.phase] : null;
 
@@ -195,14 +206,19 @@ export default function ForceFullscreen({
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: measuring ? "var(--success)" : "var(--info)",
-              animation: measuring ? "pulse 1.6s ease-in-out infinite" : undefined,
+              background: paused
+                ? "var(--warning)"
+                : measuring
+                  ? "var(--success)"
+                  : "var(--info)",
+              animation:
+                measuring && !paused ? "pulse 1.6s ease-in-out infinite" : undefined,
             }}
           />
           <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
             Progressor{" "}
             <span style={{ color: "var(--ink-muted)" }}>
-              · {measuring ? "measuring" : "connected"}
+              · {paused ? "paused" : measuring ? "measuring" : "connected"}
             </span>
           </span>
           {tindeq.lowBattery && (
@@ -397,6 +413,50 @@ export default function ForceFullscreen({
 
         {/* Big circular action (like the workout timer) */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+          {/* Pause / Skip — guided runs only. Both finalize the current rep in
+              the parent before touching the protocol clock. */}
+          {measuring && timeline && !done && (
+            <div style={{ display: "flex", gap: 10, marginBottom: 2 }}>
+              <button
+                onClick={onPause}
+                className="glass-pill"
+                style={
+                  {
+                    padding: "9px 18px",
+                    fontSize: 12,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    "--pill-tint": paused ? "var(--success)" : "var(--warning)",
+                  } as CSSProperties
+                }
+              >
+                {paused ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+                )}
+                {paused ? "Resume" : "Pause"}
+              </button>
+              <button
+                onClick={onSkip}
+                className="glass-pill"
+                style={
+                  {
+                    padding: "9px 18px",
+                    fontSize: 12,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    "--pill-tint": "var(--info)",
+                  } as CSSProperties
+                }
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6h2v12h-2z" /></svg>
+                Skip
+              </button>
+            </div>
+          )}
           <button
             onClick={() => {
               if (measuring) {

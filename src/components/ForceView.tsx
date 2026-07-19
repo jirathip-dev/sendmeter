@@ -64,6 +64,17 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   } | null>(null);
   const [loggingSession, setLoggingSession] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Guided-protocol clock controls. The protocol position is normally a pure
+  // function of the physical measuring clock (tindeq.elapsedMs); these let the
+  // user Pause / Skip by shifting *protocol* time relative to physical time.
+  //   protoTime = (paused ? pausedAtS : physicalS) + protoShiftS
+  // Skip adds the current segment's remaining time to the shift (jump forward);
+  // Pause freezes the base at the physical second it was tapped. The per-rep
+  // recorder maps protocol→physical by SUBTRACTING protoShiftS, so holds are
+  // still sliced from the right physical window (see saveHoldSlice). Reset on
+  // each Start.
+  const [protoShiftS, setProtoShiftS] = useState(0);
+  const [pausedAtS, setPausedAtS] = useState<number | null>(null);
   const [recordings, setRecordings] = useState<TindeqRecordingMeta[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [zoneSel, setZoneSel] = useState<ZoneSelection | null>(null);
@@ -180,8 +191,11 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   ) {
     if (savedSegsRef.current.has(segIdx)) return;
     savedSegsRef.current.add(segIdx);
-    const startMs = seg.startS * 1000;
-    const endMs = endMsOverride ?? (seg.startS + seg.durS) * 1000;
+    // Segment times are PROTOCOL seconds; the sample buffer is PHYSICAL ms.
+    // physical = protocol − protoShiftS (Skip/Pause only shift between holds,
+    // so the shift is constant across any single hold's physical span).
+    const startMs = (seg.startS - protoShiftS) * 1000;
+    const endMs = endMsOverride ?? (seg.startS + seg.durS - protoShiftS) * 1000;
     const slice = tindeq.samplesRef.current
       .filter((s) => s.t >= startMs && s.t <= endMs)
       .map((s) => ({ t: Math.round((s.t - startMs) * 10) / 10, kg: s.kg }));
@@ -229,22 +243,29 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   async function runStop() {
     if (timeline) {
       const tMs = tindeq.elapsedMs;
+      const physS = tMs / 1000;
+      // Walk the timeline in PROTOCOL time (physical clock + Pause/Skip shift).
+      const effS = (pausedAtS ?? physS) + protoShiftS;
+      const endPhysMs = (pausedAtS ?? physS) * 1000; // physical clock at effS
       setSaving(true);
       try {
         // Flush any completed-but-unflushed holds, then a ≥1s partial hold.
-        const tS = tMs / 1000;
-        let idx = timeline.findIndex((s) => tS < s.startS + s.durS);
+        let idx = timeline.findIndex((s) => effS < s.startS + s.durS);
         if (idx === -1) idx = timeline.length;
         for (let i = savedThroughRef.current; i < idx; i++) {
           const seg = timeline[i]!;
           if (seg.phase === "hold") await saveHoldSlice(seg, i);
         }
         savedThroughRef.current = idx;
-        const pos = timelineAt(timeline, tS);
+        const pos = timelineAt(timeline, effS);
         // idx is the current (in-progress) segment — same key the autosave
         // effect would use, so the guard dedupes the two paths.
-        if (pos && pos.seg.phase === "hold" && tMs - pos.seg.startS * 1000 >= 1000) {
-          await saveHoldSlice(pos.seg, idx, tMs);
+        if (
+          pos &&
+          pos.seg.phase === "hold" &&
+          endPhysMs - (pos.seg.startS - protoShiftS) * 1000 >= 1000
+        ) {
+          await saveHoldSlice(pos.seg, idx, endPhysMs);
         }
       } finally {
         setSaving(false);
@@ -395,6 +416,10 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   const savedThroughRef = useRef(0);
   const wasMeasuringRef = useRef(false);
   const measuring = tindeq.status === "measuring";
+  // Protocol seconds = physical clock (frozen while paused) + Pause/Skip shift.
+  const protoTS = (pausedAtS ?? tindeq.elapsedMs / 1000) + protoShiftS;
+  const paused = pausedAtS !== null;
+  const protoPos = timeline && measuring ? timelineAt(timeline, protoTS) : null;
   useEffect(() => {
     if (measuring && !wasMeasuringRef.current) {
       savedThroughRef.current = 0;
@@ -402,7 +427,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     }
     wasMeasuringRef.current = measuring;
     if (!measuring || !timeline) return;
-    const tS = tindeq.elapsedMs / 1000;
+    const tS = protoTS;
     let idx = timeline.findIndex((s) => tS < s.startS + s.durS);
     if (idx === -1) idx = timeline.length;
     for (let i = savedThroughRef.current; i < idx; i++) {
@@ -413,7 +438,41 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     // saveHoldSlice is stable enough for this use (reads refs/state at call
     // time); depending on it would re-run every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [measuring, timeline, tindeq.elapsedMs]);
+  }, [measuring, timeline, protoTS]);
+
+  // Pause / Skip during a guided run. Both first FINALIZE an in-progress hold
+  // (save the rep-so-far, mark it done) so the recorder never has to slice a
+  // hold across a shift change; then they mutate the protocol clock.
+  function finalizeHoldIfOpen() {
+    if (!timeline || !protoPos || protoPos.seg.phase !== "hold") return;
+    let idx = timeline.findIndex((s) => protoTS < s.startS + s.durS);
+    if (idx === -1) idx = timeline.length;
+    const physNowMs = (pausedAtS ?? tindeq.elapsedMs / 1000) * 1000;
+    // Slice the rep-so-far now; saveHoldSlice claims the index synchronously
+    // (savedSegsRef), so the autosave effect's later pass over this index is a
+    // harmless no-op — no need to advance savedThroughRef (which the compiler
+    // won't allow us to write from here anyway).
+    void saveHoldSlice(protoPos.seg, idx, physNowMs);
+  }
+  function skipSegment() {
+    if (!measuring || !timeline || !protoPos) return;
+    finalizeHoldIfOpen();
+    // Jump protocol time to the end of the current segment (= next segment's
+    // start); the physical clock is unchanged, so the next segment begins now.
+    setProtoShiftS((s) => s + protoPos.remaining);
+  }
+  function togglePause() {
+    if (!measuring) return;
+    if (pausedAtS !== null) {
+      // Resume: keep protocol time where it froze, then track physical again.
+      const physNow = tindeq.elapsedMs / 1000;
+      setProtoShiftS((s) => s + pausedAtS - physNow);
+      setPausedAtS(null);
+    } else {
+      finalizeHoldIfOpen();
+      setPausedAtS(tindeq.elapsedMs / 1000);
+    }
+  }
 
   // Connection dropped mid-measurement (device died, walked out of range,
   // phone locked): the samples survive in samplesRef, so run the exact same
@@ -834,8 +893,14 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
           prepare={prepare}
           onTogglePrepare={togglePrepare}
           onStop={() => void handleStop()}
+          protoTS={protoTS}
+          paused={paused}
+          onPause={togglePause}
+          onSkip={skipSegment}
           onStart={() => {
             setJustSaved(null);
+            setProtoShiftS(0);
+            setPausedAtS(null);
             void tindeq.start();
             // Lock-screen card for guided runs: hand the whole segment
             // schedule to native up front — the countdown renders from
