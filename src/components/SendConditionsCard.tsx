@@ -92,7 +92,7 @@ export default function SendConditionsCard() {
           letterSpacing: "0.1em",
         }}
       >
-        Conditions
+        Send Condition
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
         {dot(cond ? scoreColor(cond.score) : "var(--ink-faint)")}
