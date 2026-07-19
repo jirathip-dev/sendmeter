@@ -199,7 +199,10 @@ export default function ContributionHeatmap({
                       aspectRatio: "1",
                       width: "100%",
                       borderRadius: 2,
-                      background: cell.future ? "transparent" : cellColor(cell),
+                      // Future days are greyed out, not blank, so "today" reads
+                      // as the leading edge of the grid (SL-68).
+                      background: cell.future ? "var(--surface-1)" : cellColor(cell),
+                      opacity: cell.future ? 0.35 : 1,
                       outline: sel?.key === cell.key ? "1.5px solid var(--ink)" : "none",
                       cursor: cell.future ? "default" : "pointer",
                     }}

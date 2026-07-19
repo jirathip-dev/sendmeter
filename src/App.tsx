@@ -25,7 +25,9 @@ import AccountSheet from "./components/AccountSheet";
 import Sheet from "./components/Sheet";
 import TrashSheet from "./components/TrashSheet";
 import RealtimeVersionProvider from "./components/RealtimeVersionProvider";
+import ToastProvider from "./components/ToastProvider";
 import { TindeqProvider } from "./hooks/TindeqProvider";
+import { useToast } from "./hooks/useToast";
 
 export default function App() {
   const { session, loading, recovery, clearRecovery, signOut } = useAuth();
@@ -52,9 +54,11 @@ export default function App() {
 
   return (
     <RealtimeVersionProvider userId={session.user.id}>
-      <TindeqProvider>
-        <AuthedApp userId={session.user.id} onSignOut={signOut} />
-      </TindeqProvider>
+      <ToastProvider>
+        <TindeqProvider>
+          <AuthedApp userId={session.user.id} onSignOut={signOut} />
+        </TindeqProvider>
+      </ToastProvider>
     </RealtimeVersionProvider>
   );
 }
@@ -82,6 +86,7 @@ function AuthedApp({
     reload,
   } = useTrainingData(userId);
 
+  const toast = useToast();
   const [view, setView] = useState<ViewId>("dashboard");
   const [showModal, setShowModal] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | null>(null);
@@ -138,6 +143,7 @@ function AuthedApp({
 
   function submitSession() {
     void addSession(form);
+    toast("Session logged");
     setShowModal(false);
     setForm({
       date: today(),
@@ -207,7 +213,10 @@ function AuthedApp({
               <HistoryView
                 sessions={sessions}
                 currentPhase={currentPhase}
-                onDelete={(id) => void removeSession(id)}
+                onDelete={(id) => {
+                  void removeSession(id);
+                  toast("Session moved to Trash");
+                }}
                 onEdit={setEditingSession}
                 onOpenTrash={() => setShowTrash(true)}
               />
@@ -295,7 +304,10 @@ function AuthedApp({
                 <button
                   key={p.id}
                   onClick={() => {
-                    if (!active) void setPhase(p.id);
+                    if (!active) {
+                      void setPhase(p.id);
+                      toast(`Phase set to ${p.name}`);
+                    }
                     setShowPhaseChange(false);
                   }}
                   style={{

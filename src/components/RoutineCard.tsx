@@ -6,6 +6,7 @@ import {
   updateRoutinePreset,
 } from "../lib/repo";
 import type { RoutinePreset, RoutineStep } from "../types";
+import { useToast } from "../hooks/useToast";
 import RoutineFullscreen from "./RoutineFullscreen";
 
 /// Seeded on demand ("Add example") as a real, editable/deletable preset — a
@@ -34,6 +35,7 @@ function fmtTotal(steps: RoutineStep[]): string {
 /// tab's PresetManager: selectable rows, pencil edit, inline add form.
 /// Selecting a row arms it; Start runs it in the fullscreen guided timer.
 export default function RoutineCard() {
+  const toast = useToast();
   const [presets, setPresets] = useState<RoutinePreset[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -98,6 +100,7 @@ export default function RoutineCard() {
         setSelectedId(saved.id);
       }
       closeForm();
+      toast(editingId ? "Routine updated" : "Routine saved");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save routine");
     } finally {

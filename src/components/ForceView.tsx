@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import { useToast } from "../hooks/useToast";
 import {
   deleteRecording,
   fetchRecordings,
@@ -37,6 +38,7 @@ interface ForceViewProps {
 }
 
 export default function ForceView({ onLogSession }: ForceViewProps) {
+  const toast = useToast();
   // Connection + active gauge session live in an app-level provider so the
   // Progressor stays connected and the session survives leaving fullscreen /
   // changing tabs (SL-58 #5). The session is minted lazily on the first save.
@@ -130,6 +132,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     });
     setLoggingSession(false);
     setEndingSession(null);
+    toast("Gauge session logged to history");
   }
 
   useEffect(() => {

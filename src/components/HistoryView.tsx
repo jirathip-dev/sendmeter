@@ -4,6 +4,7 @@ import {
   useRealtimeBump,
   useRealtimeVersion,
 } from "../hooks/useRealtimeVersion";
+import { useToast } from "../hooks/useToast";
 import {
   deleteRecording,
   fetchRecordings,
@@ -41,6 +42,7 @@ export default function HistoryView({
 }: Props) {
   const realtimeVersion = useRealtimeVersion();
   const bumpRealtime = useRealtimeBump();
+  const toast = useToast();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [assignedIds, setAssignedIds] = useState<Set<string>>(new Set());
   // Multi-select of loose recordings → one new session.
@@ -96,6 +98,7 @@ export default function HistoryView({
       setSelectedIds(new Set());
       setAssignOpen(false);
       bumpRealtime();
+      toast(`Assigned ${ids.length} recording${ids.length === 1 ? "" : "s"}`);
     } catch (e) {
       setAssignError(e instanceof Error ? e.message : "Failed to assign");
     } finally {
@@ -149,6 +152,7 @@ export default function HistoryView({
       });
       setSelectedIds(new Set());
       bumpRealtime(); // refresh sessions + recordings everywhere
+      toast("Session created from recordings");
     } finally {
       setCreating(false);
     }

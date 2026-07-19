@@ -32,6 +32,8 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
     a.startedOn.localeCompare(b.startedOn),
   );
   const totalDays = chronological.reduce((s, p) => s + periodDays(p), 0);
+  // Start date of the currently-open period, shown on the active phase card.
+  const openStart = phasePeriods.find((p) => p.endedOn === null)?.startedOn ?? null;
 
   const segments = chronological.reduce<
     { p: PhasePeriod; days: number; startPct: number; widthPct: number }[]
@@ -153,6 +155,11 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
               {phaseHistory(p.id) && (
                 <div style={{ fontSize: 9, color: "var(--ink-muted)", marginTop: 4 }}>
                   {phaseHistory(p.id)}
+                </div>
+              )}
+              {currentPhase === p.id && openStart && (
+                <div style={{ fontSize: 9, color: p.color, marginTop: 2 }}>
+                  Since {openStart}
                 </div>
               )}
             </div>

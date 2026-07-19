@@ -512,6 +512,25 @@ textarea.field { resize: none; }
   letter-spacing: -0.01em;
 }
 
+/* Transient action toasts (SL-66) — glass pill above the bottom nav. */
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.toast-item {
+  pointer-events: auto;
+  width: max-content;
+  max-width: 100%;
+  padding: 11px 16px;
+  border-radius: 12px;
+  font-family: Inter, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--canvas) 82%, transparent);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow: var(--shadow-card);
+  animation: toast-in 0.18s ease;
+}
+
 /* Loading spinner + centered layout */
 @keyframes spin { to { transform: rotate(360deg); } }
 /* Live-workout heartbeat dot */

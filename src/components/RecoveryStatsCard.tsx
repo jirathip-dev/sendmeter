@@ -21,16 +21,19 @@ interface MetricSpec {
   label: string;
   unit: string;
   format: (v: number) => string;
+  // Which way is "good" vs the day's own 28d average — drives the per-day
+  // bar color (SL-63). null = no good/bad meaning (e.g. body weight).
+  higherIsBetter: boolean | null;
 }
 
 const METRICS: MetricSpec[] = [
-  { key: "hrvSdnnMs", label: "HRV", unit: "ms", format: (v) => Math.round(v).toString() },
-  { key: "restingHr", label: "Resting HR", unit: "bpm", format: (v) => Math.round(v).toString() },
-  { key: "respRateBpm", label: "Resp Rate", unit: "brpm", format: (v) => v.toFixed(1) },
-  { key: "sleepHours", label: "Sleep", unit: "h", format: (v) => v.toFixed(1) },
-  { key: "sleepDeepHours", label: "Deep Sleep", unit: "h", format: (v) => v.toFixed(1) },
-  { key: "sleepRemHours", label: "REM Sleep", unit: "h", format: (v) => v.toFixed(1) },
-  { key: "bodyMassKg", label: "Weight", unit: "kg", format: (v) => v.toFixed(1) },
+  { key: "hrvSdnnMs", label: "HRV", unit: "ms", format: (v) => Math.round(v).toString(), higherIsBetter: true },
+  { key: "restingHr", label: "Resting HR", unit: "bpm", format: (v) => Math.round(v).toString(), higherIsBetter: false },
+  { key: "respRateBpm", label: "Resp Rate", unit: "brpm", format: (v) => v.toFixed(1), higherIsBetter: false },
+  { key: "sleepHours", label: "Sleep", unit: "h", format: (v) => v.toFixed(1), higherIsBetter: true },
+  { key: "sleepDeepHours", label: "Deep Sleep", unit: "h", format: (v) => v.toFixed(1), higherIsBetter: true },
+  { key: "sleepRemHours", label: "REM Sleep", unit: "h", format: (v) => v.toFixed(1), higherIsBetter: true },
+  { key: "bodyMassKg", label: "Weight", unit: "kg", format: (v) => v.toFixed(1), higherIsBetter: null },
 ];
 
 // Fetch a longer window than we show so the EWMA trends are warmed up by the
@@ -148,6 +151,19 @@ export default function RecoveryStatsCard() {
             .filter((p): p is string => p !== null)
             .join(" ");
 
+        // Per-day good/bad color (SL-63): each bar compared to that day's own
+        // 28d average (falling back to the window mean), in the metric's "good"
+        // direction. A small deadband around the average stays neutral.
+        const nums = values.filter((v): v is number => v !== null);
+        const mean = nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
+        const barColor = (v: number, i: number): string => {
+          if (spec.higherIsBetter === null) return "var(--primary)";
+          const base = long[i] ?? mean;
+          if (base === 0 || Math.abs(v - base) < base * 0.02) return "var(--primary)";
+          const good = spec.higherIsBetter ? v > base : v < base;
+          return good ? "var(--success)" : "var(--danger)";
+        };
+
         return (
           <div key={spec.key} style={{ marginTop: rowIdx === 0 ? 0 : 12 }}>
             <div
@@ -226,7 +242,7 @@ export default function RecoveryStatsCard() {
                       y={y}
                       height={Y_BASE + 2 - y}
                       rx="1"
-                      fill="var(--primary)"
+                      fill={barColor(v, i)}
                       opacity={
                         hovered === hk
                           ? 0.9

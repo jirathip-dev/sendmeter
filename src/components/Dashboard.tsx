@@ -10,6 +10,7 @@ import ContributionHeatmap from "./ContributionHeatmap";
 import InfoDot from "./InfoDot";
 import ReadinessCard from "./ReadinessCard";
 import RecoverySheet from "./RecoverySheet";
+import SendConditionsCard from "./SendConditionsCard";
 import { phaseAcwrFit } from "../lib/metrics";
 
 interface Props {
@@ -73,6 +74,9 @@ export default function Dashboard({
 
   return (
     <div>
+      {/* Send conditions (SL-69) — weather-driven friction score up top. */}
+      <SendConditionsCard />
+
       {/* Phase strip — slim + neutral context (SL-60): only the phase name
           carries color; it no longer fills the screen as a big colored box. */}
       <div
