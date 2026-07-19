@@ -43,14 +43,14 @@ export default function EditSessionSheet({ session, onSave, onClose }: Props) {
       <div
         style={{
           fontFamily: "Inter, sans-serif",
-          fontSize: 20,
+          fontSize: "var(--t-xl)",
           fontWeight: 800,
           marginBottom: 2,
         }}
       >
         Edit Session
       </div>
-      <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 4 }}>
+      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
         {session.date}
         {session.workoutSource && (
           <span>
@@ -109,7 +109,7 @@ export default function EditSessionSheet({ session, onSave, onClose }: Props) {
       </div>
 
       <div className="load-preview">
-        <span style={{ fontSize: 11, color: "var(--ink-muted)" }}>Session Load</span>
+        <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>Session Load</span>
         <span
           style={{
             fontSize: 24,
@@ -119,7 +119,7 @@ export default function EditSessionSheet({ session, onSave, onClose }: Props) {
           }}
         >
           {duration * rpe}{" "}
-          <span style={{ fontSize: 13, color: "var(--ink-muted)" }}>AU</span>
+          <span style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>AU</span>
         </span>
       </div>
 

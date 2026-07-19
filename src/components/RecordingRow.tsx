@@ -196,7 +196,7 @@ export default function RecordingRow({
               border: `2px solid ${selected ? "var(--primary)" : "var(--border)"}`,
               background: selected ? "var(--primary)" : "transparent",
               color: "#ffffff",
-              fontSize: 12,
+              fontSize: "var(--t-sm)",
               lineHeight: 1,
               cursor: "pointer",
               display: "flex",
@@ -212,7 +212,7 @@ export default function RecordingRow({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
             style={{
-              fontSize: 13,
+              fontSize: "var(--t-base)",
               color: "var(--ink)",
               marginBottom: 4,
               display: "flex",
@@ -258,12 +258,12 @@ export default function RecordingRow({
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s · avg{" "}
             {rec.avgKg.toFixed(1)} kg
           </div>
           {rec.note && (
-            <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 3 }}>
+            <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 3 }}>
               {rec.note}
             </div>
           )}
@@ -272,7 +272,7 @@ export default function RecordingRow({
           <button
             className="del-btn"
             aria-label="Edit recording"
-            style={{ fontSize: 13 }}
+            style={{ fontSize: "var(--t-base)" }}
             onClick={(e) => {
               e.stopPropagation();
               onEdit(rec);
@@ -295,7 +295,7 @@ export default function RecordingRow({
         (samples ? (
           <SamplesPreview samples={samples} />
         ) : (
-          <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
+          <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
             {loadError ? "Failed to load trace" : "Loading trace…"}
           </div>
         ))}

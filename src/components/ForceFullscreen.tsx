@@ -215,7 +215,7 @@ export default function ForceFullscreen({
                 measuring && !paused ? "pulse 1.6s ease-in-out infinite" : undefined,
             }}
           />
-          <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
+          <span style={{ fontSize: "var(--t-sm)", color: "var(--ink)", flex: 1 }}>
             Progressor{" "}
             <span style={{ color: "var(--ink-muted)" }}>
               · {paused ? "paused" : measuring ? "measuring" : "connected"}
@@ -237,14 +237,14 @@ export default function ForceFullscreen({
             onClick={() => void tindeq.tare()}
             disabled={measuring}
             className="glass-pill"
-            style={{ padding: "7px 13px", fontSize: 10 }}
+            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
           >
             Tare
           </button>
           <button
             onClick={tindeq.disconnect}
             className="glass-pill"
-            style={{ padding: "7px 13px", fontSize: 10, "--pill-tint": "var(--danger)" } as CSSProperties}
+            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)", "--pill-tint": "var(--danger)" } as CSSProperties}
           >
             Disconnect
           </button>
@@ -263,7 +263,7 @@ export default function ForceFullscreen({
         >
           {done && protocol ? (
             <>
-              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: 17, color: bannerColor }}>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
                 DONE
               </div>
               <div
@@ -276,7 +276,7 @@ export default function ForceFullscreen({
               >
                 ✓
               </div>
-              <div style={{ fontSize: 13, color: "var(--ink-muted)", marginTop: 4 }}>
+              <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", marginTop: 4 }}>
                 protocol complete — Stop to finish
               </div>
             </>
@@ -287,7 +287,7 @@ export default function ForceFullscreen({
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                   letterSpacing: "0.12em",
-                  fontSize: 17,
+                  fontSize: "var(--t-lg)",
                   color: meta.color,
                 }}
               >
@@ -306,7 +306,7 @@ export default function ForceFullscreen({
               >
                 {fmt(pos.remaining)}
               </div>
-              <div style={{ fontSize: 13, color: "var(--ink-muted)", marginTop: 4 }}>
+              <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", marginTop: 4 }}>
                 {pos.seg.phase === "prepare"
                   ? "get on the hold…"
                   : `rep ${pos.seg.rep}/${protocol.reps} · set ${pos.seg.set}/${protocol.sets}`}
@@ -321,7 +321,7 @@ export default function ForceFullscreen({
             </>
           ) : measuring ? (
             <>
-              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: 17, color: bannerColor }}>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
                 MEASURING
               </div>
               <div
@@ -334,15 +334,15 @@ export default function ForceFullscreen({
                 }}
               >
                 {(tindeq.elapsedMs / 1000).toFixed(1)}
-                <span style={{ fontSize: 20, color: "var(--ink-muted)" }}>s</span>
+                <span style={{ fontSize: "var(--t-xl)", color: "var(--ink-muted)" }}>s</span>
               </div>
             </>
           ) : (
             <>
-              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: 17, color: bannerColor }}>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
                 READY
               </div>
-              <div style={{ fontSize: 12, color: "var(--ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
                 {protocol && timeline ? (
                   <>
                     <span style={{ color: "var(--ink)", fontWeight: 600 }}>{protocol.name}</span>{" "}
@@ -372,7 +372,7 @@ export default function ForceFullscreen({
               className="field"
               value={allTags.includes(tag.trim()) ? tag.trim() : ""}
               onChange={(e) => onTag(e.target.value)}
-              style={{ padding: "9px 10px", fontSize: 13, flex: 2 }}
+              style={{ padding: "9px 10px", fontSize: "var(--t-base)", flex: 2 }}
             >
               <option value="" disabled>
                 {allTags.length ? "exercise…" : "no tags yet"}
@@ -387,7 +387,7 @@ export default function ForceFullscreen({
               className="field"
               value={globalSide}
               onChange={(e) => onSide(e.target.value as TindeqSide)}
-              style={{ padding: "9px 10px", fontSize: 13, flex: 1 }}
+              style={{ padding: "9px 10px", fontSize: "var(--t-base)", flex: 1 }}
             >
               <option value="">— side</option>
               <option value="left">Left</option>
@@ -423,7 +423,7 @@ export default function ForceFullscreen({
                 style={
                   {
                     padding: "9px 18px",
-                    fontSize: 12,
+                    fontSize: "var(--t-sm)",
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
@@ -444,7 +444,7 @@ export default function ForceFullscreen({
                 style={
                   {
                     padding: "9px 18px",
-                    fontSize: 12,
+                    fontSize: "var(--t-sm)",
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
@@ -477,7 +477,7 @@ export default function ForceFullscreen({
               cursor: "pointer",
               fontFamily: "Inter, sans-serif",
               fontWeight: 800,
-              fontSize: 15,
+              fontSize: "var(--t-md)",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -504,7 +504,7 @@ export default function ForceFullscreen({
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
-                fontSize: 11,
+                fontSize: "var(--t-xs)",
                 color: "var(--ink-muted)",
                 cursor: "pointer",
               }}
@@ -518,7 +518,7 @@ export default function ForceFullscreen({
             </label>
           )}
           {!canStart && !measuring && (
-            <div style={{ fontSize: 10, color: "var(--ink-faint)", textAlign: "center" }}>
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", textAlign: "center" }}>
               {allTags.length
                 ? "Pick an exercise above to start."
                 : "Type your first exercise tag in the tab (minimize ⌄)."}

@@ -47,10 +47,10 @@ export default function EditRecordingSheet({ rec, recentTags, onSaved, onClose }
 
   return (
     <Sheet onClose={onClose}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 20, fontWeight: 800, marginBottom: 2 }}>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800, marginBottom: 2 }}>
         Edit recording
       </div>
-      <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 4 }}>
+      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
         {rec.peakKg.toFixed(1)} kg peak · {(rec.durationMs / 1000).toFixed(1)}s
       </div>
 
@@ -70,7 +70,7 @@ export default function EditRecordingSheet({ rec, recentTags, onSaved, onClose }
               style={{
                 padding: "4px 10px",
                 borderRadius: 999,
-                fontSize: 11,
+                fontSize: "var(--t-xs)",
                 fontWeight: 600,
                 cursor: "pointer",
                 border: `1px solid ${tag === t ? "var(--info)" : "var(--border)"}`,
@@ -94,7 +94,7 @@ export default function EditRecordingSheet({ rec, recentTags, onSaved, onClose }
               flex: 1,
               padding: "9px 0",
               borderRadius: 8,
-              fontSize: 12,
+              fontSize: "var(--t-sm)",
               fontWeight: 600,
               cursor: "pointer",
               border: `1px solid ${side === s.value ? "var(--warning)" : "var(--border)"}`,
@@ -116,7 +116,7 @@ export default function EditRecordingSheet({ rec, recentTags, onSaved, onClose }
       />
 
       {error && (
-        <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 10 }}>{error}</div>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 10 }}>{error}</div>
       )}
 
       <div style={{ marginTop: 16 }}>

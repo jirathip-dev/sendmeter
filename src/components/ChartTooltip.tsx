@@ -32,7 +32,7 @@ export default function ChartTooltip({
         border: "1px solid var(--border)",
         borderRadius: 6,
         boxShadow: "var(--shadow-card)",
-        fontSize: 10,
+        fontSize: "var(--t-2xs)",
         color: "var(--ink)",
         whiteSpace: "nowrap",
         pointerEvents: "none",

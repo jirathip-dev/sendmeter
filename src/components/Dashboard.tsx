@@ -100,7 +100,7 @@ export default function Dashboard({
           <div style={{ minWidth: 0 }}>
             <div
               style={{
-                fontSize: 9,
+                fontSize: "var(--t-eyebrow)",
                 color: "var(--ink-muted)",
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
@@ -110,7 +110,7 @@ export default function Dashboard({
             </div>
             <div
               style={{
-                fontSize: 15,
+                fontSize: "var(--t-md)",
                 fontWeight: 700,
                 color: phase.color,
                 letterSpacing: "-0.01em",
@@ -131,7 +131,7 @@ export default function Dashboard({
               gap: 8,
             }}
           >
-            <span style={{ fontSize: 10, color: "var(--ink-muted)", whiteSpace: "nowrap" }}>
+            <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", whiteSpace: "nowrap" }}>
               Target{" "}
               <span style={{ color: "var(--ink)", fontWeight: 700 }}>{phase.acwr}</span>
             </span>
@@ -148,7 +148,7 @@ export default function Dashboard({
                 borderRadius: 8,
                 padding: "5px 9px",
                 fontFamily: "Inter, sans-serif",
-                fontSize: 10,
+                fontSize: "var(--t-2xs)",
                 fontWeight: 600,
                 color: "var(--ink-muted)",
                 cursor: "pointer",
@@ -198,7 +198,7 @@ export default function Dashboard({
           >
             {acwrData.acwr !== null ? acwrData.acwr.toFixed(2) : "—"}
           </div>
-          <div style={{ fontSize: 11, color: status.color, marginTop: 4 }}>
+          <div style={{ fontSize: "var(--t-xs)", color: status.color, marginTop: 4 }}>
             {status.label}
           </div>
           {(() => {
@@ -209,7 +209,7 @@ export default function Dashboard({
                 ? `On target for ${phase.name}`
                 : `${fit === "below" ? "Below" : "Above"} ${phase.name} target (${phase.acwr})`;
             return (
-              <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 2 }}>
+              <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 2 }}>
                 {text}
               </div>
             );
@@ -249,7 +249,7 @@ export default function Dashboard({
             style={{
               display: "flex",
               justifyContent: "space-between",
-              fontSize: 9,
+              fontSize: "var(--t-eyebrow)",
               color: "var(--ink-faint)",
             }}
           >
@@ -267,7 +267,7 @@ export default function Dashboard({
               marginTop: 12,
               paddingTop: 10,
               borderTop: "1px solid var(--hairline)",
-              fontSize: 12,
+              fontSize: "var(--t-sm)",
             }}
           >
             <span>
@@ -300,7 +300,7 @@ export default function Dashboard({
             {weekDeltaPct !== null && (
               <span
                 style={{
-                  fontSize: 10,
+                  fontSize: "var(--t-2xs)",
                   fontVariantNumeric: "tabular-nums",
                   color:
                     Math.abs(weekDeltaPct) < 1
@@ -329,7 +329,7 @@ export default function Dashboard({
                   justifyContent: "flex-end",
                 }}
               >
-                <span style={{ fontSize: 9, color: "var(--ink-muted)" }}>
+                <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>
                   {w.total.toLocaleString()}
                 </span>
                 <div
@@ -340,7 +340,7 @@ export default function Dashboard({
                     borderRadius: 3,
                   }}
                 />
-                <span style={{ fontSize: 8, color: "var(--ink-faint)" }}>{w.label}</span>
+                <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)" }}>{w.label}</span>
               </div>
             ))}
           </div>

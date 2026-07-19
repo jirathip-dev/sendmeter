@@ -120,7 +120,7 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
             <div className="label-eyebrow" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {name}
             </div>
-            <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-0.02em" }}>
+            <div style={{ fontWeight: 800, fontSize: "var(--t-lg)", letterSpacing: "-0.02em" }}>
               {done ? "0:00" : fmt(TOTAL_S - elapsed)}
             </div>
           </div>
@@ -151,14 +151,14 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
             textAlign: "center",
           }}
         >
-          <div style={{ fontWeight: 800, letterSpacing: "0.08em", fontSize: 13, color: accent, textTransform: "uppercase" }}>
+          <div style={{ fontWeight: 800, letterSpacing: "0.08em", fontSize: "var(--t-base)", color: accent, textTransform: "uppercase" }}>
             {done ? "Complete" : `Step ${stepIndex + 1} / ${STEPS.length}`}
           </div>
           <div style={{ fontWeight: 800, fontSize: 26, letterSpacing: "-0.02em" }}>
             {done ? "All done 🤘" : step.label}
           </div>
           {!done && step.detail && (
-            <div style={{ fontSize: 13, color: "var(--ink-muted)", lineHeight: 1.5 }}>
+            <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", lineHeight: 1.5 }}>
               {step.detail}
             </div>
           )}
@@ -173,7 +173,7 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
             {done ? "✓" : fmt(stepRemaining)}
           </div>
           {!done && next && (
-            <div style={{ fontSize: 12, color: "var(--ink-faint)" }}>
+            <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)" }}>
               Next: {next.label} · {fmt(next.s)}
             </div>
           )}

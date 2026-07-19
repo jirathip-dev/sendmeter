@@ -86,7 +86,7 @@ export default function RecoveryStatsCard() {
         <div className="label-eyebrow" style={{ marginBottom: 8 }}>
           Recovery Inputs
         </div>
-        <div style={{ fontSize: 11, color: "var(--ink-muted)", lineHeight: 1.5 }}>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.5 }}>
           HRV, resting heart rate, sleep, and weight will show here once your
           watch starts syncing overnight data.
         </div>
@@ -106,7 +106,7 @@ export default function RecoveryStatsCard() {
       >
         <div className="label-eyebrow">Recovery Inputs</div>
         {/* Trend legend */}
-        <div style={{ fontSize: 8.5, color: "var(--ink-faint)", display: "flex", gap: 8 }}>
+        <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)", display: "flex", gap: 8 }}>
           <span>
             <svg width="14" height="6" style={{ verticalAlign: "middle" }}>
               <line x1="0" y1="3" x2="14" y2="3" stroke="var(--primary)" strokeWidth="1.5" />
@@ -174,19 +174,19 @@ export default function RecoveryStatsCard() {
                 marginBottom: 4,
               }}
             >
-              <span style={{ fontSize: 10, color: "var(--ink-muted)" }}>
+              <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
                 {spec.label}
               </span>
               <span
                 style={{
-                  fontSize: 13,
+                  fontSize: "var(--t-base)",
                   color: "var(--ink)",
                   fontWeight: 700,
                   fontFamily: "Inter, sans-serif",
                 }}
               >
                 {latest !== null ? spec.format(latest) : "—"}
-                <span style={{ fontSize: 9, color: "var(--ink-faint)", fontWeight: 400 }}>
+                <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)", fontWeight: 400 }}>
                   {" "}
                   {spec.unit}
                 </span>
@@ -296,7 +296,7 @@ export default function RecoveryStatsCard() {
         style={{
           display: "flex",
           justifyContent: "space-between",
-          fontSize: 7.5,
+          fontSize: "var(--t-eyebrow)",
           color: "var(--ink-faint)",
           marginTop: 4,
         }}

@@ -65,7 +65,7 @@ export default function PasskeyPrompt() {
         <span
           aria-hidden="true"
           style={{
-            fontSize: 18,
+            fontSize: "var(--t-lg)",
             lineHeight: 1,
             width: 32,
             height: 32,
@@ -78,16 +78,16 @@ export default function PasskeyPrompt() {
         >
           🔑
         </span>
-        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: 15 }}>
+        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, fontSize: "var(--t-md)" }}>
           Faster sign-in with a passkey
         </div>
       </div>
-      <div style={{ fontSize: 12, color: "var(--ink-muted)", lineHeight: 1.5, marginBottom: 12 }}>
+      <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", lineHeight: 1.5, marginBottom: 12 }}>
         Skip passwords and magic links — sign in with Face ID or Touch ID next
         time. It syncs across your Apple devices.
       </div>
       {error && (
-        <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 10 }}>{error}</div>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginBottom: 10 }}>{error}</div>
       )}
       <div className="grid-2">
         <button className="btn-ghost" disabled={busy} onClick={finish}>

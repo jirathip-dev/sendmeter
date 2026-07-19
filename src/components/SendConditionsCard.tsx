@@ -86,7 +86,7 @@ export default function SendConditionsCard() {
     >
       <div
         style={{
-          fontSize: 9,
+          fontSize: "var(--t-eyebrow)",
           color: "var(--ink-muted)",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
@@ -98,7 +98,7 @@ export default function SendConditionsCard() {
         {dot(cond ? scoreColor(cond.score) : "var(--ink-faint)")}
         <span
           style={{
-            fontSize: 13,
+            fontSize: "var(--t-base)",
             fontWeight: 700,
             color: cond ? scoreColor(cond.score) : "var(--ink)",
             overflow: "hidden",
@@ -110,7 +110,7 @@ export default function SendConditionsCard() {
         </span>
       </div>
       {cond && !loading && (
-        <div style={{ fontSize: 10, color: "var(--ink-muted)" }}>
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
           {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}%
         </div>
       )}

@@ -36,7 +36,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
           <span>Readiness</span>
           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <InfoDot topic="readiness" />
-            {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
+            {onClick && <span style={{ fontSize: "var(--t-base)", color: "var(--ink-faint)" }}>›</span>}
           </span>
         </div>
         <div
@@ -51,7 +51,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
         >
           —
         </div>
-        <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 10, lineHeight: 1.5 }}>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 10, lineHeight: 1.5 }}>
           Daily recovery score from HRV, resting heart rate, and sleep — blended
           with your climbing load. Wear your Apple Watch overnight, then open
           Sendmeter on your iPhone to sync it from Apple Health.
@@ -90,7 +90,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
         <span>Readiness</span>
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <InfoDot topic="readiness" />
-          {onClick && <span style={{ fontSize: 13, color: "var(--ink-faint)" }}>›</span>}
+          {onClick && <span style={{ fontSize: "var(--t-base)", color: "var(--ink-faint)" }}>›</span>}
         </span>
       </div>
       <div
@@ -105,7 +105,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
       >
         {latest.readiness ?? "—"}
       </div>
-      <div style={{ fontSize: 11, color, marginTop: 4, textTransform: "uppercase" }}>
+      <div style={{ fontSize: "var(--t-xs)", color, marginTop: 4, textTransform: "uppercase" }}>
         {latest.zone ?? "no score"}
         {latest.date !== days[days.length - 1]!.key && (
           <span style={{ color: "var(--ink-muted)", textTransform: "none" }}>
@@ -118,7 +118,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
           instead of leaving a bare "no score" (the engine needs ~7 days of
           HRV or resting-HR history before z-scores are meaningful). */}
       {latest.readiness == null && (
-        <div style={{ fontSize: 10, color: "var(--ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
           Your metrics are syncing, but the score needs about a week of
           overnight HRV / resting-HR history in Apple Health to build a
           baseline. It appears automatically once there's enough.
@@ -137,7 +137,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
                 position: "absolute",
                 top: 56 - (v / 100) * 50 - 5,
                 right: 0,
-                fontSize: 8,
+                fontSize: "var(--t-eyebrow)",
                 color: "var(--ink-faint)",
               }}
             >
@@ -229,7 +229,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
             style={{
               display: "flex",
               justifyContent: "space-between",
-              fontSize: 8,
+              fontSize: "var(--t-eyebrow)",
               color: "var(--ink-faint)",
               marginTop: 3,
             }}
@@ -241,7 +241,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
         </div>
       </div>
       {footerParts.length > 0 && (
-        <div style={{ fontSize: 10, color: "var(--ink-muted)", marginTop: 8 }}>
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 8 }}>
           {footerParts.join(" · ")}
         </div>
       )}

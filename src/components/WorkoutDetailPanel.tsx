@@ -12,7 +12,7 @@ function StatRow({ label, value }: { label: string; value: string }) {
       style={{
         display: "flex",
         justifyContent: "space-between",
-        fontSize: 11,
+        fontSize: "var(--t-xs)",
         marginBottom: 4,
       }}
     >
@@ -82,7 +82,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
       />
 
       {detail.attempts.length === 0 ? (
-        <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
           No attempts detected
         </div>
       ) : (
@@ -120,7 +120,7 @@ export default function WorkoutDetailPanel({ detail }: Props) {
             ))}
           </div>
           {selected && selectedIdx !== null && (
-            <div style={{ fontSize: 10, color: "var(--ink-muted)", marginTop: 6 }}>
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 6 }}>
               Attempt {selectedIdx + 1} — {Math.round(selected.durationS)}s ·
               effort {selected.effortScore?.toFixed(1) ?? "—"} · +
               {selected.elevationGainM.toFixed(1)}m

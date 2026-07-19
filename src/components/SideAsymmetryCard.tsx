@@ -34,14 +34,14 @@ export default function SideAsymmetryCard({
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "baseline",
-                fontSize: 11,
+                fontSize: "var(--t-xs)",
                 marginBottom: 5,
               }}
             >
               <span style={{ color: "var(--ink-muted)" }}>{label}</span>
               <span style={{ fontFamily: "Inter, sans-serif", fontWeight: 800 }}>
                 {v.toFixed(1)}
-                <span style={{ fontSize: 9, color: "var(--ink-faint)", fontWeight: 400 }}> kg</span>
+                <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)", fontWeight: 400 }}> kg</span>
               </span>
             </div>
             <div style={{ height: 8, borderRadius: 4, background: "var(--surface-2)", overflow: "hidden" }}>
@@ -59,7 +59,7 @@ export default function SideAsymmetryCard({
       </div>
       <div
         style={{
-          fontSize: 11,
+          fontSize: "var(--t-xs)",
           color: flag ? "var(--warning)" : "var(--ink-muted)",
           marginTop: 12,
         }}

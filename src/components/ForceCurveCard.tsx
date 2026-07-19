@@ -187,7 +187,7 @@ export default function ForceCurveCard({ tag, model, computing, error }: Props) 
 
       {!model ? (
         <div>
-          <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
             {computing
               ? "Computing your force–duration curve…"
               : error ??
@@ -203,7 +203,7 @@ export default function ForceCurveCard({ tag, model, computing, error }: Props) 
               return (
                 <div
                   style={{
-                    fontSize: 10,
+                    fontSize: "var(--t-2xs)",
                     color: "var(--warning)",
                     background: "rgba(221,177,58,0.08)",
                     border: "1px solid rgba(221,177,58,0.25)",
@@ -222,7 +222,7 @@ export default function ForceCurveCard({ tag, model, computing, error }: Props) 
               return (
                 <div
                   style={{
-                    fontSize: 10,
+                    fontSize: "var(--t-2xs)",
                     color: "var(--ink-muted)",
                     marginTop: 8,
                   }}
@@ -237,7 +237,7 @@ export default function ForceCurveCard({ tag, model, computing, error }: Props) 
             style={{
               display: "flex",
               justifyContent: "space-between",
-              fontSize: 10,
+              fontSize: "var(--t-2xs)",
               color: "var(--ink-muted)",
               margin: "6px 0 12px",
             }}

@@ -39,7 +39,7 @@ function NumField({
 }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 62 }}>
-      <span style={{ fontSize: 9, color: "var(--ink-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+      <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
         {label}
       </span>
       <input
@@ -58,7 +58,7 @@ function NumField({
           if (e.target.value !== String(clamped)) e.target.value = String(clamped);
           onChange(clamped);
         }}
-        style={{ padding: "9px 10px", fontSize: 14 }}
+        style={{ padding: "9px 10px", fontSize: "var(--t-base)" }}
       />
     </label>
   );
@@ -167,11 +167,11 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
   return (
     <div style={{ marginTop: 8 }}>
       {error && (
-        <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 8 }}>{error}</div>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginBottom: 8 }}>{error}</div>
       )}
 
       {presets.length === 0 && !adding && (
-        <div style={{ fontSize: 12, color: "var(--ink-faint)", marginBottom: 10, lineHeight: 1.5 }}>
+        <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)", marginBottom: 10, lineHeight: 1.5 }}>
           Save a hang protocol (hold · reps · sets · rest) — selecting one runs
           a guided HOLD/REST timer on the gauge.
         </div>
@@ -214,10 +214,10 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
               }}
             />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, color: "var(--ink)", fontWeight: 600 }}>
+              <div style={{ fontSize: "var(--t-base)", color: "var(--ink)", fontWeight: 600 }}>
                 {p.name}
               </div>
-              <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
+              <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
                 hold {fmt(p.holdS)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
                 {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total{" "}
                 {fmt(timelineDurationS(buildTimeline(p, { switchS: 3 })))}
@@ -249,7 +249,7 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
             <button
               className="del-btn"
               aria-label="Edit preset"
-              style={{ fontSize: 13 }}
+              style={{ fontSize: "var(--t-base)" }}
               onClick={(e) => {
                 e.stopPropagation();
                 openEdit(p);
@@ -373,7 +373,7 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
                 />
                 <NumField label="+% / set" value={pctStep} onChange={setPctStep} min={0} max={50} />
               </div>
-              <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
+              <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
                 {pctBasis === "pr"
                   ? "% of your best recorded peak for the exercise (max-strength work)."
                   : "% of critical force — the sustainable-force asymptote of the curve (endurance work)."}
@@ -397,7 +397,7 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
                 onChange={(e) => setHoldS(Number(e.target.value))}
                 style={{ width: "100%", accentColor: "var(--primary)" }}
               />
-              <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
+              <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
                 Smart target: the load auto-adjusts to the force you can sustain
                 for a {holdS}s hold, read off this exercise's force curve
                 (CF + W′/{holdS}s). Longer holds → lighter, more endurance-y load.
@@ -410,7 +410,7 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
               alignItems: "center",
               gap: 8,
               marginTop: 12,
-              fontSize: 12,
+              fontSize: "var(--t-sm)",
               color: "var(--ink-muted)",
               cursor: "pointer",
             }}

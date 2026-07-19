@@ -32,10 +32,10 @@ export default function RecoveryScreen({ onDone }: { onDone: () => void }) {
             Climbing Periodization
           </div>
           <div className="card">
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: 18, fontWeight: 800 }}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-lg)", fontWeight: 800 }}>
               Set a new password
             </div>
-            <div style={{ fontSize: 12, color: "var(--ink-muted)", marginTop: 4 }}>
+            <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginTop: 4 }}>
               Choose a new password for your account (at least 8 characters).
             </div>
             <span className="field-label">New password</span>
@@ -56,7 +56,7 @@ export default function RecoveryScreen({ onDone }: { onDone: () => void }) {
               onKeyDown={(e) => e.key === "Enter" && save()}
             />
             {error && (
-              <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 10 }}>
+              <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 10 }}>
                 {error}
               </div>
             )}

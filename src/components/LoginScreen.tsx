@@ -110,14 +110,14 @@ export default function LoginScreen() {
               <div
                 style={{
                   fontFamily: "Inter, sans-serif",
-                  fontSize: 18,
+                  fontSize: "var(--t-lg)",
                   fontWeight: 800,
                   marginBottom: 8,
                 }}
               >
                 Check your email
               </div>
-              <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 16 }}>
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 16 }}>
                 We sent a sign-in link to {email.trim()}. Open it on this
                 device to continue.
               </div>
@@ -130,14 +130,14 @@ export default function LoginScreen() {
               <div
                 style={{
                   fontFamily: "Inter, sans-serif",
-                  fontSize: 18,
+                  fontSize: "var(--t-lg)",
                   fontWeight: 800,
                   marginBottom: 4,
                 }}
               >
                 Sign in
               </div>
-              <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>
                 {mode === "magic"
                   ? "Enter your email and we'll send you a magic link. No password needed."
                   : "Sign in with your email and password."}
@@ -169,7 +169,7 @@ export default function LoginScreen() {
                 </>
               )}
               {error && (
-                <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 8 }}>
+                <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 8 }}>
                   {error}
                 </div>
               )}
@@ -200,7 +200,7 @@ export default function LoginScreen() {
                   gap: 10,
                   margin: "16px 0 12px",
                   color: "var(--ink-faint)",
-                  fontSize: 10,
+                  fontSize: "var(--t-2xs)",
                 }}
               >
                 <span style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
@@ -222,7 +222,7 @@ export default function LoginScreen() {
                   borderRadius: 8,
                   padding: "13px 20px",
                   fontFamily: "Inter, sans-serif",
-                  fontSize: 14,
+                  fontSize: "var(--t-base)",
                   fontWeight: 600,
                   cursor: "pointer",
                   WebkitTapHighlightColor: "transparent",
@@ -253,7 +253,7 @@ export default function LoginScreen() {
                     background: "none",
                     border: "none",
                     color: "var(--ink-muted)",
-                    fontSize: 11,
+                    fontSize: "var(--t-xs)",
                     cursor: "pointer",
                     fontFamily: "Inter, sans-serif",
                     textDecoration: "underline",

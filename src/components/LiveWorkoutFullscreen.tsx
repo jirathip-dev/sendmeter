@@ -86,7 +86,7 @@ export default function LiveWorkoutFullscreen({ live, onMinimize }: Props) {
               />
               Live on watch
             </div>
-            <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-0.02em" }}>
+            <div style={{ fontWeight: 800, fontSize: "var(--t-lg)", letterSpacing: "-0.02em" }}>
               {fmt(totalElapsed)}
             </div>
           </div>
@@ -95,7 +95,7 @@ export default function LiveWorkoutFullscreen({ live, onMinimize }: Props) {
               minWidth: 64,
               textAlign: "right",
               fontWeight: 700,
-              fontSize: 14,
+              fontSize: "var(--t-base)",
               color: "var(--danger)",
             }}
           >
@@ -119,7 +119,7 @@ export default function LiveWorkoutFullscreen({ live, onMinimize }: Props) {
             animation: restOver ? "pulse 0.8s ease-in-out infinite" : undefined,
           }}
         >
-          <div style={{ fontWeight: 800, letterSpacing: "0.08em", fontSize: 18, color: accent }}>
+          <div style={{ fontWeight: 800, letterSpacing: "0.08em", fontSize: "var(--t-lg)", color: accent }}>
             {climbing ? "CLIMBING" : restOver ? "REST OVER" : "RESTING"}
           </div>
           <div
@@ -132,7 +132,7 @@ export default function LiveWorkoutFullscreen({ live, onMinimize }: Props) {
           >
             {climbing ? fmt(onWall) : fmt(Math.max(0, restRemaining))}
           </div>
-          <div style={{ fontSize: 13, color: "var(--ink-muted)" }}>
+          <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>
             {climbing ? "on the wall" : `rest target ${fmt(restTarget)}`}
             {" · "}
             <span style={{ color: "var(--ink)", fontWeight: 600 }}>
@@ -144,7 +144,7 @@ export default function LiveWorkoutFullscreen({ live, onMinimize }: Props) {
           </div>
         </div>
 
-        <div style={{ textAlign: "center", fontSize: 12, color: "var(--ink-faint)", paddingBottom: 4 }}>
+        <div style={{ textAlign: "center", fontSize: "var(--t-sm)", color: "var(--ink-faint)", paddingBottom: 4 }}>
           Controlled from your watch — log boulders and end it there.
         </div>
       </div>

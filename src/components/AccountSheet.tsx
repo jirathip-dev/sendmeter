@@ -186,7 +186,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const eyebrow = (text: string, danger = false) => (
     <div
       style={{
-        fontSize: 10,
+        fontSize: "var(--t-2xs)",
         color: danger ? "var(--danger)" : "var(--ink-muted)",
         textTransform: "uppercase",
         letterSpacing: "0.1em",
@@ -202,7 +202,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       <div
         style={{
           fontFamily: "Inter, sans-serif",
-          fontSize: 20,
+          fontSize: "var(--t-xl)",
           fontWeight: 800,
         }}
       >
@@ -232,12 +232,12 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
             {/* Password */}
             {eyebrow("Password")}
             {resetEmail ? (
-              <div style={{ fontSize: 12, color: "var(--success)", lineHeight: 1.5 }}>
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--success)", lineHeight: 1.5 }}>
                 Reset link sent to {resetEmail}. Open it to set a new password.
               </div>
             ) : (
               <div>
-                <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
                   Set or reset your password by email — we'll send a secure link.
                 </div>
                 <button
@@ -255,21 +255,21 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
                 {eyebrow("Passkey")}
                 {passkeyMsg && (
-                  <div style={{ fontSize: 12, color: "var(--success)", lineHeight: 1.5, marginBottom: 10 }}>
+                  <div style={{ fontSize: "var(--t-sm)", color: "var(--success)", lineHeight: 1.5, marginBottom: 10 }}>
                     {passkeyMsg}
                   </div>
                 )}
                 {passkeys === null ? (
-                  <div style={{ fontSize: 12, color: "var(--ink-muted)" }}>Checking…</div>
+                  <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>Checking…</div>
                 ) : passkeys.length > 0 ? (
                   <div>
                     {passkeys.map((p) => (
                       <div key={p.id} className="pk-row">
                         <div style={{ minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600 }}>
+                          <div style={{ fontSize: "var(--t-base)", fontWeight: 600 }}>
                             {p.friendly_name || "Passkey"}
                           </div>
-                          <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
+                          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
                             Added {new Date(p.created_at).toLocaleDateString()}
                           </div>
                         </div>
@@ -298,7 +298,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                   </div>
                 ) : (
                   <div>
-                    <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
+                    <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
                       Add a passkey to sign in with Face ID / Touch ID — no
                       password or email needed.
                     </div>
@@ -320,13 +320,13 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
           <div>
             {eyebrow("Health data")}
             {cleared ? (
-              <div style={{ fontSize: 12, color: "var(--success)", lineHeight: 1.5 }}>
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--success)", lineHeight: 1.5 }}>
                 Health data cleared. Your device will re-sync fresh metrics from
                 Apple Health shortly.
               </div>
             ) : confirmingClear ? (
               <div>
-                <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
                   Deletes all stored daily health metrics (HRV, resting heart
                   rate, sleep, readiness). Your device re-reads them fresh from
                   Apple Health afterward.
@@ -350,7 +350,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               </div>
             ) : (
               <div>
-                <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
                   Clear all stored health metrics and re-sync them fresh from
                   Apple Health.
                 </div>
@@ -385,14 +385,14 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               {!showDanger ? (
                 <button
                   className="btn-ghost btn-inline"
-                  style={{ color: "var(--ink-muted)", fontSize: 12 }}
+                  style={{ color: "var(--ink-muted)", fontSize: "var(--t-sm)" }}
                   onClick={() => setShowDanger(true)}
                 >
                   Reveal delete option
                 </button>
               ) : confirmingDelete ? (
                 <div>
-                  <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
+                  <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
                     This permanently deletes your account and every session,
                     recording, workout, and health metric. There is no undo.
                   </div>
@@ -407,7 +407,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                       borderRadius: 8,
                       width: "100%",
                       fontFamily: "Inter, sans-serif",
-                      fontSize: 13,
+                      fontSize: "var(--t-base)",
                       fontWeight: 500,
                       cursor: "pointer",
                     }}
@@ -438,7 +438,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         )}
 
         {error && (
-          <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 14 }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 14 }}>
             {error}
           </div>
         )}

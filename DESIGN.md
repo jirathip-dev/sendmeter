@@ -74,15 +74,34 @@ these only tint small text/chips.
 
 ## Typography
 
-Single family: **Inter** (Google Fonts, weights 400/500/600/700/800).
-- **Display / stat numbers**: Inter 800, letter-spacing −0.02em,
-  `font-variant-numeric: tabular-nums` — numbers are the product; they must
-  align and be scannable (readiness 72, ACWR 1.13, 36.8 kg).
-- **UI / body**: Inter 400–500, 13–15px.
-- **Labels**: Inter 600, 10px, uppercase, +0.08em tracking, `--ink-muted`.
-- The old DM Mono / Syne pairing is retired; where Descript uses Georgia for
-  the transcript, we use oversized tabular numerals instead — the "document"
-  here is numeric, not prose.
+Single family: **Inter** (Google Fonts, weights 400/500/600/700/800),
+`font-variant-numeric: tabular-nums` — numbers are the product; they must
+align and be scannable (readiness 72, ACWR 1.13, 36.8 kg).
+
+**Fixed type scale** — one ramp for every label/caption/body/heading, defined
+once as `--t-*` tokens in `src/index.css` `:root`. Use `var(--t-*)` (inline or
+in CSS), never a hardcoded px, so the whole app shares a scale and retunes from
+one place:
+
+| token | px | role |
+|---|---|---|
+| `--t-eyebrow` | 9 | uppercase micro-labels, tags, nav labels (+tracking) |
+| `--t-2xs` | 10 | fine print, dense captions |
+| `--t-xs` | 11 | captions, secondary lines |
+| `--t-sm` | 12 | secondary body, chips, meta |
+| `--t-base` | 13 | body text, in-card titles |
+| `--t-md` | 15 | form inputs, emphasized body |
+| `--t-lg` | 18 | card + section headings |
+| `--t-xl` | 20 | small stat numbers |
+
+- **Weights**: 800 display/stat, 700 headings, 600 labels, 400–500 body.
+  Labels: 600, `--t-eyebrow`/`--t-2xs`, uppercase, +0.08em tracking, `--ink-muted`.
+- **Hero / stat numbers stay per-context** (readiness 52, force gauge 44,
+  timers via `clamp()`, section heads 22) — these are intentional one-offs and
+  are *exempt* from the scale; keep them as inline px tuned to their card.
+- Canvas/SVG `font-size` *attributes* can't resolve CSS vars, but SVG `<text>`
+  set via `style={{ fontSize: "var(--t-…)" }}` does — prefer the style form.
+- The old DM Mono / Syne pairing is retired; the "document" here is numeric.
 
 ## Surfaces & components
 

@@ -250,14 +250,14 @@ function AuthedApp({
           <div
             style={{
               fontFamily: "Inter, sans-serif",
-              fontSize: 20,
+              fontSize: "var(--t-xl)",
               fontWeight: 800,
               marginBottom: 2,
             }}
           >
             Log Session
           </div>
-          <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 4 }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
             Load = Duration × RPE
           </div>
           <LogForm form={form} setForm={setForm} onSubmit={submitSession} />
@@ -288,14 +288,14 @@ function AuthedApp({
           <div
             style={{
               fontFamily: "Inter, sans-serif",
-              fontSize: 20,
+              fontSize: "var(--t-xl)",
               fontWeight: 800,
               marginBottom: 2,
             }}
           >
             Change phase
           </div>
-          <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 12 }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
             Sets the training block your sessions log under.
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -328,16 +328,16 @@ function AuthedApp({
                       justifyContent: "space-between",
                     }}
                   >
-                    <span style={{ fontSize: 14, fontWeight: 700, color: p.color }}>
+                    <span style={{ fontSize: "var(--t-base)", fontWeight: 700, color: p.color }}>
                       {p.name}
                     </span>
                     {active && (
-                      <span style={{ fontSize: 9, color: p.color, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      <span style={{ fontSize: "var(--t-eyebrow)", color: p.color, textTransform: "uppercase", letterSpacing: "0.08em" }}>
                         Current
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
+                  <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
                     {p.desc}
                   </div>
                 </button>

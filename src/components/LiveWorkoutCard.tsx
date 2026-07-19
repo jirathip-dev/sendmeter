@@ -71,7 +71,7 @@ export default function LiveWorkoutCard({
         >
           {live.climbing ? "CLIMBING" : "RESTING"}
         </span>
-        <span aria-hidden="true" style={{ color: "var(--ink-faint)", fontSize: 15 }}>›</span>
+        <span aria-hidden="true" style={{ color: "var(--ink-faint)", fontSize: "var(--t-md)" }}>›</span>
       </div>
 
       <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
@@ -85,7 +85,7 @@ export default function LiveWorkoutCard({
         >
           {fmtElapsed(elapsed)}
         </span>
-        <span style={{ fontSize: 13, color: "var(--ink-muted)" }}>
+        <span style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>
           {live.hr !== null && (
             <>
               <span style={{ color: "var(--danger)" }}>♥</span>{" "}

@@ -109,7 +109,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
               flexWrap: "wrap",
             }}
           >
-            <span style={{ fontSize: 13, color: "var(--ink)" }}>
+            <span style={{ fontSize: "var(--t-base)", color: "var(--ink)" }}>
               {s.typeLabel}
             </span>
             <span
@@ -141,17 +141,17 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
               </span>
             )}
             {expandable && (
-              <span style={{ fontSize: 10, color: "var(--ink-muted)" }}>
+              <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
                 {expanded ? "▾" : "▸"}
               </span>
             )}
           </div>
-          <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
             {s.date} · {s.duration}min · RPE {s.rpe} ·{" "}
             <span style={{ color: "var(--ink-muted)" }}>{s.load} AU</span>
           </div>
           {s.note && (
-            <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 3 }}>
+            <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 3 }}>
               {s.note}
             </div>
           )}
@@ -160,7 +160,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
           <button
             className="del-btn"
             aria-label="Edit session"
-            style={{ fontSize: 13 }}
+            style={{ fontSize: "var(--t-base)" }}
             onClick={(e) => {
               e.stopPropagation();
               onEdit(s);
@@ -186,17 +186,17 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
       {expanded && isWorkout && (
         <>
           {detail === null && !loadError && (
-            <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
               Loading workout…
             </div>
           )}
           {loadError && (
-            <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 8 }}>
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--danger)", marginTop: 8 }}>
               Failed to load workout
             </div>
           )}
           {detail === "missing" && (
-            <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
               No workout data
             </div>
           )}
@@ -219,17 +219,17 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
           }}
         >
           {tindeqRecs === null && !loadError && (
-            <div style={{ fontSize: 10, color: "var(--ink-faint)" }}>
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
               Loading recordings…
             </div>
           )}
           {loadError && (
-            <div style={{ fontSize: 10, color: "var(--danger)" }}>
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--danger)" }}>
               Failed to load recordings
             </div>
           )}
           {tindeqRecs !== null && tindeqRecs.length === 0 && (
-            <div style={{ fontSize: 10, color: "var(--ink-faint)" }}>
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
               No recordings in this session
             </div>
           )}

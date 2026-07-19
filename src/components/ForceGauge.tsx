@@ -152,20 +152,20 @@ export default function ForceGauge({
             }}
           >
             {current.toFixed(1)}
-            <span style={{ fontSize: 16, color: "var(--ink-muted)", marginLeft: 4 }}>
+            <span style={{ fontSize: "var(--t-md)", color: "var(--ink-muted)", marginLeft: 4 }}>
               kg
             </span>
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: "var(--ink-muted)" }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
             peak{" "}
             <span
               style={{
                 color: "var(--success)",
                 fontFamily: "Inter, sans-serif",
                 fontWeight: 800,
-                fontSize: 15,
+                fontSize: "var(--t-md)",
               }}
             >
               {peak.toFixed(1)}
@@ -173,14 +173,14 @@ export default function ForceGauge({
             kg
           </div>
           {avg > 0 && (
-            <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
+            <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
               avg{" "}
               <span
                 style={{
                   color: "var(--ink)",
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 700,
-                  fontSize: 13,
+                  fontSize: "var(--t-base)",
                 }}
               >
                 {avg.toFixed(1)}
@@ -190,7 +190,7 @@ export default function ForceGauge({
           )}
           <div
             style={{
-              fontSize: 11,
+              fontSize: "var(--t-xs)",
               color: workDone ? "var(--success)" : "var(--ink-muted)",
               marginTop: 2,
             }}
@@ -211,7 +211,7 @@ export default function ForceGauge({
           style={{
             display: "flex",
             justifyContent: "space-between",
-            fontSize: 10,
+            fontSize: "var(--t-2xs)",
             color: "var(--ink-muted)",
             marginTop: 6,
           }}

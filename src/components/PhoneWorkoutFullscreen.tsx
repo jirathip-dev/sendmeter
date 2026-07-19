@@ -128,7 +128,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         </button>
         <div style={{ textAlign: "center" }}>
           <div className="label-eyebrow">Workout</div>
-          <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-0.02em" }}>
+          <div style={{ fontWeight: 800, fontSize: "var(--t-lg)", letterSpacing: "-0.02em" }}>
             {fmt(totalElapsed)}
           </div>
         </div>
@@ -157,7 +157,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
           animation: restOver ? "pulse 0.8s ease-in-out infinite" : undefined,
         }}
       >
-        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.08em", fontSize: 18, color: accent }}>
+        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.08em", fontSize: "var(--t-lg)", color: accent }}>
           {climbing ? "CLIMBING" : restOver ? "REST OVER" : "RESTING"}
         </div>
         <div
@@ -172,7 +172,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         >
           {climbing ? fmt(onWall) : fmt(Math.max(0, restRemaining))}
         </div>
-        <div style={{ fontSize: 13, color: "var(--ink-muted)" }}>
+        <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>
           {climbing ? "on the wall" : `rest target ${fmt(restTarget)}`}
           {" · "}
           <span style={{ color: "var(--ink)", fontWeight: 600 }}>
@@ -197,7 +197,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
                   padding: "5px 11px",
                   borderRadius: 999,
                   fontFamily: "Inter, sans-serif",
-                  fontSize: 12,
+                  fontSize: "var(--t-sm)",
                   fontWeight: 600,
                   cursor: "pointer",
                   border: `1px solid ${restTarget === s ? accent : "var(--border)"}`,
@@ -262,7 +262,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
               color: accent,
               fontFamily: "Inter, sans-serif",
               fontWeight: 800,
-              fontSize: 15,
+              fontSize: "var(--t-md)",
             }}
           >
             {climbing ? (

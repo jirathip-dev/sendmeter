@@ -90,7 +90,7 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
                 <span
                   style={{
                     fontFamily: "Inter, sans-serif",
-                    fontSize: 18,
+                    fontSize: "var(--t-lg)",
                     fontWeight: 800,
                     color: p.color,
                   }}
@@ -106,7 +106,7 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 10 }}>
+              <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 10 }}>
                 {p.desc}
               </div>
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
@@ -128,7 +128,7 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
             <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 12 }}>
               <div
                 style={{
-                  fontSize: 9,
+                  fontSize: "var(--t-eyebrow)",
                   color: "var(--ink-muted)",
                   textTransform: "uppercase",
                   marginBottom: 3,
@@ -138,7 +138,7 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
               </div>
               <div
                 style={{
-                  fontSize: 17,
+                  fontSize: "var(--t-lg)",
                   color: p.color,
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
@@ -146,19 +146,19 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
               >
                 {p.acwr}
               </div>
-              <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 3 }}>
+              <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 3 }}>
                 {p.weeks}
               </div>
-              <div style={{ fontSize: 10, color: "var(--ink-faint)" }}>
+              <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
                 {p.intensity}
               </div>
               {phaseHistory(p.id) && (
-                <div style={{ fontSize: 9, color: "var(--ink-muted)", marginTop: 4 }}>
+                <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)", marginTop: 4 }}>
                   {phaseHistory(p.id)}
                 </div>
               )}
               {currentPhase === p.id && openStart && (
-                <div style={{ fontSize: 9, color: p.color, marginTop: 2 }}>
+                <div style={{ fontSize: "var(--t-eyebrow)", color: p.color, marginTop: 2 }}>
                   Since {openStart}
                 </div>
               )}
@@ -172,7 +172,7 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
         <div className="card" style={{ marginBottom: 10 }}>
           <div
             style={{
-              fontSize: 10,
+              fontSize: "var(--t-2xs)",
               color: "var(--ink-muted)",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
@@ -236,7 +236,7 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
             style={{
               display: "flex",
               justifyContent: "space-between",
-              fontSize: 9,
+              fontSize: "var(--t-eyebrow)",
               color: "var(--ink-faint)",
               marginTop: 5,
             }}
@@ -250,7 +250,7 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
       <div className="card" style={{ marginTop: 6 }}>
         <div
           style={{
-            fontSize: 10,
+            fontSize: "var(--t-2xs)",
             color: "var(--ink-muted)",
             textTransform: "uppercase",
             letterSpacing: "0.1em",
@@ -262,10 +262,10 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
         {ZONES.map((z) => (
           <div key={z.range} className="zone-row">
             <div className="zone-dot" style={{ background: z.color }} />
-            <span style={{ fontSize: 11, color: "var(--ink-muted)", width: 64 }}>
+            <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", width: 64 }}>
               {z.range}
             </span>
-            <span style={{ fontSize: 11, color: "var(--ink-muted)" }}>{z.label}</span>
+            <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>{z.label}</span>
           </div>
         ))}
       </div>

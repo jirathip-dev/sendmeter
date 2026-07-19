@@ -106,7 +106,7 @@ export default function InfoDot({ topic }: { topic: InfoTopic }) {
           border: "1px solid var(--border)",
           background: "transparent",
           color: "var(--ink-faint)",
-          fontSize: 11,
+          fontSize: "var(--t-xs)",
           lineHeight: 1,
           cursor: "pointer",
           display: "inline-flex",
@@ -127,7 +127,7 @@ export default function InfoDot({ topic }: { topic: InfoTopic }) {
             <div
               style={{
                 fontFamily: "Inter, sans-serif",
-                fontSize: 18,
+                fontSize: "var(--t-lg)",
                 fontWeight: 800,
                 marginBottom: 12,
               }}
@@ -138,7 +138,7 @@ export default function InfoDot({ topic }: { topic: InfoTopic }) {
               <div key={b.heading} style={{ marginBottom: 14 }}>
                 <div
                   style={{
-                    fontSize: 11,
+                    fontSize: "var(--t-xs)",
                     fontWeight: 700,
                     color: "var(--ink)",
                     marginBottom: 4,
@@ -147,7 +147,7 @@ export default function InfoDot({ topic }: { topic: InfoTopic }) {
                 >
                   {b.heading}
                 </div>
-                <div style={{ fontSize: 12, color: "var(--ink-muted)", lineHeight: 1.6 }}>
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
                   {b.text}
                 </div>
               </div>

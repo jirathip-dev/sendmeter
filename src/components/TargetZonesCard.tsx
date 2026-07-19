@@ -94,7 +94,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
         <InfoDot topic="gaugeTarget" />
       </div>
       {!model ? (
-        <div style={{ fontSize: 11, color: "var(--ink-faint)" }}>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)" }}>
           Zones unlock once this exercise's force curve is computed (a few
           recordings, ideally one 30s+ hold).
         </div>
@@ -145,12 +145,12 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                 >
                   {zoneT.targetKg.toFixed(1)} kg
                 </span>
-                <span style={{ fontSize: 11, color: "var(--ink-muted)" }}>
+                <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
                   ({zoneT.lowKg.toFixed(1)}–{zoneT.highKg.toFixed(1)})
                 </span>
               </div>
               {/* The prescription the guided timer will run */}
-              <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 4 }}>
+              <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 4 }}>
                 Timer: hold {fmt(selected.protocol.holdS)} · rest{" "}
                 {fmt(selected.protocol.restRepsS)} × {selected.protocol.reps} reps
                 {selected.protocol.sets > 1 &&
@@ -163,7 +163,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                   alignItems: "center",
                   gap: 8,
                   marginTop: 8,
-                  fontSize: 11,
+                  fontSize: "var(--t-xs)",
                   color: "var(--ink-muted)",
                   cursor: "pointer",
                 }}
@@ -180,7 +180,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
               </label>
             </div>
           ) : (
-            <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 8 }}>
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
               Pick a zone — it arms the band on the live gauge and a guided
               hold/rest timer from its prescription.
             </div>

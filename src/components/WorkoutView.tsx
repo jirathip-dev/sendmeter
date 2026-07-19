@@ -114,7 +114,7 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
       )}
 
       {error && (
-        <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 8 }}>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginBottom: 8 }}>
           {error}
         </div>
       )}
@@ -127,7 +127,7 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
         <div className="card-title" style={{ marginBottom: 8 }}>
           Log a past workout
         </div>
-        <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
+        <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
           Log a finished session manually — date, type, duration and RPE.
         </div>
         <button className="btn-ghost" onClick={onLog}>
@@ -135,7 +135,7 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
         </button>
       </div>
 
-      <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 16, textAlign: "center" }}>
+      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 16, textAlign: "center" }}>
         Past workouts and sessions live in History.
       </div>
 
@@ -146,7 +146,7 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
           <div
             style={{
               fontFamily: "Inter, sans-serif",
-              fontSize: 20,
+              fontSize: "var(--t-xl)",
               fontWeight: 800,
               marginBottom: 12,
             }}

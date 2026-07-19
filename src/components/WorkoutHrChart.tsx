@@ -118,7 +118,7 @@ export default function WorkoutHrChart({ workoutId, startedAt, attempts }: Props
         }}
       >
         <span className="label-eyebrow">Heart rate · climbs vs rest</span>
-        <span style={{ fontSize: 8.5, color: "var(--ink-faint)" }}>
+        <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)" }}>
           <span style={{ color: "var(--success)" }}>■</span> climb
           {windows.some((w) => w.manual) && (
             <>

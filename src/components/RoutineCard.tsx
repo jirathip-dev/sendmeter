@@ -142,11 +142,11 @@ export default function RoutineCard() {
         Routines
       </div>
       {error && (
-        <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 8 }}>{error}</div>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginBottom: 8 }}>{error}</div>
       )}
 
       {presets.length === 0 && !adding && (
-        <div style={{ fontSize: 12, color: "var(--ink-faint)", marginBottom: 12, lineHeight: 1.5 }}>
+        <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)", marginBottom: 12, lineHeight: 1.5 }}>
           Build a timed step routine — a warm-up, conditioning circuit or
           mobility flow — and run it as a guided fullscreen timer.
         </div>
@@ -183,10 +183,10 @@ export default function RoutineCard() {
               }}
             />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, color: "var(--ink)", fontWeight: 600 }}>
+              <div style={{ fontSize: "var(--t-base)", color: "var(--ink)", fontWeight: 600 }}>
                 {p.name}
               </div>
-              <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
+              <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
                 <span style={{ color: "var(--info)", fontWeight: 600 }}>
                   {p.steps.length} step{p.steps.length === 1 ? "" : "s"}
                 </span>{" "}
@@ -198,7 +198,7 @@ export default function RoutineCard() {
             <button
               className="del-btn"
               aria-label="Edit routine"
-              style={{ fontSize: 13 }}
+              style={{ fontSize: "var(--t-base)" }}
               onClick={(e) => {
                 e.stopPropagation();
                 openEdit(p);
@@ -261,7 +261,7 @@ export default function RoutineCard() {
                 }}
                 style={{ width: 60, flexShrink: 0, textAlign: "center" }}
               />
-              <span style={{ fontSize: 10, color: "var(--ink-faint)" }}>s</span>
+              <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>s</span>
               <button
                 className="del-btn"
                 aria-label="Remove step"

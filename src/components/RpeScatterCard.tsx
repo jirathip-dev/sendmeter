@@ -26,7 +26,7 @@ export default function RpeScatterCard() {
         <div className="label-eyebrow" style={{ marginBottom: 8 }}>
           RPE Model
         </div>
-        <div style={{ fontSize: 11, color: "var(--ink-muted)", lineHeight: 1.5 }}>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.5 }}>
           Shows predicted vs. confirmed RPE for your auto-tracked workouts,
           once you've confirmed at least 3 ({pairs.length}/3 so far).
         </div>
@@ -153,7 +153,7 @@ export default function RpeScatterCard() {
           )}
         </svg>
       </div>
-      <div style={{ fontSize: 10, color: "var(--ink-muted)", marginTop: 6 }}>
+      <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 6 }}>
         {pairs.length} workouts · mean abs err{" "}
         <span
           style={{

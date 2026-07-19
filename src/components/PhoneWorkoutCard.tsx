@@ -39,7 +39,7 @@ export default function PhoneWorkoutCard({
         <div className="card-title" style={{ marginBottom: 8 }}>
           Phone workout
         </div>
-        <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
+        <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
           No watch? Track a session here — tap when you get on the wall and
           when you drop off to count boulders.
         </div>
@@ -82,12 +82,12 @@ export default function PhoneWorkoutCard({
           <div className="card-title" style={{ marginBottom: 4 }}>
             Workout in progress
           </div>
-          <div style={{ fontSize: 13, color: "var(--ink-muted)" }}>
+          <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>
             {state.attempts.length} boulder{state.attempts.length === 1 ? "" : "s"} ·{" "}
             {climbing ? "climbing" : "resting"}
           </div>
         </div>
-        <span style={{ color: climbing ? "var(--success)" : "var(--primary)", fontWeight: 700, fontSize: 13 }}>
+        <span style={{ color: climbing ? "var(--success)" : "var(--primary)", fontWeight: 700, fontSize: "var(--t-base)" }}>
           Resume ›
         </span>
       </button>
@@ -108,7 +108,7 @@ export default function PhoneWorkoutCard({
       <div className="card-title" style={{ marginBottom: 8 }}>
         Log workout
       </div>
-      <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 4 }}>
+      <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 4 }}>
         {durationMin} min ·{" "}
         <span style={{ color: "var(--primary)", fontWeight: 700 }}>
           {state.attempts.length}

@@ -22,8 +22,8 @@ function SubScore({ label, detail, score }: { label: string; detail: string; sco
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-        <span style={{ fontSize: 12, color: "var(--ink)", fontWeight: 600 }}>{label}</span>
-        <span style={{ fontSize: 11, color: "var(--ink-muted)" }}>
+        <span style={{ fontSize: "var(--t-sm)", color: "var(--ink)", fontWeight: 600 }}>{label}</span>
+        <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
           {detail} · <span style={{ color: scoreColor(score), fontWeight: 700 }}>{score}</span>
         </span>
       </div>
@@ -40,10 +40,10 @@ function SubScore({ label, detail, score }: { label: string; detail: string; sco
 export default function SendConditionsSheet({ cond, loading, failed, onRefresh, onClose }: Props) {
   return (
     <Sheet onClose={onClose}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 20, fontWeight: 800, marginBottom: 2 }}>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800, marginBottom: 2 }}>
         Send conditions
       </div>
-      <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 16 }}>
+      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 16 }}>
         Friction is best when it's cool and dry — better grip, less sweat.
       </div>
 
@@ -63,11 +63,11 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
             >
               {cond.label}
             </span>
-            <span style={{ fontSize: 14, color: "var(--ink-muted)", fontWeight: 700 }}>
+            <span style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", fontWeight: 700 }}>
               {cond.score}/100
             </span>
           </div>
-          <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 12 }}>
+          <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12 }}>
             {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}% humidity
           </div>
 
@@ -87,7 +87,7 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
               }}
             />
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--ink-faint)", marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)", marginBottom: 18 }}>
             <span>Poor</span>
             <span>Fair</span>
             <span>Good</span>
@@ -99,19 +99,19 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
           <SubScore label="Temperature" detail={`${Math.round(cond.tempC)}°C · 60%`} score={Math.round(tempFrictionScore(cond.tempC))} />
           <SubScore label="Humidity" detail={`${Math.round(cond.humidity)}% · 40%`} score={Math.round(humidityFrictionScore(cond.humidity))} />
 
-          <div style={{ fontSize: 11, color: "var(--ink-muted)", lineHeight: 1.6, marginTop: 4 }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6, marginTop: 4 }}>
             The score blends temperature (60%) and humidity (40%). Grip friction
             peaks around <strong>6&nbsp;°C</strong> and low humidity, and drops as
             it warms up or gets muggy. Weather is from Open-Meteo for your current
             location.
           </div>
 
-          <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 10 }}>
+          <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 10 }}>
             Updated {new Date(cond.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </div>
         </>
       ) : (
-        <div style={{ fontSize: 12, color: "var(--ink-muted)", lineHeight: 1.6, marginBottom: 4 }}>
+        <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", lineHeight: 1.6, marginBottom: 4 }}>
           {failed
             ? "Couldn't read the weather — check that location access is allowed, then try again."
             : "Check the current temperature and humidity at your location to see how good conditions are for sending."}

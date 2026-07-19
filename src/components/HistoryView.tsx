@@ -199,7 +199,7 @@ export default function HistoryView({
           style={{
             textAlign: "center",
             color: "var(--ink-faint)",
-            fontSize: 13,
+            fontSize: "var(--t-base)",
             padding: "60px 0",
           }}
         >
@@ -272,14 +272,14 @@ export default function HistoryView({
       {/* Assign ticked recordings into an existing Tindeq session */}
       {assignOpen && (
         <Sheet onClose={() => setAssignOpen(false)}>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: 20, fontWeight: 800, marginBottom: 2 }}>
+          <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800, marginBottom: 2 }}>
             Assign to session
           </div>
-          <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 12 }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
             Move {selectedIds.size} recording{selectedIds.size === 1 ? "" : "s"} into an existing Tindeq session.
           </div>
           {assignError && (
-            <div style={{ fontSize: 11, color: "var(--danger)", marginBottom: 8 }}>{assignError}</div>
+            <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginBottom: 8 }}>{assignError}</div>
           )}
           {tindeqSessions.map((s) => (
             <button
@@ -299,11 +299,11 @@ export default function HistoryView({
                 boxShadow: "var(--shadow-card)",
               }}
             >
-              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
+              <div style={{ fontSize: "var(--t-base)", fontWeight: 600, color: "var(--ink)" }}>
                 {s.date} · {s.duration}min · RPE {s.rpe}
               </div>
               {s.note && (
-                <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
+                <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
                   {s.note}
                 </div>
               )}

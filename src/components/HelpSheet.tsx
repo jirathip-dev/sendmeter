@@ -17,7 +17,7 @@ function Section({
       <div className="label-eyebrow" style={{ marginBottom: 8 }}>
         {title}
       </div>
-      <div style={{ fontSize: 12, color: "var(--ink-muted)", lineHeight: 1.6 }}>
+      <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
         {children}
       </div>
     </div>
@@ -30,14 +30,14 @@ export default function HelpSheet({ onClose }: Props) {
       <div
         style={{
           fontFamily: "Inter, sans-serif",
-          fontSize: 20,
+          fontSize: "var(--t-xl)",
           fontWeight: 800,
           marginBottom: 4,
         }}
       >
         Help & FAQ
       </div>
-        <div style={{ fontSize: 12, color: "var(--ink-faint)" }}>
+        <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)" }}>
           How the numbers on your dashboard are actually computed.
         </div>
 

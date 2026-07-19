@@ -65,7 +65,7 @@ export default function ThemeSection() {
               border: "none",
               cursor: "pointer",
               fontFamily: "Inter, sans-serif",
-              fontSize: 12,
+              fontSize: "var(--t-sm)",
               fontWeight: 600,
               background: choice === o.value ? "var(--canvas)" : "transparent",
               color: choice === o.value ? "var(--ink)" : "var(--ink-muted)",

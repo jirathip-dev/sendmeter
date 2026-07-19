@@ -553,7 +553,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       <div className="section-head">
         FORCE{" "}
         {tindeq.fakeMode && (
-          <span style={{ fontSize: 10, color: "var(--warning)" }}>(fake mode)</span>
+          <span style={{ fontSize: "var(--t-2xs)", color: "var(--warning)" }}>(fake mode)</span>
         )}
       </div>
       <div className="section-sub">
@@ -584,7 +584,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
               background: "var(--info)",
             }}
           />
-          <span style={{ fontSize: 12, color: "var(--ink)", flex: 1 }}>
+          <span style={{ fontSize: "var(--t-sm)", color: "var(--ink)", flex: 1 }}>
             Gauge session{" "}
             <span style={{ color: "var(--ink-muted)" }}>
               · {sessionCount} recording{sessionCount === 1 ? "" : "s"}
@@ -598,7 +598,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
               color: "var(--ink-muted)",
               padding: "6px 10px",
               borderRadius: 6,
-              fontSize: 10,
+              fontSize: "var(--t-2xs)",
               cursor: "pointer",
               fontFamily: "Inter, sans-serif",
             }}
@@ -613,14 +613,14 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
           <div
             style={{
               fontFamily: "Inter, sans-serif",
-              fontSize: 16,
+              fontSize: "var(--t-md)",
               fontWeight: 800,
               marginBottom: 8,
             }}
           >
             Bluetooth not available
           </div>
-          <div style={{ fontSize: 12, color: "var(--ink-muted)", lineHeight: 1.5 }}>
+          <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", lineHeight: 1.5 }}>
             {tindeq.secure
               ? "This browser doesn't support Web Bluetooth. Use Chrome or Edge on desktop or Android — iOS Safari can't connect to Bluetooth devices."
               : "Web Bluetooth requires a secure (HTTPS) connection."}
@@ -646,9 +646,9 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
             <span className="field-label" style={{ margin: 0 }}>
               Duration
             </span>
-            <span style={{ fontSize: 15, fontWeight: 700 }}>
+            <span style={{ fontSize: "var(--t-md)", fontWeight: 700 }}>
               {endingSession.durationMin} min{" "}
-              <span style={{ fontSize: 10, color: "var(--ink-faint)", fontWeight: 400 }}>
+              <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", fontWeight: 400 }}>
                 actual time
               </span>
             </span>
@@ -708,7 +708,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       )}
 
       {tindeq.errorMsg && (
-        <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 10 }}>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 10 }}>
           {tindeq.errorMsg}
         </div>
       )}
@@ -741,13 +741,13 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
               animation: status === "measuring" ? "pulse 1.6s ease-in-out infinite" : undefined,
             }}
           />
-          <span style={{ fontSize: 13, color: "var(--ink)", flex: 1 }}>
+          <span style={{ fontSize: "var(--t-base)", color: "var(--ink)", flex: 1 }}>
             Progressor{" "}
             <span style={{ color: "var(--ink-muted)" }}>
               · {status === "measuring" ? "measuring" : "connected"}
             </span>
           </span>
-          <span style={{ color: "var(--primary)", fontWeight: 700, fontSize: 13 }}>
+          <span style={{ color: "var(--primary)", fontWeight: 700, fontSize: "var(--t-base)" }}>
             Open gauge ›
           </span>
         </button>
@@ -770,7 +770,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         />
         {!pendingTag.trim() &&
           (status === "connected" || status === "measuring") && (
-            <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 8 }}>
+            <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 8 }}>
               Add a tag to start recording.
             </div>
           )}
@@ -785,11 +785,11 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
                 gap: 10,
               }}
             >
-              <span style={{ fontSize: 12, color: "var(--success)", fontWeight: 700, flex: 1 }}>
+              <span style={{ fontSize: "var(--t-sm)", color: "var(--success)", fontWeight: 700, flex: 1 }}>
                 Saved · {justSaved.tag || "untagged"}
                 {justSaved.side ? ` · ${justSaved.side}` : ""}
               </span>
-              <span style={{ fontSize: 12, color: "var(--ink)", fontFamily: "Inter, sans-serif", fontWeight: 800 }}>
+              <span style={{ fontSize: "var(--t-sm)", color: "var(--ink)", fontFamily: "Inter, sans-serif", fontWeight: 800 }}>
                 {justSaved.peakKg.toFixed(1)} kg
               </span>
               <button
@@ -800,7 +800,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
                   color: "var(--ink-muted)",
                   padding: "6px 10px",
                   borderRadius: 6,
-                  fontSize: 10,
+                  fontSize: "var(--t-2xs)",
                   cursor: "pointer",
                   fontFamily: "Inter, sans-serif",
                 }}
@@ -812,7 +812,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       </div>
 
       {listError && (
-        <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 10 }}>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 10 }}>
           {listError}
         </div>
       )}
@@ -821,7 +821,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
           (from your force curve); custom presets follow. */}
       <div
         style={{
-          fontSize: 10,
+          fontSize: "var(--t-2xs)",
           color: "var(--ink-faint)",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
@@ -868,7 +868,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
             )}
           </>
         ) : (
-          <div style={{ fontSize: 11, color: "var(--ink-faint)" }}>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)" }}>
             Peak force trend and the force–duration curve appear here after a
             couple of recordings. Recordings themselves live in History.
           </div>

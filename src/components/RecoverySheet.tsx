@@ -7,10 +7,10 @@ import RecoveryStatsCard from "./RecoveryStatsCard";
 export default function RecoverySheet({ onClose }: { onClose: () => void }) {
   return (
     <Sheet onClose={onClose}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 20, fontWeight: 800 }}>
+      <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800 }}>
         Recovery Inputs
       </div>
-      <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 16 }}>
+      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 16 }}>
         The raw HealthKit metrics your daily readiness score is computed from.
       </div>
       <RecoveryStatsCard />

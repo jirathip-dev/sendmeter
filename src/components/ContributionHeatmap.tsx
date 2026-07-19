@@ -143,7 +143,7 @@ export default function ContributionHeatmap({
                 right: 3,
                 top: `calc(14px + (100% - 14px) * ${((r + 0.5) / 7).toFixed(4)})`,
                 transform: "translateY(-50%)",
-                fontSize: 8,
+                fontSize: "var(--t-eyebrow)",
                 lineHeight: 1,
                 whiteSpace: "nowrap",
                 color: "var(--ink-faint)",
@@ -163,7 +163,7 @@ export default function ContributionHeatmap({
                 style={{
                   position: "absolute",
                   left: `${(col / columns.length) * 100}%`,
-                  fontSize: 9,
+                  fontSize: "var(--t-eyebrow)",
                   color: "var(--ink-faint)",
                 }}
               >
@@ -213,7 +213,7 @@ export default function ContributionHeatmap({
       </div>
 
       {/* Selected day readout — includes the day's dominant activity type */}
-      <div style={{ marginTop: 10, fontSize: 10, color: "var(--ink-muted)" }}>
+      <div style={{ marginTop: 10, fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
         {sel
           ? `${sel.key} · ${sel.value} ${unit}${sel.type ? ` · ${TYPE_LABEL[sel.type] ?? sel.type}` : ""}`
           : "Tap a day for its load"}
@@ -227,7 +227,7 @@ export default function ContributionHeatmap({
             flexWrap: "wrap",
             gap: "6px 12px",
             marginTop: 8,
-            fontSize: 9,
+            fontSize: "var(--t-eyebrow)",
             color: "var(--ink-faint)",
           }}
         >

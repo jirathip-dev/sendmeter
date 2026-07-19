@@ -98,7 +98,7 @@ export default function LogForm({ form, setForm, onSubmit }: Props) {
       </div>
 
       <div className="load-preview">
-        <span style={{ fontSize: 11, color: "var(--ink-muted)" }}>Session Load</span>
+        <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>Session Load</span>
         <span
           style={{
             fontSize: 24,
@@ -107,7 +107,7 @@ export default function LogForm({ form, setForm, onSubmit }: Props) {
             fontWeight: 800,
           }}
         >
-          {load} <span style={{ fontSize: 13, color: "var(--ink-muted)" }}>AU</span>
+          {load} <span style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>AU</span>
         </span>
       </div>
 

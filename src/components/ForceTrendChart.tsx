@@ -175,12 +175,12 @@ export default function ForceTrendChart({
             style={{ gridTemplateColumns: "1fr 1fr 1fr", marginBottom: 10 }}
           >
             <div>
-              <div style={{ fontSize: 9, color: "var(--ink-muted)" }}>Best</div>
+              <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>Best</div>
               <div
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
-                  fontSize: 16,
+                  fontSize: "var(--t-md)",
                   color: "var(--warning)",
                 }}
               >
@@ -188,12 +188,12 @@ export default function ForceTrendChart({
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 9, color: "var(--ink-muted)" }}>Last</div>
+              <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>Last</div>
               <div
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
-                  fontSize: 16,
+                  fontSize: "var(--t-md)",
                   color: "var(--ink)",
                 }}
               >
@@ -201,12 +201,12 @@ export default function ForceTrendChart({
               </div>
             </div>
             <div>
-              <div style={{ fontSize: 9, color: "var(--ink-muted)" }}>vs 30d avg</div>
+              <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>vs 30d avg</div>
               <div
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
-                  fontSize: 16,
+                  fontSize: "var(--t-md)",
                   color:
                     stats.delta === null
                       ? "var(--ink-muted)"
@@ -224,7 +224,7 @@ export default function ForceTrendChart({
           <Chart sorted={sorted} />
         </>
       ) : (
-        <div style={{ fontSize: 11, color: "var(--ink-faint)", padding: "12px 0" }}>
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", padding: "12px 0" }}>
           Not enough recordings with this tag yet.
         </div>
       )}
