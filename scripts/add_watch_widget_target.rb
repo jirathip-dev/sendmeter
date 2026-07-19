@@ -44,8 +44,11 @@ widget.build_configurations.each do |config|
   # `fastlane beta` pre-fetches + installs one for it (see Fastfile) — the only
   # thing this App ID lacked vs. the working phone widget.
   s["CODE_SIGN_STYLE"] = "Automatic"
-  s.delete("CODE_SIGN_IDENTITY")
-  s.delete("PROVISIONING_PROFILE_SPECIFIER")
+  # Apple Development at archive time (export re-signs to Distribution) so the
+  # appex matches its parent's cert — Xcode writes these when you toggle
+  # automatic signing for the target; keep them so a re-run stays consistent.
+  s["CODE_SIGN_IDENTITY"] = "Apple Development"
+  s["PROVISIONING_PROFILE_SPECIFIER"] = ""
   s["DEVELOPMENT_TEAM"] = "9244PWFYD7"
   s["SDKROOT"] = "watchos"
   s["WATCHOS_DEPLOYMENT_TARGET"] = "10.0"
