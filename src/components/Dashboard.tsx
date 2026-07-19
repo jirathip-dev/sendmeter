@@ -16,6 +16,7 @@ import { phaseAcwrFit } from "../lib/metrics";
 interface Props {
   phase: Phase;
   phaseDays: number;
+  todayLabel: string;
   acwrData: AcwrData;
   weeklyLoads: WeeklyLoad[];
   status: AcwrStatus;
@@ -30,6 +31,7 @@ interface Props {
 export default function Dashboard({
   phase,
   phaseDays,
+  todayLabel,
   acwrData,
   weeklyLoads,
   status,
@@ -106,7 +108,7 @@ export default function Dashboard({
                 letterSpacing: "0.1em",
               }}
             >
-              Phase · Day {phaseDays}
+              Phase · Day {phaseDays} · {todayLabel}
             </div>
             <div
               style={{

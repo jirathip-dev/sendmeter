@@ -141,6 +141,12 @@ function AuthedApp({
     Math.floor(
       (new Date(today()).getTime() - new Date(phaseStart).getTime()) / 86400000,
     ) + 1;
+  // Today's date for the phase strip (parse as LOCAL midnight so the label is
+  // right regardless of UTC offset).
+  const todayLabel = new Date(today() + "T00:00:00").toLocaleDateString(
+    undefined,
+    { weekday: "short", month: "short", day: "numeric" },
+  );
 
   function submitSession() {
     void addSession(form);
@@ -202,6 +208,7 @@ function AuthedApp({
               <Dashboard
                 phase={phase}
                 phaseDays={phaseDays}
+                todayLabel={todayLabel}
                 acwrData={acwrData}
                 weeklyLoads={weeklyLoads}
                 status={status}
