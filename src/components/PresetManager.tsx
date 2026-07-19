@@ -363,7 +363,7 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
               <input
                 type="range"
                 min={3}
-                max={60}
+                max={240}
                 value={holdS}
                 onChange={(e) => setHoldS(Number(e.target.value))}
                 style={{ width: "100%", accentColor: "var(--primary)" }}

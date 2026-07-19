@@ -18,7 +18,10 @@ export interface StoppedRecording {
   samples: TindeqSample[];
 }
 
-const MAX_RECORDING_MS = 120_000;
+// Safety cap on a single continuous recording. High enough that long holds
+// (up to 240s smart-CF targets) and full guided endurance protocols never get
+// cut off — it's only a runaway guard, not a normal stop.
+const MAX_RECORDING_MS = 1_800_000; // 30 min
 const IS_NATIVE = Capacitor.isNativePlatform();
 const FAKE_MODE =
   typeof window !== "undefined" &&

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
+import { useWakeLock } from "../hooks/useWakeLock";
 import {
   deleteRecording,
   fetchRecordings,
@@ -454,6 +455,9 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   // session, prompt to finish it (SL-58 #5) — the connection now persists
   // across tabs, so a disconnect is a deliberate end (or the device dying).
   const { status } = tindeq;
+  // Keep the screen awake while the gauge is live so a short auto-lock doesn't
+  // interrupt a hold/protocol mid-recording.
+  useWakeLock(status === "connected" || status === "measuring");
   const prevStatusRef = useRef(status);
   useEffect(() => {
     const prev = prevStatusRef.current;
