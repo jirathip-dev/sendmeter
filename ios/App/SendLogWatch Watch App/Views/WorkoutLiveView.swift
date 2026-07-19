@@ -43,6 +43,8 @@ struct WorkoutLiveView: View {
                 tunables: .default
             )
             await OfflineQueue.shared.enqueue(bundle)
+            WidgetBridge.updateLiveWorkout(active: false) // clear the live widget
+            await WidgetBridge.refreshStatus()            // fresh ACWR after the save
             ending = false
             justSaved = true
             WKInterfaceDevice.current().play(.success)

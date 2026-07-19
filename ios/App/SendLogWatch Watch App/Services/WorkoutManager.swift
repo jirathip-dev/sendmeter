@@ -124,6 +124,11 @@ final class WorkoutManager: NSObject {
             startFusion()
             isRunning = true
             refitRPEModelIfStale()
+            // Surface the live workout in the Smart Stack / complications.
+            WidgetBridge.updateLiveWorkout(
+                active: true, boulders: 0, climbing: false,
+                phaseSince: start, restTargetS: restTargetS
+            )
         } catch {
             errorMsg = error.localizedDescription
         }
@@ -148,6 +153,13 @@ final class WorkoutManager: NSObject {
         manualClimbing = detector.isManualAttemptOpen
         liveAttempts = detector.liveAttemptCount
         pushBeat()
+        WidgetBridge.updateLiveWorkout(
+            active: true,
+            boulders: liveAttempts,
+            climbing: manualClimbing,
+            phaseSince: manualClimbing ? climbingSince : restStartedAt,
+            restTargetS: restTargetS
+        )
     }
 
     /// Snapshot state and fire one best-effort live heartbeat — over Supabase

@@ -38,13 +38,24 @@ platform :ios do
     # for it — sigh does NOT create App IDs, and `produce`'s API-key support
     # is unreliable, so hit the ASC API directly (idempotent).
     widgets_id = "#{APP_IDENTIFIER}.widgets"
-    existing = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: widgets_id })
-    unless existing.any? { |b| b.identifier == widgets_id }
-      Spaceship::ConnectAPI::BundleId.create(
-        name: "Sendmeter Widgets", identifier: widgets_id, platform: "IOS"
-      )
-      UI.message("Registered App ID #{widgets_id}")
+    watch_widgets_id = "#{APP_IDENTIFIER}.watchkitapp.widgets"
+    [
+      [widgets_id, "Sendmeter Widgets"],
+      [watch_widgets_id, "Sendmeter Watch Widgets"],
+    ].each do |id, name|
+      existing = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: id })
+      unless existing.any? { |b| b.identifier == id }
+        Spaceship::ConnectAPI::BundleId.create(name: name, identifier: id, platform: "IOS")
+        UI.message("Registered App ID #{id}")
+      end
     end
+
+    # NOTE (one-time manual step): the watch widgets read the watch app's data
+    # via App Group `group.com.jirathip.sendlog`. Enable that App Group in the
+    # Apple Developer portal on BOTH `#{APP_IDENTIFIER}.watchkitapp` and
+    # `#{watch_widgets_id}` (Certificates, IDs & Profiles → the App ID →
+    # Capabilities → App Groups). Until then, get_provisioning_profile below
+    # will fail for the watch-widgets App ID with a capability-mismatch error.
 
     # App Store provisioning profiles that include the distribution cert above,
     # for the app + its embedded watch app + the widget extension. force: true
@@ -54,7 +65,7 @@ platform :ios do
     # avoiding Xcode cloud-managed signing, which the API key isn't permitted
     # to drive.
     profiles = {}
-    [APP_IDENTIFIER, "#{APP_IDENTIFIER}.watchkitapp", widgets_id].each do |bundle_id|
+    [APP_IDENTIFIER, "#{APP_IDENTIFIER}.watchkitapp", widgets_id, watch_widgets_id].each do |bundle_id|
       get_provisioning_profile(
         api_key: api_key,
         app_identifier: bundle_id,

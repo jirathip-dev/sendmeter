@@ -6,15 +6,11 @@ struct HomeView: View {
 
     var body: some View {
         List {
-            NavigationLink {
-                ForceGaugeView()
-            } label: {
+            NavigationLink(value: WatchDest.force) {
                 Label("Force Gauge", systemImage: "scalemass")
             }
 
-            NavigationLink {
-                WorkoutLiveView()
-            } label: {
+            NavigationLink(value: WatchDest.workout) {
                 Label("Climb Workout", systemImage: "figure.climbing")
             }
 
