@@ -869,7 +869,7 @@ export async function insertPhoneWorkout(input: {
   typeLabel: string;
   rpe: number;
   phase: PhaseId;
-}): Promise<void> {
+}): Promise<Session> {
   const durationMin = Math.max(
     1,
     Math.min(
@@ -926,6 +926,21 @@ export async function insertPhoneWorkout(input: {
       ),
     );
   }
+  // Return the saved session so callers can offer an immediate "Edit" (the
+  // auto-save-on-stop flow toasts with an edit action).
+  return {
+    id: session.id,
+    date: today(),
+    type: input.type,
+    typeLabel: input.typeLabel,
+    duration: durationMin,
+    rpe: input.rpe,
+    load: durationMin * input.rpe,
+    note: `${n} boulder${n === 1 ? "" : "s"}`,
+    phase: input.phase,
+    groupId: null,
+    workoutSource: "phone",
+  };
 }
 
 /// The workout's 1Hz HR trace, from climb_workouts.raw

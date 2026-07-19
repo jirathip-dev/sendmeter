@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { SESSION_TYPES } from "../constants";
 import { useLiveWorkout } from "../hooks/useLiveWorkout";
 import { usePhoneWorkout } from "../hooks/usePhoneWorkout";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
-import { insertPhoneWorkout } from "../lib/repo";
-import type { PhaseId } from "../types";
+import { insertPhoneWorkout, updateSession } from "../lib/repo";
+import type { PhaseId, Session, SessionPatch } from "../types";
+import EditSessionSheet from "./EditSessionSheet";
 import LiveWorkoutCard from "./LiveWorkoutCard";
 import LiveWorkoutFullscreen from "./LiveWorkoutFullscreen";
 import PhoneWorkoutCard from "./PhoneWorkoutCard";
@@ -12,6 +14,11 @@ import PhoneWorkoutFullscreen from "./PhoneWorkoutFullscreen";
 import RoutineCard from "./RoutineCard";
 import RpeScatterCard from "./RpeScatterCard";
 import Sheet from "./Sheet";
+
+// Auto-save-on-stop defaults: RPE banked without a prompt, and the last type
+// the user picked (via the edit sheet) so it's not always "gym".
+const LAST_TYPE_KEY = "sendmeter:last-workout-type";
+const DEFAULT_RPE = 6;
 
 interface Props {
   userId: string;
@@ -28,7 +35,6 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
   const toast = useToast();
   const live = useLiveWorkout(userId);
   const [phone, dispatch] = usePhoneWorkout();
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A running phone workout takes over full-screen; "minimize" drops back to
   // a resume bar so the rest of the tab is reachable. Defaults to minimized so
@@ -38,37 +44,75 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
   const [showRpeModel, setShowRpeModel] = useState(false);
   // Fullscreen mirror of a live WATCH workout (read-only; watch owns it).
   const [liveOpen, setLiveOpen] = useState(false);
+  // The just-saved workout, opened for editing from the toast's "Set RPE"
+  // action (auto-save-on-stop has no blocking confirm form anymore).
+  const [editingSession, setEditingSession] = useState<Session | null>(null);
 
-  async function savePhoneWorkout(meta: {
-    type: string;
-    typeLabel: string;
-    rpe: number;
-  }) {
+  // Stopping a workout SAVES it immediately — no RPE/type confirm form (that
+  // was friction). It banks a default RPE + the last-used type; the success
+  // toast offers "Set RPE" to tweak either. Runs once per confirming state.
+  const autoSaveInFlightRef = useRef(false);
+
+  async function autoSaveWorkout() {
     if (phone.phase !== "confirming") return;
-    setSaving(true);
+    const { startedAt, endedAt, attempts } = phone;
+    const n = attempts.length;
+    const typeId = localStorage.getItem(LAST_TYPE_KEY) || "gym";
+    const typeInfo =
+      SESSION_TYPES.find((t) => t.id === typeId) ??
+      SESSION_TYPES.find((t) => t.id === "gym")!;
     setError(null);
     try {
-      await insertPhoneWorkout({
-        startedAt: phone.startedAt,
-        endedAt: phone.endedAt,
-        attempts: phone.attempts,
-        type: meta.type,
-        typeLabel: meta.typeLabel,
-        rpe: meta.rpe,
+      const saved = await insertPhoneWorkout({
+        startedAt,
+        endedAt,
+        attempts,
+        type: typeInfo.id,
+        typeLabel: typeInfo.label,
+        rpe: DEFAULT_RPE,
         phase: currentPhase,
       });
       dispatch({ type: "reset" });
-      toast(`Workout saved · ${meta.typeLabel}`);
-      // Silent refetch of the workout list + the training data (Dashboard/
-      // History/ACWR) — NOT reload(), which flips the global loading spinner
-      // and would unmount this view mid-save, dropping the reset above. The
-      // insert also publishes a realtime change; this bump is belt-and-braces.
+      // Silent refetch (NOT reload(), which flips the global spinner + unmounts
+      // this view mid-save). The insert also publishes realtime; belt-and-braces.
       bumpRealtime();
+      toast(`Workout saved · ${n} boulder${n === 1 ? "" : "s"}`, "success", {
+        label: "Set RPE",
+        onClick: () => setEditingSession(saved),
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save workout");
-    } finally {
-      setSaving(false);
     }
+  }
+
+  useEffect(() => {
+    // Reset the guard once we leave "confirming" (save done → reset → idle) so
+    // the next workout auto-saves. All ref writes stay inside this effect.
+    if (phone.phase !== "confirming") {
+      autoSaveInFlightRef.current = false;
+      return;
+    }
+    if (autoSaveInFlightRef.current) return;
+    autoSaveInFlightRef.current = true;
+    void autoSaveWorkout();
+    // autoSaveWorkout reads phone/currentPhase at call time; depending on it
+    // would re-run every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phone.phase]);
+
+  function saveEditedWorkout(patch: SessionPatch) {
+    const id = editingSession?.id;
+    if (!id) return;
+    localStorage.setItem(LAST_TYPE_KEY, patch.type); // remember the pick
+    void (async () => {
+      try {
+        await updateSession(id, patch);
+        bumpRealtime();
+        toast("Workout updated");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to update workout");
+      }
+    })();
   }
 
   return (
@@ -100,9 +144,17 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
         <PhoneWorkoutCard
           state={phone}
           dispatch={dispatch}
-          saving={saving}
-          onSave={(meta) => void savePhoneWorkout(meta)}
           onOpen={() => setMinimized(false)}
+        />
+      )}
+
+      {/* Edit the just-saved workout (RPE / type / duration / note) from the
+          success toast's "Set RPE" action. */}
+      {editingSession && (
+        <EditSessionSheet
+          session={editingSession}
+          onSave={saveEditedWorkout}
+          onClose={() => setEditingSession(null)}
         />
       )}
 

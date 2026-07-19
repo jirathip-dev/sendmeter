@@ -1,6 +1,11 @@
 import { useCallback, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ToastContext, type Toast, type ToastKind } from "../hooks/useToast";
+import {
+  ToastContext,
+  type Toast,
+  type ToastAction,
+  type ToastKind,
+} from "../hooks/useToast";
 
 const KIND_COLOR: Record<ToastKind, string> = {
   success: "var(--success)",
@@ -15,13 +20,20 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(1);
 
-  const showToast = useCallback((message: string, kind: ToastKind = "success") => {
-    const id = nextId.current++;
-    setToasts((list) => [...list, { id, message, kind }]);
-    setTimeout(() => {
-      setToasts((list) => list.filter((t) => t.id !== id));
-    }, 2600);
-  }, []);
+  const showToast = useCallback(
+    (message: string, kind: ToastKind = "success", action?: ToastAction) => {
+      const id = nextId.current++;
+      setToasts((list) => [...list, { id, message, kind, action }]);
+      setTimeout(
+        () => {
+          setToasts((list) => list.filter((t) => t.id !== id));
+        },
+        // A toast with a tappable action lingers longer so it can be used.
+        action ? 5000 : 2600,
+      );
+    },
+    [],
+  );
 
   return (
     <ToastContext.Provider value={showToast}>
@@ -45,9 +57,39 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             className="toast-item"
-            style={{ borderLeft: `3px solid ${KIND_COLOR[t.kind]}` }}
+            style={{
+              borderLeft: `3px solid ${KIND_COLOR[t.kind]}`,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              // The bar itself ignores pointer events; a toast with an action
+              // must accept taps on its button.
+              pointerEvents: t.action ? "auto" : "none",
+            }}
           >
-            {t.message}
+            <span>{t.message}</span>
+            {t.action && (
+              <button
+                onClick={() => {
+                  t.action!.onClick();
+                  setToasts((list) => list.filter((x) => x.id !== t.id));
+                }}
+                style={{
+                  flexShrink: 0,
+                  background: "none",
+                  border: "none",
+                  padding: "2px 4px",
+                  margin: "-2px -2px -2px 0",
+                  fontFamily: "inherit",
+                  fontSize: "var(--t-sm)",
+                  fontWeight: 700,
+                  color: KIND_COLOR[t.kind],
+                  cursor: "pointer",
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
         ))}
       </div>

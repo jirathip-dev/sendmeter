@@ -1,5 +1,3 @@
-import { useState } from "react";
-import { SESSION_TYPES } from "../constants";
 import type {
   PhoneWorkoutAction,
   PhoneWorkoutState,
@@ -8,29 +6,19 @@ import type {
 interface Props {
   state: PhoneWorkoutState;
   dispatch: (action: PhoneWorkoutAction) => void;
-  saving: boolean;
-  onSave: (input: { type: string; typeLabel: string; rpe: number }) => void;
   /// Open the full-screen immersive view (fresh start, or resume from the bar).
   onOpen: () => void;
 }
 
-// Loggable types for a phone workout — real training types only.
-const TYPE_OPTIONS = SESSION_TYPES.filter(
-  (t) => t.id !== "auto" && t.id !== "tindeq",
-);
-
 /// Phone-only workout logging (SL-41): Start opens the immersive full-screen
-/// timer (PhoneWorkoutFullscreen). This card shows the idle prompt, a
-/// minimized "resume" bar while a workout runs, and the log/confirm form.
+/// timer (PhoneWorkoutFullscreen). This card shows the idle prompt and a
+/// minimized "resume" bar while a workout runs. Stopping auto-saves (no
+/// confirm form) — WorkoutView owns that + the "Set RPE" edit toast.
 export default function PhoneWorkoutCard({
   state,
   dispatch,
-  saving,
-  onSave,
   onOpen,
 }: Props) {
-  const [type, setType] = useState("gym");
-  const [rpe, setRpe] = useState(6);
   const onResume = onOpen;
 
   if (state.phase === "idle") {
@@ -94,78 +82,18 @@ export default function PhoneWorkoutCard({
     );
   }
 
-  // confirming
-  const durationMin = Math.max(
-    1,
-    Math.round(
-      (new Date(state.endedAt).getTime() -
-        new Date(state.startedAt).getTime()) /
-        60000,
-    ),
-  );
+  // confirming — the workout auto-saves the instant it's stopped (WorkoutView
+  // effect); this card is just the momentary "saving" placeholder.
   return (
     <div className="card" style={{ marginBottom: 12 }}>
-      <div className="card-title" style={{ marginBottom: 8 }}>
-        Log workout
+      <div className="card-title" style={{ marginBottom: 6 }}>
+        Saving workout…
       </div>
-      <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 4 }}>
-        {durationMin} min ·{" "}
+      <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>
         <span style={{ color: "var(--primary)", fontWeight: 700 }}>
           {state.attempts.length}
         </span>{" "}
-        boulder{state.attempts.length === 1 ? "" : "s"}
-      </div>
-
-      <span className="field-label">Session Type</span>
-      <select
-        className="field"
-        value={type}
-        onChange={(e) => setType(e.target.value)}
-      >
-        {TYPE_OPTIONS.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.label}
-          </option>
-        ))}
-      </select>
-
-      <span className="field-label">RPE (1–10)</span>
-      <div className="stepper">
-        <button
-          className="stepper-btn"
-          onClick={() => setRpe((r) => Math.max(1, r - 1))}
-        >
-          −
-        </button>
-        <span className="stepper-val" style={{ color: "var(--primary)" }}>{rpe}</span>
-        <button
-          className="stepper-btn"
-          onClick={() => setRpe((r) => Math.min(10, r + 1))}
-        >
-          +
-        </button>
-      </div>
-
-      <div style={{ marginTop: 14 }}>
-        <button
-          className="btn-primary"
-          disabled={saving}
-          onClick={() => {
-            const typeInfo = TYPE_OPTIONS.find((t) => t.id === type);
-            onSave({ type, typeLabel: typeInfo?.label || type, rpe });
-          }}
-        >
-          {saving ? "Saving…" : "Save Workout"}
-        </button>
-      </div>
-      <div style={{ marginTop: 8 }}>
-        <button
-          className="btn-ghost"
-          disabled={saving}
-          onClick={() => dispatch({ type: "reset" })}
-        >
-          Discard
-        </button>
+        boulder{state.attempts.length === 1 ? "" : "s"} logged
       </div>
     </div>
   );
