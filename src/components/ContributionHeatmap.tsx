@@ -129,30 +129,28 @@ export default function ContributionHeatmap({
   return (
     <div>
       <div style={{ display: "flex", gap: 5 }}>
-        {/* Weekday labels — pinned to rows 2/4/6 of the 7-row grid */}
-        <div
-          style={{
-            flexShrink: 0,
-            display: "grid",
-            gridTemplateRows: "repeat(7, 1fr)",
-            rowGap: GAP,
-            paddingTop: 14,
-          }}
-        >
-          {[0, 1, 2, 3, 4, 5, 6].map((r) => (
-            <div
+        {/* Weekday labels — absolutely pinned to the Mon/Wed/Fri cell-row
+            centers so they track the (tiny, fluid) grid rows. A text-sized grid
+            can't compress to the ~4px cell rows on a phone, which is what made
+            the labels drift out of alignment. The 14px offset clears the
+            month-label row; `100% - 14px` is the exact cell-grid height. */}
+        <div style={{ flexShrink: 0, position: "relative", width: 22 }}>
+          {WEEKDAY_ROWS.map((r, i) => (
+            <span
               key={r}
               style={{
+                position: "absolute",
+                right: 3,
+                top: `calc(14px + (100% - 14px) * ${((r + 0.5) / 7).toFixed(4)})`,
+                transform: "translateY(-50%)",
                 fontSize: 8,
+                lineHeight: 1,
+                whiteSpace: "nowrap",
                 color: "var(--ink-faint)",
-                display: "flex",
-                alignItems: "center",
               }}
             >
-              {WEEKDAY_ROWS.includes(r as 1 | 3 | 5)
-                ? WEEKDAY_NAMES[WEEKDAY_ROWS.indexOf(r as 1 | 3 | 5)]
-                : ""}
-            </div>
+              {WEEKDAY_NAMES[i]}
+            </span>
           ))}
         </div>
 
