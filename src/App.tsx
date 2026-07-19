@@ -130,12 +130,13 @@ function AuthedApp({
 
   const phase = PHASES.find((p) => p.id === currentPhase) || PHASES[0]!;
   const status = getACWRStatus(acwrData.acwr);
-  // "Day N" counts from the first session actually logged in the current phase
-  // (auto from history), not the raw phase_start_date. The open phase period's
-  // start bounds it; phaseStartDate is the fallback for old accounts.
+  // "Day N" counts from the current phase's streak of logged sessions (auto
+  // from history), so toggling to another phase and back doesn't reset it. The
+  // open period's start (or phaseStartDate) is only the fallback when nothing's
+  // been logged in the phase yet.
   const periodStart =
     phasePeriods.find((p) => p.endedOn === null)?.startedOn ?? phaseStartDate;
-  const phaseStart = phaseStartFromHistory(sessions, periodStart);
+  const phaseStart = phaseStartFromHistory(sessions, currentPhase, periodStart);
   const phaseDays =
     Math.floor(
       (new Date(today()).getTime() - new Date(phaseStart).getTime()) / 86400000,

@@ -179,27 +179,44 @@ describe("computeTindeqStats", () => {
 });
 
 describe("phaseStartFromHistory", () => {
-  const start = "2026-07-10";
+  const fallback = "2026-07-19";
 
-  it("falls back to periodStart when no session is in the phase", () => {
-    expect(phaseStartFromHistory([], start)).toBe(start);
-    // sessions all predate the phase → ignored
+  it("falls back when no current-phase session exists yet", () => {
+    expect(phaseStartFromHistory([], "capacity", fallback)).toBe(fallback);
+    // newest session is a different phase → streak is empty → fallback
     expect(
-      phaseStartFromHistory([{ date: "2026-07-01" }, { date: "2026-07-05" }], start),
-    ).toBe(start);
+      phaseStartFromHistory([{ date: "2026-07-18", phase: "strength" }], "capacity", fallback),
+    ).toBe(fallback);
   });
 
-  it("returns the earliest session on/after the phase start", () => {
+  it("returns the earliest session of the current phase's streak", () => {
     const sessions = [
-      { date: "2026-07-20" },
-      { date: "2026-07-12" }, // earliest in-phase
-      { date: "2026-07-05" }, // before phase — ignored
-      { date: "2026-07-15" },
+      { date: "2026-07-18", phase: "capacity" as const },
+      { date: "2026-07-15", phase: "capacity" as const },
+      { date: "2026-07-10", phase: "capacity" as const }, // earliest in streak
     ];
-    expect(phaseStartFromHistory(sessions, start)).toBe("2026-07-12");
+    expect(phaseStartFromHistory(sessions, "capacity", fallback)).toBe("2026-07-10");
   });
 
-  it("counts a session logged exactly on the phase start", () => {
-    expect(phaseStartFromHistory([{ date: start }], start)).toBe(start);
+  it("survives a brief toggle to another phase that logged nothing", () => {
+    // Capacity for days, a Strength period was opened + closed with no session,
+    // now back on Capacity. All sessions are capacity → count from the first.
+    const sessions = [
+      { date: "2026-07-19", phase: "capacity" as const }, // after returning
+      { date: "2026-07-12", phase: "capacity" as const },
+      { date: "2026-07-02", phase: "capacity" as const }, // real start
+    ];
+    // fallback (today's fresh period) would wrongly give Day 1
+    expect(phaseStartFromHistory(sessions, "capacity", fallback)).toBe("2026-07-02");
+  });
+
+  it("resets when a real different-phase block interrupts the streak", () => {
+    const sessions = [
+      { date: "2026-07-18", phase: "capacity" as const },
+      { date: "2026-07-16", phase: "capacity" as const }, // new capacity block start
+      { date: "2026-07-14", phase: "strength" as const }, // breaks the streak
+      { date: "2026-07-05", phase: "capacity" as const }, // older — not counted
+    ];
+    expect(phaseStartFromHistory(sessions, "capacity", fallback)).toBe("2026-07-16");
   });
 });

@@ -2,6 +2,7 @@ import type {
   AcwrData,
   AcwrStatus,
   Phase,
+  PhaseId,
   Session,
   TindeqRecordingMeta,
   WeeklyLoad,
@@ -37,21 +38,26 @@ export function phaseAcwrFit(
   return "on";
 }
 
-/// The effective start date for the current phase's "Day N" counter: the
-/// earliest logged session on/after the phase began (so the count reflects when
-/// training actually started), falling back to `periodStart` when no session has
-/// been logged in the phase yet. Both inputs and the result are YYYY-MM-DD.
+/// The effective start date for the current phase's "Day N" counter, taken from
+/// session *history* rather than the phase_periods row — so briefly switching to
+/// another phase and back (which opens a fresh period dated today) doesn't reset
+/// the count. Walks sessions newest → oldest and follows the current phase's
+/// unbroken streak (a session of a *different* phase ends it); the earliest
+/// session in that streak is when the phase actually started. Falls back to
+/// `fallbackStart` (the open period's start) when no current-phase session
+/// exists yet — e.g. a genuine fresh switch. All dates are YYYY-MM-DD.
 export function phaseStartFromHistory(
-  sessions: Pick<Session, "date">[],
-  periodStart: string,
+  sessions: Pick<Session, "date" | "phase">[],
+  currentPhase: PhaseId,
+  fallbackStart: string,
 ): string {
-  let earliest: string | null = null;
-  for (const s of sessions) {
-    if (s.date >= periodStart && (earliest === null || s.date < earliest)) {
-      earliest = s.date;
-    }
+  const desc = [...sessions].sort((a, b) => b.date.localeCompare(a.date));
+  let start: string | null = null;
+  for (const s of desc) {
+    if (s.phase !== currentPhase) break;
+    start = s.date;
   }
-  return earliest ?? periodStart;
+  return start ?? fallbackStart;
 }
 
 const EWMA_LOOKBACK_DAYS = 90;
