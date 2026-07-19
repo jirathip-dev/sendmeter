@@ -7,7 +7,6 @@ import type { PhaseId, PhasePeriod } from "../types";
 interface Props {
   currentPhase: PhaseId;
   phasePeriods: PhasePeriod[];
-  onSetPhase: (id: PhaseId) => void;
 }
 
 function periodDays(p: PhasePeriod): number {
@@ -27,11 +26,7 @@ const ZONES = [
   { range: "> 1.5", label: "Danger — injury risk", color: "var(--danger)" },
 ];
 
-export default function PhasesView({
-  currentPhase,
-  phasePeriods,
-  onSetPhase,
-}: Props) {
+export default function PhasesView({ currentPhase, phasePeriods }: Props) {
   const [hoveredPeriod, hoverPeriodProps] = useChartHover<number>();
   const chronological = [...phasePeriods].sort((a, b) =>
     a.startedOn.localeCompare(b.startedOn),
@@ -59,7 +54,10 @@ export default function PhasesView({
   return (
     <div>
       <div className="section-head">PHASES</div>
-      <div className="section-sub">Tap to set your current training phase.</div>
+      <div className="section-sub">
+        Your training blocks — what each targets and when you ran it. Change the
+        current phase from the phase strip on Home.
+      </div>
 
       {PHASES.map((p) => (
         <div
@@ -68,8 +66,8 @@ export default function PhasesView({
           style={{
             background: p.bg,
             border: `1px solid ${currentPhase === p.id ? p.color : p.border}`,
+            cursor: "default",
           }}
-          onClick={() => onSetPhase(p.id)}
         >
           <div
             style={{

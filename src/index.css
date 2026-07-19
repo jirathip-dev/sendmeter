@@ -83,6 +83,18 @@
    behind Safari's toolbar (outside .app-shell's 100dvh) show as white bands. */
 html, body { height: 100%; overflow: hidden; background: var(--bg); }
 #root { height: 100%; }
+
+/* Native-app feel: no drag-select or iOS long-press callout on chrome/labels.
+   Re-enabled on form fields below so typing/editing still works. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+input, textarea, select, [contenteditable] {
+  -webkit-user-select: text;
+  user-select: text;
+}
 ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: var(--bg); } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .app-shell {

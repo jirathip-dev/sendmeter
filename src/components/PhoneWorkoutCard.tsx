@@ -109,8 +109,11 @@ export default function PhoneWorkoutCard({
         Log workout
       </div>
       <div style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 4 }}>
-        {durationMin} min · {state.attempts.length} boulder
-        {state.attempts.length === 1 ? "" : "s"}
+        {durationMin} min ·{" "}
+        <span style={{ color: "var(--primary)", fontWeight: 700 }}>
+          {state.attempts.length}
+        </span>{" "}
+        boulder{state.attempts.length === 1 ? "" : "s"}
       </div>
 
       <span className="field-label">Session Type</span>
@@ -134,7 +137,7 @@ export default function PhoneWorkoutCard({
         >
           −
         </button>
-        <span className="stepper-val">{rpe}</span>
+        <span className="stepper-val" style={{ color: "var(--primary)" }}>{rpe}</span>
         <button
           className="stepper-btn"
           onClick={() => setRpe((r) => Math.min(10, r + 1))}

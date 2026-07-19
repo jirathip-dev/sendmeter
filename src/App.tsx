@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PHASES } from "./constants";
 import { today } from "./lib/dates";
-import { computeAcwr, computeWeeklyLoads, getACWRStatus } from "./lib/metrics";
+import {
+  computeAcwr,
+  computeWeeklyLoads,
+  getACWRStatus,
+  phaseStartFromHistory,
+} from "./lib/metrics";
 import { useAuth } from "./hooks/useAuth";
 import { useTrainingData } from "./hooks/useTrainingData";
 import type { LogFormState, Session, ViewId } from "./types";
@@ -81,6 +86,7 @@ function AuthedApp({
   const [showModal, setShowModal] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | null>(null);
   const [showPhases, setShowPhases] = useState(false);
+  const [showPhaseChange, setShowPhaseChange] = useState(false);
   const [showWatchSheet, setShowWatchSheet] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [form, setForm] = useState<LogFormState>({
@@ -119,10 +125,15 @@ function AuthedApp({
 
   const phase = PHASES.find((p) => p.id === currentPhase) || PHASES[0]!;
   const status = getACWRStatus(acwrData.acwr);
+  // "Day N" counts from the first session actually logged in the current phase
+  // (auto from history), not the raw phase_start_date. The open phase period's
+  // start bounds it; phaseStartDate is the fallback for old accounts.
+  const periodStart =
+    phasePeriods.find((p) => p.endedOn === null)?.startedOn ?? phaseStartDate;
+  const phaseStart = phaseStartFromHistory(sessions, periodStart);
   const phaseDays =
     Math.floor(
-      (new Date(today()).getTime() - new Date(phaseStartDate).getTime()) /
-        86400000,
+      (new Date(today()).getTime() - new Date(phaseStart).getTime()) / 86400000,
     ) + 1;
 
   function submitSession() {
@@ -189,6 +200,7 @@ function AuthedApp({
                 status={status}
                 sessions={sessions}
                 onOpenPhases={() => setShowPhases(true)}
+                onChangePhase={() => setShowPhaseChange(true)}
               />
             )}
             {view === "history" && (
@@ -247,17 +259,81 @@ function AuthedApp({
         </Sheet>
       )}
 
-      {/* Phases bottom sheet */}
+      {/* Phases bottom sheet — informational only (no tap-to-set) */}
       {showPhases && (
         <Sheet fullHeight onClose={() => setShowPhases(false)}>
-          <PhasesView
-            currentPhase={currentPhase}
-            phasePeriods={phasePeriods}
-            onSetPhase={(id) => void setPhase(id)}
-          />
+          <PhasesView currentPhase={currentPhase} phasePeriods={phasePeriods} />
           <div style={{ marginTop: 10 }}>
             <button className="btn-ghost" onClick={() => setShowPhases(false)}>
               Close
+            </button>
+          </div>
+        </Sheet>
+      )}
+
+      {/* Compact phase switcher — the actual "change phase" control (the sheet
+          above is reference only). */}
+      {showPhaseChange && (
+        <Sheet onClose={() => setShowPhaseChange(false)}>
+          <div
+            style={{
+              fontFamily: "Inter, sans-serif",
+              fontSize: 20,
+              fontWeight: 800,
+              marginBottom: 2,
+            }}
+          >
+            Change phase
+          </div>
+          <div style={{ fontSize: 11, color: "var(--ink-muted)", marginBottom: 12 }}>
+            Sets the training block your sessions log under.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {PHASES.map((p) => {
+              const active = p.id === currentPhase;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => {
+                    if (!active) void setPhase(p.id);
+                    setShowPhaseChange(false);
+                  }}
+                  style={{
+                    textAlign: "left",
+                    padding: "12px 14px",
+                    borderRadius: 10,
+                    cursor: "pointer",
+                    background: active ? p.bg : "var(--surface-1)",
+                    border: `1px solid ${active ? p.color : "var(--border)"}`,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <span style={{ fontSize: 14, fontWeight: 700, color: p.color }}>
+                      {p.name}
+                    </span>
+                    {active && (
+                      <span style={{ fontSize: 9, color: p.color, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                        Current
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
+                    {p.desc}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <button className="btn-ghost" onClick={() => setShowPhaseChange(false)}>
+              Cancel
             </button>
           </div>
         </Sheet>

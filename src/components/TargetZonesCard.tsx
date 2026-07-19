@@ -20,6 +20,15 @@ interface Props {
   onSelect: (sel: ZoneSelection | null) => void;
 }
 
+/// Each training quality gets its own hue (cool → warm as it moves from
+/// endurance to power), so the zone chips read as a spectrum, not one color.
+const QUALITY_COLORS: Record<TrainingQuality, string> = {
+  power: "var(--danger)", // orange — max intensity
+  strength: "var(--warning)", // yellow
+  "power-endurance": "var(--info)", // violet
+  endurance: "var(--success)", // electric blue
+};
+
 function fmt(sec: number): string {
   if (sec < 60) return `${sec}s`;
   const m = Math.floor(sec / 60);
@@ -92,6 +101,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
           <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
             {QUALITIES.map((q) => {
               const isActive = active && quality === q.id;
+              const zc = QUALITY_COLORS[q.id];
               return (
                 <button
                   key={q.id}
@@ -106,9 +116,11 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                     onSelect(build(q.id, alternate));
                   }}
                   style={{
-                    background: isActive ? "var(--primary)" : "var(--surface-1)",
-                    color: isActive ? "#ffffff" : "var(--ink-muted)",
-                    border: `1px solid ${isActive ? "var(--primary)" : "var(--border)"}`,
+                    // Filled with its hue when active; hue-tinted text + outline
+                    // when idle so each zone stays colour-coded.
+                    background: isActive ? zc : "var(--surface-1)",
+                    color: isActive ? "#ffffff" : zc,
+                    border: `1px solid ${zc}`,
                     cursor: "pointer",
                     fontFamily: "Inter, sans-serif",
                   }}
@@ -126,7 +138,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                     fontFamily: "Inter, sans-serif",
                     fontSize: 22,
                     fontWeight: 800,
-                    color: "var(--success)",
+                    color: quality ? QUALITY_COLORS[quality] : "var(--success)",
                   }}
                 >
                   {zoneT.targetKg.toFixed(1)} kg

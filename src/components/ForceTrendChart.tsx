@@ -194,7 +194,7 @@ export default function ForceTrendChart({
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                   fontSize: 16,
-                  color: "var(--surface-1)",
+                  color: "var(--ink)",
                 }}
               >
                 {stats.lastPeak.toFixed(1)}

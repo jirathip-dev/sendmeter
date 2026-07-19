@@ -20,6 +20,7 @@ interface Props {
   status: AcwrStatus;
   sessions: Session[];
   onOpenPhases: () => void;
+  onChangePhase: () => void;
 }
 
 /// Home: phase banner + ACWR with the full training-load detail inline
@@ -33,6 +34,7 @@ export default function Dashboard({
   status,
   sessions,
   onOpenPhases,
+  onChangePhase,
 }: Props) {
   const [showRecovery, setShowRecovery] = useState(false);
   const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
@@ -75,7 +77,7 @@ export default function Dashboard({
           carries color; it no longer fills the screen as a big colored box. */}
       <div
         className="phase-banner"
-        title="Change training phase"
+        title="Phase details"
         onClick={onOpenPhases}
         style={{
           marginBottom: 10,
@@ -122,13 +124,36 @@ export default function Dashboard({
             </span>
           </div>
         </div>
-        <div style={{ textAlign: "right", flexShrink: 0 }}>
-          <div style={{ fontSize: 9, color: "var(--ink-muted)", textTransform: "uppercase" }}>
-            Target
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 9, color: "var(--ink-muted)", textTransform: "uppercase" }}>
+              Target
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+              {phase.acwr}
+            </div>
           </div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
-            {phase.acwr}
-          </div>
+          {/* The actual phase switcher — the strip/sheet are reference only. */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onChangePhase();
+            }}
+            style={{
+              flexShrink: 0,
+              background: "var(--surface-1)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: "6px 10px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: 10,
+              fontWeight: 600,
+              color: "var(--ink-muted)",
+              cursor: "pointer",
+            }}
+          >
+            Change
+          </button>
         </div>
       </div>
 

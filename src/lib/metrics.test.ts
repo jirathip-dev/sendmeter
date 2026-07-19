@@ -6,6 +6,7 @@ import {
   computeTindeqStats,
   ewma,
   phaseAcwrFit,
+  phaseStartFromHistory,
 } from "./metrics";
 import { today, daysAgo } from "./dates";
 import type { Session, TindeqRecordingMeta } from "../types";
@@ -174,5 +175,31 @@ describe("computeTindeqStats", () => {
     expect(s.lastPeak).toBe(32);
     expect(s.avg30d).toBe(32); // mean of the two earlier within 30d: (30+34)/2
     expect(s.delta).toBe(0); // 32 − 32
+  });
+});
+
+describe("phaseStartFromHistory", () => {
+  const start = "2026-07-10";
+
+  it("falls back to periodStart when no session is in the phase", () => {
+    expect(phaseStartFromHistory([], start)).toBe(start);
+    // sessions all predate the phase → ignored
+    expect(
+      phaseStartFromHistory([{ date: "2026-07-01" }, { date: "2026-07-05" }], start),
+    ).toBe(start);
+  });
+
+  it("returns the earliest session on/after the phase start", () => {
+    const sessions = [
+      { date: "2026-07-20" },
+      { date: "2026-07-12" }, // earliest in-phase
+      { date: "2026-07-05" }, // before phase — ignored
+      { date: "2026-07-15" },
+    ];
+    expect(phaseStartFromHistory(sessions, start)).toBe("2026-07-12");
+  });
+
+  it("counts a session logged exactly on the phase start", () => {
+    expect(phaseStartFromHistory([{ date: start }], start)).toBe(start);
   });
 });

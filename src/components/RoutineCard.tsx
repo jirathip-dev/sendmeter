@@ -184,8 +184,10 @@ export default function RoutineCard() {
                 {p.name}
               </div>
               <div style={{ fontSize: 11, color: "var(--ink-muted)", marginTop: 2 }}>
-                {p.steps.length} step{p.steps.length === 1 ? "" : "s"} ·{" "}
-                {fmtTotal(p.steps)}
+                <span style={{ color: "var(--info)", fontWeight: 600 }}>
+                  {p.steps.length} step{p.steps.length === 1 ? "" : "s"}
+                </span>{" "}
+                · <span style={{ color: "var(--info)", fontWeight: 600 }}>{fmtTotal(p.steps)}</span>
                 {" · "}
                 {p.steps.map((st) => st.label).join(" → ")}
               </div>

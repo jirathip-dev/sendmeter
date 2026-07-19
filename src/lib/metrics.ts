@@ -37,6 +37,23 @@ export function phaseAcwrFit(
   return "on";
 }
 
+/// The effective start date for the current phase's "Day N" counter: the
+/// earliest logged session on/after the phase began (so the count reflects when
+/// training actually started), falling back to `periodStart` when no session has
+/// been logged in the phase yet. Both inputs and the result are YYYY-MM-DD.
+export function phaseStartFromHistory(
+  sessions: Pick<Session, "date">[],
+  periodStart: string,
+): string {
+  let earliest: string | null = null;
+  for (const s of sessions) {
+    if (s.date >= periodStart && (earliest === null || s.date < earliest)) {
+      earliest = s.date;
+    }
+  }
+  return earliest ?? periodStart;
+}
+
 const EWMA_LOOKBACK_DAYS = 90;
 
 /// Exponentially-weighted moving average over a daily series, null-aware:

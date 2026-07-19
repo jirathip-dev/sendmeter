@@ -97,13 +97,19 @@ export default function RpeScatterCard() {
             strokeDasharray="3 3"
             strokeWidth={1}
           />
-          {pairs.map((p, i) => (
+          {pairs.map((p, i) => {
+            // Color by how close the prediction was (SVG can't read CSS vars):
+            // spot-on = blue, off by ~1 pt = yellow, way off = orange.
+            const err = Math.abs(p.predicted - p.confirmed);
+            const dotColor =
+              err <= 1 ? "#2E96F0" : err <= 2 ? "#DDB13A" : "#E5743A";
+            return (
             <circle
               key={i}
               cx={px(p.predicted)}
               cy={py(p.confirmed)}
               r={hovered === i ? 5 : 3}
-              fill="#5B5FC7"
+              fill={dotColor}
               opacity={
                 hovered === null || hovered === i
                   ? 0.35 + 0.65 * (i / Math.max(1, pairs.length - 1))
@@ -112,7 +118,8 @@ export default function RpeScatterCard() {
               style={{ cursor: "pointer", transition: "r 0.1s, opacity 0.1s" }}
               {...hoverProps(i)}
             />
-          ))}
+            );
+          })}
           <text
             x={W - PAD.right}
             y={H - 2}
@@ -148,7 +155,19 @@ export default function RpeScatterCard() {
       </div>
       <div style={{ fontSize: 10, color: "var(--ink-muted)", marginTop: 6 }}>
         {pairs.length} workouts · mean abs err{" "}
-        <span style={{ color: "var(--ink-muted)" }}>{mae.toFixed(1)}</span>
+        <span
+          style={{
+            color:
+              mae <= 1
+                ? "var(--success)"
+                : mae <= 2
+                  ? "var(--warning)"
+                  : "var(--danger)",
+            fontWeight: 700,
+          }}
+        >
+          {mae.toFixed(1)}
+        </span>
       </div>
     </div>
   );
