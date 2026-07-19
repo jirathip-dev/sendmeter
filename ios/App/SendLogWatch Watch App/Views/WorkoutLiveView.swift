@@ -3,18 +3,17 @@ import WatchKit
 
 struct WorkoutLiveView: View {
     @State private var workout = WorkoutManager()
-    @State private var summary: WorkoutSummary?
     @State private var ending = false
+    /// Brief "Saved ✓" confirmation after auto-save-on-stop.
+    @State private var justSaved = false
     @State private var restAlarmTask: Task<Void, Never>?
 
     private let restTargets = [60, 120, 180, 300]
 
     var body: some View {
         Group {
-            if let summary {
-                WorkoutConfirmView(summary: summary) {
-                    self.summary = nil
-                }
+            if justSaved {
+                savedContent
             } else if workout.isRunning {
                 liveContent
             } else {
@@ -23,6 +22,47 @@ struct WorkoutLiveView: View {
         }
         .navigationTitle("Climb")
         .navigationBarBackButtonHidden(workout.isRunning)
+    }
+
+    // Stopping SAVES immediately (no confirm form) — banks the model's
+    // predicted RPE + detected boulders and persists locally; the upload
+    // drains in the background. Adjust RPE/type later on the phone.
+    private func endAndSave() {
+        ending = true
+        cancelRestAlarm()
+        Task {
+            guard let summary = await workout.end() else {
+                ending = false
+                return
+            }
+            let bundle = Repo.makeSaveBundle(
+                summary: summary,
+                boulders: summary.attempts.count,
+                rpe: Int(summary.predictedRPE.rounded()),
+                phase: workout.cachedPhase,
+                tunables: .default
+            )
+            await OfflineQueue.shared.enqueue(bundle)
+            ending = false
+            justSaved = true
+            WKInterfaceDevice.current().play(.success)
+            try? await Task.sleep(for: .seconds(1.6))
+            justSaved = false
+        }
+    }
+
+    @ViewBuilder
+    private var savedContent: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(.green)
+            Text("Saved").font(.headline)
+            Text("Set RPE on your phone")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
     }
 
     @ViewBuilder
@@ -106,12 +146,7 @@ struct WorkoutLiveView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(ending ? "…" : "End") {
-                    ending = true
-                    cancelRestAlarm()
-                    Task {
-                        summary = await workout.end()
-                        ending = false
-                    }
+                    endAndSave()
                 }
                 .font(.system(size: 12, weight: .semibold))
                 .buttonStyle(.bordered)

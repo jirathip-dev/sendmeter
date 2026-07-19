@@ -30,6 +30,9 @@ final class WorkoutManager: NSObject {
         }
     }
     var errorMsg: String?
+    /// Training phase captured at workout START, so the save doesn't need a
+    /// network round-trip on the critical path (it builds the bundle from this).
+    var cachedPhase = "capacity"
 
     private static func loadRestTarget() -> Int {
         let v = UserDefaults.standard.integer(forKey: "restTargetS")
@@ -73,6 +76,8 @@ final class WorkoutManager: NSObject {
     @MainActor
     func start() async {
         errorMsg = nil
+        // Warm the phase in the background so save-on-stop needs no network.
+        Task { cachedPhase = (try? await Repo.fetchCurrentPhase()) ?? "capacity" }
         detector = AttemptDetector(tunables: tunables)
         rawTrace = []
         accelBuffer = []

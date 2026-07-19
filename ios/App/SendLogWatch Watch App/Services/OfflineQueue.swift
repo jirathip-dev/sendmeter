@@ -21,15 +21,28 @@ actor OfflineQueue {
             .filter { $0.pathExtension == "json" }.count ?? 0
     }
 
-    /// Persist first, then try to upload immediately.
+    /// Persist first, then try to upload immediately (awaits the upload).
     func enqueueAndUpload(_ bundle: WorkoutSaveBundle) async {
+        persist(bundle)
+        await drain()
+    }
+
+    /// Persist the bundle and return as soon as it's on disk — the upload runs
+    /// in the background (the queue retries until it lands). Use this for the
+    /// auto-save-on-stop flow so the UI dismisses instantly instead of blocking
+    /// on the (potentially large, e.g. a 2-hour raw HR trace) network upload.
+    func enqueue(_ bundle: WorkoutSaveBundle) {
+        persist(bundle)
+        Task { await drain() }
+    }
+
+    private func persist(_ bundle: WorkoutSaveBundle) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let url = pendingDir.appendingPathComponent("\(bundle.workout.id.uuidString).json")
         if let data = try? encoder.encode(bundle) {
             try? data.write(to: url, options: .atomic)
         }
-        await drain()
     }
 
     func drain() async {
