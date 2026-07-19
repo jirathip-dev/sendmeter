@@ -75,8 +75,10 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
   const [sets, setSets] = useState(3);
   const [restRepsS, setRestRepsS] = useState(3);
   const [restSetsS, setRestSetsS] = useState(180);
-  const [targetKg, setTargetKg] = useState(0); // 0 = no target
-  const [targetPct, setTargetPct] = useState(0); // 0 = off; overrides kg
+  const [targetMode, setTargetMode] = useState<"off" | "kg" | "pct" | "curve">("off");
+  const [targetKg, setTargetKg] = useState(0);
+  const [targetPct, setTargetPct] = useState(60);
+  const [pctBasis, setPctBasis] = useState<"pr" | "cf">("pr");
   const [pctStep, setPctStep] = useState(0); // +% per set
   const [alternateSides, setAlternateSides] = useState(false);
 
@@ -88,8 +90,12 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
     setSets(p.sets);
     setRestRepsS(p.restRepsS);
     setRestSetsS(p.restSetsS);
+    setTargetMode(
+      p.targetCurve ? "curve" : p.targetPct != null ? "pct" : p.targetKg != null ? "kg" : "off",
+    );
     setTargetKg(p.targetKg ?? 0);
-    setTargetPct(p.targetPct ?? 0);
+    setTargetPct(p.targetPct ?? 60);
+    setPctBasis(p.pctBasis);
     setPctStep(p.pctStep);
     setAlternateSides(p.alternateSides);
     setAdding(true);
@@ -117,9 +123,11 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
       sets,
       restRepsS,
       restSetsS,
-      targetKg: targetKg > 0 ? targetKg : null,
-      targetPct: targetPct > 0 ? targetPct : null,
-      pctStep: targetPct > 0 ? pctStep : 0,
+      targetKg: targetMode === "kg" && targetKg > 0 ? targetKg : null,
+      targetPct: targetMode === "pct" && targetPct > 0 ? targetPct : null,
+      pctBasis,
+      pctStep: targetMode === "pct" && targetPct > 0 ? pctStep : 0,
+      targetCurve: targetMode === "curve",
       alternateSides,
     };
     try {
@@ -203,13 +211,15 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
                 hold {fmt(p.holdS)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
                 {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total{" "}
                 {fmt(timelineDurationS(buildTimeline(p, { switchS: 3 })))}
-                {p.targetPct !== null ? (
+                {p.targetCurve ? (
+                  <span style={{ color: "var(--success)" }}> · auto CF @ {fmt(p.holdS)}</span>
+                ) : p.targetPct !== null ? (
                   <span style={{ color: "var(--success)" }}>
                     {" "}
                     · {p.targetPct}
                     {p.pctStep > 0 &&
                       `→${Math.min(150, p.targetPct + (p.sets - 1) * p.pctStep)}`}
-                    % PR
+                    % {p.pctBasis === "cf" ? "CF" : "PR"}
                   </span>
                 ) : (
                   p.targetKg !== null && (
@@ -264,24 +274,106 @@ export default function PresetManager({ selectedId, onSelect }: Props) {
             <NumField label="Rest / rep s" value={restRepsS} onChange={setRestRepsS} min={0} max={600} />
             <NumField label="Rest / set s" value={restSetsS} onChange={setRestSetsS} min={0} max={1200} />
           </div>
-          {/* Target: absolute kg, or % of the exercise's PR (overrides kg)
-              with an optional per-set ramp — 50% + 10%/set ⇒ 50/60/70/80%. */}
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <NumField label="Target kg (0 = off)" value={targetKg} onChange={setTargetKg} min={0} max={200} />
-            <NumField label="% of PR (0 = off)" value={targetPct} onChange={setTargetPct} min={0} max={150} />
-            {targetPct > 0 && (
-              <NumField label="+% / set" value={pctStep} onChange={setPctStep} min={0} max={50} />
-            )}
+          {/* Target load — how the band on the live gauge is set. */}
+          <span className="field-label">Target load</span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {(
+              [
+                ["off", "None"],
+                ["kg", "Fixed kg"],
+                ["pct", "% of…"],
+                ["curve", "Auto (curve)"],
+              ] as const
+            ).map(([m, label]) => (
+              <button
+                key={m}
+                className="tag"
+                onClick={() => setTargetMode(m)}
+                style={{
+                  background: targetMode === m ? "var(--primary)" : "var(--surface-1)",
+                  color: targetMode === m ? "#ffffff" : "var(--ink-muted)",
+                  border: `1px solid ${targetMode === m ? "var(--primary)" : "var(--border)"}`,
+                  cursor: "pointer",
+                  fontFamily: "Inter, sans-serif",
+                }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          {targetPct > 0 && (
-            <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 6 }}>
-              % of PR uses your best recorded peak for the selected exercise
-              (and side){pctStep > 0 && ` — sets run ${targetPct}%${Array.from(
-                { length: Math.min(sets, 4) - 1 },
-                (_, i) => ` → ${Math.min(150, targetPct + (i + 1) * pctStep)}%`,
-              ).join("")}${sets > 4 ? " → …" : ""}`}
-              .
+
+          {targetMode === "kg" && (
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <NumField label="Target kg" value={targetKg} onChange={setTargetKg} min={1} max={200} />
             </div>
+          )}
+
+          {targetMode === "pct" && (
+            <>
+              {/* Reference: % of PR (max strength) or % of Critical Force (endurance) */}
+              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                {(
+                  [
+                    ["pr", "% of PR"],
+                    ["cf", "% of Critical Force"],
+                  ] as const
+                ).map(([b, label]) => (
+                  <button
+                    key={b}
+                    className="tag"
+                    onClick={() => setPctBasis(b)}
+                    style={{
+                      background: pctBasis === b ? "var(--info)" : "var(--surface-1)",
+                      color: pctBasis === b ? "#ffffff" : "var(--ink-muted)",
+                      border: `1px solid ${pctBasis === b ? "var(--info)" : "var(--border)"}`,
+                      cursor: "pointer",
+                      fontFamily: "Inter, sans-serif",
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <NumField
+                  label={pctBasis === "pr" ? "% of PR" : "% of CF"}
+                  value={targetPct}
+                  onChange={setTargetPct}
+                  min={1}
+                  max={150}
+                />
+                <NumField label="+% / set" value={pctStep} onChange={setPctStep} min={0} max={50} />
+              </div>
+              <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
+                {pctBasis === "pr"
+                  ? "% of your best recorded peak for the exercise (max-strength work)."
+                  : "% of critical force — the sustainable-force asymptote of the curve (endurance work)."}
+                {pctStep > 0 &&
+                  ` Sets run ${targetPct}%${Array.from(
+                    { length: Math.min(sets, 4) - 1 },
+                    (_, i) => ` → ${Math.min(150, targetPct + (i + 1) * pctStep)}%`,
+                  ).join("")}${sets > 4 ? " → …" : ""}.`}
+              </div>
+            </>
+          )}
+
+          {targetMode === "curve" && (
+            <>
+              <span className="field-label">Hold time — {holdS}s</span>
+              <input
+                type="range"
+                min={3}
+                max={60}
+                value={holdS}
+                onChange={(e) => setHoldS(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--primary)" }}
+              />
+              <div style={{ fontSize: 10, color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
+                Smart target: the load auto-adjusts to the force you can sustain
+                for a {holdS}s hold, read off this exercise's force curve
+                (CF + W′/{holdS}s). Longer holds → lighter, more endurance-y load.
+              </div>
+            </>
           )}
           <label
             style={{

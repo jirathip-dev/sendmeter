@@ -45,16 +45,37 @@ export function protocolDurationS(p: TindeqPreset): number {
 /// ((targetPct + (set-1)·pctStep)% of prKg, capped at 150%), otherwise the
 /// absolute targetKg; null when the preset has no target (or %PR is set but
 /// no PR exists yet for the exercise).
+/// The force references a preset resolves its target against, all from the
+/// current exercise's force-duration model (null when not yet computed).
+export interface PresetRefs {
+  prKg: number | null; // best recorded peak
+  cf: number | null; // critical force
+  wPrime: number | null; // impulse above CF (kg·s)
+  maxF: number | null; // best short-window force
+}
+
+/// Resolve a preset's target load (kg) for a given set, against the exercise's
+/// force references. Priority: smart curve → % of PR/CF → fixed kg. Returns
+/// null when the needed reference isn't available yet (band just doesn't show).
 export function presetTargetKg(
   p: TindeqPreset,
-  prKg: number | null,
+  refs: PresetRefs,
   set: number,
 ): number | null {
+  // Smart target (SL-62): force sustainable for exactly this hold — CF + W'/t,
+  // capped at the best short-window force.
+  if (p.targetCurve) {
+    if (refs.cf == null || refs.wPrime == null || p.holdS <= 0) return null;
+    const f = refs.cf + refs.wPrime / p.holdS;
+    const capped = refs.maxF != null ? Math.min(refs.maxF, f) : f;
+    return Math.round(capped * 10) / 10;
+  }
   if (p.targetPct != null) {
-    if (prKg == null || prKg <= 0) return null;
+    const base = p.pctBasis === "cf" ? refs.cf : refs.prKg;
+    if (base == null || base <= 0) return null;
     const clampedSet = Math.max(1, Math.min(p.sets, set));
     const pct = Math.min(150, p.targetPct + (clampedSet - 1) * p.pctStep);
-    return Math.round(((pct / 100) * prKg) * 10) / 10;
+    return Math.round(((pct / 100) * base) * 10) / 10;
   }
   return p.targetKg;
 }

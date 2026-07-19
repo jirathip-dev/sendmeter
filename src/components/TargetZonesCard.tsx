@@ -68,7 +68,9 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
         restSetsS: zp.restSetsS,
         targetKg: t.targetKg,
         targetPct: null,
+        pctBasis: "pr",
         pctStep: 0,
+        targetCurve: false,
         alternateSides: alt,
       },
     };

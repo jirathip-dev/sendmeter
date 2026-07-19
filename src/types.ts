@@ -146,11 +146,17 @@ export interface TindeqPreset {
   restSetsS: number;
   /// Optional target load — drawn as the target band on the live chart.
   targetKg: number | null;
-  /// Optional target as % of the exercise's PR (best recorded peak).
-  /// Overrides targetKg when set.
+  /// Optional target as % of a reference (see pctBasis). Overrides targetKg.
   targetPct: number | null;
-  /// Per-set ramp: set N targets (targetPct + (N-1)·pctStep)% of PR.
+  /// What targetPct is a percentage of: "pr" = best recorded peak (max
+  /// strength), "cf" = critical force (sustainable / endurance).
+  pctBasis: "pr" | "cf";
+  /// Per-set ramp: set N targets (targetPct + (N-1)·pctStep)% of the basis.
   pctStep: number;
+  /// Smart target (SL-62): derive the load from the exercise's force-duration
+  /// curve at holdS — the force sustainable for exactly that hold (CF + W'/t).
+  /// Overrides targetKg/targetPct when true.
+  targetCurve: boolean;
   /// Alternate left/right each rep (switch hands during the rep rest).
   alternateSides: boolean;
 }

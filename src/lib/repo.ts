@@ -446,7 +446,7 @@ export async function insertRecording(
 // MARK: Tindeq presets (hang protocols for the guided gauge timer)
 
 const PRESET_COLS =
-  "id, name, hold_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_step, alternate_sides";
+  "id, name, hold_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides";
 
 type PresetRow = {
   id: string;
@@ -458,7 +458,9 @@ type PresetRow = {
   rest_sets_s: number;
   target_kg: number | null;
   target_pct: number | null;
+  pct_basis: string;
   pct_step: number;
+  target_curve: boolean;
   alternate_sides: boolean;
 };
 
@@ -473,7 +475,9 @@ function toPreset(r: PresetRow): TindeqPreset {
     restSetsS: r.rest_sets_s,
     targetKg: r.target_kg,
     targetPct: r.target_pct,
+    pctBasis: r.pct_basis === "cf" ? "cf" : "pr",
     pctStep: r.pct_step,
+    targetCurve: r.target_curve,
     alternateSides: r.alternate_sides,
   };
 }
@@ -488,7 +492,9 @@ function presetToRow(p: Omit<TindeqPreset, "id">) {
     rest_sets_s: p.restSetsS,
     target_kg: p.targetKg,
     target_pct: p.targetPct,
+    pct_basis: p.pctBasis,
     pct_step: p.pctStep,
+    target_curve: p.targetCurve,
     alternate_sides: p.alternateSides,
   };
 }

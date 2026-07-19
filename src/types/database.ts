@@ -316,11 +316,13 @@ export type Database = {
           hold_s: number
           id: string
           name: string
+          pct_basis: string
           pct_step: number
           reps: number
           rest_reps_s: number
           rest_sets_s: number
           sets: number
+          target_curve: boolean
           target_kg: number | null
           target_pct: number | null
           user_id: string
@@ -331,11 +333,13 @@ export type Database = {
           hold_s: number
           id?: string
           name?: string
+          pct_basis?: string
           pct_step?: number
           reps: number
           rest_reps_s: number
           rest_sets_s: number
           sets: number
+          target_curve?: boolean
           target_kg?: number | null
           target_pct?: number | null
           user_id?: string
@@ -346,11 +350,13 @@ export type Database = {
           hold_s?: number
           id?: string
           name?: string
+          pct_basis?: string
           pct_step?: number
           reps?: number
           rest_reps_s?: number
           rest_sets_s?: number
           sets?: number
+          target_curve?: boolean
           target_kg?: number | null
           target_pct?: number | null
           user_id?: string

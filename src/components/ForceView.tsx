@@ -343,11 +343,19 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     ? Math.max(...curveRecordings.map((r) => r.peakKg))
     : null;
 
+  // Force references a preset resolves its target against (PR / CF / W' / maxF).
+  const presetRefs = {
+    prKg,
+    cf: model?.cf ?? null,
+    wPrime: model?.wPrime ?? null,
+    maxF: model?.maxF ?? null,
+  };
+
   // One guided-timer path: a custom preset wins; else an armed zone runs its
-  // prescription. The chart band comes from the preset's target (absolute kg
-  // or %-of-PR, set 1 here — the fullscreen ramps it per set), else the zone.
+  // prescription. The chart band comes from the preset's target (kg, %-of-PR/CF,
+  // or the smart curve — set 1 here; the fullscreen ramps it per set), else the zone.
   const activeProtocol: TindeqPreset | null = preset ?? zoneSel?.protocol ?? null;
-  const presetKgSet1 = preset ? presetTargetKg(preset, prKg, 1) : null;
+  const presetKgSet1 = preset ? presetTargetKg(preset, presetRefs, 1) : null;
   const bandTarget: GaugeTarget | null =
     preset && presetKgSet1 != null
       ? {
@@ -811,7 +819,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
           protocol={activeProtocol}
           timeline={timeline}
           target={bandTarget}
-          prKg={prKg}
+          presetRefs={presetRefs}
           globalSide={pendingSide}
           tag={pendingTag}
           allTags={allTags}

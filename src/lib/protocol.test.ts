@@ -20,7 +20,9 @@ const repeaters: TindeqPreset = {
   restSetsS: 180,
   targetKg: null,
   targetPct: null,
+  pctBasis: "pr",
   pctStep: 0,
+  targetCurve: false,
   alternateSides: false,
 };
 
@@ -35,11 +37,15 @@ const alt: TindeqPreset = {
   restSetsS: 0,
   targetKg: null,
   targetPct: null,
+  pctBasis: "pr",
   pctStep: 0,
+  targetCurve: false,
   alternateSides: true,
 };
 
 describe("presetTargetKg", () => {
+  // pr 30, cf 20, W' 300 (so F(7s) ≈ 20 + 300/7 ≈ 62.9, capped at maxF 40)
+  const refs = { prKg: 30, cf: 20, wPrime: 300, maxF: 40 };
   const ramp: TindeqPreset = {
     ...repeaters,
     sets: 4,
@@ -49,21 +55,39 @@ describe("presetTargetKg", () => {
   };
 
   it("ramps % of PR per set (50/60/70/80 of a 30kg PR)", () => {
-    expect(presetTargetKg(ramp, 30, 1)).toBe(15);
-    expect(presetTargetKg(ramp, 30, 2)).toBe(18);
-    expect(presetTargetKg(ramp, 30, 3)).toBe(21);
-    expect(presetTargetKg(ramp, 30, 4)).toBe(24);
+    expect(presetTargetKg(ramp, refs, 1)).toBe(15);
+    expect(presetTargetKg(ramp, refs, 2)).toBe(18);
+    expect(presetTargetKg(ramp, refs, 3)).toBe(21);
+    expect(presetTargetKg(ramp, refs, 4)).toBe(24);
   });
 
   it("clamps the set to the preset's range and the pct to 150", () => {
-    expect(presetTargetKg(ramp, 30, 99)).toBe(24); // set clamped to 4
-    expect(presetTargetKg({ ...ramp, targetPct: 140, pctStep: 20 }, 30, 4)).toBe(45); // 150% cap
+    expect(presetTargetKg(ramp, refs, 99)).toBe(24); // set clamped to 4
+    expect(presetTargetKg({ ...ramp, targetPct: 140, pctStep: 20 }, refs, 4)).toBe(45); // 150% cap
+  });
+
+  it("%CF basis resolves against critical force, not PR", () => {
+    // 90% of CF 20 = 18
+    const cfPct: TindeqPreset = { ...ramp, sets: 1, targetPct: 90, pctStep: 0, pctBasis: "cf" };
+    expect(presetTargetKg(cfPct, refs, 1)).toBe(18);
+    // no CF → null
+    expect(presetTargetKg(cfPct, { ...refs, cf: null }, 1)).toBeNull();
+  });
+
+  it("smart curve target = CF + W'/hold, capped at maxF", () => {
+    const curve: TindeqPreset = { ...repeaters, holdS: 30, targetCurve: true };
+    // 20 + 300/30 = 30
+    expect(presetTargetKg(curve, refs, 1)).toBe(30);
+    // short hold would exceed maxF → capped at 40
+    expect(presetTargetKg({ ...curve, holdS: 7 }, refs, 1)).toBe(40);
+    // needs CF + W'
+    expect(presetTargetKg(curve, { ...refs, cf: null }, 1)).toBeNull();
   });
 
   it("%PR mode needs a PR; falls back to absolute kg when pct unset", () => {
-    expect(presetTargetKg(ramp, null, 1)).toBeNull();
-    expect(presetTargetKg({ ...ramp, targetPct: null }, null, 1)).toBe(20);
-    expect(presetTargetKg({ ...ramp, targetPct: null, targetKg: null }, 30, 1)).toBeNull();
+    expect(presetTargetKg(ramp, { ...refs, prKg: null }, 1)).toBeNull();
+    expect(presetTargetKg({ ...ramp, targetPct: null }, { ...refs, prKg: null }, 1)).toBe(20);
+    expect(presetTargetKg({ ...ramp, targetPct: null, targetKg: null }, refs, 1)).toBeNull();
   });
 });
 

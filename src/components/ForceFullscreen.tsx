@@ -2,7 +2,7 @@ import { useEffect, useRef, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { useTindeq } from "../hooks/useTindeq";
 import { presetTargetKg, timelineAt, timelineDurationS } from "../lib/protocol";
-import type { ProtocolSegment } from "../lib/protocol";
+import type { PresetRefs, ProtocolSegment } from "../lib/protocol";
 import type { TindeqPreset, TindeqSide } from "../types";
 import ForceGauge from "./ForceGauge";
 import type { GaugeTarget } from "./ForceCurveCard";
@@ -17,8 +17,9 @@ interface Props {
   /// Fallback load band for the live chart (zone band / set-1 preset band —
   /// with a %-of-PR ramp the band is re-derived here per CURRENT set).
   target: GaugeTarget | null;
-  /// Best recorded peak for the active exercise (+side) — %PR anchor.
-  prKg: number | null;
+  /// Force references (PR / CF / W' / maxF) the preset resolves its target
+  /// against — re-derived per CURRENT set for a %-ramp band.
+  presetRefs: PresetRefs;
   /// Tab-global side — shown during holds when the protocol doesn't alternate.
   globalSide: TindeqSide;
   /// Tab-global tag + existing tags, so a free hold can be armed right here
@@ -59,7 +60,7 @@ export default function ForceFullscreen({
   protocol,
   timeline,
   target,
-  prKg,
+  presetRefs,
   globalSide,
   tag,
   allTags,
@@ -143,7 +144,7 @@ export default function ForceFullscreen({
   // Per-set target band: a %-of-PR preset ramps up each set; the chart band
   // follows the CURRENT set live (set 1 while idle, last set once done).
   const currentSet = pos?.seg.set ?? (done ? (protocol?.sets ?? 1) : 1);
-  const protocolKg = protocol ? presetTargetKg(protocol, prKg, currentSet) : null;
+  const protocolKg = protocol ? presetTargetKg(protocol, presetRefs, currentSet) : null;
   const band: GaugeTarget | null =
     protocol && protocolKg != null
       ? {
