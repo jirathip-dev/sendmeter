@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import {
   deletePreset,
   fetchPresets,
@@ -186,8 +186,8 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
             ? presetTargetKg(p, presetRefs, 1)
             : null;
         return (
+          <Fragment key={p.id}>
           <div
-            key={p.id}
             onClick={() => onSelect(selected ? null : p)}
             style={{
               display: "flex",
@@ -268,10 +268,24 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
               ×
             </button>
           </div>
+          {adding && editingId === p.id && renderForm()}
+          </Fragment>
         );
       })}
 
-      {adding ? (
+      {/* New-preset form sits at the bottom; an edit form renders inline
+          under its own row (see the map above). */}
+      {adding && !editingId && renderForm()}
+      {!adding && (
+        <button className="btn-ghost" onClick={() => setAdding(true)}>
+          + New preset
+        </button>
+      )}
+    </div>
+  );
+
+  function renderForm() {
+    return (
         <div className="card">
           <span className="field-label" style={{ marginTop: 0 }}>Name (optional)</span>
           <input
@@ -426,11 +440,6 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
             </button>
           </div>
         </div>
-      ) : (
-        <button className="btn-ghost" onClick={() => setAdding(true)}>
-          + New preset
-        </button>
-      )}
-    </div>
-  );
+    );
+  }
 }
