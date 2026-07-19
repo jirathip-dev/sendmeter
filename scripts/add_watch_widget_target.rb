@@ -37,14 +37,15 @@ widget.build_configurations.each do |config|
   s["GENERATE_INFOPLIST_FILE"] = "YES"
   s["INFOPLIST_KEY_CFBundleDisplayName"] = "Sendmeter"
   s["CODE_SIGN_ENTITLEMENTS"] = "SendLogWatchWidgets/SendLogWatchWidgets.entitlements"
-  # MANUAL signing (not Automatic): the `fastlane beta` API key cannot drive
-  # Xcode's automatic signing, and a brand-new App ID has no cached Development
-  # profile, so archive fails with "Authentication failed / no iOS App
-  # Development profile". The lane fetches this App Store profile by its
-  # convention name; sign against it directly.
-  s["CODE_SIGN_STYLE"] = "Manual"
-  s["CODE_SIGN_IDENTITY"] = "Apple Distribution"
-  s["PROVISIONING_PROFILE_SPECIFIER"] = "com.jirathip.sendlog.watchkitapp.widgets AppStore"
+  # AUTOMATIC signing, identical to the phone-widget target so the archive
+  # signs the appex with the SAME certificate as its parent watch app (manual
+  # Distribution here caused an "embedded binary not signed with the same cert"
+  # mismatch). A brand-new App ID has no cached Development profile, so
+  # `fastlane beta` pre-fetches + installs one for it (see Fastfile) — the only
+  # thing this App ID lacked vs. the working phone widget.
+  s["CODE_SIGN_STYLE"] = "Automatic"
+  s.delete("CODE_SIGN_IDENTITY")
+  s.delete("PROVISIONING_PROFILE_SPECIFIER")
   s["DEVELOPMENT_TEAM"] = "9244PWFYD7"
   s["SDKROOT"] = "watchos"
   s["WATCHOS_DEPLOYMENT_TARGET"] = "10.0"
