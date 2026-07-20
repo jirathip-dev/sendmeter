@@ -1,5 +1,9 @@
+import { useState } from "react";
+import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { fetchWeightHistory } from "../lib/repo";
+import BoxChip from "./BoxChip";
 import SvgChartTooltip from "./SvgChartTooltip";
 import type { TindeqRecordingMeta, TindeqSide } from "../types";
 
@@ -15,6 +19,21 @@ const W = 300;
 const H = 120;
 const PAD = { top: 12, right: 8, bottom: 16, left: 30 };
 
+const MODE_KEY = "sendmeter:trend-mode";
+
+/// SL-88: the trend can plot absolute kg or strength-to-weight (% of body
+/// weight). Weigh-ins are sparse, so each rep uses the last weight on/before
+/// its date (forward fill); reps older than the first weigh-in fall back to
+/// that first weight.
+function weightOn(weights: { date: string; kg: number }[], date: string): number {
+  let w = weights[0]!.kg;
+  for (const entry of weights) {
+    if (entry.date > date) break;
+    w = entry.kg;
+  }
+  return w;
+}
+
 /// Daily aggregation: each training day's best peak + rep count. The chart
 /// scatters EVERY rep faintly and highlights the daily bests (local maxima)
 /// with the global max in gold — spread stays visible, trend reads off the
@@ -26,17 +45,23 @@ interface DailyBest {
   count: number;
 }
 
-function dailyBests(sorted: TindeqRecordingMeta[]): DailyBest[] {
+interface TrendPoint {
+  id: string;
+  recordedAt: string;
+  val: number;
+}
+
+function dailyBests(sorted: TrendPoint[]): DailyBest[] {
   const byDate = new Map<string, DailyBest>();
   for (const r of sorted) {
     const date = r.recordedAt.slice(0, 10);
     const cur = byDate.get(date);
     if (!cur) {
-      byDate.set(date, { date, t: Date.parse(r.recordedAt), best: r.peakKg, count: 1 });
+      byDate.set(date, { date, t: Date.parse(r.recordedAt), best: r.val, count: 1 });
     } else {
       cur.count += 1;
-      if (r.peakKg > cur.best) {
-        cur.best = r.peakKg;
+      if (r.val > cur.best) {
+        cur.best = r.val;
         cur.t = Date.parse(r.recordedAt);
       }
     }
@@ -44,14 +69,22 @@ function dailyBests(sorted: TindeqRecordingMeta[]): DailyBest[] {
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function Chart({ days, all }: { days: DailyBest[]; all: TindeqRecordingMeta[] }) {
+function Chart({
+  days,
+  all,
+  unit,
+}: {
+  days: DailyBest[];
+  all: TrendPoint[];
+  unit: string;
+}) {
   const [hovered, hoverProps] = useChartHover<number>();
   const allTs = all.map((r) => Date.parse(r.recordedAt));
   const tMin = Math.min(days[0]!.t, allTs[0] ?? days[0]!.t);
   const tMax = Math.max(days[days.length - 1]!.t, tMin + 1);
   // The y-domain covers EVERY rep, not just the bests — the scatter shows
   // the whole session's spread.
-  const allPeaks = all.map((r) => r.peakKg);
+  const allPeaks = all.map((r) => r.val);
   const yMin = Math.min(...allPeaks) * 0.9;
   const yMax = Math.max(...allPeaks) * 1.08 || 1;
 
@@ -92,7 +125,7 @@ function Chart({ days, all }: { days: DailyBest[]; all: TindeqRecordingMeta[] })
             style={{ fill: "var(--ink-faint)" }}
           >
             {v.toFixed(0)}
-            {i === yTicks.length - 1 ? "kg" : ""}
+            {i === yTicks.length - 1 ? unit : ""}
           </text>
         </g>
       ))}
@@ -101,7 +134,7 @@ function Chart({ days, all }: { days: DailyBest[]; all: TindeqRecordingMeta[] })
         <circle
           key={r.id}
           cx={px(allTs[i]!)}
-          cy={py(r.peakKg)}
+          cy={py(r.val)}
           r={1.8}
           fill="#7B83EB"
           opacity={0.3}
@@ -160,7 +193,7 @@ function Chart({ days, all }: { days: DailyBest[]; all: TindeqRecordingMeta[] })
           viewH={H}
           lines={[
             fmtDate(hoveredD.t),
-            `best ${hoveredD.best.toFixed(1)} kg · ${hoveredD.count} rep${hoveredD.count === 1 ? "" : "s"}`,
+            `best ${hoveredD.best.toFixed(1)} ${unit} · ${hoveredD.count} rep${hoveredD.count === 1 ? "" : "s"}`,
           ]}
         />
       )}
@@ -173,6 +206,11 @@ export default function ForceTrendChart({
   selectedTag,
   selectedSide,
 }: Props) {
+  const [mode, setMode] = useState<"kg" | "bw">(() =>
+    localStorage.getItem(MODE_KEY) === "bw" ? "bw" : "kg",
+  );
+  const weights = useCancellableFetch(fetchWeightHistory, [], 0);
+
   const filtered = recordings.filter(
     (r) =>
       (selectedTag === null || r.tag === selectedTag) &&
@@ -180,10 +218,25 @@ export default function ForceTrendChart({
   );
   if (recordings.length < 2) return null;
 
-  const sorted = [...filtered].sort((a, b) =>
-    a.recordedAt.localeCompare(b.recordedAt),
-  );
+  // No weigh-ins yet → the %BW mode has nothing to divide by.
+  const ratioMode = mode === "bw" && weights.length > 0;
+  const unit = ratioMode ? "%BW" : "kg";
+
+  const sorted: TrendPoint[] = [...filtered]
+    .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
+    .map((r) => ({
+      id: r.id,
+      recordedAt: r.recordedAt,
+      val: ratioMode
+        ? (r.peakKg / weightOn(weights, r.recordedAt.slice(0, 10))) * 100
+        : r.peakKg,
+    }));
   const days = dailyBests(sorted);
+
+  function pick(next: "kg" | "bw") {
+    setMode(next);
+    localStorage.setItem(MODE_KEY, next);
+  }
 
   // Stats over DAILY BESTS — a submax endurance day no longer drags "Last"
   // or the 30d comparison around; each day is represented by its best pull.
@@ -205,14 +258,29 @@ export default function ForceTrendChart({
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
-      <div className="label-eyebrow" style={{ marginBottom: 10 }}>
-        Peak Force Trend
-        {selectedTag && (
-          <span style={{ color: "var(--ink-faint)" }}>
-            {" "}
-            · {selectedTag}
-            {selectedSide ? ` · ${selectedSide}` : ""}
-          </span>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 10,
+        }}
+      >
+        <div className="label-eyebrow">
+          Peak Force Trend
+          {selectedTag && (
+            <span style={{ color: "var(--ink-faint)" }}>
+              {" "}
+              · {selectedTag}
+              {selectedSide ? ` · ${selectedSide}` : ""}
+            </span>
+          )}
+        </div>
+        {weights.length > 0 && (
+          <div style={{ display: "flex", gap: 4 }}>
+            <BoxChip label="kg" small active={mode === "kg"} onClick={() => pick("kg")} />
+            <BoxChip label="%BW" small active={mode === "bw"} onClick={() => pick("bw")} />
+          </div>
         )}
       </div>
 
@@ -269,7 +337,7 @@ export default function ForceTrendChart({
               </div>
             </div>
           </div>
-          <Chart days={days} all={sorted} />
+          <Chart days={days} all={sorted} unit={unit} />
         </>
       ) : (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", padding: "12px 0" }}>

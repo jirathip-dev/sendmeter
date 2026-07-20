@@ -704,6 +704,22 @@ export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
   }));
 }
 
+/// Full body-weight history (SL-88) — every dated weigh-in, oldest first.
+/// The strength-to-weight trend forward-fills these across rep dates, so it
+/// needs the whole history, not the dashboard's 14-day window.
+export async function fetchWeightHistory(): Promise<
+  { date: string; kg: number }[]
+> {
+  const data = unwrap(
+    await supabase
+      .from("health_metrics")
+      .select("date, body_mass_kg")
+      .not("body_mass_kg", "is", null)
+      .order("date", { ascending: true }),
+  );
+  return data.map((r) => ({ date: r.date, kg: r.body_mass_kg as number }));
+}
+
 /// Hard-deletes the signed-in user's health_metrics rows (RLS scopes to
 /// auth.uid()). Used by "Clear health data & resync" to recover from data
 /// polluted by e.g. the watch being worn by someone else. Defaults to all
