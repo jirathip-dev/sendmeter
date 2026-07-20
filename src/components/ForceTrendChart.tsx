@@ -1,4 +1,3 @@
-import { computeTindeqStats } from "../lib/metrics";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
@@ -16,25 +15,53 @@ const W = 300;
 const H = 120;
 const PAD = { top: 12, right: 8, bottom: 16, left: 30 };
 
-function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
+/// One point per training DAY: the day's best peak + how many reps were done.
+/// Plotting every rep made high-volume days smear into vertical stacks and
+/// submax endurance work drag the line around — the trend is about your best
+/// effort each day, not every rep.
+interface DailyBest {
+  date: string; // YYYY-MM-DD
+  t: number; // ms of the day's best rep
+  best: number;
+  count: number;
+}
+
+function dailyBests(sorted: TindeqRecordingMeta[]): DailyBest[] {
+  const byDate = new Map<string, DailyBest>();
+  for (const r of sorted) {
+    const date = r.recordedAt.slice(0, 10);
+    const cur = byDate.get(date);
+    if (!cur) {
+      byDate.set(date, { date, t: Date.parse(r.recordedAt), best: r.peakKg, count: 1 });
+    } else {
+      cur.count += 1;
+      if (r.peakKg > cur.best) {
+        cur.best = r.peakKg;
+        cur.t = Date.parse(r.recordedAt);
+      }
+    }
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function Chart({ days }: { days: DailyBest[] }) {
   const [hovered, hoverProps] = useChartHover<number>();
-  const xs = sorted.map((r) => Date.parse(r.recordedAt));
-  const tMin = xs[0]!;
-  const tMax = Math.max(xs[xs.length - 1]!, tMin + 1);
-  const peaks = sorted.map((r) => r.peakKg);
+  const tMin = days[0]!.t;
+  const tMax = Math.max(days[days.length - 1]!.t, tMin + 1);
+  const peaks = days.map((d) => d.best);
   const yMin = Math.min(...peaks) * 0.9;
   const yMax = Math.max(...peaks) * 1.08 || 1;
 
   const { x: px, y: py } = useSvgScale(W, H, PAD, tMin, tMax, yMin, yMax);
 
-  const points = sorted
-    .map((r, i) => `${px(xs[i]!).toFixed(1)},${py(r.peakKg).toFixed(1)}`)
+  const points = days
+    .map((d) => `${px(d.t).toFixed(1)},${py(d.best).toFixed(1)}`)
     .join(" ");
 
-  // PR = max peak; ties → most recent
+  // PR = max daily best; ties → most recent
   let prIdx = 0;
-  sorted.forEach((r, i) => {
-    if (r.peakKg >= sorted[prIdx]!.peakKg) prIdx = i;
+  days.forEach((d, i) => {
+    if (d.best >= days[prIdx]!.best) prIdx = i;
   });
 
   const fmtDate = (t: number) => {
@@ -42,7 +69,7 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
     return `${d.getMonth() + 1}/${d.getDate()}`;
   };
 
-  const hoveredR = hovered !== null ? sorted[hovered] : undefined;
+  const hoveredD = hovered !== null ? days[hovered] : undefined;
   const yMid = (yMin + yMax) / 2;
   const yTicks = [yMin, yMid, yMax];
 
@@ -77,21 +104,21 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
         strokeWidth={1.5}
         vectorEffect="non-scaling-stroke"
       />
-      {sorted.map((r, i) => (
+      {days.map((d, i) => (
         <circle
-          key={r.id}
-          cx={px(xs[i]!)}
-          cy={py(r.peakKg)}
+          key={d.date}
+          cx={px(d.t)}
+          cy={py(d.best)}
           r={hovered === i ? (i === prIdx ? 6 : 4.5) : i === prIdx ? 4 : 2.5}
           fill={i === prIdx ? "#DDB13A" : "#5B5FC7"}
           style={{ cursor: "pointer", transition: "r 0.1s" }}
           {...hoverProps(i)}
         />
       ))}
-      {sorted[prIdx] && (
+      {days[prIdx] && (
         <text
-          x={Math.min(px(xs[prIdx]!), W - 18)}
-          y={Math.max(py(sorted[prIdx]!.peakKg) - 8, 8)}
+          x={Math.min(px(days[prIdx]!.t), W - 18)}
+          y={Math.max(py(days[prIdx]!.best) - 8, 8)}
           fontSize={8}
           fill="#DDB13A"
         >
@@ -110,26 +137,26 @@ function Chart({ sorted }: { sorted: TindeqRecordingMeta[] }) {
       >
         {fmtDate(tMax)}
       </text>
-      {hovered !== null && (
+      {hovered !== null && hoveredD && (
         <line
-          x1={px(xs[hovered]!)}
+          x1={px(hoveredD.t)}
           y1={PAD.top}
-          x2={px(xs[hovered]!)}
+          x2={px(hoveredD.t)}
           y2={H - PAD.bottom}
           style={{ stroke: "var(--ink-faint)" }}
           strokeDasharray="2 2"
           strokeWidth={1}
         />
       )}
-      {hoveredR && hovered !== null && (
+      {hoveredD && hovered !== null && (
         <SvgChartTooltip
-          x={px(xs[hovered]!)}
-          y={py(hoveredR.peakKg)}
+          x={px(hoveredD.t)}
+          y={py(hoveredD.best)}
           viewW={W}
           viewH={H}
           lines={[
-            fmtDate(xs[hovered]!),
-            `${hoveredR.peakKg.toFixed(1)} kg${hoveredR.tag ? ` · ${hoveredR.tag}` : ""}`,
+            fmtDate(hoveredD.t),
+            `best ${hoveredD.best.toFixed(1)} kg · ${hoveredD.count} rep${hoveredD.count === 1 ? "" : "s"}`,
           ]}
         />
       )}
@@ -147,13 +174,30 @@ export default function ForceTrendChart({
       (selectedTag === null || r.tag === selectedTag) &&
       (selectedSide === null || r.side === selectedSide),
   );
-
-  const stats = computeTindeqStats(filtered);
   if (recordings.length < 2) return null;
 
   const sorted = [...filtered].sort((a, b) =>
     a.recordedAt.localeCompare(b.recordedAt),
   );
+  const days = dailyBests(sorted);
+
+  // Stats over DAILY BESTS — a submax endurance day no longer drags "Last"
+  // or the 30d comparison around; each day is represented by its best pull.
+  const best = days.length ? Math.max(...days.map((d) => d.best)) : 0;
+  const lastDay = days[days.length - 1];
+  const priorWindow = lastDay
+    ? days.filter(
+        (d) =>
+          d.date !== lastDay.date &&
+          lastDay.t - d.t <= 30 * 86_400_000 &&
+          lastDay.t - d.t > 0,
+      )
+    : [];
+  const delta =
+    lastDay && priorWindow.length
+      ? lastDay.best -
+        priorWindow.reduce((s, d) => s + d.best, 0) / priorWindow.length
+      : null;
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
@@ -168,7 +212,7 @@ export default function ForceTrendChart({
         )}
       </div>
 
-      {stats && sorted.length >= 2 ? (
+      {days.length >= 2 ? (
         <>
           <div
             className="grid-2"
@@ -184,11 +228,11 @@ export default function ForceTrendChart({
                   color: "var(--warning)",
                 }}
               >
-                {stats.bestPeak.toFixed(1)}
+                {best.toFixed(1)}
               </div>
             </div>
             <div>
-              <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>Last</div>
+              <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>Last day</div>
               <div
                 style={{
                   fontFamily: "Inter, sans-serif",
@@ -197,7 +241,7 @@ export default function ForceTrendChart({
                   color: "var(--ink)",
                 }}
               >
-                {stats.lastPeak.toFixed(1)}
+                {lastDay ? lastDay.best.toFixed(1) : "—"}
               </div>
             </div>
             <div>
@@ -208,24 +252,24 @@ export default function ForceTrendChart({
                   fontWeight: 800,
                   fontSize: "var(--t-md)",
                   color:
-                    stats.delta === null
+                    delta === null
                       ? "var(--ink-muted)"
-                      : stats.delta >= 0
+                      : delta >= 0
                         ? "var(--success)"
                         : "var(--danger)",
                 }}
               >
-                {stats.delta === null
+                {delta === null
                   ? "—"
-                  : `${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)}`}
+                  : `${delta >= 0 ? "+" : ""}${delta.toFixed(1)}`}
               </div>
             </div>
           </div>
-          <Chart sorted={sorted} />
+          <Chart days={days} />
         </>
       ) : (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", padding: "12px 0" }}>
-          Not enough recordings with this tag yet.
+          Not enough training days with this tag yet.
         </div>
       )}
     </div>
