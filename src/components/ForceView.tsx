@@ -9,7 +9,7 @@ import {
   fetchRecordingSamples,
   insertRecording,
 } from "../lib/repo";
-import { computeForceCurve } from "../lib/force-curve";
+import { computeForceCurve, pickCurveRecordings } from "../lib/force-curve";
 import type { ForceCurveModel } from "../lib/force-curve";
 import { buildTimeline, presetTargetKg, timelineAt } from "../lib/protocol";
 import type { ProtocolSegment } from "../lib/protocol";
@@ -329,12 +329,20 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       r.tag === effectiveTag &&
       (chartSide === null || r.side === chartSide),
   );
-  const curveKey = `${effectiveTag ?? ""}|${chartSide ?? "all"}|${curveRecordings.length}`;
+  const tagSideKey = `${effectiveTag ?? ""}|${chartSide ?? "all"}`;
+  const curveKey = `${tagSideKey}|${curveRecordings.length}`;
   const canComputeCurve = effectiveTag !== null && curveRecordings.length > 0;
+  const curveFrozen = tindeq.status === "measuring";
   useEffect(() => {
     if (!canComputeCurve) return;
+    // Freeze mid-run (SL-80): every per-rep save bumps the count and would
+    // trigger a recompute whose short-hold flood can null CF — taking the
+    // armed target away mid-set. Recompute on stop instead.
+    if (curveFrozen) return;
     let cancelled = false;
-    const recs = curveRecordings.slice(0, 15);
+    // Best per duration bucket over a long window — NOT the latest N, which a
+    // burst of short reps floods (SL-80).
+    const recs = pickCurveRecordings(curveRecordings);
     Promise.all(recs.map((r) => fetchRecordingSamples(r.id)))
       .then((all) => {
         if (cancelled) return;
@@ -354,10 +362,17 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     };
     // curveKey encodes tag/side/count — the actual deps of this computation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [curveKey, canComputeCurve]);
-  const curveReady = curveComputedFor === curveKey;
-  const model = canComputeCurve && curveReady ? curveModel : null;
-  const curveComputing = canComputeCurve && !curveReady;
+  }, [curveKey, canComputeCurve, curveFrozen]);
+  // Serve the model as long as it belongs to this tag/side — even while a
+  // recompute for a newer count is pending — so the curve/zones/targets never
+  // blank between reps. The count is the key's last "|" segment.
+  const computedTagSide =
+    curveComputedFor === null
+      ? null
+      : curveComputedFor.slice(0, curveComputedFor.lastIndexOf("|"));
+  const modelForTagSide = computedTagSide === tagSideKey;
+  const model = canComputeCurve && modelForTagSide ? curveModel : null;
+  const curveComputing = canComputeCurve && !modelForTagSide;
 
   // PR for the active exercise (+side) — the same best-peak the trend chart
   // marks as PR. Anchors presets whose target is a % of PR.

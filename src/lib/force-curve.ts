@@ -63,6 +63,61 @@ export function meanMaxForce(
   return best;
 }
 
+/// Which recordings feed the curve fit (SL-80). The old "latest 15" broke on
+/// real training: a session of many short reps evicted every long hold from
+/// the window, the ≥10s fit points vanished, and CF collapsed to null (zones
+/// + auto-CF targets gone). Instead pick per-DURATION-BUCKET bests over a
+/// longer window, and always keep the longest efforts — short-rep floods
+/// can't starve the long end of the curve.
+export interface CurveCandidate {
+  id: string;
+  durationMs: number;
+  avgKg: number;
+  recordedAt: string; // ISO timestamp
+}
+
+const PICK_WINDOW_DAYS = 90;
+const PICK_PER_BUCKET = 3;
+const PICK_LONGEST = 3;
+// Bucket edges in seconds — roughly log-spaced over CURVE_WINDOWS_S.
+const PICK_BUCKETS_S = [5, 10, 20, 45, 90];
+
+function durationBucket(durationMs: number): number {
+  const s = durationMs / 1000;
+  for (let i = 0; i < PICK_BUCKETS_S.length; i++) {
+    if (s < PICK_BUCKETS_S[i]!) return i;
+  }
+  return PICK_BUCKETS_S.length;
+}
+
+export function pickCurveRecordings<T extends CurveCandidate>(
+  recs: T[],
+  nowMs: number = Date.now(),
+): T[] {
+  const cutoff = nowMs - PICK_WINDOW_DAYS * 86_400_000;
+  const recent = recs.filter((r) => Date.parse(r.recordedAt) >= cutoff);
+  // A dormant exercise keeps its old curve rather than losing it entirely.
+  const pool = recent.length > 0 ? recent : recs;
+
+  const picked = new Map<string, T>();
+  const byBucket = new Map<number, T[]>();
+  for (const r of pool) {
+    const b = durationBucket(r.durationMs);
+    const list = byBucket.get(b);
+    if (list) list.push(r);
+    else byBucket.set(b, [r]);
+  }
+  for (const list of byBucket.values()) {
+    list.sort((a, b) => b.avgKg - a.avgKg);
+    for (const r of list.slice(0, PICK_PER_BUCKET)) picked.set(r.id, r);
+  }
+  // The hyperbola's long end needs the longest efforts regardless of load.
+  for (const r of [...pool].sort((a, b) => b.durationMs - a.durationMs).slice(0, PICK_LONGEST)) {
+    picked.set(r.id, r);
+  }
+  return [...picked.values()];
+}
+
 export function computeForceCurve(
   recordings: TindeqSample[][],
 ): ForceCurveModel | null {

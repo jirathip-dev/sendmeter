@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   meanMaxForce,
+  pickCurveRecordings,
   computeForceCurve,
   predictForce,
   zoneTarget,
@@ -95,5 +96,49 @@ describe("zoneTarget", () => {
     expect(zoneTarget(noCf, "endurance")).toBeNull();
     expect(zoneTarget(noCf, "power-endurance")).toBeNull();
     expect(zoneTarget(noCf, "power")!.targetKg).toBe(38); // maxF-based still works
+  });
+});
+
+describe("pickCurveRecordings (SL-80)", () => {
+  const now = Date.parse("2026-07-20T00:00:00Z");
+  const daysAgo = (d: number) =>
+    new Date(now - d * 86_400_000).toISOString();
+  let seq = 0;
+  const rec = (durationS: number, avgKg: number, ageDays: number) => ({
+    id: `r${seq++}`,
+    durationMs: durationS * 1000,
+    avgKg,
+    recordedAt: daysAgo(ageDays),
+  });
+
+  it("a flood of short reps cannot evict the long holds", () => {
+    const longHolds = [rec(35, 18, 20), rec(60, 15, 25)];
+    const shortFlood = Array.from({ length: 50 }, () => rec(7, 22, 0));
+    const picked = pickCurveRecordings([...shortFlood, ...longHolds], now);
+    const ids = picked.map((r) => r.id);
+    expect(ids).toContain(longHolds[0]!.id);
+    expect(ids).toContain(longHolds[1]!.id);
+    // and the flood itself is capped at the per-bucket best few
+    expect(picked.filter((r) => r.durationMs === 7000).length).toBeLessThanOrEqual(3);
+  });
+
+  it("takes the hardest efforts per duration bucket", () => {
+    const weak = rec(7, 10, 1);
+    const strong = [rec(7, 30, 1), rec(7, 28, 1), rec(7, 26, 1)];
+    const picked = pickCurveRecordings([weak, ...strong], now);
+    const ids = picked.map((r) => r.id);
+    for (const s of strong) expect(ids).toContain(s.id);
+    // weak short rep only survives via the longest-efforts guarantee, which
+    // in this all-short pool it may — but the bucket picks are the strong ones
+    expect(picked.filter((r) => r.avgKg >= 26).length).toBe(3);
+  });
+
+  it("ignores stale recordings when recent ones exist, but falls back for a dormant exercise", () => {
+    const old = rec(30, 20, 200);
+    const fresh = rec(7, 15, 1);
+    const withFresh = pickCurveRecordings([old, fresh], now);
+    expect(withFresh.map((r) => r.id)).toEqual([fresh.id]);
+    const dormantOnly = pickCurveRecordings([old], now);
+    expect(dormantOnly.map((r) => r.id)).toEqual([old.id]);
   });
 });
