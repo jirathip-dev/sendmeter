@@ -132,6 +132,10 @@ export interface TindeqRecordingMeta {
   tag: string; // exercise, e.g. "FDP" — trends group by this
   side: TindeqSide;
   groupId: string | null; // gauge session this recording belongs to
+  /// Guided-protocol provenance (SL-79) — reps of one run share a run id and
+  /// carry their set number; null for free holds / older rows.
+  protocolRunId: string | null;
+  setNo: number | null;
 }
 
 /// A saved hang protocol (hold / reps / sets / rests) — drives the guided
@@ -191,6 +195,10 @@ export interface NewTindeqRecording {
   tag: string;
   side: TindeqSide;
   groupId: string | null;
+  /// Guided-protocol provenance (SL-79): reps of one run share a run id and
+  /// carry their set number. Null for free holds.
+  protocolRunId: string | null;
+  setNo: number | null;
   samples: TindeqSample[];
 }
 

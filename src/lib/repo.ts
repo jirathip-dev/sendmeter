@@ -340,7 +340,7 @@ export async function switchPhase(
 }
 
 const RECORDING_COLS =
-  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id";
+  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no";
 
 type RecordingRow = {
   id: string;
@@ -353,6 +353,8 @@ type RecordingRow = {
   tag: string;
   side: string;
   group_id: string | null;
+  protocol_run_id: string | null;
+  set_no: number | null;
 };
 
 function toRecording(r: RecordingRow): TindeqRecordingMeta {
@@ -367,6 +369,8 @@ function toRecording(r: RecordingRow): TindeqRecordingMeta {
     tag: r.tag,
     side: r.side as TindeqSide,
     groupId: r.group_id,
+    protocolRunId: r.protocol_run_id,
+    setNo: r.set_no,
   };
 }
 
@@ -435,6 +439,8 @@ export async function insertRecording(
         tag: rec.tag,
         side: rec.side,
         group_id: rec.groupId,
+        protocol_run_id: rec.protocolRunId,
+        set_no: rec.setNo,
         samples: rec.samples.map((s) => [s.t, s.kg]),
       })
       .select(RECORDING_COLS)
@@ -647,6 +653,22 @@ export async function updateRecordingMeta(
       .single(),
   );
   return toRecording(data);
+}
+
+/// Bulk tag/side/note edit for every recording in a set or run (SL-79).
+export async function updateRecordingsMeta(
+  ids: string[],
+  patch: { tag: string; side: TindeqSide; note: string },
+): Promise<TindeqRecordingMeta[]> {
+  if (ids.length === 0) return [];
+  const data = unwrap<RecordingRow[]>(
+    await supabase
+      .from("tindeq_recordings")
+      .update({ tag: patch.tag, side: patch.side, note: patch.note })
+      .in("id", ids)
+      .select(RECORDING_COLS),
+  );
+  return data.map(toRecording);
 }
 
 /// Deletes the auth user; every table cascades from auth.users, so all data

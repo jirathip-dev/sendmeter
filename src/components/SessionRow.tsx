@@ -258,11 +258,20 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
       {editingRec && (
         <EditRecordingSheet
           rec={editingRec}
+          runSiblings={
+            editingRec.protocolRunId
+              ? (tindeqRecs ?? []).filter(
+                  (r) => r.protocolRunId === editingRec.protocolRunId,
+                )
+              : []
+          }
           recentTags={[...new Set((tindeqRecs ?? []).map((r) => r.tag).filter(Boolean))]}
           onSaved={(saved) =>
-            setTindeqRecs((list) =>
-              list ? list.map((x) => (x.id === saved.id ? saved : x)) : list,
-            )
+            setTindeqRecs((list) => {
+              if (!list) return list;
+              const byId = new Map(saved.map((r) => [r.id, r]));
+              return list.map((x) => byId.get(x.id) ?? x);
+            })
           }
           onClose={() => setEditingRec(null)}
         />

@@ -372,9 +372,11 @@ export type Database = {
           id: string
           note: string
           peak_kg: number
+          protocol_run_id: string | null
           recorded_at: string
           sample_count: number
           samples: Json
+          set_no: number | null
           side: string
           tag: string
           user_id: string
@@ -387,9 +389,11 @@ export type Database = {
           id?: string
           note?: string
           peak_kg: number
+          protocol_run_id?: string | null
           recorded_at?: string
           sample_count: number
           samples: Json
+          set_no?: number | null
           side?: string
           tag?: string
           user_id?: string
@@ -402,9 +406,11 @@ export type Database = {
           id?: string
           note?: string
           peak_kg?: number
+          protocol_run_id?: string | null
           recorded_at?: string
           sample_count?: number
           samples?: Json
+          set_no?: number | null
           side?: string
           tag?: string
           user_id?: string

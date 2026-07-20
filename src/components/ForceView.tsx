@@ -183,6 +183,10 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   // → the duplicate recordings seen in the wild. The index is claimed
   // synchronously before the async insert so whichever path runs first wins.
   const savedSegsRef = useRef<Set<number>>(new Set());
+  // One id per guided-protocol run (SL-79) — every rep saved from that run
+  // carries it (+ its set number), so History can treat the run/set as a
+  // group and edits can apply to all of it. Null while free-holding.
+  const protocolRunIdRef = useRef<string | null>(null);
   async function saveHoldSlice(
     seg: ProtocolSegment,
     segIdx: number,
@@ -212,6 +216,8 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         tag: pendingTag.trim(),
         side: seg.side ?? pendingSide,
         groupId: ensureSession(),
+        protocolRunId: protocolRunIdRef.current,
+        setNo: seg.set,
         samples: slice,
       });
       setRecordings((list) => [saved, ...list]);
@@ -286,6 +292,8 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         tag: pendingTag.trim(),
         side: pendingSide,
         groupId: ensureSession(),
+        protocolRunId: null,
+        setNo: null,
         samples: summary.samples,
       });
       setRecordings((list) => [saved, ...list]);
@@ -914,6 +922,9 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
             setJustSaved(null);
             setProtoShiftS(0);
             setPausedAtS(null);
+            // New run id for guided runs; free holds stay unstamped (SL-79).
+            protocolRunIdRef.current =
+              timeline && activeProtocol ? crypto.randomUUID() : null;
             void tindeq.start();
             // Lock-screen card for guided runs: hand the whole segment
             // schedule to native up front — the countdown renders from

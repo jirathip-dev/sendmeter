@@ -272,14 +272,29 @@ export default function HistoryView({
         </div>
       )}
 
-      {/* Edit a single recording's tag/side/note */}
+      {/* Edit a recording's tag/side/note — optionally the whole set/run (SL-79) */}
       {editingRec && (
         <EditRecordingSheet
           rec={editingRec}
+          runSiblings={
+            editingRec.protocolRunId
+              ? allRecordings.filter(
+                  (r) => r.protocolRunId === editingRec.protocolRunId,
+                )
+              : []
+          }
           recentTags={recentTags}
           onSaved={(saved) => {
-            setEditedRecs((prev) => new Map(prev).set(saved.id, saved));
-            toast("Recording updated");
+            setEditedRecs((prev) => {
+              const next = new Map(prev);
+              for (const r of saved) next.set(r.id, r);
+              return next;
+            });
+            toast(
+              saved.length === 1
+                ? "Recording updated"
+                : `${saved.length} recordings updated`,
+            );
           }}
           onClose={() => setEditingRec(null)}
         />

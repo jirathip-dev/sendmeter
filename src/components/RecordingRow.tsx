@@ -261,6 +261,9 @@ export default function RecordingRow({
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s · avg{" "}
             {rec.avgKg.toFixed(1)} kg
+            {rec.setNo !== null && (
+              <span style={{ color: "var(--info)" }}> · set {rec.setNo}</span>
+            )}
           </div>
           {rec.note && (
             <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 3 }}>

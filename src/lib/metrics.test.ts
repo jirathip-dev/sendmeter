@@ -39,6 +39,8 @@ function rec(recordedAt: string, peakKg: number): TindeqRecordingMeta {
     tag: "FDP",
     side: "",
     groupId: null,
+    protocolRunId: null,
+    setNo: null,
   };
 }
 

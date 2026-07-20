@@ -1,13 +1,20 @@
 import { useState } from "react";
-import { updateRecordingMeta } from "../lib/repo";
+import { updateRecordingMeta, updateRecordingsMeta } from "../lib/repo";
 import type { TindeqRecordingMeta, TindeqSide } from "../types";
 import Sheet from "./Sheet";
 
+/// How far an edit reaches (SL-79): just this rep, every rep of its set, or
+/// every rep of the whole protocol run.
+type EditScope = "rep" | "set" | "run";
+
 interface Props {
   rec: TindeqRecordingMeta;
+  /// Recordings sharing this rec's protocolRunId (including rec itself) —
+  /// enables set/run bulk edits. Empty for free holds.
+  runSiblings: TindeqRecordingMeta[];
   /// Existing exercise tags, for quick-pick chips (avoid re-typing).
   recentTags: string[];
-  onSaved: (rec: TindeqRecordingMeta) => void;
+  onSaved: (recs: TindeqRecordingMeta[]) => void;
   onClose: () => void;
 }
 
@@ -20,22 +27,39 @@ const SIDES: { value: TindeqSide; label: string }[] = [
 
 /// Fix a recording's tag / side / note after the fact — the common case is
 /// forgetting to switch the side or set the tag before a rep (SL-58).
-export default function EditRecordingSheet({ rec, recentTags, onSaved, onClose }: Props) {
+export default function EditRecordingSheet({
+  rec,
+  runSiblings,
+  recentTags,
+  onSaved,
+  onClose,
+}: Props) {
   const [tag, setTag] = useState(rec.tag);
   const [side, setSide] = useState<TindeqSide>(rec.side);
   const [note, setNote] = useState(rec.note);
+  const [scope, setScope] = useState<EditScope>("rep");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const setSiblings = runSiblings.filter(
+    (r) => rec.setNo !== null && r.setNo === rec.setNo,
+  );
+  const scopeIds: Record<EditScope, string[]> = {
+    rep: [rec.id],
+    set: setSiblings.map((r) => r.id),
+    run: runSiblings.map((r) => r.id),
+  };
 
   async function save() {
     setSaving(true);
     setError(null);
+    const patch = { tag: tag.trim(), side, note: note.trim() };
     try {
-      const saved = await updateRecordingMeta(rec.id, {
-        tag: tag.trim(),
-        side,
-        note: note.trim(),
-      });
+      const ids = scopeIds[scope];
+      const saved =
+        ids.length > 1
+          ? await updateRecordingsMeta(ids, patch)
+          : [await updateRecordingMeta(rec.id, patch)];
       onSaved(saved);
       onClose();
     } catch (e) {
@@ -106,6 +130,40 @@ export default function EditRecordingSheet({ rec, recentTags, onSaved, onClose }
           </button>
         ))}
       </div>
+
+      {/* Bulk scope — only for guided-protocol reps (SL-79) */}
+      {runSiblings.length > 1 && (
+        <>
+          <span className="field-label">Apply to</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {(
+              [
+                ["rep", "This rep"],
+                ["set", `Set ${rec.setNo ?? "?"} (${setSiblings.length})`],
+                ["run", `Whole run (${runSiblings.length})`],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setScope(v)}
+                style={{
+                  flex: 1,
+                  padding: "9px 0",
+                  borderRadius: 8,
+                  fontSize: "var(--t-sm)",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  border: `1px solid ${scope === v ? "var(--info)" : "var(--border)"}`,
+                  background: scope === v ? "rgba(123,131,235,0.12)" : "transparent",
+                  color: scope === v ? "var(--ink)" : "var(--ink-muted)",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       <span className="field-label">Note (optional)</span>
       <input
