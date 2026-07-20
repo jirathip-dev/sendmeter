@@ -26,6 +26,11 @@ function fmt(sec: number): string {
   return s === 0 ? `${m}m` : `${m}m${s}s`;
 }
 
+/// Selected-protocol persistence (SL-76): ForceView unmounts on tab switch and
+/// its preset state dies with it, so the armed protocol vanished every time
+/// you peeked at another tab. Remember the id and re-arm on mount.
+const SELECTED_KEY = "sendmeter:force-preset";
+
 function NumField({
   label,
   value,
@@ -100,13 +105,25 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
   useEffect(() => {
     let alive = true;
     fetchPresets()
-      .then((list) => alive && setPresets(list))
+      .then((list) => {
+        if (!alive) return;
+        setPresets(list);
+        // Re-arm the previously selected protocol (survives tab switches).
+        const savedId = localStorage.getItem(SELECTED_KEY);
+        if (savedId && selectedId === null) {
+          const saved = list.find((p) => p.id === savedId);
+          if (saved) onSelect(saved);
+        }
+      })
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load presets"),
       );
     return () => {
       alive = false;
     };
+    // Restore uses mount-time selection only; re-running on selection change
+    // would re-arm a deliberately deselected preset.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function save() {
@@ -149,6 +166,7 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
   async function remove(id: string) {
     setPresets((list) => list.filter((p) => p.id !== id));
     if (selectedId === id) onSelect(null);
+    if (localStorage.getItem(SELECTED_KEY) === id) localStorage.removeItem(SELECTED_KEY);
     toast("Preset deleted");
     try {
       await deletePreset(id);
@@ -182,7 +200,11 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
         return (
           <Fragment key={p.id}>
           <div
-            onClick={() => onSelect(selected ? null : p)}
+            onClick={() => {
+              if (selected) localStorage.removeItem(SELECTED_KEY);
+              else localStorage.setItem(SELECTED_KEY, p.id);
+              onSelect(selected ? null : p);
+            }}
             style={{
               display: "flex",
               alignItems: "center",
