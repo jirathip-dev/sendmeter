@@ -13,12 +13,76 @@ import {
 import type { Session, TindeqRecordingMeta, WorkoutDetail } from "../types";
 import EditRecordingSheet from "./EditRecordingSheet";
 import RecordingRow from "./RecordingRow";
+import Sheet from "./Sheet";
 import WorkoutDetailPanel from "./WorkoutDetailPanel";
 
 interface Props {
   s: Session;
   onDelete: (id: string) => void;
   onEdit?: (s: Session) => void;
+}
+
+/// One collapsible section per exercise tag inside a Tindeq session's detail
+/// page — a high-rep session (dozens of reps across exercises) reads as a few
+/// summary lines instead of an endless list.
+function TagGroup({
+  tag,
+  recs,
+  onEditRec,
+  onDeleteRec,
+}: {
+  tag: string;
+  recs: TindeqRecordingMeta[];
+  onEditRec: (r: TindeqRecordingMeta) => void;
+  onDeleteRec: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const best = Math.max(...recs.map((r) => r.peakKg));
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "10px 12px",
+          borderRadius: 9,
+          border: "1px solid var(--border)",
+          background: "var(--surface-1)",
+          fontFamily: "inherit",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <span style={{ fontSize: "var(--t-base)", fontWeight: 700, color: "var(--ink)", flex: 1 }}>
+          {tag || "untagged"}
+        </span>
+        <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
+          {recs.length} rep{recs.length === 1 ? "" : "s"} · best{" "}
+          <span style={{ color: "var(--success)", fontWeight: 700 }}>
+            {best.toFixed(1)} kg
+          </span>
+        </span>
+        <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          {recs.map((r) => (
+            <RecordingRow
+              key={r.id}
+              rec={r}
+              onEdit={onEditRec}
+              onDelete={onDeleteRec}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function SessionRow({ s, onDelete, onEdit }: Props) {
@@ -28,7 +92,9 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
   const isWorkout = s.workoutSource !== null;
   const isTindeq = s.type === "tindeq" && s.groupId !== null;
   const expandable = isWorkout || isTindeq;
-  const [expanded, setExpanded] = useState(false);
+  // Detail opens as its OWN full-height page (sheet) instead of expanding
+  // inline — long sessions were unmanageable inside the timeline (SL-86).
+  const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState<WorkoutDetail | null | "missing">(null);
   const [tindeqRecs, setTindeqRecs] = useState<TindeqRecordingMeta[] | null>(
     null,
@@ -36,13 +102,12 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
   const [editingRec, setEditingRec] = useState<TindeqRecordingMeta | null>(null);
   const [loadError, setLoadError] = useState(false);
 
-  async function toggle() {
+  async function open() {
     if (!expandable) return;
-    const next = !expanded;
-    setExpanded(next);
-    if (!next || loadError) return;
+    setDetailOpen(true);
+    if (loadError) return;
     // Always refetch on open (not just when the cache is empty) so a recording
-    // assigned into this group while it was collapsed shows on re-expand.
+    // assigned into this group while it was closed shows on re-open.
     try {
       if (isWorkout) {
         const d = await fetchWorkoutForSession(s.id);
@@ -55,14 +120,12 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
     }
   }
 
-  // Refetch the expanded content when data changes elsewhere (e.g. a recording
-  // assigned into this session's group, or a watch write) — without this the
-  // cached recordings only refresh on remount, so a just-moved recording
-  // wouldn't show until you left and re-entered History.
+  // Refetch the open detail when data changes elsewhere (e.g. a recording
+  // assigned into this session's group, or a watch write).
   const realtimeVersion = useRealtimeVersion();
   const bumpRealtime = useRealtimeBump();
   useEffect(() => {
-    if (!expanded) return;
+    if (!detailOpen) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -83,6 +146,25 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realtimeVersion]);
 
+  // Recordings grouped by tag, preserving first-seen order.
+  const tagGroups: { tag: string; recs: TindeqRecordingMeta[] }[] = [];
+  for (const r of tindeqRecs ?? []) {
+    const g = tagGroups.find((x) => x.tag === r.tag);
+    if (g) g.recs.push(r);
+    else tagGroups.push({ tag: r.tag, recs: [r] });
+  }
+
+  function deleteRec(id: string) {
+    setTindeqRecs((list) => (list ? list.filter((x) => x.id !== id) : list));
+    // Removing a rep shrinks the session's span — recompute its total time,
+    // then bump so the header duration/load refresh.
+    void (async () => {
+      await deleteRecording(id);
+      if (s.groupId) await recalcTindeqSessionDuration(s.groupId);
+      bumpRealtime();
+    })();
+  }
+
   return (
     <div
       className="session-row"
@@ -92,7 +174,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
         gap: 0,
         cursor: expandable ? "pointer" : undefined,
       }}
-      onClick={() => void toggle()}
+      onClick={() => void open()}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div
@@ -142,7 +224,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
             )}
             {expandable && (
               <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
-                {expanded ? "▾" : "▸"}
+                ›
               </span>
             )}
           </div>
@@ -183,78 +265,73 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
         </button>
       </div>
 
-      {expanded && isWorkout && (
-        <>
-          {detail === null && !loadError && (
-            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
-              Loading workout…
+      {/* The session's own page — detail charts + recordings live here */}
+      {detailOpen && (
+        <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default" }}>
+          <Sheet fullHeight onClose={() => setDetailOpen(false)}>
+            <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800 }}>
+              {s.typeLabel}
             </div>
-          )}
-          {loadError && (
-            <div style={{ fontSize: "var(--t-2xs)", color: "var(--danger)", marginTop: 8 }}>
-              Failed to load workout
+            <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", margin: "2px 0 10px" }}>
+              {s.date} · {s.duration}min · RPE {s.rpe} · {s.load} AU
+              {s.note ? ` · ${s.note}` : ""}
             </div>
-          )}
-          {detail === "missing" && (
-            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
-              No workout data
-            </div>
-          )}
-          {detail !== null && detail !== "missing" && (
-            <WorkoutDetailPanel detail={detail} />
-          )}
-        </>
-      )}
 
-      {expanded && isTindeq && (
-        <div
-          // Recording rows have their own expand/collapse — don't let their
-          // clicks bubble up and toggle the whole session row.
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            marginTop: 10,
-            paddingTop: 10,
-            borderTop: "1px solid var(--hairline)",
-            cursor: "default",
-          }}
-        >
-          {tindeqRecs === null && !loadError && (
-            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
-              Loading recordings…
-            </div>
-          )}
-          {loadError && (
-            <div style={{ fontSize: "var(--t-2xs)", color: "var(--danger)" }}>
-              Failed to load recordings
-            </div>
-          )}
-          {tindeqRecs !== null && tindeqRecs.length === 0 && (
-            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
-              No recordings in this session
-            </div>
-          )}
-          {/* Full recording rows — expand each for its force-trace chart */}
-          {tindeqRecs?.map((r) => (
-            <RecordingRow
-              key={r.id}
-              rec={r}
-              onEdit={setEditingRec}
-              onDelete={(id) => {
-                setTindeqRecs((list) =>
-                  list ? list.filter((x) => x.id !== id) : list,
-                );
-                // Removing a rep shrinks the session's span — recompute its
-                // total time, then bump so the header duration/load refresh.
-                void (async () => {
-                  await deleteRecording(id);
-                  if (s.groupId) await recalcTindeqSessionDuration(s.groupId);
-                  bumpRealtime();
-                })();
-              }}
-            />
-          ))}
+            {isWorkout && (
+              <>
+                {detail === null && !loadError && (
+                  <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
+                    Loading workout…
+                  </div>
+                )}
+                {loadError && (
+                  <div style={{ fontSize: "var(--t-2xs)", color: "var(--danger)" }}>
+                    Failed to load workout
+                  </div>
+                )}
+                {detail === "missing" && (
+                  <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
+                    No workout data
+                  </div>
+                )}
+                {detail !== null && detail !== "missing" && (
+                  <WorkoutDetailPanel detail={detail} />
+                )}
+              </>
+            )}
+
+            {isTindeq && (
+              <>
+                {tindeqRecs === null && !loadError && (
+                  <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
+                    Loading recordings…
+                  </div>
+                )}
+                {loadError && (
+                  <div style={{ fontSize: "var(--t-2xs)", color: "var(--danger)" }}>
+                    Failed to load recordings
+                  </div>
+                )}
+                {tindeqRecs !== null && tindeqRecs.length === 0 && (
+                  <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
+                    No recordings in this session
+                  </div>
+                )}
+                {tagGroups.map((g) => (
+                  <TagGroup
+                    key={g.tag || "untagged"}
+                    tag={g.tag}
+                    recs={g.recs}
+                    onEditRec={setEditingRec}
+                    onDeleteRec={deleteRec}
+                  />
+                ))}
+              </>
+            )}
+          </Sheet>
         </div>
       )}
+
       {editingRec && (
         <EditRecordingSheet
           rec={editingRec}
