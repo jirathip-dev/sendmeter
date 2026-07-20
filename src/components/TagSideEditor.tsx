@@ -26,12 +26,23 @@ export default function TagSideEditor({
   onSide: (s: TindeqSide) => void;
 }) {
   const [addingTag, setAddingTag] = useState(false);
+  const [showAllTags, setShowAllTags] = useState(false);
   const [draft, setDraft] = useState("");
   const trimmed = tag.trim();
   // A brand-new tag (no recordings yet) still gets a chip so the selection
   // is visible and toggleable.
   const tags =
     !trimmed || allTags.includes(trimmed) ? allTags : [trimmed, ...allTags];
+  // A long tag list collapses to the first few (most-used first) + the
+  // active one, with a "+N" chip revealing the rest.
+  const VISIBLE = 8;
+  const visibleTags = showAllTags
+    ? tags
+    : [
+        ...tags.slice(0, VISIBLE),
+        ...(trimmed && tags.indexOf(trimmed) >= VISIBLE ? [trimmed] : []),
+      ];
+  const hiddenCount = tags.length - visibleTags.length;
 
   function commitDraft() {
     const t = draft.trim();
@@ -47,7 +58,7 @@ export default function TagSideEditor({
       {/* Current exercise — the big box */}
       <div
         style={{
-          padding: "13px 16px",
+          padding: "11px 14px",
           borderRadius: 12,
           background: "var(--surface-1)",
           border: "1px solid var(--border)",
@@ -57,7 +68,7 @@ export default function TagSideEditor({
         <div
           style={{
             fontFamily: "Inter, sans-serif",
-            fontSize: 22,
+            fontSize: "var(--t-xl)",
             fontWeight: 800,
             letterSpacing: "-0.01em",
             color: trimmed ? "var(--ink)" : "var(--ink-faint)",
@@ -73,9 +84,9 @@ export default function TagSideEditor({
         </div>
       </div>
 
-      {/* Tag chips + "+" to add a new one */}
+      {/* Tag chips + "+" to add a new one; long lists collapse behind "+N" */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {tags.map((t) => (
+        {visibleTags.map((t) => (
           <BoxChip
             key={t}
             label={t}
@@ -83,6 +94,14 @@ export default function TagSideEditor({
             onClick={() => onTag(t === trimmed ? "" : t)}
           />
         ))}
+        {hiddenCount > 0 && (
+          <BoxChip
+            label={`+${hiddenCount}`}
+            active={false}
+            onClick={() => setShowAllTags(true)}
+            style={{ color: "var(--ink-muted)" }}
+          />
+        )}
         <BoxChip
           label="＋"
           active={addingTag}
