@@ -26,6 +26,8 @@ interface Props {
   onOpenTrash: () => void;
 }
 
+const PAGE_SIZE = 40;
+
 type TimelineItem =
   | { kind: "session"; key: string; sortKey: string; s: Session }
   | { kind: "recording"; key: string; sortKey: string; rec: TindeqRecordingMeta };
@@ -44,6 +46,8 @@ export default function HistoryView({
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
+  // Lazy render (SL-86): mount the timeline in pages.
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [assignedIds, setAssignedIds] = useState<Set<string>>(new Set());
   // Multi-select of loose recordings → one new session.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -220,7 +224,7 @@ export default function HistoryView({
           No sessions yet.
         </div>
       )}
-      {items.map((it) =>
+      {items.slice(0, visibleCount).map((it) =>
         it.kind === "session" ? (
           <SessionRow key={it.key} s={it.s} onDelete={onDelete} onEdit={onEdit} />
         ) : (
@@ -238,6 +242,19 @@ export default function HistoryView({
             onToggleSelect={toggleSelect}
           />
         ),
+      )}
+
+      {/* Lazy render (SL-86): a long history mounts rows in pages instead of
+          all at once — expanded charts already fetch lazily per row. */}
+      {items.length > visibleCount && (
+        <button
+          className="btn-ghost"
+          style={{ marginTop: 4 }}
+          onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+        >
+          Load {Math.min(PAGE_SIZE, items.length - visibleCount)} more ·{" "}
+          {items.length - visibleCount} older
+        </button>
       )}
 
       {/* Floating glass action bar while loose recordings are ticked */}
