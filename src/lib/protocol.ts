@@ -4,12 +4,10 @@ import type { TindeqPreset } from "../types";
 /// list of timed segments; the UI and the per-rep recorder both walk it, so
 /// countdowns and saved recordings can never disagree.
 ///
-/// Alternating mode ("switch hands during the rest"): each preset rep is a
-/// LEFT+RIGHT pair — hold L, a short SWITCH window, hold R (eating into the
-/// rest), the remaining rest, then a SWITCH back to L before the next pair
-/// (so BOTH hand changes get a countdown). If the rest is too short to fit
-/// the switches + the other hand's hold, it's automatically extended:
-/// effectiveRest = max(rest, switchS + holdS + switchS).
+/// Alternating mode (SL-78): hands alternate per SET — set 1 runs every rep
+/// LEFT, set 2 RIGHT, and so on. The set rest ends with a short SWITCH
+/// countdown into the other hand (the rest is auto-extended to at least the
+/// switch window). Within a set, rep rests are plain rests on the same hand.
 
 export interface ProtocolSegment {
   phase: "prepare" | "hold" | "switch" | "rest" | "setRest";
@@ -27,10 +25,10 @@ export interface TimelinePosition {
   remaining: number;
 }
 
-/// Which hand a rep uses when the preset alternates: pairs always run
-/// left-then-right.
-export function repSide(rep: number): "left" | "right" {
-  return rep % 2 === 1 ? "left" : "right";
+/// Which hand a SET uses when the preset alternates: odd sets left, even
+/// sets right.
+export function setSide(set: number): "left" | "right" {
+  return set % 2 === 1 ? "left" : "right";
 }
 
 /// Nominal (non-alternating) duration — the quick summary shown on preset
@@ -107,23 +105,14 @@ export function buildTimeline(
       const lastRep = rep === p.reps;
       const lastSet = set === p.sets;
       if (p.alternateSides) {
-        push("hold", "left", rep, set, p.holdS);
-        push("switch", "right", rep, set, switchS);
-        push("hold", "right", rep, set, p.holdS);
-        // The other hand's hold ate into the rest; what's left of the
-        // (auto-extended) rest window plays out, ending with a switch back
-        // to LEFT so the return change gets a countdown too.
-        if (!(lastRep && lastSet)) {
-          const nominal = lastRep ? p.restSetsS : p.restRepsS;
-          const eff = Math.max(nominal, switchS + p.holdS + switchS);
-          push(
-            lastRep ? "setRest" : "rest",
-            null,
-            rep,
-            set,
-            eff - switchS - p.holdS - switchS,
-          );
-          push("switch", "left", rep, set, switchS);
+        // Per-SET alternation: every rep in this set is on one hand; the set
+        // rest ends with a SWITCH countdown into the other hand.
+        push("hold", setSide(set), rep, set, p.holdS);
+        if (!lastRep) push("rest", null, rep, set, p.restRepsS);
+        else if (!lastSet) {
+          const eff = Math.max(p.restSetsS, switchS);
+          push("setRest", null, rep, set, eff - switchS);
+          push("switch", setSide(set + 1), rep, set, switchS);
         }
       } else {
         push("hold", null, rep, set, p.holdS);

@@ -176,7 +176,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                     if (quality) onSelect(build(quality, e.target.checked));
                   }}
                 />
-                Alternate left ⇄ right each rep (otherwise uses the selected side)
+                Alternate left ⇄ right each set (otherwise uses the selected side)
               </label>
             </div>
           ) : (

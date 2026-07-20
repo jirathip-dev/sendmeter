@@ -436,7 +436,7 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
               checked={alternateSides}
               onChange={(e) => setAlternateSides(e.target.checked)}
             />
-            Alternate left ⇄ right each rep (otherwise uses the selected side)
+            Alternate left ⇄ right each set (otherwise uses the selected side)
           </label>
           <div style={{ marginTop: 14 }}>
             <button className="btn-primary" disabled={saving} onClick={() => void save()}>

@@ -152,6 +152,15 @@ export default function ForceFullscreen({
         (globalSide === "left" || globalSide === "right" ? globalSide : null))
       : null;
 
+  // Upcoming hand during a rest (alternating protocols): the next hold
+  // segment's side — same hand within a set, the other one across a set rest.
+  const nextHoldSide =
+    pos && timeline
+      ? (timeline.find(
+          (s) => s.phase === "hold" && s.startS >= pos.seg.startS + pos.seg.durS,
+        )?.side ?? null)
+      : null;
+
   // Per-set target band: a %-of-PR preset ramps up each set; the chart band
   // follows the CURRENT set live (set 1 while idle, last set once done).
   const currentSet = pos?.seg.set ?? (done ? (protocol?.sets ?? 1) : 1);
@@ -311,10 +320,11 @@ export default function ForceFullscreen({
                   ? "get on the hold…"
                   : `rep ${pos.seg.rep}/${protocol.reps} · set ${pos.seg.set}/${protocol.sets}`}
                 {(pos.seg.phase === "rest" || pos.seg.phase === "setRest") &&
-                  protocol.alternateSides && (
+                  protocol.alternateSides &&
+                  nextHoldSide && (
                     <span style={{ color: "var(--warning)", fontWeight: 700 }}>
                       {" "}
-                      · next: LEFT
+                      · next: {nextHoldSide.toUpperCase()}
                     </span>
                   )}
               </div>
