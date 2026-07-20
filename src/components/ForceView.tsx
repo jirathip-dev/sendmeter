@@ -86,8 +86,8 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   const [curveError, setCurveError] = useState<string | null>(null);
   const realtimeVersion = useRealtimeVersion();
 
-  // Every tag ever used, most frequent first; top 6 become one-tap chips,
-  // the full list feeds the input's autocomplete datalist.
+  // Every tag ever used, most frequent first — rendered as selectable box
+  // chips (SL-82).
   const allTags = (() => {
     const counts = new Map<string, number>();
     for (const r of recordings) {
@@ -97,7 +97,6 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       .sort((a, b) => b[1] - a[1])
       .map(([t]) => t);
   })();
-  const recentTags = allTags.slice(0, 6);
 
   const sessionCount = gaugeSession
     ? recordings.filter((r) => r.groupId === gaugeSession.groupId).length
@@ -778,7 +777,6 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         <TagSideEditor
           tag={pendingTag}
           side={pendingSide}
-          recentTags={recentTags}
           allTags={allTags}
           onTag={setPendingTag}
           onSide={setPendingSide}

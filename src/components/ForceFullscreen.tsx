@@ -4,6 +4,7 @@ import type { useTindeq } from "../hooks/useTindeq";
 import { presetTargetKg, timelineAt, timelineDurationS } from "../lib/protocol";
 import type { PresetRefs, ProtocolSegment } from "../lib/protocol";
 import type { TindeqPreset, TindeqSide } from "../types";
+import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
 import type { GaugeTarget } from "./ForceCurveCard";
 
@@ -375,41 +376,49 @@ export default function ForceFullscreen({
         </div>
 
         {/* Quick exercise + side pickers — arm a free hold without leaving
-            the gauge (brand-new tags are typed in the tab). A freshly typed
-            tag has no recordings yet, so it isn't in allTags — include it as
-            an option so the armed tag actually shows instead of "exercise…"
-            (SL-81). */}
+            the gauge (brand-new tags are typed in the tab). Box chips, no
+            dropdowns (SL-82); a freshly typed tag with no recordings yet is
+            included so the armed tag shows (SL-81). */}
         {!measuring && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <select
-              className="field"
-              value={tag.trim()}
-              onChange={(e) => onTag(e.target.value)}
-              style={{ padding: "9px 10px", fontSize: "var(--t-base)", flex: 2 }}
-            >
-              <option value="" disabled>
-                {allTags.length ? "exercise…" : "no tags yet"}
-              </option>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {(allTags.includes(tag.trim()) || !tag.trim()
                 ? allTags
                 : [tag.trim(), ...allTags]
               ).map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
+                <BoxChip
+                  key={t}
+                  small
+                  label={t}
+                  active={t === tag.trim()}
+                  onClick={() => onTag(t)}
+                />
               ))}
-            </select>
-            <select
-              className="field"
-              value={globalSide}
-              onChange={(e) => onSide(e.target.value as TindeqSide)}
-              style={{ padding: "9px 10px", fontSize: "var(--t-base)", flex: 1 }}
-            >
-              <option value="">— side</option>
-              <option value="left">Left</option>
-              <option value="right">Right</option>
-              <option value="both">Both</option>
-            </select>
+              {allTags.length === 0 && !tag.trim() && (
+                <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", alignSelf: "center" }}>
+                  no tags yet — add one in the tab
+                </span>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(
+                [
+                  ["", "—"],
+                  ["left", "Left"],
+                  ["right", "Right"],
+                  ["both", "Both"],
+                ] as const
+              ).map(([v, label]) => (
+                <BoxChip
+                  key={v}
+                  small
+                  label={label}
+                  active={globalSide === v}
+                  onClick={() => onSide(v as TindeqSide)}
+                  style={{ flex: 1 }}
+                />
+              ))}
+            </div>
           </div>
         )}
 
