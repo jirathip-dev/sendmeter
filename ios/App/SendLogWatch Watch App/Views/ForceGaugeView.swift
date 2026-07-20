@@ -8,6 +8,9 @@ private let SIDE_OPTIONS: [(value: String, label: String)] = [
     ("both", "Both"),
 ]
 
+private let LAST_TAG_KEY = "lastTindeqTag"
+private let LAST_SIDE_KEY = "lastTindeqSide"
+
 struct ForceGaugeView: View {
     // App-level so the connection + gauge session survive leaving this screen
     // (SL-58 #5). The finish prompt is presented from RootView.
@@ -17,11 +20,17 @@ struct ForceGaugeView: View {
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
 
     // Exercise setup — set once before the first rep, tweak side between reps.
-    // Hidden while measuring so the live gauge fits one screen; Stop always
-    // saves with whatever tag/side is set (no post-stop decision).
+    // Stop always saves with whatever tag/side is set (no post-stop decision).
     @State private var tag = ""
     @State private var side = ""
     @State private var recentTags: [String] = []
+    // SL-75: the one-shot fetch used to lose the auth race → "no tags yet"
+    // even though the phone had plenty, and the silent first-tag default then
+    // mislabeled the rep. Now: retried fetch with a visible loading state,
+    // and only the persisted LAST-USED tag is auto-picked — never the first
+    // of the list.
+    @State private var tagsLoading = true
+    @State private var tagFetchTask: Task<Void, Never>?
 
     private let sparkTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
@@ -55,8 +64,11 @@ struct ForceGaugeView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
 
-                case .connected, .measuring:
-                    gaugeContent
+                case .connected:
+                    setupContent
+
+                case .measuring:
+                    measuringContent
                 }
 
                 if let savedMsg {
@@ -66,10 +78,13 @@ struct ForceGaugeView: View {
                 }
             }
         }
-        .onChange(of: tindeq.status) { _, _ in
+        .onChange(of: tindeq.status) { _, status in
             // Controls show/hide on start/stop, shifting layout — snap back to
             // the top so the live gauge stays in view instead of a blank scroll.
             withAnimation { proxy.scrollTo("gaugeTop", anchor: .top) }
+            // A connect is a fresh chance to win the tag fetch (auth relay may
+            // have settled since launch).
+            if status == .connected && recentTags.isEmpty { loadTags() }
         }
         }
         .navigationTitle("Force")
@@ -79,13 +94,33 @@ struct ForceGaugeView: View {
             }
         }
         .task {
-            recentTags = (try? await Repo.fetchRecentTindeqTags()) ?? []
-            // Pick-only tag: default to the most-recent exercise so Start
-            // works immediately (mirror of the web tab's default).
-            if tag.isEmpty, let first = recentTags.first { tag = first }
+            // Last-used tag/side restore instantly — no network needed to start.
+            if tag.isEmpty { tag = UserDefaults.standard.string(forKey: LAST_TAG_KEY) ?? "" }
+            if side.isEmpty { side = UserDefaults.standard.string(forKey: LAST_SIDE_KEY) ?? "" }
+            loadTags()
         }
+        .onDisappear { tagFetchTask?.cancel() }
         // No .onDisappear disconnect — the connection persists across navigation
         // (SL-58 #5); it drops only on a real BLE loss, which prompts to finish.
+    }
+
+    /// Fetch the tag list with retries — a cold launch can lose the race with
+    /// the auth relay, which used to leave "no tags yet" stuck on screen.
+    private func loadTags() {
+        tagFetchTask?.cancel()
+        tagsLoading = true
+        tagFetchTask = Task {
+            for attempt in 0..<4 {
+                if Task.isCancelled { return }
+                if let tags = try? await Repo.fetchRecentTindeqTags(), !tags.isEmpty {
+                    recentTags = tags
+                    tagsLoading = false
+                    return
+                }
+                try? await Task.sleep(for: .seconds(Double(attempt + 1) * 1.5))
+            }
+            tagsLoading = false
+        }
     }
 
     // MARK: Session bar
@@ -118,15 +153,21 @@ struct ForceGaugeView: View {
         }
     }
 
-    // MARK: Gauge
+    /// Deliberate disconnect (SL-75: there was no button). With saved reps it
+    /// first surfaces the finish prompt so the session gets logged instead of
+    /// orphaned; the sheet doesn't need the BLE link, so disconnect right away.
+    private func disconnectTapped() {
+        if tindeq.sessionCount > 0 { tindeq.pendingFinish = true }
+        tindeq.disconnect()
+    }
+
+    // MARK: Connected (setup) — fits one page: status, tag/side, Start.
 
     @ViewBuilder
-    private var gaugeContent: some View {
+    private var setupContent: some View {
         HStack {
-            Circle()
-                .fill(tindeq.status == .measuring ? .green : .blue)
-                .frame(width: 8, height: 8)
-            Text(tindeq.status == .measuring ? "measuring" : "connected")
+            Circle().fill(.blue).frame(width: 8, height: 8)
+            Text("connected")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -134,33 +175,75 @@ struct ForceGaugeView: View {
                 Image(systemName: "battery.25")
                     .foregroundStyle(.yellow)
             }
+            Button {
+                disconnectTapped()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+            .tint(.red)
         }
 
-        // Exercise setup (hidden while measuring to keep the gauge one-screen).
         // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
         // free text drifts from the app's tag set. New tags are created in the
         // iPhone/web Force tab; the watch selects from what already exists.
-        if tindeq.status == .connected {
-            if recentTags.isEmpty {
-                Text("No exercise tags yet — record once in the iPhone app to create one.")
+        if tagsLoading && recentTags.isEmpty {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("Loading exercises…")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-            } else {
-                Picker("Exercise", selection: $tag) {
-                    ForEach(recentTags, id: \.self) { t in
-                        Text(t).tag(t)
-                    }
-                }
-                .pickerStyle(.navigationLink)
-                .font(.footnote)
             }
-            Picker("Side", selection: $side) {
-                ForEach(SIDE_OPTIONS, id: \.value) { o in
-                    Text(o.label).tag(o.value)
+        } else if recentTags.isEmpty {
+            Text("No exercise tags found — record once in the iPhone app, or check the phone app is signed in.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Button("Retry") { loadTags() }
+                .font(.footnote)
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+        } else {
+            Picker("Exercise", selection: $tag) {
+                // Explicit empty choice — a rep is never silently mislabeled.
+                Text("pick…").tag("")
+                ForEach(recentTags, id: \.self) { t in
+                    Text(t).tag(t)
                 }
             }
             .pickerStyle(.navigationLink)
             .font(.footnote)
+        }
+        Picker("Side", selection: $side) {
+            ForEach(SIDE_OPTIONS, id: \.value) { o in
+                Text(o.label).tag(o.value)
+            }
+        }
+        .pickerStyle(.navigationLink)
+        .font(.footnote)
+
+        Button("Start") {
+            savedMsg = nil
+            tindeq.start()
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
+        if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
+            Text("Pick an exercise to start.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Measuring — the live gauge owns the whole screen.
+
+    @ViewBuilder
+    private var measuringContent: some View {
+        HStack {
+            Circle().fill(.green).frame(width: 8, height: 8)
+            Text(tag).font(.footnote).foregroundStyle(.secondary)
+            Spacer()
         }
 
         Text(String(format: "%.1f", tindeq.currentKg))
@@ -169,7 +252,7 @@ struct ForceGaugeView: View {
         + Text(" kg").font(.footnote).foregroundStyle(.secondary)
 
         // Hold time — the primary live number after force, so it reads at a
-        // glance mid-hang (much larger than the old footnote).
+        // glance mid-hang.
         HStack(alignment: .firstTextBaseline) {
             Text("peak \(String(format: "%.1f", tindeq.peakKg))")
                 .font(.footnote)
@@ -178,25 +261,15 @@ struct ForceGaugeView: View {
             Text(String(format: "%.1f", tindeq.elapsedMs / 1000))
                 .font(.system(size: 26, weight: .bold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(tindeq.status == .measuring ? .primary : .secondary)
             + Text(" s").font(.footnote).foregroundStyle(.secondary)
         }
 
         Sparkline(samples: sparkSamples)
             .frame(height: 50)
 
-        if tindeq.status == .measuring {
-            Button(saving ? "Saving…" : "Stop & Save") { saveStop() }
-                .buttonStyle(.borderedProminent)
-                .disabled(saving)
-        } else {
-            Button("Start") {
-                savedMsg = nil
-                tindeq.start()
-            }
+        Button(saving ? "Saving…" : "Stop & Save") { saveStop() }
             .buttonStyle(.borderedProminent)
             .disabled(saving)
-        }
     }
 
     // Stop always saves — with the tag/side set before the rep. A failure keeps
@@ -210,18 +283,23 @@ struct ForceGaugeView: View {
         // connect shares a group_id (SL-58 #5). Mint synchronously before the
         // async insert so the group id is stable for this and later reps.
         let groupId = tindeq.ensureSession()
+        let savedTag = tag.trimmingCharacters(in: .whitespaces)
+        let savedSide = side
         Task {
             do {
                 try await Repo.insertTindeqRecording(
                     rec,
                     note: "",
-                    tag: tag.trimmingCharacters(in: .whitespaces),
-                    side: side,
+                    tag: savedTag,
+                    side: savedSide,
                     groupId: groupId
                 )
-                let tagLabel = tag.isEmpty ? "" : " · \(tag)"
+                let tagLabel = savedTag.isEmpty ? "" : " · \(savedTag)"
                 savedMsg = String(format: "Saved · %.1f kg%@", rec.peakKg, tagLabel)
                 tindeq.sessionCount += 1
+                // Remember for next launch (SL-75: instant, correct defaults).
+                UserDefaults.standard.set(savedTag, forKey: LAST_TAG_KEY)
+                UserDefaults.standard.set(savedSide, forKey: LAST_SIDE_KEY)
             } catch {
                 savedMsg = ErrorText.friendly(error)
             }
