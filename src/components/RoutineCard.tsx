@@ -273,7 +273,7 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
                       list.map((x, j) => (j === i ? { ...x, s: v } : x)),
                     )
                   }
-                  style={{ width: 58, flexShrink: 0, textAlign: "center" }}
+                  style={{ width: 54, flexShrink: 0, textAlign: "center", fontSize: "var(--t-sm)", padding: "10px 6px" }}
                 />
                 <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>s</span>
                 <span style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)" }}>×</span>
@@ -286,7 +286,7 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
                       list.map((x, j) => (j === i ? { ...x, reps: v } : x)),
                     )
                   }
-                  style={{ width: 48, flexShrink: 0, textAlign: "center" }}
+                  style={{ width: 44, flexShrink: 0, textAlign: "center", fontSize: "var(--t-sm)", padding: "10px 6px" }}
                 />
                 <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>reps</span>
                 <NumInput
@@ -298,7 +298,7 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
                       list.map((x, j) => (j === i ? { ...x, restS: v } : x)),
                     )
                   }
-                  style={{ width: 58, flexShrink: 0, textAlign: "center" }}
+                  style={{ width: 54, flexShrink: 0, textAlign: "center", fontSize: "var(--t-sm)", padding: "10px 6px" }}
                 />
                 <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>rest s</span>
               </div>

@@ -15,10 +15,10 @@ const W = 300;
 const H = 120;
 const PAD = { top: 12, right: 8, bottom: 16, left: 30 };
 
-/// One point per training DAY: the day's best peak + how many reps were done.
-/// Plotting every rep made high-volume days smear into vertical stacks and
-/// submax endurance work drag the line around — the trend is about your best
-/// effort each day, not every rep.
+/// Daily aggregation: each training day's best peak + rep count. The chart
+/// scatters EVERY rep faintly and highlights the daily bests (local maxima)
+/// with the global max in gold — spread stays visible, trend reads off the
+/// highlighted points, and stats derive from daily bests.
 interface DailyBest {
   date: string; // YYYY-MM-DD
   t: number; // ms of the day's best rep
@@ -44,19 +44,18 @@ function dailyBests(sorted: TindeqRecordingMeta[]): DailyBest[] {
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
-function Chart({ days }: { days: DailyBest[] }) {
+function Chart({ days, all }: { days: DailyBest[]; all: TindeqRecordingMeta[] }) {
   const [hovered, hoverProps] = useChartHover<number>();
-  const tMin = days[0]!.t;
+  const allTs = all.map((r) => Date.parse(r.recordedAt));
+  const tMin = Math.min(days[0]!.t, allTs[0] ?? days[0]!.t);
   const tMax = Math.max(days[days.length - 1]!.t, tMin + 1);
-  const peaks = days.map((d) => d.best);
-  const yMin = Math.min(...peaks) * 0.9;
-  const yMax = Math.max(...peaks) * 1.08 || 1;
+  // The y-domain covers EVERY rep, not just the bests — the scatter shows
+  // the whole session's spread.
+  const allPeaks = all.map((r) => r.peakKg);
+  const yMin = Math.min(...allPeaks) * 0.9;
+  const yMax = Math.max(...allPeaks) * 1.08 || 1;
 
   const { x: px, y: py } = useSvgScale(W, H, PAD, tMin, tMax, yMin, yMax);
-
-  const points = days
-    .map((d) => `${px(d.t).toFixed(1)},${py(d.best).toFixed(1)}`)
-    .join(" ");
 
   // PR = max daily best; ties → most recent
   let prIdx = 0;
@@ -97,19 +96,24 @@ function Chart({ days }: { days: DailyBest[] }) {
           </text>
         </g>
       ))}
-      <polyline
-        points={points}
-        fill="none"
-        stroke="#5B5FC7"
-        strokeWidth={1.5}
-        vectorEffect="non-scaling-stroke"
-      />
+      {/* Every rep as a faint scatter — the day's spread stays visible… */}
+      {all.map((r, i) => (
+        <circle
+          key={r.id}
+          cx={px(allTs[i]!)}
+          cy={py(r.peakKg)}
+          r={1.8}
+          fill="#7B83EB"
+          opacity={0.3}
+        />
+      ))}
+      {/* …with each day's best (local maximum) highlighted, PR in gold. */}
       {days.map((d, i) => (
         <circle
           key={d.date}
           cx={px(d.t)}
           cy={py(d.best)}
-          r={hovered === i ? (i === prIdx ? 6 : 4.5) : i === prIdx ? 4 : 2.5}
+          r={hovered === i ? (i === prIdx ? 6 : 5) : i === prIdx ? 4.5 : 3.5}
           fill={i === prIdx ? "#DDB13A" : "#5B5FC7"}
           style={{ cursor: "pointer", transition: "r 0.1s" }}
           {...hoverProps(i)}
@@ -265,7 +269,7 @@ export default function ForceTrendChart({
               </div>
             </div>
           </div>
-          <Chart days={days} />
+          <Chart days={days} all={sorted} />
         </>
       ) : (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", padding: "12px 0" }}>

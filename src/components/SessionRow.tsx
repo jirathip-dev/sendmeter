@@ -11,9 +11,9 @@ import {
   recalcTindeqSessionDuration,
 } from "../lib/repo";
 import type { Session, TindeqRecordingMeta, WorkoutDetail } from "../types";
+import DetailPage from "./DetailPage";
 import EditRecordingSheet from "./EditRecordingSheet";
 import RecordingRow from "./RecordingRow";
-import Sheet from "./Sheet";
 import WorkoutDetailPanel from "./WorkoutDetailPanel";
 
 interface Props {
@@ -265,18 +265,15 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
         </button>
       </div>
 
-      {/* The session's own page — detail charts + recordings live here */}
+      {/* The session's own page — slides in from the right, swipe right to
+          go back (iOS push style). */}
       {detailOpen && (
         <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default" }}>
-          <Sheet fullHeight onClose={() => setDetailOpen(false)}>
-            <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800 }}>
-              {s.typeLabel}
-            </div>
-            <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", margin: "2px 0 10px" }}>
-              {s.date} · {s.duration}min · RPE {s.rpe} · {s.load} AU
-              {s.note ? ` · ${s.note}` : ""}
-            </div>
-
+          <DetailPage
+            title={s.typeLabel}
+            subtitle={`${s.date} · ${s.duration}min · RPE ${s.rpe} · ${s.load} AU${s.note ? ` · ${s.note}` : ""}`}
+            onClose={() => setDetailOpen(false)}
+          >
             {isWorkout && (
               <>
                 {detail === null && !loadError && (
@@ -328,7 +325,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
                 ))}
               </>
             )}
-          </Sheet>
+          </DetailPage>
         </div>
       )}
 

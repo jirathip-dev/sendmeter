@@ -4,6 +4,7 @@ import type { ForceCurveModel, TrainingQuality } from "../lib/force-curve";
 import { buildTimeline, timelineDurationS } from "../lib/protocol";
 import type { TindeqPreset } from "../types";
 import type { GaugeTarget } from "./ForceCurveCard";
+import BoxChip from "./BoxChip";
 import InfoDot from "./InfoDot";
 
 /// A selected zone = a load band for the live chart + a full guided protocol
@@ -100,14 +101,17 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
         </div>
       ) : (
         <>
-          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+          {/* Same box-chip size as the tag/side pickers — one chip language
+              across the tab; each zone keeps its hue. */}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {QUALITIES.map((q) => {
               const isActive = active && quality === q.id;
-              const zc = QUALITY_COLORS[q.id];
               return (
-                <button
+                <BoxChip
                   key={q.id}
-                  className="tag"
+                  label={q.label}
+                  active={isActive}
+                  color={QUALITY_COLORS[q.id]}
                   onClick={() => {
                     if (isActive) {
                       setQuality(null);
@@ -117,18 +121,7 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                     setQuality(q.id);
                     onSelect(build(q.id, alternate));
                   }}
-                  style={{
-                    // Filled with its hue when active; hue-tinted text + outline
-                    // when idle so each zone stays colour-coded.
-                    background: isActive ? zc : "var(--surface-1)",
-                    color: isActive ? "#ffffff" : zc,
-                    border: `1px solid ${zc}`,
-                    cursor: "pointer",
-                    fontFamily: "Inter, sans-serif",
-                  }}
-                >
-                  {q.label}
-                </button>
+                />
               );
             })}
           </div>

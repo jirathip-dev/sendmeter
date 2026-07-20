@@ -111,6 +111,17 @@ input, textarea, select, [contenteditable] {
   -webkit-user-select: text;
   user-select: text;
 }
+/* Native number-spinner arrows obscure the value in narrow fields (routine
+   step editor) — values are typed or set by NumInput's clamp-on-blur. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
 ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: var(--bg); } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .app-shell {
