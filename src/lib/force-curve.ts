@@ -120,29 +120,45 @@ export function pickCurveRecordings<T extends CurveCandidate>(
 
 export function computeForceCurve(
   recordings: TindeqSample[][],
+  opts: { fitDepth?: number } = {},
 ): ForceCurveModel | null {
+  // How many efforts per window feed the regression. 1 = the old
+  // envelope-only fit; the default 3 regresses over the top few efforts of
+  // each duration, so the fit reflects repeated performance instead of a
+  // single lucky pull (SL-80b).
+  const fitDepth = opts.fitDepth ?? 3;
   const points: ForceCurvePoint[] = [];
+  const xs: number[] = [];
+  const ys: number[] = [];
+  const fitWindows = new Set<number>();
   for (const w of CURVE_WINDOWS_S) {
-    let best: number | null = null;
+    const vals: number[] = [];
     for (const samples of recordings) {
       const v = meanMaxForce(samples, w);
-      if (v !== null && (best === null || v > best)) best = v;
+      if (v !== null && v > 0) vals.push(v);
     }
-    if (best !== null && best > 0) {
-      points.push({ windowS: w, kg: Math.round(best * 100) / 100 });
+    if (vals.length === 0) continue;
+    vals.sort((a, b) => b - a);
+    // Chart still shows the best-effort envelope per window…
+    points.push({ windowS: w, kg: Math.round(vals[0]! * 100) / 100 });
+    // …but the CF regression sees the top-K efforts of every long window.
+    if (w >= FIT_MIN_WINDOW_S) {
+      for (const v of vals.slice(0, fitDepth)) {
+        xs.push(1 / w);
+        ys.push(v);
+      }
+      fitWindows.add(w);
     }
   }
   if (points.length === 0) return null;
 
   const maxF = Math.max(...points.map((p) => p.kg));
 
-  // Critical-force fit: F = CF + W'·(1/t) over long windows
-  const fitPts = points.filter((p) => p.windowS >= FIT_MIN_WINDOW_S);
+  // Critical-force fit: F = CF + W'·(1/t) over long windows. Still requires
+  // ≥3 DISTINCT windows — many efforts at one duration can't anchor a line.
   let cf: number | null = null;
   let wPrime: number | null = null;
-  if (fitPts.length >= FIT_MIN_POINTS) {
-    const xs = fitPts.map((p) => 1 / p.windowS);
-    const ys = fitPts.map((p) => p.kg);
+  if (fitWindows.size >= FIT_MIN_POINTS) {
     const n = xs.length;
     const mx = xs.reduce((a, b) => a + b, 0) / n;
     const my = ys.reduce((a, b) => a + b, 0) / n;

@@ -142,3 +142,24 @@ describe("pickCurveRecordings (SL-80)", () => {
     expect(dormantOnly.map((r) => r.id)).toEqual([old.id]);
   });
 });
+
+describe("computeForceCurve — multi-point fit (SL-80b)", () => {
+  it("regresses over the top efforts per window, not just the envelope", () => {
+    // Two flat 60s holds: a 20kg best and a 10kg repeat. Envelope-only fit
+    // (depth 1) sees only 20kg → CF 20; depth 2 averages both → CF 15.
+    const recs = [hold(60, 20), hold(60, 10)];
+    const deep = computeForceCurve(recs, { fitDepth: 2 })!;
+    expect(deep.cf).toBeCloseTo(15, 1);
+    const envelope = computeForceCurve(recs, { fitDepth: 1 })!;
+    expect(envelope.cf).toBeCloseTo(20, 1);
+    // the chart's envelope points are unchanged by the fit depth
+    expect(deep.points).toEqual(envelope.points);
+  });
+
+  it("still needs three distinct long windows for a CF", () => {
+    // 12s holds only reach the 10s window — one distinct fit window even
+    // with many recordings → no CF.
+    const m = computeForceCurve([hold(12, 20), hold(12, 18), hold(12, 16)])!;
+    expect(m.cf).toBeNull();
+  });
+});
