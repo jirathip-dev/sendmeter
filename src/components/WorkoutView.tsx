@@ -175,7 +175,7 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
       )}
 
       {/* Guided routine presets (warm-ups, circuits) — utility, saves nothing */}
-      <RoutineCard />
+      <RoutineCard currentPhase={currentPhase} />
 
       {/* Manual entry — the Log Session sheet (moved from Home) */}
       <div className="card" style={{ marginTop: 2 }}>

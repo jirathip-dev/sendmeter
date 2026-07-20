@@ -80,6 +80,8 @@ export const SESSION_TYPES: SessionType[] = [
     defaultRpe: 4,
     defaultDuration: 30,
   },
+  // Guided step routines (SL-83) — warm-ups, calisthenics, conditioning.
+  { id: "routine", label: "Routine", defaultRpe: 4, defaultDuration: 20 },
   { id: "arc", label: "ARC / Traversing", defaultRpe: 4, defaultDuration: 40 },
   { id: "campus", label: "Campus Board", defaultRpe: 9, defaultDuration: 30 },
   { id: "custom", label: "Custom", defaultRpe: 6, defaultDuration: 60 },

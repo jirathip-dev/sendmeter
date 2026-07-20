@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import { expandRoutine, routineDurationS } from "../lib/routine";
 import type { RoutineStep } from "../types";
 
 interface Props {
@@ -8,6 +9,9 @@ interface Props {
   /// The routine to run — from the selected preset (RoutineCard).
   steps: RoutineStep[];
   onClose: () => void;
+  /// Fired once when the routine completes (Done) — the owner logs it to
+  /// History (SL-83). Wall-clock minutes actually spent, pauses included.
+  onFinish?: (durationMin: number) => void;
 }
 
 function fmt(sec: number): string {
@@ -15,42 +19,61 @@ function fmt(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/// Immersive guided routine timer (Workout tab). No data is saved — it's a
-/// utility, not a session. Steps auto-advance off pure elapsed-time
-/// derivation; Skip fast-forwards to the next step boundary.
-export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props) {
-  const TOTAL_S = STEPS.reduce((sum, st) => sum + st.s, 0);
+const PREPARE_S = 5;
+
+/// Immersive guided routine timer (Workout tab). Steps expand to work×reps
+/// with rests between repetitions (SL-83); a short GET READY leads in, and
+/// Pause freezes the clock. Completing the routine logs it to History via
+/// onFinish. Skip fast-forwards to the next segment boundary.
+export default function RoutineFullscreen({ name, steps, onClose, onFinish }: Props) {
+  const SEGS = expandRoutine(steps, { prepareS: PREPARE_S });
+  const TOTAL_S = routineDurationS(SEGS);
   const [startedMs] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
   // Seconds fast-forwarded by Skip presses (adds to real elapsed).
   const [skippedS, setSkippedS] = useState(0);
+  // Pause freezes the routine clock: while paused, elapsed derives from the
+  // moment Pause was hit; accumulated pause time is subtracted after resume.
+  const [pausedAtMs, setPausedAtMs] = useState<number | null>(null);
+  const [pausedTotalMs, setPausedTotalMs] = useState(0);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
   }, []);
 
-  const elapsed = (now - startedMs) / 1000 + skippedS;
+  const paused = pausedAtMs !== null;
+  const elapsed =
+    ((pausedAtMs ?? now) - startedMs - pausedTotalMs) / 1000 + skippedS;
   const done = elapsed >= TOTAL_S;
 
-  // Derive the current step + time position inside it from elapsed.
-  let stepIndex = 0;
-  let stepStartS = 0;
-  for (let i = 0; i < STEPS.length; i++) {
-    if (elapsed < stepStartS + STEPS[i]!.s) {
-      stepIndex = i;
+  // Derive the current segment from elapsed.
+  let segIndex = 0;
+  for (let i = 0; i < SEGS.length; i++) {
+    if (elapsed < SEGS[i]!.startS + SEGS[i]!.durS) {
+      segIndex = i;
       break;
     }
-    stepStartS += STEPS[i]!.s;
-    stepIndex = i;
+    segIndex = i;
   }
-  const step = STEPS[stepIndex]!;
-  const stepRemaining = done ? 0 : stepStartS + step.s - elapsed;
-  const next = STEPS[stepIndex + 1];
+  const seg = SEGS[segIndex]!;
+  const segRemaining = done ? 0 : seg.startS + seg.durS - elapsed;
+  const next = SEGS[segIndex + 1];
+  const stepCount = steps.length;
 
-  // Beep + vibrate on each step change (and at done) — same best-effort
+  // Log exactly once on completion — wall-clock minutes, pauses included.
+  const finishedRef = useRef(false);
+  useEffect(() => {
+    if (!done || finishedRef.current) return;
+    finishedRef.current = true;
+    onFinish?.(Math.max(1, Math.round((Date.now() - startedMs) / 60000)));
+    // onFinish is an owner callback read at fire time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done]);
+
+  // Beep + vibrate on each segment change (and at done) — same best-effort
   // audio pattern as the workout timer: context primed on user taps.
   const audioRef = useRef<AudioContext | null>(null);
-  const lastBeepStepRef = useRef(0);
+  const lastBeepRef = useRef(0);
   function primeAudio() {
     try {
       if (!audioRef.current) audioRef.current = new AudioContext();
@@ -59,10 +82,10 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
       // no audio available
     }
   }
-  const beepKey = done ? STEPS.length : stepIndex;
+  const beepKey = done ? SEGS.length : segIndex;
   useEffect(() => {
-    if (beepKey === lastBeepStepRef.current) return;
-    lastBeepStepRef.current = beepKey;
+    if (beepKey === lastBeepRef.current) return;
+    lastBeepRef.current = beepKey;
     const ctx = audioRef.current;
     if (ctx) {
       try {
@@ -70,7 +93,7 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
         const g = ctx.createGain();
         o.connect(g);
         g.connect(ctx.destination);
-        o.frequency.value = done ? 660 : 880;
+        o.frequency.value = done ? 660 : seg.kind === "rest" ? 440 : 880;
         g.gain.setValueAtTime(0.25, ctx.currentTime);
         o.start();
         o.stop(ctx.currentTime + 0.18);
@@ -79,15 +102,34 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
       }
     }
     navigator.vibrate?.(done ? [200, 100, 200] : 150);
-  }, [beepKey, done]);
+  }, [beepKey, done, seg.kind]);
 
   function skip() {
     primeAudio();
     if (done) return;
-    setSkippedS((s) => s + stepRemaining);
+    setSkippedS((s) => s + segRemaining);
   }
 
-  const accent = done ? "var(--success)" : "var(--primary)";
+  function togglePause() {
+    primeAudio();
+    if (done) return;
+    if (pausedAtMs !== null) {
+      setPausedTotalMs((t) => t + (Date.now() - pausedAtMs));
+      setPausedAtMs(null);
+    } else {
+      setPausedAtMs(Date.now());
+    }
+  }
+
+  const accent = done
+    ? "var(--success)"
+    : paused
+      ? "var(--warning)"
+      : seg.kind === "rest"
+        ? "var(--info)"
+        : seg.kind === "prepare"
+          ? "var(--warning)"
+          : "var(--primary)";
 
   return createPortal(
     <div
@@ -134,7 +176,7 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
           </button>
         </div>
 
-        {/* Step banner + countdown */}
+        {/* Segment banner + countdown */}
         <div
           style={{
             flex: 1,
@@ -152,14 +194,27 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
           }}
         >
           <div style={{ fontWeight: 800, letterSpacing: "0.08em", fontSize: "var(--t-base)", color: accent, textTransform: "uppercase" }}>
-            {done ? "Complete" : `Step ${stepIndex + 1} / ${STEPS.length}`}
+            {done
+              ? "Complete"
+              : paused
+                ? "Paused"
+                : seg.kind === "prepare"
+                  ? "Get ready"
+                  : seg.kind === "rest"
+                    ? "Rest"
+                    : `Step ${seg.stepIndex} / ${stepCount}`}
           </div>
           <div style={{ fontWeight: 800, fontSize: 26, letterSpacing: "-0.02em" }}>
-            {done ? "All done 🤘" : step.label}
+            {done ? "All done 🤘" : seg.kind === "rest" && next ? `next: ${next.label}` : seg.label}
           </div>
-          {!done && step.detail && (
+          {!done && seg.kind === "work" && seg.reps > 1 && (
+            <div style={{ fontSize: "var(--t-sm)", color: accent, fontWeight: 700 }}>
+              rep {seg.rep} / {seg.reps}
+            </div>
+          )}
+          {!done && seg.kind === "work" && seg.detail && (
             <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", lineHeight: 1.5 }}>
-              {step.detail}
+              {seg.detail}
             </div>
           )}
           <div
@@ -170,12 +225,21 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
               color: "var(--ink)",
             }}
           >
-            {done ? "✓" : fmt(stepRemaining)}
+            {done ? "✓" : fmt(segRemaining)}
           </div>
           {!done && next && (
             <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)" }}>
-              Next: {next.label} · {fmt(next.s)}
+              Next: {next.kind === "rest" ? "rest" : next.label} · {fmt(next.durS)}
             </div>
+          )}
+          {!done && (
+            <button
+              className="glass-pill"
+              onClick={togglePause}
+              style={{ marginTop: 6, "--pill-tint": paused ? "var(--success)" : "var(--warning)" } as CSSProperties}
+            >
+              {paused ? "Resume" : "Pause"}
+            </button>
           )}
           {done && (
             <button className="btn-primary" style={{ marginTop: 10, width: "auto", padding: "12px 28px" }} onClick={onClose}>
@@ -184,16 +248,15 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
           )}
         </div>
 
-        {/* Segmented step progress bar */}
+        {/* Segmented progress bar (one cell per runtime segment) */}
         <div style={{ display: "flex", gap: 4, paddingBottom: 4 }} onClick={primeAudio}>
-          {STEPS.map((st, i) => {
-            const startS = STEPS.slice(0, i).reduce((sum, x) => sum + x.s, 0);
-            const frac = Math.max(0, Math.min(1, (elapsed - startS) / st.s));
+          {SEGS.map((s, i) => {
+            const frac = Math.max(0, Math.min(1, (elapsed - s.startS) / s.durS));
             return (
               <div
                 key={i}
                 style={{
-                  flex: st.s,
+                  flex: s.durS,
                   height: 5,
                   borderRadius: 3,
                   background: "var(--surface-2)",
@@ -204,7 +267,7 @@ export default function RoutineFullscreen({ name, steps: STEPS, onClose }: Props
                   style={{
                     width: `${frac * 100}%`,
                     height: "100%",
-                    background: accent,
+                    background: s.kind === "rest" ? "var(--info)" : accent,
                     borderRadius: 3,
                   }}
                 />

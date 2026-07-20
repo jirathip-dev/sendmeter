@@ -3,9 +3,13 @@ import {
   deleteRoutinePreset,
   fetchRoutinePresets,
   insertRoutinePreset,
+  insertSession,
   updateRoutinePreset,
 } from "../lib/repo";
-import type { RoutinePreset, RoutineStep } from "../types";
+import { today } from "../lib/dates";
+import { expandRoutine, routineDurationS } from "../lib/routine";
+import type { PhaseId, RoutinePreset, RoutineStep } from "../types";
+import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
 import NumInput from "./NumInput";
 import RoutineFullscreen from "./RoutineFullscreen";
@@ -25,7 +29,7 @@ const EXAMPLE_ROUTINE: Omit<RoutinePreset, "id"> = {
 };
 
 function fmtTotal(steps: RoutineStep[]): string {
-  const total = steps.reduce((sum, st) => sum + st.s, 0);
+  const total = routineDurationS(expandRoutine(steps));
   const m = Math.floor(total / 60);
   const s = total % 60;
   return s === 0 ? `${m}m` : `${m}m${s}s`;
@@ -35,8 +39,9 @@ function fmtTotal(steps: RoutineStep[]): string {
 /// conditioning circuits, mobility flows). Same interaction model as the Force
 /// tab's PresetManager: selectable rows, pencil edit, inline add form.
 /// Selecting a row arms it; Start runs it in the fullscreen guided timer.
-export default function RoutineCard() {
+export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId }) {
   const toast = useToast();
+  const bumpRealtime = useRealtimeBump();
   const [presets, setPresets] = useState<RoutinePreset[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -193,7 +198,9 @@ export default function RoutineCard() {
                 </span>{" "}
                 · <span style={{ color: "var(--info)", fontWeight: 600 }}>{fmtTotal(p.steps)}</span>
                 {" · "}
-                {p.steps.map((st) => st.label).join(" → ")}
+                {p.steps
+                  .map((st) => ((st.reps ?? 1) > 1 ? `${st.label} ×${st.reps}` : st.label))
+                  .join(" → ")}
               </div>
             </div>
             <button
@@ -232,39 +239,69 @@ export default function RoutineCard() {
           />
           <span className="field-label">Steps</span>
           {steps.map((st, i) => (
-            <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-              <input
-                className="field"
-                value={st.label}
-                placeholder={`Step ${i + 1} — e.g. Easy traversing`}
-                onChange={(e) =>
-                  setSteps((list) =>
-                    list.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)),
-                  )
-                }
-                style={{ flex: 1, minWidth: 0 }}
-              />
-              <NumInput
-                value={st.s}
-                min={5}
-                max={1800}
-                onCommit={(v) =>
-                  setSteps((list) =>
-                    list.map((x, j) => (j === i ? { ...x, s: v } : x)),
-                  )
-                }
-                style={{ width: 60, flexShrink: 0, textAlign: "center" }}
-              />
-              <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>s</span>
-              <button
-                className="del-btn"
-                aria-label="Remove step"
-                disabled={steps.length === 1}
-                style={{ opacity: steps.length === 1 ? 0.3 : 1 }}
-                onClick={() => setSteps((list) => list.filter((_, j) => j !== i))}
-              >
-                ×
-              </button>
+            <div key={i} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  className="field"
+                  value={st.label}
+                  placeholder={`Step ${i + 1} — e.g. Easy traversing`}
+                  onChange={(e) =>
+                    setSteps((list) =>
+                      list.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)),
+                    )
+                  }
+                  style={{ flex: 1, minWidth: 0 }}
+                />
+                <button
+                  className="del-btn"
+                  aria-label="Remove step"
+                  disabled={steps.length === 1}
+                  style={{ opacity: steps.length === 1 ? 0.3 : 1 }}
+                  onClick={() => setSteps((list) => list.filter((_, j) => j !== i))}
+                >
+                  ×
+                </button>
+              </div>
+              {/* duration ×reps + rest between reps (SL-83) */}
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+                <NumInput
+                  value={st.s}
+                  min={5}
+                  max={1800}
+                  onCommit={(v) =>
+                    setSteps((list) =>
+                      list.map((x, j) => (j === i ? { ...x, s: v } : x)),
+                    )
+                  }
+                  style={{ width: 58, flexShrink: 0, textAlign: "center" }}
+                />
+                <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>s</span>
+                <span style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)" }}>×</span>
+                <NumInput
+                  value={st.reps ?? 1}
+                  min={1}
+                  max={50}
+                  onCommit={(v) =>
+                    setSteps((list) =>
+                      list.map((x, j) => (j === i ? { ...x, reps: v } : x)),
+                    )
+                  }
+                  style={{ width: 48, flexShrink: 0, textAlign: "center" }}
+                />
+                <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>reps</span>
+                <NumInput
+                  value={st.restS ?? 0}
+                  min={0}
+                  max={600}
+                  onCommit={(v) =>
+                    setSteps((list) =>
+                      list.map((x, j) => (j === i ? { ...x, restS: v } : x)),
+                    )
+                  }
+                  style={{ width: 58, flexShrink: 0, textAlign: "center" }}
+                />
+                <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>rest s</span>
+              </div>
             </div>
           ))}
           <button
@@ -317,6 +354,26 @@ export default function RoutineCard() {
           name={selected.name}
           steps={selected.steps}
           onClose={() => setRunning(false)}
+          onFinish={(durationMin) => {
+            // A completed routine IS a workout (SL-83) — log it so it feeds
+            // ACWR and shows in History. RPE defaults; edit in History.
+            void (async () => {
+              try {
+                await insertSession({
+                  date: today(),
+                  type: "routine",
+                  duration: durationMin,
+                  rpe: 4,
+                  note: selected.name,
+                  phase: currentPhase,
+                });
+                bumpRealtime();
+                toast(`Routine logged · ${durationMin} min`);
+              } catch (e) {
+                setError(e instanceof Error ? e.message : "Failed to log routine");
+              }
+            })();
+          }}
         />
       )}
     </div>

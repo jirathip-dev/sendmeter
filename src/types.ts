@@ -171,8 +171,12 @@ export type RoutineStep = {
   label: string;
   /// Optional coaching hint shown under the step name.
   detail?: string;
-  /// Duration in seconds.
+  /// Duration in seconds (per repetition).
   s: number;
+  /// Repeat the step this many times (SL-83). Default/absent = 1.
+  reps?: number;
+  /// Rest between repetitions of this step, in seconds. Default/absent = 0.
+  restS?: number;
 };
 
 /// User-defined guided routine (Workout tab) — an ordered list of timed steps
