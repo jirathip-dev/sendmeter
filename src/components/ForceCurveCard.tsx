@@ -59,12 +59,20 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
       (W - PAD.left - PAD.right);
   const { y: py } = useSvgScale(W, H, PAD, 0, 1, 0, yMax);
 
-  // A model's fitted hyperbola sampled along the axis.
+  // A model's fitted hyperbola sampled along the axis — drawn only where the
+  // hyperbola sits BELOW maxF. At short durations CF + W′/t exceeds the best
+  // short-window force and predictForce clamps flat; drawing that cap looked
+  // like a fake "flat 1–10s" prediction, so the line starts at the crossing.
   const hyperbola = (m: ForceCurveModel): string => {
+    let lo = tMin;
+    if (m.cf !== null && m.wPrime !== null && m.maxF > m.cf && m.wPrime > 0) {
+      const tCross = m.wPrime / (m.maxF - m.cf);
+      lo = Math.max(tMin, Math.log10(tCross));
+    }
     const steps = 40;
     const parts: string[] = [];
     for (let i = 0; i <= steps; i++) {
-      const logT = tMin + ((tMax - tMin) * i) / steps;
+      const logT = lo + ((tMax - lo) * i) / steps;
       const t = Math.pow(10, logT);
       parts.push(`${px(t).toFixed(1)},${py(predictForce(m, t)).toFixed(1)}`);
     }
@@ -132,6 +140,17 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           </text>
         </>
       )}
+      {/* Every effort's mean-max — the raw spread behind the envelope */}
+      {(model.scatter ?? []).map((p, i) => (
+        <circle
+          key={`sc-${i}`}
+          cx={px(p.windowS)}
+          cy={py(p.kg)}
+          r={1.4}
+          fill="#7B83EB"
+          opacity={0.3}
+        />
+      ))}
       {/* Curve-shift overlays: each active trailing window's fit (SL-80c) */}
       {overlays.map((o) => (
         <polyline

@@ -25,7 +25,11 @@ export interface ForceCurvePoint {
 }
 
 export interface ForceCurveModel {
-  points: ForceCurvePoint[]; // aggregated mean-max, ascending window
+  points: ForceCurvePoint[]; // best-effort envelope per window, ascending
+  /// EVERY recording's mean-max per window — the raw scatter behind the
+  /// envelope, so the chart can show the full spread of efforts, not just
+  /// the best (optional: absent on hand-built models in tests).
+  scatter?: ForceCurvePoint[];
   maxF: number; // best short-window force (kg)
   cf: number | null; // critical force (kg); null = not enough long holds
   wPrime: number | null; // impulse above CF (kg·s)
@@ -134,6 +138,7 @@ export function computeForceCurve(
   // single lucky pull (SL-80b).
   const fitDepth = opts.fitDepth ?? 3;
   const points: ForceCurvePoint[] = [];
+  const scatter: ForceCurvePoint[] = [];
   const xs: number[] = [];
   const ys: number[] = [];
   const fitWindows = new Set<number>();
@@ -145,7 +150,9 @@ export function computeForceCurve(
     }
     if (vals.length === 0) continue;
     vals.sort((a, b) => b - a);
-    // Chart still shows the best-effort envelope per window…
+    // Every effort lands in the scatter…
+    for (const v of vals) scatter.push({ windowS: w, kg: Math.round(v * 100) / 100 });
+    // …the envelope keeps the best per window…
     points.push({ windowS: w, kg: Math.round(vals[0]! * 100) / 100 });
     // …but the CF regression sees the top-K efforts of every long window.
     if (w >= FIT_MIN_WINDOW_S) {
@@ -184,7 +191,7 @@ export function computeForceCurve(
     }
   }
 
-  return { points, maxF, cf, wPrime };
+  return { points, scatter, maxF, cf, wPrime };
 }
 
 /// Trailing windows for the curve-shift overlays (SL-80c): how has the
