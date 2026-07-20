@@ -365,19 +365,25 @@ export default function ForceFullscreen({
         </div>
 
         {/* Quick exercise + side pickers — arm a free hold without leaving
-            the gauge (brand-new tags are typed in the tab). */}
+            the gauge (brand-new tags are typed in the tab). A freshly typed
+            tag has no recordings yet, so it isn't in allTags — include it as
+            an option so the armed tag actually shows instead of "exercise…"
+            (SL-81). */}
         {!measuring && (
           <div style={{ display: "flex", gap: 8 }}>
             <select
               className="field"
-              value={allTags.includes(tag.trim()) ? tag.trim() : ""}
+              value={tag.trim()}
               onChange={(e) => onTag(e.target.value)}
               style={{ padding: "9px 10px", fontSize: "var(--t-base)", flex: 2 }}
             >
               <option value="" disabled>
                 {allTags.length ? "exercise…" : "no tags yet"}
               </option>
-              {allTags.map((t) => (
+              {(allTags.includes(tag.trim()) || !tag.trim()
+                ? allTags
+                : [tag.trim(), ...allTags]
+              ).map((t) => (
                 <option key={t} value={t}>
                   {t}
                 </option>
