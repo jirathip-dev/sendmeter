@@ -373,6 +373,30 @@ final class WorkoutManager: NSObject {
             if self.fusionTick % 5 == 0 {
                 self.pushBeat()
             }
+            // Durable flush every ~2 min (SL-90) — the trace-so-far survives a
+            // crash/dead battery instead of living only in memory until End.
+            if self.fusionTick % 120 == 0 {
+                self.flushPartial()
+            }
+        }
+    }
+
+    /// Merge-upsert the in-progress climb_workouts row with everything known
+    /// so far. Best-effort: a failure just waits for the next flush or the
+    /// end-of-workout upload (which overwrites this row with final stats).
+    private func flushPartial() {
+        guard let startDate else { return }
+        let partial = ClimbWorkoutPartialUpsert(
+            id: workoutId,
+            startedAt: startDate,
+            endedAt: Date(),
+            elevationGainM: max(0, maxAltitudeSeen - minAltitudeSeen),
+            attemptsDetected: liveAttempts,
+            attemptsConfirmed: liveAttempts,
+            raw: tunables.keepRawTrace ? rawTrace : nil
+        )
+        Task.detached(priority: .background) {
+            try? await Repo.flushPartialWorkout(partial)
         }
     }
 }

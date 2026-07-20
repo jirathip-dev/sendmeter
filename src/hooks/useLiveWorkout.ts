@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import type { PluginListenerHandle } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
@@ -53,22 +53,57 @@ function rowToLive(row: Record<string, unknown>): LiveWorkout {
   };
 }
 
+/// One point of the client-accumulated live HR series (SL-90) — every
+/// heartbeat's HR reading, collected while the mirror is open so the
+/// fullscreen can chart the workout's HR in real time.
+export interface LiveHrPoint {
+  t: number; // ms epoch of the beat
+  hr: number;
+}
+
 /// The user's in-progress watch workout, mirrored live (SL-41): one initial
 /// fetch plus a dedicated realtime channel that reads row payloads directly.
 /// Deliberately NOT part of RealtimeVersionProvider — a 5s heartbeat through
 /// the global version counter would refetch every card in the app every 5s.
-/// Returns null when there's no workout, it ended, or the heartbeat went
-/// stale.
-export function useLiveWorkout(userId: string): LiveWorkout | null {
+/// Returns [null, series] when there's no workout, it ended, or the heartbeat
+/// went stale.
+export function useLiveWorkout(
+  userId: string,
+): [LiveWorkout | null, LiveHrPoint[]] {
   const [row, setRow] = useState<LiveWorkout | null>(null);
+  // Mirror of `row` for the event callbacks — lets the WC listener compare
+  // freshness without doing side effects inside a setState updater.
+  const rowRef = useRef<LiveWorkout | null>(null);
+  // HR series keyed by workout id so a new workout starts a fresh chart.
+  // Appended only inside async callbacks (react-compiler: no sync setState
+  // in effect bodies).
+  const [hrLog, setHrLog] = useState<{ id: string; pts: LiveHrPoint[] }>({
+    id: "",
+    pts: [],
+  });
   // Re-evaluate staleness on a timer even with no new events.
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let cancelled = false;
+
+    function ingest(next: LiveWorkout) {
+      if (next.status !== "live" || next.hr === null) return;
+      const pt = { t: new Date(next.updatedAt).getTime(), hr: next.hr };
+      setHrLog((prev) => {
+        if (prev.id !== next.workoutId) return { id: next.workoutId, pts: [pt] };
+        const last = prev.pts[prev.pts.length - 1];
+        if (last && pt.t <= last.t) return prev; // duplicate/out-of-order beat
+        return { id: prev.id, pts: [...prev.pts, pt] };
+      });
+    }
+
     fetchLiveWorkout()
       .then((r) => {
-        if (!cancelled) setRow(r);
+        if (cancelled) return;
+        rowRef.current = r;
+        setRow(r);
+        if (r) ingest(r);
       })
       .catch(() => {});
 
@@ -84,7 +119,10 @@ export function useLiveWorkout(userId: string): LiveWorkout | null {
         },
         (payload) => {
           if (payload.new && "workout_id" in payload.new) {
-            setRow(rowToLive(payload.new));
+            const next = rowToLive(payload.new);
+            rowRef.current = next;
+            setRow(next);
+            ingest(next);
           }
         },
       )
@@ -97,13 +135,14 @@ export function useLiveWorkout(userId: string): LiveWorkout | null {
     let wcHandle: PluginListenerHandle | null = null;
     if (Capacitor.isNativePlatform()) {
       void SendLogAuthBridge.addListener("liveWorkout", (msg) => {
-        setRow((prev) => {
-          const next = messageToLive(msg, prev);
-          if (prev && new Date(prev.updatedAt).getTime() > new Date(next.updatedAt).getTime()) {
-            return prev;
-          }
-          return next;
-        });
+        const prev = rowRef.current;
+        const next = messageToLive(msg, prev);
+        if (prev && new Date(prev.updatedAt).getTime() > new Date(next.updatedAt).getTime()) {
+          return; // a fresher supabase row already landed
+        }
+        rowRef.current = next;
+        setRow(next);
+        ingest(next);
       }).then((h) => {
         wcHandle = h;
       });
@@ -118,7 +157,7 @@ export function useLiveWorkout(userId: string): LiveWorkout | null {
     };
   }, [userId]);
 
-  if (!row || row.status !== "live") return null;
-  if (now - new Date(row.updatedAt).getTime() > STALE_MS) return null;
-  return row;
+  if (!row || row.status !== "live") return [null, []];
+  if (now - new Date(row.updatedAt).getTime() > STALE_MS) return [null, []];
+  return [row, hrLog.id === row.workoutId ? hrLog.pts : []];
 }

@@ -186,14 +186,23 @@ enum Repo {
         return WorkoutSaveBundle(session: session, workout: workout, attempts: attempts)
     }
 
+    /// Best-effort mid-workout flush (SL-90) — merge-upserts the partial row.
+    static func flushPartialWorkout(_ p: ClimbWorkoutPartialUpsert) async throws {
+        try await client.from("climb_workouts")
+            .upsert(p, onConflict: "id")
+            .execute()
+    }
+
     /// Three idempotent upserts (client-generated UUIDs) so offline-queue
-    /// replays after partial success are safe.
+    /// replays after partial success are safe. The workout row MERGES on
+    /// conflict (not ignore) — the SL-90 periodic flush may have written a
+    /// partial row under the same id, and the final stats must land over it.
     static func uploadBundle(_ bundle: WorkoutSaveBundle) async throws {
         try await client.from("sessions")
             .upsert(bundle.session, onConflict: "id", ignoreDuplicates: true)
             .execute()
         try await client.from("climb_workouts")
-            .upsert(bundle.workout, onConflict: "id", ignoreDuplicates: true)
+            .upsert(bundle.workout, onConflict: "id")
             .execute()
         if !bundle.attempts.isEmpty {
             try await client.from("climb_attempts")

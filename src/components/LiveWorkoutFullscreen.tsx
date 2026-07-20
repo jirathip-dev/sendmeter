@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import type { LiveHrPoint } from "../hooks/useLiveWorkout";
 import type { LiveWorkout } from "../types";
 
 interface Props {
   live: LiveWorkout;
+  /// Client-accumulated heartbeat HR (SL-90) — one point per ~5s beat since
+  /// this mirror mounted. Realtime chart, not the durable trace.
+  hrSeries: LiveHrPoint[];
   onMinimize: () => void;
 }
 
@@ -12,13 +16,55 @@ function fmt(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+const SPARK_W = 300;
+const SPARK_H = 56;
+
+/// Live HR sparkline — draws once ≥2 beats have arrived. Plain polyline in a
+/// fixed viewBox; the y-domain pads the observed range so the line breathes.
+function HrSparkline({ pts }: { pts: LiveHrPoint[] }) {
+  if (pts.length < 2) return null;
+  const tMin = pts[0]!.t;
+  const tMax = Math.max(pts[pts.length - 1]!.t, tMin + 1);
+  const hrs = pts.map((p) => p.hr);
+  const yMin = Math.min(...hrs) - 5;
+  const yMax = Math.max(...hrs) + 5;
+  const x = (t: number) => ((t - tMin) / (tMax - tMin)) * SPARK_W;
+  const y = (hr: number) =>
+    SPARK_H - ((hr - yMin) / (yMax - yMin)) * (SPARK_H - 8) - 4;
+  const points = pts.map((p) => `${x(p.t).toFixed(1)},${y(p.hr).toFixed(1)}`).join(" ");
+  const last = pts[pts.length - 1]!;
+  return (
+    <svg
+      viewBox={`0 0 ${SPARK_W} ${SPARK_H}`}
+      style={{ width: "100%", display: "block" }}
+      aria-label="Live heart-rate chart"
+    >
+      <polyline
+        points={points}
+        fill="none"
+        stroke="#E5743A"
+        strokeWidth={1.6}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <circle cx={x(last.t)} cy={y(last.hr)} r={2.6} fill="#E5743A" />
+      <text x={0} y={9} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
+        {Math.round(yMax - 5)}
+      </text>
+      <text x={0} y={SPARK_H - 1} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
+        {Math.round(yMin + 5)}
+      </text>
+    </svg>
+  );
+}
+
 /// Read-only fullscreen mirror of the in-progress WATCH workout — the same
 /// CLIMBING / RESTING timer screen as the phone workout, driven by the
 /// live_workouts heartbeat. The phase timestamps are absolute, so the timers
 /// tick locally with second precision between ~5s beats; the watch also beats
 /// immediately on Boulder/Stop, so phase flips land fast. No controls here —
 /// the watch owns the workout.
-export default function LiveWorkoutFullscreen({ live, onMinimize }: Props) {
+export default function LiveWorkoutFullscreen({ live, hrSeries, onMinimize }: Props) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
@@ -143,6 +189,25 @@ export default function LiveWorkoutFullscreen({ live, onMinimize }: Props) {
             )}
           </div>
         </div>
+
+        {/* Realtime HR chart (SL-90) — builds up from the heartbeats while
+            this mirror is open. */}
+        {hrSeries.length >= 2 && (
+          <div
+            style={{
+              borderRadius: 14,
+              border: "1px solid var(--border)",
+              background: "var(--surface-1)",
+              padding: "8px 10px 4px",
+              marginBottom: 10,
+            }}
+          >
+            <div className="label-eyebrow" style={{ marginBottom: 2 }}>
+              Heart rate
+            </div>
+            <HrSparkline pts={hrSeries} />
+          </div>
+        )}
 
         <div style={{ textAlign: "center", fontSize: "var(--t-sm)", color: "var(--ink-faint)", paddingBottom: 4 }}>
           Controlled from your watch — log boulders and end it there.

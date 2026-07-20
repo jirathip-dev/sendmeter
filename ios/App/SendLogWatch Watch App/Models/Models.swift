@@ -103,6 +103,30 @@ nonisolated struct ClimbWorkoutInsert: Codable {
     }
 }
 
+/// SL-90: mid-workout durable flush — every ~2 min the watch upserts the
+/// in-progress climb_workouts row (trace + counts so far) so a dead battery
+/// or crash doesn't lose hours of data. Only the fields known mid-workout;
+/// the final WorkoutSaveBundle merge-upserts the full row over it. ended_at
+/// is a provisional "data through here" mark (the column is NOT NULL).
+nonisolated struct ClimbWorkoutPartialUpsert: Codable {
+    var id: UUID
+    var startedAt: Date
+    var endedAt: Date
+    var elevationGainM: Double
+    var attemptsDetected: Int
+    var attemptsConfirmed: Int
+    var raw: [[Double?]]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, raw
+        case startedAt = "started_at"
+        case endedAt = "ended_at"
+        case elevationGainM = "elevation_gain_m"
+        case attemptsDetected = "attempts_detected"
+        case attemptsConfirmed = "attempts_confirmed"
+    }
+}
+
 nonisolated struct LabeledWorkoutRow: Codable {
     var avgHr: Double?
     var meanEffort: Double?
