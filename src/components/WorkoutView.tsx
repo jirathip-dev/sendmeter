@@ -13,6 +13,7 @@ import PhoneWorkoutCard from "./PhoneWorkoutCard";
 import PhoneWorkoutFullscreen from "./PhoneWorkoutFullscreen";
 import RoutineCard from "./RoutineCard";
 import RpeScatterCard from "./RpeScatterCard";
+import WorkoutStatsCard from "./WorkoutStatsCard";
 import Sheet from "./Sheet";
 
 // Auto-save-on-stop defaults: RPE banked without a prompt, and the last type
@@ -176,6 +177,9 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
 
       {/* Guided routine presets (warm-ups, circuits) — utility, saves nothing */}
       <RoutineCard currentPhase={currentPhase} />
+
+      {/* Summary stats across recent workouts (SL-85) */}
+      <WorkoutStatsCard />
 
       {/* Manual entry — the Log Session sheet (moved from Home) */}
       <div className="card" style={{ marginTop: 2 }}>

@@ -826,6 +826,22 @@ export async function fetchWorkoutById(
   return data ? toWorkoutDetail(data) : null;
 }
 
+/// Recent workouts WITH their attempts — feeds the summary stats card
+/// (SL-85): avg climb/rest per workout, HR recovery trends.
+export async function fetchRecentWorkoutDetails(
+  limit = 10,
+): Promise<WorkoutDetail[]> {
+  const data = unwrap(
+    await supabase
+      .from("climb_workouts")
+      .select(WORKOUT_DETAIL_COLS)
+      .order("started_at", { ascending: false })
+      .order("started_at", { referencedTable: "climb_attempts", ascending: true })
+      .limit(limit),
+  );
+  return (data as WorkoutDetailRow[]).map(toWorkoutDetail);
+}
+
 /// Recent workouts for the Workout tab (metadata only; detail lazy-loads).
 export async function fetchWorkouts(limit = 30): Promise<WorkoutListItem[]> {
   const data = unwrap(
