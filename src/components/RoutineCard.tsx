@@ -7,6 +7,7 @@ import {
 } from "../lib/repo";
 import type { RoutinePreset, RoutineStep } from "../types";
 import { useToast } from "../hooks/useToast";
+import NumInput from "./NumInput";
 import RoutineFullscreen from "./RoutineFullscreen";
 
 /// Seeded on demand ("Add example") as a real, editable/deletable preset — a
@@ -243,22 +244,15 @@ export default function RoutineCard() {
                 }
                 style={{ flex: 1, minWidth: 0 }}
               />
-              <input
-                className="field"
-                type="number"
-                inputMode="numeric"
+              <NumInput
+                value={st.s}
                 min={5}
                 max={1800}
-                value={st.s}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  if (!Number.isFinite(v)) return;
-                  const clamped = Math.max(0, Math.min(1800, v));
-                  if (e.target.value !== String(clamped)) e.target.value = String(clamped);
+                onCommit={(v) =>
                   setSteps((list) =>
-                    list.map((x, j) => (j === i ? { ...x, s: clamped } : x)),
-                  );
-                }}
+                    list.map((x, j) => (j === i ? { ...x, s: v } : x)),
+                  )
+                }
                 style={{ width: 60, flexShrink: 0, textAlign: "center" }}
               />
               <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>s</span>

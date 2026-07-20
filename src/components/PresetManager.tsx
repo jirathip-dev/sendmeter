@@ -8,6 +8,7 @@ import {
 import { buildTimeline, presetTargetKg, timelineDurationS } from "../lib/protocol";
 import type { PresetRefs } from "../lib/protocol";
 import { useToast } from "../hooks/useToast";
+import NumInput from "./NumInput";
 import type { TindeqPreset } from "../types";
 
 interface Props {
@@ -43,22 +44,11 @@ function NumField({
       <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
         {label}
       </span>
-      <input
-        className="field"
-        type="number"
-        inputMode="numeric"
+      <NumInput
         value={value}
+        onCommit={onChange}
         min={min}
         max={max}
-        onChange={(e) => {
-          const v = Number(e.target.value);
-          if (!Number.isFinite(v)) return;
-          const clamped = Math.max(min, Math.min(max, v));
-          // Normalize the DOM text too — otherwise typed leading zeros
-          // ("080") stick, since React sees 80 === 80 and won't rewrite.
-          if (e.target.value !== String(clamped)) e.target.value = String(clamped);
-          onChange(clamped);
-        }}
         style={{ padding: "9px 10px", fontSize: "var(--t-base)" }}
       />
     </label>
