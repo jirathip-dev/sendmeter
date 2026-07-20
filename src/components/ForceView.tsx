@@ -9,8 +9,12 @@ import {
   fetchRecordingSamples,
   insertRecording,
 } from "../lib/repo";
-import { computeForceCurve, pickCurveRecordings } from "../lib/force-curve";
-import type { ForceCurveModel } from "../lib/force-curve";
+import {
+  computeForceCurve,
+  CURVE_PERIODS,
+  pickCurveRecordings,
+} from "../lib/force-curve";
+import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import { buildTimeline, presetTargetKg, timelineAt } from "../lib/protocol";
 import type { ProtocolSegment } from "../lib/protocol";
 import {
@@ -82,6 +86,8 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   // Force-curve model for the selected tag/side — auto-computed (no button)
   // and shared by the curve card + the target-zones picker.
   const [curveModel, setCurveModel] = useState<ForceCurveModel | null>(null);
+  // Curve-shift overlays (SL-80c): one model per trailing window (30d…3y).
+  const [periodCurves, setPeriodCurves] = useState<PeriodCurve[]>([]);
   const [curveComputedFor, setCurveComputedFor] = useState<string | null>(null);
   const [curveError, setCurveError] = useState<string | null>(null);
   const realtimeVersion = useRealtimeVersion();
@@ -349,12 +355,36 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     let cancelled = false;
     // Best per duration bucket over a long window — NOT the latest N, which a
     // burst of short reps floods (SL-80).
-    const recs = pickCurveRecordings(curveRecordings);
-    Promise.all(recs.map((r) => fetchRecordingSamples(r.id)))
+    const now = Date.now();
+    const recs = pickCurveRecordings(curveRecordings, now);
+    // Per-period picks for the curve-shift overlays (strict windows — an
+    // empty period is an honestly absent curve, not a fallback).
+    const periodPicks = CURVE_PERIODS.map((p) => ({
+      ...p,
+      recs: pickCurveRecordings(curveRecordings, now, {
+        windowDays: p.days,
+        fallbackToAll: false,
+      }),
+    }));
+    // One shared sample fetch across the active model + every period.
+    const ids = [
+      ...new Set([...recs, ...periodPicks.flatMap((p) => p.recs)].map((r) => r.id)),
+    ];
+    Promise.all(ids.map((id) => fetchRecordingSamples(id)))
       .then((all) => {
         if (cancelled) return;
-        const m = computeForceCurve(all);
+        const samplesById = new Map(ids.map((id, i) => [id, all[i]!]));
+        const m = computeForceCurve(recs.map((r) => samplesById.get(r.id)!));
         setCurveModel(m);
+        setPeriodCurves(
+          periodPicks.map((p) => ({
+            label: p.label,
+            days: p.days,
+            model: p.recs.length
+              ? computeForceCurve(p.recs.map((r) => samplesById.get(r.id)!))
+              : null,
+          })),
+        );
         setCurveError(m ? null : "No usable samples in these recordings.");
         setCurveComputedFor(curveKey);
       })
@@ -362,6 +392,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         if (cancelled) return;
         setCurveError(e instanceof Error ? e.message : "Failed to compute curve");
         setCurveModel(null);
+        setPeriodCurves([]);
         setCurveComputedFor(curveKey);
       });
     return () => {
@@ -878,6 +909,7 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
                     : effectiveTag
                 }
                 model={model}
+                periods={modelForTagSide ? periodCurves : []}
                 computing={curveComputing}
                 error={curveError}
               />

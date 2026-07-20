@@ -93,10 +93,16 @@ function durationBucket(durationMs: number): number {
 export function pickCurveRecordings<T extends CurveCandidate>(
   recs: T[],
   nowMs: number = Date.now(),
+  opts: { windowDays?: number; fallbackToAll?: boolean } = {},
 ): T[] {
-  const cutoff = nowMs - PICK_WINDOW_DAYS * 86_400_000;
+  const windowDays = opts.windowDays ?? PICK_WINDOW_DAYS;
+  const fallbackToAll = opts.fallbackToAll ?? true;
+  const cutoff = nowMs - windowDays * 86_400_000;
   const recent = recs.filter((r) => Date.parse(r.recordedAt) >= cutoff);
-  // A dormant exercise keeps its old curve rather than losing it entirely.
+  // A dormant exercise keeps its old curve rather than losing it entirely —
+  // except for the strict period overlays, where an empty window means an
+  // honestly absent curve.
+  if (recent.length === 0 && !fallbackToAll) return [];
   const pool = recent.length > 0 ? recent : recs;
 
   const picked = new Map<string, T>();
@@ -179,6 +185,23 @@ export function computeForceCurve(
   }
 
   return { points, maxF, cf, wPrime };
+}
+
+/// Trailing windows for the curve-shift overlays (SL-80c): how has the
+/// force–duration curve moved over time?
+export const CURVE_PERIODS = [
+  { label: "30d", days: 30 },
+  { label: "90d", days: 90 },
+  { label: "180d", days: 180 },
+  { label: "1y", days: 365 },
+  { label: "2y", days: 730 },
+  { label: "3y", days: 1095 },
+] as const;
+
+export interface PeriodCurve {
+  label: string;
+  days: number;
+  model: ForceCurveModel | null;
 }
 
 export function predictForce(model: ForceCurveModel, tS: number): number {
