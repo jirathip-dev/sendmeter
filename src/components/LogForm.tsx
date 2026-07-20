@@ -9,7 +9,7 @@ interface Props {
 }
 
 export default function LogForm({ form, setForm, onSubmit }: Props) {
-  const load = form.duration * form.rpe;
+  const load = Math.round(form.duration * form.rpe);
 
   function handleType(e: React.ChangeEvent<HTMLSelectElement>) {
     const t = SESSION_TYPES.find((x) => x.id === e.target.value);
@@ -81,7 +81,7 @@ export default function LogForm({ form, setForm, onSubmit }: Props) {
         <button
           className="stepper-btn"
           onClick={() =>
-            setForm((f) => ({ ...f, rpe: Math.max(1, f.rpe - 1) }))
+            setForm((f) => ({ ...f, rpe: Math.max(1, f.rpe - 0.5) }))
           }
         >
           −
@@ -90,7 +90,7 @@ export default function LogForm({ form, setForm, onSubmit }: Props) {
         <button
           className="stepper-btn"
           onClick={() =>
-            setForm((f) => ({ ...f, rpe: Math.min(10, f.rpe + 1) }))
+            setForm((f) => ({ ...f, rpe: Math.min(10, f.rpe + 0.5) }))
           }
         >
           +

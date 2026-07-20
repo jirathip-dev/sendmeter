@@ -38,7 +38,9 @@ struct WorkoutLiveView: View {
             let bundle = Repo.makeSaveBundle(
                 summary: summary,
                 boulders: summary.attempts.count,
-                rpe: Int(summary.predictedRPE.rounded()),
+                // Bank the prediction at half-point precision (SL-89) — no
+                // rounding to whole numbers, adjust later on the phone.
+                rpe: min(10, max(1, (summary.predictedRPE * 2).rounded() / 2)),
                 phase: workout.cachedPhase,
                 tunables: .default
             )

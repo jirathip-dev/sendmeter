@@ -8,7 +8,7 @@ import SwiftUI
 struct GaugeFinishSheet: View {
     @Environment(TindeqManager.self) private var tindeq
 
-    @State private var rpe = 5
+    @State private var rpe = 5.0
     @State private var logging = false
 
     private var durationMin: Int {
@@ -31,10 +31,12 @@ struct GaugeFinishSheet: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
                 }
-                Stepper(value: $rpe, in: 1...10) {
+                Stepper(value: $rpe, in: 1...10, step: 0.5) {
                     VStack(alignment: .leading) {
                         Text("RPE").font(.system(size: 10)).foregroundStyle(.secondary)
-                        Text("\(rpe)").monospacedDigit()
+                        Text(rpe.truncatingRemainder(dividingBy: 1) == 0
+                            ? "\(Int(rpe))" : String(format: "%.1f", rpe))
+                            .monospacedDigit()
                     }
                 }
                 Button(logging ? "Logging…" : "Log Session") {

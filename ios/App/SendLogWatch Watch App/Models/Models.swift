@@ -53,7 +53,7 @@ nonisolated struct SessionInsert: Codable {
     var type: String
     var typeLabel: String
     var durationMin: Int
-    var rpe: Int
+    var rpe: Double            // half-point steps (SL-89); DB column is numeric(3,1)
     var note: String
     var phase: String
     var groupId: UUID?         // Tindeq gauge session link
@@ -79,7 +79,7 @@ nonisolated struct ClimbWorkoutInsert: Codable {
     var attemptsDetected: Int
     var attemptsConfirmed: Int
     var rpePredicted: Double
-    var rpeConfirmed: Int
+    var rpeConfirmed: Double
     var meanEffort: Double
     var attemptsPer10min: Double
     var sessionId: UUID
@@ -107,7 +107,7 @@ nonisolated struct LabeledWorkoutRow: Codable {
     var avgHr: Double?
     var meanEffort: Double?
     var attemptsPer10min: Double?
-    var rpeConfirmed: Int?
+    var rpeConfirmed: Double?
 
     enum CodingKeys: String, CodingKey {
         case avgHr = "avg_hr"

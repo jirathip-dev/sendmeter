@@ -222,7 +222,7 @@ final class WorkoutManager: NSObject {
                     sessionHRR: hrr,
                     meanEffort: effort,
                     attemptsPer10min: r.attemptsPer10min ?? 0,
-                    rpe: Double(rpe)
+                    rpe: rpe
                 )
             }
             if let model = RPEModelFitter.fit(

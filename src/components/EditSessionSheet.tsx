@@ -95,14 +95,14 @@ export default function EditSessionSheet({ session, onSave, onClose }: Props) {
       <div className="stepper">
         <button
           className="stepper-btn"
-          onClick={() => setRpe((r) => Math.max(1, r - 1))}
+          onClick={() => setRpe((r) => Math.max(1, r - 0.5))}
         >
           −
         </button>
         <span className="stepper-val">{rpe}</span>
         <button
           className="stepper-btn"
-          onClick={() => setRpe((r) => Math.min(10, r + 1))}
+          onClick={() => setRpe((r) => Math.min(10, r + 0.5))}
         >
           +
         </button>
@@ -118,7 +118,7 @@ export default function EditSessionSheet({ session, onSave, onClose }: Props) {
             fontWeight: 800,
           }}
         >
-          {duration * rpe}{" "}
+          {Math.round(duration * rpe)}{" "}
           <span style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>AU</span>
         </span>
       </div>

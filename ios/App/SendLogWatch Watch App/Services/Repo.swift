@@ -50,7 +50,7 @@ enum Repo {
     /// app): type 'tindeq', load = duration × RPE feeds ACWR.
     static func logTindeqSession(
         durationMin: Int,
-        rpe: Int,
+        rpe: Double,
         note: String,
         groupId: UUID
     ) async throws {
@@ -119,7 +119,7 @@ enum Repo {
     static func makeSaveBundle(
         summary: WorkoutSummary,
         boulders: Int,
-        rpe: Int,
+        rpe: Double,
         phase: String,
         tunables: Tunables
     ) -> WorkoutSaveBundle {

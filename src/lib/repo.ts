@@ -8,7 +8,6 @@ import type {
   NewTindeqRecording,
   PhaseId,
   PhasePeriod,
-  RpePair,
   Session,
   SessionPatch,
   TindeqPreset,
@@ -62,7 +61,7 @@ function toSession(r: SessionRow): Session {
     typeLabel: r.type_label,
     duration: r.duration_min,
     rpe: r.rpe,
-    load: r.load ?? r.duration_min * r.rpe,
+    load: r.load ?? Math.round(r.duration_min * r.rpe),
     note: r.note,
     phase: r.phase as PhaseId,
     groupId: r.group_id,
@@ -729,22 +728,6 @@ export async function deleteHealthMetrics(opts?: {
   if (opts?.to) q = q.lte("date", opts.to);
   const { error } = await q;
   if (error) throw error;
-}
-
-export async function fetchRpePairs(): Promise<RpePair[]> {
-  const data = unwrap(
-    await supabase
-      .from("climb_workouts")
-      .select("rpe_predicted, rpe_confirmed, started_at")
-      .not("rpe_predicted", "is", null)
-      .not("rpe_confirmed", "is", null)
-      .order("started_at", { ascending: true }),
-  );
-  return data.map((r) => ({
-    predicted: Number(r.rpe_predicted),
-    confirmed: r.rpe_confirmed as number,
-    startedAt: r.started_at,
-  }));
 }
 
 const WORKOUT_DETAIL_COLS =

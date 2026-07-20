@@ -12,9 +12,7 @@ import LiveWorkoutFullscreen from "./LiveWorkoutFullscreen";
 import PhoneWorkoutCard from "./PhoneWorkoutCard";
 import PhoneWorkoutFullscreen from "./PhoneWorkoutFullscreen";
 import RoutineCard from "./RoutineCard";
-import RpeScatterCard from "./RpeScatterCard";
 import WorkoutStatsCard from "./WorkoutStatsCard";
-import Sheet from "./Sheet";
 
 // Auto-save-on-stop defaults: RPE banked without a prompt, and the last type
 // the user picked (via the edit sheet) so it's not always "gym".
@@ -42,7 +40,6 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
   // a workout resumed from localStorage on load doesn't hijack the screen —
   // the Start/Resume buttons open it.
   const [minimized, setMinimized] = useState(true);
-  const [showRpeModel, setShowRpeModel] = useState(false);
   // Fullscreen mirror of a live WATCH workout (read-only; watch owns it).
   const [liveOpen, setLiveOpen] = useState(false);
   // The just-saved workout, opened for editing from the toast's "Set RPE"
@@ -118,18 +115,7 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
 
   return (
     <div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-        }}
-      >
-        <div className="section-head">WORKOUT</div>
-        <button className="header-btn" onClick={() => setShowRpeModel(true)}>
-          RPE Model
-        </button>
-      </div>
+      <div className="section-head">WORKOUT</div>
       <div className="section-sub">
         Live watch tracking, phone logging, and your recent climbs.
       </div>
@@ -197,29 +183,6 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
       <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 16, textAlign: "center" }}>
         Past workouts and sessions live in History.
       </div>
-
-      {/* RPE Model sheet — predicted vs confirmed effort (moved from History;
-          it's about how workouts feel, which belongs with "do"). */}
-      {showRpeModel && (
-        <Sheet onClose={() => setShowRpeModel(false)}>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--t-xl)",
-              fontWeight: 800,
-              marginBottom: 12,
-            }}
-          >
-            RPE Model
-          </div>
-          <RpeScatterCard />
-          <div style={{ marginTop: 12 }}>
-            <button className="btn-ghost" onClick={() => setShowRpeModel(false)}>
-              Close
-            </button>
-          </div>
-        </Sheet>
-      )}
     </div>
   );
 }
