@@ -86,6 +86,9 @@ struct ForceGaugeView: View {
             // have settled since launch).
             if status == .connected && recentTags.isEmpty { loadTags() }
         }
+        // Keep the phone's live Force mirror in sync with the pickers (SL-87).
+        .onChange(of: tag) { _, t in tindeq.liveTag = t }
+        .onChange(of: side) { _, s in tindeq.liveSide = s }
         }
         .navigationTitle("Force")
         .onReceive(sparkTimer) { _ in
@@ -97,6 +100,8 @@ struct ForceGaugeView: View {
             // Last-used tag/side restore instantly — no network needed to start.
             if tag.isEmpty { tag = UserDefaults.standard.string(forKey: LAST_TAG_KEY) ?? "" }
             if side.isEmpty { side = UserDefaults.standard.string(forKey: LAST_SIDE_KEY) ?? "" }
+            tindeq.liveTag = tag
+            tindeq.liveSide = side
             loadTags()
         }
         .onDisappear { tagFetchTask?.cancel() }

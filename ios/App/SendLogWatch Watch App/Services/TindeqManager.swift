@@ -1,6 +1,7 @@
 import CoreBluetooth
 import Foundation
 import Observation
+import WatchConnectivity
 
 /// CoreBluetooth central for the Tindeq Progressor. Mirrors the web app's
 /// useTindeq hook: same statuses, 120 s recording cap, t rounded to ms int,
@@ -30,6 +31,13 @@ final class TindeqManager: NSObject {
     /// the "log this session?" prompt. Presented at the root so it shows even
     /// after the user has navigated away from the Force screen.
     var pendingFinish = false
+
+    // SL-87 live mirror: the phone Force tab shows what the watch gauge is
+    // doing. The view keeps these in sync with its pickers so beats carry the
+    // exercise context.
+    var liveTag = "" { didSet { pushForceBeat() } }
+    var liveSide = "" { didSet { pushForceBeat() } }
+    private var beatTick = 0
 
     private static let maxRecordingMs: Double = 120_000
 
@@ -88,6 +96,7 @@ final class TindeqManager: NSObject {
         peripheral = nil
         controlChar = nil
         status = .idle
+        pushForceBeat()
     }
 
     func tare() {
@@ -105,6 +114,7 @@ final class TindeqManager: NSObject {
         measuring = true
         status = .measuring
         startUITimer()
+        pushForceBeat()
     }
 
     func stop() -> StoppedRecording? {
@@ -124,6 +134,7 @@ final class TindeqManager: NSObject {
         currentKg = 0
         peakKg = summary.peakKg
         elapsedMs = Double(summary.durationMs)
+        pushForceBeat()
         return summary
     }
 
@@ -159,10 +170,43 @@ final class TindeqManager: NSObject {
             self.currentKg = last.kg
             self.elapsedMs = last.t
             if last.kg > self.peakKg { self.peakKg = last.kg }
+            // Mirror beat every 5th tick (~2 Hz) while measuring (SL-87).
+            self.beatTick += 1
+            if self.beatTick % 5 == 0 { self.pushForceBeat() }
             if last.t >= Self.maxRecordingMs, self.measuring {
                 _ = self.stop()
             }
         }
+    }
+
+    /// SL-87: fire one live-force beat over WatchConnectivity when the phone
+    /// is reachable — same Bluetooth-fast mirror path as the workout beat
+    /// (the auth-bridge plugin forwards it to the WebView). Fire-and-forget;
+    /// there's deliberately no Supabase fallback (an 80 Hz gauge has no
+    /// business heartbeating the network).
+    private func pushForceBeat() {
+        let wc = WCSession.default
+        guard wc.activationState == .activated, wc.isReachable else { return }
+        let statusStr: String
+        switch status {
+        case .measuring: statusStr = "measuring"
+        case .connected: statusStr = "connected"
+        default: statusStr = "idle"
+        }
+        wc.sendMessage(
+            [
+                "kind": "liveForce",
+                "status": statusStr,
+                "kg": (currentKg * 100).rounded() / 100,
+                "peak_kg": (peakKg * 100).rounded() / 100,
+                "elapsed_ms": elapsedMs.rounded(),
+                "session_count": sessionCount,
+                "tag": liveTag,
+                "side": liveSide,
+                "updated_at": Date().timeIntervalSince1970,
+            ],
+            replyHandler: nil, errorHandler: nil
+        )
     }
 
     private func stopUITimer() {
@@ -251,6 +295,7 @@ extension TindeqManager: CBCentralManagerDelegate {
         if !wasIntentional, sessionId != nil, sessionCount > 0 {
             pendingFinish = true
         }
+        pushForceBeat()
     }
 }
 
@@ -281,6 +326,7 @@ extension TindeqManager: CBPeripheralDelegate {
         if controlChar != nil {
             status = .connected
             write(.sampleBattery)
+            pushForceBeat()
         }
     }
 

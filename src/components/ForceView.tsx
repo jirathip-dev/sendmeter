@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useLiveForce } from "../hooks/useLiveForce";
 import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
@@ -55,6 +56,9 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     minimized: gaugeMinimized,
     setMinimized: setGaugeMinimized,
   } = useTindeqSession();
+  // Watch gauge mirror (SL-87) — non-null while the watch's Progressor
+  // screen is connected/measuring and the phone is WC-reachable.
+  const liveForce = useLiveForce();
   // The just-auto-saved recording, shown as a confirmation so the user can
   // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
   // prompt — a rep now saves the moment you stop, using the tag set beforehand.
@@ -612,6 +616,88 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       <div className="section-sub">
         Grip-force analysis &amp; training — Tindeq Progressor via Bluetooth.
       </div>
+
+      {/* Watch gauge mirror (SL-87) — the Progressor is on the WATCH; show
+          its live numbers here, read-only (the watch owns the session). */}
+      {liveForce && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 10,
+            border: "1px solid color-mix(in srgb, var(--info) 45%, transparent)",
+          }}
+        >
+          <div
+            className="label-eyebrow"
+            style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "var(--success)",
+                animation: "pulse 1.6s ease-in-out infinite",
+              }}
+            />
+            Live on watch
+            {liveForce.tag && (
+              <span style={{ color: "var(--ink-faint)", textTransform: "none" }}>
+                · {liveForce.tag}
+                {liveForce.side ? ` · ${liveForce.side}` : ""}
+              </span>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
+            <div>
+              <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>
+                {liveForce.status === "measuring" ? "CURRENT" : "LAST PEAK"}
+              </div>
+              <div
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontWeight: 800,
+                  fontSize: 32,
+                  lineHeight: 1.1,
+                  color: liveForce.status === "measuring" ? "var(--success)" : "var(--ink)",
+                }}
+              >
+                {(liveForce.status === "measuring" ? liveForce.kg : liveForce.peakKg).toFixed(1)}
+                <span style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}> kg</span>
+              </div>
+            </div>
+            {liveForce.status === "measuring" && (
+              <div>
+                <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>PEAK</div>
+                <div
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontWeight: 800,
+                    fontSize: "var(--t-md)",
+                    color: "var(--warning)",
+                  }}
+                >
+                  {liveForce.peakKg.toFixed(1)}
+                </div>
+              </div>
+            )}
+            <div style={{ marginLeft: "auto", textAlign: "right" }}>
+              <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>REPS</div>
+              <div
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontWeight: 800,
+                  fontSize: "var(--t-md)",
+                  color: "var(--ink)",
+                }}
+              >
+                {liveForce.sessionCount}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Gauge session bar — appears once the first recording auto-creates a
           session (SL-58 #5, no manual Start). Finish logs it (RPE prompt). */}
