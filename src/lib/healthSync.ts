@@ -17,11 +17,21 @@ export function healthLastSyncedAt(): number | null {
   }
 }
 
-function recordHealthSync(): void {
+/// Which call path triggered the sync — carried on the event `detail` so
+/// listeners can react differently: the readiness card always re-reads the
+/// timestamp, but a "synced" toast only makes sense for a foreground sync the
+/// user is actively looking at. The cold-launch background sync fires on
+/// every app open and would be noisy; the resync path already gets its own
+/// "Health data cleared · resyncing" toast from AccountSheet.
+export type HealthSyncSource = "background" | "foreground" | "resync";
+
+function recordHealthSync(source: HealthSyncSource): void {
   try {
     localStorage.setItem(SYNCED_AT_KEY, String(Date.now()));
     // Nudge any mounted readiness card to re-read the timestamp.
-    window.dispatchEvent(new Event("sendmeter:health-synced"));
+    window.dispatchEvent(
+      new CustomEvent("sendmeter:health-synced", { detail: { source } }),
+    );
   } catch {
     /* ignore */
   }
@@ -48,7 +58,7 @@ export async function startHealthBackgroundSync(): Promise<void> {
     await SendLogHealth.requestAuthorization();
     await SendLogHealth.startBackgroundSync();
     await SendLogHealth.syncNow();
-    recordHealthSync();
+    recordHealthSync("background");
   } catch {
     // HealthKit denied / unavailable — readiness just stays empty
   }
@@ -61,7 +71,7 @@ export async function syncHealthNow(): Promise<void> {
   if (!IS_NATIVE) return;
   try {
     await SendLogHealth.syncNow();
-    recordHealthSync();
+    recordHealthSync("foreground");
   } catch {
     // plugin unavailable — safe to ignore
   }
@@ -75,7 +85,7 @@ export async function resyncHealthHistory(): Promise<void> {
   if (!IS_NATIVE) return;
   try {
     await SendLogHealth.clearAndResync();
-    recordHealthSync();
+    recordHealthSync("resync");
   } catch {
     // plugin unavailable — safe to ignore
   }

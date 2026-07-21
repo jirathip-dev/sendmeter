@@ -5,7 +5,11 @@ import {
   onWatchSessionRequest,
   relaySessionToWatch,
 } from "../lib/watchAuthRelay";
-import { relayHealthSession, startHealthBackgroundSync } from "../lib/healthSync";
+import {
+  relayHealthSession,
+  startHealthBackgroundSync,
+  syncHealthNow,
+} from "../lib/healthSync";
 
 export function useAuth() {
   const [session, setSession] = useState<Session | null>(null);
@@ -56,6 +60,10 @@ export function useAuth() {
       void supabase.auth.getSession().then(({ data }) => {
         setSession(data.session);
         onSession(data.session);
+        // Pick up anything HealthKit collected while backgrounded (e.g. a
+        // wearable sync) right when the user is looking at the readiness
+        // card — no-op on web / until a session exists.
+        if (data.session) void syncHealthNow();
       });
     };
     document.addEventListener("visibilitychange", onVisible);

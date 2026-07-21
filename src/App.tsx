@@ -28,6 +28,7 @@ import RealtimeVersionProvider from "./components/RealtimeVersionProvider";
 import ToastProvider from "./components/ToastProvider";
 import { TindeqProvider } from "./hooks/TindeqProvider";
 import { useToast } from "./hooks/useToast";
+import type { HealthSyncSource } from "./lib/healthSync";
 
 export default function App() {
   const { session, loading, recovery, clearRecovery, signOut } = useAuth();
@@ -105,6 +106,20 @@ function AuthedApp({
 
   const acwrData = useMemo(() => computeAcwr(sessions), [sessions]);
   const weeklyLoads = useMemo(() => computeWeeklyLoads(sessions), [sessions]);
+
+  // SL-31 sync toast: only for a foreground resync the user is actively
+  // looking at. The cold-launch background sync fires on every app open
+  // (would be noisy) and the "Clear & resync" path already toasts itself.
+  useEffect(() => {
+    const onHealthSynced = (e: Event) => {
+      const source = (e as CustomEvent<{ source?: HealthSyncSource }>).detail
+        ?.source;
+      if (source === "foreground") toast("Health data synced");
+    };
+    window.addEventListener("sendmeter:health-synced", onHealthSynced);
+    return () =>
+      window.removeEventListener("sendmeter:health-synced", onHealthSynced);
+  }, [toast]);
 
   // Auto-hide the topbar + bottom nav on scroll-down, reveal on scroll-up
   // (modern app chrome). Both overlay the content, so hiding frees the screen.
