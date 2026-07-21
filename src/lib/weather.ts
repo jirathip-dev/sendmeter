@@ -6,8 +6,13 @@ import { Geolocation } from "@capacitor/geolocation";
 export interface SendConditions {
   tempC: number;
   humidity: number; // %
-  score: number; // 0–100
+  score: number; // 0–100 absolute
   label: "Prime" | "Good" | "Fair" | "Poor";
+  /// Where today's score sits in the last ~30 days of local hourly weather
+  /// (SL-91) — 0–100, or null if the history is unavailable/too short. This
+  /// is the signal that matters in a hot climate where the absolute score is
+  /// always "Poor": "today is better than N% of recent hours here".
+  percentile: number | null;
   fetchedAt: number; // epoch ms
 }
 
@@ -35,6 +40,96 @@ function scoreLabel(score: number): SendConditions["label"] {
   if (score >= 55) return "Good";
   if (score >= 35) return "Fair";
   return "Poor";
+}
+
+/// Shared colour ramp for an absolute send score (poor → prime). Lifted here
+/// (SL-91) so the card and sheet stop duplicating the thresholds.
+export function sendScoreColor(score: number): string {
+  return score >= 55 ? "var(--success)" : score >= 35 ? "var(--warning)" : "var(--danger)";
+}
+
+/// Colour for a local percentile (SL-91): a high percentile is a good day for
+/// THIS location regardless of the absolute score.
+export function percentileColor(p: number): string {
+  return p >= 75 ? "var(--success)" : p >= 40 ? "var(--warning)" : "var(--danger)";
+}
+
+/// Where `current` sits within `history` — the fraction of hours scoring
+/// strictly lower, as 0–100. Null until there's a meaningful sample (~4 days
+/// of hourly data) so a sparse fetch can't produce a misleading percentile.
+export function scorePercentile(current: number, history: number[]): number | null {
+  if (history.length < 100) return null;
+  const below = history.reduce((n, s) => n + (s < current ? 1 : 0), 0);
+  return Math.round((below / history.length) * 100);
+}
+
+const HIST_KEY = "sendmeter:climate-hist";
+/// Weekly cache bucket — the local climate distribution barely moves week to
+/// week, so we refetch the (heavier) archive at most once per 7 days.
+const weekBucket = (nowMs: number) => Math.floor(nowMs / (7 * 86_400_000));
+
+interface ClimateHist {
+  coordsKey: string;
+  week: number;
+  scores: number[];
+}
+
+/// Last ~30 days of hourly local weather, each hour run through the SAME
+/// absolute scorer, so the percentile compares like with like. From
+/// Open-Meteo's ERA5 archive (which lags ~2 days). Cached per rounded
+/// location + ISO-ish week in localStorage. Returns null on any failure —
+/// the percentile just degrades to null.
+async function fetchLocalScoreHistory(
+  lat: string,
+  lon: string,
+): Promise<number[] | null> {
+  const coordsKey = `${lat},${lon}`;
+  const week = weekBucket(Date.now());
+  try {
+    const raw = localStorage.getItem(HIST_KEY);
+    if (raw) {
+      const c = JSON.parse(raw) as ClimateHist;
+      if (c.coordsKey === coordsKey && c.week === week && c.scores?.length) {
+        return c.scores;
+      }
+    }
+  } catch {
+    /* ignore malformed cache */
+  }
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const end = new Date(Date.now() - 2 * 86_400_000); // ERA5 lags ~2 days
+  const start = new Date(end.getTime() - 30 * 86_400_000);
+  try {
+    const res = await fetch(
+      `https://archive-api.open-meteo.com/v1/era5?latitude=${lat}&longitude=${lon}&start_date=${iso(start)}&end_date=${iso(end)}&hourly=temperature_2m,relative_humidity_2m`,
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      hourly?: {
+        temperature_2m?: (number | null)[];
+        relative_humidity_2m?: (number | null)[];
+      };
+    };
+    const temps = data.hourly?.temperature_2m;
+    const hums = data.hourly?.relative_humidity_2m;
+    if (!temps || !hums) return null;
+    const scores: number[] = [];
+    for (let i = 0; i < temps.length; i++) {
+      const t = temps[i];
+      const h = hums[i];
+      if (t == null || h == null) continue;
+      scores.push(computeSendScore(t, h));
+    }
+    if (scores.length === 0) return null;
+    try {
+      localStorage.setItem(HIST_KEY, JSON.stringify({ coordsKey, week, scores }));
+    } catch {
+      /* ignore quota */
+    }
+    return scores;
+  } catch {
+    return null;
+  }
 }
 
 async function getCoords(): Promise<{ lat: number; lon: number } | null> {
@@ -69,18 +164,38 @@ export async function fetchSendConditions(): Promise<SendConditions | null> {
   const lat = coords.lat.toFixed(2);
   const lon = coords.lon.toFixed(2);
   try {
-    const res = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m`,
-    );
-    if (!res.ok) return null;
-    const data = (await res.json()) as {
-      current?: { temperature_2m?: number; relative_humidity_2m?: number };
-    };
-    const tempC = data.current?.temperature_2m;
-    const humidity = data.current?.relative_humidity_2m;
+    // Current weather + the local 30-day history in parallel; the archive is
+    // best-effort, so the percentile degrades to null without blocking.
+    const [data, history] = await Promise.all([
+      fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m`,
+      )
+        .then((res) =>
+          res.ok
+            ? (res.json() as Promise<{
+                current?: {
+                  temperature_2m?: number;
+                  relative_humidity_2m?: number;
+                };
+              }>)
+            : null,
+        )
+        .catch(() => null),
+      fetchLocalScoreHistory(lat, lon),
+    ]);
+    const tempC = data?.current?.temperature_2m;
+    const humidity = data?.current?.relative_humidity_2m;
     if (tempC == null || humidity == null) return null;
     const score = computeSendScore(tempC, humidity);
-    return { tempC, humidity, score, label: scoreLabel(score), fetchedAt: Date.now() };
+    const percentile = history ? scorePercentile(score, history) : null;
+    return {
+      tempC,
+      humidity,
+      score,
+      label: scoreLabel(score),
+      percentile,
+      fetchedAt: Date.now(),
+    };
   } catch {
     return null;
   }

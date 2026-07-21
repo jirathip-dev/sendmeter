@@ -1,12 +1,10 @@
 import Sheet from "./Sheet";
 import {
   humidityFrictionScore,
+  sendScoreColor as scoreColor,
   tempFrictionScore,
   type SendConditions,
 } from "../lib/weather";
-
-const scoreColor = (s: number) =>
-  s >= 55 ? "var(--success)" : s >= 35 ? "var(--warning)" : "var(--danger)";
 
 interface Props {
   cond: SendConditions | null;
@@ -71,6 +69,35 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
             {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}% humidity
           </div>
 
+          {/* Relative-to-location standing (SL-91) — the signal that matters
+              where the absolute score is always low. */}
+          {cond.percentile !== null && (
+            <div
+              style={{
+                fontSize: "var(--t-sm)",
+                color: "var(--ink)",
+                background: "var(--surface-1)",
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                padding: "10px 12px",
+                marginBottom: 16,
+                lineHeight: 1.5,
+              }}
+            >
+              Better than{" "}
+              <strong>{cond.percentile}%</strong> of the last 30 days at your
+              location{" "}
+              <span style={{ color: "var(--ink-muted)" }}>
+                — {cond.percentile >= 75
+                  ? "a standout window here"
+                  : cond.percentile >= 40
+                    ? "an average day here"
+                    : "below par for here"}
+                .
+              </span>
+            </div>
+          )}
+
           {/* Score scale — orange (poor) → yellow → blue (prime) */}
           <div style={{ position: "relative", height: 10, borderRadius: 5, marginBottom: 6, background: "linear-gradient(to right, var(--danger), var(--warning), var(--success))", opacity: 0.85 }}>
             <div
@@ -102,8 +129,11 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6, marginTop: 4 }}>
             The score blends temperature (60%) and humidity (40%). Grip friction
             peaks around <strong>6&nbsp;°C</strong> and low humidity, and drops as
-            it warms up or gets muggy. Weather is from Open-Meteo for your current
-            location.
+            it warms up or gets muggy.
+            {cond.percentile !== null
+              ? " The percentile above compares today against the last 30 days at your location, so a warm climate still has good and bad days."
+              : ""}{" "}
+            Weather is from Open-Meteo for your current location.
           </div>
 
           <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 10 }}>

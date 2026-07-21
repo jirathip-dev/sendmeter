@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchSendConditions, type SendConditions } from "../lib/weather";
+import {
+  fetchSendConditions,
+  percentileColor,
+  sendScoreColor,
+  type SendConditions,
+} from "../lib/weather";
 import SendConditionsSheet from "./SendConditionsSheet";
 
 const KEY = "sendmeter:send-conditions";
@@ -14,8 +19,12 @@ function loadCached(): SendConditions | null {
   }
 }
 
-const scoreColor = (s: number) =>
-  s >= 55 ? "var(--success)" : s >= 35 ? "var(--warning)" : "var(--danger)";
+/// Colour by the LOCAL percentile when we have it (SL-91) — a hot-climate day
+/// that's good *for here* shouldn't read as red just because the absolute
+/// score is low; falls back to the absolute score otherwise.
+function condColor(c: SendConditions): string {
+  return c.percentile !== null ? percentileColor(c.percentile) : sendScoreColor(c.score);
+}
 
 /// Compact "send conditions" widget (SL-69): temperature + humidity → a climbing
 /// friction score. Fetches on tap the first time (so the location prompt is
@@ -95,12 +104,12 @@ export default function SendConditionsCard() {
         Send Conditions
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-        {dot(cond ? scoreColor(cond.score) : "var(--ink-faint)")}
+        {dot(cond ? condColor(cond) : "var(--ink-faint)")}
         <span
           style={{
             fontSize: "var(--t-base)",
             fontWeight: 700,
-            color: cond ? scoreColor(cond.score) : "var(--ink)",
+            color: cond ? condColor(cond) : "var(--ink)",
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
@@ -112,6 +121,9 @@ export default function SendConditionsCard() {
       {cond && !loading && (
         <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
           {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}%
+          {cond.percentile !== null && (
+            <span style={{ color: condColor(cond) }}> · top {100 - cond.percentile}%</span>
+          )}
         </div>
       )}
     </div>
