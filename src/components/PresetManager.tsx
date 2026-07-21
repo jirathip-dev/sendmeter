@@ -7,6 +7,9 @@ import {
 } from "../lib/repo";
 import { buildTimeline, presetTargetKg, timelineDurationS } from "../lib/protocol";
 import type { PresetRefs } from "../lib/protocol";
+import { QUALITIES } from "../lib/force-curve";
+import { classifyZone } from "../lib/zoneHistory";
+import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useToast } from "../hooks/useToast";
 import NumInput from "./NumInput";
 import type { TindeqPreset } from "../types";
@@ -24,6 +27,33 @@ function fmt(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return s === 0 ? `${m}m` : `${m}m${s}s`;
+}
+
+/// The training quality a protocol trains, inferred from its hold length
+/// (SL-100 classifier) — so a custom preset carries the same power/strength/
+/// pow-end/endurance label as the recommended zones.
+function QualityBadge({ holdS }: { holdS: number }) {
+  const q = classifyZone(holdS);
+  if (!q) return null;
+  const color = QUALITY_COLORS[q];
+  const label = QUALITIES.find((x) => x.id === q)?.label ?? q;
+  return (
+    <span
+      style={{
+        fontSize: "var(--t-2xs)",
+        fontWeight: 700,
+        color,
+        border: `1px solid ${color}`,
+        borderRadius: 6,
+        padding: "1px 6px",
+        flexShrink: 0,
+        textTransform: "uppercase",
+        letterSpacing: "0.04em",
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
 /// Selected-protocol persistence (SL-76): ForceView unmounts on tab switch and
@@ -230,8 +260,20 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
               }}
             />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: "var(--t-base)", color: "var(--ink)", fontWeight: 600 }}>
-                {p.name}
+              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                <span
+                  style={{
+                    fontSize: "var(--t-base)",
+                    color: "var(--ink)",
+                    fontWeight: 600,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {p.name}
+                </span>
+                <QualityBadge holdS={p.holdS} />
               </div>
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
                 hold {fmt(p.holdS)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}

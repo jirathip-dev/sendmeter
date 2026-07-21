@@ -18,6 +18,10 @@ function DistributionChart({ hist, score }: { hist: ClimateSummary; score: numbe
   const max = Math.max(1, ...counts);
   const todayBin = Math.min(BINS - 1, Math.max(0, Math.floor((score / 100) * BINS)));
   return (
+    // Every bin is a full-height faint TRACK spanning the whole Poor→Prime
+    // axis, with the hour-count filling from the bottom — so a bunched
+    // distribution still reads across the full width and today's outlined
+    // column shows its true position on the axis (not just "rightmost bar").
     <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 56 }}>
       {counts.map((c, i) => {
         const binScore = (i + 0.5) * (100 / BINS);
@@ -28,15 +32,26 @@ function DistributionChart({ hist, score }: { hist: ClimateSummary; score: numbe
             title={`${Math.round(i * (100 / BINS))}–${Math.round((i + 1) * (100 / BINS))}: ${c}h`}
             style={{
               flex: 1,
-              height: `${(c / max) * 100}%`,
-              minHeight: c > 0 ? 2 : 0,
-              background: scoreColor(binScore),
-              opacity: isToday ? 1 : 0.4,
+              height: "100%",
+              display: "flex",
+              alignItems: "flex-end",
+              background: "var(--surface-1)",
               borderRadius: 2,
               outline: isToday ? "2px solid var(--ink)" : undefined,
               outlineOffset: 1,
             }}
-          />
+          >
+            <div
+              style={{
+                width: "100%",
+                height: `${(c / max) * 100}%`,
+                minHeight: c > 0 ? 2 : 0,
+                background: scoreColor(binScore),
+                opacity: isToday ? 1 : 0.55,
+                borderRadius: 2,
+              }}
+            />
+          </div>
         );
       })}
     </div>
