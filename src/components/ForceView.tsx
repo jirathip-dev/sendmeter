@@ -33,7 +33,8 @@ import SideAsymmetryCard from "./SideAsymmetryCard";
 import TagManagerSheet from "./TagManagerSheet";
 import TagSideEditor from "./TagSideEditor";
 import TargetZonesCard from "./TargetZonesCard";
-import type { ZoneSelection } from "./TargetZonesCard";
+import { buildZoneSelection, type ZoneSelection } from "../lib/zoneSelection";
+import ZoneFocusCard from "./ZoneFocusCard";
 import ForceFullscreen from "./ForceFullscreen";
 import ForceTrendChart from "./ForceTrendChart";
 
@@ -1008,6 +1009,22 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
           model={model}
           selected={zoneSel}
           onSelect={setZoneSel}
+        />
+      )}
+      {effectiveTag && (
+        <ZoneFocusCard
+          recordings={recordings.filter((r) => r.tag === effectiveTag)}
+          model={model}
+          onPick={(q) =>
+            setZoneSel(
+              buildZoneSelection(
+                model,
+                q,
+                chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag,
+                false,
+              ),
+            )
+          }
         />
       )}
       <PresetManager selectedId={preset?.id ?? null} onSelect={setPreset} presetRefs={presetRefs} />

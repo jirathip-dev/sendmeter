@@ -1,18 +1,16 @@
 import { useState } from "react";
-import { QUALITIES, ZONE_PROTOCOLS, zoneTarget } from "../lib/force-curve";
-import type { ForceCurveModel, TrainingQuality } from "../lib/force-curve";
+import { QUALITIES, zoneTarget } from "../lib/force-curve";
+import type { ForceCurveModel } from "../lib/force-curve";
 import { buildTimeline, timelineDurationS } from "../lib/protocol";
-import type { TindeqPreset } from "../types";
-import type { GaugeTarget } from "./ForceCurveCard";
+import {
+  QUALITY_COLORS,
+  buildZoneSelection,
+  selectedQuality,
+  type ZoneSelection,
+} from "../lib/zoneSelection";
+
 import BoxChip from "./BoxChip";
 import InfoDot from "./InfoDot";
-
-/// A selected zone = a load band for the live chart + a full guided protocol
-/// (pull time / rest / reps / sets) for the fullscreen countdown.
-export interface ZoneSelection {
-  target: GaugeTarget;
-  protocol: TindeqPreset;
-}
 
 interface Props {
   tag: string;
@@ -20,15 +18,6 @@ interface Props {
   selected: ZoneSelection | null;
   onSelect: (sel: ZoneSelection | null) => void;
 }
-
-/// Each training quality gets its own hue (cool → warm as it moves from
-/// endurance to power), so the zone chips read as a spectrum, not one color.
-const QUALITY_COLORS: Record<TrainingQuality, string> = {
-  power: "var(--danger)", // orange — max intensity
-  strength: "var(--warning)", // yellow
-  "power-endurance": "var(--info)", // violet
-  endurance: "var(--success)", // electric blue
-};
 
 function fmt(sec: number): string {
   if (sec < 60) return `${sec}s`;
@@ -43,41 +32,12 @@ function fmt(sec: number): string {
 /// zone's prescription). Alternate ticks L⇄R per rep; otherwise the global
 /// side applies.
 export default function TargetZonesCard({ tag, model, selected, onSelect }: Props) {
-  const [quality, setQuality] = useState<TrainingQuality | null>(null);
   const [alternate, setAlternate] = useState(false);
 
-  function build(q: TrainingQuality, alt: boolean): ZoneSelection | null {
-    if (!model) return null;
-    const t = zoneTarget(model, q);
-    if (!t) return null;
-    const zp = ZONE_PROTOCOLS[q];
-    return {
-      target: {
-        kg: t.targetKg,
-        lowKg: t.lowKg,
-        highKg: t.highKg,
-        workS: t.workS,
-        label: `${t.label} · ${tag}`,
-      },
-      protocol: {
-        id: `zone:${q}`,
-        name: `${t.label} · ${tag}`,
-        holdS: zp.holdS,
-        reps: zp.reps,
-        sets: zp.sets,
-        restRepsS: zp.restRepsS,
-        restSetsS: zp.restSetsS,
-        targetKg: t.targetKg,
-        targetPct: null,
-        pctBasis: "pr",
-        pctStep: 0,
-        targetCurve: false,
-        alternateSides: alt,
-      },
-    };
-  }
-
-  const active = quality !== null && selected !== null;
+  // Which zone is armed is derived from `selected` (its `zone:${q}` id) so the
+  // SL-100 recommendation card arming the same `zoneSel` lights the right chip.
+  const quality = selectedQuality(selected);
+  const active = quality !== null;
   const zoneT = model && quality ? zoneTarget(model, quality) : null;
 
   return (
@@ -114,12 +74,10 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                   color={QUALITY_COLORS[q.id]}
                   onClick={() => {
                     if (isActive) {
-                      setQuality(null);
                       onSelect(null);
                       return;
                     }
-                    setQuality(q.id);
-                    onSelect(build(q.id, alternate));
+                    onSelect(buildZoneSelection(model, q.id, tag, alternate));
                   }}
                 />
               );
@@ -166,7 +124,8 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                   checked={alternate}
                   onChange={(e) => {
                     setAlternate(e.target.checked);
-                    if (quality) onSelect(build(quality, e.target.checked));
+                    if (quality)
+                      onSelect(buildZoneSelection(model, quality, tag, e.target.checked));
                   }}
                 />
                 Alternate left ⇄ right each set (otherwise uses the selected side)
