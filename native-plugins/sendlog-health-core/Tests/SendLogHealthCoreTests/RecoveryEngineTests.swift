@@ -8,13 +8,20 @@ final class RecoveryEngineTests: XCTestCase {
         hrv: Double? = nil,
         rhr: Double? = nil,
         sleep: Double? = nil,
+        deep: Double? = nil,
+        rem: Double? = nil,
+        resp: Double? = nil,
         hrvBase: [Double] = [],
         rhrBase: [Double] = [],
-        sleepBase: [Double] = []
+        sleepBase: [Double] = [],
+        respBase: [Double] = [],
+        restBase: [Double] = []
     ) -> DailyHealthInputs {
         DailyHealthInputs(
             hrvSDNNms: hrv, restingHR: rhr, sleepHours: sleep, bodyMassKg: nil,
-            hrvLnBaseline: hrvBase, rhrBaseline: rhrBase, sleepBaseline: sleepBase
+            sleepDeepHours: deep, sleepRemHours: rem, respRateBpm: resp,
+            hrvLnBaseline: hrvBase, rhrBaseline: rhrBase, sleepBaseline: sleepBase,
+            respBaseline: respBase, restorativeSleepBaseline: restBase
         )
     }
 
@@ -124,6 +131,42 @@ final class RecoveryEngineTests: XCTestCase {
         XCTAssertEqual(zone(rhr: 54), .maintain)
         XCTAssertEqual(zone(rhr: 50), .push)
         XCTAssertEqual(zone(rhr: 58), .recover)
+    }
+
+    func testRespRateElevatedPenalises() {
+        // Resp +2σ above baseline → −wResp*2 = −12. RHR at mean (0).
+        let r = RecoveryEngine.compute(
+            inputs: inputs(
+                rhr: 54, resp: 20,
+                rhrBase: base(mean: 54, sigma: 2),
+                respBase: base(mean: 14, sigma: 2) // 20 = +3σ → clamped +2
+            ),
+            acwr: nil, t: t
+        )
+        XCTAssertEqual(r.score, 38) // 50 − 6*2
+        XCTAssertEqual(r.driver, "Breathing rate elevated")
+    }
+
+    func testRestorativeSleepBonusCaps() {
+        // Deep+REM well above baseline → +wRestSleep*cap = +5. RHR at mean.
+        let r = RecoveryEngine.compute(
+            inputs: inputs(
+                rhr: 54, deep: 2.0, rem: 2.5, // restorative 4.5
+                rhrBase: base(mean: 54, sigma: 2),
+                restBase: base(mean: 2.5, sigma: 0.4) // 4.5 = +5σ → capped z 1
+            ),
+            acwr: nil, t: t
+        )
+        XCTAssertEqual(r.score, 55) // 50 + 5 capped
+    }
+
+    func testNewTermsDropWithoutBaseline() {
+        // resp/restorative present but no baseline → both terms drop; RHR carries.
+        let r = RecoveryEngine.compute(
+            inputs: inputs(rhr: 54, deep: 2, rem: 2, resp: 30, rhrBase: base(mean: 54, sigma: 2)),
+            acwr: nil, t: t
+        )
+        XCTAssertEqual(r.score, 50)
     }
 
     func testDriverLine() {

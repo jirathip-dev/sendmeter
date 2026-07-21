@@ -5,9 +5,8 @@ public struct DailyHealthInputs {
     public var restingHR: Double?
     public var sleepHours: Double?
     public var bodyMassKg: Double?
-    // Additive metrics: stored and displayed, not yet folded into the
-    // readiness score (no baseline computed yet — see RecoveryStatsCard on
-    // web). Defaulted so existing call sites (tests) don't need updating.
+    // Folded into the score as of SL-18 (respiratory rate + restorative
+    // = deep+REM sleep), each against its own rolling baseline below.
     public var sleepDeepHours: Double?
     public var sleepRemHours: Double?
     public var respRateBpm: Double?
@@ -15,6 +14,10 @@ public struct DailyHealthInputs {
     public var hrvLnBaseline: [Double]
     public var rhrBaseline: [Double]
     public var sleepBaseline: [Double]
+    // SL-18 baselines. Defaulted to [] so callers/tests that predate these
+    // (and days with no such history) simply drop the term.
+    public var respBaseline: [Double]
+    public var restorativeSleepBaseline: [Double]
 
     public init(
         hrvSDNNms: Double? = nil,
@@ -26,7 +29,9 @@ public struct DailyHealthInputs {
         respRateBpm: Double? = nil,
         hrvLnBaseline: [Double],
         rhrBaseline: [Double],
-        sleepBaseline: [Double]
+        sleepBaseline: [Double],
+        respBaseline: [Double] = [],
+        restorativeSleepBaseline: [Double] = []
     ) {
         self.hrvSDNNms = hrvSDNNms
         self.restingHR = restingHR
@@ -38,6 +43,15 @@ public struct DailyHealthInputs {
         self.hrvLnBaseline = hrvLnBaseline
         self.rhrBaseline = rhrBaseline
         self.sleepBaseline = sleepBaseline
+        self.respBaseline = respBaseline
+        self.restorativeSleepBaseline = restorativeSleepBaseline
+    }
+
+    /// Deep + REM hours combined (restorative sleep) — nil only when BOTH are
+    /// missing, so a device reporting just one stage still contributes.
+    public var restorativeSleepHours: Double? {
+        if sleepDeepHours == nil && sleepRemHours == nil { return nil }
+        return (sleepDeepHours ?? 0) + (sleepRemHours ?? 0)
     }
 }
 

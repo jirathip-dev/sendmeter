@@ -22,6 +22,18 @@ public enum RecoveryEngine {
             baseline: inputs.sleepBaseline,
             sigmaFloor: t.sleepSigmaFloorH, t: t
         )
+        // SL-18: respiratory rate + restorative (deep+REM) sleep. Additive —
+        // each drops out (0) when its baseline is short or the metric absent.
+        let zResp = zScore(
+            value: inputs.respRateBpm,
+            baseline: inputs.respBaseline,
+            sigmaFloor: nil, t: t
+        )
+        let zRest = zScore(
+            value: inputs.restorativeSleepHours,
+            baseline: inputs.restorativeSleepBaseline,
+            sigmaFloor: t.restSleepSigmaFloorH, t: t
+        )
 
         // Without either autonomic signal there is nothing to score.
         guard zHRV != nil || zRHR != nil else {
@@ -38,9 +50,11 @@ public enum RecoveryEngine {
         let cHRV = t.wHRV * (zHRV ?? 0)
         let cRHR = -t.wRHR * (zRHR ?? 0)
         let cSleep = t.wSleep * min(zSleep ?? 0, t.sleepPosCapZ)
+        let cResp = -t.wResp * (zResp ?? 0)
+        let cRest = t.wRestSleep * min(zRest ?? 0, t.restSleepPosCapZ)
         let cLoad = -t.loadPenaltyMax * pLoad
 
-        let raw = 50 + cHRV + cRHR + cSleep + cLoad
+        let raw = 50 + cHRV + cRHR + cSleep + cResp + cRest + cLoad
         let score = max(0, min(100, Int(raw.rounded())))
 
         let zone: ReadinessZone =
@@ -51,7 +65,10 @@ public enum RecoveryEngine {
         return ReadinessResult(
             score: score,
             zone: zone,
-            driver: driverLine(cHRV: cHRV, cRHR: cRHR, cSleep: cSleep, cLoad: cLoad)
+            driver: driverLine(
+                cHRV: cHRV, cRHR: cRHR, cSleep: cSleep,
+                cResp: cResp, cRest: cRest, cLoad: cLoad
+            )
         )
     }
 
@@ -73,11 +90,16 @@ public enum RecoveryEngine {
         return max(-t.zClamp, min(t.zClamp, (value - mean) / sigma))
     }
 
-    private static func driverLine(cHRV: Double, cRHR: Double, cSleep: Double, cLoad: Double) -> String {
+    private static func driverLine(
+        cHRV: Double, cRHR: Double, cSleep: Double,
+        cResp: Double, cRest: Double, cLoad: Double
+    ) -> String {
         let terms: [(Double, String)] = [
             (cHRV, cHRV >= 0 ? "HRV well above baseline" : "HRV below baseline"),
             (cRHR, cRHR >= 0 ? "Resting HR low" : "Resting HR elevated"),
             (cSleep, cSleep >= 0 ? "Well slept" : "Short sleep"),
+            (cResp, cResp >= 0 ? "Breathing rate calm" : "Breathing rate elevated"),
+            (cRest, cRest >= 0 ? "Deep/REM sleep strong" : "Low deep/REM sleep"),
             (cLoad, "High training load"),
         ]
         let dominant = terms.max { abs($0.0) < abs($1.0) }!

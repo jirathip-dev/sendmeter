@@ -75,6 +75,8 @@ final class HealthKitReader: HealthMetricsProviding {
         var hrvBase: [Double] = []
         var rhrBase: [Double] = []
         var sleepBase: [Double] = []
+        var respBase: [Double] = []        // SL-18
+        var restBase: [Double] = []        // SL-18: deep+REM hours
         for d in 1...t.baselineDays {
             guard let day = cal.date(byAdding: .day, value: -d, to: now) else { continue }
             let w = nightWindow(endingOn: day)
@@ -90,8 +92,15 @@ final class HealthKitReader: HealthMetricsProviding {
             ) {
                 rhrBase.append(rhr)
             }
-            if let s = try? await sleepBreakdown(in: w).totalHours, s > 0 {
-                sleepBase.append(s)
+            if let sb = try? await sleepBreakdown(in: w) {
+                if let total = sb.totalHours, total > 0 { sleepBase.append(total) }
+                let rest = (sb.deepHours ?? 0) + (sb.remHours ?? 0)
+                if rest > 0 { restBase.append(rest) }
+            }
+            if let resp = try? await meanQuantity(
+                .respiratoryRate, in: w, unit: .count().unitDivided(by: .minute())
+            ), resp > 0 {
+                respBase.append(resp)
             }
         }
 
@@ -106,7 +115,9 @@ final class HealthKitReader: HealthMetricsProviding {
             respRateBpm: try await respRateToday,
             hrvLnBaseline: hrvBase,
             rhrBaseline: rhrBase,
-            sleepBaseline: sleepBase
+            sleepBaseline: sleepBase,
+            respBaseline: respBase,
+            restorativeSleepBaseline: restBase
         )
     }
 
@@ -176,11 +187,16 @@ final class HealthKitReader: HealthMetricsProviding {
             var hrvBase: [Double] = []
             var rhrBase: [Double] = []
             var sleepBase: [Double] = []
+            var respBase: [Double] = []    // SL-18
+            var restBase: [Double] = []    // SL-18: deep+REM hours
             for b in 1...t.baselineDays {
                 let a = agg[o + b]
                 if let h = a.hrv, h > 0 { hrvBase.append(log(h)) }
                 if let r = a.rhr { rhrBase.append(r) }
                 if let s = a.sleepTotal, s > 0 { sleepBase.append(s) }
+                if let rp = a.resp, rp > 0 { respBase.append(rp) }
+                let rest = (a.sleepDeep ?? 0) + (a.sleepRem ?? 0)
+                if rest > 0 { restBase.append(rest) }
             }
             let massWindow = DateInterval(
                 start: cal.date(byAdding: .day, value: -30, to: day)!, end: day
@@ -201,7 +217,9 @@ final class HealthKitReader: HealthMetricsProviding {
                     respRateBpm: a.resp,
                     hrvLnBaseline: hrvBase,
                     rhrBaseline: rhrBase,
-                    sleepBaseline: sleepBase
+                    sleepBaseline: sleepBase,
+                    respBaseline: respBase,
+                    restorativeSleepBaseline: restBase
                 )
             ))
         }

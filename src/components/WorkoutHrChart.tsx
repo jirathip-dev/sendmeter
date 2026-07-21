@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchWorkoutRaw } from "../lib/repo";
+import { hrRecoveryBpm } from "../lib/workoutStats";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
@@ -130,6 +131,11 @@ export default function WorkoutHrChart({ workoutId, startedAt, attempts, source 
   const yTicks = [hrMin, (hrMin + hrMax) / 2, hrMax];
   const xTicks = [0, tMax / 2, tMax];
 
+  // HR-recovery fatigue metric (SL-25): mean bpm the heart drops in the 60s
+  // after each climb — bigger = fresher between attempts. Computed from the
+  // trace already loaded here (no extra fetch).
+  const recoveryBpm = hrRecoveryBpm(samples, startedAt, attempts);
+
   return (
     <div style={{ marginTop: 12 }}>
       <div
@@ -152,6 +158,15 @@ export default function WorkoutHrChart({ workoutId, startedAt, attempts, source 
           · gaps = rest
         </span>
       </div>
+      {recoveryBpm !== null && (
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
+          HR recovery{" "}
+          <span style={{ color: "var(--danger)", fontWeight: 700 }}>
+            −{Math.round(recoveryBpm)} bpm
+          </span>{" "}
+          in the 60s after a climb, on average
+        </div>
+      )}
       <div ref={hostRef} style={{ width: "100%" }}>
         <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
           {/* Attempt segments (rest stays unshaded) */}

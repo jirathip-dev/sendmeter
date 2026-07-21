@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { useChartHover } from "../hooks/useChartHover";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { useRipple } from "../hooks/useRipple";
+import { healthLastSyncedAt } from "../lib/healthSync";
 import { fetchHealthMetrics } from "../lib/repo";
 import ChartTooltip from "./ChartTooltip";
 import InfoDot from "./InfoDot";
@@ -13,6 +15,18 @@ const ZONE_COLORS: Record<string, string> = {
   recover: "var(--danger)",
 };
 
+/// Short "N ago" for the last-synced line (SL-31).
+function relativeTime(ms: number): string {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return d === 1 ? "yesterday" : `${d}d ago`;
+}
+
 export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}) {
   const [hoveredDay, hoverDayProps] = useChartHover<number>();
   const { ripples, spawnRipple } = useRipple();
@@ -22,6 +36,13 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
     [],
     realtimeVersion,
   );
+  // Last health sync time (SL-31) — re-read when a sync fires (native).
+  const [syncedAt, setSyncedAt] = useState<number | null>(() => healthLastSyncedAt());
+  useEffect(() => {
+    const h = () => setSyncedAt(healthLastSyncedAt());
+    window.addEventListener("sendmeter:health-synced", h);
+    return () => window.removeEventListener("sendmeter:health-synced", h);
+  }, []);
 
   // Empty state: the feature should be discoverable before any watch data
   if (metrics.length === 0) {
@@ -243,6 +264,11 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
       {footerParts.length > 0 && (
         <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 8 }}>
           {footerParts.join(" · ")}
+        </div>
+      )}
+      {syncedAt !== null && (
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: footerParts.length ? 2 : 8 }}>
+          Synced {relativeTime(syncedAt)}
         </div>
       )}
     </div>

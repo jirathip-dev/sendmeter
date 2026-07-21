@@ -4,6 +4,29 @@ import { SendLogHealth } from "sendlog-health";
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
+const SYNCED_AT_KEY = "sendmeter:health-synced-at";
+
+/// Epoch ms of the last successful health sync, or null (SL-31). Drives the
+/// "Last synced" line on the readiness card so a sync gives visible feedback.
+export function healthLastSyncedAt(): number | null {
+  try {
+    const v = localStorage.getItem(SYNCED_AT_KEY);
+    return v ? Number(v) : null;
+  } catch {
+    return null;
+  }
+}
+
+function recordHealthSync(): void {
+  try {
+    localStorage.setItem(SYNCED_AT_KEY, String(Date.now()));
+    // Nudge any mounted readiness card to re-read the timestamp.
+    window.dispatchEvent(new Event("sendmeter:health-synced"));
+  } catch {
+    /* ignore */
+  }
+}
+
 /// Hand the native health plugin the current session so its own Supabase
 /// client can read sessions / write health_metrics — including on a
 /// background wake, when the WebView's supabase-js session isn't reachable.
@@ -25,6 +48,7 @@ export async function startHealthBackgroundSync(): Promise<void> {
     await SendLogHealth.requestAuthorization();
     await SendLogHealth.startBackgroundSync();
     await SendLogHealth.syncNow();
+    recordHealthSync();
   } catch {
     // HealthKit denied / unavailable — readiness just stays empty
   }
@@ -37,6 +61,7 @@ export async function syncHealthNow(): Promise<void> {
   if (!IS_NATIVE) return;
   try {
     await SendLogHealth.syncNow();
+    recordHealthSync();
   } catch {
     // plugin unavailable — safe to ignore
   }
@@ -50,6 +75,7 @@ export async function resyncHealthHistory(): Promise<void> {
   if (!IS_NATIVE) return;
   try {
     await SendLogHealth.clearAndResync();
+    recordHealthSync();
   } catch {
     // plugin unavailable — safe to ignore
   }

@@ -2,12 +2,20 @@ import Foundation
 
 /// Every readiness-score constant. readiness = clamp(round(
 ///   50 + wHRV·z_hrv − wRHR·z_rhr + wSleep·min(z_sleep, sleepPosCapZ)
+///      − wResp·z_resp + wRestSleep·min(z_rest, restSleepPosCapZ)
 ///      − loadPenaltyMax·p_load ), 0, 100)
 public struct RecoveryTunables {
     public var wHRV: Double = 15          // HRV: best-validated marker, largest weight
     public var wRHR: Double = 12          // RHR: robust but correlated with HRV
     public var wSleep: Double = 8         // sleep: noisy nightly, partly in HRV already
     public var sleepPosCapZ: Double = 1.0 // oversleeping can't supercharge the score
+    // SL-18: respiratory rate (elevated = illness/stress, so a negative term
+    // like RHR) and restorative deep+REM sleep (a sleep-quality bonus beyond
+    // duration). Both small — supporting signals, not primary drivers.
+    public var wResp: Double = 6
+    public var wRestSleep: Double = 5
+    public var restSleepPosCapZ: Double = 1.0  // extra deep/REM can't supercharge
+    public var restSleepSigmaFloorH: Double = 0.3
     public var loadPenaltyMax: Double = 20
     public var acwrPenaltyStart: Double = 1.3   // matches web "Optimal" band upper edge
     public var acwrPenaltyFull: Double = 2.0    // full penalty at "Danger"
