@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   deleteRoutinePreset,
+  deleteSession,
   fetchRoutinePresets,
   insertRoutinePreset,
   insertSession,
@@ -8,6 +9,13 @@ import {
 } from "../lib/repo";
 import { today } from "../lib/dates";
 import { expandRoutine, routineDurationS } from "../lib/routine";
+import {
+  clearRoutineRun,
+  loadRoutineRun,
+  partialMinutes,
+  shouldLog,
+  type RoutineRunState,
+} from "../lib/routineRun";
 import type { PhaseId, RoutinePreset, RoutineStep } from "../types";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
@@ -45,6 +53,12 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
   const [presets, setPresets] = useState<RoutinePreset[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  // A routine left running when the app was last closed (SL-97). Read once
+  // (lazy init — the sanctioned impure spot); consumed when its preset loads,
+  // then cleared so a fresh Start doesn't resume a stale run.
+  const [resumeRun, setResumeRun] = useState<RoutineRunState | null>(() =>
+    loadRoutineRun(),
+  );
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -59,7 +73,19 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
       .then((list) => {
         if (!alive) return;
         setPresets(list);
-        setSelectedId(list[0]?.id ?? null);
+        // Auto-resume an interrupted run if its preset still exists (SL-97);
+        // otherwise default-select the first preset and drop the stale run.
+        const resume = resumeRun && list.some((p) => p.id === resumeRun.presetId);
+        if (resume) {
+          setSelectedId(resumeRun!.presetId);
+          setRunning(true);
+        } else {
+          setSelectedId(list[0]?.id ?? null);
+          if (resumeRun) {
+            clearRoutineRun();
+            setResumeRun(null);
+          }
+        }
       })
       .catch((e: unknown) =>
         setError(e instanceof Error ? e.message : "Failed to load routines"),
@@ -67,9 +93,45 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
     return () => {
       alive = false;
     };
+    // Mount-only: resumeRun is read once at load; adding it would re-run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selected = presets.find((p) => p.id === selectedId) ?? presets[0] ?? null;
+
+  /// Log a routine as a session (feeds ACWR + History). `undo` adds an Undo
+  /// action to the toast — used for partial auto-saves on early exit (SL-97)
+  /// since the user didn't explicitly choose to save.
+  async function logRoutine(durationMin: number, note: string, undo = false) {
+    try {
+      const s = await insertSession({
+        date: today(),
+        type: "routine",
+        duration: durationMin,
+        rpe: 4,
+        note,
+        phase: currentPhase,
+      });
+      bumpRealtime();
+      toast(
+        `Routine logged · ${durationMin} min`,
+        "success",
+        undo
+          ? {
+              label: "Undo",
+              onClick: () => {
+                void (async () => {
+                  await deleteSession(s.id);
+                  bumpRealtime();
+                })();
+              },
+            }
+          : undefined,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to log routine");
+    }
+  }
 
   function openEdit(p: RoutinePreset) {
     setEditingId(p.id);
@@ -322,7 +384,18 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
         </div>
       ) : selected ? (
         <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
-          <button className="btn-primary" style={{ flex: 1 }} onClick={() => setRunning(true)}>
+          <button
+            className="btn-primary"
+            style={{ flex: 1 }}
+            onClick={() => {
+              // A fresh Start must not resume a stale saved run.
+              if (resumeRun) {
+                clearRoutineRun();
+                setResumeRun(null);
+              }
+              setRunning(true);
+            }}
+          >
             Start Routine
           </button>
           <button
@@ -352,27 +425,30 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
       {running && selected && (
         <RoutineFullscreen
           name={selected.name}
+          presetId={selected.id}
           steps={selected.steps}
-          onClose={() => setRunning(false)}
+          initial={
+            resumeRun && resumeRun.presetId === selected.id
+              ? resumeRun
+              : undefined
+          }
+          onClose={() => {
+            setResumeRun(null);
+            setRunning(false);
+          }}
+          onExitEarly={(elapsed) => {
+            setResumeRun(null);
+            setRunning(false);
+            // Left before finishing — log the partial time (SL-97) unless it
+            // barely ran, with an Undo since it wasn't an explicit save.
+            if (!shouldLog(elapsed)) return;
+            void logRoutine(partialMinutes(elapsed), `${selected.name} (partial)`, true);
+          }}
           onFinish={(durationMin) => {
             // A completed routine IS a workout (SL-83) — log it so it feeds
             // ACWR and shows in History. RPE defaults; edit in History.
-            void (async () => {
-              try {
-                await insertSession({
-                  date: today(),
-                  type: "routine",
-                  duration: durationMin,
-                  rpe: 4,
-                  note: selected.name,
-                  phase: currentPhase,
-                });
-                bumpRealtime();
-                toast(`Routine logged · ${durationMin} min`);
-              } catch (e) {
-                setError(e instanceof Error ? e.message : "Failed to log routine");
-              }
-            })();
+            setResumeRun(null);
+            void logRoutine(durationMin, selected.name);
           }}
         />
       )}

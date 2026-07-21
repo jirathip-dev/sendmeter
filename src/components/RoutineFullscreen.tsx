@@ -1,14 +1,28 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { expandRoutine, routineDurationS } from "../lib/routine";
+import {
+  clearRoutineRun,
+  saveRoutineRun,
+  type RoutineRunState,
+} from "../lib/routineRun";
 import type { RoutineStep } from "../types";
 
 interface Props {
   /// Name of the routine — shown in the top-bar eyebrow.
   name: string;
+  /// Preset id — persisted so an interrupted run can resume the right routine.
+  presetId: string;
   /// The routine to run — from the selected preset (RoutineCard).
   steps: RoutineStep[];
+  /// Resume an interrupted run (SL-97) — seeds the clock so a refresh mid-
+  /// routine continues where it left off. Undefined = a fresh start.
+  initial?: RoutineRunState;
+  /// Plain close after the Done button — the run already logged via onFinish.
   onClose: () => void;
+  /// Exited before completion (X button) — the owner decides whether to log a
+  /// partial session. Passes the routine seconds elapsed at exit (SL-97).
+  onExitEarly: (elapsedS: number) => void;
   /// Fired once when the routine completes (Done) — the owner logs it to
   /// History (SL-83). Wall-clock minutes actually spent, pauses included.
   onFinish?: (durationMin: number) => void;
@@ -25,17 +39,30 @@ const PREPARE_S = 5;
 /// with rests between repetitions (SL-83); a short GET READY leads in, and
 /// Pause freezes the clock. Completing the routine logs it to History via
 /// onFinish. Skip fast-forwards to the next segment boundary.
-export default function RoutineFullscreen({ name, steps, onClose, onFinish }: Props) {
+export default function RoutineFullscreen({
+  name,
+  presetId,
+  steps,
+  initial,
+  onClose,
+  onExitEarly,
+  onFinish,
+}: Props) {
   const SEGS = expandRoutine(steps, { prepareS: PREPARE_S });
   const TOTAL_S = routineDurationS(SEGS);
-  const [startedMs] = useState(() => Date.now());
+  // Seed from a resumed run when present (SL-97), else start now.
+  const [startedMs] = useState(() => initial?.startedMs ?? Date.now());
   const [now, setNow] = useState(() => Date.now());
   // Seconds fast-forwarded by Skip presses (adds to real elapsed).
-  const [skippedS, setSkippedS] = useState(0);
+  const [skippedS, setSkippedS] = useState(() => initial?.skippedS ?? 0);
   // Pause freezes the routine clock: while paused, elapsed derives from the
   // moment Pause was hit; accumulated pause time is subtracted after resume.
-  const [pausedAtMs, setPausedAtMs] = useState<number | null>(null);
-  const [pausedTotalMs, setPausedTotalMs] = useState(0);
+  const [pausedAtMs, setPausedAtMs] = useState<number | null>(
+    () => initial?.pausedAtMs ?? null,
+  );
+  const [pausedTotalMs, setPausedTotalMs] = useState(
+    () => initial?.pausedTotalMs ?? 0,
+  );
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
@@ -45,6 +72,25 @@ export default function RoutineFullscreen({ name, steps, onClose, onFinish }: Pr
   const elapsed =
     ((pausedAtMs ?? now) - startedMs - pausedTotalMs) / 1000 + skippedS;
   const done = elapsed >= TOTAL_S;
+
+  // Persist the running clock (SL-97) so a refresh / relaunch resumes it. Only
+  // while genuinely in progress — the finish + close paths clear the key.
+  useEffect(() => {
+    if (done) return;
+    saveRoutineRun({ presetId, startedMs, skippedS, pausedAtMs, pausedTotalMs });
+  }, [done, presetId, startedMs, skippedS, pausedAtMs, pausedTotalMs]);
+
+  // X button: log a partial session if it ran long enough (owner decides),
+  // else just close. The Done button (post-completion) uses onClose directly —
+  // onFinish already logged the full session.
+  function handleClose() {
+    clearRoutineRun();
+    if (done) {
+      onClose();
+    } else {
+      onExitEarly(elapsed);
+    }
+  }
 
   // Derive the current segment from elapsed.
   let segIndex = 0;
@@ -65,6 +111,7 @@ export default function RoutineFullscreen({ name, steps, onClose, onFinish }: Pr
   useEffect(() => {
     if (!done || finishedRef.current) return;
     finishedRef.current = true;
+    clearRoutineRun();
     onFinish?.(Math.max(1, Math.round((Date.now() - startedMs) / 60000)));
     // onFinish is an owner callback read at fire time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -153,7 +200,7 @@ export default function RoutineFullscreen({ name, steps, onClose, onFinish }: Pr
       >
         {/* Top bar — glass chip (close) · title + total remaining · Skip pill */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <button onClick={onClose} aria-label="Close routine" className="glass-chip">
+          <button onClick={handleClose} aria-label="Close routine" className="glass-chip">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 6l12 12M18 6L6 18" />
             </svg>
@@ -242,7 +289,7 @@ export default function RoutineFullscreen({ name, steps, onClose, onFinish }: Pr
             </button>
           )}
           {done && (
-            <button className="btn-primary" style={{ marginTop: 10, width: "auto", padding: "12px 28px" }} onClick={onClose}>
+            <button className="btn-primary" style={{ marginTop: 10, width: "auto", padding: "12px 28px" }} onClick={handleClose}>
               Done
             </button>
           )}
