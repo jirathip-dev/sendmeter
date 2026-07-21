@@ -82,15 +82,38 @@ extension SendLogAuthBridge: WCSessionDelegate {
     /// Bluetooth-fast mirror path (sub-second, no network hop) alongside the
     /// Supabase heartbeat; the WebView keeps whichever source is newest. The
     /// force-gauge beat (SL-87) uses the same path, WC-only (no network
-    /// fallback — it's a ~2 Hz gauge stream).
+    /// fallback — it's a ~2 Hz gauge stream). `requestSession` is the watch
+    /// asking to be re-supplied with a fresh session when its relayed token
+    /// went stale — the WebView answers by relaying the current session again.
     public func session(
         _ session: WCSession,
         didReceiveMessage message: [String: Any]
     ) {
-        guard let kind = message["kind"] as? String,
-              kind == "liveWorkout" || kind == "liveForce" else { return }
-        var payload = message
-        payload.removeValue(forKey: "kind")
-        notifyListeners(kind, data: payload as [String: Any])
+        handleWatchMessage(message)
+    }
+
+    /// Queued (guaranteed-delivery) variant — used when the phone wasn't
+    /// reachable at send time, so a `requestSession` still arrives once the
+    /// phone app runs.
+    public func session(
+        _ session: WCSession,
+        didReceiveUserInfo userInfo: [String: Any] = [:]
+    ) {
+        handleWatchMessage(userInfo)
+    }
+
+    private func handleWatchMessage(_ message: [String: Any]) {
+        guard let kind = message["kind"] as? String else { return }
+        switch kind {
+        case "liveWorkout", "liveForce":
+            var payload = message
+            payload.removeValue(forKey: "kind")
+            notifyListeners(kind, data: payload as [String: Any])
+        case "requestSession":
+            // The WebView (useAuth) listens and re-relays the current session.
+            notifyListeners("sessionRequested", data: [:])
+        default:
+            break
+        }
     }
 }

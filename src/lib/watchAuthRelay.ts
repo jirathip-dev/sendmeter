@@ -22,3 +22,12 @@ export function relaySessionToWatch(session: Session | null): void {
     void SendLogAuthBridge.clearSession();
   }
 }
+
+/// Register a handler for the watch's "relay me a fresh session" request
+/// (fired when the watch's stored token went stale and it's stuck on its
+/// sign-in screen). The handler should fetch the current session and call
+/// `relaySessionToWatch`. No-op on web / no watch.
+export function onWatchSessionRequest(handler: () => void): void {
+  if (!IS_NATIVE) return;
+  void SendLogAuthBridge.addListener("sessionRequested", handler);
+}

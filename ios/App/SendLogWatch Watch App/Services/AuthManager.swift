@@ -22,8 +22,13 @@ final class AuthManager: NSObject {
 
     var state: State = .loading
     var errorMsg: String?
+    /// True while we've asked the phone for a fresh session and are waiting —
+    /// the sign-in screen shows "Signing in from iPhone…" instead of jumping
+    /// straight to the manual email form.
+    var syncing = false
 
     private var client: SupabaseClient { SupabaseService.client }
+    private var syncTimeout: Task<Void, Never>?
 
     override init() {
         super.init()
@@ -54,7 +59,40 @@ final class AuthManager: NSObject {
            session.expiresAt > Date().timeIntervalSince1970 + 60 {
             state = .signedIn(userId: session.user.id)
         } else {
+            // No usable local session — instead of parking on the manual login
+            // form, PULL a fresh one from the phone (only supabase-js on the
+            // phone can refresh tokens; the watch just consumes what it relays).
             state = .signedOut
+            requestSessionFromPhone()
+        }
+    }
+
+    /// Ask the paired iPhone to relay a fresh session. The phone's supabase-js
+    /// is the sole refresher, so this is the watch's recovery path when its
+    /// last-relayed token has gone stale (e.g. after a TestFlight update). The
+    /// phone answers by re-relaying via `updateApplicationContext`, which lands
+    /// in `didReceiveApplicationContext` below. Reachable → immediate message;
+    /// otherwise queue it so it's delivered when the phone app next runs.
+    @MainActor
+    func requestSessionFromPhone() {
+        guard WCSession.isSupported() else { return }
+        let s = WCSession.default
+        guard s.activationState == .activated else { return }
+        syncing = true
+        let msg = ["kind": "requestSession"]
+        if s.isReachable {
+            s.sendMessage(msg, replyHandler: nil) { _ in
+                s.transferUserInfo(msg) // immediate send failed → queue it
+            }
+        } else {
+            s.transferUserInfo(msg)
+        }
+        // Reveal the manual form if the phone never answers (app not running).
+        syncTimeout?.cancel()
+        syncTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.syncing = false }
         }
     }
 
@@ -86,6 +124,8 @@ final class AuthManager: NSObject {
                 let session = try await client.auth.setSession(
                     accessToken: accessToken, refreshToken: refreshToken
                 )
+                syncTimeout?.cancel()
+                syncing = false
                 state = .signedIn(userId: session.user.id)
                 return true
             } catch {
@@ -140,6 +180,16 @@ extension AuthManager: WCSessionDelegate {
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         Task { @MainActor in
             await applyWatchConnectivityEvent(applicationContext)
+        }
+    }
+
+    /// The phone became reachable — if we're still signed out, this is the
+    /// moment to (re)ask for a session; the request would have failed silently
+    /// while the phone was asleep.
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        guard session.isReachable else { return }
+        Task { @MainActor in
+            if case .signedOut = state { requestSessionFromPhone() }
         }
     }
 }

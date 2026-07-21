@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
-import { relaySessionToWatch } from "../lib/watchAuthRelay";
+import {
+  onWatchSessionRequest,
+  relaySessionToWatch,
+} from "../lib/watchAuthRelay";
 import { relayHealthSession, startHealthBackgroundSync } from "../lib/healthSync";
 
 export function useAuth() {
@@ -56,6 +59,15 @@ export function useAuth() {
       });
     };
     document.addEventListener("visibilitychange", onVisible);
+
+    // The watch, stuck on its sign-in screen with a stale token, can ask us to
+    // re-relay a session (native only). getSession() returns a phone-refreshed
+    // token — the watch consumes it and signs back in without a manual login.
+    onWatchSessionRequest(() => {
+      void supabase.auth.getSession().then(({ data }) => {
+        relaySessionToWatch(data.session);
+      });
+    });
 
     // Native deep-link recovery: setSession (from a reset link) fires SIGNED_IN,
     // not PASSWORD_RECOVERY, so deepLinks.ts dispatches this to trigger the

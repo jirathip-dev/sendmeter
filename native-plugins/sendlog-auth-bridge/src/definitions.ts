@@ -55,4 +55,12 @@ export interface SendLogAuthBridgePlugin {
     eventName: "liveForce",
     listener: (msg: LiveForceMessage) => void,
   ): Promise<PluginListenerHandle>;
+
+  /// The watch asking the phone to relay a fresh session (its relayed token
+  /// went stale). Answer by calling `setSession` with the current session.
+  /// Native only; never fires on web.
+  addListener(
+    eventName: "sessionRequested",
+    listener: () => void,
+  ): Promise<PluginListenerHandle>;
 }
