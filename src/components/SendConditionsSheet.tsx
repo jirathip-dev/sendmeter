@@ -1,10 +1,47 @@
 import Sheet from "./Sheet";
 import {
   humidityFrictionScore,
+  scoreHistogram,
   sendScoreColor as scoreColor,
   tempFrictionScore,
+  type ClimateSummary,
   type SendConditions,
 } from "../lib/weather";
+
+const BINS = 20;
+
+/// The local 30-day send-score distribution (SL-91b) with today marked — so
+/// the percentile is something you can SEE (is today an outlier or typical?).
+/// Bars are coloured by their own score band; today's column is outlined.
+function DistributionChart({ hist, score }: { hist: ClimateSummary; score: number }) {
+  const counts = scoreHistogram(hist.scores, BINS);
+  const max = Math.max(1, ...counts);
+  const todayBin = Math.min(BINS - 1, Math.max(0, Math.floor((score / 100) * BINS)));
+  return (
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 56 }}>
+      {counts.map((c, i) => {
+        const binScore = (i + 0.5) * (100 / BINS);
+        const isToday = i === todayBin;
+        return (
+          <div
+            key={i}
+            title={`${Math.round(i * (100 / BINS))}–${Math.round((i + 1) * (100 / BINS))}: ${c}h`}
+            style={{
+              flex: 1,
+              height: `${(c / max) * 100}%`,
+              minHeight: c > 0 ? 2 : 0,
+              background: scoreColor(binScore),
+              opacity: isToday ? 1 : 0.4,
+              borderRadius: 2,
+              outline: isToday ? "2px solid var(--ink)" : undefined,
+              outlineOffset: 1,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
 
 interface Props {
   cond: SendConditions | null;
@@ -95,6 +132,40 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
                     : "below par for here"}
                 .
               </span>
+            </div>
+          )}
+
+          {/* Local distribution (SL-91b): the 30-day spread with today marked,
+              plus the raw weather range so "historical vs current" is visible. */}
+          {cond.hist && (
+            <div style={{ marginBottom: 16 }}>
+              <div
+                className="label-eyebrow"
+                style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}
+              >
+                <span>Last 30 days here</span>
+                <span style={{ color: "var(--ink-faint)" }}>
+                  today ●
+                </span>
+              </div>
+              <DistributionChart hist={cond.hist} score={cond.score} />
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  fontSize: "var(--t-eyebrow)",
+                  color: "var(--ink-faint)",
+                  marginTop: 4,
+                }}
+              >
+                <span>Poor</span>
+                <span>Prime</span>
+              </div>
+              <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 8, lineHeight: 1.5 }}>
+                Range here: <strong>{Math.round(cond.hist.tempMin)}–{Math.round(cond.hist.tempMax)}°C</strong>,{" "}
+                <strong>{Math.round(cond.hist.humMin)}–{Math.round(cond.hist.humMax)}%</strong> humidity.
+                Now: <span style={{ color: scoreColor(cond.score), fontWeight: 700 }}>{Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}%</span>.
+              </div>
             </div>
           )}
 

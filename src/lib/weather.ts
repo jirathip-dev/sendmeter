@@ -13,6 +13,9 @@ export interface SendConditions {
   /// is the signal that matters in a hot climate where the absolute score is
   /// always "Poor": "today is better than N% of recent hours here".
   percentile: number | null;
+  /// The local 30-day distribution the percentile is measured against
+  /// (SL-91b), so the sheet can plot today against it. Null when unavailable.
+  hist: ClimateSummary | null;
   fetchedAt: number; // epoch ms
 }
 
@@ -68,21 +71,42 @@ const HIST_KEY = "sendmeter:climate-hist";
 /// week, so we refetch the (heavier) archive at most once per 7 days.
 const weekBucket = (nowMs: number) => Math.floor(nowMs / (7 * 86_400_000));
 
-interface ClimateHist {
+/// The local 30-day climate the percentile is measured against (SL-91b): the
+/// hourly send scores plus the raw temperature/humidity ranges, so the sheet
+/// can show today against the whole distribution instead of a bare number.
+export interface ClimateSummary {
+  scores: number[]; // hourly send scores over the window
+  tempMin: number;
+  tempMax: number;
+  humMin: number;
+  humMax: number;
+}
+
+interface ClimateHist extends ClimateSummary {
   coordsKey: string;
   week: number;
-  scores: number[];
+}
+
+/// Bucket send scores into `bins` equal 0–100 columns — the histogram the
+/// sheet draws. Exported for the distribution chart + tests.
+export function scoreHistogram(scores: number[], bins = 20): number[] {
+  const counts = new Array<number>(bins).fill(0);
+  for (const s of scores) {
+    const i = Math.min(bins - 1, Math.max(0, Math.floor((s / 100) * bins)));
+    counts[i]!++;
+  }
+  return counts;
 }
 
 /// Last ~30 days of hourly local weather, each hour run through the SAME
 /// absolute scorer, so the percentile compares like with like. From
 /// Open-Meteo's ERA5 archive (which lags ~2 days). Cached per rounded
-/// location + ISO-ish week in localStorage. Returns null on any failure —
-/// the percentile just degrades to null.
-async function fetchLocalScoreHistory(
+/// location + week in localStorage. Returns null on any failure — the
+/// percentile + distribution just degrade to absent.
+async function fetchLocalClimate(
   lat: string,
   lon: string,
-): Promise<number[] | null> {
+): Promise<ClimateSummary | null> {
   const coordsKey = `${lat},${lon}`;
   const week = weekBucket(Date.now());
   try {
@@ -90,7 +114,13 @@ async function fetchLocalScoreHistory(
     if (raw) {
       const c = JSON.parse(raw) as ClimateHist;
       if (c.coordsKey === coordsKey && c.week === week && c.scores?.length) {
-        return c.scores;
+        return {
+          scores: c.scores,
+          tempMin: c.tempMin,
+          tempMax: c.tempMax,
+          humMin: c.humMin,
+          humMax: c.humMax,
+        };
       }
     }
   } catch {
@@ -114,19 +144,31 @@ async function fetchLocalScoreHistory(
     const hums = data.hourly?.relative_humidity_2m;
     if (!temps || !hums) return null;
     const scores: number[] = [];
+    let tempMin = Infinity;
+    let tempMax = -Infinity;
+    let humMin = Infinity;
+    let humMax = -Infinity;
     for (let i = 0; i < temps.length; i++) {
       const t = temps[i];
       const h = hums[i];
       if (t == null || h == null) continue;
       scores.push(computeSendScore(t, h));
+      if (t < tempMin) tempMin = t;
+      if (t > tempMax) tempMax = t;
+      if (h < humMin) humMin = h;
+      if (h > humMax) humMax = h;
     }
     if (scores.length === 0) return null;
+    const summary: ClimateSummary = { scores, tempMin, tempMax, humMin, humMax };
     try {
-      localStorage.setItem(HIST_KEY, JSON.stringify({ coordsKey, week, scores }));
+      localStorage.setItem(
+        HIST_KEY,
+        JSON.stringify({ coordsKey, week, ...summary } satisfies ClimateHist),
+      );
     } catch {
       /* ignore quota */
     }
-    return scores;
+    return summary;
   } catch {
     return null;
   }
@@ -166,7 +208,7 @@ export async function fetchSendConditions(): Promise<SendConditions | null> {
   try {
     // Current weather + the local 30-day history in parallel; the archive is
     // best-effort, so the percentile degrades to null without blocking.
-    const [data, history] = await Promise.all([
+    const [data, climate] = await Promise.all([
       fetch(
         `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m`,
       )
@@ -181,19 +223,20 @@ export async function fetchSendConditions(): Promise<SendConditions | null> {
             : null,
         )
         .catch(() => null),
-      fetchLocalScoreHistory(lat, lon),
+      fetchLocalClimate(lat, lon),
     ]);
     const tempC = data?.current?.temperature_2m;
     const humidity = data?.current?.relative_humidity_2m;
     if (tempC == null || humidity == null) return null;
     const score = computeSendScore(tempC, humidity);
-    const percentile = history ? scorePercentile(score, history) : null;
+    const percentile = climate ? scorePercentile(score, climate.scores) : null;
     return {
       tempC,
       humidity,
       score,
       label: scoreLabel(score),
       percentile,
+      hist: climate,
       fetchedAt: Date.now(),
     };
   } catch {

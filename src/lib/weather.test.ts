@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeSendScore,
   humidityFrictionScore,
+  scoreHistogram,
   scorePercentile,
   tempFrictionScore,
 } from "./weather";
@@ -43,5 +44,16 @@ describe("scorePercentile (SL-91)", () => {
 
   it("the worst possible day ranks at 0", () => {
     expect(scorePercentile(5, hist(200, 10))).toBe(0);
+  });
+});
+
+describe("scoreHistogram (SL-91b)", () => {
+  it("bins scores into equal 0–100 columns", () => {
+    const h = scoreHistogram([0, 4, 5, 99, 100], 20); // bin width 5
+    expect(h).toHaveLength(20);
+    expect(h[0]).toBe(2); // 0 and 4
+    expect(h[1]).toBe(1); // 5
+    expect(h[19]).toBe(2); // 99 and 100 clamp into the last bin
+    expect(h.reduce((a, b) => a + b, 0)).toBe(5);
   });
 });
