@@ -1,33 +1,52 @@
 import { describe, it, expect } from "vitest";
-import { climbRestStats, hrRecoveryBpm } from "./workoutStats";
+import { hrRecoveryBpm, meanEffort, workRestRatio } from "./workoutStats";
 import type { WorkoutAttempt, WorkoutHrSample } from "../types";
 
-const att = (startedAt: string, durationS: number): WorkoutAttempt => ({
+const att = (
+  startedAt: string,
+  durationS: number,
+  effortScore: number | null = null,
+): WorkoutAttempt => ({
   startedAt,
   durationS,
   elevationGainM: 0,
   avgHr: null,
   peakHr: null,
-  effortScore: null,
+  effortScore,
   source: "manual",
 });
 
-describe("climbRestStats (SL-85)", () => {
-  it("averages attempt durations and the gaps between them", () => {
-    const { avgClimbS, avgRestS } = climbRestStats([
+describe("meanEffort (SL-99)", () => {
+  it("averages the non-null effort scores", () => {
+    expect(
+      meanEffort([att("t", 10, 40), att("t", 10, 60), att("t", 10, null)]),
+    ).toBeCloseTo(50, 5);
+  });
+  it("is null when no attempt has an effort score", () => {
+    expect(meanEffort([att("t", 10), att("t", 10)])).toBeNull();
+    expect(meanEffort([])).toBeNull();
+  });
+});
+
+describe("workRestRatio (SL-99)", () => {
+  it("is total climb time over total rest time", () => {
+    // climbs 30 + 60 + 30 = 120s; rests 120 + 180 = 300s → 0.4
+    const r = workRestRatio([
       att("2026-07-20T10:00:00Z", 30), // ends 10:00:30
       att("2026-07-20T10:02:30Z", 60), // gap 120s, ends 10:03:30
       att("2026-07-20T10:06:30Z", 30), // gap 180s
     ]);
-    expect(avgClimbS).toBeCloseTo(40, 5);
-    expect(avgRestS).toBeCloseTo(150, 5);
+    expect(r).toBeCloseTo(120 / 300, 5);
   });
-
-  it("needs two attempts for a rest figure", () => {
-    const one = climbRestStats([att("2026-07-20T10:00:00Z", 30)]);
-    expect(one.avgClimbS).toBe(30);
-    expect(one.avgRestS).toBeNull();
-    expect(climbRestStats([]).avgClimbS).toBeNull();
+  it("skips overlapping (non-positive) gaps and needs measurable rest", () => {
+    // Two back-to-back attempts with no gap → no rest → null
+    expect(
+      workRestRatio([att("2026-07-20T10:00:00Z", 30), att("2026-07-20T10:00:30Z", 30)]),
+    ).toBeNull();
+  });
+  it("needs at least two attempts", () => {
+    expect(workRestRatio([att("t", 30)])).toBeNull();
+    expect(workRestRatio([])).toBeNull();
   });
 });
 

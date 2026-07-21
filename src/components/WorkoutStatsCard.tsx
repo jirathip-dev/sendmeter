@@ -1,13 +1,9 @@
 import { useState } from "react";
 import { fetchRecentWorkoutDetails, fetchWorkoutRaw } from "../lib/repo";
-import { climbRestStats, hrRecoveryBpm } from "../lib/workoutStats";
+import { hrRecoveryBpm, meanEffort, workRestRatio } from "../lib/workoutStats";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import type { WorkoutDetail } from "../types";
-
-function fmtS(s: number): string {
-  return s >= 90 ? `${(s / 60).toFixed(1)}m` : `${Math.round(s)}s`;
-}
 
 function dayLabel(iso: string): string {
   const d = new Date(iso);
@@ -53,9 +49,9 @@ function BarTrend({
   );
 }
 
-/// Summary stats across recent workouts (SL-85): average climb time, average
-/// rest between boulders, and (on demand — it needs the raw HR traces) how
-/// fast HR recovers in the minute after each climb.
+/// Summary stats across recent workouts (SL-85 / SL-99): per-session
+/// intensity (mean effort score), work-to-rest density, and (on demand — it
+/// needs the raw HR traces) how fast HR recovers in the minute after a climb.
 export default function WorkoutStatsCard() {
   const realtimeVersion = useRealtimeVersion();
   const workouts = useCancellableFetch<WorkoutDetail[]>(
@@ -72,7 +68,11 @@ export default function WorkoutStatsCard() {
 
   // Oldest → newest so the trend reads left-to-right/top-to-bottom in time.
   const ordered = [...withAttempts].reverse();
-  const stats = ordered.map((w) => ({ w, ...climbRestStats(w.attempts) }));
+  const stats = ordered.map((w) => ({
+    w,
+    effort: meanEffort(w.attempts),
+    ratio: workRestRatio(w.attempts),
+  }));
 
   async function loadHrRecovery() {
     setHrLoading(true);
@@ -99,21 +99,21 @@ export default function WorkoutStatsCard() {
       </div>
 
       <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginBottom: 4, fontWeight: 600 }}>
-        AVG CLIMB TIME
+        INTENSITY (EFFORT/CLIMB)
       </div>
       <BarTrend
-        rows={stats.map((s) => ({ label: dayLabel(s.w.startedAt), value: s.avgClimbS }))}
-        color="var(--success)"
-        fmt={fmtS}
+        rows={stats.map((s) => ({ label: dayLabel(s.w.startedAt), value: s.effort }))}
+        color="var(--warning)"
+        fmt={(v) => v.toFixed(0)}
       />
 
       <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", margin: "12px 0 4px", fontWeight: 600 }}>
-        AVG REST BETWEEN CLIMBS
+        WORK : REST (climb time ÷ rest time)
       </div>
       <BarTrend
-        rows={stats.map((s) => ({ label: dayLabel(s.w.startedAt), value: s.avgRestS }))}
+        rows={stats.map((s) => ({ label: dayLabel(s.w.startedAt), value: s.ratio }))}
         color="var(--primary)"
-        fmt={fmtS}
+        fmt={(v) => v.toFixed(2)}
       />
 
       <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", margin: "12px 0 4px", fontWeight: 600 }}>
