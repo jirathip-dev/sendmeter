@@ -363,6 +363,30 @@ export type Database = {
         }
         Relationships: []
       }
+      tindeq_tags: {
+        Row: {
+          created_at: string
+          hidden: boolean
+          id: string
+          name: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          hidden?: boolean
+          id?: string
+          name: string
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          hidden?: boolean
+          id?: string
+          name?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       tindeq_recordings: {
         Row: {
           avg_kg: number
@@ -468,6 +492,10 @@ export type Database = {
     }
     Functions: {
       delete_account: { Args: never; Returns: undefined }
+      rename_tindeq_tag: {
+        Args: { old_name: string; new_name: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never

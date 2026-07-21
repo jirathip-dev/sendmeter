@@ -670,6 +670,49 @@ export async function updateRecordingsMeta(
   return data.map(toRecording);
 }
 
+// MARK: Tag management (SL-92) — rename across the whole dataset + hide.
+// Tags stay denormalized as tindeq_recordings.tag; tindeq_tags only holds the
+// hidden flag (see the migration comment). A tag needs a row here only when
+// hidden — visible tags come from distinct recording tags.
+
+/// Names of the user's hidden tags, filtered out of the Force-tab pickers,
+/// trend and curve (the recordings themselves are untouched).
+export async function fetchHiddenTags(): Promise<string[]> {
+  const data = unwrap<{ name: string }[]>(
+    await supabase.from("tindeq_tags").select("name").eq("hidden", true),
+  );
+  return data.map((r) => r.name);
+}
+
+/// Rename a tag EVERYWHERE — repoints every recording carrying `oldName` to
+/// `newName` and clears any stale registry row, atomically (DB function). If
+/// `newName` already exists the two tags merge.
+export async function renameTag(
+  oldName: string,
+  newName: string,
+): Promise<void> {
+  const name = newName.trim();
+  if (!name) throw new Error("Tag name can't be empty");
+  unwrap(
+    await supabase.rpc("rename_tindeq_tag", {
+      old_name: oldName,
+      new_name: name,
+    }),
+  );
+}
+
+/// Hide or unhide a tag. Upserts the registry row (user_id defaults to
+/// auth.uid()); the recordings are never touched.
+export async function setTagHidden(
+  name: string,
+  hidden: boolean,
+): Promise<void> {
+  const { error } = await supabase
+    .from("tindeq_tags")
+    .upsert({ name, hidden }, { onConflict: "user_id,name" });
+  if (error) throw error;
+}
+
 /// Deletes the auth user; every table cascades from auth.users, so all data
 /// goes with it. Required by App Store guideline 5.1.1(v).
 export async function deleteAccount(): Promise<void> {

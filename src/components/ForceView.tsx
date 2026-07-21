@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveForce } from "../hooks/useLiveForce";
 import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
@@ -6,6 +7,7 @@ import { useToast } from "../hooks/useToast";
 import { useWakeLock } from "../hooks/useWakeLock";
 import {
   deleteRecording,
+  fetchHiddenTags,
   fetchRecordings,
   fetchRecordingSamples,
   insertRecording,
@@ -28,6 +30,7 @@ import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import PresetManager from "./PresetManager";
 import SideAsymmetryCard from "./SideAsymmetryCard";
+import TagManagerSheet from "./TagManagerSheet";
 import TagSideEditor from "./TagSideEditor";
 import TargetZonesCard from "./TargetZonesCard";
 import type { ZoneSelection } from "./TargetZonesCard";
@@ -96,17 +99,24 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   const [curveError, setCurveError] = useState<string | null>(null);
   const realtimeVersion = useRealtimeVersion();
 
-  // Every tag ever used, most frequent first — rendered as selectable box
-  // chips (SL-82).
-  const allTags = (() => {
+  // Every tag ever used with its rep count, most frequent first (SL-82).
+  const tagCounts = (() => {
     const counts = new Map<string, number>();
     for (const r of recordings) {
       if (r.tag) counts.set(r.tag, (counts.get(r.tag) ?? 0) + 1);
     }
     return [...counts.entries()]
       .sort((a, b) => b[1] - a[1])
-      .map(([t]) => t);
+      .map(([name, count]) => ({ name, count }));
   })();
+  // Hidden tags (SL-92) drop out of the pickers/trend/curve — the recordings
+  // stay. Not in the realtime publication, so mutations bump manually.
+  const hiddenTags = useCancellableFetch(fetchHiddenTags, [], realtimeVersion);
+  const hiddenSet = new Set(hiddenTags);
+  const allTags = tagCounts
+    .filter((t) => !hiddenSet.has(t.name))
+    .map((t) => t.name);
+  const [showTagManager, setShowTagManager] = useState(false);
 
   const sessionCount = gaugeSession
     ? recordings.filter((r) => r.groupId === gaugeSession.groupId).length
@@ -896,8 +906,32 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
           target zones, trend and curve below. Always visible — this is also
           the only place a brand-new tag can be typed. */}
       <div className="card" style={{ marginTop: 10 }}>
-        <div className="label-eyebrow" style={{ marginBottom: 8 }}>
-          Exercise &amp; Side
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 8,
+          }}
+        >
+          <div className="label-eyebrow">Exercise &amp; Side</div>
+          {tagCounts.length > 0 && (
+            <button
+              onClick={() => setShowTagManager(true)}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--primary)",
+                fontFamily: "Inter, sans-serif",
+                fontWeight: 700,
+                fontSize: "var(--t-xs)",
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              Manage tags
+            </button>
+          )}
         </div>
         <TagSideEditor
           tag={pendingTag}
@@ -977,6 +1011,14 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
         />
       )}
       <PresetManager selectedId={preset?.id ?? null} onSelect={setPreset} presetRefs={presetRefs} />
+
+      {showTagManager && (
+        <TagManagerSheet
+          tags={tagCounts}
+          hidden={hiddenSet}
+          onClose={() => setShowTagManager(false)}
+        />
+      )}
 
       {/* Peak force trend + force curve — always visible */}
       <div style={{ marginTop: 16 }}>
