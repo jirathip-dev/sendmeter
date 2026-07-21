@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
+import { useLiveWorkout } from "../hooks/useLiveWorkout";
 import {
   useRealtimeBump,
   useRealtimeVersion,
@@ -14,11 +15,13 @@ import {
 } from "../lib/repo";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
 import EditRecordingSheet from "./EditRecordingSheet";
+import LiveSessionRow from "./LiveSessionRow";
 import RecordingRow from "./RecordingRow";
 import SessionRow from "./SessionRow";
 import Sheet from "./Sheet";
 
 interface Props {
+  userId: string;
   sessions: Session[];
   currentPhase: PhaseId;
   onDelete: (id: string) => void;
@@ -36,6 +39,7 @@ type TimelineItem =
 /// to stats + HR chart; Tindeq sessions expand to full recording charts)
 /// plus ungrouped Tindeq recordings interleaved by date.
 export default function HistoryView({
+  userId,
   sessions,
   currentPhase,
   onDelete,
@@ -43,6 +47,10 @@ export default function HistoryView({
   onOpenTrash,
 }: Props) {
   const realtimeVersion = useRealtimeVersion();
+  // The in-progress watch workout, shown as a pinned live row (SL-98) so a
+  // long session is visible immediately instead of only after it ends. Null
+  // when nothing's live / the beat goes stale.
+  const [live] = useLiveWorkout(userId);
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
@@ -212,7 +220,10 @@ export default function HistoryView({
         {ungrouped.length > 0 &&
           ` · ${ungrouped.length} loose recording${ungrouped.length === 1 ? "" : "s"}`}
       </div>
-      {items.length === 0 && (
+      {/* Pinned live-workout row (SL-98) — outside the paginated list so it's
+          always visible; disappears on its own when the workout ends. */}
+      {live && <LiveSessionRow live={live} />}
+      {items.length === 0 && !live && (
         <div
           style={{
             textAlign: "center",

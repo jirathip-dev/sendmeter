@@ -219,6 +219,7 @@ function AuthedApp({
             )}
             {view === "history" && (
               <HistoryView
+                userId={userId}
                 sessions={sessions}
                 currentPhase={currentPhase}
                 onDelete={(id) => {

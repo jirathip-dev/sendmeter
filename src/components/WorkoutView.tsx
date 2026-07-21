@@ -32,7 +32,7 @@ interface Props {
 export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
-  const [live, liveHr] = useLiveWorkout(userId);
+  const [live] = useLiveWorkout(userId);
   const [phone, dispatch] = usePhoneWorkout();
   const [error, setError] = useState<string | null>(null);
   // A running phone workout takes over full-screen; "minimize" drops back to
@@ -122,11 +122,7 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
 
       {live && <LiveWorkoutCard live={live} onOpen={() => setLiveOpen(true)} />}
       {live && liveOpen && (
-        <LiveWorkoutFullscreen
-          live={live}
-          hrSeries={liveHr}
-          onMinimize={() => setLiveOpen(false)}
-        />
+        <LiveWorkoutFullscreen live={live} onMinimize={() => setLiveOpen(false)} />
       )}
 
       {/* Hide the phone-logging card while a watch workout is live — one
