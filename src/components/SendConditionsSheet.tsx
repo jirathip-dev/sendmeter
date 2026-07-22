@@ -3,8 +3,10 @@ import ChartTooltip from "./ChartTooltip";
 import { useChartHover } from "../hooks/useChartHover";
 import {
   humidityFrictionScore,
+  isTempRangeSaturated,
   percentileColor,
   percentileLabel,
+  sameHourDaysAgo,
   sameHourScores,
   scoreLabel,
   sendScoreColor as scoreColor,
@@ -52,7 +54,7 @@ function DayComparisonChart({
         }}
       />
       {days.map((s, i) => {
-        const daysAgo = days.length - i;
+        const daysAgo = sameHourDaysAgo(i, days.length);
         const isHovered = hoveredIdx === i;
         return (
           <div
@@ -169,6 +171,13 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
     cond && cond.hist && cond.percentile !== null && cond.hourOfDay !== undefined
       ? sameHourScores(cond.hist.scores, cond.hourOfDay)
       : null;
+  // Whether the "maxed out year-round" driver-line claim is actually
+  // supported by the 30-day history, rather than inferred from today's
+  // reading alone (today could be the hottest day in an otherwise-cooler
+  // range).
+  const histTempSaturated = cond?.hist
+    ? isTempRangeSaturated(cond.hist.tempMin, cond.hist.tempMax)
+    : false;
   return (
     <Sheet onClose={onClose}>
       <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800, marginBottom: 2 }}>
@@ -286,7 +295,7 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
                   marginTop: 4,
                 }}
               >
-                <span>{chartDays.length} days ago</span>
+                <span>{sameHourDaysAgo(0, chartDays.length)} days ago</span>
                 <span>today</span>
               </div>
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 8, lineHeight: 1.5 }}>
@@ -347,9 +356,11 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
             in a warm climate the day-to-day ranking is driven almost entirely
             by humidity.
             {cond.hist &&
-              (tempFrictionScore(cond.tempC) === 0
+              (histTempSaturated
                 ? ` Temperature is maxed out here year-round — today ranks on humidity: ${Math.round(cond.humidity)}% against the local ${Math.round(cond.hist.humMin)}–${Math.round(cond.hist.humMax)}% range.`
-                : ` Today ranks on the mix of ${Math.round(cond.tempC)}°C against the local ${Math.round(cond.hist.tempMin)}–${Math.round(cond.hist.tempMax)}°C range and ${Math.round(cond.humidity)}% against ${Math.round(cond.hist.humMin)}–${Math.round(cond.hist.humMax)}% humidity.`)}{" "}
+                : tempFrictionScore(cond.tempC) === 0
+                  ? ` Temperature is maxed out in this range — today ranks on humidity: ${Math.round(cond.humidity)}% against the local ${Math.round(cond.hist.humMin)}–${Math.round(cond.hist.humMax)}% range.`
+                  : ` Today ranks on the mix of ${Math.round(cond.tempC)}°C against the local ${Math.round(cond.hist.tempMin)}–${Math.round(cond.hist.tempMax)}°C range and ${Math.round(cond.humidity)}% against ${Math.round(cond.hist.humMin)}–${Math.round(cond.hist.humMax)}% humidity.`)}{" "}
             Weather is from Open-Meteo for your current location.
           </div>
 

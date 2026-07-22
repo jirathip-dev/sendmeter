@@ -37,6 +37,18 @@ export function tempFrictionScore(tempC: number): number {
   return clamp(100 - Math.abs(tempC - 6) * 6, 0, 100);
 }
 
+/// Whether the temperature sub-score is saturated at 0 across the WHOLE
+/// `[tempMin, tempMax]` history range, not just at today's reading — i.e.
+/// even the coolest day in the window still scores 0. Used to gate
+/// "maxed out year-round" copy: if the range's best (closest-to-6°C) point
+/// still scores 0, the claim holds; if the range dips cool enough that some
+/// day would score above 0, it doesn't (some days there DO get a temperature
+/// contribution, today just isn't one of them).
+export function isTempRangeSaturated(tempMin: number, tempMax: number): boolean {
+  const best = Math.min(Math.max(6, tempMin), tempMax);
+  return tempFrictionScore(best) === 0;
+}
+
 /// Humidity sub-score: drier = better (0% → 100, ~90% → 0).
 export function humidityFrictionScore(humidity: number): number {
   return clamp(100 - humidity * 1.1, 0, 100);
@@ -79,6 +91,22 @@ export function sameHourScores(scores: (number | null)[], hourOfDay: number): nu
     if (s != null) out.push(s);
   }
   return out;
+}
+
+/// Open-Meteo's ERA5 archive typically isn't current through yesterday — the
+/// most recent complete day it can serve lags realtime by this many days (see
+/// `fetchLocalClimate`'s `end` calculation). Exported so UI code labelling a
+/// `sameHourScores` series doesn't have to assume the last entry is "1 day
+/// ago" when it's actually `ERA5_LAG_DAYS` days ago.
+export const ERA5_LAG_DAYS = 2;
+
+/// How many days before "now" entry `index` of a `sameHourScores(...)` result
+/// of length `length` represents. The series is chronological (index 0 =
+/// earliest, `length - 1` = most recent), and the most recent entry is
+/// `ERA5_LAG_DAYS` days old, not 1 — a naive `length - index` undercounts
+/// every label by `ERA5_LAG_DAYS - 1` days.
+export function sameHourDaysAgo(index: number, length: number): number {
+  return length - index - 1 + ERA5_LAG_DAYS;
 }
 
 /// Where `current` ranks among `dayScores` (typically `sameHourScores`'
@@ -161,7 +189,7 @@ async function fetchLocalClimate(
     /* ignore malformed cache */
   }
   const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const end = new Date(Date.now() - 2 * 86_400_000); // ERA5 lags ~2 days
+  const end = new Date(Date.now() - ERA5_LAG_DAYS * 86_400_000);
   const start = new Date(end.getTime() - 30 * 86_400_000);
   try {
     // Two accepted limitations, not engineered around:

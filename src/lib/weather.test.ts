@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   computeSendScore,
   dayRank,
+  ERA5_LAG_DAYS,
   fakeSendConditionsForHour,
   humidityFrictionScore,
+  isTempRangeSaturated,
   percentileLabel,
+  sameHourDaysAgo,
   sameHourScores,
   tempFrictionScore,
 } from "./weather";
@@ -41,6 +44,40 @@ describe("sameHourScores (issue #99)", () => {
 
   it("returns an empty array when the hour never occurs", () => {
     expect(sameHourScores([1, 2, 3], 5)).toEqual([]);
+  });
+});
+
+describe("sameHourDaysAgo (SL-99 follow-up: ERA5 archive lag)", () => {
+  it("labels the most recent entry as ERA5_LAG_DAYS ago, not 1", () => {
+    // A naive `length - index` would say the last entry is "1 day ago" —
+    // the archive is actually stale by ERA5_LAG_DAYS days.
+    expect(sameHourDaysAgo(4, 5)).toBe(ERA5_LAG_DAYS);
+  });
+
+  it("labels the earliest entry as (length - 1 + lag) days ago", () => {
+    expect(sameHourDaysAgo(0, 5)).toBe(5 - 1 + ERA5_LAG_DAYS);
+  });
+});
+
+describe("isTempRangeSaturated (SL-99 follow-up: driver-line copy)", () => {
+  it("is true when even the coolest day in range still scores 0", () => {
+    // A hot climate: 25–36°C never gets close enough to the 6°C optimum.
+    expect(isTempRangeSaturated(25, 36)).toBe(true);
+  });
+
+  it("is false when the range dips cool enough to score above 0", () => {
+    // 10°C still scores 76 (100 - 4*6), so the range isn't maxed out.
+    expect(isTempRangeSaturated(10, 36)).toBe(false);
+  });
+
+  it("is false when the optimum (6°C) falls inside the range", () => {
+    expect(isTempRangeSaturated(4, 20)).toBe(false);
+  });
+
+  it("handles a cold climate below the optimum using the warmest (closest) day", () => {
+    // Whole range colder than 6°C — the closest point is tempMax (3°C),
+    // which still scores well above 0.
+    expect(isTempRangeSaturated(-5, 3)).toBe(false);
   });
 });
 
