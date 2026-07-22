@@ -37,6 +37,7 @@ import { buildZoneSelection, type ZoneSelection } from "../lib/zoneSelection";
 import ZoneFocusCard from "./ZoneFocusCard";
 import ForceFullscreen from "./ForceFullscreen";
 import ForceTrendChart from "./ForceTrendChart";
+import LiveForceSparkline from "./LiveForceSparkline";
 
 interface ForceViewProps {
   onLogSession: (input: {
@@ -707,6 +708,9 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
               </div>
             </div>
           </div>
+          {/* SL-95: recent-samples sparkline, accumulated client-side from
+              each beat's small trailing window (see useLiveForce). */}
+          <LiveForceSparkline samples={liveForce.spark} />
         </div>
       )}
 

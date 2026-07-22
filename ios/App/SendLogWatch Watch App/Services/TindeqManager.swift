@@ -145,6 +145,32 @@ final class TindeqManager: NSObject {
         return samples.filter { $0.t >= cutoff }
     }
 
+    /// Downsampled trailing window for the phone mirror's sparkline (SL-95,
+    /// follow-up to SL-87). The on-watch `Sparkline` (ForceGaugeView) already
+    /// reads full-rate `recentSamples()` at its own 10 Hz timer; WC beats
+    /// instead carry a much coarser slice — the same ~3 s trailing window,
+    /// thinned to at most ~15 points — so a ~2 Hz beat stays a tiny JSON array
+    /// rather than shipping raw 80 Hz BLE samples over WatchConnectivity.
+    /// Each point is `[t, kg]` with `t` still milliseconds (same clock as
+    /// `elapsed_ms`, relative to this hold's start) so the phone can re-anchor
+    /// every point to wall-clock time using the beat's `updated_at` and
+    /// `elapsed_ms`, then accumulate its own rolling buffer client-side (see
+    /// `useLiveForce.ts`) — no single beat's window is trusted as the whole
+    /// history.
+    private func sparkWindow() -> [[Double]] {
+        let recent = recentSamples(windowMs: 3_000)
+        guard !recent.isEmpty else { return [] }
+        let step = max(1, recent.count / 15)
+        var out: [[Double]] = []
+        var i = 0
+        while i < recent.count {
+            let s = recent[i]
+            out.append([s.t.rounded(), (s.kg * 100).rounded() / 100])
+            i += step
+        }
+        return out
+    }
+
     // MARK: Internals
 
     private func write(_ cmd: Tindeq.Cmd) {
@@ -204,6 +230,9 @@ final class TindeqManager: NSObject {
                 "tag": liveTag,
                 "side": liveSide,
                 "updated_at": Date().timeIntervalSince1970,
+                // SL-95: only meaningful mid-hold — omitted (empty) otherwise
+                // so idle/connected beats stay tiny.
+                "spark": status == .measuring ? sparkWindow() : [],
             ],
             replyHandler: nil, errorHandler: nil
         )

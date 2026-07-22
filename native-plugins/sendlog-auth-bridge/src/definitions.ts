@@ -29,6 +29,13 @@ export interface LiveForceMessage {
   tag?: string;
   side?: string;
   updated_at: number;
+  /// SL-95: a downsampled trailing ~3s window of `[t_ms, kg]` pairs, `t_ms`
+  /// relative to this hold's start (same clock as `elapsed_ms`) — only
+  /// present (non-empty) while `status === "measuring"`. The phone re-anchors
+  /// each point to wall-clock time using `updated_at`/`elapsed_ms` and
+  /// accumulates its own rolling buffer (see `useLiveForce.ts`); this field
+  /// is one beat's slice, not the full history.
+  spark?: [number, number][];
 }
 
 export interface SendLogAuthBridgePlugin {
