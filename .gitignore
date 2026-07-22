@@ -25,6 +25,7 @@ dist-ssr
 
 .env
 supabase/.temp/
+supabase/.branches/
 
 # Xcode user/build state (per-machine, not project config)
 xcuserdata/
