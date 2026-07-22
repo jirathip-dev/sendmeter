@@ -6,12 +6,26 @@ import type {
   Session,
   WeeklyLoad,
 } from "../types";
+import ChartTooltip from "./ChartTooltip";
 import ContributionHeatmap from "./ContributionHeatmap";
 import InfoDot from "./InfoDot";
 import ReadinessCard from "./ReadinessCard";
 import RecoverySheet from "./RecoverySheet";
 import SendConditionsCard from "./SendConditionsCard";
+import { useChartHover } from "../hooks/useChartHover";
 import { phaseAcwrFit } from "../lib/metrics";
+
+// Sign convention/formatting for a week-over-week AU delta, shared by the
+// "Weekly load" header badge and the per-bar tooltip.
+function weekDelta(cur: number, prev: number): { pct: number; arrow: string; color: string } | null {
+  if (prev <= 0) return null;
+  const pct = ((cur - prev) / prev) * 100;
+  return {
+    pct,
+    arrow: pct > 0 ? "▲" : pct < 0 ? "▼" : "",
+    color: Math.abs(pct) < 1 ? "var(--ink-muted)" : pct > 0 ? "var(--success)" : "var(--danger)",
+  };
+}
 
 interface Props {
   phase: Phase;
@@ -40,12 +54,13 @@ export default function Dashboard({
   onChangePhase,
 }: Props) {
   const [showRecovery, setShowRecovery] = useState(false);
+  const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
   const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
   // Week-over-week delta: the windows are rolling 7-day sums, so "Now" vs
   // "1w" is a fair full-window comparison. No baseline (prev 0) hides it.
   const curWeek = weeklyLoads[weeklyLoads.length - 1]?.total ?? 0;
   const prevWeek = weeklyLoads[weeklyLoads.length - 2]?.total ?? 0;
-  const weekDeltaPct = prevWeek > 0 ? ((curWeek - prevWeek) / prevWeek) * 100 : null;
+  const curWeekDelta = weekDelta(curWeek, prevWeek);
   // Per-day total load AND the day's dominant activity type (most load) — the
   // heatmap hues each cell by type (SL-60).
   const daily = useMemo(() => {
@@ -299,52 +314,71 @@ export default function Dashboard({
             }}
           >
             <span>Weekly load</span>
-            {weekDeltaPct !== null && (
+            {curWeekDelta !== null && (
               <span
                 style={{
                   fontSize: "var(--t-2xs)",
                   fontVariantNumeric: "tabular-nums",
-                  color:
-                    Math.abs(weekDeltaPct) < 1
-                      ? "var(--ink-muted)"
-                      : weekDeltaPct > 0
-                        ? "var(--success)"
-                        : "var(--danger)",
+                  color: curWeekDelta.color,
                 }}
               >
-                {weekDeltaPct > 0 ? "▲" : weekDeltaPct < 0 ? "▼" : ""}{" "}
-                {Math.abs(weekDeltaPct).toFixed(0)}% vs prior wk
+                {curWeekDelta.arrow} {Math.abs(curWeekDelta.pct).toFixed(0)}% vs prior wk
               </span>
             )}
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 88 }}>
-            {weeklyLoads.map((w, i) => (
-              <div
-                key={i}
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 4,
-                  height: "100%",
-                  justifyContent: "flex-end",
-                }}
-              >
-                <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>
-                  {w.total.toLocaleString()}
-                </span>
+          <div
+            className="chart-scrub"
+            style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 88 }}
+          >
+            {weeklyLoads.map((w, i) => {
+              const delta = i > 0 ? weekDelta(w.total, weeklyLoads[i - 1]!.total) : null;
+              return (
                 <div
+                  key={i}
                   style={{
-                    width: "100%",
-                    height: Math.max((w.total / maxW) * 64, 2),
-                    background: i === weeklyLoads.length - 1 ? "var(--success)" : "var(--border)",
-                    borderRadius: 3,
+                    flex: 1,
+                    position: "relative",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 4,
+                    height: "100%",
+                    justifyContent: "flex-end",
                   }}
-                />
-                <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)" }}>{w.label}</span>
-              </div>
-            ))}
+                  {...hoverWeekProps(i)}
+                >
+                  {hoveredWeek === i && (
+                    <ChartTooltip
+                      align={i < 2 ? "start" : i > weeklyLoads.length - 3 ? "end" : "center"}
+                    >
+                      <div style={{ fontWeight: 600 }}>{w.label}</div>
+                      <div style={{ color: "var(--ink-muted)" }}>{w.total.toLocaleString()} AU</div>
+                      {delta !== null && (
+                        <div style={{ color: delta.color }}>
+                          {delta.arrow} {Math.abs(delta.pct).toFixed(0)}% vs prior wk
+                        </div>
+                      )}
+                    </ChartTooltip>
+                  )}
+                  <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>
+                    {w.total.toLocaleString()}
+                  </span>
+                  <div
+                    style={{
+                      width: "100%",
+                      height: Math.max((w.total / maxW) * 64, 2),
+                      background: i === weeklyLoads.length - 1 ? "var(--success)" : "var(--border)",
+                      borderRadius: 3,
+                      opacity: hoveredWeek === null || hoveredWeek === i ? 1 : 0.5,
+                      boxShadow: hoveredWeek === i ? "0 0 0 1.5px var(--ink)" : "none",
+                      cursor: "pointer",
+                      transition: "opacity 0.1s",
+                    }}
+                  />
+                  <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)" }}>{w.label}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
 

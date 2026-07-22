@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useChartHover } from "../hooks/useChartHover";
 import { SESSION_TYPES } from "../constants";
+import ChartTooltip from "./ChartTooltip";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAY_ROWS = [1, 3, 5] as const; // Mon / Wed / Fri
@@ -59,7 +61,7 @@ export default function ContributionHeatmap({
   weeks?: number;
   unit?: string;
 }) {
-  const [sel, setSel] = useState<Cell | null>(null);
+  const [hovered, hoverProps] = useChartHover<string>();
 
   const { columns, max } = useMemo(() => {
     const today = new Date();
@@ -173,50 +175,59 @@ export default function ContributionHeatmap({
           </div>
           {/* Fluid grid: 1 column per week, square cells, fills the width */}
           <div
+            className="chart-scrub"
             style={{
               display: "grid",
               gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
               columnGap: GAP,
             }}
           >
-            {columns.map((col, ci) => (
-              <div
-                key={ci}
-                style={{
-                  display: "grid",
-                  gridTemplateRows: "repeat(7, 1fr)",
-                  rowGap: GAP,
-                }}
-              >
-                {col.map((cell) => (
-                  <div
-                    key={cell.key}
-                    onClick={() => !cell.future && setSel(cell)}
-                    title={cell.future ? "" : `${cell.key} · ${cell.value} ${unit}`}
-                    style={{
-                      aspectRatio: "1",
-                      width: "100%",
-                      borderRadius: 2,
-                      // Future days are greyed out, not blank, so "today" reads
-                      // as the leading edge of the grid (SL-68).
-                      background: cell.future ? "var(--surface-1)" : cellColor(cell),
-                      opacity: cell.future ? 0.35 : 1,
-                      outline: sel?.key === cell.key ? "1.5px solid var(--ink)" : "none",
-                      cursor: cell.future ? "default" : "pointer",
-                    }}
-                  />
-                ))}
-              </div>
-            ))}
+            {columns.map((col, ci) => {
+              const hAlign =
+                ci < columns.length / 3 ? "start" : ci > (columns.length * 2) / 3 ? "end" : "center";
+              return (
+                <div
+                  key={ci}
+                  style={{
+                    display: "grid",
+                    gridTemplateRows: "repeat(7, 1fr)",
+                    rowGap: GAP,
+                  }}
+                >
+                  {col.map((cell, di) => (
+                    <div
+                      key={cell.key}
+                      style={{
+                        position: "relative",
+                        aspectRatio: "1",
+                        width: "100%",
+                        borderRadius: 2,
+                        // Future days are greyed out, not blank, so "today" reads
+                        // as the leading edge of the grid (SL-68).
+                        background: cell.future ? "var(--surface-1)" : cellColor(cell),
+                        opacity: cell.future ? 0.35 : 1,
+                        outline: hovered === cell.key ? "1.5px solid var(--ink)" : "none",
+                        cursor: cell.future ? "default" : "pointer",
+                      }}
+                      {...(cell.future ? {} : hoverProps(cell.key))}
+                    >
+                      {hovered === cell.key && (
+                        <ChartTooltip
+                          align={hAlign}
+                          style={di < 4 ? { bottom: "auto", top: "100%", marginTop: 6 } : undefined}
+                        >
+                          {cell.value > 0
+                            ? `${cell.key} · ${cell.value} ${unit}${cell.type ? ` · ${TYPE_LABEL[cell.type] ?? cell.type}` : ""}`
+                            : `${cell.key} · rest`}
+                        </ChartTooltip>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
-      </div>
-
-      {/* Selected day readout — includes the day's dominant activity type */}
-      <div style={{ marginTop: 10, fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
-        {sel
-          ? `${sel.key} · ${sel.value} ${unit}${sel.type ? ` · ${TYPE_LABEL[sel.type] ?? sel.type}` : ""}`
-          : "Tap a day for its load"}
       </div>
 
       {/* Per-activity-type legend (only the types that appear) */}
