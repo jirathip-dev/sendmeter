@@ -242,4 +242,48 @@ describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () =>
     expect(zonePrescription(noCf, "endurance", 80)).toBeNull();
     expect(zonePrescription(noCf, "power-endurance", 80)).toBeNull();
   });
+
+  describe("pct > 100 shortens the hold for every above-CF zone (#105/SL-103)", () => {
+    // Same W′-cost-constant math as the <100% path, just scaling kg up
+    // instead of down: raising the load means less time is needed to bank
+    // the same (F − CF) × t dose, so the hold SHRINKS.
+    it("power: 110% shortens the 5s base hold", () => {
+      // baseKg 38 (0.95×40), newKg 41.8 (×1.1) → (18×5)/21.8 ≈ 4.13s → round to 4
+      expect(zoneTarget(model, "power", 110)!.workS).toBe(4);
+      expect(zoneTarget(model, "power", 110)!.workS).toBeLessThan(ZONE_PROTOCOLS.power.holdS);
+    });
+
+    it("strength: 110% shortens the 10s base hold", () => {
+      // baseKg 34 (0.85×40), newKg 37.4 → (14×10)/17.4 ≈ 8.05s → round to 8
+      expect(zoneTarget(model, "strength", 110)!.workS).toBe(8);
+      expect(zoneTarget(model, "strength", 110)!.workS).toBeLessThan(ZONE_PROTOCOLS.strength.holdS);
+    });
+
+    it("power-endurance: 110% shortens the 7s base hold", () => {
+      // f60 25, newKg 27.5 → (5×7)/7.5 ≈ 4.67s → round to 5
+      expect(zoneTarget(model, "power-endurance", 110)!.workS).toBe(5);
+      expect(zoneTarget(model, "power-endurance", 110)!.workS).toBeLessThan(
+        ZONE_PROTOCOLS["power-endurance"].holdS,
+      );
+    });
+
+    it("power: the 3s floor engages when the W′-cost math would go lower", () => {
+      // baseKg sits just 0.1kg above CF, so scaling up to 110% collapses the
+      // denominator (newKg − cf) far faster than the numerator shrinks —
+      // the raw math wants a sub-1s hold, which the zone's [3, 15]s clamp floors.
+      const tightPower: ForceCurveModel = { points: [], maxF: 40, cf: 37.9, wPrime: 300 };
+      expect(zoneTarget(tightPower, "power", 110)!.workS).toBe(3);
+    });
+
+    it("strength: the 5s floor engages under the same tight-margin setup", () => {
+      const tightStrength: ForceCurveModel = { points: [], maxF: 100, cf: 84.9, wPrime: 300 };
+      expect(zoneTarget(tightStrength, "strength", 110)!.workS).toBe(5);
+    });
+
+    it("power-endurance: the 5s floor engages under the same tight-margin setup", () => {
+      // cf 25, wPrime 6 → f60 = 25 + 6/60 = 25.1, just above cf.
+      const tightPe: ForceCurveModel = { points: [], maxF: 40, cf: 25, wPrime: 6 };
+      expect(zoneTarget(tightPe, "power-endurance", 110)!.workS).toBe(5);
+    });
+  });
 });

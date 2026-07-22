@@ -29,8 +29,13 @@ export function classifyZoneLoaded(
   if (holdS < 1) return null; // stray blip, not a real hold
   if (kg == null || refs.maxF == null) return classifyZone(holdS);
   if (refs.cf != null && kg <= refs.cf) return "endurance";
+  // Thresholds mirror each zone's own band low in `zoneTarget` (force-curve.ts)
+  // — power 0.9·maxF, strength 0.8·maxF — so a preset badges the same zone its
+  // load would actually place it in, not a looser fuzzy bucket (#105/SL-103:
+  // this used to say 0.75, below the Strength band's own 0.8 low, so a ~76%
+  // preset badged "Strength" while falling short of the zone it named).
   if (kg >= 0.9 * refs.maxF && holdS <= 6) return "power";
-  if (kg >= 0.75 * refs.maxF && holdS <= 20) return "strength";
+  if (kg >= 0.8 * refs.maxF && holdS <= 20) return "strength";
   if (holdS <= 20) return "power-endurance";
   return "endurance";
 }

@@ -44,9 +44,19 @@ describe("classifyZoneLoaded (SL-97b)", () => {
     expect(classifyZoneLoaded(6, 36, refs)).toBe("power"); // exactly 0.9 · maxF
   });
 
-  it("strength: ≥75% maxF and ≤20s (worked example: maxF 40, cf 20, 10s @ 34kg)", () => {
+  it("strength: ≥80% maxF and ≤20s (worked example: maxF 40, cf 20, 10s @ 34kg)", () => {
+    // Threshold matches the Strength zone's own band low (zoneTarget: 0.8·maxF,
+    // #105/SL-103) so a preset only badges Strength when it actually reaches
+    // that zone's load.
     expect(classifyZoneLoaded(10, 34, refs)).toBe("strength"); // 0.85 · maxF
-    expect(classifyZoneLoaded(20, 30, refs)).toBe("strength"); // exactly 0.75 · maxF
+    expect(classifyZoneLoaded(20, 32, refs)).toBe("strength"); // exactly 0.8 · maxF
+  });
+
+  it("a load just under the Strength band falls to power-endurance, not a fuzzy Strength badge", () => {
+    // 30kg = 0.75·maxF — under the old (incidental) 0.75 threshold this
+    // badged "Strength" despite sitting below the zone's own 0.8 low; it now
+    // re-badges Power Endurance, which matches what the load actually is.
+    expect(classifyZoneLoaded(20, 30, refs)).toBe("power-endurance");
   });
 
   it("power-endurance: above CF but under the power/strength thresholds, ≤20s", () => {
