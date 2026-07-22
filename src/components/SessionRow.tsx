@@ -7,6 +7,7 @@ import {
 import {
   deleteRecording,
   fetchRecordingsByGroup,
+  fetchSamplesByGroup,
   fetchWorkoutForSession,
   recalcTindeqSessionDuration,
 } from "../lib/repo";
@@ -14,6 +15,7 @@ import type { Session, TindeqRecordingMeta, WorkoutDetail } from "../types";
 import DetailPage from "./DetailPage";
 import EditRecordingSheet from "./EditRecordingSheet";
 import RecordingRow from "./RecordingRow";
+import RepBoxPlotChart from "./RepBoxPlotChart";
 import WorkoutDetailPanel from "./WorkoutDetailPanel";
 
 interface Props {
@@ -28,11 +30,15 @@ interface Props {
 function TagGroup({
   tag,
   recs,
+  samplesById,
   onEditRec,
   onDeleteRec,
 }: {
   tag: string;
   recs: TindeqRecordingMeta[];
+  /// Recording id → raw kg samples for the whole session (issue #100) — the
+  /// per-rep box plot below reads each rep's distribution out of this.
+  samplesById: Map<string, number[]>;
   onEditRec: (r: TindeqRecordingMeta) => void;
   onDeleteRec: (id: string) => void;
 }) {
@@ -69,6 +75,13 @@ function TagGroup({
           {open ? "▾" : "▸"}
         </span>
       </button>
+      {/* Per-rep box plot — always visible (glanceable without expanding),
+          but it's interactive (hover/scrub) so it lives outside the toggle
+          button; stopPropagation as a backstop against any future wrapper
+          click handler between here and the button. */}
+      <div onClick={(e) => e.stopPropagation()}>
+        <RepBoxPlotChart recs={recs} samplesById={samplesById} />
+      </div>
       {open && (
         <div style={{ marginTop: 6 }}>
           {recs.map((r) => (
@@ -99,6 +112,13 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
   const [tindeqRecs, setTindeqRecs] = useState<TindeqRecordingMeta[] | null>(
     null,
   );
+  // Raw kg samples per recording (issue #100) — fetched alongside the
+  // metadata so the per-rep box plots have a distribution to draw. Starts
+  // empty rather than null: the header/meta above never waits on this, and
+  // `RepBoxPlotChart` treats "id missing from the map" as "still loading".
+  const [tindeqSamples, setTindeqSamples] = useState<Map<string, number[]>>(
+    () => new Map(),
+  );
   const [editingRec, setEditingRec] = useState<TindeqRecordingMeta | null>(null);
   const [loadError, setLoadError] = useState(false);
 
@@ -113,7 +133,12 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
         const d = await fetchWorkoutForSession(s.id);
         setDetail(d ?? "missing");
       } else if (isTindeq) {
-        setTindeqRecs(await fetchRecordingsByGroup(s.groupId!));
+        const [recs, samples] = await Promise.all([
+          fetchRecordingsByGroup(s.groupId!),
+          fetchSamplesByGroup(s.groupId!),
+        ]);
+        setTindeqRecs(recs);
+        setTindeqSamples(samples);
       }
     } catch {
       setLoadError(true);
@@ -133,8 +158,14 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
           const d = await fetchWorkoutForSession(s.id);
           if (!cancelled) setDetail(d ?? "missing");
         } else if (isTindeq) {
-          const recs = await fetchRecordingsByGroup(s.groupId!);
-          if (!cancelled) setTindeqRecs(recs);
+          const [recs, samples] = await Promise.all([
+            fetchRecordingsByGroup(s.groupId!),
+            fetchSamplesByGroup(s.groupId!),
+          ]);
+          if (!cancelled) {
+            setTindeqRecs(recs);
+            setTindeqSamples(samples);
+          }
         }
       } catch {
         /* keep the stale view rather than flashing an error */
@@ -319,6 +350,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
                     key={g.tag || "untagged"}
                     tag={g.tag}
                     recs={g.recs}
+                    samplesById={tindeqSamples}
                     onEditRec={setEditingRec}
                     onDeleteRec={deleteRec}
                   />
