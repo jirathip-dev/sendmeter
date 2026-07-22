@@ -1,7 +1,7 @@
 import { useState } from "react";
 import Sheet from "./Sheet";
 
-export type InfoTopic = "acwr" | "readiness" | "forceCurve" | "gaugeTarget";
+export type InfoTopic = "acwr" | "readiness" | "forceCurve" | "gaugeTarget" | "phaseStepBack";
 
 const CONTENT: Record<
   InfoTopic,
@@ -62,6 +62,23 @@ const CONTENT: Record<
       {
         heading: "Using a target",
         text: "Picking a zone draws its band on the live gauge and arms its guided timer — keep the trace inside the band for the prescribed work time. Zones sharpen as your curve gets more data (especially one all-out 30–60s hold). The Intensity dial next to \"Protocol presets\" (60–110%) applies to the RECOMMENDED ZONES only: it scales the target load and adapts hold time to keep the training dose equivalent — dial it down for a lighter session, or above 100% for a heavier one (shorter holds, extra strain on your pulleys — only when fully warmed up). Custom presets are never modified by this dial; a preset's quality badge still reflects whatever load it actually resolves to (fixed kg, or a %-of-PR/CF/curve target).",
+      },
+    ],
+  },
+  phaseStepBack: {
+    title: "Why step back to Capacity",
+    body: [
+      {
+        heading: "Two signals, closed loop",
+        text: "The phase banner and Readiness are normally shown side by side — this nudge is the one place they talk to each other. Power and strength phases ask your nervous system for near-maximal output; that only works safely on top of good recovery.",
+      },
+      {
+        heading: "The trigger",
+        text: "Readiness sitting in the red 'recover' zone (below 40) for 3+ days in a row while you're in a power or strength phase. One rough night is noise — HRV wobbles with alcohol, heat, late meals. A multi-day slide is the meaningful signal.",
+      },
+      {
+        heading: "It's a suggestion, not a rule",
+        text: "Capacity work (volume, lower intensity) lets you keep training while your recovery catches up, instead of grinding a high-intensity phase on an empty tank. Dismiss it if you'd rather push through — it won't nag again for this same low streak.",
       },
     ],
   },

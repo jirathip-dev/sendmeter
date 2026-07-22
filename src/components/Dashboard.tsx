@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type {
   AcwrData,
   AcwrStatus,
+  HealthMetric,
   Phase,
   Session,
   WeeklyLoad,
@@ -12,8 +13,18 @@ import InfoDot from "./InfoDot";
 import ReadinessCard from "./ReadinessCard";
 import RecoverySheet from "./RecoverySheet";
 import SendConditionsCard from "./SendConditionsCard";
+import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
-import { phaseAcwrFit } from "../lib/metrics";
+import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import { daysAgo } from "../lib/dates";
+import { phaseAcwrFit, suggestPhaseStepBack } from "../lib/metrics";
+import { fetchHealthMetrics } from "../lib/repo";
+
+// A dismissal is keyed to the streak's oldest day (not just "true/false"), so
+// declining the nudge sticks for the rest of THIS low streak but reappears
+// on a fresh one — e.g. readiness recovers, phase stays in power, then slides
+// low again later. Persisted (SL-23), like the app's other one-shot prompts.
+const STEP_BACK_DISMISS_KEY = "sendmeter:phase-step-back-dismissed";
 
 // Sign convention/formatting for a week-over-week AU delta, shared by the
 // "Weekly load" header badge and the per-bar tooltip.
@@ -55,6 +66,31 @@ export default function Dashboard({
 }: Props) {
   const [showRecovery, setShowRecovery] = useState(false);
   const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
+
+  // Recovery-adjusted phase suggestion (SL-23): reuses the same 14-day
+  // readiness fetch shape ReadinessCard uses (its own instance — components
+  // here each fetch independently, same pattern as RecoveryStatsCard).
+  const realtimeVersion = useRealtimeVersion();
+  const readinessHistory = useCancellableFetch<HealthMetric[]>(
+    () => fetchHealthMetrics(14),
+    [],
+    realtimeVersion,
+  );
+  const stepBack = suggestPhaseStepBack(readinessHistory, phase.id);
+  const [dismissedStreakStart, setDismissedStreakStart] = useState<string | null>(() =>
+    typeof localStorage !== "undefined" ? localStorage.getItem(STEP_BACK_DISMISS_KEY) : null,
+  );
+  // The streak's oldest day, in absolute date terms — stable while the streak
+  // continues (even as streakDays grows day over day), so it doubles as the
+  // dismissal's identity key.
+  const streakStart = stepBack.suggested ? daysAgo(stepBack.streakDays - 1) : null;
+  const showStepBack = streakStart !== null && streakStart !== dismissedStreakStart;
+  function dismissStepBack() {
+    if (streakStart === null) return;
+    localStorage.setItem(STEP_BACK_DISMISS_KEY, streakStart);
+    setDismissedStreakStart(streakStart);
+  }
+
   const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
   // Week-over-week delta: the windows are rolling 7-day sums, so "Now" vs
   // "1w" is a fair full-window comparison. No baseline (prev 0) hides it.
@@ -178,6 +214,70 @@ export default function Dashboard({
 
         <SendConditionsCard />
       </div>
+
+      {/* Recovery-adjusted phase suggestion (SL-23) — soft, dismissible;
+          tinted with the current phase's colors so it reads as attached to
+          the banner above rather than a new alert. */}
+      {showStepBack && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 10,
+            padding: "9px 12px",
+            borderRadius: 12,
+            background: phase.bg,
+            border: `1px solid ${phase.border}`,
+          }}
+        >
+          <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.4, flex: 1 }}>
+            Readiness has been low for {stepBack.streakDays} days — consider
+            stepping back to Capacity.
+          </span>
+          <InfoDot topic="phaseStepBack" />
+          <button
+            onClick={onChangePhase}
+            style={{
+              flexShrink: 0,
+              background: "var(--surface-1)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              padding: "5px 9px",
+              fontFamily: "Inter, sans-serif",
+              fontSize: "var(--t-2xs)",
+              fontWeight: 600,
+              color: phase.color,
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Step back
+          </button>
+          <button
+            aria-label="Dismiss suggestion"
+            onClick={dismissStepBack}
+            style={{
+              flexShrink: 0,
+              width: 22,
+              height: 22,
+              borderRadius: "50%",
+              border: "1px solid transparent",
+              background: "transparent",
+              color: "var(--ink-faint)",
+              fontSize: "var(--t-sm)",
+              lineHeight: 1,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <div
         style={{
