@@ -287,6 +287,10 @@ are safe regardless.
 - **`?fake-tindeq`** query param puts the web Force view in fake mode (simulated
   BLE + force stream) — the only way to exercise the connect→measure→save flow in
   a browser (real Web Bluetooth needs a device).
+- **`?fake-weather[=hot|prime|bad|no-hist]`** puts Send Conditions in fake mode
+  (`src/lib/weather.ts`) — a synthesized reading + 30-day history, skipping
+  geolocation, both live Open-Meteo calls, and both localStorage caches — so
+  the card/sheet are browser-testable in local dev without a device's location.
 - **Never add `live_workouts` to `WATCHED_TABLES`** in
   `RealtimeVersionProvider.tsx` — the watch heartbeats it every ~5s, which
   would refetch every card in the app every 5s. The Workout tab subscribes to

@@ -1,59 +1,95 @@
 import Sheet from "./Sheet";
 import {
   humidityFrictionScore,
-  scoreHistogram,
+  percentileColor,
+  percentileLabel,
+  sameHourScores,
+  scoreLabel,
   sendScoreColor as scoreColor,
   tempFrictionScore,
-  type ClimateSummary,
   type SendConditions,
 } from "../lib/weather";
 
-const BINS = 20;
-
-/// The local 30-day send-score distribution (SL-91b) with today marked — so
-/// the percentile is something you can SEE (is today an outlier or typical?).
-/// Bars are coloured by their own score band; today's column is outlined.
-function DistributionChart({ hist, score }: { hist: ClimateSummary; score: number }) {
-  const counts = scoreHistogram(hist.scores, BINS);
-  const max = Math.max(1, ...counts);
-  const todayBin = Math.min(BINS - 1, Math.max(0, Math.floor((score / 100) * BINS)));
+/// Same-hour-of-day comparison chart (issue #99): one bar per day at the
+/// SAME local hour as the current reading, chronological, with today's bar
+/// appended on the right — the countable claim the banner makes ("better
+/// than N of the last M days at this time of day") made visible as bars
+/// under a dotted "today" line. Replaces the old absolute-score histogram,
+/// which collapsed to a single bin in a hot climate where every hour scores
+/// the same "Poor". `days` (from `sameHourScores`) is computed by the caller
+/// so it can also drive the under-axis "N days ago" label off the same
+/// series length.
+function DayComparisonChart({
+  score,
+  percentile,
+  days,
+}: {
+  score: number;
+  percentile: number;
+  days: number[];
+}) {
+  const max = Math.max(1, ...days, score);
+  const todayColor = percentileColor(percentile);
   return (
-    // Every bin is a full-height faint TRACK spanning the whole Poor→Prime
-    // axis, with the hour-count filling from the bottom — so a bunched
-    // distribution still reads across the full width and today's outlined
-    // column shows its true position on the axis (not just "rightmost bar").
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 56 }}>
-      {counts.map((c, i) => {
-        const binScore = (i + 0.5) * (100 / BINS);
-        const isToday = i === todayBin;
+    <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 56, position: "relative" }}>
+      {/* Dotted line at today's level — days under it are the ones today beats. */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: `${(score / max) * 100}%`,
+          borderTop: "1px dashed var(--ink-faint)",
+        }}
+      />
+      {days.map((s, i) => {
+        const daysAgo = days.length - i;
         return (
           <div
             key={i}
-            title={`${Math.round(i * (100 / BINS))}–${Math.round((i + 1) * (100 / BINS))}: ${c}h`}
+            title={`${daysAgo} days ago: ${s}`}
             style={{
               flex: 1,
               height: "100%",
               display: "flex",
               alignItems: "flex-end",
-              background: "var(--surface-1)",
-              borderRadius: 2,
-              outline: isToday ? "2px solid var(--ink)" : undefined,
-              outlineOffset: 1,
             }}
           >
             <div
               style={{
                 width: "100%",
-                height: `${(c / max) * 100}%`,
-                minHeight: c > 0 ? 2 : 0,
-                background: scoreColor(binScore),
-                opacity: isToday ? 1 : 0.55,
+                height: `${(s / max) * 100}%`,
+                minHeight: s > 0 ? 2 : 0,
+                background: "var(--ink-faint)",
+                opacity: 0.55,
                 borderRadius: 2,
               }}
             />
           </div>
         );
       })}
+      {/* Today's bar, appended on the right — coloured + full opacity so it pops. */}
+      <div
+        title={`Today: ${score}`}
+        style={{
+          flex: 1.3,
+          height: "100%",
+          display: "flex",
+          alignItems: "flex-end",
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            height: `${(score / max) * 100}%`,
+            minHeight: score > 0 ? 2 : 0,
+            background: todayColor,
+            outline: `2px solid ${todayColor}`,
+            outlineOffset: 1,
+            borderRadius: 2,
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -64,6 +100,16 @@ interface Props {
   failed: boolean;
   onRefresh: () => void;
   onClose: () => void;
+}
+
+/// The headline's percentile suffix (issue #99). Percentile 100 reads as
+/// "top 0%", which is backwards — say "best of the last N days" instead.
+/// Below 40 ("Poor" territory) the label + banner tail already say it's a
+/// bad window, so the suffix is omitted rather than printing "top 100%".
+function headlineSuffix(percentile: number, daysTotal: number | null): string | null {
+  if (percentile === 100) return daysTotal !== null ? `best of the last ${daysTotal} days` : null;
+  if (percentile >= 40) return `top ${Math.max(1, 100 - percentile)}%`;
+  return null;
 }
 
 /// A labelled sub-score bar (0–100) — used for the temperature and humidity
@@ -84,10 +130,20 @@ function SubScore({ label, detail, score }: { label: string; detail: string; sco
   );
 }
 
-/// Detail view for the "send conditions" widget (SL-69): the current weather,
-/// the derived friction score with its temperature/humidity breakdown, and an
-/// explanation of how the status is determined.
+/// Detail view for the "send conditions" widget (SL-69): a percentile-first
+/// headline (how today compares to the same hour of day over the last 30
+/// days — the signal that's actually informative in a hot climate, where the
+/// absolute score is permanently "Poor"), with the absolute friction model
+/// kept as a secondary, clearly-labelled explanation below.
 export default function SendConditionsSheet({ cond, loading, failed, onRefresh, onClose }: Props) {
+  const suffix =
+    cond && cond.percentile !== null ? headlineSuffix(cond.percentile, cond.daysTotal) : null;
+  // Same-hour day series for the comparison chart, computed once so both the
+  // chart and its "N days ago" axis label agree on the count (issue #99).
+  const chartDays =
+    cond && cond.hist && cond.percentile !== null && cond.hourOfDay !== undefined
+      ? sameHourScores(cond.hist.scores, cond.hourOfDay)
+      : null;
   return (
     <Sheet onClose={onClose}>
       <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800, marginBottom: 2 }}>
@@ -99,31 +155,62 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
 
       {cond ? (
         <>
-          {/* Headline score */}
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
-            <span
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: 40,
-                fontWeight: 800,
-                color: scoreColor(cond.score),
-                letterSpacing: "-0.03em",
-                lineHeight: 1,
-              }}
-            >
-              {cond.label}
-            </span>
-            <span style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", fontWeight: 700 }}>
-              {cond.score}/100
-            </span>
-          </div>
-          <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12 }}>
-            {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}% humidity
-          </div>
+          {/* Headline: percentile-first when we have a same-hour ranking —
+              that's the number that's actually informative in a hot climate,
+              where the absolute score is permanently "Poor". Falls back to
+              the absolute headline when there's no ranking (short/no history). */}
+          {cond.percentile !== null ? (
+            <>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+                <span
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: 40,
+                    fontWeight: 800,
+                    color: percentileColor(cond.percentile),
+                    letterSpacing: "-0.03em",
+                    lineHeight: 1,
+                  }}
+                >
+                  {percentileLabel(cond.percentile)}
+                </span>
+                <span style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", fontWeight: 600 }}>
+                  conditions for here{suffix ? ` · ${suffix}` : ""}
+                </span>
+              </div>
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12 }}>
+                {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}% humidity
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+                <span
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: 40,
+                    fontWeight: 800,
+                    color: scoreColor(cond.score),
+                    letterSpacing: "-0.03em",
+                    lineHeight: 1,
+                  }}
+                >
+                  {cond.label}
+                </span>
+                <span style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", fontWeight: 700 }}>
+                  {cond.score}/100
+                </span>
+              </div>
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12 }}>
+                {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}% humidity
+              </div>
+            </>
+          )}
 
-          {/* Relative-to-location standing (SL-91) — the signal that matters
-              where the absolute score is always low. */}
-          {cond.percentile !== null && (
+          {/* The countable claim (issue #99): the banner states exactly what
+              the chart below shows — how many of the last N same-hour days
+              today beats. */}
+          {cond.percentile !== null && cond.daysBelow !== null && cond.daysTotal !== null && (
             <div
               style={{
                 fontSize: "var(--t-sm)",
@@ -137,33 +224,34 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
               }}
             >
               Better than{" "}
-              <strong>{cond.percentile}%</strong> of the last 30 days at your
-              location{" "}
+              <strong>
+                {cond.daysBelow} of the last {cond.daysTotal} days
+              </strong>{" "}
+              at this time of day.{" "}
               <span style={{ color: "var(--ink-muted)" }}>
-                — {cond.percentile >= 75
-                  ? "a standout window here"
+                {cond.percentile >= 75
+                  ? "A standout window for here."
                   : cond.percentile >= 40
-                    ? "an average day here"
-                    : "below par for here"}
-                .
+                    ? "A typical day here."
+                    : "Below par for here."}
               </span>
             </div>
           )}
 
-          {/* Local distribution (SL-91b): the 30-day spread with today marked,
-              plus the raw weather range so "historical vs current" is visible. */}
-          {cond.hist && (
+          {/* Same-hour-of-day comparison (issue #99): today plotted against
+              the other ~30 days at the SAME hour, so the chart shows exactly
+              what the banner counts. Belt-and-braces `hourOfDay !== undefined`
+              guard against a stale pre-#99 localStorage cache. */}
+          {cond.hist && cond.percentile !== null && chartDays && (
             <div style={{ marginBottom: 16 }}>
               <div
                 className="label-eyebrow"
                 style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}
               >
-                <span>Last 30 days here</span>
-                <span style={{ color: "var(--ink-faint)" }}>
-                  today ●
-                </span>
+                <span>Same time of day · last 30 days</span>
+                <span style={{ color: percentileColor(cond.percentile) }}>today</span>
               </div>
-              <DistributionChart hist={cond.hist} score={cond.score} />
+              <DayComparisonChart score={cond.score} percentile={cond.percentile} days={chartDays} />
               <div
                 style={{
                   display: "flex",
@@ -173,14 +261,28 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
                   marginTop: 4,
                 }}
               >
-                <span>Poor</span>
-                <span>Prime</span>
+                <span>{chartDays.length} days ago</span>
+                <span>today</span>
               </div>
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 8, lineHeight: 1.5 }}>
                 Range here: <strong>{Math.round(cond.hist.tempMin)}–{Math.round(cond.hist.tempMax)}°C</strong>,{" "}
                 <strong>{Math.round(cond.hist.humMin)}–{Math.round(cond.hist.humMax)}%</strong> humidity.
-                Now: <span style={{ color: scoreColor(cond.score), fontWeight: 700 }}>{Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}%</span>.
               </div>
+            </div>
+          )}
+
+          {/* Absolute friction — secondary, clearly labelled: the model that
+              explains the raw temp/humidity numbers, kept below the
+              percentile-first headline rather than leading with it. The
+              summary line is skipped when the headline above IS the absolute
+              score (no percentile) — it would just repeat it verbatim. */}
+          <div className="label-eyebrow" style={{ marginBottom: 6 }}>Absolute friction</div>
+          {cond.percentile !== null && (
+            <div style={{ fontSize: "var(--t-sm)", color: "var(--ink)", marginBottom: 10 }}>
+              <span style={{ color: scoreColor(cond.score), fontWeight: 700 }}>
+                {scoreLabel(cond.score)} · {cond.score}/100
+              </span>{" "}
+              — {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}%
             </div>
           )}
 
@@ -213,12 +315,16 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
           <SubScore label="Humidity" detail={`${Math.round(cond.humidity)}% · 40%`} score={Math.round(humidityFrictionScore(cond.humidity))} />
 
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6, marginTop: 4 }}>
-            The score blends temperature (60%) and humidity (40%). Grip friction
-            peaks around <strong>6&nbsp;°C</strong> and low humidity, and drops as
-            it warms up or gets muggy.
-            {cond.percentile !== null
-              ? " The percentile above compares today against the last 30 days at your location, so a warm climate still has good and bad days."
-              : ""}{" "}
+            {cond.percentile !== null &&
+              "The headline compares right now with the same time of day over the last 30 days at your location — a high rank means this is a good window for here, whatever the absolute score says. "}
+            The absolute score rewards cold and dry (friction peaks near
+            6&nbsp;°C); above ~23&nbsp;°C the temperature part bottoms out, so
+            in a warm climate the day-to-day ranking is driven almost entirely
+            by humidity.
+            {cond.hist &&
+              (tempFrictionScore(cond.tempC) === 0
+                ? ` Temperature is maxed out here year-round — today ranks on humidity: ${Math.round(cond.humidity)}% against the local ${Math.round(cond.hist.humMin)}–${Math.round(cond.hist.humMax)}% range.`
+                : ` Today ranks on the mix of ${Math.round(cond.tempC)}°C against the local ${Math.round(cond.hist.tempMin)}–${Math.round(cond.hist.tempMax)}°C range and ${Math.round(cond.humidity)}% against ${Math.round(cond.hist.humMin)}–${Math.round(cond.hist.humMax)}% humidity.`)}{" "}
             Weather is from Open-Meteo for your current location.
           </div>
 
