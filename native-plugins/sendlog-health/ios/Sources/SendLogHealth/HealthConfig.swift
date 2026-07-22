@@ -9,8 +9,17 @@ import Supabase
 /// src/lib/supabase.ts and the watch's SupabaseConfig.plist — safe to embed;
 /// RLS is the security boundary.
 enum HealthConfig {
+    // Simulator-only: localhost is meaningless on a physical device, so
+    // Debug-on-device deliberately stays on the hosted project (test there
+    // with a throwaway account) — only the simulator gets pointed at the
+    // local Supabase stack.
+    #if DEBUG && targetEnvironment(simulator)
+    static let supabaseURL = URL(string: "http://127.0.0.1:54321")!
+    static let supabaseAnonKey = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH"
+    #else
     static let supabaseURL = URL(string: "https://zznsqmcewtzlnfoiefkk.supabase.co")!
     static let supabaseAnonKey = "sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp"
+    #endif
 
     /// Session (incl. refresh token) persists in the Keychain automatically —
     /// KeychainLocalStorage is the SDK default on Apple platforms, so a

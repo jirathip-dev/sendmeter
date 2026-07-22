@@ -18,7 +18,8 @@ a **Tindeq Progressor** strain gauge over Bluetooth LE.
 ## Commands
 
 ```bash
-npm run dev        # vite dev server (port 5173)
+npm run dev:local  # DEFAULT dev loop: local Supabase stack (Docker) + vite (port 5173)
+npm run dev        # vite against the HOSTED (production) Supabase — only when real data is needed
 npm run build      # tsc --noEmit && vite build
 npm run typecheck  # tsc --noEmit
 npm run lint       # eslint .
@@ -31,6 +32,105 @@ Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic only
 - `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."` — watch logic (attempt detection, RPE model, Tindeq protocol, dates).
 
 Always run `npm run typecheck && npm run lint && npm test && npm run build` after web changes.
+
+## Local dev environment (issue #95)
+
+**Default to this for all web work** — develop and test against the local stack;
+only touch the hosted project when a change specifically needs real data (and
+prefer read-only poking there). `npm run dev:local` is the one command: it
+starts a **local Supabase stack** (Docker; CLI is a devDependency, so
+`npx supabase …` works), writes `.env.development.local` pointing the dev server
+at it, and runs vite. Plain `npm run dev` hits the **hosted (production)
+project** unless that file exists — delete it to switch back. The file is
+dev-mode only: `npm run build` / fastlane / Vercel never read it (verified — the
+prod bundle keeps the hosted URL). Note vite reads env files **at startup**: a
+dev server started before the file existed keeps serving the hosted config until
+restarted. A login that rejects `dev@sendmeter.test` is the tell that the tab is
+on the hosted project.
+
+- **Login:** `dev@sendmeter.test` / `devpassword` (use the password toggle on
+  the login screen; magic-link emails land in Mailpit at `127.0.0.1:54324`).
+- **Seed:** `supabase/seed.sql` — the test user plus ~6 weeks of sessions,
+  35 days of health metrics, a watch workout with attempts, and Tindeq
+  recordings, all relative to `current_date`. Local-only; never runs remotely.
+  It also re-grants table access to the API roles — the current local postgres
+  image ships hardened default privileges (no auto-grants on new tables), while
+  the hosted project predates that and has them. Without the grants every
+  PostgREST query fails `permission denied` locally.
+- **Lifecycle:** `npm run db:reset` re-applies all migrations + seed (data is
+  disposable); `db:stop` shuts the stack down; `db:status` prints URLs/keys.
+  Studio: `127.0.0.1:54323`. Test a new migration here before applying it
+  to the remote DB.
+- BLE still needs `?fake-tindeq`; native/watch/HealthKit stay on the hosted
+  project (their Supabase config is compiled in) — this environment is for the
+  web app.
+
+### iOS / watch testing ladder
+
+Work down this ladder — each rung is cheaper than the next, so push logic up it:
+
+1. **Pure logic → unit tests, no simulator.** Readiness/ACWR math lives in
+   `sendlog-health-core` (`swift test` on macOS); attempt detection, RPE model,
+   Tindeq protocol, and date logic live in `SendLogWatchTests`. New native logic
+   should land in one of these testable layers first, UI wiring second.
+2. **WebView UI → browser against the local stack** (`npm run dev:local` +
+   `?fake-tindeq`). Everything React is fully exercisable here.
+3. **Capacitor shell + watch UI → simulators.** `npm run sync:local` (web
+   bundle + health plugin + watch all hit the local stack), then run the App
+   scheme (paired iPhone+watch simulators for the companion); log in with
+   `dev@sendmeter.test` / `devpassword`. Good for layout, navigation,
+   WatchConnectivity relays, and the watch UI. HealthKit sample data can be
+   added by hand in the simulator's Health app, but background delivery is
+   unreliable there.
+4. **Device / TestFlight — the only truth for:** HealthKit runtime + background
+   delivery, real HRV/sleep data, Bluetooth (Tindeq), attempt detection (real
+   motion sensors), Live Activities, complications/Smart Stack, passkeys, and
+   signing. Flag these as device-only rather than claiming them verified.
+
+**Simulator loop (rung 3), learned the hard way:**
+
+```bash
+npm run sync:local        # local-config web bundle → ios/App/App/public
+# Xcode Run (App scheme, Debug) is the easy path — it installs fresh automatically.
+# Headless equivalent:
+xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+  -destination 'generic/platform=iOS Simulator' build
+xcodebuild -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" \
+  -configuration Debug -destination 'generic/platform=watchOS Simulator' build
+# then install + launch onto the booted sims (products live under
+# ~/Library/Developer/Xcode/DerivedData/App-<hash>/Build/Products/):
+xcrun simctl install booted <...>/Debug-iphonesimulator/App.app
+xcrun simctl launch booted com.jirathip.sendlog
+xcrun simctl install booted "<...>/Debug-watchsimulator/SendLogWatch Watch App.app"
+xcrun simctl launch booted com.jirathip.sendlog.watchkitapp
+```
+
+- **Never run two xcodebuilds on this project concurrently** — they corrupt
+  each other's SPM checkouts in shared DerivedData ("couldn't be removed /
+  File exists" resolve errors). Build sequentially; a failed resolve just
+  needs a rerun.
+- **Stale installs are the #1 trap.** Launching a simulator does NOT update
+  the app in it — an old install keeps the old (hosted-project) config and
+  login as `dev@sendmeter.test` fails "wrong email or password". The tell on
+  BOTH phone and watch: pre-rename "SEND LOG" branding on the sign-in screen
+  = stale build (current source says Sendmeter everywhere). When in doubt,
+  reinstall via simctl. The watch app is a
+  separate install on the watch sim: rebuilding/reinstalling the phone app
+  does NOT refresh it.
+- **Watch sign-in:** the watch gets its session relayed from the running,
+  signed-in phone app over WatchConnectivity (works between *paired* sims).
+  Watch running alone = manual password sign-in — expected, not a bug; the
+  seeded local user's password works there directly.
+
+**Caveat for rung 4:** device builds still have the hosted Supabase config
+**compiled in** (localhost is meaningless on a physical device) — a Debug
+device build writes to **production**. When testing native flows on-device,
+sign in with a throwaway dev account, never the real account.
+
+**Warning:** `sync:local` leaves a local-config web bundle in
+`ios/App/App/public` — run `npm run sync` (or let fastlane's lane rebuild)
+before archiving; fastlane runs its own `npm run build` so TestFlight builds
+are safe regardless.
 
 ## Architecture
 

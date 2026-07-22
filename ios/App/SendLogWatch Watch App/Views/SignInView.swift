@@ -9,7 +9,7 @@ struct SignInView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
-                Text("SEND LOG")
+                Text("SENDMETER")
                     .font(.headline)
 
                 // Preferred path: pull the session from the paired iPhone so

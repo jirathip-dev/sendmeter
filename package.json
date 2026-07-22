@@ -10,7 +10,14 @@
     "test": "vitest run",
     "lint": "eslint .",
     "preview": "vite preview",
-    "sync": "cap sync ios"
+    "sync": "cap sync ios",
+    "build:local": "tsc --noEmit && vite build --mode development",
+    "sync:local": "npm run build:local && cap sync ios",
+    "dev:local": "./scripts/dev-local.sh",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:status": "supabase status"
   },
   "dependencies": {
     "@capacitor-community/apple-sign-in": "^7.1.0",

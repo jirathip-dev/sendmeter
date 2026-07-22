@@ -14,6 +14,17 @@ enum SupabaseService {
     /// fails RLS. Fresh access tokens arrive via the phone relay instead
     /// (on every auth event + app foreground).
     static let client: SupabaseClient = {
+        // Simulator-only: localhost is meaningless on a physical device, so
+        // Debug-on-device deliberately stays on the hosted project (test
+        // there with a throwaway account) — only the simulator gets pointed
+        // at the local Supabase stack.
+        #if DEBUG && targetEnvironment(simulator)
+        return SupabaseClient(
+            supabaseURL: URL(string: "http://127.0.0.1:54321")!,
+            supabaseKey: "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH",
+            options: SupabaseClientOptions(auth: .init(autoRefreshToken: false))
+        )
+        #else
         guard
             let url = Bundle.main.url(forResource: "SupabaseConfig", withExtension: "plist"),
             let dict = NSDictionary(contentsOf: url) as? [String: String],
@@ -27,5 +38,6 @@ enum SupabaseService {
             supabaseKey: anonKey,
             options: SupabaseClientOptions(auth: .init(autoRefreshToken: false))
         )
+        #endif
     }()
 }
