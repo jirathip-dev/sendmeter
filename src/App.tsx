@@ -24,6 +24,7 @@ import PasskeyPrompt from "./components/PasskeyPrompt";
 import AccountSheet from "./components/AccountSheet";
 import Sheet from "./components/Sheet";
 import TrashSheet from "./components/TrashSheet";
+import UnlinkedSessionNudge from "./components/UnlinkedSessionNudge";
 import RealtimeVersionProvider from "./components/RealtimeVersionProvider";
 import ToastProvider from "./components/ToastProvider";
 import { TindeqProvider } from "./hooks/TindeqProvider";
@@ -95,6 +96,10 @@ function AuthedApp({
   const [showPhaseChange, setShowPhaseChange] = useState(false);
   const [showWatchSheet, setShowWatchSheet] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  // The just-logged session, while it may still have same-day unlinked
+  // Tindeq recordings to nudge-link (SL-21). Cleared on dismiss/link, or by
+  // logging another session.
+  const [nudgeSession, setNudgeSession] = useState<Session | null>(null);
   const [form, setForm] = useState<LogFormState>({
     date: today(),
     type: "fingerboard",
@@ -164,8 +169,11 @@ function AuthedApp({
   );
 
   function submitSession() {
-    void addSession(form);
-    toast("Session logged");
+    void (async () => {
+      const saved = await addSession(form);
+      toast("Session logged");
+      if (saved) setNudgeSession(saved);
+    })();
     setShowModal(false);
     setForm({
       date: today(),
@@ -210,6 +218,14 @@ function AuthedApp({
               ×
             </button>
           </div>
+        )}
+        {/* SL-21 nudge: appears right after the Log Session sheet saves, if
+            same-day Tindeq recordings are still ungrouped. */}
+        {nudgeSession && (
+          <UnlinkedSessionNudge
+            session={nudgeSession}
+            onDismiss={() => setNudgeSession(null)}
+          />
         )}
         {loading ? (
           <div className="loading-center" style={{ padding: "72px 0" }}>

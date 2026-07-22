@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dateStr, today, daysAgo } from "./dates";
+import { dateStr, today, daysAgo, localDayRange } from "./dates";
 
 describe("dateStr", () => {
   it("formats a local date as zero-padded YYYY-MM-DD", () => {
@@ -27,5 +27,28 @@ describe("today / daysAgo", () => {
     const d = new Date();
     d.setDate(d.getDate() - 10);
     expect(daysAgo(10)).toBe(dateStr(d));
+  });
+});
+
+describe("localDayRange", () => {
+  it("spans exactly 24 hours", () => {
+    const { start, end } = localDayRange("2026-03-14");
+    expect(new Date(end).getTime() - new Date(start).getTime()).toBe(
+      24 * 60 * 60 * 1000,
+    );
+  });
+
+  it("start/end fall in the same local day as the input, end is exclusive", () => {
+    const { start, end } = localDayRange("2026-03-14");
+    expect(dateStr(new Date(start))).toBe("2026-03-14");
+    // One ms before the exclusive end is still the 14th; end itself rolls
+    // into the 15th.
+    expect(dateStr(new Date(new Date(end).getTime() - 1))).toBe("2026-03-14");
+    expect(dateStr(new Date(end))).toBe("2026-03-15");
+  });
+
+  it("handles month/year rollover", () => {
+    const { end } = localDayRange("2026-12-31");
+    expect(dateStr(new Date(end))).toBe("2027-01-01");
   });
 });

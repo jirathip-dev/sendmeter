@@ -22,7 +22,7 @@ import type {
   WorkoutListItem,
 } from "../types";
 import { SESSION_TYPES } from "../constants";
-import { today } from "./dates";
+import { localDayRange, today } from "./dates";
 
 /// Throws on a Postgrest error, otherwise returns `data`. Safe for any
 /// query except `.maybeSingle()`, where `data: null` with no error is a
@@ -414,6 +414,29 @@ export async function fetchRecordingsByGroup(
   return data.map(toRecording);
 }
 
+/// Same-LOCAL-day Tindeq recordings that haven't been grouped into any
+/// session yet (SL-21) — feeds the "link to this session?" nudge shown after
+/// logging a session. Narrower than History's "ungrouped" notion (which also
+/// treats a stale/orphaned group_id — its session got deleted — as loose):
+/// here `group_id is null` is the case that actually matters, a gauge run the
+/// user never turned into a session at all.
+export async function fetchUnlinkedRecordingsForDate(
+  date: string,
+): Promise<TindeqRecordingMeta[]> {
+  const { start, end } = localDayRange(date);
+  const data = unwrap(
+    await supabase
+      .from("tindeq_recordings")
+      .select(RECORDING_COLS)
+      .is("group_id", null)
+      .is("deleted_at", null)
+      .gte("recorded_at", start)
+      .lt("recorded_at", end)
+      .order("recorded_at", { ascending: false }),
+  );
+  return data.map(toRecording);
+}
+
 export async function fetchRecordingSamples(
   id: string,
 ): Promise<TindeqSample[]> {
@@ -632,6 +655,41 @@ export async function updateRecordingGroup(
       .single(),
   );
   return toRecording(data);
+}
+
+/// Link previously-ungrouped Tindeq recordings to a session via the same
+/// group_id convention History's multi-select flow uses (SL-21): mint a
+/// fresh group_id for the session if it doesn't have one yet (a session
+/// logged through the plain Log Session form never gets one), stamp it onto
+/// the recordings in one batch (mirrors updateRecordingsMeta's `.in()`
+/// pattern). Duration is recomputed from the recording span ONLY for tindeq
+/// sessions, where duration is defined as the gauge wall-clock span — for a
+/// manually-logged session the user just typed a duration into the form, and
+/// attaching a few gauge reps must not clobber it (e.g. a 90-min climbing
+/// session would become the reps' 12-min span).
+export async function linkRecordingsToSession(
+  session: { id: string; groupId: string | null; type: string },
+  recordingIds: string[],
+): Promise<void> {
+  if (recordingIds.length === 0) return;
+  const groupId = session.groupId ?? crypto.randomUUID();
+  if (!session.groupId) {
+    unwrap(
+      await supabase
+        .from("sessions")
+        .update({ group_id: groupId })
+        .eq("id", session.id)
+        .select("id"),
+    );
+  }
+  unwrap(
+    await supabase
+      .from("tindeq_recordings")
+      .update({ group_id: groupId })
+      .in("id", recordingIds)
+      .select("id"),
+  );
+  if (session.type === "tindeq") await recalcTindeqSessionDuration(groupId);
 }
 
 /// Recompute a Tindeq session's duration from its recordings' actual time span
