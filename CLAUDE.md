@@ -378,8 +378,17 @@ are safe regardless.
 - Commit only when asked; branch off `main` first. The iPhone health-sync + rename
   work (`feature/iphone-health-sync`) is **merged to `main`**; on-device TestFlight
   verification of the HealthKit runtime + watch UX is still pending.
-- Backlog + planning live in Notion (the "Sendmeter" page → Backlog database) and
-  in `~/.claude/plans/`. Native/HealthKit runtime behavior can't be verified in the
-  simulator — flag device-only work rather than claiming it verified.
+- Backlog lives in **GitHub Issues** on this repo (migrated from Notion
+  2026-07-21; each issue title is prefixed `SL-N` carrying over the old Notion
+  auto-increment ID, so commit-message references like "SL-91" still resolve —
+  search `SL-91` in Issues). Labels mirror the old Notion schema: `type: *`
+  (bug/idea/refactor/performance/security/chore), `area: *` (dashboard,
+  tindeq-ble, watch-app, etc.), `priority: *` (urgent/high/medium/low), plus
+  `blocks-release`. Closed issues use `--reason completed` for shipped work and
+  `--reason "not planned"` for dropped ideas — the Notion reason string is
+  `"not planned"` with a space, not `not_planned` (the latter silently fails).
+  Planning docs still live in `~/.claude/plans/`. Native/HealthKit runtime
+  behavior can't be verified in the simulator — flag device-only work rather
+  than claiming it verified.
 - App Store submission state is tracked in `docs/app-store-checklist.md` and
   `ios/COMPANION_SETUP.md` (signing troubleshooting + the health device-test checklist).
