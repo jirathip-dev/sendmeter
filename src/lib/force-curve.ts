@@ -257,65 +257,190 @@ export const ZONE_PROTOCOLS: Record<
   endurance: { holdS: 30, restRepsS: 30, reps: 8, sets: 1, restSetsS: 0 },
 };
 
+// ---------------------------------------------------------------------------
+// Adjustable intensity (SL-97): scaling the target load down/up automatically
+// extends/shortens the hold time so the training dose stays equivalent,
+// derived from the same critical-force model. All pure — the UI only stores
+// the chosen pct and calls back in here.
+
+export const ZONE_INTENSITY = { min: 60, max: 110, step: 5, default: 100 } as const;
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+function clampIntensity(pct: number): number {
+  return clamp(pct, ZONE_INTENSITY.min, ZONE_INTENSITY.max);
+}
+
+/// Hold times <20s round to the nearest second; ≥20s round to the nearest 5s
+/// (matches how the base protocols are already specified: 5/7/10s vs 30s).
+function roundHoldS(s: number): number {
+  return s < 20 ? Math.round(s) : Math.round(s / 5) * 5;
+}
+
+const HOLD_CLAMP_S: Record<Exclude<TrainingQuality, "endurance">, [number, number]> = {
+  power: [3, 15],
+  strength: [5, 30],
+  "power-endurance": [5, 15],
+};
+
+/// Adjusted hold for the above-CF zones (power/strength/power-endurance):
+/// scaling load down should extend the hold so the per-rep training dose —
+/// impulse above CF (W′ cost), or plain force×time without a CF fit — stays
+/// constant.
+function adjustedHoldAboveCf(
+  quality: Exclude<TrainingQuality, "endurance">,
+  model: ForceCurveModel,
+  baseKg: number,
+  newKg: number,
+  baseHoldS: number,
+): number {
+  const [lo, hi] = HOLD_CLAMP_S[quality];
+  let holdS: number;
+  if (model.cf !== null && model.wPrime !== null && baseKg > model.cf) {
+    if (newKg > model.cf) {
+      // Constant W′ cost: (F − CF) × t stays fixed.
+      holdS = ((baseKg - model.cf) * baseHoldS) / (newKg - model.cf);
+    } else {
+      // Very low intensity — at/below CF the W′ cost is undefined (the hold
+      // could run indefinitely); cap at the zone's longest allowed hold.
+      holdS = hi;
+    }
+  } else {
+    // No CF fit (or the odd case where even the 100% target sits at/below
+    // CF) — impulse-preserving fallback: force × time held constant.
+    holdS = (baseHoldS * baseKg) / newKg;
+  }
+  return roundHoldS(clamp(holdS, lo, hi));
+}
+
+/// Adjusted hold + reps for endurance: total time-under-tension (reps ×
+/// hold) stays constant. Hold grows with the square of how much the load
+/// dropped (F(t) = CF + W′/t means halving the excess-over-CF roughly
+/// quadruples sustainable duration at fixed dose), reps shrink to compensate.
+/// Exported for direct testing of the [20, 240]s clamp (unreachable through
+/// zoneTarget/zonePrescription alone since those clamp pct to [60, 110] first).
+export function adjustedEndurance(
+  baseHoldS: number,
+  baseReps: number,
+  pct: number,
+): { holdS: number; reps: number } {
+  const rawHoldS = baseHoldS * (100 / pct) ** 2;
+  const holdS = roundHoldS(clamp(rawHoldS, 20, 240));
+  const reps = clamp(Math.round((baseReps * baseHoldS) / holdS), 1, baseReps);
+  return { holdS, reps };
+}
+
 export function zoneTarget(
   model: ForceCurveModel,
   quality: TrainingQuality,
+  intensityPct = 100,
 ): ZoneTarget | null {
   const round1 = (v: number) => Math.round(v * 10) / 10;
+  const pct = clampIntensity(intensityPct);
+  const scale = pct / 100;
+  const suffix = pct === 100 ? "" : ` · intensity ${pct}%`;
   switch (quality) {
     case "power": {
-      const t = model.maxF * 0.95;
+      const baseKg = round1(model.maxF * 0.95);
+      const newKg = round1(baseKg * scale);
       return {
         quality,
         label: "Power",
-        targetKg: round1(t),
-        lowKg: round1(model.maxF * 0.9),
-        highKg: round1(model.maxF),
-        workS: 5,
+        targetKg: newKg,
+        lowKg: round1(model.maxF * 0.9 * scale),
+        highKg: round1(model.maxF * scale),
+        workS: adjustedHoldAboveCf("power", model, baseKg, newKg, ZONE_PROTOCOLS.power.holdS),
         protocol: "5s max pulls · full recovery (2–3 min) · 5–8 reps",
-        basis: `90–100% of your best short-window force (${round1(model.maxF)} kg)`,
+        basis: `90–100% of your best short-window force (${round1(model.maxF)} kg)${suffix}`,
       };
     }
     case "strength": {
-      const t = model.maxF * 0.85;
+      const baseKg = round1(model.maxF * 0.85);
+      const newKg = round1(baseKg * scale);
       return {
         quality,
         label: "Strength",
-        targetKg: round1(t),
-        lowKg: round1(model.maxF * 0.8),
-        highKg: round1(model.maxF * 0.9),
-        workS: 10,
+        targetKg: newKg,
+        lowKg: round1(model.maxF * 0.8 * scale),
+        highKg: round1(model.maxF * 0.9 * scale),
+        workS: adjustedHoldAboveCf("strength", model, baseKg, newKg, ZONE_PROTOCOLS.strength.holdS),
         protocol: "7–10s holds · 2–3 min rest · 4–6 reps",
-        basis: `80–90% of max (${round1(model.maxF)} kg)`,
+        basis: `80–90% of max (${round1(model.maxF)} kg)${suffix}`,
       };
     }
     case "power-endurance": {
       if (model.cf === null || model.wPrime === null) return null;
       const f60 = model.cf + model.wPrime / 60;
+      const baseKg = round1(f60);
+      const newKg = round1(baseKg * scale);
       return {
         quality,
         label: "Power Endurance",
-        targetKg: round1(f60),
-        lowKg: round1(f60 * 0.93),
-        highKg: round1(f60 * 1.07),
-        workS: 7,
+        targetKg: newKg,
+        lowKg: round1(f60 * 0.93 * scale),
+        highKg: round1(f60 * 1.07 * scale),
+        workS: adjustedHoldAboveCf(
+          "power-endurance",
+          model,
+          baseKg,
+          newKg,
+          ZONE_PROTOCOLS["power-endurance"].holdS,
+        ),
         protocol: "repeaters 7s on / 3s off × 6 · 2 min rest · 3–5 sets",
-        basis: `force sustainable ~60s: CF ${round1(model.cf)} + W′/60`,
+        basis: `force sustainable ~60s: CF ${round1(model.cf)} + W′/60${suffix}`,
       };
     }
     case "endurance": {
       if (model.cf === null) return null;
-      const t = model.cf * 0.9;
+      const baseKg = round1(model.cf * 0.9);
+      const newKg = round1(baseKg * scale);
+      const { holdS } = adjustedEndurance(ZONE_PROTOCOLS.endurance.holdS, ZONE_PROTOCOLS.endurance.reps, pct);
       return {
         quality,
         label: "Endurance",
-        targetKg: round1(t),
-        lowKg: round1(model.cf * 0.8),
-        highKg: round1(model.cf),
-        workS: 30,
+        targetKg: newKg,
+        lowKg: round1(model.cf * 0.8 * scale),
+        highKg: round1(model.cf * scale),
+        workS: holdS,
         protocol: "30s on / 30s off × 6–10, or continuous 3–10 min",
-        basis: `80–100% of critical force (${round1(model.cf)} kg)`,
+        basis: `80–100% of critical force (${round1(model.cf)} kg)${suffix}`,
       };
     }
   }
+}
+
+export interface ZonePrescription {
+  target: ZoneTarget;
+  holdS: number;
+  reps: number;
+  sets: number;
+  restRepsS: number;
+  restSetsS: number;
+}
+
+/// Full adjusted prescription for an armed zone — the gauge band (`target`)
+/// plus the guided-timer numbers, all derived from one pct (pure; consumed
+/// by zoneSelection.ts so callers touch a single function).
+export function zonePrescription(
+  model: ForceCurveModel,
+  quality: TrainingQuality,
+  intensityPct = 100,
+): ZonePrescription | null {
+  const target = zoneTarget(model, quality, intensityPct);
+  if (!target) return null;
+  const zp = ZONE_PROTOCOLS[quality];
+  if (quality === "endurance") {
+    const { holdS, reps } = adjustedEndurance(zp.holdS, zp.reps, clampIntensity(intensityPct));
+    return { target, holdS, reps, sets: zp.sets, restRepsS: zp.restRepsS, restSetsS: zp.restSetsS };
+  }
+  return {
+    target,
+    holdS: target.workS,
+    reps: zp.reps,
+    sets: zp.sets,
+    restRepsS: zp.restRepsS,
+    restSetsS: zp.restSetsS,
+  };
 }

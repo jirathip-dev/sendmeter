@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveForce } from "../hooks/useLiveForce";
 import { useTindeqSession } from "../hooks/useTindeqSession";
@@ -16,6 +17,7 @@ import {
   computeForceCurve,
   CURVE_PERIODS,
   pickCurveRecordings,
+  ZONE_INTENSITY,
 } from "../lib/force-curve";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import { buildTimeline, presetTargetKg, timelineAt } from "../lib/protocol";
@@ -33,11 +35,38 @@ import SideAsymmetryCard from "./SideAsymmetryCard";
 import TagManagerSheet from "./TagManagerSheet";
 import TagSideEditor from "./TagSideEditor";
 import TargetZonesCard from "./TargetZonesCard";
-import { buildZoneSelection, type ZoneSelection } from "../lib/zoneSelection";
+import {
+  buildZoneSelection,
+  loadIntensity,
+  saveIntensity,
+  selectedQuality,
+  type ZoneSelection,
+} from "../lib/zoneSelection";
 import ZoneFocusCard from "./ZoneFocusCard";
 import ForceFullscreen from "./ForceFullscreen";
 import ForceTrendChart from "./ForceTrendChart";
 import LiveForceSparkline from "./LiveForceSparkline";
+
+/// Compact −/+ stepper button (shared by the Protocol-presets intensity dial;
+/// formerly lived on TargetZonesCard's per-quality stepper before SL-97b
+/// lifted intensity to one global control here).
+const stepBtnStyle = (disabled: boolean): CSSProperties => ({
+  width: 24,
+  height: 24,
+  borderRadius: 6,
+  border: "1px solid var(--border)",
+  background: "var(--surface-1)",
+  color: "var(--ink-muted)",
+  fontSize: 14,
+  fontWeight: 700,
+  lineHeight: 1,
+  cursor: disabled ? "default" : "pointer",
+  opacity: disabled ? 0.4 : 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  WebkitTapHighlightColor: "transparent",
+});
 
 interface ForceViewProps {
   onLogSession: (input: {
@@ -92,6 +121,10 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   const [listError, setListError] = useState<string | null>(null);
   const [zoneSel, setZoneSel] = useState<ZoneSelection | null>(null);
   const [preset, setPreset] = useState<TindeqPreset | null>(null);
+  // Global session-intensity dial (SL-97b) — one number for the whole
+  // Protocol-presets section (zones AND custom presets), lazily seeded from
+  // localStorage so a returning user keeps their last adjustment.
+  const [intensityPct, setIntensityPct] = useState(() => loadIntensity());
   // Force-curve model for the selected tag/side — auto-computed (no button)
   // and shared by the curve card + the target-zones picker.
   const [curveModel, setCurveModel] = useState<ForceCurveModel | null>(null);
@@ -457,6 +490,26 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
           label: preset.name,
         }
       : (zoneSel?.target ?? null);
+
+  // The composed exercise label a zone selection arms/re-arms under (matches
+  // the `tag` prop TargetZonesCard/ZoneFocusCard render with). Null while no
+  // tag is selected yet.
+  const zoneTag = effectiveTag ? (chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag) : null;
+
+  // Move the global intensity dial: persist + update state, and if a zone is
+  // currently armed, re-arm it at the new pct so its baked target/timer
+  // numbers update immediately. Custom presets are UNAFFECTED by this dial —
+  // their load is never rescaled, only recommended zones respond to it.
+  function changeIntensity(delta: number) {
+    const next = Math.min(ZONE_INTENSITY.max, Math.max(ZONE_INTENSITY.min, intensityPct + delta));
+    if (next === intensityPct) return;
+    setIntensityPct(next);
+    saveIntensity(next);
+    const q = selectedQuality(zoneSel);
+    if (q && model && zoneTag) {
+      setZoneSel(buildZoneSelection(model, q, zoneTag, zoneSel!.protocol.alternateSides, next));
+    }
+  }
 
   // Get-ready countdown preference (5s PREPARE before the first hold).
   const [prepare, setPrepare] = useState(
@@ -995,40 +1048,73 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       )}
 
       {/* Protocols: the zone target is the recommended/default protocol
-          (from your force curve); custom presets follow. */}
+          (from your force curve); custom presets follow. The session-
+          intensity dial (SL-97) applies to RECOMMENDED ZONES ONLY — it scales
+          the target load and adapts hold time to keep the training dose
+          equivalent. Custom presets are never touched by it; a preset's
+          quality badge below still reflects whatever load it actually
+          resolves to. */}
       <div
         style={{
-          fontSize: "var(--t-2xs)",
-          color: "var(--ink-faint)",
-          textTransform: "uppercase",
-          letterSpacing: "0.1em",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
           margin: "20px 0 10px",
         }}
       >
-        Protocol presets
+        <div
+          style={{
+            fontSize: "var(--t-2xs)",
+            color: "var(--ink-faint)",
+            textTransform: "uppercase",
+            letterSpacing: "0.1em",
+          }}
+        >
+          Protocol presets
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>Intensity</span>
+          <button
+            style={stepBtnStyle(intensityPct <= ZONE_INTENSITY.min)}
+            disabled={intensityPct <= ZONE_INTENSITY.min}
+            onClick={() => changeIntensity(-ZONE_INTENSITY.step)}
+          >
+            −
+          </button>
+          <span
+            style={{
+              fontSize: "var(--t-xs)",
+              color: intensityPct > 100 ? "var(--warning)" : "var(--ink)",
+              fontWeight: 700,
+              width: 34,
+              textAlign: "center",
+            }}
+          >
+            {intensityPct}%
+          </span>
+          <button
+            style={stepBtnStyle(intensityPct >= ZONE_INTENSITY.max)}
+            disabled={intensityPct >= ZONE_INTENSITY.max}
+            onClick={() => changeIntensity(ZONE_INTENSITY.step)}
+          >
+            +
+          </button>
+        </div>
       </div>
-      {effectiveTag && (
+      {zoneTag && (
         <TargetZonesCard
-          tag={chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag}
+          tag={zoneTag}
           model={model}
           selected={zoneSel}
           onSelect={setZoneSel}
+          intensityPct={intensityPct}
         />
       )}
-      {effectiveTag && (
+      {effectiveTag && zoneTag && (
         <ZoneFocusCard
           recordings={recordings.filter((r) => r.tag === effectiveTag)}
           model={model}
-          onPick={(q) =>
-            setZoneSel(
-              buildZoneSelection(
-                model,
-                q,
-                chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag,
-                false,
-              ),
-            )
-          }
+          onPick={(q) => setZoneSel(buildZoneSelection(model, q, zoneTag, false, intensityPct))}
         />
       )}
       <PresetManager selectedId={preset?.id ?? null} onSelect={setPreset} presetRefs={presetRefs} />

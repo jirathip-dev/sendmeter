@@ -75,7 +75,8 @@ export function presetTargetKg(
     const pct = Math.min(150, p.targetPct + (clampedSet - 1) * p.pctStep);
     return Math.round(((pct / 100) * base) * 10) / 10;
   }
-  return p.targetKg;
+  if (p.targetKg == null) return null;
+  return Math.round(p.targetKg * 10) / 10;
 }
 
 export function buildTimeline(
