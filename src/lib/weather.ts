@@ -8,12 +8,23 @@ export interface SendConditions {
   humidity: number; // %
   score: number; // 0–100 absolute
   label: "Prime" | "Good" | "Fair" | "Poor";
-  /// Where today's score sits in the last ~30 days of local hourly weather
-  /// (SL-91) — 0–100, or null if the history is unavailable/too short. This
-  /// is the signal that matters in a hot climate where the absolute score is
-  /// always "Poor": "today is better than N% of recent hours here".
+  /// Where right now ranks against the SAME local hour of day on the last
+  /// ~30 days (issue #99) — 0–100, or null if there are fewer than 20 such
+  /// days. This is the signal that matters in a hot climate where the
+  /// absolute score is always "Poor": "3pm today is better than N of the
+  /// last M 3pm's here", comparing like with like instead of pooling every
+  /// hour (night vs. midday) into one distribution.
   percentile: number | null;
-  /// The local 30-day distribution the percentile is measured against
+  /// Raw counts behind `percentile` — the countable claim the banner makes.
+  /// Null exactly when `percentile` is null.
+  daysBelow: number | null;
+  daysTotal: number | null;
+  /// Local hour (0–23) the reading was taken, used to pull the matching
+  /// same-hour series out of `hist` at render time. Computed once here (not
+  /// in render — react-compiler forbids impure `Date.now()`/`getHours()` in
+  /// render bodies).
+  hourOfDay: number;
+  /// The local 30-day climate history `percentile` is measured against
   /// (SL-91b), so the sheet can plot today against it. Null when unavailable.
   hist: ClimateSummary | null;
   fetchedAt: number; // epoch ms
@@ -38,7 +49,7 @@ export function computeSendScore(tempC: number, humidity: number): number {
   );
 }
 
-function scoreLabel(score: number): SendConditions["label"] {
+export function scoreLabel(score: number): SendConditions["label"] {
   if (score >= 75) return "Prime";
   if (score >= 55) return "Good";
   if (score >= 35) return "Fair";
@@ -57,25 +68,58 @@ export function percentileColor(p: number): string {
   return p >= 75 ? "var(--success)" : p >= 40 ? "var(--warning)" : "var(--danger)";
 }
 
-/// Where `current` sits within `history` — the fraction of hours scoring
-/// strictly lower, as 0–100. Null until there's a meaningful sample (~4 days
-/// of hourly data) so a sparse fetch can't produce a misleading percentile.
-export function scorePercentile(current: number, history: number[]): number | null {
-  if (history.length < 100) return null;
-  const below = history.reduce((n, s) => n + (s < current ? 1 : 0), 0);
-  return Math.round((below / history.length) * 100);
+/// Every day's send score at a given local hour-of-day, chronological, nulls
+/// dropped — `hist.scores` is aligned so index `i` is day `floor(i/24)`, hour
+/// `i%24` (see `fetchLocalClimate`'s `&timezone=auto`). This is the series
+/// `dayRank` compares `current` against: same time of day, different days.
+export function sameHourScores(scores: (number | null)[], hourOfDay: number): number[] {
+  const out: number[] = [];
+  for (let i = hourOfDay; i < scores.length; i += 24) {
+    const s = scores[i];
+    if (s != null) out.push(s);
+  }
+  return out;
 }
 
-const HIST_KEY = "sendmeter:climate-hist";
+/// Where `current` ranks among `dayScores` (typically `sameHourScores`'
+/// output) — the count scoring strictly lower, the total, and the resulting
+/// percentile. Null when there are fewer than 20 days: too sparse to claim a
+/// rank at a single hour of day.
+export function dayRank(
+  current: number,
+  dayScores: number[],
+): { below: number; total: number; percentile: number } | null {
+  const total = dayScores.length;
+  if (total < 20) return null;
+  const below = dayScores.reduce((n, s) => n + (s < current ? 1 : 0), 0);
+  return { below, total, percentile: Math.round((below / total) * 100) };
+}
+
+/// Label for a same-hour-of-day percentile (issue #99) — aligned with
+/// `percentileColor`'s thresholds so Prime and Good both read as the same
+/// green: ≥90 is the top decile ("Prime"), ≥75 "Good", ≥40 "Fair", else
+/// "Poor".
+export function percentileLabel(p: number): SendConditions["label"] {
+  if (p >= 90) return "Prime";
+  if (p >= 75) return "Good";
+  if (p >= 40) return "Fair";
+  return "Poor";
+}
+
+const HIST_KEY = "sendmeter:climate-hist-v2";
 /// Weekly cache bucket — the local climate distribution barely moves week to
 /// week, so we refetch the (heavier) archive at most once per 7 days.
 const weekBucket = (nowMs: number) => Math.floor(nowMs / (7 * 86_400_000));
 
-/// The local 30-day climate the percentile is measured against (SL-91b): the
-/// hourly send scores plus the raw temperature/humidity ranges, so the sheet
-/// can show today against the whole distribution instead of a bare number.
+/// The local 30-day climate the percentile is measured against (issue #99):
+/// hourly send scores aligned to LOCAL time (index `i` = day `floor(i/24)`,
+/// hour `i%24` — see `fetchLocalClimate`'s `&timezone=auto`) plus the raw
+/// temperature/humidity ranges, so the sheet can show today against the
+/// same-hour history instead of a bare number. `scores[i]` is null for an
+/// hour the archive didn't return — kept as a placeholder (not skipped) so
+/// the day/hour index arithmetic stays valid.
 export interface ClimateSummary {
-  scores: number[]; // hourly send scores over the window
+  scores: (number | null)[]; // hourly send scores over the window, local-time aligned
   tempMin: number;
   tempMax: number;
   humMin: number;
@@ -87,22 +131,12 @@ interface ClimateHist extends ClimateSummary {
   week: number;
 }
 
-/// Bucket send scores into `bins` equal 0–100 columns — the histogram the
-/// sheet draws. Exported for the distribution chart + tests.
-export function scoreHistogram(scores: number[], bins = 20): number[] {
-  const counts = new Array<number>(bins).fill(0);
-  for (const s of scores) {
-    const i = Math.min(bins - 1, Math.max(0, Math.floor((s / 100) * bins)));
-    counts[i]!++;
-  }
-  return counts;
-}
-
 /// Last ~30 days of hourly local weather, each hour run through the SAME
-/// absolute scorer, so the percentile compares like with like. From
-/// Open-Meteo's ERA5 archive (which lags ~2 days). Cached per rounded
-/// location + week in localStorage. Returns null on any failure — the
-/// percentile + distribution just degrade to absent.
+/// absolute scorer, so the day comparison compares like with like. From
+/// Open-Meteo's ERA5 archive (which lags ~2 days), requested with
+/// `&timezone=auto` so the hourly arrays align to LOCAL time rather than UTC.
+/// Cached per rounded location + week in localStorage. Returns null on any
+/// failure — the percentile just degrades to absent.
 async function fetchLocalClimate(
   lat: string,
   lon: string,
@@ -130,8 +164,18 @@ async function fetchLocalClimate(
   const end = new Date(Date.now() - 2 * 86_400_000); // ERA5 lags ~2 days
   const start = new Date(end.getTime() - 30 * 86_400_000);
   try {
+    // Two accepted limitations, not engineered around:
+    // (a) `timezone=auto` returns ONE fixed UTC offset for the whole range —
+    //     days on the far side of a DST transition inside the 30-day window
+    //     are off by 1 hour against `sameHourScores`' hour-of-day index. Fine
+    //     for a weather hint, not for anything that needs to be exact.
+    // (b) `hourOfDay` (below, in `fetchSendConditions`) comes from the
+    //     device's clock, which matches the weather location except while
+    //     travelling across timezones before this cache (bucketed weekly)
+    //     expires — the same-hour comparison would then be comparing the
+    //     wrong local hour at the new location.
     const res = await fetch(
-      `https://archive-api.open-meteo.com/v1/era5?latitude=${lat}&longitude=${lon}&start_date=${iso(start)}&end_date=${iso(end)}&hourly=temperature_2m,relative_humidity_2m`,
+      `https://archive-api.open-meteo.com/v1/era5?latitude=${lat}&longitude=${lon}&start_date=${iso(start)}&end_date=${iso(end)}&hourly=temperature_2m,relative_humidity_2m&timezone=auto`,
     );
     if (!res.ok) return null;
     const data = (await res.json()) as {
@@ -143,7 +187,9 @@ async function fetchLocalClimate(
     const temps = data.hourly?.temperature_2m;
     const hums = data.hourly?.relative_humidity_2m;
     if (!temps || !hums) return null;
-    const scores: number[] = [];
+    // Push null (not skip) for a missing hour — skipping would shift every
+    // later index off its day/hour-of-day slot and break `sameHourScores`.
+    const scores: (number | null)[] = [];
     let tempMin = Infinity;
     let tempMax = -Infinity;
     let humMin = Infinity;
@@ -151,14 +197,17 @@ async function fetchLocalClimate(
     for (let i = 0; i < temps.length; i++) {
       const t = temps[i];
       const h = hums[i];
-      if (t == null || h == null) continue;
+      if (t == null || h == null) {
+        scores.push(null);
+        continue;
+      }
       scores.push(computeSendScore(t, h));
       if (t < tempMin) tempMin = t;
       if (t > tempMax) tempMax = t;
       if (h < humMin) humMin = h;
       if (h > humMax) humMax = h;
     }
-    if (scores.length === 0) return null;
+    if (tempMin === Infinity) return null; // every hour was null
     const summary: ClimateSummary = { scores, tempMin, tempMax, humMin, humMax };
     try {
       localStorage.setItem(
@@ -172,6 +221,164 @@ async function fetchLocalClimate(
   } catch {
     return null;
   }
+}
+
+// ---- Fake-mode fixtures (browser-testable, no geolocation/network) --------
+// `?fake-weather` (default scenario "hot") or `?fake-weather=<scenario>` short-
+// circuits `fetchSendConditions` into returning a synthesized, deterministic
+// `SendConditions` — mirrors `?fake-tindeq` (see useTindeq.ts) so Send
+// Conditions can be exercised in `npm run dev:local` without a device's
+// location or live Open-Meteo calls. Scenarios:
+//   hot     (default) — issue #99: current 35°C/45% is absolute Poor but ranks
+//           in the top decile against the SAME hour of day on the other ~30
+//           days (percentile ≥90 at every hour — verified by a script, see
+//           `fakeHotHistory`).
+//   prime   — current 5°C/30% against a mild-climate history → absolute
+//           Prime, and ≥90th same-hour percentile at every hour (verified —
+//           see `fakePrimeHistory`).
+//   bad     — the SAME hot-climate history as `hot`, but a worse current
+//           reading (36°C/95%) → a low same-hour percentile ("below par for
+//           here").
+//   no-hist — current reading with no local history at all (hist/percentile
+//           both null) — exercises the degraded UI (no banner, no chart).
+const weatherParams =
+  typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+export const WEATHER_FAKE_MODE = weatherParams?.has("fake-weather") ?? false;
+const WEATHER_FAKE_SCENARIO = weatherParams?.get("fake-weather") || "hot";
+
+/// Deterministic (no `Math.random`) hourly diurnal pattern for a fake ~30-day
+/// climate history — 30 days × 24h = 720 samples, the same shape a real ERA5
+/// pull returns (no nulls). Temp/humidity each swing over the day between
+/// `mid ± amp` following a shaped cosine peaking at 15:00 (mid-afternoon
+/// heat); `p` > 1 narrows the extremes (e.g. a brief afternoon dry snap
+/// rather than half the day), and a `phaseOffsetHours` lag on humidity lets a
+/// few hours land near the day's optimum instead of humidity being a pure
+/// mirror image of temperature. A small day-to-day drift (`sin` over the
+/// ~30-day window) adds gentle variation on top. `dryWetAmp` (default 0)
+/// layers in a SEPARATE, rare brief-dry-spell event across days — near 0 most
+/// days (wetter, `+dryWetAmp`) but collapsing to the plain diurnal value for
+/// the ~1 day nearest `dryPhaseDay`, `dryQ` controlling how narrow that dip
+/// is — so a day-to-day comparison at a fixed hour has real spread instead of
+/// the diurnal cycle repeating near-identically every day (which is what
+/// `sameHourScores` would otherwise compare against). Every hour is run
+/// through the same `computeSendScore` the real path uses, tracking min/max
+/// exactly like `fetchLocalClimate` does.
+function fakeHistory(opts: {
+  tempMid: number;
+  tempAmp: number;
+  humMid: number;
+  humAmp: number;
+  p?: number;
+  phaseOffsetHours?: number;
+  dryWetAmp?: number;
+  dryPhaseDay?: number;
+  dryQ?: number;
+}): ClimateSummary {
+  const {
+    tempMid,
+    tempAmp,
+    humMid,
+    humAmp,
+    p = 1,
+    phaseOffsetHours = 0,
+    dryWetAmp = 0,
+    dryPhaseDay = 15,
+    dryQ = 40,
+  } = opts;
+  const shaped = (theta: number) => Math.sign(Math.cos(theta)) * Math.abs(Math.cos(theta)) ** p;
+  const scores: (number | null)[] = [];
+  let tempMin = Infinity;
+  let tempMax = -Infinity;
+  let humMin = Infinity;
+  let humMax = -Infinity;
+  for (let i = 0; i < 720; i++) {
+    const hourOfDay = i % 24;
+    const day = Math.floor(i / 24);
+    const thetaT = (2 * Math.PI * (hourOfDay - 15)) / 24;
+    const thetaH = (2 * Math.PI * (hourOfDay - 15 + phaseOffsetHours)) / 24;
+    const dayTheta = (2 * Math.PI * day) / 30;
+    const dryPulseTheta = (2 * Math.PI * (day - dryPhaseDay)) / 30;
+    const dryPulse = Math.abs(Math.cos(dryPulseTheta / 2)) ** dryQ;
+    const t = tempMid + tempAmp * shaped(thetaT) + 0.5 * Math.sin(dayTheta);
+    const h = humMid - humAmp * shaped(thetaH) + 2 * Math.sin(dayTheta + 1) + dryWetAmp * (1 - dryPulse);
+    scores.push(computeSendScore(t, h));
+    if (t < tempMin) tempMin = t;
+    if (t > tempMax) tempMax = t;
+    if (h < humMin) humMin = h;
+    if (h > humMax) humMax = h;
+  }
+  return { scores, tempMin, tempMax, humMin, humMax };
+}
+
+// Same hot-climate shape backs both `hot` and `bad` (bad just reads a worse
+// current value against it): history temps ~25–36°C, humidity ~40–76%, with
+// one brief dry-spell day (`dryWetAmp`/`dryQ`, dipping near 40%) so the
+// same-hour-of-day comparison has real day-to-day spread rather than the
+// diurnal cycle alone (which repeats almost identically every day and would
+// make `hot`'s current reading tie the trough instead of beating it).
+// Verified (see the PR description's percentile check) that `hot`'s current
+// (35°C/45%) ranks ≥90th percentile against every one of the 24 hours-of-day.
+function fakeHotHistory(): ClimateSummary {
+  return fakeHistory({
+    tempMid: 30.5,
+    tempAmp: 5,
+    humMid: 54,
+    humAmp: 12,
+    p: 4,
+    dryWetAmp: 8,
+    dryQ: 150,
+  });
+}
+
+// Current 5°C/30% (score 83) against a mild, wide-swinging climate — tuned so
+// the current reading is at least tied by every historical hour rather than
+// beaten by some (a `tempMid` off-optimum, e.g. the previous 7.5°C, lets the
+// diurnal cycle pass exactly through the 6°C peak at some hour every day,
+// which then beats a merely-good current reading at that hour on every one
+// of the 30 days — percentile 0, not a fluke). `tempMid` at the scorer's own
+// optimum (6°C, current is 5°C) plus a humidity floor (18%) still drier than
+// current's 30% keeps `prime` ≥90th percentile at all 24 hours-of-day
+// (verified — see the PR description's percentile table).
+function fakePrimeHistory(): ClimateSummary {
+  return fakeHistory({ tempMid: 5, tempAmp: 8, humMid: 50, humAmp: 30 });
+}
+
+/// Pure fixture builder for `?fake-weather=<scenario>`, decoupled from the
+/// wall clock so it's testable for every hour-of-day (unlike `fakeSendConditions`,
+/// which supplies the real current hour). Exported for tests only.
+export function fakeSendConditionsForHour(scenario: string, hourOfDay: number): SendConditions {
+  const fetchedAt = Date.now();
+  const build = (tempC: number, humidity: number, hist: ClimateSummary | null): SendConditions => {
+    const score = computeSendScore(tempC, humidity);
+    const rank = hist ? dayRank(score, sameHourScores(hist.scores, hourOfDay)) : null;
+    return {
+      tempC,
+      humidity,
+      score,
+      label: scoreLabel(score),
+      percentile: rank?.percentile ?? null,
+      daysBelow: rank?.below ?? null,
+      daysTotal: rank?.total ?? null,
+      hourOfDay,
+      hist,
+      fetchedAt,
+    };
+  };
+  if (scenario === "prime") {
+    return build(5, 30, fakePrimeHistory());
+  }
+  if (scenario === "bad") {
+    return build(36, 95, fakeHotHistory());
+  }
+  if (scenario === "no-hist") {
+    return build(35, 45, null);
+  }
+  // "hot" (default) — issue #99.
+  return build(35, 45, fakeHotHistory());
+}
+
+function fakeSendConditions(scenario: string): SendConditions {
+  return fakeSendConditionsForHour(scenario, new Date().getHours());
 }
 
 async function getCoords(): Promise<{ lat: number; lon: number } | null> {
@@ -201,10 +408,12 @@ async function getCoords(): Promise<{ lat: number; lon: number } | null> {
 /// rounded to ~1 km before hitting the (keyless, public) Open-Meteo API so we
 /// don't ship a precise location off-device.
 export async function fetchSendConditions(): Promise<SendConditions | null> {
+  if (WEATHER_FAKE_MODE) return fakeSendConditions(WEATHER_FAKE_SCENARIO);
   const coords = await getCoords();
   if (!coords) return null;
   const lat = coords.lat.toFixed(2);
   const lon = coords.lon.toFixed(2);
+  const hourOfDay = new Date().getHours();
   try {
     // Current weather + the local 30-day history in parallel; the archive is
     // best-effort, so the percentile degrades to null without blocking.
@@ -229,13 +438,16 @@ export async function fetchSendConditions(): Promise<SendConditions | null> {
     const humidity = data?.current?.relative_humidity_2m;
     if (tempC == null || humidity == null) return null;
     const score = computeSendScore(tempC, humidity);
-    const percentile = climate ? scorePercentile(score, climate.scores) : null;
+    const rank = climate ? dayRank(score, sameHourScores(climate.scores, hourOfDay)) : null;
     return {
       tempC,
       humidity,
       score,
       label: scoreLabel(score),
-      percentile,
+      percentile: rank?.percentile ?? null,
+      daysBelow: rank?.below ?? null,
+      daysTotal: rank?.total ?? null,
+      hourOfDay,
       hist: climate,
       fetchedAt: Date.now(),
     };

@@ -2,15 +2,20 @@ import { useCallback, useEffect, useState } from "react";
 import {
   fetchSendConditions,
   percentileColor,
+  percentileLabel,
   sendScoreColor,
+  WEATHER_FAKE_MODE,
   type SendConditions,
 } from "../lib/weather";
 import SendConditionsSheet from "./SendConditionsSheet";
 
-const KEY = "sendmeter:send-conditions";
+const KEY = "sendmeter:send-conditions-v2";
 const FRESH_MS = 30 * 60 * 1000;
 
 function loadCached(): SendConditions | null {
+  // Fake data must never leak into real usage, and a real cached value must
+  // not mask the fake scenario — see weather.ts's `?fake-weather`.
+  if (WEATHER_FAKE_MODE) return null;
   try {
     const raw = localStorage.getItem(KEY);
     return raw ? (JSON.parse(raw) as SendConditions) : null;
@@ -24,6 +29,23 @@ function loadCached(): SendConditions | null {
 /// score is low; falls back to the absolute score otherwise.
 function condColor(c: SendConditions): string {
   return c.percentile !== null ? percentileColor(c.percentile) : sendScoreColor(c.score);
+}
+
+/// Same percentile-first framing as `condColor`: the local same-hour ranking
+/// (issue #99) is the headline when we have it, falling back to the absolute
+/// label otherwise.
+function condLabel(c: SendConditions): SendConditions["label"] {
+  return c.percentile !== null ? percentileLabel(c.percentile) : c.label;
+}
+
+/// The card's compact percentile detail (issue #99). Percentile reads as
+/// "how much of the distribution is below me", so ≥50 is naturally a "top"
+/// framing and <50 a "bottom" one — printing "top 100%" (percentile 0) would
+/// read backwards.
+function percentileDetail(percentile: number): string {
+  return percentile >= 50
+    ? `top ${Math.max(1, 100 - percentile)}%`
+    : `bottom ${Math.max(1, percentile)}%`;
 }
 
 /// Compact "send conditions" widget (SL-69): temperature + humidity → a climbing
@@ -42,10 +64,12 @@ export default function SendConditionsCard() {
     setLoading(false);
     if (c) {
       setCond(c);
-      try {
-        localStorage.setItem(KEY, JSON.stringify(c));
-      } catch {
-        /* ignore quota */
+      if (!WEATHER_FAKE_MODE) {
+        try {
+          localStorage.setItem(KEY, JSON.stringify(c));
+        } catch {
+          /* ignore quota */
+        }
       }
     } else {
       setFailed(true);
@@ -115,14 +139,14 @@ export default function SendConditionsCard() {
             whiteSpace: "nowrap",
           }}
         >
-          {loading ? "Checking…" : cond ? cond.label : failed ? "N/A" : "Check"}
+          {loading ? "Checking…" : cond ? condLabel(cond) : failed ? "N/A" : "Check"}
         </span>
       </div>
       {cond && !loading && (
         <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
           {Math.round(cond.tempC)}°C · {Math.round(cond.humidity)}%
           {cond.percentile !== null && (
-            <span style={{ color: condColor(cond) }}> · top {100 - cond.percentile}%</span>
+            <span style={{ color: condColor(cond) }}> · {percentileDetail(cond.percentile)}</span>
           )}
         </div>
       )}
