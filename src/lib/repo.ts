@@ -446,13 +446,23 @@ export async function fetchRecordingSamples(
   return data.samples.map(([t, kg]) => ({ t, kg }));
 }
 
-/// Raw kg samples for every recording in a Tindeq session, keyed by
-/// recording id — one query for the whole group rather than one per rep
-/// (issue #100's per-rep box plots). Only the kg half of each `[tMs, kg]`
-/// pair is kept; the box plot only needs the force distribution, not time.
-export async function fetchSamplesByGroup(
-  groupId: string,
+/// Raw kg samples for a specific set of recordings, keyed by recording id —
+/// one query per request rather than one per rep (issue #100's per-rep box
+/// plots). Only the kg half of each `[tMs, kg]` pair is kept; the box plot
+/// only needs the force distribution, not time.
+///
+/// Scoped to explicit ids (not a whole `group_id`) rather than always
+/// pulling every recording in the session: `SessionRow` calls this with all
+/// of a session's recording ids on open (one-shot, keeps the box plot
+/// glanceable — issue #100), but on a realtime-triggered refresh only with
+/// the ids NOT already cached, so an unrelated write elsewhere in the
+/// account doesn't re-download samples already on hand (SL-102 — this used
+/// to be `fetchSamplesByGroup(groupId)`, unconditionally refetched on every
+/// realtime bump while the detail was open).
+export async function fetchSamplesForRecordings(
+  ids: string[],
 ): Promise<Map<string, number[]>> {
+  if (ids.length === 0) return new Map();
   // Typed as the raw jsonb shape (not the narrower tuple-array type used
   // elsewhere) — TS's structural check for an ARRAY of objects containing a
   // `Json`-typed property doesn't unify against a narrower array type the
@@ -462,7 +472,7 @@ export async function fetchSamplesByGroup(
     await supabase
       .from("tindeq_recordings")
       .select("id, samples")
-      .eq("group_id", groupId)
+      .in("id", ids)
       .is("deleted_at", null)
       .overrideTypes<{ id: string; samples: [number, number][] | null }[], { merge: false }>(),
   );

@@ -7,7 +7,7 @@ import {
 import {
   deleteRecording,
   fetchRecordingsByGroup,
-  fetchSamplesByGroup,
+  fetchSamplesForRecordings,
   fetchWorkoutForSession,
   recalcTindeqSessionDuration,
 } from "../lib/repo";
@@ -78,7 +78,11 @@ function TagGroup({
       {/* Per-rep box plot — always visible (glanceable without expanding),
           but it's interactive (hover/scrub) so it lives outside the toggle
           button; stopPropagation as a backstop against any future wrapper
-          click handler between here and the button. */}
+          click handler between here and the button. SL-102: samples are
+          fetched once, eagerly, when the session detail opens (see `open()`
+          below) — the amplifier that issue killed was the REALTIME refetch
+          re-downloading everything on every account-wide write, not this
+          one-shot fetch, so it stays eager to keep the chart glanceable. */}
       <div onClick={(e) => e.stopPropagation()}>
         <RepBoxPlotChart recs={recs} samplesById={samplesById} />
       </div>
@@ -112,10 +116,11 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
   const [tindeqRecs, setTindeqRecs] = useState<TindeqRecordingMeta[] | null>(
     null,
   );
-  // Raw kg samples per recording (issue #100) — fetched alongside the
-  // metadata so the per-rep box plots have a distribution to draw. Starts
-  // empty rather than null: the header/meta above never waits on this, and
-  // `RepBoxPlotChart` treats "id missing from the map" as "still loading".
+  // Raw kg samples per recording (issue #100), keyed by recording id —
+  // fetched alongside the metadata so the per-rep box plots have a
+  // distribution to draw. Starts empty rather than null: the header/meta
+  // above never waits on this, and `RepBoxPlotChart` treats "id missing from
+  // the map" as "still loading".
   const [tindeqSamples, setTindeqSamples] = useState<Map<string, number[]>>(
     () => new Map(),
   );
@@ -133,11 +138,14 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
         const d = await fetchWorkoutForSession(s.id);
         setDetail(d ?? "missing");
       } else if (isTindeq) {
-        const [recs, samples] = await Promise.all([
-          fetchRecordingsByGroup(s.groupId!),
-          fetchSamplesByGroup(s.groupId!),
-        ]);
+        const recs = await fetchRecordingsByGroup(s.groupId!);
         setTindeqRecs(recs);
+        // Samples need the recording ids, so this can't join the metadata
+        // fetch in a Promise.all — but it's still one eager, one-shot fetch
+        // per open (SL-102 review: this keeps the box plot glanceable
+        // without a click; the amplifier the issue was actually about was
+        // the REALTIME refetch below, not this one).
+        const samples = await fetchSamplesForRecordings(recs.map((r) => r.id));
         setTindeqSamples(samples);
       }
     } catch {
@@ -146,7 +154,15 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
   }
 
   // Refetch the open detail when data changes elsewhere (e.g. a recording
-  // assigned into this session's group, or a watch write).
+  // assigned into this session's group, or a watch write). `tindeq_recordings`
+  // is in `RealtimeVersionProvider`'s `WATCHED_TABLES` account-wide, so this
+  // fires on every recording write anywhere, not just this session's — always
+  // refetching full samples here was the SL-102 amplifier. Metadata is cheap
+  // and always refreshed; samples are only fetched for recording ids that
+  // aren't already cached (i.e. reps that showed up since the last fetch,
+  // e.g. one saved from the watch while this sheet is open) — already-cached
+  // ids are never refetched. Stale entries (recordings removed from this
+  // group by the metadata refetch) are purged from the cache to match.
   const realtimeVersion = useRealtimeVersion();
   const bumpRealtime = useRealtimeBump();
   useEffect(() => {
@@ -158,13 +174,32 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
           const d = await fetchWorkoutForSession(s.id);
           if (!cancelled) setDetail(d ?? "missing");
         } else if (isTindeq) {
-          const [recs, samples] = await Promise.all([
-            fetchRecordingsByGroup(s.groupId!),
-            fetchSamplesByGroup(s.groupId!),
-          ]);
-          if (!cancelled) {
-            setTindeqRecs(recs);
-            setTindeqSamples(samples);
+          const recs = await fetchRecordingsByGroup(s.groupId!);
+          if (cancelled) return;
+          setTindeqRecs(recs);
+          const currentIds = new Set(recs.map((r) => r.id));
+          const newIds = recs
+            .map((r) => r.id)
+            .filter((id) => !tindeqSamples.has(id));
+          // Purge samples for ids no longer in this group's metadata —
+          // complements the deleteRec purge for the "deleted elsewhere"
+          // path (e.g. reassigned to a different tag/session).
+          setTindeqSamples((prev) => {
+            let changed = false;
+            const next = new Map(prev);
+            for (const id of prev.keys()) {
+              if (!currentIds.has(id)) {
+                next.delete(id);
+                changed = true;
+              }
+            }
+            return changed ? next : prev;
+          });
+          if (newIds.length > 0) {
+            const fetched = await fetchSamplesForRecordings(newIds);
+            if (!cancelled) {
+              setTindeqSamples((prev) => new Map([...prev, ...fetched]));
+            }
           }
         }
       } catch {
@@ -187,6 +222,15 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
 
   function deleteRec(id: string) {
     setTindeqRecs((list) => (list ? list.filter((x) => x.id !== id) : list));
+    // SL-102: also drop the id from the samples cache — otherwise it lingers
+    // in `tindeqSamples` (harmless but an orphaned entry) until the group is
+    // next re-expanded and the fetch happens to overwrite it.
+    setTindeqSamples((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
     // Removing a rep shrinks the session's span — recompute its total time,
     // then bump so the header duration/load refresh.
     void (async () => {

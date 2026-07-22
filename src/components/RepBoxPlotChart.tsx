@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { boxStats } from "../lib/boxplot";
+import { boxStats, type BoxStats } from "../lib/boxplot";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
@@ -10,10 +10,23 @@ interface Props {
   /// reversed internally so the chart reads chronologically left→right.
   recs: TindeqRecordingMeta[];
   /// Recording id → raw kg samples for the whole session, fetched once by
-  /// the parent (`fetchSamplesByGroup`). Entries missing while still
-  /// loading; charts fall back to a loading hint until they arrive.
+  /// the parent (`fetchSamplesForRecordings`, scoped to this session's
+  /// recording ids). An id missing from the map means "not fetched yet"
+  /// (still loading); an id present with an `[]` value means "fetched,
+  /// genuinely no samples" — these render differently below (see
+  /// `RepState`, SL-102 #2).
   samplesById: Map<string, number[]>;
 }
+
+/// Per-rep loading state, distinguishing "haven't heard back yet" from
+/// "heard back, this rep just has no samples" — collapsing both into `null`
+/// (as a plain `BoxStats | null` would) is what let an all-empty group get
+/// stuck on the loading placeholder forever (SL-102 #2): every rep read as
+/// "not loaded" and `loadedAny` never flipped.
+type RepState =
+  | { loaded: false }
+  | { loaded: true; stats: null } // fetched, but samples were empty
+  | { loaded: true; stats: BoxStats };
 
 const H = 120;
 const PAD = { top: 10, right: 8, bottom: 8, left: 28 };
@@ -80,16 +93,22 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
   }, []);
 
   const chrono = [...recs].reverse();
-  const stats = chrono.map((r) => {
+  const stats: RepState[] = chrono.map((r) => {
     const samples = samplesById.get(r.id);
-    return samples && samples.length ? boxStats(samples) : null;
+    if (samples === undefined) return { loaded: false };
+    if (samples.length === 0) return { loaded: true, stats: null };
+    // boxStats only returns null for empty input, already ruled out above.
+    return { loaded: true, stats: boxStats(samples)! };
   });
-  const loadedAny = stats.some((s) => s !== null);
+  // A completed fetch of empty arrays still counts as "loaded" (SL-102 #2) —
+  // otherwise a group whose every rep genuinely has no samples never flips
+  // out of the "Loading force curves…" placeholder.
+  const loadedAny = stats.some((s) => s.loaded);
 
   const allYs: number[] = [];
   stats.forEach((s) => {
-    if (!s) return;
-    allYs.push(s.whiskerLo, s.whiskerHi, ...s.outliers);
+    if (!s.loaded || !s.stats) return;
+    allYs.push(s.stats.whiskerLo, s.stats.whiskerHi, ...s.stats.outliers);
   });
   // Fall back to a placeholder domain while nothing has loaded yet — the
   // hook below must run on every render regardless (rules of hooks), so the
@@ -124,7 +143,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
 
   const yTicks = [yMin, (yMin + yMax) / 2, yMax];
 
-  const hoveredStats = hovered !== null ? stats[hovered] : null;
+  const hoveredState = hovered !== null ? stats[hovered] : null;
   const hoveredRec = hovered !== null ? chrono[hovered] : undefined;
 
   // The session-best rep (by peak kg) gets its median tick called out in the
@@ -221,14 +240,50 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
           ))}
 
           {chrono.map((r, i) => {
-            const s = stats[i];
-            if (!s) return null;
+            const state = stats[i]!;
             const cx = px(i + 0.5);
+            const isHovered = hovered === i;
+            const dimmed = hovered !== null && !isHovered;
+
+            // Still waiting on this rep's fetch (rare post-SL-102: samples
+            // only start loading once the group expands, so this is only
+            // momentarily true) — nothing to draw yet.
+            if (!state.loaded) return null;
+
+            // Fetched, but genuinely no samples (SL-102 #2) — a faint
+            // baseline tick instead of leaving a silent gap with no box and
+            // no hit target, so the rep is still visible/hoverable.
+            if (!state.stats) {
+              return (
+                <g key={r.id} opacity={dimmed ? DIM_OPACITY : 1}>
+                  <line
+                    x1={cx - MIN_BOX_W / 2}
+                    y1={py(yMin)}
+                    x2={cx + MIN_BOX_W / 2}
+                    y2={py(yMin)}
+                    stroke="var(--ink-faint)"
+                    strokeOpacity={0.5}
+                    strokeWidth={1.5}
+                    strokeDasharray="2 2"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  <rect
+                    x={px(i)}
+                    y={PAD.top}
+                    width={Math.max(1, px(i + 1) - px(i))}
+                    height={H - PAD.top - PAD.bottom}
+                    fill="transparent"
+                    style={{ cursor: "pointer" }}
+                    {...hoverProps(i)}
+                  />
+                </g>
+              );
+            }
+
+            const s = state.stats;
             const outlierDots = pickOutlierDots(s.outliers, py, MAX_OUTLIER_DOTS);
             const color = sideColor(r.side);
             const gradientId = r.side === "left" ? `${uid}-primary` : `${uid}-success`;
-            const isHovered = hovered === i;
-            const dimmed = hovered !== null && !isHovered;
             return (
               <g key={r.id} opacity={dimmed ? DIM_OPACITY : 1}>
                 {/* Whisker + caps */}
@@ -327,7 +382,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
             );
           })}
 
-          {hovered !== null && hoveredStats && hoveredRec && (
+          {hovered !== null && hoveredState?.loaded && hoveredRec && (
             <>
               <line
                 x1={px(hovered + 0.5)}
@@ -340,14 +395,21 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
               />
               <SvgChartTooltip
                 x={px(hovered + 0.5)}
-                y={py(hoveredStats.median)}
+                y={hoveredState.stats ? py(hoveredState.stats.median) : py(yMin)}
                 viewW={W}
                 viewH={H}
-                lines={[
-                  `Rep ${hovered + 1}${sideLabel(hoveredRec.side) ? ` · ${sideLabel(hoveredRec.side)}` : ""}`,
-                  `median ${hoveredStats.median.toFixed(1)} kg`,
-                  `peak ${hoveredRec.peakKg.toFixed(1)} kg`,
-                ]}
+                lines={
+                  hoveredState.stats
+                    ? [
+                        `Rep ${hovered + 1}${sideLabel(hoveredRec.side) ? ` · ${sideLabel(hoveredRec.side)}` : ""}`,
+                        `median ${hoveredState.stats.median.toFixed(1)} kg`,
+                        `peak ${hoveredRec.peakKg.toFixed(1)} kg`,
+                      ]
+                    : [
+                        `Rep ${hovered + 1}${sideLabel(hoveredRec.side) ? ` · ${sideLabel(hoveredRec.side)}` : ""}`,
+                        "no samples recorded",
+                      ]
+                }
               />
             </>
           )}
