@@ -5,6 +5,10 @@ import {
   computeForceCurve,
   predictForce,
   zoneTarget,
+  zonePrescription,
+  adjustedEndurance,
+  ZONE_PROTOCOLS,
+  ZONE_INTENSITY,
   type ForceCurveModel,
 } from "./force-curve";
 import type { TindeqSample } from "../types";
@@ -161,5 +165,81 @@ describe("computeForceCurve — multi-point fit (SL-80b)", () => {
     // with many recordings → no CF.
     const m = computeForceCurve([hold(12, 20), hold(12, 18), hold(12, 16)])!;
     expect(m.cf).toBeNull();
+  });
+});
+
+describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () => {
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+  const noCf: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
+
+  it("100% is an exact no-op — same numbers as the un-adjusted zoneTarget for every zone", () => {
+    for (const q of ["power", "strength", "power-endurance", "endurance"] as const) {
+      const base = zoneTarget(model, q);
+      const adjusted = zoneTarget(model, q, 100);
+      expect(adjusted).toEqual(base);
+      expect(adjusted!.workS).toBe(ZONE_PROTOCOLS[q].holdS);
+      expect(adjusted!.basis).not.toContain("intensity");
+    }
+  });
+
+  it("kg scales linearly with pct", () => {
+    const base = zoneTarget(model, "power")!;
+    const at80 = zoneTarget(model, "power", 80)!;
+    expect(at80.targetKg).toBeCloseTo(base.targetKg * 0.8, 1);
+    expect(at80.lowKg).toBeCloseTo(base.lowKg * 0.8, 1);
+    expect(at80.highKg).toBeCloseTo(base.highKg * 0.8, 1);
+    expect(at80.basis).toContain("intensity 80%");
+  });
+
+  it("strength hold at reduced intensity matches the W′-cost invariant (hand-built model)", () => {
+    // targetKg(100%) = 34, cf = 10 → base W′ cost = (34 − 10) × 10s = 240 kg·s.
+    const m: ForceCurveModel = { points: [], maxF: 40, cf: 10, wPrime: 200 };
+    const t68 = zoneTarget(m, "strength", 68)!;
+    expect(t68.targetKg).toBeCloseTo(23.1, 1); // 34 × 0.68
+    expect(t68.workS).toBe(18); // (34−10)×10 / (23.1−10) ≈ 18.3 → round to 18
+    // the recovered W′ cost stays close to the 100% baseline (240) despite rounding
+    expect((t68.targetKg - 10) * t68.workS).toBeGreaterThan(220);
+    expect((t68.targetKg - 10) * t68.workS).toBeLessThan(260);
+  });
+
+  it("clamps the hold at the zone's max when the scaled target drops to/below CF", () => {
+    const m: ForceCurveModel = { points: [], maxF: 40, cf: 30, wPrime: 100 };
+    expect(zoneTarget(m, "strength", 60)!.workS).toBe(30); // strength max clamp
+    expect(zoneTarget(m, "power", 60)!.workS).toBe(15); // power max clamp
+  });
+
+  it("falls back to the impulse-preserving formula when there's no CF fit", () => {
+    const t70 = zoneTarget(noCf, "strength", 70)!;
+    expect(t70.targetKg).toBeCloseTo(23.8, 1); // 34 × 0.7
+    expect(t70.workS).toBe(14); // 10 × 34 / 23.8 ≈ 14.29 → round to 14
+    // power/strength still exist without a CF fit
+    expect(zoneTarget(noCf, "power", 70)).not.toBeNull();
+  });
+
+  it("endurance keeps total time-under-tension ~constant and reps shrinks to compensate", () => {
+    const t60 = zonePrescription(model, "endurance", 60)!;
+    expect(t60.holdS).toBe(85); // 30 × (100/60)² ≈ 83.3 → round to nearest 5
+    expect(t60.reps).toBe(3); // round(8 × 30 / 85) = 3
+    // base time-under-tension was 30 × 8 = 240s; rounding keeps it in the ballpark
+    expect(t60.holdS * t60.reps).toBeGreaterThan(200);
+    expect(t60.holdS * t60.reps).toBeLessThan(280);
+    expect(t60.reps).toBeLessThanOrEqual(ZONE_PROTOCOLS.endurance.reps);
+  });
+
+  it("adjustedEndurance clamps hold to [20, 240]s", () => {
+    expect(adjustedEndurance(30, 8, 110).holdS).toBeGreaterThanOrEqual(20);
+    // an extreme drop (well beyond the UI's 60% floor) hits the 240s cap
+    expect(adjustedEndurance(30, 8, 5).holdS).toBe(240);
+    expect(adjustedEndurance(30, 8, 5).reps).toBe(1);
+  });
+
+  it("clamps input pct to [60, 110]", () => {
+    expect(zoneTarget(model, "power", 200)).toEqual(zoneTarget(model, "power", ZONE_INTENSITY.max));
+    expect(zoneTarget(model, "power", -50)).toEqual(zoneTarget(model, "power", ZONE_INTENSITY.min));
+  });
+
+  it("zonePrescription returns null when the zone itself is undefined for the model", () => {
+    expect(zonePrescription(noCf, "endurance", 80)).toBeNull();
+    expect(zonePrescription(noCf, "power-endurance", 80)).toBeNull();
   });
 });

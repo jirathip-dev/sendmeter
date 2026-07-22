@@ -14,6 +14,27 @@ export function classifyZone(durationS: number): TrainingQuality | null {
   return "endurance";
 }
 
+/// Load-aware classifier (SL-97b): once a preset's target resolves to an
+/// actual kg (fixed, %-of-PR/CF, or curve, all after the intensity dial's
+/// scaling), classify off duration AND load together instead of duration
+/// alone — a preset's badge then re-classifies live as the intensity dial or
+/// the underlying curve moves, instead of being frozen by its authored hold
+/// time. Falls back to the duration-only `classifyZone` when there's no
+/// resolved load or no maxF to compare it against (untargeted presets).
+export function classifyZoneLoaded(
+  holdS: number,
+  kg: number | null,
+  refs: { maxF: number | null; cf: number | null },
+): TrainingQuality | null {
+  if (holdS < 1) return null; // stray blip, not a real hold
+  if (kg == null || refs.maxF == null) return classifyZone(holdS);
+  if (refs.cf != null && kg <= refs.cf) return "endurance";
+  if (kg >= 0.9 * refs.maxF && holdS <= 6) return "power";
+  if (kg >= 0.75 * refs.maxF && holdS <= 20) return "strength";
+  if (holdS <= 20) return "power-endurance";
+  return "endurance";
+}
+
 /// Distinct training DAYS per zone over the trailing window — "days I touched
 /// this quality", which reads as training balance better than a raw rep count
 /// (one long endurance session isn't 40 endurance reps' worth of emphasis).

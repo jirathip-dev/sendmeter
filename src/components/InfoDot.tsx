@@ -61,7 +61,7 @@ const CONTENT: Record<
       },
       {
         heading: "Using a target",
-        text: "Picking a zone draws its band on the live gauge and arms its guided timer — keep the trace inside the band for the prescribed work time. Zones sharpen as your curve gets more data (especially one all-out 30–60s hold).",
+        text: "Picking a zone draws its band on the live gauge and arms its guided timer — keep the trace inside the band for the prescribed work time. Zones sharpen as your curve gets more data (especially one all-out 30–60s hold). The Intensity dial next to \"Protocol presets\" (60–110%) applies to the RECOMMENDED ZONES only: it scales the target load and adapts hold time to keep the training dose equivalent — dial it down for a lighter session, or above 100% for a heavier one (shorter holds, extra strain on your pulleys — only when fully warmed up). Custom presets are never modified by this dial; a preset's quality badge still reflects whatever load it actually resolves to (fixed kg, or a %-of-PR/CF/curve target).",
       },
     ],
   },

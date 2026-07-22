@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyZone, recommendZone, zoneTrainingDays } from "./zoneHistory";
+import { classifyZone, classifyZoneLoaded, recommendZone, zoneTrainingDays } from "./zoneHistory";
 import type { ForceCurveModel } from "./force-curve";
 
 describe("classifyZone (SL-100)", () => {
@@ -13,6 +13,55 @@ describe("classifyZone (SL-100)", () => {
     expect(classifyZone(20)).toBe("strength");
     expect(classifyZone(30)).toBe("endurance");
     expect(classifyZone(90)).toBe("endurance");
+  });
+});
+
+describe("classifyZoneLoaded (SL-97b)", () => {
+  const refs = { maxF: 40, cf: 20 };
+
+  it("falls back to the duration-only classifier with no resolved kg", () => {
+    expect(classifyZoneLoaded(7, null, refs)).toBe(classifyZone(7));
+    expect(classifyZoneLoaded(10, null, refs)).toBe(classifyZone(10));
+  });
+
+  it("falls back to the duration-only classifier with no maxF", () => {
+    expect(classifyZoneLoaded(10, 34, { maxF: null, cf: 20 })).toBe(classifyZone(10));
+  });
+
+  it("still returns null for a sub-1s blip regardless of load", () => {
+    expect(classifyZoneLoaded(0.5, 34, refs)).toBeNull();
+  });
+
+  it("≤ critical force is always endurance, even at a short hold", () => {
+    // 15kg is below CF 20 — a hold this light is sustainable, not powerful,
+    // no matter how short the hold happened to be.
+    expect(classifyZoneLoaded(5, 15, refs)).toBe("endurance");
+    expect(classifyZoneLoaded(5, 20, refs)).toBe("endurance"); // == CF counts too
+  });
+
+  it("power: ≥90% maxF and ≤6s", () => {
+    expect(classifyZoneLoaded(5, 37, refs)).toBe("power"); // 0.925 · maxF
+    expect(classifyZoneLoaded(6, 36, refs)).toBe("power"); // exactly 0.9 · maxF
+  });
+
+  it("strength: ≥75% maxF and ≤20s (worked example: maxF 40, cf 20, 10s @ 34kg)", () => {
+    expect(classifyZoneLoaded(10, 34, refs)).toBe("strength"); // 0.85 · maxF
+    expect(classifyZoneLoaded(20, 30, refs)).toBe("strength"); // exactly 0.75 · maxF
+  });
+
+  it("power-endurance: above CF but under the power/strength thresholds, ≤20s", () => {
+    expect(classifyZoneLoaded(10, 24, refs)).toBe("power-endurance"); // 0.6 · maxF
+    expect(classifyZoneLoaded(5, 24, refs)).toBe("power-endurance"); // short but under 0.9 · maxF
+  });
+
+  it("endurance: above CF and > 20s, even without a strength-level load", () => {
+    expect(classifyZoneLoaded(25, 24, refs)).toBe("endurance");
+  });
+
+  it("re-classifies live as the resolved load drops at a fixed hold time", () => {
+    // The worked example from the PR: maxF 40, cf 20, hold fixed at 10s.
+    expect(classifyZoneLoaded(10, 34, refs)).toBe("strength"); // 100% intensity, 34kg
+    expect(classifyZoneLoaded(10, 24, refs)).toBe("power-endurance"); // ~70% intensity, 24kg
   });
 });
 

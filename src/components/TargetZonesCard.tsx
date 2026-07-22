@@ -17,6 +17,9 @@ interface Props {
   model: ForceCurveModel | null;
   selected: ZoneSelection | null;
   onSelect: (sel: ZoneSelection | null) => void;
+  /// The global session-intensity dial (SL-97b), owned by ForceView and
+  /// applied at the "Protocol presets" header — this card just reads it.
+  intensityPct: number;
 }
 
 function fmt(sec: number): string {
@@ -31,14 +34,14 @@ function fmt(sec: number): string {
 /// the band on the live gauge AND its guided timer (hold/rest/reps from the
 /// zone's prescription). Alternate ticks L⇄R per rep; otherwise the global
 /// side applies.
-export default function TargetZonesCard({ tag, model, selected, onSelect }: Props) {
+export default function TargetZonesCard({ tag, model, selected, onSelect, intensityPct }: Props) {
   const [alternate, setAlternate] = useState(false);
 
   // Which zone is armed is derived from `selected` (its `zone:${q}` id) so the
   // SL-100 recommendation card arming the same `zoneSel` lights the right chip.
   const quality = selectedQuality(selected);
   const active = quality !== null;
-  const zoneT = model && quality ? zoneTarget(model, quality) : null;
+  const zoneT = model && quality ? zoneTarget(model, quality, intensityPct) : null;
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
@@ -77,7 +80,9 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                       onSelect(null);
                       return;
                     }
-                    onSelect(buildZoneSelection(model, q.id, tag, alternate));
+                    onSelect(
+                      buildZoneSelection(model, q.id, tag, alternate, intensityPct),
+                    );
                   }}
                 />
               );
@@ -108,6 +113,22 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                   ` · ${selected.protocol.sets} sets (${fmt(selected.protocol.restSetsS)} between)`}{" "}
                 · total {fmt(timelineDurationS(buildTimeline(selected.protocol, { switchS: 3 })))}
               </div>
+              {/* SL-97b: the actual dial lives at the "Protocol presets"
+                  header now (ForceView) — this is just the contextual note
+                  for whatever it's currently set to. */}
+              {quality && intensityPct !== 100 && (
+                <div
+                  style={{
+                    fontSize: "var(--t-2xs)",
+                    color: intensityPct > 100 ? "var(--warning)" : "var(--ink-faint)",
+                    marginTop: 8,
+                  }}
+                >
+                  {intensityPct < 100
+                    ? "Lighter load — hold times auto-extended along your force curve to keep the stimulus."
+                    : "Above the recommended load — extra strain on fingers; only when fully warmed up."}
+                </div>
+              )}
               <label
                 style={{
                   display: "flex",
@@ -125,7 +146,9 @@ export default function TargetZonesCard({ tag, model, selected, onSelect }: Prop
                   onChange={(e) => {
                     setAlternate(e.target.checked);
                     if (quality)
-                      onSelect(buildZoneSelection(model, quality, tag, e.target.checked));
+                      onSelect(
+                        buildZoneSelection(model, quality, tag, e.target.checked, intensityPct),
+                      );
                   }}
                 />
                 Alternate left ⇄ right each set (otherwise uses the selected side)
