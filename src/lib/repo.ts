@@ -423,6 +423,29 @@ export async function fetchRecordingSamples(
   return data.samples.map(([t, kg]) => ({ t, kg }));
 }
 
+/// Raw kg samples for every recording in a Tindeq session, keyed by
+/// recording id — one query for the whole group rather than one per rep
+/// (issue #100's per-rep box plots). Only the kg half of each `[tMs, kg]`
+/// pair is kept; the box plot only needs the force distribution, not time.
+export async function fetchSamplesByGroup(
+  groupId: string,
+): Promise<Map<string, number[]>> {
+  // Typed as the raw jsonb shape (not the narrower tuple-array type used
+  // elsewhere) — TS's structural check for an ARRAY of objects containing a
+  // `Json`-typed property doesn't unify against a narrower array type the
+  // way a single (non-array) row does, so the single-recording queries above
+  // can assert straight to the tuple type but this multi-row one can't.
+  const data = unwrap<{ id: string; samples: [number, number][] | null }[]>(
+    await supabase
+      .from("tindeq_recordings")
+      .select("id, samples")
+      .eq("group_id", groupId)
+      .is("deleted_at", null)
+      .overrideTypes<{ id: string; samples: [number, number][] | null }[], { merge: false }>(),
+  );
+  return new Map(data.map((r) => [r.id, (r.samples ?? []).map(([, kg]) => kg)]));
+}
+
 export async function insertRecording(
   rec: NewTindeqRecording,
 ): Promise<TindeqRecordingMeta> {
