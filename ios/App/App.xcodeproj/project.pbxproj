@@ -24,6 +24,7 @@
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */; };
+		703E0DDDB01CECCD44C5799A /* TagReconciliationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */; };
 		84A773B1BB150F1AB8E722B3 /* SendLogWatchWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4ED1337E0BF37CC3D16491E5 /* SendLogWatchWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
 		E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */; };
@@ -132,12 +133,43 @@
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TindeqProtocolTests.swift; sourceTree = "<group>"; };
 		9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendLogWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TagReconciliationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		328AD0DD30045D4800E07518 /* SendLogWatch Watch App */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = "SendLogWatch Watch App"; sourceTree = "<group>"; };
-		4ADAA864710E2A647B96D4F8 /* SendLogWatchWidgets */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = SendLogWatchWidgets; sourceTree = "<group>"; };
-		F7F1ED539BCB08514B5E7073 /* SendmeterWidgets */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = SendmeterWidgets; sourceTree = "<group>"; };
+		328AD0DD30045D4800E07518 /* SendLogWatch Watch App */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = "SendLogWatch Watch App";
+			sourceTree = "<group>";
+		};
+		4ADAA864710E2A647B96D4F8 /* SendLogWatchWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = SendLogWatchWidgets;
+			sourceTree = "<group>";
+		};
+		F7F1ED539BCB08514B5E7073 /* SendmeterWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = SendmeterWidgets;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -191,6 +223,7 @@
 				929803D573A0FA4074230787 /* DateExtensionsTests.swift */,
 				553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */,
 				9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */,
+				C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = "<group>";
@@ -472,6 +505,7 @@
 				4F9BA0DA906E18E88FCDFCA8 /* DateExtensionsTests.swift in Sources */,
 				607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */,
 				12574DD8CDB9DC854DF1002A /* TindeqProtocolTests.swift in Sources */,
+				703E0DDDB01CECCD44C5799A /* TagReconciliationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

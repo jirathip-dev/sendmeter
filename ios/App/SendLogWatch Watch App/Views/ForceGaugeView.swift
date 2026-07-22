@@ -111,21 +111,43 @@ struct ForceGaugeView: View {
 
     /// Fetch the tag list with retries — a cold launch can lose the race with
     /// the auth relay, which used to leave "no tags yet" stuck on screen.
+    /// Only a NON-EMPTY successful fetch is treated as a confirmed visible-tag
+    /// set for `reconcileLastTag` (SL-94): under RLS an *unauthenticated*
+    /// select returns an empty success, not an error, so an empty result is
+    /// indistinguishable from the SL-75 auth race — trusting it would wipe a
+    /// perfectly valid persisted tag on a slow cold launch. A genuine
+    /// hide/rename still reconciles, since the other visible tags come back.
     private func loadTags() {
         tagFetchTask?.cancel()
         tagsLoading = true
         tagFetchTask = Task {
+            var fetched: [String]?
             for attempt in 0..<4 {
                 if Task.isCancelled { return }
-                if let tags = try? await Repo.fetchRecentTindeqTags(), !tags.isEmpty {
-                    recentTags = tags
-                    tagsLoading = false
-                    return
+                if let tags = try? await Repo.fetchRecentTindeqTags() {
+                    fetched = tags
+                    if !tags.isEmpty { break }
                 }
                 try? await Task.sleep(for: .seconds(Double(attempt + 1) * 1.5))
             }
+            if Task.isCancelled { return }
+            recentTags = fetched ?? []
+            if let fetched, !fetched.isEmpty { reconcileLastTag(against: fetched) }
             tagsLoading = false
         }
+    }
+
+    /// SL-94: the persisted last-used tag can go stale if it was renamed or
+    /// hidden on the phone since it was saved. Once a fetch has genuinely
+    /// confirmed the current visible tag set, drop a selection (and its
+    /// persisted default) that no longer appears in it — otherwise Start
+    /// would stay enabled with a tag that isn't shown anywhere on screen.
+    /// Keeps the SL-75 guard intact: Start is disabled whenever `tag` is
+    /// empty, so clearing here re-enables that guard instead of bypassing it.
+    private func reconcileLastTag(against visibleTags: [String]) {
+        guard TagReconciliation.shouldClearStaleTag(tag, visibleTags: visibleTags) else { return }
+        tag = ""
+        UserDefaults.standard.removeObject(forKey: LAST_TAG_KEY)
     }
 
     // MARK: Session bar

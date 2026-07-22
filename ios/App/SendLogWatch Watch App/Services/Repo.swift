@@ -27,9 +27,14 @@ enum Repo {
         try await client.from("tindeq_recordings").insert(row).execute()
     }
 
-    /// Distinct tags from recent recordings, most recently used first.
+    /// Distinct tags from recent recordings, most recently used first, minus
+    /// any hidden via the `tindeq_tags` registry (SL-92/SL-94) — mirrors the
+    /// web/iPhone Force-tab pickers (`fetchHiddenTags` + client-side filter
+    /// in `src/components/ForceView.tsx`). A renamed tag simply never shows
+    /// up here under its old name (the rename repoints every recording), so
+    /// no separate rename handling is needed on the read side.
     static func fetchRecentTindeqTags() async throws -> [String] {
-        let rows: [TindeqTagRow] = try await client
+        async let recordingsTask: [TindeqTagRow] = client
             .from("tindeq_recordings")
             .select("tag")
             .neq("tag", value: "")
@@ -37,13 +42,30 @@ enum Repo {
             .limit(100)
             .execute()
             .value
+        async let hiddenTask: [String] = fetchHiddenTags()
+
+        let rows = try await recordingsTask
+        let hidden = Set(try await hiddenTask)
+
         var seen = Set<String>()
         var tags: [String] = []
-        for r in rows where !seen.contains(r.tag) {
+        for r in rows where !seen.contains(r.tag) && !hidden.contains(r.tag) {
             seen.insert(r.tag)
             tags.append(r.tag)
         }
         return tags
+    }
+
+    /// Names of the user's hidden tags (SL-92 registry) — filtered out of
+    /// `fetchRecentTindeqTags`. Mirrors the web app's `fetchHiddenTags`.
+    static func fetchHiddenTags() async throws -> [String] {
+        let rows: [HiddenTagRow] = try await client
+            .from("tindeq_tags")
+            .select("name")
+            .eq("hidden", value: true)
+            .execute()
+            .value
+        return rows.map(\.name)
     }
 
     /// Log a finished gauge session into the training log (mirrors the web

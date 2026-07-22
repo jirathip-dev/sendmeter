@@ -191,6 +191,11 @@ nonisolated struct TindeqTagRow: Codable {
     var tag: String
 }
 
+/// SL-94: a row from the `tindeq_tags` registry (SL-92) selected `hidden`.
+nonisolated struct HiddenTagRow: Codable {
+    var name: String
+}
+
 nonisolated struct UserSettingsRow: Codable {
     var currentPhase: String
 
