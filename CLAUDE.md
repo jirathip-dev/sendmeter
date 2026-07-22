@@ -247,6 +247,15 @@ are safe regardless.
   derives `CapApp-SPM`'s platform from the *first* `IPHONEOS_DEPLOYMENT_TARGET` in
   the pbxproj (the **project-level** one), so it must be 16 for `cap sync` to
   regenerate SPM correctly.
+- **`@capacitor-community/apple-sign-in`'s SPM pin is patched, not upstream.**
+  It has no Capacitor-8 release; the npm-published 7.1.0 pins
+  `capacitor-swift-pm` to `7.0.0..<8.0.0`, disjoint with
+  `native-plugins/sendlog-passkey`'s `8.0.0..<9.0.0` — with the pristine
+  package NO scheme in `ios/App/App.xcodeproj` resolves its SPM graph.
+  `patch-package` re-pins it to `from: "8.0.0"` on `postinstall` from
+  `patches/@capacitor-community+apple-sign-in+7.1.0.patch`. Never remove the
+  `postinstall` script or the patch file — a clean `npm ci` without them
+  silently reverts the pin and breaks SPM resolution project-wide.
 - **Dates must be Gregorian.** A Thai-region device defaults `Calendar.current` to
   the Buddhist calendar (year + 543), which once corrupted every stored date. Use
   `Calendar.gregorianLocal` / `Date.localDateString` (Swift) and the web
