@@ -1,0 +1,12 @@
+# Project-level agent-ops config. Merged over the platform defaults
+# (agent-ops/config/defaults.yaml); values here win.
+
+base_branch: staging
+
+commands:
+  setup: npm ci              # hermetic install — never mutates the lockfile
+  test: npm run test          # vitest run
+  lint: npm run lint          # eslint .
+  typecheck: npm run typecheck  # tsc --noEmit
+
+skills: [coding, testing]
