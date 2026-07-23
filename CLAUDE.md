@@ -384,6 +384,14 @@ are safe regardless.
   triggers the Vercel web deploy, which **rejects commits from unrecognized authors**
   — a machine-default `user@host` email silently blocks it. Redeploy the current
   HEAD from the Vercel dashboard if it was pushed under the wrong identity.
+- **Vercel previews (issue #121):** `vercel.json` enables git deploys only for
+  `main` (production) and `staging` (preview) — task branches never deploy.
+  Promotion PRs (staging → main) get a preview URL that must point at the **dev**
+  Supabase backend via Preview-scoped `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`
+  env vars in the Vercel project settings (`src/lib/supabase.ts` falls back to the
+  committed prod config when they're absent, so Production needs no vars). The dev
+  project's auth allow-list must include the preview wildcard **origin-only**
+  (no trailing `/**`): `https://climbing-tracker-*-jirathip-kunkanjanathorn-s-projects.vercel.app`.
 
 ## Working style here
 
