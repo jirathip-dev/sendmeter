@@ -366,6 +366,16 @@ are safe regardless.
 
 ## Deploy (TestFlight + Vercel)
 
+- **Release flow: TestFlight builds from `staging`, by default.** TestFlight is
+  the rung-4 device-verification channel, so build it from `staging` *before*
+  promoting: staging → `fastlane beta` → verify on device → promotion PR
+  staging → main (which triggers the Vercel production web deploy). Promoting
+  first would ship native code to the release branch before it's ever been
+  device-verifiable, and couples "I need a build on my phone" to a web prod
+  deploy. Exception: builds for **external testers / App Store submission** cut
+  from `main` so the promoted branch is exactly what ships. Note the branch is
+  only a *code-state* distinction for native builds — the compiled-in Supabase
+  config means every device build reads/writes **production** data.
 - **`fastlane beta` runs fully headless via the ASC API key** — `cd` to repo root
   (or `ios/`) and run `LANG=en_US.UTF-8 fastlane beta`; it works from a
   spawned/non-interactive shell, no signed-in Xcode account required. The lane
