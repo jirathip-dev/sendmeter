@@ -44,18 +44,20 @@ final class HealthKitReader: HealthMetricsProviding {
         let now = Date()
         let cal = Calendar.gregorianLocal
 
-        func nightWindow(endingOn day: Date) -> DateInterval {
-            let noon = cal.date(bySettingHour: 12, minute: 0, second: 0, of: day)!
-            let start = cal.date(byAdding: .hour, value: -18, to: noon)! // 18:00 prev day
-            return DateInterval(start: start, end: noon)
-        }
-
-        let todayWindow = nightWindow(endingOn: now)
+        let todayWindow = cal.nightWindow(endingOn: now)
 
         async let hrvToday = meanQuantity(
             .heartRateVariabilitySDNN, in: todayWindow,
             unit: .secondUnit(with: .milli)
         )
+        // NOT bound to todayWindow: Apple's daily resting-HR estimate is
+        // often timestamped mid-day rather than overnight, so night-windowing
+        // it would frequently make today's RHR nil (and could starve the
+        // baseline below minBaselineDays, silently dropping the whole term).
+        // #109's intraday-instability fix instead lives at the write layer
+        // (see HealthSyncManager + ReadinessWritePolicy) — an automatic
+        // re-sync stops overwriting an already-computed today after noon,
+        // rather than trying to make the HealthKit read itself stable.
         async let rhrToday = latestQuantity(
             .restingHeartRate, in: DateInterval(start: cal.startOfDay(for: now), end: now),
             unit: .count().unitDivided(by: .minute())
@@ -79,7 +81,7 @@ final class HealthKitReader: HealthMetricsProviding {
         var restBase: [Double] = []        // SL-18: deep+REM hours
         for d in 1...t.baselineDays {
             guard let day = cal.date(byAdding: .day, value: -d, to: now) else { continue }
-            let w = nightWindow(endingOn: day)
+            let w = cal.nightWindow(endingOn: day)
             if let hrv = try? await meanQuantity(
                 .heartRateVariabilitySDNN, in: w, unit: .secondUnit(with: .milli)
             ), hrv > 0 {
@@ -135,10 +137,7 @@ final class HealthKitReader: HealthMetricsProviding {
 
     private func nightAggregate(endingOn day: Date, capEnd: Date?) async throws -> NightAggregate {
         let cal = Calendar.gregorianLocal
-        let noon = cal.date(bySettingHour: 12, minute: 0, second: 0, of: day)!
-        let night = DateInterval(
-            start: cal.date(byAdding: .hour, value: -18, to: noon)!, end: noon
-        )
+        let night = cal.nightWindow(endingOn: day)
         let dayStart = cal.startOfDay(for: day)
         let dayEndFull = cal.date(byAdding: .day, value: 1, to: dayStart)!
         let dayEnd = capEnd.map { min(dayEndFull, $0) } ?? dayEndFull

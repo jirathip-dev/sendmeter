@@ -1,5 +1,6 @@
 import Foundation
 import Capacitor
+import SendLogHealthCore
 
 /// Bridges the web layer to the native iPhone health pipeline: HealthKit read
 /// + readiness compute + Supabase upsert (see HealthSyncManager). The heavy
@@ -42,9 +43,17 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    // #109: `trigger` is read from the JS-facing call, NOT assumed —
+    // `syncHealthNow`/`startHealthBackgroundSync` (visibilitychange foreground
+    // and cold-launch respectively) are app-driven, not a user gesture, and
+    // pass "automatic" explicitly. There's no user-refresh gesture in the app
+    // today, so a missing/unrecognized `trigger` fails safe as `.automatic`
+    // (respects ReadinessWritePolicy's after-noon lock) rather than the unsafe
+    // `.manual` (always overwrites) — see HealthSyncManager.syncNow.
     @objc func syncNow(_ call: CAPPluginCall) {
+        let trigger: SyncTrigger = call.getString("trigger") == "manual" ? .manual : .automatic
         Task {
-            do { try await manager.syncNow(); call.resolve() }
+            do { try await manager.syncNow(trigger: trigger); call.resolve() }
             catch { call.reject(error.localizedDescription) }
         }
     }
