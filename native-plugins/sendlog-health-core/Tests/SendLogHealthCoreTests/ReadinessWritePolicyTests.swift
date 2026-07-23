@@ -92,6 +92,35 @@ final class ReadinessWritePolicyTests: XCTestCase {
         XCTAssertTrue(allow)
     }
 
+    /// #112 item 3: the "today" date string must come from the injected
+    /// calendar, not the device time zone — otherwise the date check and the
+    /// noon cutoff disagree for a foreign-timezone calendar, and an
+    /// afternoon automatic sync would treat today's locked row as a
+    /// mismatched day and overwrite the frozen score.
+    ///
+    /// The foreign zone is placed 13h from the machine's, and the instant at
+    /// its wall-clock 12:30 — 13h away that is always across midnight, so
+    /// the device-local date is guaranteed to differ from the row date and
+    /// the pre-fix implementation (device-date comparison) returns true here.
+    func testForeignTimezoneCalendarStaysInternallyConsistent() {
+        let deviceOffset = TimeZone.current.secondsFromGMT()
+        let shift = deviceOffset >= 0 ? -13 * 3600 : 13 * 3600
+        var foreign = Calendar(identifier: .gregorian)
+        foreign.timeZone = TimeZone(secondsFromGMT: deviceOffset + shift)!
+
+        let now = foreign.date(from: DateComponents(
+            year: 2026, month: 7, day: 23, hour: 12, minute: 30
+        ))!
+        let allow = ReadinessWritePolicy.shouldOverwriteReadiness(
+            existingReadiness: 62,
+            existingRowDate: "2026-07-23",
+            now: now,
+            trigger: .automatic,
+            calendar: foreign
+        )
+        XCTAssertFalse(allow) // past noon in the injected zone → locked
+    }
+
     func testExactlyNoonIsNoLongerBeforeNoon() {
         let now = date(2026, 7, 23, 12, 0)
         let allow = ReadinessWritePolicy.shouldOverwriteReadiness(
