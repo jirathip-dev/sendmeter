@@ -7,9 +7,14 @@ import {
   ewma,
   phaseAcwrFit,
   phaseStartFromHistory,
+  suggestPhaseStepBack,
 } from "./metrics";
 import { today, daysAgo } from "./dates";
-import type { Session, TindeqRecordingMeta } from "../types";
+import type { HealthMetric, Session, TindeqRecordingMeta } from "../types";
+
+function readiness(date: string, value: number | null): Pick<HealthMetric, "date" | "readiness"> {
+  return { date, readiness: value };
+}
 
 function session(date: string, load: number): Session {
   return {
@@ -220,5 +225,113 @@ describe("phaseStartFromHistory", () => {
       { date: "2026-07-05", phase: "capacity" as const }, // older — not counted
     ];
     expect(phaseStartFromHistory(sessions, "capacity", fallback)).toBe("2026-07-16");
+  });
+});
+
+describe("suggestPhaseStepBack", () => {
+  it("suggests stepping back at exactly the N-day threshold in a power phase", () => {
+    const history = [
+      readiness(today(), 35),
+      readiness(daysAgo(1), 30),
+      readiness(daysAgo(2), 38),
+      readiness(daysAgo(3), 90), // outside the streak — must not be counted
+    ];
+    const result = suggestPhaseStepBack(history, "power");
+    expect(result.streakDays).toBe(3);
+    expect(result.suggested).toBe(true);
+  });
+
+  it("does not suggest one day short of the threshold", () => {
+    const history = [readiness(today(), 35), readiness(daysAgo(1), 30)];
+    const result = suggestPhaseStepBack(history, "strength");
+    expect(result.streakDays).toBe(2);
+    expect(result.suggested).toBe(false);
+  });
+
+  it("breaks the streak on a missing day (sparse history is conservative)", () => {
+    const history = [
+      readiness(today(), 35),
+      readiness(daysAgo(1), 30),
+      // daysAgo(2) missing entirely — no reading, not a good one
+      readiness(daysAgo(3), 20),
+      readiness(daysAgo(4), 20),
+    ];
+    const result = suggestPhaseStepBack(history, "power");
+    expect(result.streakDays).toBe(2);
+    expect(result.suggested).toBe(false);
+  });
+
+  it("breaks the streak on a day with a null score (metrics row present but no baseline yet)", () => {
+    const history = [
+      readiness(today(), 35),
+      readiness(daysAgo(1), 30),
+      readiness(daysAgo(2), null),
+      readiness(daysAgo(3), 20),
+    ];
+    const result = suggestPhaseStepBack(history, "power");
+    expect(result.streakDays).toBe(2);
+    expect(result.suggested).toBe(false);
+  });
+
+  it("clears once readiness recovers, even with a prior long low streak", () => {
+    const history = [
+      readiness(today(), 72), // recovered
+      readiness(daysAgo(1), 30),
+      readiness(daysAgo(2), 30),
+      readiness(daysAgo(3), 30),
+      readiness(daysAgo(4), 30),
+    ];
+    const result = suggestPhaseStepBack(history, "power");
+    expect(result.streakDays).toBe(0);
+    expect(result.suggested).toBe(false);
+  });
+
+  it("never suggests when already in the capacity phase", () => {
+    const history = [
+      readiness(today(), 20),
+      readiness(daysAgo(1), 20),
+      readiness(daysAgo(2), 20),
+      readiness(daysAgo(3), 20),
+    ];
+    const result = suggestPhaseStepBack(history, "capacity");
+    expect(result).toEqual({ suggested: false, streakDays: 0 });
+  });
+
+  it("never suggests in the execution (taper/comp) phase", () => {
+    const history = [
+      readiness(today(), 20),
+      readiness(daysAgo(1), 20),
+      readiness(daysAgo(2), 20),
+    ];
+    const result = suggestPhaseStepBack(history, "execution");
+    expect(result).toEqual({ suggested: false, streakDays: 0 });
+  });
+
+  it("gives no suggestion on empty history", () => {
+    expect(suggestPhaseStepBack([], "power")).toEqual({ suggested: false, streakDays: 0 });
+  });
+
+  it("keeps suggesting past the threshold (streak grows, not just clamps)", () => {
+    const history = [
+      readiness(today(), 30),
+      readiness(daysAgo(1), 30),
+      readiness(daysAgo(2), 30),
+      readiness(daysAgo(3), 30),
+      readiness(daysAgo(4), 30),
+    ];
+    const result = suggestPhaseStepBack(history, "strength");
+    expect(result.streakDays).toBe(5);
+    expect(result.suggested).toBe(true);
+  });
+
+  it("treats the low threshold as exclusive at the boundary (40 itself is not low)", () => {
+    const history = [
+      readiness(today(), 40),
+      readiness(daysAgo(1), 30),
+      readiness(daysAgo(2), 30),
+    ];
+    const result = suggestPhaseStepBack(history, "power");
+    expect(result.streakDays).toBe(0);
+    expect(result.suggested).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import type { WorkoutAttempt, WorkoutHrSample } from "../types";
+import type { Session, WorkoutAttempt, WorkoutHrSample } from "../types";
 
 /// Per-workout summary stats (SL-85 / SL-99) — pure and testable.
 
@@ -13,17 +13,6 @@ function restGaps(attempts: WorkoutAttempt[]): number[] {
     if (gap > 0) gaps.push(gap);
   }
   return gaps;
-}
-
-/// Session intensity (SL-99): mean attempt effort score, or null if none of
-/// the attempts carry one (older/phone workouts). Effort score already blends
-/// HR + motion, so it reads as "how hard the climbs were".
-export function meanEffort(attempts: WorkoutAttempt[]): number | null {
-  const scores = attempts
-    .map((a) => a.effortScore)
-    .filter((s): s is number => s !== null);
-  if (scores.length === 0) return null;
-  return scores.reduce((a, b) => a + b, 0) / scores.length;
 }
 
 /// Work-to-rest ratio (SL-99): total climbing seconds ÷ total rest seconds.
@@ -70,4 +59,36 @@ export function hrRecoveryBpm(
   return drops.length
     ? drops.reduce((a, b) => a + b, 0) / drops.length
     : null;
+}
+
+/// Distinct-day RPE trend for the Workout tab's recent-training chart
+/// (#108): unlike the metrics above (which only cover watch/phone-tracked
+/// climbs that have attempts), this reads straight off every logged
+/// session's `rpe` — so a session saved via "Log a past workout" (the
+/// manual flow: a `sessions` row only, no matching `climb_workouts` row)
+/// still shows up. Buckets by the session's own `date` string (already a
+/// local YYYY-MM-DD — see dates.ts) via plain string comparison, never
+/// parsed into a `Date`, so there's no UTC/local conversion to drop a day
+/// near midnight. Same-day sessions average their RPE. Returns the most
+/// recent `days` distinct dates that have a session, oldest → newest (so a
+/// left-to-right bar trend reads as time moving forward).
+export function recentDailyRpe(
+  sessions: Pick<Session, "date" | "rpe">[],
+  days: number,
+): { date: string; rpe: number }[] {
+  const byDate = new Map<string, { sum: number; n: number }>();
+  for (const s of sessions) {
+    const e = byDate.get(s.date);
+    if (e) {
+      e.sum += s.rpe;
+      e.n += 1;
+    } else {
+      byDate.set(s.date, { sum: s.rpe, n: 1 });
+    }
+  }
+  return [...byDate.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .slice(0, days)
+    .reverse()
+    .map(([date, e]) => ({ date, rpe: e.sum / e.n }));
 }

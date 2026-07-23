@@ -169,6 +169,39 @@ final class RecoveryEngineTests: XCTestCase {
         XCTAssertEqual(r.score, 50)
     }
 
+    // #111 end-to-end: a wearable-data gap (usable nights only right after
+    // the gap and >2 months back) starves the fixed 30-night window → nil,
+    // but the same nights run through BaselineBuilder's extended selection
+    // produce a score.
+    func testGapScenarioScoresAfterExtendedHarvest() {
+        let nights: [NightSample] = (0..<90).map { i in
+            if (0...5).contains(i) || (65...70).contains(i) {
+                return NightSample(hrv: i % 2 == 0 ? 45 : 55, rhr: i % 2 == 0 ? 52 : 60)
+            }
+            return NightSample()
+        }
+        func compute(_ built: BaselineBuilder.Result) -> ReadinessResult {
+            RecoveryEngine.compute(
+                inputs: inputs(
+                    hrv: 50, rhr: 56,
+                    hrvBase: built.hrvLnBaseline, rhrBase: built.rhrBaseline
+                ),
+                acwr: nil, t: t
+            )
+        }
+        // Pre-fix behavior: only the standard 30-night window → 6 usable
+        // autonomic nights → both z-terms drop → nil.
+        let starved = BaselineBuilder.build(nights: Array(nights.prefix(t.baselineDays)), t: t)
+        XCTAssertTrue(starved.isAutonomicStarved)
+        XCTAssertNil(compute(starved).score)
+        // With the extended harvest the same user scores.
+        let extended = BaselineBuilder.build(nights: nights, t: t)
+        XCTAssertFalse(extended.isAutonomicStarved)
+        let r = compute(extended)
+        XCTAssertNotNil(r.score)
+        XCTAssertNotNil(r.zone)
+    }
+
     func testDriverLine() {
         let r = RecoveryEngine.compute(
             inputs: inputs(

@@ -38,9 +38,10 @@ struct WorkoutLiveView: View {
             let bundle = Repo.makeSaveBundle(
                 summary: summary,
                 boulders: summary.attempts.count,
-                // Bank the prediction at half-point precision (SL-89) — no
-                // rounding to whole numbers, adjust later on the phone.
-                rpe: min(10, max(1, (summary.predictedRPE * 2).rounded() / 2)),
+                // Bank the model's raw prediction at 0.1 precision (#107) —
+                // no rounding to half-points, adjust later on the phone. The
+                // 0.5-step steppers are for MANUAL entry only (SL-89).
+                rpe: RPEQuantization.autoTracked(summary.predictedRPE),
                 phase: workout.cachedPhase,
                 tunables: .default
             )

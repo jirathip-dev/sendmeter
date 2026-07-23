@@ -75,8 +75,13 @@ export function presetTargetKg(
     const pct = Math.min(150, p.targetPct + (clampedSet - 1) * p.pctStep);
     return Math.round(((pct / 100) * base) * 10) / 10;
   }
-  if (p.targetKg == null) return null;
-  return Math.round(p.targetKg * 10) / 10;
+  // Fixed-kg mode: pass the stored value through as-is. Rounding here was
+  // scope creep from the badge work (SL-103/#105) — this branch feeds the
+  // live gauge band and presetKgSet1 too, not just the badge. Consumers that
+  // want a rounded display already `.toFixed(1)` it (PresetManager); the
+  // badge classifier only compares it against maxF/CF thresholds, where sub-
+  // 0.1kg precision is immaterial.
+  return p.targetKg == null ? null : p.targetKg;
 }
 
 export function buildTimeline(

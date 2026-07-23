@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { BleClient } from "@capacitor-community/bluetooth-le";
 import { Capacitor } from "@capacitor/core";
 import { parseNotification, TINDEQ } from "../lib/tindeq-protocol";
-import type { TindeqSample } from "../types";
+import { enqueueRecording, loadQueue, saveQueue } from "../lib/recordingQueue";
+import type { TindeqSample, TindeqSide } from "../types";
 
 export type TindeqStatus =
   | "unsupported"
@@ -27,7 +28,7 @@ const FAKE_MODE =
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).has("fake-tindeq");
 
-function summarize(samples: TindeqSample[]): StoppedRecording | null {
+export function summarize(samples: TindeqSample[]): StoppedRecording | null {
   if (samples.length === 0) return null;
   const rounded = samples.map((s) => ({
     t: Math.round(s.t),
@@ -40,6 +41,55 @@ function summarize(samples: TindeqSample[]): StoppedRecording | null {
     avgKg: Math.round((kgs.reduce((a, b) => a + b, 0) / kgs.length) * 100) / 100,
     samples: rounded,
   };
+}
+
+/// What ForceView (the tag/side/session owner) knows at the moment this hook
+/// unmounts — supplied via setSalvageContext, consumed only by the
+/// unmount-salvage cleanup below (#106).
+export interface SalvageContext {
+  tag: string;
+  side: TindeqSide;
+  groupId: string | null;
+  /// The signed-in user who captured it. Required (not optional) so a
+  /// salvage can never silently fall back to null when a real user IS
+  /// known — drainQueue attempts null-user entries for ANY signed-in user,
+  /// and this device's throwaway-dev-account workflow makes "captured under
+  /// account A, drained into account B" a real scenario, not a hypothetical
+  /// one. Only the no-context-registered fallback below uses null.
+  userId: string;
+  /// True while ForceView's own Stop flow (handleStop/runStop) is mid-flight
+  /// — that path already owns saving (or queuing, on failure) this data, so
+  /// the salvage cleanup must stand down rather than double-save it.
+  stopInFlight: boolean;
+}
+
+/// Pure gate for the unmount-salvage cleanup — pulled out so the exact
+/// condition is independently unit-testable. A single test on this would
+/// have caught a prior, inverted version of this check. `measuring` is OR-ed
+/// with `pendingInterruption` because a mid-measurement BLE drop clears
+/// measuringRef before the deferred stop handler can run — a logout in that
+/// same tick must still salvage (#113).
+export function shouldSalvageOnUnmount(params: {
+  measuring: boolean;
+  pendingInterruption: boolean;
+  stopInFlight: boolean;
+  sampleCount: number;
+}): boolean {
+  return (
+    (params.measuring || params.pendingInterruption) &&
+    !params.stopInFlight &&
+    params.sampleCount >= 2
+  );
+}
+
+/// #117: note for a stop triggered by a BLE interruption. When THIS mounted
+/// ForceView instance never observed measuring, the drop happened while it
+/// was unmounted (tab switched) and the recovered save is a raw whole-buffer
+/// blob that may overlap already-saved per-rep rows — label it (mirroring the
+/// salvage path's "Recovered after sign-out") so it can't masquerade as a
+/// clean pull. A mounted interruption is the normal stop path: no note.
+export function interruptionNote(everMeasuredThisMount: boolean): string {
+  return everMeasuredThisMount ? "" : "Recovered after connection loss";
 }
 
 /**
@@ -64,22 +114,43 @@ export function useTindeq() {
   const [peak, setPeak] = useState(0);
   const [avg, setAvg] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
-  // Bumped when the connection drops MID-MEASUREMENT — the samples are still
-  // in samplesRef, and the owner (ForceView) must run its stop/save path so
-  // the interrupted recording isn't lost.
-  const [interruptions, setInterruptions] = useState(0);
+  // True while a mid-measurement BLE drop's buffer is unclaimed — the
+  // reactive mirror of pendingInterruptionRef below (the ref stays because
+  // the unmount-salvage cleanup must capture it synchronously). The owner
+  // (ForceView) reacts by running its stop/save path — including on a
+  // REMOUNT, when the drop fired while it was on another tab (#117); cleared
+  // when any start/stop takes ownership of the buffer.
+  const [pendingInterruption, setPendingInterruption] = useState(false);
 
   const deviceIdRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
   const samplesRef = useRef<TindeqSample[]>([]);
   const t0Ref = useRef<number | null>(null);
   const measuringRef = useRef(false);
+  // #113: set on a mid-measurement BLE drop, cleared when any stop/start
+  // takes ownership of the buffer; OR-ed into the salvage gate so a drop +
+  // logout in the same tick still salvages (the disconnect callback clears
+  // measuringRef before the deferred stop handler can run).
+  const pendingInterruptionRef = useRef(false);
   const latestRef = useRef({ kg: 0, t: 0 });
   // Running mean of the current pull (sum/count over all samples) — flushed
   // to `avg` state once per frame alongside current/peak.
   const sumRef = useRef({ sum: 0, count: 0 });
   const rafRef = useRef(0);
   const fakeTimerRef = useRef(0);
+  // #106: the last context ForceView registered (tag/side/groupId + whether
+  // its own Stop is mid-flight) — read only by the unmount-salvage cleanup
+  // below. Deliberately never cleared on ForceView's OWN unmount (an
+  // ordinary tab switch, which does NOT tear this hook down — see below):
+  // the last-known context is exactly what a later salvage (possibly after
+  // the user left the Force tab entirely) should use.
+  const salvageContextRef = useRef<(() => SalvageContext) | null>(null);
+  const setSalvageContext = useCallback(
+    (cb: (() => SalvageContext) | null) => {
+      salvageContextRef.current = cb;
+    },
+    [],
+  );
 
   const stopRaf = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -122,11 +193,97 @@ export function useTindeq() {
     deviceIdRef.current = null;
   }, [stopRaf]);
 
+  // #106: this hook's owner is TindeqProvider, which sits ABOVE the tab
+  // switch (SL-58 #5) — ForceView unmounts and remounts freely underneath it
+  // as the user navigates, but THIS hook instance (and its BLE connection,
+  // and samplesRef) only unmounts for one reason: the authed tree tears
+  // down, i.e. App.tsx's `if (!session) return <LoginScreen />` fired. So
+  // there's no tab-switch ambiguity to gate against here — unlike an
+  // equivalent attempt from ForceView's own unmount, which fires on every
+  // ordinary tab switch too (a prior version of this fix tried exactly that
+  // and salvaged spurious duplicates as a result).
   useEffect(() => {
     return () => {
+      // INVARIANT: wasMeasuring/pendingInterruption/sampleCount MUST be
+      // captured here, in this SAME cleanup, BEFORE cleanupDevice() runs —
+      // cleanupDevice() sets measuringRef.current = false, so reading it
+      // after (or from a separate effect that might reorder relative to this
+      // one) would always see "not measuring" and silently disable salvage.
+      // cleanupDevice() doesn't touch pendingInterruptionRef today, but the
+      // same capture-before-cleanup discipline covers it so that never
+      // regresses. Don't split this cleanup or reorder these lines.
+      const wasMeasuring = measuringRef.current;
+      const pendingInterruption = pendingInterruptionRef.current;
+      const sampleCount = samplesRef.current.length;
       const deviceId = deviceIdRef.current;
       cleanupDevice();
       if (deviceId) void BleClient.disconnect(deviceId).catch(() => {});
+
+      // No ForceView ever registered a context this session (e.g. the
+      // session died while the user was on a different tab, or measuring
+      // started some other way) — nothing can be "mid-Stop" in that case,
+      // so fall back to a generic, tag-less, user-less recovery rather than
+      // a silent full loss. `userId` is pulled out separately (rather than
+      // folded into the fallback object below) so SalvageContext.userId can
+      // stay a required `string` for every REGISTERED context — only this
+      // no-registration fallback is allowed to pass null through to
+      // enqueueRecording.
+      const registered = salvageContextRef.current?.();
+      const ctx = registered ?? {
+        tag: "",
+        side: "" as TindeqSide,
+        groupId: null,
+        stopInFlight: false,
+      };
+      const userId: string | null = registered?.userId ?? null;
+      if (
+        !shouldSalvageOnUnmount({
+          measuring: wasMeasuring,
+          pendingInterruption,
+          stopInFlight: ctx.stopInFlight,
+          sampleCount,
+        })
+      ) {
+        return;
+      }
+      const summary = summarize(samplesRef.current);
+      if (!summary) return;
+      const persisted = saveQueue(
+        enqueueRecording(
+          loadQueue(),
+          {
+            id: crypto.randomUUID(),
+            durationMs: summary.durationMs,
+            peakKg: summary.peakKg,
+            avgKg: summary.avgKg,
+            // Free-hold-shaped recovery — flagged so it reads as a salvaged
+            // blob rather than a normal miss, and NEVER carries a
+            // protocolRunId even mid-guided-protocol: it's a raw buffer
+            // slice, not a clean per-rep hold, and tagging it into a run
+            // would skew SL-102's per-rep box plots/run grouping.
+            note: "Recovered after sign-out",
+            tag: ctx.tag,
+            side: ctx.side,
+            groupId: ctx.groupId,
+            protocolRunId: null,
+            setNo: null,
+            samples: summary.samples,
+          },
+          // null only via the no-context fallback above — a REGISTERED
+          // context always carries the real signed-in user id, so a pull
+          // captured under one account can never drain into another
+          // (drainQueue attempts null-user entries for ANY signed-in user).
+          userId,
+        ),
+      );
+      if (!persisted) {
+        // Otherwise this failure is invisible — no toast/UI is reachable
+        // from an unmount cleanup, and the buffer is gone the moment this
+        // function returns.
+        console.warn(
+          "[tindeq] salvage-on-unmount: recording captured but localStorage write failed — data lost",
+        );
+      }
     };
   }, [cleanupDevice]);
 
@@ -166,7 +323,10 @@ export function useTindeq() {
         setStatus("idle");
         setErrorMsg("Device disconnected");
         // Tell the owner to save the in-flight recording (samplesRef intact).
-        if (wasMeasuring) setInterruptions((n) => n + 1);
+        if (wasMeasuring) {
+          pendingInterruptionRef.current = true;
+          setPendingInterruption(true);
+        }
       });
       await BleClient.startNotifications(
         device.deviceId,
@@ -209,6 +369,10 @@ export function useTindeq() {
   }, [writeCmd]);
 
   const start = useCallback(async () => {
+    // A new pull resets samplesRef, so any stale salvage claim on the old
+    // buffer is void (#113).
+    pendingInterruptionRef.current = false;
+    setPendingInterruption(false);
     samplesRef.current = [];
     t0Ref.current = null;
     latestRef.current = { kg: 0, t: 0 };
@@ -239,6 +403,11 @@ export function useTindeq() {
   }, [writeCmd, startRaf, handleSamples]);
 
   const stop = useCallback(async (): Promise<StoppedRecording | null> => {
+    // The Stop flow now owns this data (save or queue-on-failure), so the
+    // salvage claim must be released — otherwise a later normal logout would
+    // queue a duplicate of an already-saved pull (#113).
+    pendingInterruptionRef.current = false;
+    setPendingInterruption(false);
     measuringRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
@@ -266,6 +435,29 @@ export function useTindeq() {
     return () => clearInterval(id);
   }, [status, stop]);
 
+  // Dev-only (#117): the fake connect() registers no disconnect callback, so
+  // fake mode otherwise has NO way to simulate a mid-measurement drop — and
+  // the interruption/recovery path would be unverifiable in a browser. Run
+  // `window.__tindeqFakeDrop()` from the console; same body as the real
+  // disconnect callback in connect() above. Strictly FAKE_MODE-gated.
+  useEffect(() => {
+    if (!FAKE_MODE) return;
+    const w = window as Window & { __tindeqFakeDrop?: () => void };
+    w.__tindeqFakeDrop = () => {
+      const wasMeasuring = measuringRef.current;
+      cleanupDevice();
+      setStatus("idle");
+      setErrorMsg("Device disconnected");
+      if (wasMeasuring) {
+        pendingInterruptionRef.current = true;
+        setPendingInterruption(true);
+      }
+    };
+    return () => {
+      delete w.__tindeqFakeDrop;
+    };
+  }, [cleanupDevice]);
+
   return {
     status,
     supported,
@@ -276,13 +468,14 @@ export function useTindeq() {
     peak,
     avg,
     elapsedMs,
-    interruptions,
+    pendingInterruption,
     samplesRef,
     connect,
     disconnect,
     tare,
     start,
     stop,
+    setSalvageContext,
     fakeMode: FAKE_MODE,
   };
 }

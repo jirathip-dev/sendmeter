@@ -184,7 +184,7 @@ enum Repo {
             elevationGainM: summary.elevationGainM,
             attemptsDetected: summary.attempts.count,
             attemptsConfirmed: boulders,
-            rpePredicted: (summary.predictedRPE * 10).rounded() / 10,
+            rpePredicted: RPEQuantization.autoTracked(summary.predictedRPE),
             rpeConfirmed: rpe,
             meanEffort: (meanEffort * 100).rounded() / 100,
             attemptsPer10min: (attemptsPer10min * 100).rounded() / 100,

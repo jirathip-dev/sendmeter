@@ -57,7 +57,9 @@ export async function startHealthBackgroundSync(): Promise<void> {
   try {
     await SendLogHealth.requestAuthorization();
     await SendLogHealth.startBackgroundSync();
-    await SendLogHealth.syncNow();
+    // #109: cold launch, not a user gesture — "automatic", so the native
+    // side's after-noon readiness lock applies (see ReadinessWritePolicy).
+    await SendLogHealth.syncNow({ trigger: "automatic" });
     recordHealthSync("background");
   } catch {
     // HealthKit denied / unavailable — readiness just stays empty
@@ -70,7 +72,10 @@ export async function startHealthBackgroundSync(): Promise<void> {
 export async function syncHealthNow(): Promise<void> {
   if (!IS_NATIVE) return;
   try {
-    await SendLogHealth.syncNow();
+    // #109: fired from useAuth's visibilitychange foreground listener, not
+    // a user gesture — "automatic". There's no explicit user-refresh action
+    // in the app yet; when one's added it should pass "manual" instead.
+    await SendLogHealth.syncNow({ trigger: "automatic" });
     recordHealthSync("foreground");
   } catch {
     // plugin unavailable — safe to ignore

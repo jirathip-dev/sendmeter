@@ -22,6 +22,9 @@ const DEFAULT_RPE = 6;
 interface Props {
   userId: string;
   currentPhase: PhaseId;
+  /// All sessions (manual + auto-tracked) — feeds WorkoutStatsCard's
+  /// per-day RPE trend so a manually-logged past workout shows up there too.
+  sessions: Session[];
   /// Opens the manual Log Session sheet (moved here from Home).
   onLog: () => void;
 }
@@ -29,7 +32,7 @@ interface Props {
 /// The Workout tab: start/track a workout (live watch mirror or phone
 /// full-screen timer) and manually log a session. Past workouts live in
 /// History.
-export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
+export default function WorkoutView({ userId, currentPhase, sessions, onLog }: Props) {
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
   const [live] = useLiveWorkout(userId);
@@ -164,8 +167,8 @@ export default function WorkoutView({ userId, currentPhase, onLog }: Props) {
       {/* Guided routine presets (warm-ups, circuits) — utility, saves nothing */}
       <RoutineCard currentPhase={currentPhase} />
 
-      {/* Summary stats across recent workouts (SL-85) */}
-      <WorkoutStatsCard />
+      {/* Summary stats across recent workouts (SL-85 / #108) */}
+      <WorkoutStatsCard sessions={sessions} />
 
       {/* Manual entry — the Log Session sheet (moved from Home) */}
       <div className="card" style={{ marginTop: 2 }}>

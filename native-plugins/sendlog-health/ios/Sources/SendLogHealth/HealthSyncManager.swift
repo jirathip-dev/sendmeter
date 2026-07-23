@@ -15,9 +15,15 @@ private struct HealthMetricsUpsert: Codable {
     var sleepRemHours: Double?
     var bodyMassKg: Double?
     var respRateBpm: Double?
+    // Optional (not just "nullable in the DB"): when ReadinessWritePolicy
+    // withholds today's score, these three are left OUT of the upsert
+    // payload entirely (Codable's synthesized encodeIfPresent for Optional
+    // properties omits nil keys rather than sending `null`), so Postgres'
+    // ON CONFLICT DO UPDATE only touches the biometric columns above and
+    // leaves the existing readiness/zone/computed_at untouched.
     var readiness: Int?
     var zone: String?
-    var computedAt: Date
+    var computedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case date, readiness, zone
@@ -35,6 +41,18 @@ private struct HealthMetricsUpsert: Codable {
 private struct SessionLoadRow: Codable {
     var date: String
     var load: Int?
+}
+
+/// Just enough of today's existing row to decide whether an automatic sync
+/// may overwrite its readiness — see `ReadinessWritePolicy`. Deliberately
+/// decodes `date` as a String (the DB `date` column, not a `timestamptz`)
+/// rather than `computed_at` as a `Date` — a `timestamptz` decode mismatch
+/// here must not be able to break this lookup (see the fail-open handling
+/// in `syncNow`), and the policy only needs presence + the row's own date
+/// for its self-defense check, not a timestamp.
+private struct ExistingReadinessRow: Codable {
+    var date: String
+    var readiness: Int?
 }
 
 /// Orchestrates iPhone-side readiness: read HealthKit → ACWR from the user's
@@ -57,14 +75,54 @@ final class HealthSyncManager {
         try await client.auth.setSession(accessToken: accessToken, refreshToken: refreshToken)
     }
 
-    /// Read HealthKit, compute today's readiness, upsert one row.
-    func syncNow() async throws {
-        let inputs = try await reader.readToday()
-        let acwr = try? await computeAcwr()
-        let result = RecoveryEngine.compute(inputs: inputs, acwr: acwr, t: tunables)
+    /// Read HealthKit, upsert today's biometrics, and — subject to
+    /// `ReadinessWritePolicy` — (re)compute and upsert readiness/zone.
+    ///
+    /// `trigger` is required, not defaulted: `.manual` (an explicit
+    /// user-refresh gesture — the app has none yet, reserved for a future
+    /// pull-to-refresh) is always authoritative; `.automatic` (every
+    /// existing call site today — cold-launch and foreground re-syncs are
+    /// both app-driven, not user-initiated) defers to the policy. #109:
+    /// an automatic sync can fire repeatedly through the day (background
+    /// delivery, plus every app foreground), and several inputs — resting
+    /// HR especially — aren't guaranteed finalized in the morning, so once
+    /// today has a readiness, an automatic sync after noon leaves it alone.
+    ///
+    /// The biometric columns (hrv/rhr/sleep/resp/mass) are NOT gated by the
+    /// policy and are always re-read + re-upserted on every call, locked or
+    /// not — a metric HealthKit only finishes writing mid-afternoon (sleep
+    /// stages are a common case) must still land in the row for that day.
+    /// Readiness is the frozen morning score; the biometric columns stay
+    /// current through the day.
+    func syncNow(trigger: SyncTrigger) async throws {
+        let today = Date().localDateString
 
-        let row = HealthMetricsUpsert(
-            date: Date().localDateString,
+        var allowReadinessOverwrite = true
+        if trigger == .automatic {
+            // Fail OPEN: a network blip or a decode mismatch here must not
+            // silently turn the whole sync into a no-op — that would leave
+            // the day without ANY score, which is worse than the intraday
+            // drift this policy exists to fix. Unknown state defaults to
+            // "not yet locked", matching pre-#109 (always-overwrite)
+            // behavior.
+            let existing: [ExistingReadinessRow] = (try? await client
+                .from("health_metrics")
+                .select("date, readiness")
+                .eq("date", value: today)
+                .execute()
+                .value) ?? []
+            allowReadinessOverwrite = ReadinessWritePolicy.shouldOverwriteReadiness(
+                existingReadiness: existing.first?.readiness,
+                existingRowDate: existing.first?.date,
+                now: Date(),
+                trigger: .automatic
+            )
+        }
+
+        let inputs = try await reader.readToday()
+
+        var row = HealthMetricsUpsert(
+            date: today,
             hrvSdnnMs: inputs.hrvSDNNms,
             restingHr: inputs.restingHR,
             sleepHours: inputs.sleepHours,
@@ -72,10 +130,18 @@ final class HealthSyncManager {
             sleepRemHours: inputs.sleepRemHours,
             bodyMassKg: inputs.bodyMassKg,
             respRateBpm: inputs.respRateBpm,
-            readiness: result.score,
-            zone: result.zone?.rawValue,
-            computedAt: Date()
+            readiness: nil,
+            zone: nil,
+            computedAt: nil
         )
+        if allowReadinessOverwrite {
+            let acwr = try? await computeAcwr()
+            let result = RecoveryEngine.compute(inputs: inputs, acwr: acwr, t: tunables)
+            row.readiness = result.score
+            row.zone = result.zone?.rawValue
+            row.computedAt = Date()
+        }
+
         try await client
             .from("health_metrics")
             .upsert(row, onConflict: "user_id,date")
@@ -85,7 +151,9 @@ final class HealthSyncManager {
     /// Hard-delete the user's health rows (RLS scopes to auth.uid()), then
     /// rebuild the whole recent history from HealthKit — not just today — so a
     /// clear recovers the full readiness trend, not a single day. Days with no
-    /// health signal are skipped rather than written as empty rows.
+    /// health signal are skipped rather than written as empty rows. Explicit
+    /// user action (the "Clear & resync" setting) — always authoritative,
+    /// doesn't consult `ReadinessWritePolicy`.
     func clearAndResync(historyDays: Int = 90) async throws {
         try await client
             .from("health_metrics")
@@ -194,7 +262,10 @@ final class HealthSyncManager {
             sampleType: HealthKitReader.observedType, predicate: nil
         ) { [weak self] _, completion, _ in
             Task {
-                try? await self?.syncNow()
+                // #109: this fires on every HealthKit background wake, not
+                // on user action — always .automatic, so ReadinessWritePolicy
+                // gets a say before today's row is touched.
+                try? await self?.syncNow(trigger: .automatic)
                 completion()
             }
         }

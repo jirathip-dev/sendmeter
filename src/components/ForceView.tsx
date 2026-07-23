@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveForce } from "../hooks/useLiveForce";
+import { interruptionNote } from "../hooks/useTindeq";
 import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
@@ -27,7 +28,13 @@ import {
   startTindeqLiveActivity,
   updateTindeqLivePeak,
 } from "../lib/liveActivity";
-import type { TindeqPreset, TindeqRecordingMeta, TindeqSide } from "../types";
+import { enqueueRecording, loadQueue, saveQueue } from "../lib/recordingQueue";
+import type {
+  NewTindeqRecording,
+  TindeqPreset,
+  TindeqRecordingMeta,
+  TindeqSide,
+} from "../types";
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import PresetManager from "./PresetManager";
@@ -69,6 +76,7 @@ const stepBtnStyle = (disabled: boolean): CSSProperties => ({
 });
 
 interface ForceViewProps {
+  userId: string;
   onLogSession: (input: {
     durationMin: number;
     rpe: number;
@@ -77,8 +85,32 @@ interface ForceViewProps {
   }) => Promise<void>;
 }
 
-export default function ForceView({ onLogSession }: ForceViewProps) {
+export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const toast = useToast();
+  // #106: a rep whose insert fails (dead auth session, dropped connection)
+  // gets queued to localStorage instead of dropped — App.tsx drains it once
+  // a session comes back. Tracks whether the PREVIOUS attempt (of either
+  // kind) failed, so the toast below fires once per outage rather than once
+  // per queue-empty check — a queue that's still non-empty from an earlier
+  // outage must not swallow the notice for a brand-new one.
+  const outageRef = useRef(false);
+  function persistRecordingToQueue(
+    rec: NewTindeqRecording & { id: string },
+  ): boolean {
+    return saveQueue(enqueueRecording(loadQueue(), rec, userId));
+  }
+  function queueFailedRecording(rec: NewTindeqRecording & { id: string }) {
+    const isNewOutage = !outageRef.current;
+    outageRef.current = true;
+    const persisted = persistRecordingToQueue(rec);
+    if (!isNewOutage) return;
+    toast(
+      persisted
+        ? "Couldn't save — recording queued, will sync automatically"
+        : "Couldn't save this recording",
+      "error",
+    );
+  }
   // Connection + active gauge session live in an app-level provider so the
   // Progressor stays connected and the session survives leaving fullscreen /
   // changing tabs (SL-58 #5). The session is minted lazily on the first save.
@@ -262,23 +294,39 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       return;
     }
     const kgs = slice.map((s) => s.kg);
+    // Minted up front (not just on retry) so even the FIRST attempt below
+    // carries it — if that request actually lands server-side but the
+    // response never makes it back (dead session, timeout), a later queue
+    // drain retrying with this SAME id collides on the primary key (23505)
+    // instead of inserting a second row for the same rep (#106).
+    const rec: NewTindeqRecording & { id: string } = {
+      id: crypto.randomUUID(),
+      durationMs: Math.max(1, Math.round(slice[slice.length - 1]!.t)),
+      peakKg: Math.max(...kgs),
+      avgKg: Math.round((kgs.reduce((a, b) => a + b, 0) / kgs.length) * 100) / 100,
+      note: "",
+      tag: pendingTag.trim(),
+      side: seg.side ?? pendingSide,
+      groupId: ensureSession(),
+      protocolRunId: protocolRunIdRef.current,
+      setNo: seg.set,
+      samples: slice,
+    };
     try {
-      const saved = await insertRecording({
-        durationMs: Math.max(1, Math.round(slice[slice.length - 1]!.t)),
-        peakKg: Math.max(...kgs),
-        avgKg: Math.round((kgs.reduce((a, b) => a + b, 0) / kgs.length) * 100) / 100,
-        note: "",
-        tag: pendingTag.trim(),
-        side: seg.side ?? pendingSide,
-        groupId: ensureSession(),
-        protocolRunId: protocolRunIdRef.current,
-        setNo: seg.set,
-        samples: slice,
-      });
+      const saved = await insertRecording(rec);
+      outageRef.current = false;
       setRecordings((list) => [saved, ...list]);
       setJustSaved(saved);
     } catch (e) {
-      savedSegsRef.current.delete(segIdx); // insert failed — allow a retry
+      // Insert failed (dead auth session, dropped connection, …) — queue the
+      // slice for retry instead of dropping it (#106). Unlike the "nothing
+      // captured" branch above, KEEP the segment claimed: retrying now
+      // happens via the queue drain, not the live autosave effect, so
+      // un-claiming would let that effect re-walk this same index once more
+      // time has passed and insert the FULL segment — landing both the
+      // queued partial and the live full rep as two rows for one hold (the
+      // exact double-count hazard CLAUDE.md warns about for guided protocols).
+      queueFailedRecording(rec);
       setListError(e instanceof Error ? e.message : "Failed to save recording");
     }
   }
@@ -290,17 +338,20 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   // double tap) could both call this — the first claim wins so a free hold is
   // never inserted twice.
   const stopInFlightRef = useRef(false);
-  async function handleStop() {
+  // `note` labels the free-hold save — "" for a normal stop; the interruption
+  // effect below passes "Recovered after connection loss" when the drop fired
+  // while this view was unmounted (#117).
+  async function handleStop(note = "") {
     if (stopInFlightRef.current) return;
     stopInFlightRef.current = true;
     try {
-      await runStop();
+      await runStop(note);
     } finally {
       stopInFlightRef.current = false;
     }
   }
 
-  async function runStop() {
+  async function runStop(note: string) {
     if (timeline) {
       const tMs = tindeq.elapsedMs;
       const physS = tMs / 1000;
@@ -338,23 +389,30 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
     void endTindeqLiveActivity();
     if (!summary) return;
     setSaving(true);
+    // Minted up front — see the comment on the equivalent line in
+    // saveHoldSlice (retry idempotency via 23505, #106).
+    const rec: NewTindeqRecording & { id: string } = {
+      id: crypto.randomUUID(),
+      durationMs: summary.durationMs,
+      peakKg: summary.peakKg,
+      avgKg: summary.avgKg,
+      note,
+      tag: pendingTag.trim(),
+      side: pendingSide,
+      groupId: ensureSession(),
+      protocolRunId: null,
+      setNo: null,
+      samples: summary.samples,
+    };
     try {
-      const saved = await insertRecording({
-        durationMs: summary.durationMs,
-        peakKg: summary.peakKg,
-        avgKg: summary.avgKg,
-        note: "",
-        tag: pendingTag.trim(),
-        side: pendingSide,
-        groupId: ensureSession(),
-        protocolRunId: null,
-        setNo: null,
-        samples: summary.samples,
-      });
+      const saved = await insertRecording(rec);
+      outageRef.current = false;
       setRecordings((list) => [saved, ...list]);
       setJustSaved(saved);
       // keep tag and side — set once, tweak side between reps
     } catch (e) {
+      // Queue instead of dropping (#106) — see saveHoldSlice above.
+      queueFailedRecording(rec);
       setListError(e instanceof Error ? e.message : "Failed to save recording");
     } finally {
       setSaving(false);
@@ -599,18 +657,30 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
   // Connection dropped mid-measurement (device died, walked out of range,
   // phone locked): the samples survive in samplesRef, so run the exact same
   // stop/save path a manual Stop would — the interrupted recording is saved
-  // instead of lost. Deferred to a task so no state writes happen
-  // synchronously inside the effect.
-  const handledInterruptionsRef = useRef(tindeq.interruptions);
+  // instead of lost. Driven by the provider-owned salvage CLAIM (not a
+  // counter delta): effects run on mount, so a drop that fired while this
+  // view was UNMOUNTED (tab switched) is re-detected on remount and recovered
+  // the same way (#117). The claim is released inside handleStop → runStop →
+  // tindeq.stop(), which flips the dep false; if a stop already completed
+  // before this runs, the claim is false and nothing is scheduled. Deferred
+  // to a task so no state writes happen synchronously inside the effect.
+  // Whether THIS mounted instance ever observed measuring — false in the
+  // remount case, which labels the recovered save (see interruptionNote).
+  const everMeasuredRef = useRef(false);
   useEffect(() => {
-    if (tindeq.interruptions === handledInterruptionsRef.current) return;
-    handledInterruptionsRef.current = tindeq.interruptions;
-    const t = setTimeout(() => void handleStop(), 0);
+    if (measuring) everMeasuredRef.current = true;
+  }, [measuring]);
+  useEffect(() => {
+    if (!tindeq.pendingInterruption) return;
+    const t = setTimeout(
+      () => void handleStop(interruptionNote(everMeasuredRef.current)),
+      0,
+    );
     return () => clearTimeout(t);
     // handleStop reads current state/refs at call time; depending on it
     // would re-arm this effect every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tindeq.interruptions]);
+  }, [tindeq.pendingInterruption]);
 
   // Feed the session peak to the lock-screen card, throttled — the card's
   // timers render natively; only the number needs occasional refreshes.
@@ -629,6 +699,38 @@ export default function ForceView({ onLogSession }: ForceViewProps) {
       void endTindeqLiveActivity();
     };
   }, []);
+
+  // #106: if the auth session dies mid-measurement, the tab that vanishes is
+  // NOT this component — App.tsx's `if (!session) return <LoginScreen />`
+  // tears down the whole authed tree, including TindeqProvider, which owns
+  // the BLE connection/samplesRef ABOVE the tab switch (SL-58 #5) so it
+  // (correctly) survives ordinary navigation away from Force. TindeqProvider
+  // therefore only unmounts for that one reason, and its own unmount
+  // cleanup (in useTindeq.ts) is what salvages an in-progress pull — this
+  // effect just keeps it supplied with the current tag/side/groupId (and
+  // whether OUR OWN Stop flow is already handling the data) so that salvage
+  // has something better than a tag-less fallback to work with. Not
+  // unregistered on ForceView's own unmount: if the user leaves the Force
+  // tab and the session then dies while they're elsewhere, this LAST-known
+  // context is still the best guess available.
+  useEffect(() => {
+    tindeq.setSalvageContext(() => ({
+      tag: pendingTag.trim(),
+      side: pendingSide,
+      groupId: gaugeSession?.groupId ?? null,
+      // The signed-in user, always known here — without this a salvaged
+      // recording would fall to enqueueRecording's null-userId path, which
+      // ANY signed-in user can drain (real risk on a shared device using
+      // throwaway dev accounts, not just hypothetical).
+      userId,
+      stopInFlight: stopInFlightRef.current,
+    }));
+    // setSalvageContext itself is useCallback-stable ([] deps in useTindeq);
+    // depending on the whole `tindeq` object instead would re-run this every
+    // animation frame while measuring (its container is a fresh object each
+    // TindeqProvider render, since current/peak/elapsedMs tick via rAF).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tindeq.setSalvageContext, pendingTag, pendingSide, gaugeSession, userId]);
 
   // Pop the gauge fullscreen the moment the Progressor connects (only on the
   // connecting→connected transition — a stop→connected change must not

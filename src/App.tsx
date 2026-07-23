@@ -24,11 +24,14 @@ import PasskeyPrompt from "./components/PasskeyPrompt";
 import AccountSheet from "./components/AccountSheet";
 import Sheet from "./components/Sheet";
 import TrashSheet from "./components/TrashSheet";
+import UnlinkedSessionNudge from "./components/UnlinkedSessionNudge";
 import RealtimeVersionProvider from "./components/RealtimeVersionProvider";
 import ToastProvider from "./components/ToastProvider";
 import { TindeqProvider } from "./hooks/TindeqProvider";
 import { useToast } from "./hooks/useToast";
 import type { HealthSyncSource } from "./lib/healthSync";
+import { insertRecording } from "./lib/repo";
+import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
 
 export default function App() {
   const { session, loading, recovery, clearRecovery, signOut } = useAuth();
@@ -95,6 +98,10 @@ function AuthedApp({
   const [showPhaseChange, setShowPhaseChange] = useState(false);
   const [showWatchSheet, setShowWatchSheet] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  // The just-logged session, while it may still have same-day unlinked
+  // Tindeq recordings to nudge-link (SL-21). Cleared on dismiss/link, or by
+  // logging another session.
+  const [nudgeSession, setNudgeSession] = useState<Session | null>(null);
   const [form, setForm] = useState<LogFormState>({
     date: today(),
     type: "fingerboard",
@@ -106,6 +113,26 @@ function AuthedApp({
 
   const acwrData = useMemo(() => computeAcwr(sessions), [sessions]);
   const weeklyLoads = useMemo(() => computeWeeklyLoads(sessions), [sessions]);
+
+  // #106: recover any tindeq recordings that failed to save (dead auth
+  // session, dropped connection) while we were signed out — AuthedApp only
+  // renders once `session` exists, so a fresh mount here IS "auth just
+  // succeeded" (login or a session restore). drainPendingRecordingsQueue
+  // guards its own re-entrancy, so a duplicate mount can't double-insert.
+  // No manual list refresh needed on success — `tindeq_recordings` is a
+  // WATCHED_TABLES table, so each recovered insert bumps the realtime
+  // version and ForceView's own fetch effect picks it up.
+  useEffect(() => {
+    let cancelled = false;
+    void drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
+      if (!cancelled && n > 0) {
+        toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, toast]);
 
   // SL-31 sync toast: only for a foreground resync the user is actively
   // looking at. The cold-launch background sync fires on every app open
@@ -164,8 +191,11 @@ function AuthedApp({
   );
 
   function submitSession() {
-    void addSession(form);
-    toast("Session logged");
+    void (async () => {
+      const saved = await addSession(form);
+      toast("Session logged");
+      if (saved) setNudgeSession(saved);
+    })();
     setShowModal(false);
     setForm({
       date: today(),
@@ -211,6 +241,14 @@ function AuthedApp({
             </button>
           </div>
         )}
+        {/* SL-21 nudge: appears right after the Log Session sheet saves, if
+            same-day Tindeq recordings are still ungrouped. */}
+        {nudgeSession && (
+          <UnlinkedSessionNudge
+            session={nudgeSession}
+            onDismiss={() => setNudgeSession(null)}
+          />
+        )}
         {loading ? (
           <div className="loading-center" style={{ padding: "72px 0" }}>
             <div className="spinner" />
@@ -249,11 +287,12 @@ function AuthedApp({
               <WorkoutView
                 userId={userId}
                 currentPhase={currentPhase}
+                sessions={sessions}
                 onLog={openLog}
               />
             )}
             {view === "tindeq" && (
-              <ForceView onLogSession={addTindeqSession} />
+              <ForceView userId={userId} onLogSession={addTindeqSession} />
             )}
           </>
         )}

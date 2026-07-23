@@ -315,10 +315,13 @@ function adjustedHoldAboveCf(
   return roundHoldS(clamp(holdS, lo, hi));
 }
 
-/// Adjusted hold + reps for endurance: total time-under-tension (reps ×
-/// hold) stays constant. Hold grows with the square of how much the load
-/// dropped (F(t) = CF + W′/t means halving the excess-over-CF roughly
-/// quadruples sustainable duration at fixed dose), reps shrink to compensate.
+/// Adjusted hold + reps for endurance: a pure heuristic of `pct`, holding
+/// total time-under-tension (reps × hold) roughly constant as intensity
+/// scales — hold grows with the square of `100/pct`, reps shrink to
+/// compensate. Deliberately NOT derived from the F(t) = CF + W′/t curve the
+/// above-CF zones use (adjustedHoldAboveCf): endurance targets sit at/below
+/// CF (zoneTarget's 80–100% of CF), where that hyperbola isn't valid — it
+/// models the finite W′ reservoir above CF, which doesn't exist down here.
 /// Exported for direct testing of the [20, 240]s clamp (unreachable through
 /// zoneTarget/zonePrescription alone since those clamp pct to [60, 110] first).
 export function adjustedEndurance(

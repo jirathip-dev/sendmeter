@@ -85,7 +85,7 @@ export function useTrainingData(userId: string) {
     // refetch so the web/iOS app picks it up without a manual reload.
   }, [userId, realtimeVersion, runFetch]);
 
-  async function addSession(form: LogFormState) {
+  async function addSession(form: LogFormState): Promise<Session | undefined> {
     const temp: Session = {
       id: `temp-${Math.random().toString(36).slice(2)}`,
       date: form.date,
@@ -105,9 +105,13 @@ export function useTrainingData(userId: string) {
       setSessions((list) =>
         sortSessions(list.map((s) => (s.id === temp.id ? saved : s))),
       );
+      // Returned so callers can offer a same-day follow-up (SL-21's
+      // unlinked-recordings nudge after the Log Session sheet saves).
+      return saved;
     } catch (e) {
       setSessions((list) => list.filter((s) => s.id !== temp.id));
       setError(e instanceof Error ? e.message : "Failed to save session");
+      return undefined;
     }
   }
 

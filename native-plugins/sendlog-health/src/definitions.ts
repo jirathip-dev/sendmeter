@@ -1,3 +1,11 @@
+/// Distinguishes an app-driven sync (foreground/cold-launch — the app has no
+/// user-refresh gesture yet, so this is what every current call site sends)
+/// from an explicit user-initiated one (reserved for a future pull-to-refresh
+/// — always authoritative on the native side, bypassing the after-noon
+/// readiness lock; see ReadinessWritePolicy in sendlog-health-core). Omitting
+/// `trigger` on the native side fails safe as "automatic".
+export type HealthSyncTrigger = "automatic" | "manual";
+
 export interface SendLogHealthPlugin {
   /// Prompt for HealthKit read access (HRV, resting HR, sleep, body mass,
   /// respiratory rate). No-op resolve on non-iOS.
@@ -12,9 +20,11 @@ export interface SendLogHealthPlugin {
     refreshToken: string;
   }): Promise<void>;
 
-  /// Read HealthKit now, compute readiness, and upsert today's row. Called on
-  /// app foreground and right after a clear. Resolves after the upsert.
-  syncNow(): Promise<void>;
+  /// Read HealthKit now, upsert today's biometrics, and — unless
+  /// ReadinessWritePolicy withholds it (an `"automatic"` sync after an
+  /// already-scored today's noon) — (re)compute and upsert readiness. Called
+  /// on app foreground and cold launch. Resolves after the upsert.
+  syncNow(options?: { trigger?: HealthSyncTrigger }): Promise<void>;
 
   /// Delete the user's health_metrics rows, then immediately re-ingest from
   /// HealthKit (native path for the Account "Clear & resync" action).

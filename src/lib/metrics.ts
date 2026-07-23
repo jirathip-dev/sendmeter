@@ -1,6 +1,7 @@
 import type {
   AcwrData,
   AcwrStatus,
+  HealthMetric,
   Phase,
   PhaseId,
   Session,
@@ -58,6 +59,68 @@ export function phaseStartFromHistory(
     start = s.date;
   }
   return start ?? fallbackStart;
+}
+
+// "Low" readiness mirrors the "recover" zone floor already drawn as a
+// gridline on ReadinessCard and colored var(--danger) — see
+// RecoveryTunables.zoneRecoverBelow in sendlog-health-core (kept in sync by
+// hand; the score/zone pair is computed server-side and both land in
+// health_metrics). Reusing it means this suggestion agrees with what the
+// user already sees as "red" rather than inventing a second threshold.
+const LOW_READINESS_THRESHOLD = 40;
+
+// A single rough night is noise; a multi-day trend is a signal worth acting
+// on. 3 consecutive low days is the shortest window that reads as a trend
+// rather than a blip — short enough to still be timely mid-phase.
+const LOW_READINESS_STREAK_DAYS = 3;
+
+// Phases whose whole intent is pushing load/intensity — the only phases a
+// "step back" suggestion is meaningful for. Capacity is already the
+// step-back phase (nothing to suggest); execution is taper/comp-focused,
+// where backing off defeats the point, so it's deliberately out of scope.
+const STEP_BACK_PHASES: ReadonlySet<PhaseId> = new Set(["power", "strength"]);
+
+export interface PhaseStepBackSuggestion {
+  /// Whether to show the soft nudge right now.
+  suggested: boolean;
+  /// Consecutive low-readiness days counted back from today (0 if the
+  /// streak is broken, insufficient, or the phase doesn't apply). Also
+  /// doubles as the per-streak key the UI persists a dismissal under, so a
+  /// fresh streak (post-recovery relapse) shows the suggestion again.
+  streakDays: number;
+}
+
+/// Recovery-adjusted phase suggestion (SL-23): softly nudge toward capacity
+/// when readiness has trended low for several days while training in a
+/// power/strength phase — closing the loop between the two signals
+/// (readiness, phase) that today are only ever shown in parallel.
+///
+/// Conservative by construction: a day with no reading at all (missing from
+/// `readinessHistory`, e.g. watch not worn) breaks the streak exactly like a
+/// day with a good score would — sparse history never *manufactures* a
+/// suggestion, it just fails to confirm one. The streak walks backward from
+/// today via `daysAgo`, so it only counts an *unbroken run ending today*;
+/// three low days a week ago don't linger and trigger it now.
+///
+/// Clears on its own next render once either input moves: readiness recovery
+/// (today's score is missing or back at/above the threshold) resets the walk
+/// to 0 immediately, and switching to a non-power/strength phase (including
+/// the capacity step-back this suggests) short-circuits to `suggested: false`
+/// before the readiness streak is even walked.
+export function suggestPhaseStepBack(
+  readinessHistory: Pick<HealthMetric, "date" | "readiness">[],
+  currentPhase: PhaseId,
+): PhaseStepBackSuggestion {
+  if (!STEP_BACK_PHASES.has(currentPhase)) return { suggested: false, streakDays: 0 };
+
+  const byDate = new Map(readinessHistory.map((m) => [m.date, m.readiness]));
+  let streak = 0;
+  for (let i = 0; ; i++) {
+    const readiness = byDate.get(daysAgo(i));
+    if (readiness == null || readiness >= LOW_READINESS_THRESHOLD) break;
+    streak++;
+  }
+  return { suggested: streak >= LOW_READINESS_STREAK_DAYS, streakDays: streak };
 }
 
 const EWMA_LOOKBACK_DAYS = 90;

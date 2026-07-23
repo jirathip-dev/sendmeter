@@ -599,3 +599,28 @@ textarea.field { resize: none; }
   font-size: var(--t-lg); line-height: 1; cursor: pointer; padding: 0 2px; opacity: 0.7;
   -webkit-tap-highlight-color: transparent;
 }
+
+/* Nudge banner (SL-21) — same shape as .error-banner, desaturated --info tint
+   for an informational (not alarming) suggestion. */
+.nudge-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 12px 11px 14px; margin-bottom: 12px;
+  background: color-mix(in srgb, var(--info) 12%, var(--canvas));
+  border: 1px solid color-mix(in srgb, var(--info) 35%, transparent);
+  border-radius: 12px;
+}
+.nudge-banner .msg { flex: 1; font-size: var(--t-sm); color: var(--ink); font-weight: 500; }
+.nudge-link {
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+  border: none; color: var(--primary-accent); font-weight: 700; font-size: var(--t-xs);
+  padding: 6px 12px; border-radius: 7px; cursor: pointer; font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.nudge-link:disabled { opacity: 0.6; cursor: default; }
+.nudge-x {
+  flex-shrink: 0;
+  background: none; border: none; color: var(--ink-muted);
+  font-size: var(--t-lg); line-height: 1; cursor: pointer; padding: 0 2px; opacity: 0.7;
+  -webkit-tap-highlight-color: transparent;
+}
