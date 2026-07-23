@@ -46,6 +46,10 @@ const CONTENT: Record<
         heading: "Reading it",
         text: "It's a trend tool: single days are noisy (alcohol, heat, late meals all move HRV). A multi-day slide — especially HRV down AND resting HR up — is the meaningful signal to back off intensity. It needs about a week of overnight data to build a baseline.",
       },
+      {
+        heading: "Why it doesn't change all day",
+        text: "The score reflects your overnight recovery, so it locks at noon — later syncs keep the metric values below current (resting HR often finalizes mid-day) without rewriting the score. “Score as of” shows when it was computed.",
+      },
     ],
   },
   gaugeTarget: {
