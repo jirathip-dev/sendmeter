@@ -7,35 +7,128 @@ describe("shouldSalvageOnUnmount", () => {
   // have caught it immediately.
   it("salvages when measuring, no stop in flight, and enough samples", () => {
     expect(
-      shouldSalvageOnUnmount({ measuring: true, stopInFlight: false, sampleCount: 2 }),
+      shouldSalvageOnUnmount({
+        measuring: true,
+        pendingInterruption: false,
+        stopInFlight: false,
+        sampleCount: 2,
+      }),
     ).toBe(true);
   });
 
   it("does not salvage when not measuring", () => {
     expect(
-      shouldSalvageOnUnmount({ measuring: false, stopInFlight: false, sampleCount: 50 }),
+      shouldSalvageOnUnmount({
+        measuring: false,
+        pendingInterruption: false,
+        stopInFlight: false,
+        sampleCount: 50,
+      }),
     ).toBe(false);
   });
 
   it("does not salvage while a Stop is already in flight — the normal path owns it", () => {
     expect(
-      shouldSalvageOnUnmount({ measuring: true, stopInFlight: true, sampleCount: 50 }),
+      shouldSalvageOnUnmount({
+        measuring: true,
+        pendingInterruption: false,
+        stopInFlight: true,
+        sampleCount: 50,
+      }),
     ).toBe(false);
   });
 
   it("does not salvage a near-empty buffer (fewer than 2 samples)", () => {
     expect(
-      shouldSalvageOnUnmount({ measuring: true, stopInFlight: false, sampleCount: 1 }),
+      shouldSalvageOnUnmount({
+        measuring: true,
+        pendingInterruption: false,
+        stopInFlight: false,
+        sampleCount: 1,
+      }),
     ).toBe(false);
     expect(
-      shouldSalvageOnUnmount({ measuring: true, stopInFlight: false, sampleCount: 0 }),
+      shouldSalvageOnUnmount({
+        measuring: true,
+        pendingInterruption: false,
+        stopInFlight: false,
+        sampleCount: 0,
+      }),
     ).toBe(false);
   });
 
   it("requires ALL three conditions at once, not any single one", () => {
     expect(
-      shouldSalvageOnUnmount({ measuring: false, stopInFlight: true, sampleCount: 0 }),
+      shouldSalvageOnUnmount({
+        measuring: false,
+        pendingInterruption: false,
+        stopInFlight: true,
+        sampleCount: 0,
+      }),
     ).toBe(false);
+  });
+
+  it("salvages on a pending interruption even though the disconnect callback already cleared measuring (#113 race)", () => {
+    expect(
+      shouldSalvageOnUnmount({
+        measuring: false,
+        pendingInterruption: true,
+        stopInFlight: false,
+        sampleCount: 2,
+      }),
+    ).toBe(true);
+  });
+
+  it("pending interruption still defers to a Stop in flight — that path owns the data", () => {
+    expect(
+      shouldSalvageOnUnmount({
+        measuring: false,
+        pendingInterruption: true,
+        stopInFlight: true,
+        sampleCount: 50,
+      }),
+    ).toBe(false);
+  });
+
+  it("pending interruption still requires at least 2 samples", () => {
+    expect(
+      shouldSalvageOnUnmount({
+        measuring: false,
+        pendingInterruption: true,
+        stopInFlight: false,
+        sampleCount: 1,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSalvageOnUnmount({
+        measuring: false,
+        pendingInterruption: true,
+        stopInFlight: false,
+        sampleCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("no salvage once the interruption was handled (flag cleared) — the dup guard", () => {
+    expect(
+      shouldSalvageOnUnmount({
+        measuring: false,
+        pendingInterruption: false,
+        stopInFlight: false,
+        sampleCount: 50,
+      }),
+    ).toBe(false);
+  });
+
+  it("measuring and pendingInterruption are OR-ed, not AND-ed", () => {
+    expect(
+      shouldSalvageOnUnmount({
+        measuring: true,
+        pendingInterruption: true,
+        stopInFlight: false,
+        sampleCount: 2,
+      }),
+    ).toBe(true);
   });
 });
 
