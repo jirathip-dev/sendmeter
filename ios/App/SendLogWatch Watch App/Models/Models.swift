@@ -53,7 +53,7 @@ nonisolated struct SessionInsert: Codable {
     var type: String
     var typeLabel: String
     var durationMin: Int
-    var rpe: Double            // half-point steps (SL-89); DB column is numeric(3,1)
+    var rpe: Double            // decimal (SL-89): 0.5-step manual entry, or 0.1-precision auto-tracked (#107); DB column is numeric(3,1)
     var note: String
     var phase: String
     var groupId: UUID?         // Tindeq gauge session link

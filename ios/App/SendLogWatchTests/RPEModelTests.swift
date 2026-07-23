@@ -91,4 +91,33 @@ final class RPEModelTests: XCTestCase {
         ]
         XCTAssertNil(RPEModelFitter.solve4x4(singular, [1, 2, 3, 4]))
     }
+
+    // MARK: - RPEQuantization (#107: auto-tracked RPE keeps 0.1 precision,
+    // not the 0.5 half-point granularity used by the MANUAL steppers).
+
+    func testAutoTrackedKeepsOneDecimalPrecision() {
+        XCTAssertEqual(RPEQuantization.autoTracked(5.7), 5.7, accuracy: 1e-9)
+        XCTAssertEqual(RPEQuantization.autoTracked(6.34), 6.3, accuracy: 1e-9)
+        XCTAssertEqual(RPEQuantization.autoTracked(6.35), 6.4, accuracy: 1e-9)
+        XCTAssertEqual(RPEQuantization.autoTracked(1.0), 1.0, accuracy: 1e-9)
+        XCTAssertEqual(RPEQuantization.autoTracked(10.0), 10.0, accuracy: 1e-9)
+    }
+
+    func testAutoTrackedDoesNotSnapToHalfPoints() {
+        // The bug (#107): the old path rounded 5.7 down to 5.5. Assert it no
+        // longer lands on a half-point step when the raw prediction doesn't.
+        let p = RPEQuantization.autoTracked(5.7)
+        XCTAssertEqual(p, 5.7, accuracy: 1e-9)
+        XCTAssertGreaterThan(abs(p - 5.5), 0.01)
+    }
+
+    func testAutoTrackedClampsToValidRange() {
+        XCTAssertEqual(RPEQuantization.autoTracked(-3.2), 1.0, accuracy: 1e-9)
+        XCTAssertEqual(RPEQuantization.autoTracked(0.4), 1.0, accuracy: 1e-9)
+        XCTAssertEqual(RPEQuantization.autoTracked(14.9), 10.0, accuracy: 1e-9)
+    }
+
+    func testAutoTrackedHandlesNaN() {
+        XCTAssertEqual(RPEQuantization.autoTracked(.nan), 1.0, accuracy: 1e-9)
+    }
 }
