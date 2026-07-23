@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveForce } from "../hooks/useLiveForce";
+import { interruptionNote } from "../hooks/useTindeq";
 import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
@@ -337,17 +338,20 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // double tap) could both call this — the first claim wins so a free hold is
   // never inserted twice.
   const stopInFlightRef = useRef(false);
-  async function handleStop() {
+  // `note` labels the free-hold save — "" for a normal stop; the interruption
+  // effect below passes "Recovered after connection loss" when the drop fired
+  // while this view was unmounted (#117).
+  async function handleStop(note = "") {
     if (stopInFlightRef.current) return;
     stopInFlightRef.current = true;
     try {
-      await runStop();
+      await runStop(note);
     } finally {
       stopInFlightRef.current = false;
     }
   }
 
-  async function runStop() {
+  async function runStop(note: string) {
     if (timeline) {
       const tMs = tindeq.elapsedMs;
       const physS = tMs / 1000;
@@ -392,7 +396,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       durationMs: summary.durationMs,
       peakKg: summary.peakKg,
       avgKg: summary.avgKg,
-      note: "",
+      note,
       tag: pendingTag.trim(),
       side: pendingSide,
       groupId: ensureSession(),
@@ -653,18 +657,30 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // Connection dropped mid-measurement (device died, walked out of range,
   // phone locked): the samples survive in samplesRef, so run the exact same
   // stop/save path a manual Stop would — the interrupted recording is saved
-  // instead of lost. Deferred to a task so no state writes happen
-  // synchronously inside the effect.
-  const handledInterruptionsRef = useRef(tindeq.interruptions);
+  // instead of lost. Driven by the provider-owned salvage CLAIM (not a
+  // counter delta): effects run on mount, so a drop that fired while this
+  // view was UNMOUNTED (tab switched) is re-detected on remount and recovered
+  // the same way (#117). The claim is released inside handleStop → runStop →
+  // tindeq.stop(), which flips the dep false; if a stop already completed
+  // before this runs, the claim is false and nothing is scheduled. Deferred
+  // to a task so no state writes happen synchronously inside the effect.
+  // Whether THIS mounted instance ever observed measuring — false in the
+  // remount case, which labels the recovered save (see interruptionNote).
+  const everMeasuredRef = useRef(false);
   useEffect(() => {
-    if (tindeq.interruptions === handledInterruptionsRef.current) return;
-    handledInterruptionsRef.current = tindeq.interruptions;
-    const t = setTimeout(() => void handleStop(), 0);
+    if (measuring) everMeasuredRef.current = true;
+  }, [measuring]);
+  useEffect(() => {
+    if (!tindeq.pendingInterruption) return;
+    const t = setTimeout(
+      () => void handleStop(interruptionNote(everMeasuredRef.current)),
+      0,
+    );
     return () => clearTimeout(t);
     // handleStop reads current state/refs at call time; depending on it
     // would re-arm this effect every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tindeq.interruptions]);
+  }, [tindeq.pendingInterruption]);
 
   // Feed the session peak to the lock-screen card, throttled — the card's
   // timers render natively; only the number needs occasional refreshes.
