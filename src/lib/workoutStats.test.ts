@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { hrRecoveryBpm, meanEffort, workRestRatio } from "./workoutStats";
+import {
+  hrRecoveryBpm,
+  recentDailyRpe,
+  workRestRatio,
+} from "./workoutStats";
 import type { WorkoutAttempt, WorkoutHrSample } from "../types";
 
 const att = (
@@ -14,18 +18,6 @@ const att = (
   peakHr: null,
   effortScore,
   source: "manual",
-});
-
-describe("meanEffort (SL-99)", () => {
-  it("averages the non-null effort scores", () => {
-    expect(
-      meanEffort([att("t", 10, 40), att("t", 10, 60), att("t", 10, null)]),
-    ).toBeCloseTo(50, 5);
-  });
-  it("is null when no attempt has an effort score", () => {
-    expect(meanEffort([att("t", 10), att("t", 10)])).toBeNull();
-    expect(meanEffort([])).toBeNull();
-  });
 });
 
 describe("workRestRatio (SL-99)", () => {
@@ -68,5 +60,75 @@ describe("hrRecoveryBpm (SL-85)", () => {
     expect(
       hrRecoveryBpm([], "2026-07-20T10:00:00Z", [att("2026-07-20T10:00:00Z", 30)]),
     ).toBeNull();
+  });
+});
+
+describe("recentDailyRpe (#108)", () => {
+  it("keeps decimal RPE — no rounding", () => {
+    expect(recentDailyRpe([{ date: "2026-07-21", rpe: 5.5 }], 8)).toEqual([
+      { date: "2026-07-21", rpe: 5.5 },
+    ]);
+  });
+
+  it("includes a manually-logged session with no attempts/workout row", () => {
+    // A "Log a past workout" entry is just a `sessions` row — this reads it
+    // straight off the session list, unlike the attempt-based stats above.
+    const rows = recentDailyRpe(
+      [
+        { date: "2026-07-19", rpe: 6 },
+        { date: "2026-07-21", rpe: 7.5 }, // logged on the 21st
+        { date: "2026-07-23", rpe: 4 },
+      ],
+      8,
+    );
+    expect(rows.map((r) => r.date)).toEqual([
+      "2026-07-19",
+      "2026-07-21",
+      "2026-07-23",
+    ]);
+    expect(rows.find((r) => r.date === "2026-07-21")?.rpe).toBe(7.5);
+  });
+
+  it("averages same-day sessions", () => {
+    const rows = recentDailyRpe(
+      [
+        { date: "2026-07-21", rpe: 5 },
+        { date: "2026-07-21", rpe: 8 },
+      ],
+      8,
+    );
+    expect(rows).toEqual([{ date: "2026-07-21", rpe: 6.5 }]);
+  });
+
+  it("keeps only the most recent `days` distinct dates, oldest → newest", () => {
+    const sessions = ["07-17", "07-18", "07-19", "07-20", "07-21"].map(
+      (md) => ({ date: `2026-${md}`, rpe: 5 }),
+    );
+    const rows = recentDailyRpe(sessions, 3);
+    expect(rows.map((r) => r.date)).toEqual([
+      "2026-07-19",
+      "2026-07-20",
+      "2026-07-21",
+    ]);
+  });
+
+  it("is order-independent — sorts by date, not input order", () => {
+    const rows = recentDailyRpe(
+      [
+        { date: "2026-07-21", rpe: 7 },
+        { date: "2026-07-19", rpe: 5 },
+        { date: "2026-07-20", rpe: 6 },
+      ],
+      8,
+    );
+    expect(rows.map((r) => r.date)).toEqual([
+      "2026-07-19",
+      "2026-07-20",
+      "2026-07-21",
+    ]);
+  });
+
+  it("returns [] for no sessions", () => {
+    expect(recentDailyRpe([], 8)).toEqual([]);
   });
 });

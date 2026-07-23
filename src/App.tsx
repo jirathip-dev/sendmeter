@@ -265,6 +265,7 @@ function AuthedApp({
               <WorkoutView
                 userId={userId}
                 currentPhase={currentPhase}
+                sessions={sessions}
                 onLog={openLog}
               />
             )}
