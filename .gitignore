@@ -46,3 +46,6 @@ fastlane/certs/
 *.mobileprovision
 *.ipa
 *.dSYM.zip
+
+.worktrees/
+.agent-runs/
