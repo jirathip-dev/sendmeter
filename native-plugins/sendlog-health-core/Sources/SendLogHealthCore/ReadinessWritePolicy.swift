@@ -55,7 +55,11 @@ public enum ReadinessWritePolicy {
     ///     `timestamptz` (a source of decode-mismatch failures) just to
     ///     consult this policy.
     ///   - now: current time; also used to derive "today" for the
-    ///     self-defense check via `Date.localDateString`.
+    ///     self-defense check.
+    ///   - calendar: sole time-zone authority for the policy — both the noon
+    ///     cutoff and the "today" date string are derived from it, so a
+    ///     non-device-timezone calendar (tests do this) stays internally
+    ///     consistent.
     public static func shouldOverwriteReadiness(
         existingReadiness: Int?,
         existingRowDate: String?,
@@ -67,7 +71,7 @@ public enum ReadinessWritePolicy {
         case .manual:
             return true
         case .automatic:
-            guard existingReadiness != nil, existingRowDate == now.localDateString else {
+            guard existingReadiness != nil, existingRowDate == now.dateString(in: calendar) else {
                 return true
             }
             let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: now)!

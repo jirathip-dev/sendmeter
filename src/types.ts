@@ -76,6 +76,7 @@ export interface HealthMetric {
   date: string; // YYYY-MM-DD
   readiness: number | null;
   zone: string | null;
+  computedAt: string; // timestamptz — when readiness was (re)computed, NOT last sync (#112: score freezes at noon)
   hrvSdnnMs: number | null;
   restingHr: number | null;
   sleepHours: number | null;
