@@ -93,6 +93,9 @@ export function useTrainingData(userId: string) {
       typeLabel: form.type,
       duration: form.duration,
       rpe: form.rpe,
+      // Manually-entered — always confirmed, never the phone auto-save
+      // placeholder (issue #114).
+      rpeConfirmed: true,
       load: form.duration * form.rpe,
       note: form.note,
       phase: form.phase,
@@ -139,7 +142,14 @@ export function useTrainingData(userId: string) {
     setSessions((list) =>
       list.map((s) =>
         s.id === id
-          ? { ...s, ...patch, load: patch.duration * patch.rpe }
+          ? {
+              ...s,
+              ...patch,
+              // Reaching the edit sheet means a human reviewed this RPE —
+              // un-mute the bar immediately (issue #114).
+              rpeConfirmed: true,
+              load: patch.duration * patch.rpe,
+            }
           : s,
       ),
     );

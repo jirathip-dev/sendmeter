@@ -72,23 +72,29 @@ export function hrRecoveryBpm(
 /// near midnight. Same-day sessions average their RPE. Returns the most
 /// recent `days` distinct dates that have a session, oldest → newest (so a
 /// left-to-right bar trend reads as time moving forward).
+///
+/// `confirmed` (issue #114) is false for a day if ANY session contributing
+/// to its average is an unreviewed phone auto-save still sitting at the
+/// hardcoded default RPE — the chart mutes that bar rather than rendering it
+/// indistinguishably from a user-confirmed value.
 export function recentDailyRpe(
-  sessions: Pick<Session, "date" | "rpe">[],
+  sessions: Pick<Session, "date" | "rpe" | "rpeConfirmed">[],
   days: number,
-): { date: string; rpe: number }[] {
-  const byDate = new Map<string, { sum: number; n: number }>();
+): { date: string; rpe: number; confirmed: boolean }[] {
+  const byDate = new Map<string, { sum: number; n: number; confirmed: boolean }>();
   for (const s of sessions) {
     const e = byDate.get(s.date);
     if (e) {
       e.sum += s.rpe;
       e.n += 1;
+      if (s.rpeConfirmed === false) e.confirmed = false;
     } else {
-      byDate.set(s.date, { sum: s.rpe, n: 1 });
+      byDate.set(s.date, { sum: s.rpe, n: 1, confirmed: s.rpeConfirmed !== false });
     }
   }
   return [...byDate.entries()]
     .sort((a, b) => b[0].localeCompare(a[0]))
     .slice(0, days)
     .reverse()
-    .map(([date, e]) => ({ date, rpe: e.sum / e.n }));
+    .map(([date, e]) => ({ date, rpe: e.sum / e.n, confirmed: e.confirmed }));
 }

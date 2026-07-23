@@ -17,6 +17,9 @@ export type SessionRow = {
   type_label: string;
   duration_min: number;
   rpe: number;
+  // Optional: absent on any cached/legacy row shape from before this column
+  // existed — toSession below defaults a missing value to true.
+  rpe_confirmed?: boolean;
   load: number;
   note: string;
   phase: string;
@@ -25,7 +28,7 @@ export type SessionRow = {
 };
 
 export const SESSION_COLS =
-  "id, date, type, type_label, duration_min, rpe, load, note, phase, group_id, workout_source";
+  "id, date, type, type_label, duration_min, rpe, rpe_confirmed, load, note, phase, group_id, workout_source";
 
 export function toSession(r: SessionRow): Session {
   return {
@@ -35,6 +38,9 @@ export function toSession(r: SessionRow): Session {
     typeLabel: r.type_label,
     duration: r.duration_min,
     rpe: r.rpe,
+    // Coerce missing/undefined (rows predating the column, e.g. a stale
+    // cached shape) to confirmed — only an explicit `false` mutes the bar.
+    rpeConfirmed: r.rpe_confirmed !== false,
     load: r.load,
     note: r.note,
     phase: r.phase as PhaseId,
@@ -109,6 +115,9 @@ export async function updateSession(
         duration_min: patch.duration,
         rpe: patch.rpe,
         note: patch.note,
+        // Reaching this function means a human reviewed the edit sheet —
+        // always mark confirmed, whatever the RPE ends up as.
+        rpe_confirmed: true,
       })
       .eq("id", id)
       .select(SESSION_COLS)

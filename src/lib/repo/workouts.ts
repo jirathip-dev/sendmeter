@@ -246,6 +246,9 @@ export async function insertPhoneWorkout(input: {
         note: `${n} boulder${n === 1 ? "" : "s"}`,
         phase: input.phase,
         workout_source: "phone",
+        // Unconfirmed until the user edits it away from the auto-save
+        // default (issue #114) — see EditSessionSheet's rpe_confirmed: true.
+        rpe_confirmed: false,
       })
       .select("id")
       .single(),
@@ -287,6 +290,7 @@ export async function insertPhoneWorkout(input: {
     typeLabel: input.typeLabel,
     duration: durationMin,
     rpe: input.rpe,
+    rpeConfirmed: false,
     load: durationMin * input.rpe,
     note: `${n} boulder${n === 1 ? "" : "s"}`,
     phase: input.phase,

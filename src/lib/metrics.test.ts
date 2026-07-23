@@ -24,6 +24,7 @@ function session(date: string, load: number): Session {
     typeLabel: "Board",
     duration: 60,
     rpe: 5,
+    rpeConfirmed: true,
     load,
     note: "",
     phase: "capacity",
