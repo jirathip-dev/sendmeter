@@ -82,6 +82,16 @@ export function shouldSalvageOnUnmount(params: {
   );
 }
 
+/// #117: note for a stop triggered by a BLE interruption. When THIS mounted
+/// ForceView instance never observed measuring, the drop happened while it
+/// was unmounted (tab switched) and the recovered save is a raw whole-buffer
+/// blob that may overlap already-saved per-rep rows — label it (mirroring the
+/// salvage path's "Recovered after sign-out") so it can't masquerade as a
+/// clean pull. A mounted interruption is the normal stop path: no note.
+export function interruptionNote(everMeasuredThisMount: boolean): string {
+  return everMeasuredThisMount ? "" : "Recovered after connection loss";
+}
+
 /**
  * Tindeq Progressor over BleClient: Web Bluetooth in browsers, native
  * CoreBluetooth inside the Capacitor iOS app — one code path for both.
@@ -104,10 +114,13 @@ export function useTindeq() {
   const [peak, setPeak] = useState(0);
   const [avg, setAvg] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
-  // Bumped when the connection drops MID-MEASUREMENT — the samples are still
-  // in samplesRef, and the owner (ForceView) must run its stop/save path so
-  // the interrupted recording isn't lost.
-  const [interruptions, setInterruptions] = useState(0);
+  // True while a mid-measurement BLE drop's buffer is unclaimed — the
+  // reactive mirror of pendingInterruptionRef below (the ref stays because
+  // the unmount-salvage cleanup must capture it synchronously). The owner
+  // (ForceView) reacts by running its stop/save path — including on a
+  // REMOUNT, when the drop fired while it was on another tab (#117); cleared
+  // when any start/stop takes ownership of the buffer.
+  const [pendingInterruption, setPendingInterruption] = useState(false);
 
   const deviceIdRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
@@ -312,7 +325,7 @@ export function useTindeq() {
         // Tell the owner to save the in-flight recording (samplesRef intact).
         if (wasMeasuring) {
           pendingInterruptionRef.current = true;
-          setInterruptions((n) => n + 1);
+          setPendingInterruption(true);
         }
       });
       await BleClient.startNotifications(
@@ -359,6 +372,7 @@ export function useTindeq() {
     // A new pull resets samplesRef, so any stale salvage claim on the old
     // buffer is void (#113).
     pendingInterruptionRef.current = false;
+    setPendingInterruption(false);
     samplesRef.current = [];
     t0Ref.current = null;
     latestRef.current = { kg: 0, t: 0 };
@@ -393,6 +407,7 @@ export function useTindeq() {
     // salvage claim must be released — otherwise a later normal logout would
     // queue a duplicate of an already-saved pull (#113).
     pendingInterruptionRef.current = false;
+    setPendingInterruption(false);
     measuringRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
@@ -420,6 +435,29 @@ export function useTindeq() {
     return () => clearInterval(id);
   }, [status, stop]);
 
+  // Dev-only (#117): the fake connect() registers no disconnect callback, so
+  // fake mode otherwise has NO way to simulate a mid-measurement drop — and
+  // the interruption/recovery path would be unverifiable in a browser. Run
+  // `window.__tindeqFakeDrop()` from the console; same body as the real
+  // disconnect callback in connect() above. Strictly FAKE_MODE-gated.
+  useEffect(() => {
+    if (!FAKE_MODE) return;
+    const w = window as Window & { __tindeqFakeDrop?: () => void };
+    w.__tindeqFakeDrop = () => {
+      const wasMeasuring = measuringRef.current;
+      cleanupDevice();
+      setStatus("idle");
+      setErrorMsg("Device disconnected");
+      if (wasMeasuring) {
+        pendingInterruptionRef.current = true;
+        setPendingInterruption(true);
+      }
+    };
+    return () => {
+      delete w.__tindeqFakeDrop;
+    };
+  }, [cleanupDevice]);
+
   return {
     status,
     supported,
@@ -430,7 +468,7 @@ export function useTindeq() {
     peak,
     avg,
     elapsedMs,
-    interruptions,
+    pendingInterruption,
     samplesRef,
     connect,
     disconnect,

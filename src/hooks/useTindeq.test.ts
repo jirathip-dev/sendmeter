@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { shouldSalvageOnUnmount, summarize } from "./useTindeq";
+import {
+  interruptionNote,
+  shouldSalvageOnUnmount,
+  summarize,
+} from "./useTindeq";
 
 describe("shouldSalvageOnUnmount", () => {
   // #106: this exact gate was shipped INVERTED once (`!sessionAliveRef`
@@ -129,6 +133,20 @@ describe("shouldSalvageOnUnmount", () => {
         sampleCount: 2,
       }),
     ).toBe(true);
+  });
+});
+
+describe("interruptionNote", () => {
+  // #117: a drop that fired while ForceView was unmounted is recovered on
+  // remount as a raw whole-buffer save that may overlap per-rep rows — it
+  // must carry a label (mirroring salvage's "Recovered after sign-out") so
+  // it can't masquerade as a clean pull.
+  it("labels a remount recovery (this instance never observed measuring)", () => {
+    expect(interruptionNote(false)).toBe("Recovered after connection loss");
+  });
+
+  it("leaves a mounted interruption unlabeled — it's the normal stop path", () => {
+    expect(interruptionNote(true)).toBe("");
   });
 });
 
