@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { SESSION_TYPES } from "../constants";
 import type { Session, SessionPatch } from "../types";
+import { stepRpe } from "../lib/rpe";
 import Sheet from "./Sheet";
 
 interface Props {
@@ -95,14 +96,14 @@ export default function EditSessionSheet({ session, onSave, onClose }: Props) {
       <div className="stepper">
         <button
           className="stepper-btn"
-          onClick={() => setRpe((r) => Math.max(1, r - 0.5))}
+          onClick={() => setRpe((r) => stepRpe(r, -1))}
         >
           −
         </button>
         <span className="stepper-val">{rpe}</span>
         <button
           className="stepper-btn"
-          onClick={() => setRpe((r) => Math.min(10, r + 0.5))}
+          onClick={() => setRpe((r) => stepRpe(r, 1))}
         >
           +
         </button>
