@@ -30,6 +30,8 @@ import ToastProvider from "./components/ToastProvider";
 import { TindeqProvider } from "./hooks/TindeqProvider";
 import { useToast } from "./hooks/useToast";
 import type { HealthSyncSource } from "./lib/healthSync";
+import { insertRecording } from "./lib/repo";
+import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
 
 export default function App() {
   const { session, loading, recovery, clearRecovery, signOut } = useAuth();
@@ -111,6 +113,26 @@ function AuthedApp({
 
   const acwrData = useMemo(() => computeAcwr(sessions), [sessions]);
   const weeklyLoads = useMemo(() => computeWeeklyLoads(sessions), [sessions]);
+
+  // #106: recover any tindeq recordings that failed to save (dead auth
+  // session, dropped connection) while we were signed out — AuthedApp only
+  // renders once `session` exists, so a fresh mount here IS "auth just
+  // succeeded" (login or a session restore). drainPendingRecordingsQueue
+  // guards its own re-entrancy, so a duplicate mount can't double-insert.
+  // No manual list refresh needed on success — `tindeq_recordings` is a
+  // WATCHED_TABLES table, so each recovered insert bumps the realtime
+  // version and ForceView's own fetch effect picks it up.
+  useEffect(() => {
+    let cancelled = false;
+    void drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
+      if (!cancelled && n > 0) {
+        toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, toast]);
 
   // SL-31 sync toast: only for a foreground resync the user is actively
   // looking at. The cold-launch background sync fires on every app open
@@ -270,7 +292,7 @@ function AuthedApp({
               />
             )}
             {view === "tindeq" && (
-              <ForceView onLogSession={addTindeqSession} />
+              <ForceView userId={userId} onLogSession={addTindeqSession} />
             )}
           </>
         )}

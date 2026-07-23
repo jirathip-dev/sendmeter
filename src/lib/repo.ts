@@ -486,6 +486,9 @@ export async function insertRecording(
     await supabase
       .from("tindeq_recordings")
       .insert({
+        // Only set when the caller minted one for retry-idempotency (#106) —
+        // omitted, the column's own gen_random_uuid() default applies.
+        ...(rec.id ? { id: rec.id } : {}),
         duration_ms: rec.durationMs,
         peak_kg: rec.peakKg,
         avg_kg: rec.avgKg,

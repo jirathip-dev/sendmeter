@@ -186,6 +186,14 @@ export interface DeletedTindeqRecording extends TindeqRecordingMeta {
 }
 
 export interface NewTindeqRecording {
+  /// Optional client-generated id (#106): when a save might need to be
+  /// retried from the offline queue (see lib/recordingQueue.ts), the caller
+  /// mints this up front and reuses it across every retry — insertRecording
+  /// passes it straight through as the row's primary key, so a retry of an
+  /// insert that actually landed server-side (but whose response the client
+  /// never saw) collides on the unique constraint instead of duplicating the
+  /// row. Omitted for normal (non-retried) saves — the DB default applies.
+  id?: string;
   durationMs: number;
   peakKg: number;
   avgKg: number;

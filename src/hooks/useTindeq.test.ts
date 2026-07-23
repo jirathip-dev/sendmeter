@@ -1,0 +1,59 @@
+import { describe, it, expect } from "vitest";
+import { shouldSalvageOnUnmount, summarize } from "./useTindeq";
+
+describe("shouldSalvageOnUnmount", () => {
+  // #106: this exact gate was shipped INVERTED once (`!sessionAliveRef`
+  // instead of the right condition) — a single case like each of these would
+  // have caught it immediately.
+  it("salvages when measuring, no stop in flight, and enough samples", () => {
+    expect(
+      shouldSalvageOnUnmount({ measuring: true, stopInFlight: false, sampleCount: 2 }),
+    ).toBe(true);
+  });
+
+  it("does not salvage when not measuring", () => {
+    expect(
+      shouldSalvageOnUnmount({ measuring: false, stopInFlight: false, sampleCount: 50 }),
+    ).toBe(false);
+  });
+
+  it("does not salvage while a Stop is already in flight — the normal path owns it", () => {
+    expect(
+      shouldSalvageOnUnmount({ measuring: true, stopInFlight: true, sampleCount: 50 }),
+    ).toBe(false);
+  });
+
+  it("does not salvage a near-empty buffer (fewer than 2 samples)", () => {
+    expect(
+      shouldSalvageOnUnmount({ measuring: true, stopInFlight: false, sampleCount: 1 }),
+    ).toBe(false);
+    expect(
+      shouldSalvageOnUnmount({ measuring: true, stopInFlight: false, sampleCount: 0 }),
+    ).toBe(false);
+  });
+
+  it("requires ALL three conditions at once, not any single one", () => {
+    expect(
+      shouldSalvageOnUnmount({ measuring: false, stopInFlight: true, sampleCount: 0 }),
+    ).toBe(false);
+  });
+});
+
+describe("summarize", () => {
+  it("returns null for an empty buffer", () => {
+    expect(summarize([])).toBe(null);
+  });
+
+  it("computes duration/peak/avg from the last sample and rounds kg to 2dp", () => {
+    const result = summarize([
+      { t: 0, kg: 10.001 },
+      { t: 500.4, kg: 30.005 },
+      { t: 1000.6, kg: 20 },
+    ]);
+    expect(result).not.toBeNull();
+    expect(result!.durationMs).toBe(1001); // last sample's t, rounded
+    expect(result!.peakKg).toBe(30.01); // rounded from 30.005
+    expect(result!.avgKg).toBe(20); // (10 + 30.01 + 20) / 3, rounded to 2dp
+    expect(result!.samples).toHaveLength(3);
+  });
+});
