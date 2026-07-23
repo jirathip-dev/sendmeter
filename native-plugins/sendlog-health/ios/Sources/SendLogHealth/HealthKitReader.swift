@@ -73,37 +73,26 @@ final class HealthKitReader: HealthMetricsProviding {
             unit: .count().unitDivided(by: .minute())
         )
 
-        // Baselines: per-night aggregates over the trailing window (excluding today)
-        var hrvBase: [Double] = []
-        var rhrBase: [Double] = []
-        var sleepBase: [Double] = []
-        var respBase: [Double] = []        // SL-18
-        var restBase: [Double] = []        // SL-18: deep+REM hours
+        // Baselines: per-night aggregates over the trailing window (excluding
+        // today), newest first — same per-metric windows as the old inline
+        // loop (night window for HRV/sleep/resp, full local day for RHR),
+        // now fetched via nightAggregate and filtered by BaselineBuilder.
+        // If the standard window starves BOTH autonomic baselines (a
+        // wearable-data gap, #111), one extended scan pulls older nights up
+        // to `baselineLookbackMaxDays` back — BaselineBuilder still keeps
+        // only the newest `baselineDays` usable entries per metric.
+        var nights: [NightSample] = []
         for d in 1...t.baselineDays {
             guard let day = cal.date(byAdding: .day, value: -d, to: now) else { continue }
-            let w = cal.nightWindow(endingOn: day)
-            if let hrv = try? await meanQuantity(
-                .heartRateVariabilitySDNN, in: w, unit: .secondUnit(with: .milli)
-            ), hrv > 0 {
-                hrvBase.append(log(hrv))
+            nights.append(await nightSample(endingOn: day))
+        }
+        var built = BaselineBuilder.build(nights: nights, t: t)
+        if built.isAutonomicStarved, t.baselineLookbackMaxDays > t.baselineDays {
+            for d in (t.baselineDays + 1)...t.baselineLookbackMaxDays {
+                guard let day = cal.date(byAdding: .day, value: -d, to: now) else { continue }
+                nights.append(await nightSample(endingOn: day))
             }
-            if let rhr = try? await latestQuantity(
-                .restingHeartRate,
-                in: DateInterval(start: cal.startOfDay(for: day), end: cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: day))!),
-                unit: .count().unitDivided(by: .minute())
-            ) {
-                rhrBase.append(rhr)
-            }
-            if let sb = try? await sleepBreakdown(in: w) {
-                if let total = sb.totalHours, total > 0 { sleepBase.append(total) }
-                let rest = (sb.deepHours ?? 0) + (sb.remHours ?? 0)
-                if rest > 0 { restBase.append(rest) }
-            }
-            if let resp = try? await meanQuantity(
-                .respiratoryRate, in: w, unit: .count().unitDivided(by: .minute())
-            ), resp > 0 {
-                respBase.append(resp)
-            }
+            built = BaselineBuilder.build(nights: nights, t: t)
         }
 
         let sleep = try await sleepToday
@@ -115,11 +104,11 @@ final class HealthKitReader: HealthMetricsProviding {
             sleepDeepHours: sleep.deepHours,
             sleepRemHours: sleep.remHours,
             respRateBpm: try await respRateToday,
-            hrvLnBaseline: hrvBase,
-            rhrBaseline: rhrBase,
-            sleepBaseline: sleepBase,
-            respBaseline: respBase,
-            restorativeSleepBaseline: restBase
+            hrvLnBaseline: built.hrvLnBaseline,
+            rhrBaseline: built.rhrBaseline,
+            sleepBaseline: built.sleepBaseline,
+            respBaseline: built.respBaseline,
+            restorativeSleepBaseline: built.restorativeSleepBaseline
         )
     }
 
@@ -162,6 +151,19 @@ final class HealthKitReader: HealthMetricsProviding {
         )
     }
 
+    private static func sample(_ a: NightAggregate) -> NightSample {
+        NightSample(
+            hrv: a.hrv, rhr: a.rhr, sleepTotal: a.sleepTotal,
+            sleepDeep: a.sleepDeep, sleepRem: a.sleepRem, resp: a.resp
+        )
+    }
+
+    /// One baseline night as a core `NightSample`; a failed fetch degrades to
+    /// an empty night (same effect as the old loop's per-metric `try?`).
+    private func nightSample(endingOn day: Date) async -> NightSample {
+        Self.sample((try? await nightAggregate(endingOn: day, capEnd: nil)) ?? NightAggregate())
+    }
+
     /// Rebuild the trailing `days` of daily inputs (newest first) from HealthKit
     /// — each day computed against its own trailing baseline window, exactly as
     /// `readToday` does for today, but for the whole span. Per-night aggregates
@@ -180,22 +182,31 @@ final class HealthKitReader: HealthMetricsProviding {
             agg.append(try await nightAggregate(endingOn: day, capEnd: o == 0 ? now : nil))
         }
 
+        // #111: when a day's standard window starves both autonomic
+        // baselines, extend the shared aggregate array once (memoized) up to
+        // `baselineLookbackMaxDays` past the span and rebuild that day from
+        // the longer slice.
+        var extendedScanDone = false
+
         var out: [(date: String, inputs: DailyHealthInputs)] = []
         for o in 0..<days {
             let day = cal.date(byAdding: .day, value: -o, to: now)!
-            var hrvBase: [Double] = []
-            var rhrBase: [Double] = []
-            var sleepBase: [Double] = []
-            var respBase: [Double] = []    // SL-18
-            var restBase: [Double] = []    // SL-18: deep+REM hours
-            for b in 1...t.baselineDays {
-                let a = agg[o + b]
-                if let h = a.hrv, h > 0 { hrvBase.append(log(h)) }
-                if let r = a.rhr { rhrBase.append(r) }
-                if let s = a.sleepTotal, s > 0 { sleepBase.append(s) }
-                if let rp = a.resp, rp > 0 { respBase.append(rp) }
-                let rest = (a.sleepDeep ?? 0) + (a.sleepRem ?? 0)
-                if rest > 0 { restBase.append(rest) }
+            func nights(lookback: Int) -> [NightSample] {
+                let hi = min(o + lookback, agg.count - 1)
+                guard o + 1 <= hi else { return [] }
+                return agg[(o + 1)...hi].map(Self.sample)
+            }
+            var built = BaselineBuilder.build(nights: nights(lookback: t.baselineDays), t: t)
+            if built.isAutonomicStarved, t.baselineLookbackMaxDays > t.baselineDays {
+                if !extendedScanDone {
+                    extendedScanDone = true
+                    let extendedTotal = days + t.baselineLookbackMaxDays
+                    for o2 in agg.count..<extendedTotal {
+                        let d2 = cal.date(byAdding: .day, value: -o2, to: now)!
+                        agg.append(try await nightAggregate(endingOn: d2, capEnd: nil))
+                    }
+                }
+                built = BaselineBuilder.build(nights: nights(lookback: t.baselineLookbackMaxDays), t: t)
             }
             let massWindow = DateInterval(
                 start: cal.date(byAdding: .day, value: -30, to: day)!, end: day
@@ -214,11 +225,11 @@ final class HealthKitReader: HealthMetricsProviding {
                     sleepDeepHours: a.sleepDeep,
                     sleepRemHours: a.sleepRem,
                     respRateBpm: a.resp,
-                    hrvLnBaseline: hrvBase,
-                    rhrBaseline: rhrBase,
-                    sleepBaseline: sleepBase,
-                    respBaseline: respBase,
-                    restorativeSleepBaseline: restBase
+                    hrvLnBaseline: built.hrvLnBaseline,
+                    rhrBaseline: built.rhrBaseline,
+                    sleepBaseline: built.sleepBaseline,
+                    respBaseline: built.respBaseline,
+                    restorativeSleepBaseline: built.restorativeSleepBaseline
                 )
             ))
         }

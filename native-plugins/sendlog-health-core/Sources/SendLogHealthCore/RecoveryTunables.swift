@@ -22,6 +22,10 @@ public struct RecoveryTunables {
     public var zClamp: Double = 2.0
     public var baselineDays: Int = 30
     public var minBaselineDays: Int = 7   // a z-term needs this much history else drops
+    // #111: extended-scan cap, only consulted when the standard `baselineDays`
+    // window starves BOTH autonomic baselines (wearable-data gap); must be
+    // ≥ `baselineDays`.
+    public var baselineLookbackMaxDays: Int = 90
     public var sleepSigmaFloorH: Double = 0.5
     public var zoneRecoverBelow: Int = 40
     public var zonePushAbove: Int = 70
