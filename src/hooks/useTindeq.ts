@@ -64,14 +64,22 @@ export interface SalvageContext {
 }
 
 /// Pure gate for the unmount-salvage cleanup — pulled out so the exact
-/// condition (all three, ANDed) is independently unit-testable. A single
-/// test on this would have caught a prior, inverted version of this check.
+/// condition is independently unit-testable. A single test on this would
+/// have caught a prior, inverted version of this check. `measuring` is OR-ed
+/// with `pendingInterruption` because a mid-measurement BLE drop clears
+/// measuringRef before the deferred stop handler can run — a logout in that
+/// same tick must still salvage (#113).
 export function shouldSalvageOnUnmount(params: {
   measuring: boolean;
+  pendingInterruption: boolean;
   stopInFlight: boolean;
   sampleCount: number;
 }): boolean {
-  return params.measuring && !params.stopInFlight && params.sampleCount >= 2;
+  return (
+    (params.measuring || params.pendingInterruption) &&
+    !params.stopInFlight &&
+    params.sampleCount >= 2
+  );
 }
 
 /**
@@ -106,6 +114,11 @@ export function useTindeq() {
   const samplesRef = useRef<TindeqSample[]>([]);
   const t0Ref = useRef<number | null>(null);
   const measuringRef = useRef(false);
+  // #113: set on a mid-measurement BLE drop, cleared when any stop/start
+  // takes ownership of the buffer; OR-ed into the salvage gate so a drop +
+  // logout in the same tick still salvages (the disconnect callback clears
+  // measuringRef before the deferred stop handler can run).
+  const pendingInterruptionRef = useRef(false);
   const latestRef = useRef({ kg: 0, t: 0 });
   // Running mean of the current pull (sum/count over all samples) — flushed
   // to `avg` state once per frame alongside current/peak.
@@ -178,13 +191,16 @@ export function useTindeq() {
   // and salvaged spurious duplicates as a result).
   useEffect(() => {
     return () => {
-      // INVARIANT: wasMeasuring/sampleCount MUST be captured here, in this
-      // SAME cleanup, BEFORE cleanupDevice() runs — cleanupDevice() sets
-      // measuringRef.current = false, so reading it after (or from a
-      // separate effect that might reorder relative to this one) would
-      // always see "not measuring" and silently disable salvage. Don't split
-      // this cleanup or reorder these two lines.
+      // INVARIANT: wasMeasuring/pendingInterruption/sampleCount MUST be
+      // captured here, in this SAME cleanup, BEFORE cleanupDevice() runs —
+      // cleanupDevice() sets measuringRef.current = false, so reading it
+      // after (or from a separate effect that might reorder relative to this
+      // one) would always see "not measuring" and silently disable salvage.
+      // cleanupDevice() doesn't touch pendingInterruptionRef today, but the
+      // same capture-before-cleanup discipline covers it so that never
+      // regresses. Don't split this cleanup or reorder these lines.
       const wasMeasuring = measuringRef.current;
+      const pendingInterruption = pendingInterruptionRef.current;
       const sampleCount = samplesRef.current.length;
       const deviceId = deviceIdRef.current;
       cleanupDevice();
@@ -210,6 +226,7 @@ export function useTindeq() {
       if (
         !shouldSalvageOnUnmount({
           measuring: wasMeasuring,
+          pendingInterruption,
           stopInFlight: ctx.stopInFlight,
           sampleCount,
         })
@@ -293,7 +310,10 @@ export function useTindeq() {
         setStatus("idle");
         setErrorMsg("Device disconnected");
         // Tell the owner to save the in-flight recording (samplesRef intact).
-        if (wasMeasuring) setInterruptions((n) => n + 1);
+        if (wasMeasuring) {
+          pendingInterruptionRef.current = true;
+          setInterruptions((n) => n + 1);
+        }
       });
       await BleClient.startNotifications(
         device.deviceId,
@@ -336,6 +356,9 @@ export function useTindeq() {
   }, [writeCmd]);
 
   const start = useCallback(async () => {
+    // A new pull resets samplesRef, so any stale salvage claim on the old
+    // buffer is void (#113).
+    pendingInterruptionRef.current = false;
     samplesRef.current = [];
     t0Ref.current = null;
     latestRef.current = { kg: 0, t: 0 };
@@ -366,6 +389,10 @@ export function useTindeq() {
   }, [writeCmd, startRaf, handleSamples]);
 
   const stop = useCallback(async (): Promise<StoppedRecording | null> => {
+    // The Stop flow now owns this data (save or queue-on-failure), so the
+    // salvage claim must be released — otherwise a later normal logout would
+    // queue a duplicate of an already-saved pull (#113).
+    pendingInterruptionRef.current = false;
     measuringRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
