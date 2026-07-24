@@ -96,7 +96,7 @@ function AuthedApp({
   const [editingSession, setEditingSession] = useState<Session | null>(null);
   const [showPhases, setShowPhases] = useState(false);
   const [showPhaseChange, setShowPhaseChange] = useState(false);
-  const [showWatchSheet, setShowWatchSheet] = useState(false);
+  const [showAccountSheet, setShowAccountSheet] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   // The just-logged session, while it may still have same-day unlinked
   // Tindeq recordings to nudge-link (SL-21). Cleared on dismiss/link, or by
@@ -219,7 +219,7 @@ function AuthedApp({
       <button
         className="account-fab"
         aria-label="Account"
-        onClick={() => setShowWatchSheet(true)}
+        onClick={() => setShowAccountSheet(true)}
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="8.2" r="3.4" />
@@ -415,9 +415,9 @@ function AuthedApp({
       )}
 
       {/* Account bottom sheet */}
-      {showWatchSheet && (
+      {showAccountSheet && (
         <AccountSheet
-          onClose={() => setShowWatchSheet(false)}
+          onClose={() => setShowAccountSheet(false)}
           onSignOut={onSignOut}
         />
       )}
