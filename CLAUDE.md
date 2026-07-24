@@ -377,6 +377,20 @@ are safe regardless.
   what ships. Note the branch is only a *code-state* distinction for native
   builds — the compiled-in Supabase config means every device build
   reads/writes **production** data.
+- **CI TestFlight builds are opt-in, not per-merge (#150).**
+  `.github/workflows/testflight.yml` runs `fastlane beta` on a Blacksmith
+  **6vCPU** macOS runner (`blacksmith-6vcpu-macos-26`, $0.08/min — macOS
+  minutes burn the free tier at 20x the Ubuntu rate and were the dominant CI
+  cost, ~$0.5+ per build on the old always-on 12vCPU trigger). A staging push
+  only builds when the pushed commit message contains **`[testflight]`** (for
+  a squash-merged PR that's the PR title); untagged pushes show as skipped
+  runs. For an on-demand build use
+  `gh workflow run TestFlight --ref staging` (a `runner` input overrides the
+  label, e.g. back to 12vCPU for a rush build). The workflow's `concurrency`
+  queues and never cancels — build numbers come from
+  `latest_testflight_build_number + 1`, so parallel runs would race the same
+  number. Failed uploads (Apple 500s happen) still bill the full build —
+  rerun via workflow_dispatch rather than re-pushing.
 - **`fastlane beta` runs fully headless via the ASC API key** — `cd` to repo root
   (or `ios/`) and run `LANG=en_US.UTF-8 bundle exec fastlane beta` (always via
   `bundle exec`, never bare `fastlane beta` — the Ruby toolchain is pinned in
