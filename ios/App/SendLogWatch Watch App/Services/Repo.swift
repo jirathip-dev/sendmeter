@@ -69,27 +69,31 @@ enum Repo {
     }
 
     /// Log a finished gauge session into the training log (mirrors the web
-    /// app): type 'tindeq', load = duration × RPE feeds ACWR.
-    static func logTindeqSession(
-        durationMin: Int,
-        rpe: Double,
-        note: String,
-        groupId: UUID
-    ) async throws {
+    /// app): type 'tindeq', load = duration × RPE feeds ACWR. Takes the
+    /// already-persisted `PendingTindeqSession` from `PendingSessionQueue`
+    /// (issue #144) — date/duration/note were captured at "Log Session" tap
+    /// time, so a delayed drain still logs against the moment the session
+    /// actually finished. Phase is resolved here (at drain time) rather than
+    /// at enqueue time since it's a cheap re-fetch and rarely stale.
+    /// Idempotent upsert on the client-minted id so offline-queue replays
+    /// after partial success are safe (same pattern as `uploadBundle`).
+    static func logTindeqSession(_ pending: PendingTindeqSession) async throws {
         let phase = (try? await fetchCurrentPhase()) ?? "capacity"
         let session = SessionInsert(
-            id: UUID(),
-            date: Date().localDateString,
+            id: pending.id,
+            date: pending.date,
             type: "tindeq",
             typeLabel: "Tindeq",
-            durationMin: max(1, min(600, durationMin)),
-            rpe: rpe,
-            note: note,
+            durationMin: max(1, min(600, pending.durationMin)),
+            rpe: pending.rpe,
+            note: pending.note,
             phase: phase,
-            groupId: groupId,
+            groupId: pending.groupId,
             workoutSource: nil
         )
-        try await client.from("sessions").insert(session).execute()
+        try await client.from("sessions")
+            .upsert(session, onConflict: "id", ignoreDuplicates: true)
+            .execute()
     }
 
     // MARK: Confirmed workout → sessions + climb_workouts + climb_attempts

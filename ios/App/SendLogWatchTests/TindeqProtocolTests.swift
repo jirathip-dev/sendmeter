@@ -63,3 +63,130 @@ final class TindeqProtocolTests: XCTestCase {
         XCTAssertEqual(parseTindeqNotification(Data([0x7F, 0x00])), .unknown(0x7F))
     }
 }
+
+// MARK: - PendingTindeqSession (issue #144)
+
+/// Regression coverage for the end-of-session grouping bug: "Log Session"
+/// used to `try? await` the network insert directly, right as the user
+/// lowered their wrist — watchOS then suspended the app and froze the
+/// in-flight request, so the session row (carrying the group_id every rep in
+/// the connect needs) could land minutes to hours late, arriving on the phone
+/// as an orphaned card over already-regrouped recordings. The fix persists a
+/// `PendingTindeqSession` to `PendingSessionQueue` before any network call;
+/// these tests cover the payload built at tap time (`PendingTindeqSession
+/// .build`) and the round-trip encode/decode `PendingSessionQueue` relies on.
+final class PendingTindeqSessionTests: XCTestCase {
+    private let groupId = UUID()
+
+    func testBuildUsesSessionStartedAtForDate() {
+        // 2026-07-12 09:00 local → session runs 42 min → "now" rolls into the
+        // next minute boundary but the logged date must still be the day the
+        // session STARTED (mirrors Repo.makeSaveBundle's workout convention).
+        var comps = DateComponents()
+        comps.year = 2026
+        comps.month = 7
+        comps.day = 12
+        comps.hour = 23
+        comps.minute = 50
+        let started = Calendar.gregorianLocal.date(from: comps)!
+        let now = started.addingTimeInterval(42 * 60)
+
+        let pending = PendingTindeqSession.build(
+            sessionStartedAt: started,
+            now: now,
+            recordingCount: 11,
+            rpe: 7.5,
+            groupId: groupId
+        )
+
+        XCTAssertEqual(pending.date, started.localDateString)
+        XCTAssertEqual(pending.durationMin, 42)
+        XCTAssertEqual(pending.note, "11 recordings")
+        XCTAssertEqual(pending.rpe, 7.5)
+        XCTAssertEqual(pending.groupId, groupId)
+    }
+
+    func testBuildSingularRecordingNote() {
+        let pending = PendingTindeqSession.build(
+            sessionStartedAt: Date(),
+            now: Date(),
+            recordingCount: 1,
+            rpe: 5,
+            groupId: groupId
+        )
+        XCTAssertEqual(pending.note, "1 recording")
+    }
+
+    func testBuildFallsBackToNowWhenSessionStartedAtIsNil() {
+        // Finish-on-disconnect (SL-58 #5) can in principle race a nil
+        // sessionStartedAt — build() must not crash, and should treat the
+        // session as having just started (1 min floor) rather than produce a
+        // garbage duration.
+        let now = Date()
+        let pending = PendingTindeqSession.build(
+            sessionStartedAt: nil,
+            now: now,
+            recordingCount: 3,
+            rpe: 6,
+            groupId: groupId
+        )
+        XCTAssertEqual(pending.durationMin, 1)
+        XCTAssertEqual(pending.date, now.localDateString)
+    }
+
+    func testBuildDurationFloorsAtOneMinute() {
+        let now = Date()
+        let pending = PendingTindeqSession.build(
+            sessionStartedAt: now, // zero elapsed
+            now: now,
+            recordingCount: 2,
+            rpe: 5,
+            groupId: groupId
+        )
+        XCTAssertEqual(pending.durationMin, 1)
+    }
+
+    func testBuildDurationClampsAtSixHundredMinutes() {
+        let started = Date()
+        let now = started.addingTimeInterval(50 * 3600) // 50 h — absurd but possible if a drop is missed
+        let pending = PendingTindeqSession.build(
+            sessionStartedAt: started,
+            now: now,
+            recordingCount: 4,
+            rpe: 8,
+            groupId: groupId
+        )
+        XCTAssertEqual(pending.durationMin, 600)
+    }
+
+    /// `PendingSessionQueue.persist`/`drain` round-trip a `PendingTindeqSession`
+    /// through JSON on disk exactly like this (iso8601 dates aren't even
+    /// exercised here since every field is a UUID/String/Int/Double — this
+    /// guards the Codable shape itself, e.g. against an accidental snake_case
+    /// `CodingKeys` mismatch that would silently drop a field on decode).
+    func testPendingSessionEncodeDecodeRoundTrip() throws {
+        let original = PendingTindeqSession(
+            id: UUID(),
+            date: "2026-07-24",
+            durationMin: 17,
+            rpe: 6.5,
+            note: "11 recordings",
+            groupId: groupId
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(original)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(PendingTindeqSession.self, from: data)
+
+        XCTAssertEqual(decoded.id, original.id)
+        XCTAssertEqual(decoded.date, original.date)
+        XCTAssertEqual(decoded.durationMin, original.durationMin)
+        XCTAssertEqual(decoded.rpe, original.rpe)
+        XCTAssertEqual(decoded.note, original.note)
+        XCTAssertEqual(decoded.groupId, original.groupId)
+    }
+}
