@@ -1,7 +1,13 @@
-# TestFlight CD — fastlane beta on merge to staging (#133).
-# staging is the device-verification channel (CLAUDE.md release flow), so
-# every meaningful staging merge ships a build; workflow_dispatch covers
-# reruns and the external-tester builds cut from main.
+# TestFlight CD — fastlane beta, on demand (#133, cost-gated per #150).
+# macOS runner minutes are the repo's dominant CI cost (Blacksmith macOS is
+# billed at 20–40x the Ubuntu rate), and device verification happens in
+# batches, not per-merge — so staging pushes only build when the pushed
+# commit message opts in with "[testflight]" (for a squash merge, put it in
+# the PR title). workflow_dispatch covers everything else: on-demand builds,
+# reruns, and the external-tester builds cut from main.
+# No paths filter: the [testflight] tag is the single trigger source, and a
+# paths filter would silently swallow a tagged merge that only touched
+# untracked paths. Untagged pushes show as skipped runs, which cost nothing.
 # Signing is CI-safe per #132: the beta lane imports the distribution cert
 # from secrets under ENV["CI"] instead of minting one. Secrets live in the
 # `testflight` GitHub environment — the job must declare it to read them.
@@ -10,26 +16,11 @@ name: TestFlight
 on:
   push:
     branches: [staging]
-    paths:
-      - "src/**"
-      - "public/**"
-      - "index.html"
-      - "ios/**"
-      - "native-plugins/**"
-      - "patches/**"
-      - "package.json"
-      - "package-lock.json"
-      - "capacitor.config.ts"
-      - "vite.config.ts"
-      - "fastlane/**"
-      - "Gemfile"
-      - "Gemfile.lock"
-      - ".github/workflows/testflight.yml"
   workflow_dispatch:
     inputs:
       runner:
         description: "Runner label"
-        default: blacksmith-12vcpu-macos-26
+        default: blacksmith-6vcpu-macos-26
         type: string
 
 # The build number is latest_testflight_build_number + 1, so two parallel
@@ -43,7 +34,8 @@ permissions:
 
 jobs:
   beta:
-    runs-on: ${{ inputs.runner || 'blacksmith-12vcpu-macos-26' }}
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[testflight]')
+    runs-on: ${{ inputs.runner || 'blacksmith-6vcpu-macos-26' }}
     environment: testflight
     timeout-minutes: 60
     steps:

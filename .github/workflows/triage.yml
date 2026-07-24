@@ -31,6 +31,9 @@ jobs:
       target_repo: ${{ github.repository }}
       max_issues: 3
       auto_merge: true    # agent merges to staging after tester PASS + reviewer APPROVE + caps
-      runner: blacksmith-4vcpu-ubuntu-2404
+      # 2vCPU on purpose (#150): the pipeline is Claude-API/token-bound, not
+      # CPU-bound, and at ~14 min x 6 runs/day the 4vCPU tier alone burned
+      # the entire Blacksmith free allowance (4vCPU consumes it at 2x).
+      runner: blacksmith-2vcpu-ubuntu-2404
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
