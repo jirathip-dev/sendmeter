@@ -11,6 +11,7 @@ import {
   fetchRecordings,
   insertTindeqSession,
   recalcTindeqSessionDuration,
+  restoreRecording,
   updateRecordingGroup,
 } from "../lib/repo";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
@@ -245,7 +246,19 @@ export default function HistoryView({
             onDelete={(id) => {
               setRemovedIds((prev) => new Set(prev).add(id));
               void deleteRecording(id);
-              toast("Recording deleted");
+              // Issue #143: instant delete (unchanged) + an Undo action that
+              // restores the recording and drops the optimistic hide.
+              toast("Recording deleted", "success", {
+                label: "Undo",
+                onClick: () => {
+                  void restoreRecording(id);
+                  setRemovedIds((prev) => {
+                    const next = new Set(prev);
+                    next.delete(id);
+                    return next;
+                  });
+                },
+              });
             }}
             onEdit={setEditingRec}
             selectable
