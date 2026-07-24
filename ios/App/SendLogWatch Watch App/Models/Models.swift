@@ -258,6 +258,52 @@ nonisolated struct WorkoutSaveBundle: Codable {
     var attempts: [ClimbAttemptInsert]
 }
 
+/// A gauge session queued for upload by `PendingSessionQueue` (issue #144):
+/// "Log Session" used to await the network insert directly, right when the
+/// user lowers their wrist — watchOS then suspends the app and freezes the
+/// in-flight request, so the session row (and its group_id) could land
+/// minutes to hours later, if at all. `id` is minted client-side at enqueue
+/// time so the eventual insert is an idempotent upsert (safe to retry/replay,
+/// same pattern as `WorkoutSaveBundle`). `date`/`durationMin`/`note` are
+/// captured synchronously at tap time so a delayed drain still logs the
+/// session against the moment it actually finished.
+nonisolated struct PendingTindeqSession: Codable {
+    var id: UUID
+    var date: String           // YYYY-MM-DD, captured at enqueue time
+    var durationMin: Int
+    var rpe: Double
+    var note: String
+    var groupId: UUID          // Tindeq gauge session link — must survive the upload
+
+    /// Builds the "Log Session" payload as a pure function, so
+    /// SendLogWatchTests can exercise it without a live TindeqManager/View.
+    /// `now` defaults to the real clock but is injectable for tests.
+    /// Duration is clamped to 1-600 min, matching `SessionInsert`/
+    /// `WorkoutSaveBundle`'s bound (the DB's date-sanity constraints assume
+    /// it); `date` is the session's START day, matching the convention
+    /// `Repo.makeSaveBundle` uses for workouts (`summary.startedAt`), not the
+    /// moment it happened to be logged.
+    static func build(
+        sessionStartedAt: Date?,
+        now: Date = Date(),
+        recordingCount: Int,
+        rpe: Double,
+        groupId: UUID
+    ) -> PendingTindeqSession {
+        let started = sessionStartedAt ?? now
+        let rawMinutes = Int((now.timeIntervalSince(started) / 60).rounded())
+        let note = "\(recordingCount) recording\(recordingCount == 1 ? "" : "s")"
+        return PendingTindeqSession(
+            id: UUID(),
+            date: started.localDateString,
+            durationMin: max(1, min(600, rawMinutes)),
+            rpe: rpe,
+            note: note,
+            groupId: groupId
+        )
+    }
+}
+
 extension Calendar {
     /// Always Gregorian, regardless of the device's Region/Calendar setting.
     /// A Thai Region, for example, defaults to the Buddhist calendar

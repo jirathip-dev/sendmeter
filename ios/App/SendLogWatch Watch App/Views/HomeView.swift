@@ -28,7 +28,9 @@ struct HomeView: View {
         }
         .navigationTitle("Sendmeter")
         .task {
-            pendingUploads = await OfflineQueue.shared.pendingCount()
+            async let workouts = OfflineQueue.shared.pendingCount()
+            async let sessions = PendingSessionQueue.shared.pendingCount()
+            pendingUploads = await workouts + sessions
         }
     }
 }

@@ -18,6 +18,7 @@ struct SendLogWatchApp: App {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 Task { await OfflineQueue.shared.drain() }
+                Task { await PendingSessionQueue.shared.drain() }
                 // Keep the complications/Smart-Stack readiness + ACWR fresh.
                 Task { await WidgetBridge.refreshStatus() }
             }
