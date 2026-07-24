@@ -31,6 +31,10 @@ struct ForceGaugeView: View {
     // of the list.
     @State private var tagsLoading = true
     @State private var tagFetchTask: Task<Void, Never>?
+    // Bumped on every loadTags() call so a superseded fetch (cancelled
+    // because a newer one started) never stomps on the current one's
+    // tagsLoading flag — issue #147's leaked-spinner fix.
+    @State private var tagFetchGeneration = 0
 
     private let sparkTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
@@ -83,8 +87,14 @@ struct ForceGaugeView: View {
             // the top so the live gauge stays in view instead of a blank scroll.
             withAnimation { proxy.scrollTo("gaugeTop", anchor: .top) }
             // A connect is a fresh chance to win the tag fetch (auth relay may
-            // have settled since launch).
-            if status == .connected && recentTags.isEmpty { loadTags() }
+            // have settled since launch) — but not if a fetch is already in
+            // flight (issue #147: restarting a mid-retry fetch here reset its
+            // backoff right as the BLE radio got busiest connecting to the
+            // Progressor, which is how the loading spinner got stuck).
+            if status == .connected
+                && TagFetchPolicy.shouldRestartOnConnect(hasTags: !recentTags.isEmpty, inFlight: tagsLoading) {
+                loadTags()
+            }
         }
         // Keep the phone's live Force mirror in sync with the pickers (SL-87).
         .onChange(of: tag) { _, t in tindeq.liveTag = t }
@@ -120,20 +130,38 @@ struct ForceGaugeView: View {
     private func loadTags() {
         tagFetchTask?.cancel()
         tagsLoading = true
+        tagFetchGeneration += 1
+        let generation = tagFetchGeneration
         tagFetchTask = Task {
+            // Leak-proof clear: runs on every exit path (cancellation,
+            // break, or falling out of the loop) but only when this task is
+            // still the current one — a superseded task must not clear the
+            // newer task's in-flight flag (issue #147).
+            defer {
+                if generation == tagFetchGeneration { tagsLoading = false }
+            }
             var fetched: [String]?
-            for attempt in 0..<4 {
+            for attempt in 0..<TagFetchPolicy.maxAttempts {
                 if Task.isCancelled { return }
-                if let tags = try? await Repo.fetchRecentTindeqTags() {
+                // Per-attempt timeout: this fetch is proxied over the BLE
+                // link, so a request stalled by CoreBluetooth scanning/
+                // connecting to the Progressor would otherwise ride out
+                // URLSession's ~60s default, pinning the spinner for minutes.
+                if let tags = try? await withTimeout(
+                    seconds: TagFetchPolicy.perAttemptTimeoutSeconds,
+                    operation: { try await Repo.fetchRecentTindeqTags() }
+                ) {
                     fetched = tags
                     if !tags.isEmpty { break }
                 }
-                try? await Task.sleep(for: .seconds(Double(attempt + 1) * 1.5))
+                if Task.isCancelled { return }
+                if let sleepSeconds = TagFetchPolicy.sleepSeconds(afterAttempt: attempt) {
+                    try? await Task.sleep(for: .seconds(sleepSeconds))
+                }
             }
             if Task.isCancelled { return }
             recentTags = fetched ?? []
             if let fetched, !fetched.isEmpty { reconcileLastTag(against: fetched) }
-            tagsLoading = false
         }
     }
 
