@@ -74,6 +74,22 @@ final class DateSupportTests: XCTestCase {
         XCTAssertEqual(w.start, expectedStart)
     }
 
+    /// `dateString(in:)` renders the date in the calendar's time zone, not
+    /// the device's — the same instant is a different calendar date on
+    /// opposite sides of the international date line.
+    func testDateStringUsesCalendarTimeZone() {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "Etc/UTC")!
+        var utcPlus14 = Calendar(identifier: .gregorian)
+        utcPlus14.timeZone = TimeZone(identifier: "Etc/GMT-14")! // = UTC+14
+
+        let instant = utc.date(from: DateComponents(
+            year: 2026, month: 7, day: 23, hour: 23
+        ))!
+        XCTAssertEqual(instant.dateString(in: utc), "2026-07-23")
+        XCTAssertEqual(instant.dateString(in: utcPlus14), "2026-07-24")
+    }
+
     /// Same regression, fall-back direction: the old "noon minus 18 hours"
     /// formula landed on 19:00 the previous day (verified against the
     /// pre-fix math) instead of the correct wall-clock 18:00.

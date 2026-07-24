@@ -270,6 +270,7 @@ export type Database = {
           note: string
           phase: string
           rpe: number
+          rpe_confirmed: boolean
           type: string
           type_label: string
           user_id: string
@@ -286,6 +287,7 @@ export type Database = {
           note?: string
           phase: string
           rpe: number
+          rpe_confirmed?: boolean
           type: string
           type_label: string
           user_id?: string
@@ -302,6 +304,7 @@ export type Database = {
           note?: string
           phase?: string
           rpe?: number
+          rpe_confirmed?: boolean
           type?: string
           type_label?: string
           user_id?: string

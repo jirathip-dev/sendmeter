@@ -27,12 +27,15 @@ function dateLabel(dateStr: string): string {
 }
 
 /// Horizontal mini bar-trend: one row per workout, bar scaled to the max.
+/// `muted` (issue #114) dims a row whose value hasn't been human-reviewed —
+/// e.g. an unconfirmed phone auto-save RPE — so it doesn't read as
+/// indistinguishable from a confirmed one.
 function BarTrend({
   rows,
   color,
   fmt,
 }: {
-  rows: { label: string; value: number | null }[];
+  rows: { label: string; value: number | null; muted?: boolean }[];
   color: string;
   fmt: (v: number) => string;
 }) {
@@ -51,12 +54,21 @@ function BarTrend({
                   width: `${(r.value / max) * 100}%`,
                   height: "100%",
                   background: color,
+                  opacity: r.muted ? 0.4 : 1,
                   borderRadius: 4,
                 }}
               />
             )}
           </div>
-          <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink)", width: 40, textAlign: "right", flexShrink: 0 }}>
+          <span
+            style={{
+              fontSize: "var(--t-2xs)",
+              color: r.muted ? "var(--ink-faint)" : "var(--ink)",
+              width: 40,
+              textAlign: "right",
+              flexShrink: 0,
+            }}
+          >
             {r.value !== null ? fmt(r.value) : "—"}
           </span>
         </div>
@@ -127,7 +139,11 @@ export default function WorkoutStatsCard({ sessions }: { sessions: Session[] }) 
             SESSION RPE
           </div>
           <BarTrend
-            rows={rpeRows.map((r) => ({ label: dateLabel(r.date), value: r.rpe }))}
+            rows={rpeRows.map((r) => ({
+              label: dateLabel(r.date),
+              value: r.rpe,
+              muted: !r.confirmed,
+            }))}
             color="var(--warning)"
             fmt={(v) => v.toFixed(1)}
           />

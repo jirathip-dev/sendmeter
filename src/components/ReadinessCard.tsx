@@ -15,6 +15,12 @@ const ZONE_COLORS: Record<string, string> = {
   recover: "var(--danger)",
 };
 
+/// Local wall-clock "7:12" for the score-as-of line (#112).
+function timeOfDay(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 /// Short "N ago" for the last-synced line (SL-31).
 function relativeTime(ms: number): string {
   const s = Math.max(0, (Date.now() - ms) / 1000);
@@ -93,6 +99,14 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     days.push({ key, m: byDate.get(key) });
   }
+
+  // #112: after the noon freeze "Synced just now" alone misleads — the score
+  // may be hours older than the sync. Show when the score itself was computed
+  // (today only; an older score already gets its date next to the zone label).
+  const scoreAsOf =
+    latest.readiness != null && latest.date === days[days.length - 1]!.key
+      ? timeOfDay(latest.computedAt)
+      : null;
 
   const footerParts: string[] = [];
   if (latest.hrvSdnnMs) footerParts.push(`HRV ${Math.round(latest.hrvSdnnMs)}ms`);
@@ -266,9 +280,11 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
           {footerParts.join(" · ")}
         </div>
       )}
-      {syncedAt !== null && (
+      {(scoreAsOf !== null || syncedAt !== null) && (
         <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: footerParts.length ? 2 : 8 }}>
-          Synced {relativeTime(syncedAt)}
+          {scoreAsOf !== null && `Score as of ${scoreAsOf}`}
+          {scoreAsOf !== null && syncedAt !== null && " · "}
+          {syncedAt !== null && `Synced ${relativeTime(syncedAt)}`}
         </div>
       )}
     </div>

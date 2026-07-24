@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import { PHASES, SESSION_TYPES } from "../constants";
 import type { LogFormState, PhaseId } from "../types";
+import { stepRpe } from "../lib/rpe";
 
 interface Props {
   form: LogFormState;
@@ -81,7 +82,7 @@ export default function LogForm({ form, setForm, onSubmit }: Props) {
         <button
           className="stepper-btn"
           onClick={() =>
-            setForm((f) => ({ ...f, rpe: Math.max(1, f.rpe - 0.5) }))
+            setForm((f) => ({ ...f, rpe: stepRpe(f.rpe, -1) }))
           }
         >
           −
@@ -90,7 +91,7 @@ export default function LogForm({ form, setForm, onSubmit }: Props) {
         <button
           className="stepper-btn"
           onClick={() =>
-            setForm((f) => ({ ...f, rpe: Math.min(10, f.rpe + 0.5) }))
+            setForm((f) => ({ ...f, rpe: stepRpe(f.rpe, 1) }))
           }
         >
           +

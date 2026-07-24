@@ -279,11 +279,20 @@ are safe regardless.
     (this bit after a TestFlight update). AuthManager therefore ignores relays
     whose `expiresAt` is past and reads the Keychain fallback via the
     non-refreshing `auth.currentSession` only. Keep both guards.
-- **Migrations aren't auto-applied.** Files in `supabase/migrations/` are just SQL
-  on disk — apply them to the remote DB via the Supabase MCP (`apply_migration`) or
-  the CLI, or the schema drifts from the code. (The `health_metrics` delete policy +
-  date-sanity constraints sat unapplied for a while: with no DELETE policy, a delete
-  silently matches zero rows, so "Clear health data" looked broken while succeeding.)
+- **Migrations aren't auto-applied — and must go to BOTH remote projects.** Files
+  in `supabase/migrations/` are just SQL on disk. Apply each new migration to the
+  **prod** project (`zznsqmcewtzlnfoiefkk`, via the Supabase MCP `apply_migration`
+  or the CLI) **and** to the **dev/preview** project (`mjkndfhjnipomjjhgsxv`, issue
+  #121 — hosted on a second Supabase account; the main account is only a Developer
+  member there, so use its Management API token at `~/.supabase/dev-account-token`
+  against `POST /v1/projects/mjkndfhjnipomjjhgsxv/database/query`, and record the
+  version in `supabase_migrations.schema_migrations`). Skipping prod drifts the
+  schema from the code (the `health_metrics` delete policy + date-sanity constraints
+  sat unapplied for a while: with no DELETE policy, a delete silently matches zero
+  rows, so "Clear health data" looked broken while succeeding); skipping dev breaks
+  Vercel preview deployments the same way. The dev project is free-tier and
+  auto-pauses after ~7 idle days — unpause it (second account's dashboard or its
+  token) before verifying a release.
 - **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
   **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
   prompt (in-app has an Undo; the watch hides tag/side/session controls *while
@@ -357,6 +366,16 @@ are safe regardless.
 
 ## Deploy (TestFlight + Vercel)
 
+- **Release flow: TestFlight builds from `staging`, by default.** TestFlight is
+  the rung-4 device-verification channel, so build it from `staging` *before*
+  promoting: staging → `fastlane beta` → verify on device → promotion PR
+  staging → main (which triggers the Vercel production web deploy). Promoting
+  first would ship native code to the release branch before it's ever been
+  device-verifiable, and couples "I need a build on my phone" to a web prod
+  deploy. Exception: builds for **external testers / App Store submission** cut
+  from `main` so the promoted branch is exactly what ships. Note the branch is
+  only a *code-state* distinction for native builds — the compiled-in Supabase
+  config means every device build reads/writes **production** data.
 - **`fastlane beta` runs fully headless via the ASC API key** — `cd` to repo root
   (or `ios/`) and run `LANG=en_US.UTF-8 fastlane beta`; it works from a
   spawned/non-interactive shell, no signed-in Xcode account required. The lane
@@ -384,6 +403,19 @@ are safe regardless.
   triggers the Vercel web deploy, which **rejects commits from unrecognized authors**
   — a machine-default `user@host` email silently blocks it. Redeploy the current
   HEAD from the Vercel dashboard if it was pushed under the wrong identity.
+- **Vercel previews (issue #121):** `vercel.json` enables git deploys only for
+  `main` (production) and `staging` (preview) — task branches never deploy.
+  Promotion PRs (staging → main) get a preview URL that must point at the **dev**
+  Supabase backend via Preview-scoped `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`
+  env vars in the Vercel project settings (`src/lib/supabase.ts` falls back to the
+  committed prod config when they're absent, so Production needs no vars). The dev
+  project's auth allow-list must include the preview wildcard **origin-only**
+  (no trailing `/**`): `https://climbing-tracker-*-jirathip-kunkanjanathorn-s-projects.vercel.app`.
+  Vercel hashes the staging branch alias to `climbing-tracker-git-ea1530-…` (the
+  literal `git-staging-…` name would exceed the 63-char DNS label limit) — that
+  alias is the stable staging-preview URL and the dev project's auth Site URL.
+  Previews sit behind Vercel SSO (fine when logged in; mint a bypass link via the
+  Vercel MCP `get_access_to_vercel_url` for curl/fetch).
 
 ## Working style here
 

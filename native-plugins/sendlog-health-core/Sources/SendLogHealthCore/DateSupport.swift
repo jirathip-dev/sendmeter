@@ -43,10 +43,21 @@ extension Date {
     /// Forces Gregorian + en_US_POSIX so the year is always AD, never a
     /// locale-specific era — see Calendar.gregorianLocal.
     public var localDateString: String {
+        dateString(in: .gregorianLocal)
+    }
+
+    /// `localDateString` rendered in `calendar`'s time zone instead of the
+    /// device's. For code that does hour arithmetic on an injected calendar
+    /// (ReadinessWritePolicy's noon cutoff) — deriving the date string from
+    /// the same calendar keeps the two from disagreeing near midnight when
+    /// the injected time zone isn't the device's. Only the time zone is
+    /// taken from `calendar`; Gregorian + en_US_POSIX are still forced so
+    /// the year is always AD.
+    public func dateString(in calendar: Calendar) -> String {
         let f = DateFormatter()
         f.calendar = Calendar(identifier: .gregorian)
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = .current
+        f.timeZone = calendar.timeZone
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: self)
     }

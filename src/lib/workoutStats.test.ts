@@ -65,9 +65,9 @@ describe("hrRecoveryBpm (SL-85)", () => {
 
 describe("recentDailyRpe (#108)", () => {
   it("keeps decimal RPE — no rounding", () => {
-    expect(recentDailyRpe([{ date: "2026-07-21", rpe: 5.5 }], 8)).toEqual([
-      { date: "2026-07-21", rpe: 5.5 },
-    ]);
+    expect(
+      recentDailyRpe([{ date: "2026-07-21", rpe: 5.5, rpeConfirmed: true }], 8),
+    ).toEqual([{ date: "2026-07-21", rpe: 5.5, confirmed: true }]);
   });
 
   it("includes a manually-logged session with no attempts/workout row", () => {
@@ -75,9 +75,9 @@ describe("recentDailyRpe (#108)", () => {
     // straight off the session list, unlike the attempt-based stats above.
     const rows = recentDailyRpe(
       [
-        { date: "2026-07-19", rpe: 6 },
-        { date: "2026-07-21", rpe: 7.5 }, // logged on the 21st
-        { date: "2026-07-23", rpe: 4 },
+        { date: "2026-07-19", rpe: 6, rpeConfirmed: true },
+        { date: "2026-07-21", rpe: 7.5, rpeConfirmed: true }, // logged on the 21st
+        { date: "2026-07-23", rpe: 4, rpeConfirmed: true },
       ],
       8,
     );
@@ -92,17 +92,17 @@ describe("recentDailyRpe (#108)", () => {
   it("averages same-day sessions", () => {
     const rows = recentDailyRpe(
       [
-        { date: "2026-07-21", rpe: 5 },
-        { date: "2026-07-21", rpe: 8 },
+        { date: "2026-07-21", rpe: 5, rpeConfirmed: true },
+        { date: "2026-07-21", rpe: 8, rpeConfirmed: true },
       ],
       8,
     );
-    expect(rows).toEqual([{ date: "2026-07-21", rpe: 6.5 }]);
+    expect(rows).toEqual([{ date: "2026-07-21", rpe: 6.5, confirmed: true }]);
   });
 
   it("keeps only the most recent `days` distinct dates, oldest → newest", () => {
     const sessions = ["07-17", "07-18", "07-19", "07-20", "07-21"].map(
-      (md) => ({ date: `2026-${md}`, rpe: 5 }),
+      (md) => ({ date: `2026-${md}`, rpe: 5, rpeConfirmed: true }),
     );
     const rows = recentDailyRpe(sessions, 3);
     expect(rows.map((r) => r.date)).toEqual([
@@ -115,9 +115,9 @@ describe("recentDailyRpe (#108)", () => {
   it("is order-independent — sorts by date, not input order", () => {
     const rows = recentDailyRpe(
       [
-        { date: "2026-07-21", rpe: 7 },
-        { date: "2026-07-19", rpe: 5 },
-        { date: "2026-07-20", rpe: 6 },
+        { date: "2026-07-21", rpe: 7, rpeConfirmed: true },
+        { date: "2026-07-19", rpe: 5, rpeConfirmed: true },
+        { date: "2026-07-20", rpe: 6, rpeConfirmed: true },
       ],
       8,
     );
@@ -130,5 +130,24 @@ describe("recentDailyRpe (#108)", () => {
 
   it("returns [] for no sessions", () => {
     expect(recentDailyRpe([], 8)).toEqual([]);
+  });
+
+  it("marks a day unconfirmed for an unreviewed phone auto-save (#114)", () => {
+    const rows = recentDailyRpe(
+      [{ date: "2026-07-21", rpe: 6, rpeConfirmed: false }],
+      8,
+    );
+    expect(rows).toEqual([{ date: "2026-07-21", rpe: 6, confirmed: false }]);
+  });
+
+  it("mixed day: any unconfirmed session mutes the whole day's average (#114)", () => {
+    const rows = recentDailyRpe(
+      [
+        { date: "2026-07-21", rpe: 6, rpeConfirmed: false }, // unreviewed phone auto-save
+        { date: "2026-07-21", rpe: 8, rpeConfirmed: true }, // user-logged, same day
+      ],
+      8,
+    );
+    expect(rows).toEqual([{ date: "2026-07-21", rpe: 7, confirmed: false }]);
   });
 });

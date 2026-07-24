@@ -38,6 +38,10 @@ export interface Session {
   typeLabel: string;
   duration: number; // minutes
   rpe: number; // 1-10
+  // Whether a human has reviewed/confirmed this RPE — false for a phone
+  // auto-save still sitting at the hardcoded DEFAULT_RPE until edited
+  // (issue #114). Manual entries and edits are always true.
+  rpeConfirmed: boolean;
   load: number; // duration * rpe
   note: string;
   phase: PhaseId;
@@ -76,6 +80,7 @@ export interface HealthMetric {
   date: string; // YYYY-MM-DD
   readiness: number | null;
   zone: string | null;
+  computedAt: string; // timestamptz — when readiness was (re)computed, NOT last sync (#112: score freezes at noon)
   hrvSdnnMs: number | null;
   restingHr: number | null;
   sleepHours: number | null;
