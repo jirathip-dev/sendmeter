@@ -29,7 +29,7 @@ on:
     inputs:
       runner:
         description: "Runner label"
-        default: blacksmith-12vcpu-macos-15
+        default: blacksmith-12vcpu-macos-26
         type: string
 
 # The build number is latest_testflight_build_number + 1, so two parallel
@@ -43,7 +43,7 @@ permissions:
 
 jobs:
   beta:
-    runs-on: ${{ inputs.runner || 'blacksmith-12vcpu-macos-15' }}
+    runs-on: ${{ inputs.runner || 'blacksmith-12vcpu-macos-26' }}
     environment: testflight
     timeout-minutes: 60
     steps:
