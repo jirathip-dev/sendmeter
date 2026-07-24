@@ -45,7 +45,7 @@ struct SignInView: View {
     @ViewBuilder
     private var signInForm: some View {
         VStack(spacing: 10) {
-                Text("Sign in with the password you set from the web app (Watch button), or open Sendmeter on your iPhone to sync automatically.")
+                Text("Open Sendmeter on your iPhone to sign in automatically, or sign in with your account email and password (set one from the app's Account settings).")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 

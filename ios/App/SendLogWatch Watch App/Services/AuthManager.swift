@@ -139,8 +139,8 @@ final class AuthManager: NSObject {
         }
     }
 
-    /// Email + password sign-in — manual fallback. The password is set once
-    /// from the web app (Account sheet); web login itself stays magic-link.
+    /// Email + password sign-in — manual fallback. The password is set via
+    /// the Account sheet's password-reset email; web login itself stays magic-link.
     @MainActor
     func signIn(email: String, password: String) async {
         errorMsg = nil
@@ -164,7 +164,7 @@ final class AuthManager: NSObject {
     private func friendlyAuthError(_ error: Error) -> String {
         let text = error.localizedDescription
         if text.localizedCaseInsensitiveContains("invalid login credentials") {
-            return "Wrong email or password. Set the watch password from the web app first (Watch button, top right)."
+            return "Wrong email or password. Open Sendmeter on your iPhone to sign in automatically, or set a password from the app's Account settings (password reset email)."
         }
         return text
     }

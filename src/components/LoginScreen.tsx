@@ -47,7 +47,7 @@ export default function LoginScreen() {
     if (err) {
       setError(
         err.message.toLowerCase().includes("invalid login credentials")
-          ? "Wrong email or password. Set a password via the Watch button on the web app first."
+          ? "Wrong email or password. You can also sign in with a magic link, Apple, or a passkey."
           : err.message,
       );
     }
