@@ -1,6 +1,6 @@
 # Quality gate — lint, typecheck, tests, and a production build.
-# Deployment is separate (Vercel deploys via git integration; vercel.json
-# restricts deploys to main, previews to staging).
+# Deployment is separate (deploy-web.yml deploys via the Vercel CLI:
+# main → production, staging → preview).
 name: CI
 
 on:

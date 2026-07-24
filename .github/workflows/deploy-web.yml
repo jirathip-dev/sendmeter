@@ -1,0 +1,47 @@
+# Web deploy via Vercel CLI token. The git integration is unavailable since
+# the move to the sendmeter org (private org repos need Vercel Pro — #135),
+# so merge-triggered deploys happen here instead: main → production,
+# staging → preview. Requires repo secrets VERCEL_TOKEN, VERCEL_ORG_ID,
+# VERCEL_PROJECT_ID.
+name: Deploy Web
+
+on:
+  push:
+    branches: [main, staging]
+
+concurrency:
+  group: vercel-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # vercel build runs the project's install + build itself (postinstall
+      # must run — it applies the apple-sign-in SPM patch, harmless on web
+      # but keeps the tree consistent).
+      - name: Pull Vercel project settings
+        run: >
+          npx vercel@56 pull --yes
+          --environment=${{ github.ref_name == 'main' && 'production' || 'preview' }}
+          --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build
+        run: npx vercel@56 build ${{ github.ref_name == 'main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy
+        run: npx vercel@56 deploy --prebuilt ${{ github.ref_name == 'main' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }}
