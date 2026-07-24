@@ -78,11 +78,6 @@ actor PendingSessionQueue {
                 return l < r
             }
 
-        // Read once per drain pass, not per file (issue #158) — the signed-in
-        // account can't change mid-pass, and this keeps a single consistent
-        // account check for every candidate file.
-        let currentUserId = SupabaseService.client.auth.currentSession?.user.id
-
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         for file in files {
@@ -94,6 +89,12 @@ actor PendingSessionQueue {
                 try? FileManager.default.removeItem(at: file)
                 continue
             }
+            // Read fresh right before each file's check, not once before the
+            // loop (issue #158) — this is a non-@MainActor actor and `await`
+            // below is a suspension point, so a concurrent account switch
+            // could otherwise go unnoticed for the rest of the pass and let
+            // a session queued under Account A upload under Account B.
+            let currentUserId = SupabaseService.client.auth.currentSession?.user.id
             guard shouldDrain(itemUserId: session.enqueuedUserId, currentUserId: currentUserId) else {
                 // Queued under a different account (or nobody's signed in):
                 // leave the file on disk untouched and keep checking the

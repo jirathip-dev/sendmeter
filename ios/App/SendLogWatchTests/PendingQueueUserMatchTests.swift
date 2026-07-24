@@ -31,7 +31,10 @@ final class PendingQueueUserMatchTests: XCTestCase {
         XCTAssertFalse(shouldDrain(itemUserId: accountA, currentUserId: nil))
     }
 
-    func testBothNilDrains() {
-        XCTAssertTrue(shouldDrain(itemUserId: nil, currentUserId: nil))
+    func testSignedOutBeatsLegacyTrust() {
+        // Nobody signed in means nothing drains, even an unstamped legacy
+        // item — the "signed out: never drain" guard fires before the
+        // "legacy stamp: trust current session" guard is ever reached.
+        XCTAssertFalse(shouldDrain(itemUserId: nil, currentUserId: nil))
     }
 }
