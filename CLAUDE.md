@@ -368,16 +368,20 @@ are safe regardless.
 
 - **Release flow: TestFlight builds from `staging`, by default.** TestFlight is
   the rung-4 device-verification channel, so build it from `staging` *before*
-  promoting: staging → `fastlane beta` → verify on device → promotion PR
-  staging → main (which triggers the Vercel production web deploy). Promoting
-  first would ship native code to the release branch before it's ever been
-  device-verifiable, and couples "I need a build on my phone" to a web prod
-  deploy. Exception: builds for **external testers / App Store submission** cut
-  from `main` so the promoted branch is exactly what ships. Note the branch is
-  only a *code-state* distinction for native builds — the compiled-in Supabase
-  config means every device build reads/writes **production** data.
+  promoting: staging → `bundle exec fastlane beta` → verify on device →
+  promotion PR staging → main (which triggers the Vercel production web
+  deploy). Promoting first would ship native code to the release branch
+  before it's ever been device-verifiable, and couples "I need a build on my
+  phone" to a web prod deploy. Exception: builds for **external testers /
+  App Store submission** cut from `main` so the promoted branch is exactly
+  what ships. Note the branch is only a *code-state* distinction for native
+  builds — the compiled-in Supabase config means every device build
+  reads/writes **production** data.
 - **`fastlane beta` runs fully headless via the ASC API key** — `cd` to repo root
-  (or `ios/`) and run `LANG=en_US.UTF-8 fastlane beta`; it works from a
+  (or `ios/`) and run `LANG=en_US.UTF-8 bundle exec fastlane beta` (always via
+  `bundle exec`, never bare `fastlane beta` — the Ruby toolchain is pinned in
+  `.mise.toml` and the fastlane version in `Gemfile.lock`; a bare invocation
+  can pick up a different globally-installed fastlane). It works from a
   spawned/non-interactive shell, no signed-in Xcode account required. The lane
   (`fastlane/Fastfile`) does everything: `npm run build && cap sync ios`, then
   `get_certificates` (installs/creates the Apple Distribution cert via the API key),
