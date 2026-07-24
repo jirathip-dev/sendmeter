@@ -2,9 +2,9 @@
 # macOS runner minutes are the repo's dominant CI cost (Blacksmith macOS is
 # billed at 20–40x the Ubuntu rate), and device verification happens in
 # batches, not per-merge — so staging pushes only build when the pushed
-# commit message opts in with "[testflight]" (for a squash merge, put it in
-# the PR title). workflow_dispatch covers everything else: on-demand builds,
-# reruns, and the external-tester builds cut from main.
+# commit *subject* (first line) opts in with "[testflight]" (for a squash
+# merge, put it in the PR title). workflow_dispatch covers everything else:
+# on-demand builds, reruns, and the external-tester builds cut from main.
 # No paths filter: the [testflight] tag is the single trigger source, and a
 # paths filter would silently swallow a tagged merge that only touched
 # untracked paths. Untagged pushes show as skipped runs, which cost nothing.
@@ -33,8 +33,36 @@ permissions:
   contents: read
 
 jobs:
+  # The tag must be in the commit subject, not anywhere in the message:
+  # contains(head_commit.message, ...) matched the whole body, so the commit
+  # that introduced the gate triggered itself off its own description, and
+  # any message that merely mentions the tag (docs, reverts, changelogs)
+  # would start a paid macOS build. Expressions can't split lines, hence a
+  # seconds-long Ubuntu job to extract the first line.
+  gate:
+    if: github.event_name == 'push'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.subject.outputs.build }}
+    steps:
+      - id: subject
+        env:
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          subject="${MESSAGE%%$'\n'*}"
+          case "$subject" in
+            *"[testflight]"*) echo "build=true" >>"$GITHUB_OUTPUT" ;;
+            *) echo "build=false" >>"$GITHUB_OUTPUT" ;;
+          esac
+
   beta:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[testflight]')
+    needs: gate
+    # gate is skipped on workflow_dispatch, and a skipped need fails the
+    # default success() check — !cancelled() lets the dispatch path through.
+    if: >-
+      !cancelled() &&
+      (github.event_name == 'workflow_dispatch' || needs.gate.outputs.build == 'true')
     runs-on: ${{ inputs.runner || 'blacksmith-6vcpu-macos-26' }}
     environment: testflight
     timeout-minutes: 60
