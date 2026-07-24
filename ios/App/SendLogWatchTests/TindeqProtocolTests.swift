@@ -190,3 +190,43 @@ final class PendingTindeqSessionTests: XCTestCase {
         XCTAssertEqual(decoded.groupId, original.groupId)
     }
 }
+
+// MARK: - TindeqSalvagePolicy (issue #151)
+
+/// A BLE drop mid-hold used to silently lose the in-flight rep — the
+/// `samples` buffer survived the disconnect but nothing wrote it, and the
+/// next `start()` wiped it before it could be saved. These cover the pure
+/// decision of whether `TindeqManager`'s disconnect handler should salvage
+/// that rep as its own recording (mirrors the web app's interruption-salvage
+/// in `useTindeq.ts`/`ForceView.tsx`).
+final class TindeqSalvagePolicyTests: XCTestCase {
+    func testSalvagesUnplannedDropMidMeasurementWithSamples() {
+        XCTAssertTrue(TindeqSalvagePolicy.shouldSalvage(
+            wasIntentional: false, wasMeasuring: true, sampleCount: 100
+        ))
+    }
+
+    func testDoesNotSalvageIntentionalDisconnect() {
+        XCTAssertFalse(TindeqSalvagePolicy.shouldSalvage(
+            wasIntentional: true, wasMeasuring: true, sampleCount: 100
+        ))
+    }
+
+    func testDoesNotSalvageWhenNotMeasuring() {
+        XCTAssertFalse(TindeqSalvagePolicy.shouldSalvage(
+            wasIntentional: false, wasMeasuring: false, sampleCount: 100
+        ))
+    }
+
+    func testDoesNotSalvageWithNoSamples() {
+        XCTAssertFalse(TindeqSalvagePolicy.shouldSalvage(
+            wasIntentional: false, wasMeasuring: true, sampleCount: 0
+        ))
+    }
+
+    func testDoesNotSalvageWithOnlyOneSample() {
+        XCTAssertFalse(TindeqSalvagePolicy.shouldSalvage(
+            wasIntentional: false, wasMeasuring: true, sampleCount: 1
+        ))
+    }
+}
