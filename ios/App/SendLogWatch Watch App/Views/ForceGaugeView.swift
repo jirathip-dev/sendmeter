@@ -40,67 +40,91 @@ struct ForceGaugeView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-        ScrollView {
-            VStack(spacing: 8) {
-                Color.clear.frame(height: 1).id("gaugeTop")
-                // Session controls hide while measuring — the live gauge owns
-                // the screen; they come back the moment the rep stops.
-                if tindeq.status != .unsupported && tindeq.status != .measuring {
-                    sessionBar
-                }
-
-                switch tindeq.status {
-                case .unsupported:
-                    Text(tindeq.errorMsg ?? "Bluetooth unavailable")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
-                case .idle:
-                    Button("Connect Progressor") { tindeq.connect() }
-                        .buttonStyle(.borderedProminent)
-                    if let msg = tindeq.errorMsg {
-                        Text(msg).font(.footnote).foregroundStyle(.red)
+            Group {
+                // Measuring owns the whole screen in a plain, non-scrolling
+                // VStack (issue #149) — the live gauge, peak/timer, and Stop
+                // & Save must all be visible at once without hunting for a
+                // scroll position mid-hang. Every other state keeps the
+                // ScrollView (loading/empty/error states legitimately may
+                // need it).
+                if tindeq.status == .measuring {
+                    VStack(spacing: 4) {
+                        measuringContent
                     }
+                } else {
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            Color.clear.frame(height: 1).id("gaugeTop")
+                            // Session controls hide while measuring — the live gauge owns
+                            // the screen; they come back the moment the rep stops.
+                            if tindeq.status != .unsupported && tindeq.status != .measuring {
+                                sessionBar
+                            }
 
-                case .scanning, .connecting:
-                    ProgressView()
-                    Text(tindeq.status == .scanning ? "Scanning…" : "Connecting…")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                            switch tindeq.status {
+                            case .unsupported:
+                                Text(tindeq.errorMsg ?? "Bluetooth unavailable")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
 
-                case .connected:
-                    setupContent
+                            case .idle:
+                                Button("Connect Progressor") { tindeq.connect() }
+                                    .buttonStyle(.borderedProminent)
+                                if let msg = tindeq.errorMsg {
+                                    Text(msg).font(.footnote).foregroundStyle(.red)
+                                }
 
-                case .measuring:
-                    measuringContent
-                }
+                            case .scanning, .connecting:
+                                ProgressView()
+                                Text(tindeq.status == .scanning ? "Scanning…" : "Connecting…")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
 
-                if let savedMsg {
-                    Text(savedMsg)
-                        .font(.footnote)
-                        .foregroundStyle(saving ? Color.secondary : Color.green)
+                            case .connected:
+                                setupContent
+
+                            case .measuring:
+                                // Unreachable — measuring renders in the non-scrolling
+                                // branch above; kept only for switch exhaustiveness.
+                                EmptyView()
+                            }
+
+                            if let savedMsg {
+                                Text(savedMsg)
+                                    .font(.footnote)
+                                    .foregroundStyle(saving ? Color.secondary : Color.green)
+                            }
+                        }
+                    }
                 }
             }
-        }
-        .onChange(of: tindeq.status) { _, status in
-            // Controls show/hide on start/stop, shifting layout — snap back to
-            // the top so the live gauge stays in view instead of a blank scroll.
-            withAnimation { proxy.scrollTo("gaugeTop", anchor: .top) }
-            // A connect is a fresh chance to win the tag fetch (auth relay may
-            // have settled since launch) — but not if a fetch is already in
-            // flight (issue #147: restarting a mid-retry fetch here reset its
-            // backoff right as the BLE radio got busiest connecting to the
-            // Progressor, which is how the loading spinner got stuck).
-            if status == .connected
-                && TagFetchPolicy.shouldRestartOnConnect(hasTags: !recentTags.isEmpty, inFlight: tagsLoading) {
-                loadTags()
+            .onChange(of: tindeq.status) { _, status in
+                // Controls show/hide on start/stop, shifting layout — snap back to
+                // the top so the live gauge stays in view instead of a blank scroll.
+                // Guarded to the scrolling branch: the "gaugeTop" anchor doesn't
+                // exist while measuring owns the screen non-scrolling.
+                if status != .measuring {
+                    withAnimation { proxy.scrollTo("gaugeTop", anchor: .top) }
+                }
+                // A connect is a fresh chance to win the tag fetch (auth relay may
+                // have settled since launch) — but not if a fetch is already in
+                // flight (issue #147: restarting a mid-retry fetch here reset its
+                // backoff right as the BLE radio got busiest connecting to the
+                // Progressor, which is how the loading spinner got stuck).
+                if status == .connected
+                    && TagFetchPolicy.shouldRestartOnConnect(hasTags: !recentTags.isEmpty, inFlight: tagsLoading) {
+                    loadTags()
+                }
             }
-        }
-        // Keep the phone's live Force mirror in sync with the pickers (SL-87).
-        .onChange(of: tag) { _, t in tindeq.liveTag = t }
-        .onChange(of: side) { _, s in tindeq.liveSide = s }
+            // Keep the phone's live Force mirror in sync with the pickers (SL-87).
+            .onChange(of: tag) { _, t in tindeq.liveTag = t }
+            .onChange(of: side) { _, s in tindeq.liveSide = s }
         }
         .navigationTitle("Force")
+        // Hide the nav bar while measuring to reclaim vertical space for the
+        // live gauge — it returns the moment the rep stops (status flips back
+        // to .connected).
+        .toolbar(tindeq.status == .measuring ? .hidden : .visible, for: .navigationBar)
         .onReceive(sparkTimer) { _ in
             if tindeq.status == .measuring {
                 sparkSamples = tindeq.recentSamples()
@@ -220,74 +244,85 @@ struct ForceGaugeView: View {
 
     @ViewBuilder
     private var setupContent: some View {
-        HStack {
-            Circle().fill(.blue).frame(width: 8, height: 8)
-            Text("connected")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Spacer()
-            if tindeq.lowBattery {
-                Image(systemName: "battery.25")
-                    .foregroundStyle(.yellow)
-            }
-            Button {
-                disconnectTapped()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.mini)
-            .tint(.red)
-        }
-
-        // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
-        // free text drifts from the app's tag set. New tags are created in the
-        // iPhone/web Force tab; the watch selects from what already exists.
-        if tagsLoading && recentTags.isEmpty {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
-                Text("Loading exercises…")
+        // Tighter spacing + small controls so the common path — connected
+        // row, 2 pickers, Start — fits a 41mm screen without scrolling
+        // (issue #149). This VStack is still a child of the outer
+        // ScrollView's VStack, which stays as a fallback for the session bar
+        // / saved-message lines that can still push it over on the smallest
+        // watch.
+        VStack(spacing: 4) {
+            HStack {
+                Circle().fill(.blue).frame(width: 8, height: 8)
+                Text("connected")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-            }
-        } else if recentTags.isEmpty {
-            Text("No exercise tags found — record once in the iPhone app, or check the phone app is signed in.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Button("Retry") { loadTags() }
-                .font(.footnote)
+                Spacer()
+                if tindeq.lowBattery {
+                    Image(systemName: "battery.25")
+                        .foregroundStyle(.yellow)
+                }
+                Button {
+                    disconnectTapped()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
-        } else {
-            Picker("Exercise", selection: $tag) {
-                // Explicit empty choice — a rep is never silently mislabeled.
-                Text("pick…").tag("")
-                ForEach(recentTags, id: \.self) { t in
-                    Text(t).tag(t)
+                .tint(.red)
+            }
+
+            // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
+            // free text drifts from the app's tag set. New tags are created in the
+            // iPhone/web Force tab; the watch selects from what already exists.
+            if tagsLoading && recentTags.isEmpty {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Loading exercises…")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } else if recentTags.isEmpty {
+                Text("No exercise tags found — record once in the iPhone app, or check the phone app is signed in.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Button("Retry") { loadTags() }
+                    .font(.footnote)
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+            } else {
+                Picker("Exercise", selection: $tag) {
+                    // Explicit empty choice — a rep is never silently mislabeled.
+                    Text("pick…").tag("")
+                    ForEach(recentTags, id: \.self) { t in
+                        Text(t).tag(t)
+                    }
+                }
+                .pickerStyle(.navigationLink)
+                .font(.footnote)
+                .controlSize(.small)
+            }
+            Picker("Side", selection: $side) {
+                ForEach(SIDE_OPTIONS, id: \.value) { o in
+                    Text(o.label).tag(o.value)
                 }
             }
             .pickerStyle(.navigationLink)
             .font(.footnote)
-        }
-        Picker("Side", selection: $side) {
-            ForEach(SIDE_OPTIONS, id: \.value) { o in
-                Text(o.label).tag(o.value)
-            }
-        }
-        .pickerStyle(.navigationLink)
-        .font(.footnote)
+            .controlSize(.small)
 
-        Button("Start") {
-            savedMsg = nil
-            tindeq.start()
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
-        if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
-            Text("Pick an exercise to start.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            Button("Start") {
+                savedMsg = nil
+                tindeq.start()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
+            if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
+                Text("Pick an exercise to start.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -297,14 +332,20 @@ struct ForceGaugeView: View {
     private var measuringContent: some View {
         HStack {
             Circle().fill(.green).frame(width: 8, height: 8)
-            Text(tag).font(.footnote).foregroundStyle(.secondary)
+            Text(tag)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Spacer()
         }
 
-        Text(String(format: "%.1f", tindeq.currentKg))
+        (Text(String(format: "%.1f", tindeq.currentKg))
             .font(.system(size: 42, weight: .heavy, design: .rounded))
             .monospacedDigit()
-        + Text(" kg").font(.footnote).foregroundStyle(.secondary)
+        + Text(" kg").font(.footnote).foregroundStyle(.secondary))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
 
         // Hold time — the primary live number after force, so it reads at a
         // glance mid-hang.
@@ -312,15 +353,19 @@ struct ForceGaugeView: View {
             Text("peak \(String(format: "%.1f", tindeq.peakKg))")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             Spacer()
-            Text(String(format: "%.1f", tindeq.elapsedMs / 1000))
+            (Text(String(format: "%.1f", tindeq.elapsedMs / 1000))
                 .font(.system(size: 26, weight: .bold, design: .rounded))
                 .monospacedDigit()
-            + Text(" s").font(.footnote).foregroundStyle(.secondary)
+            + Text(" s").font(.footnote).foregroundStyle(.secondary))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
 
         Sparkline(samples: sparkSamples)
-            .frame(height: 50)
+            .frame(minHeight: 28, maxHeight: 50)
 
         Button(saving ? "Saving…" : "Stop & Save") { saveStop() }
             .buttonStyle(.borderedProminent)
