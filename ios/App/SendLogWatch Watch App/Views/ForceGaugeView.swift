@@ -17,6 +17,11 @@ struct ForceGaugeView: View {
     @Environment(TindeqManager.self) private var tindeq
     @State private var saving = false
     @State private var savedMsg: String?
+    // Bumped every time savedMsg is finalized (issue #149 follow-up) so the
+    // delayed auto-clear below only fires for the message it was scheduled
+    // for — a fast next rep that overwrites savedMsg before the old timer
+    // fires must not have its fresh message wiped by the stale one.
+    @State private var savedMsgGeneration = 0
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
 
     // Exercise setup — set once before the first rep, tweak side between reps.
@@ -53,7 +58,11 @@ struct ForceGaugeView: View {
                     }
                 } else {
                     ScrollView {
-                        VStack(spacing: 8) {
+                        // Tightened from 8 (issue #149 follow-up): the setup +
+                        // session-bar + saved-message combination between reps
+                        // is the mainline flow, not a rare edge case — every
+                        // point here counts toward fitting a 41mm screen.
+                        VStack(spacing: 4) {
                             Color.clear.frame(height: 1).id("gaugeTop")
                             // Session controls hide while measuring — the live gauge owns
                             // the screen; they come back the moment the rep stops.
@@ -90,9 +99,18 @@ struct ForceGaugeView: View {
                             }
 
                             if let savedMsg {
+                                // Least essential line in the stack (issue #149
+                                // follow-up) — kept last so it's the first thing
+                                // to scroll off if the combo still overflows the
+                                // smallest watch, and capped to one line so a
+                                // long tag name can't silently wrap into a
+                                // second line and blow the budget.
                                 Text(savedMsg)
-                                    .font(.footnote)
+                                    .font(.caption2)
                                     .foregroundStyle(saving ? Color.secondary : Color.green)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.7)
+                                    .truncationMode(.tail)
                             }
                         }
                     }
@@ -208,14 +226,18 @@ struct ForceGaugeView: View {
     private var sessionBar: some View {
         // Only shown once a rep has minted the session (auto-group). Before the
         // first save there's nothing to end, so no bar — the gauge just records.
+        // Sized down from .footnote (issue #149 follow-up): this bar is visible
+        // on the setup screen for every rep after the first, stacked above the
+        // pickers + Start, so its own footprint matters just as much as
+        // setupContent's for fitting the smallest watch without scrolling.
         if tindeq.sessionId != nil {
             HStack {
-                Circle().fill(.blue).frame(width: 6, height: 6)
+                Circle().fill(.blue).frame(width: 5, height: 5)
                 Text("Session · \(tindeq.sessionCount)")
-                    .font(.footnote)
+                    .font(.caption2)
                 Spacer()
                 Button("Finish") { finish() }
-                    .font(.footnote)
+                    .font(.caption2)
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
             }
@@ -247,14 +269,16 @@ struct ForceGaugeView: View {
         // Tighter spacing + small controls so the common path — connected
         // row, 2 pickers, Start — fits a 41mm screen without scrolling
         // (issue #149). This VStack is still a child of the outer
-        // ScrollView's VStack, which stays as a fallback for the session bar
-        // / saved-message lines that can still push it over on the smallest
-        // watch.
-        VStack(spacing: 4) {
+        // ScrollView's VStack, which stays as a fallback: the session bar
+        // and saved-message lines (also sized down, issue #149 follow-up)
+        // sit outside it, and the saved-message line — deliberately last in
+        // the outer stack — is the one that scrolls off first if the
+        // smallest watch still can't fit everything at once.
+        VStack(spacing: 3) {
             HStack {
-                Circle().fill(.blue).frame(width: 8, height: 8)
+                Circle().fill(.blue).frame(width: 6, height: 6)
                 Text("connected")
-                    .font(.footnote)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
                 if tindeq.lowBattery {
@@ -279,15 +303,15 @@ struct ForceGaugeView: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
                     Text("Loading exercises…")
-                        .font(.footnote)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             } else if recentTags.isEmpty {
                 Text("No exercise tags found — record once in the iPhone app, or check the phone app is signed in.")
-                    .font(.footnote)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                 Button("Retry") { loadTags() }
-                    .font(.footnote)
+                    .font(.caption2)
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
             } else {
@@ -299,7 +323,7 @@ struct ForceGaugeView: View {
                     }
                 }
                 .pickerStyle(.navigationLink)
-                .font(.footnote)
+                .font(.caption2)
                 .controlSize(.small)
             }
             Picker("Side", selection: $side) {
@@ -308,7 +332,7 @@ struct ForceGaugeView: View {
                 }
             }
             .pickerStyle(.navigationLink)
-            .font(.footnote)
+            .font(.caption2)
             .controlSize(.small)
 
             Button("Start") {
@@ -320,7 +344,7 @@ struct ForceGaugeView: View {
             .disabled(saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
             if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
                 Text("Pick an exercise to start.")
-                    .font(.footnote)
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }
@@ -404,6 +428,27 @@ struct ForceGaugeView: View {
                 savedMsg = ErrorText.friendly(error)
             }
             saving = false
+            scheduleSavedMsgDismiss()
+        }
+    }
+
+    /// Auto-clears the save confirmation a couple seconds after it lands
+    /// (issue #149 follow-up). `savedMsg` used to sit on screen indefinitely
+    /// — until the *next* Start tap set it back to nil — which meant it was
+    /// routinely still showing once the user was back in `setupContent` for
+    /// the next rep, stacked under the session bar. It's harmless
+    /// UX-wise (nothing reads `savedMsg` besides this display and the
+    /// explicit clear on Start), so letting it fade on its own keeps the
+    /// setup screen's normal state as uncluttered as its first render.
+    /// Generation-guarded like `loadTags()`'s fetch tracking: a fast next
+    /// rep that overwrites `savedMsg` with a new confirmation before this
+    /// timer fires must not have the old timer wipe the new message.
+    private func scheduleSavedMsgDismiss() {
+        savedMsgGeneration += 1
+        let generation = savedMsgGeneration
+        Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            if generation == savedMsgGeneration { savedMsg = nil }
         }
     }
 }
