@@ -358,7 +358,11 @@ function AuthedApp({
       {/* Phases bottom sheet — informational only (no tap-to-set) */}
       {showPhases && (
         <Sheet fullHeight onClose={() => setShowPhases(false)}>
-          <PhasesView currentPhase={currentPhase} phasePeriods={phasePeriods} />
+          <PhasesView
+            currentPhase={currentPhase}
+            phasePeriods={phasePeriods}
+            phaseStartDate={phaseStartDate}
+          />
           <div style={{ marginTop: 10 }}>
             <button className="btn-ghost" onClick={() => setShowPhases(false)}>
               Close
