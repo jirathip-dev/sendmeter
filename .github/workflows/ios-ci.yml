@@ -35,7 +35,12 @@ jobs:
     timeout-minutes: 15
     # The official image rather than a setup action: one less third-party
     # dependency, and it pins the toolchain explicitly.
-    container: swift:6.0
+    #
+    # Must track the Swift version Xcode ships (6.3 as of Xcode 26.6), not
+    # just "some Swift 6": the package uses `nonisolated` on type declarations
+    # (RPEModel.swift), which 6.0 rejects outright — the macOS job compiled it
+    # fine while this one failed to build at all.
+    container: swift:6.3
     steps:
       - uses: actions/checkout@v4
 
