@@ -23,9 +23,14 @@ actor PendingSessionQueue {
         return dir
     }
 
-    /// Count of items pending for the currently signed-in account only
-    /// (issue #158) — otherwise Account B would see a permanently-stuck "N
-    /// pending" badge for items stranded under Account A.
+    /// Count of items pending for the currently signed-in account, PLUS any
+    /// item stranded while nobody is signed in (issue #189) — otherwise
+    /// Account B would see a permanently-stuck "N pending" badge for items
+    /// stranded under Account A (#158), AND a session saved while signed out
+    /// would show 0 pending forever, since `shouldDrain` always returns
+    /// false with `currentUserId == nil`. `drain()`'s own guard is untouched
+    /// (it still never uploads a mismatched or signed-out item) — widening
+    /// this count is display-only.
     func pendingCount() -> Int {
         let currentUserId = SupabaseService.client.auth.currentSession?.user.id
         let decoder = JSONDecoder()
@@ -38,6 +43,7 @@ actor PendingSessionQueue {
                 let session = try? decoder.decode(PendingTindeqSession.self, from: data)
             else { return true } // unreadable: still counts until drain() cleans it up
             return shouldDrain(itemUserId: session.enqueuedUserId, currentUserId: currentUserId)
+                || currentUserId == nil
         }.count
     }
 

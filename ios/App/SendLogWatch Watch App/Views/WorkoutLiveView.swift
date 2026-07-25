@@ -6,6 +6,14 @@ struct WorkoutLiveView: View {
     @State private var ending = false
     /// Brief "Saved ✓" confirmation after auto-save-on-stop.
     @State private var justSaved = false
+    /// Whether the just-saved bundle is still sitting in the offline queue
+    /// (issue #189) — checked right before showing `justSaved`, so
+    /// `WidgetBridge.refreshStatus()`'s own network round trip below gives
+    /// `drain()` a real chance to finish uploading first when signed in.
+    /// Signed-out stays queued deterministically (`drain()` no-ops
+    /// immediately), so this reliably distinguishes "still uploading" from
+    /// "stuck until sign-in" without touching `drain()`/`shouldDrain`.
+    @State private var stillQueued = false
     @State private var restAlarmTask: Task<Void, Never>?
 
     private let restTargets = [60, 120, 180, 300]
@@ -48,6 +56,7 @@ struct WorkoutLiveView: View {
             await OfflineQueue.shared.enqueue(bundle)
             WidgetBridge.updateLiveWorkout(active: false) // clear the live widget
             await WidgetBridge.refreshStatus()            // fresh ACWR after the save
+            stillQueued = await OfflineQueue.shared.pendingCount() > 0
             ending = false
             justSaved = true
             WKInterfaceDevice.current().play(.success)
@@ -62,8 +71,8 @@ struct WorkoutLiveView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 34))
                 .foregroundStyle(.green)
-            Text("Saved").font(.headline)
-            Text("Set RPE on your phone")
+            Text(stillQueued ? "Saved to watch" : "Saved").font(.headline)
+            Text(stillQueued ? "uploads when signed in" : "Set RPE on your phone")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

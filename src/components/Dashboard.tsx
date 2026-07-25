@@ -339,8 +339,14 @@ export default function Dashboard({
                 top: 0,
                 width: "100%",
                 height: "100%",
+                // Band edges match getACWRStatus's thresholds exactly (0.8 /
+                // 1.3 / 1.5 on a 0-2 scale → 40% / 65% / 75%) — the marker
+                // below shares the same `(acwr / 2) * 100%` mapping, so the
+                // dot always lands in the band that names its own status
+                // (issue #189: these used to disagree, e.g. a 1.37 dot
+                // rendering past the "1.5" gridline).
                 background:
-                  "linear-gradient(to right, var(--info) 0%,var(--info) 15%,var(--success) 30%,var(--success) 68%,var(--warning) 80%,var(--danger) 100%)",
+                  "linear-gradient(to right, var(--info) 0%,var(--info) 40%,var(--success) 40%,var(--success) 65%,var(--warning) 65%,var(--warning) 75%,var(--danger) 75%,var(--danger) 100%)",
                 opacity: 0.55,
                 borderRadius: 3,
               }}
@@ -364,16 +370,21 @@ export default function Dashboard({
           </div>
           <div
             style={{
-              display: "flex",
-              justifyContent: "space-between",
+              position: "relative",
+              height: "1.4em",
               fontSize: "var(--t-eyebrow)",
               color: "var(--ink-faint)",
             }}
           >
-            <span>0</span>
-            <span>1.0</span>
-            <span>1.5</span>
-            <span>2</span>
+            {/* Absolutely positioned at each tick's true fraction of the
+                0-2 scale (issue #189) — `justify-content: space-between`
+                spaced these evenly regardless of value, so "1.5" sat at
+                ~66% while the marker it was meant to label rendered at 75%.
+                0/50/75/100% below is exactly 0/1.0/1.5/2 ÷ 2 × 100. */}
+            <span style={{ position: "absolute", left: "0%", transform: "translateX(0%)" }}>0</span>
+            <span style={{ position: "absolute", left: "50%", transform: "translateX(-50%)" }}>1.0</span>
+            <span style={{ position: "absolute", left: "75%", transform: "translateX(-50%)" }}>1.5</span>
+            <span style={{ position: "absolute", left: "100%", transform: "translateX(-100%)" }}>2</span>
           </div>
 
           {/* Acute / chronic (formerly the LoadSheet drill-in) */}

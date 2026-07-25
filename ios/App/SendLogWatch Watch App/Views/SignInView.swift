@@ -5,12 +5,25 @@ struct SignInView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var busy = false
+    @State private var pendingUploads = 0
 
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
                 Text("SENDMETER")
                     .font(.headline)
+
+                // A workout/session can be saved locally while signed out
+                // (offline-first: OfflineQueue/PendingSessionQueue persist
+                // before upload) — surface that here (issue #189), since
+                // this is the one screen shown for the entire duration
+                // nobody's signed in, exactly when it matters most.
+                if pendingUploads > 0 {
+                    Text("\(pendingUploads) workout\(pendingUploads == 1 ? "" : "s") waiting to upload — sign in to finish")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                }
 
                 // Preferred path: pull the session from the paired iPhone so
                 // there's no manual login. Shown while we wait for its answer.
@@ -40,6 +53,11 @@ struct SignInView: View {
         // Ask the phone the moment this screen appears (covers the case where
         // bootstrap requested before WCSession finished activating).
         .onAppear { auth.requestSessionFromPhone() }
+        .task {
+            async let workouts = OfflineQueue.shared.pendingCount()
+            async let sessions = PendingSessionQueue.shared.pendingCount()
+            pendingUploads = await workouts + sessions
+        }
     }
 
     @ViewBuilder
