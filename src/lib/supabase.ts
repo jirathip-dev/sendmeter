@@ -4,7 +4,7 @@ import type { Database } from "../types/database";
 // Public client config — the publishable key is safe to commit (it ships in
 // every browser bundle regardless; RLS is the security boundary). Env vars
 // override for local/dev flexibility.
-const SUPABASE_URL =
+export const SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL ?? "https://zznsqmcewtzlnfoiefkk.supabase.co";
 const SUPABASE_ANON_KEY =
   import.meta.env.VITE_SUPABASE_ANON_KEY ??
