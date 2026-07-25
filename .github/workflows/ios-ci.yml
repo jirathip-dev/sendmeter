@@ -1,0 +1,103 @@
+# Swift correctness gate — compiles the watch and phone targets and runs
+# SendLogWatchTests on a simulator.
+#
+# Deliberately NOT part of ci.yml: macOS runners bill at a large multiple of
+# Ubuntu (#150), and workflow-level `paths` is the only way GitHub will keep a
+# macOS runner from spinning up at all on a web-only PR. A job-level `if:`
+# would still allocate the runner before evaluating.
+#
+# This is a correctness check, not a deploy. No signing, no App Store Connect
+# key, no upload, and no `[testflight]` subject gate — see testflight.yml for
+# that lane.
+name: iOS CI
+
+on:
+  pull_request:
+    branches: [main, staging]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-ci.yml"
+  # Manual escape hatch for verifying the lane itself without a native change.
+  workflow_dispatch:
+
+# Superseded pushes shouldn't keep an expensive runner busy.
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift:
+    runs-on: blacksmith-6vcpu-macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Required even though nothing here is web: postinstall applies the
+      # apple-sign-in SPM patch, and the phone target's package (CapApp-SPM)
+      # is generated from node_modules. Without it the App scheme won't
+      # resolve its dependencies.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      # The scheme's test action is bound to a watchOS destination, and
+      # simulator names drift between Xcode images — resolve one from the
+      # runner instead of pinning a device that may not exist.
+      - name: Resolve a watchOS simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          name=$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          names = [d["name"]
+                   for runtime, entries in devices.items() if "watchOS" in runtime
+                   for d in entries]
+          print(names[0] if names else "")
+          ')
+          if [ -z "$name" ]; then
+            echo "::error::No watchOS simulator available on this image."
+            xcrun simctl list runtimes
+            exit 1
+          fi
+          echo "Using watchOS simulator: $name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      # Compiling the watch target is what catches the #162 class of bug (a
+      # missing `import Supabase` in OfflineQueue.swift/PendingSessionQueue.swift
+      # that reached staging green and only surfaced on a manual TestFlight run).
+      - name: Build watch app and tests
+        run: |
+          xcodebuild build-for-testing \
+            -project "ios/App/App.xcodeproj" \
+            -scheme "SendLogWatch Watch App" \
+            -destination "platform=watchOS Simulator,OS=latest,name=${{ steps.sim.outputs.name }}" \
+            CODE_SIGNING_ALLOWED=NO
+
+      # SendLogWatchTests has never executed in CI (#178). The scheme already
+      # lists it under <Testables>, so this runs the whole suite.
+      - name: Run SendLogWatchTests
+        run: |
+          xcodebuild test-without-building \
+            -project "ios/App/App.xcodeproj" \
+            -scheme "SendLogWatch Watch App" \
+            -destination "platform=watchOS Simulator,OS=latest,name=${{ steps.sim.outputs.name }}" \
+            CODE_SIGNING_ALLOWED=NO
+
+      # Compile-only: the phone app has no test target of its own, and a full
+      # simulator test run isn't worth the minutes. This still catches type
+      # errors and missing imports in the Capacitor host app.
+      - name: Compile phone app
+        run: |
+          xcodebuild build \
+            -project "ios/App/App.xcodeproj" \
+            -scheme "App" \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO
