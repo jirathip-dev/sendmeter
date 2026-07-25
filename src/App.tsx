@@ -144,11 +144,17 @@ function AuthedApp({
   // SL-31 sync toast: only for a foreground resync the user is actively
   // looking at. The cold-launch background sync fires on every app open
   // (would be noisy) and the "Clear & resync" path already toasts itself.
+  // #146: source alone isn't enough — the native plugin always re-upserts
+  // on every foreground call regardless of whether anything actually
+  // changed, so also require `changed` or the toast fires on every
+  // foreground even with no new data.
   useEffect(() => {
     const onHealthSynced = (e: Event) => {
-      const source = (e as CustomEvent<{ source?: HealthSyncSource }>).detail
-        ?.source;
-      if (source === "foreground") toast("Health data synced");
+      const detail = (e as CustomEvent<{ source?: HealthSyncSource; changed?: boolean }>)
+        .detail;
+      if (detail?.source === "foreground" && detail.changed) {
+        toast("Health data synced");
+      }
     };
     window.addEventListener("sendmeter:health-synced", onHealthSynced);
     return () =>

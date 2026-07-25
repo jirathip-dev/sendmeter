@@ -1,5 +1,6 @@
 import { supabase } from "../supabase";
 import type { HealthMetric } from "../../types";
+import { today } from "../dates";
 import { unwrap } from "./shared";
 
 export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
@@ -28,6 +29,26 @@ export async function fetchHealthMetrics(days = 14): Promise<HealthMetric[]> {
     bodyMassKg: r.body_mass_kg,
     respRateBpm: r.resp_rate_bpm,
   }));
+}
+
+/// A stable serialization of today's health_metrics row, for detecting
+/// whether a sync actually changed anything (#146). Deliberately omits
+/// `computed_at` — the native side re-stamps that on every automatic sync
+/// regardless of whether the underlying values changed (see
+/// HealthSyncManager's "always re-upsert, locked or not" biometric columns),
+/// so including it would make every sync look "changed". Returns `null` when
+/// no row exists yet for today (fetchTodayHealthSignature's `before` before
+/// the first sync of the day, or when HealthKit has nothing at all).
+export async function fetchTodayHealthSignature(): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("health_metrics")
+    .select(
+      "hrv_sdnn_ms, resting_hr, sleep_hours, sleep_deep_hours, sleep_rem_hours, body_mass_kg, resp_rate_bpm, readiness, zone",
+    )
+    .eq("date", today())
+    .maybeSingle();
+  if (error) throw error;
+  return data ? JSON.stringify(data) : null;
 }
 
 /// Full body-weight history (SL-88) — every dated weigh-in, oldest first.
