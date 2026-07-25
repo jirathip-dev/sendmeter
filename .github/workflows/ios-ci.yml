@@ -50,25 +50,38 @@ jobs:
       # The scheme's test action is bound to a watchOS destination, and
       # simulator names drift between Xcode images — resolve one from the
       # runner instead of pinning a device that may not exist.
+      #
+      # Resolve to a UDID, not name+OS. The image carries the same watch model
+      # under several runtimes, each paired to a different iPhone, so
+      # "name=Apple Watch Series 11 (46mm),OS=latest" is ambiguous and
+      # xcodebuild refuses it with "multiple devices matched the request".
       - name: Resolve a watchOS simulator
         id: sim
         run: |
           set -euo pipefail
-          name=$(xcrun simctl list devices available --json | python3 -c '
-          import json, sys
+          read -r udid label <<<"$(xcrun simctl list devices available --json | python3 -c '
+          import json, re, sys
           devices = json.load(sys.stdin)["devices"]
-          names = [d["name"]
-                   for runtime, entries in devices.items() if "watchOS" in runtime
-                   for d in entries]
-          print(names[0] if names else "")
-          ')
-          if [ -z "$name" ]; then
+          best = None
+          for runtime, entries in devices.items():
+              m = re.search(r"watchOS-(\d+)-(\d+)", runtime)
+              if not m:
+                  continue
+              version = (int(m.group(1)), int(m.group(2)))
+              for d in entries:
+                  if not d.get("isAvailable", True):
+                      continue
+                  if best is None or version > best[0]:
+                      best = (version, d["udid"], d["name"])
+          print(f"{best[1]} {best[2]}" if best else "")
+          ')"
+          if [ -z "${udid:-}" ]; then
             echo "::error::No watchOS simulator available on this image."
             xcrun simctl list runtimes
             exit 1
           fi
-          echo "Using watchOS simulator: $name"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "Using watchOS simulator: $label ($udid)"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       # Compiling the watch target is what catches the #162 class of bug (a
       # missing `import Supabase` in OfflineQueue.swift/PendingSessionQueue.swift
@@ -78,7 +91,7 @@ jobs:
           xcodebuild build-for-testing \
             -project "ios/App/App.xcodeproj" \
             -scheme "SendLogWatch Watch App" \
-            -destination "platform=watchOS Simulator,OS=latest,name=${{ steps.sim.outputs.name }}" \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO
 
       # SendLogWatchTests has never executed in CI (#178). The scheme already
@@ -88,7 +101,7 @@ jobs:
           xcodebuild test-without-building \
             -project "ios/App/App.xcodeproj" \
             -scheme "SendLogWatch Watch App" \
-            -destination "platform=watchOS Simulator,OS=latest,name=${{ steps.sim.outputs.name }}" \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO
 
       # Compile-only: the phone app has no test target of its own, and a full
