@@ -12,6 +12,7 @@ import { classifyZoneLoaded } from "../lib/zoneHistory";
 import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useToast } from "../hooks/useToast";
 import { restoreAt } from "../lib/restoreAt";
+import ConfirmDialog from "./ConfirmDialog";
 import NumInput from "./NumInput";
 import type { TindeqPreset } from "../types";
 
@@ -123,6 +124,9 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
   const [pctBasis, setPctBasis] = useState<"pr" | "cf">("pr");
   const [pctStep, setPctStep] = useState(0); // +% per set
   const [alternateSides, setAlternateSides] = useState(false);
+  // Issue #143: gate preset delete behind a confirm dialog. Holds the preset
+  // being confirmed (need its name for the dialog copy).
+  const [confirmDelete, setConfirmDelete] = useState<TindeqPreset | null>(null);
 
   function openEdit(p: TindeqPreset) {
     setEditingId(p.id);
@@ -220,6 +224,16 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
       setPresets((list) => restoreAt(list, removed, index));
       toast("Couldn't delete preset — restored", "error");
     }
+  }
+
+  // Issue #143: called after the confirm dialog is accepted. Delegates to
+  // `remove`, which since issue #166 rolls the preset back into the list and
+  // toasts an error if the server call fails.
+  function confirmRemove() {
+    if (!confirmDelete) return;
+    const id = confirmDelete.id;
+    setConfirmDelete(null);
+    void remove(id);
   }
 
   return (
@@ -338,7 +352,7 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
               style={{ marginLeft: 0 }}
               onClick={(e) => {
                 e.stopPropagation();
-                void remove(p.id);
+                setConfirmDelete(p);
               }}
             >
               ×
@@ -356,6 +370,17 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
         <button className="btn-ghost" onClick={() => setAdding(true)}>
           + New preset
         </button>
+      )}
+
+      {/* Delete-preset confirm (issue #143) */}
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete preset '${confirmDelete.name}'?`}
+          body="This can't be undone."
+          confirmLabel="Delete"
+          onConfirm={confirmRemove}
+          onClose={() => setConfirmDelete(null)}
+        />
       )}
     </div>
   );
