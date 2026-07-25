@@ -4,6 +4,7 @@ import type {
   HealthMetric,
   Phase,
   PhaseId,
+  PhasePeriod,
   Session,
   TindeqRecordingMeta,
   WeeklyLoad,
@@ -37,6 +38,27 @@ export function phaseAcwrFit(
   if (acwr < phase.acwrLow) return "below";
   if (acwr > phase.acwrHigh) return "above";
   return "on";
+}
+
+/// The current phase's open `phase_periods` row's start date, phase-aware —
+/// guards against a stale `phasePeriods` snapshot that still belongs to a
+/// phase just switched away from. During a phase switch, `currentPhase` and
+/// `phaseStartDate` flip optimistically (synchronously) while `phasePeriods`
+/// only refreshes after the async `switchPhase` call resolves; naively taking
+/// "whichever period is open" during that window returns the OLD phase's
+/// period, producing a bogus transient "Day N" (see issue #170). Falls back
+/// to `phaseStartDate` — which is set to today() at the same instant
+/// `currentPhase` flips — whenever no open period matches `currentPhase`,
+/// including that transient window.
+export function currentPeriodStart(
+  phasePeriods: Pick<PhasePeriod, "phase" | "startedOn" | "endedOn">[],
+  currentPhase: PhaseId,
+  phaseStartDate: string,
+): string {
+  return (
+    phasePeriods.find((p) => p.endedOn === null && p.phase === currentPhase)
+      ?.startedOn ?? phaseStartDate
+  );
 }
 
 /// The effective start date for the current phase's "Day N" counter, taken from
