@@ -14,6 +14,7 @@ import {
   restoreRecording,
   updateRecordingGroup,
 } from "../lib/repo";
+import { dominantZone, zoneSets } from "../lib/zoneHistory";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
 import EditRecordingSheet from "./EditRecordingSheet";
 import LiveSessionRow from "./LiveSessionRow";
@@ -31,6 +32,11 @@ interface Props {
 }
 
 const PAGE_SIZE = 40;
+
+// Fallback zone mix for a Tindeq session whose groupId has no recordings in
+// `allRecordings` yet (e.g. just created) — `dominantZone` on all-zeros
+// returns null, same as "no zone known".
+const EMPTY_ZONE_SETS = zoneSets([]);
 
 type TimelineItem =
   | { kind: "session"; key: string; sortKey: string; s: Session }
@@ -75,6 +81,23 @@ export default function HistoryView({
     [],
     realtimeVersion,
   );
+  // Tindeq session badge should read as the training QUALITY the session's
+  // own recordings belong to (power/strength/pow-end/endurance, same
+  // classification the Training-balance card uses), not the app-wide
+  // "Global phase" — the two vocabularies otherwise contradict each other on
+  // the same session (#214). Grouped once here (no new fetch — `allRecordings`
+  // already has everything) and passed down to each Tindeq SessionRow.
+  const recordingsByGroup = new Map<string, TindeqRecordingMeta[]>();
+  for (const r of allRecordings) {
+    if (!r.groupId) continue;
+    const list = recordingsByGroup.get(r.groupId);
+    if (list) list.push(r);
+    else recordingsByGroup.set(r.groupId, [r]);
+  }
+  const zoneByGroup = new Map<string, ReturnType<typeof zoneSets>>();
+  for (const [groupId, recs] of recordingsByGroup) {
+    zoneByGroup.set(groupId, zoneSets(recs));
+  }
   // A recording belongs to a session only if its groupId matches a session
   // that actually exists. A gauge run that was never "finished"/logged leaves
   // recordings stamped with a groupId but no session row — those are orphans,
@@ -238,7 +261,18 @@ export default function HistoryView({
       )}
       {items.slice(0, visibleCount).map((it) =>
         it.kind === "session" ? (
-          <SessionRow key={it.key} s={it.s} onDelete={onDelete} onEdit={onEdit} />
+          <SessionRow
+            key={it.key}
+            s={it.s}
+            onDelete={onDelete}
+            onEdit={onEdit}
+            zoneMix={it.s.groupId ? zoneByGroup.get(it.s.groupId) ?? null : null}
+            zone={
+              it.s.groupId
+                ? dominantZone(zoneByGroup.get(it.s.groupId) ?? EMPTY_ZONE_SETS)
+                : null
+            }
+          />
         ) : (
           <RecordingRow
             key={it.key}
