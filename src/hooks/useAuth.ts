@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { supabase } from "../lib/supabase";
+import { supabase, SUPABASE_URL } from "../lib/supabase";
+import { getSessionWithDiagnostics } from "../lib/authDiagnostics";
 import {
   onWatchSessionRequest,
   relaySessionToWatch,
@@ -31,10 +32,13 @@ export function useAuth() {
       }
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
+    // A null session here (issue #194) is otherwise indistinguishable
+    // between "never logged in", a network hiccup, and auth-js having
+    // silently cleared a revoked stored session — see authDiagnostics.ts.
+    getSessionWithDiagnostics(supabase, SUPABASE_URL).then(({ session }) => {
+      setSession(session);
       setLoading(false);
-      onSession(data.session);
+      onSession(session);
     });
     const {
       data: { subscription },
@@ -56,14 +60,16 @@ export function useAuth() {
       // revoke the family across instances). Reflect that so the UI drops to
       // the login screen instead of a zombie authed state — auth-js removes an
       // invalid stored session *without* emitting SIGNED_OUT, so nothing else
-      // would catch it.
-      void supabase.auth.getSession().then(({ data }) => {
-        setSession(data.session);
-        onSession(data.session);
+      // would catch it. getSessionWithDiagnostics classifies + records *why*
+      // (network vs. revoked vs. never stored — issue #194) instead of this
+      // staying silent.
+      void getSessionWithDiagnostics(supabase, SUPABASE_URL).then(({ session }) => {
+        setSession(session);
+        onSession(session);
         // Pick up anything HealthKit collected while backgrounded (e.g. a
         // wearable sync) right when the user is looking at the readiness
         // card — no-op on web / until a session exists.
-        if (data.session) void syncHealthNow();
+        if (session) void syncHealthNow();
       });
     };
     document.addEventListener("visibilitychange", onVisible);
