@@ -55,13 +55,20 @@ function recordHealthSync(source: HealthSyncSource, changed = false): void {
 /// Hand the native health plugin the current session so its own Supabase
 /// client can read sessions / write health_metrics — including on a
 /// background wake, when the WebView's supabase-js session isn't reachable.
-/// Called on every auth event, mirroring the watch auth relay. No-op on web.
+/// Called on every auth event, mirroring the watch auth relay. A null
+/// session (sign-out) clears the plugin's stored session too (issue #196) —
+/// otherwise its Keychain keeps a live refresh token that a later background
+/// wake could still use. No-op on web.
 export function relayHealthSession(session: Session | null): void {
-  if (!IS_NATIVE || !session) return;
-  void SendLogHealth.setSession({
-    accessToken: session.access_token,
-    refreshToken: session.refresh_token,
-  });
+  if (!IS_NATIVE) return;
+  if (session) {
+    void SendLogHealth.setSession({
+      accessToken: session.access_token,
+      refreshToken: session.refresh_token,
+    });
+  } else {
+    void SendLogHealth.clearSession();
+  }
 }
 
 /// After sign-in: request HealthKit access, register background delivery, and

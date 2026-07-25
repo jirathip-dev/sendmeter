@@ -13,6 +13,7 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "requestAuthorization", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setSession", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearSession", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "syncNow", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearAndResync", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startBackgroundSync", returnType: CAPPluginReturnPromise),
@@ -40,6 +41,13 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
                 try await manager.setSession(accessToken: accessToken, refreshToken: refreshToken)
                 call.resolve()
             } catch { call.reject(error.localizedDescription) }
+        }
+    }
+
+    @objc func clearSession(_ call: CAPPluginCall) {
+        Task {
+            await manager.clearSession()
+            call.resolve()
         }
     }
 

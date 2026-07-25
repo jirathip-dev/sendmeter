@@ -23,7 +23,9 @@ actor LiveWorkoutSync {
 
     private func resolveUserId() async -> UUID? {
         if let userId { return userId }
-        userId = try? await SupabaseService.client.auth.session.user.id
+        // `currentSession` (not `.session`) — the latter refreshes an
+        // expired token, which this client must never do (issue #196).
+        userId = SupabaseService.auth.auth.currentSession?.user.id
         return userId
     }
 
@@ -84,7 +86,7 @@ actor LiveWorkoutSync {
     }
 
     private func upsert(_ row: LiveWorkoutUpsert) async {
-        try? await SupabaseService.client
+        try? await SupabaseService.data
             .from("live_workouts")
             .upsert(row, onConflict: "user_id")
             .execute()
