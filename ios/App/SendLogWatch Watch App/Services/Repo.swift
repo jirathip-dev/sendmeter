@@ -2,7 +2,7 @@ import Foundation
 import Supabase
 
 enum Repo {
-    private static var client: SupabaseClient { SupabaseService.client }
+    private static var client: SupabaseClient { SupabaseService.data }
 
     // MARK: Tindeq recordings (identical shape to the web app's inserts)
 

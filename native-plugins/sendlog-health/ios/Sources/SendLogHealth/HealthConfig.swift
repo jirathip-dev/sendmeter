@@ -25,15 +25,37 @@ enum HealthConfig {
     /// KeychainLocalStorage is the SDK default on Apple platforms, so a
     /// background wake reuses the last relayed session without a round-trip.
     ///
-    /// `autoRefreshToken: false` — this client consumes the session relayed
+    /// Two clients, not one (issue #196): `autoRefreshToken: false` alone
+    /// does NOT stop a refresh — supabase-swift's default `.auth` accessor
+    /// still refreshes an expired token on demand (inside `auth.session`),
+    /// and this plugin must never do that. It consumes the session relayed
     /// from the WebView's supabase-js, which owns the refresh cycle. Refresh
     /// tokens are single-use: if this client refreshed the shared token too,
     /// whichever refreshed second would trip replay detection and revoke the
-    /// whole session family (breaking watch + web at once). Fresh tokens
-    /// arrive via relayHealthSession on every auth event + app foreground.
-    static let client = SupabaseClient(
+    /// whole session family (breaking watch + web at once) — a background
+    /// HealthKit wake is exactly the case where the relayed token is likely
+    /// already expired. Fresh tokens arrive via relayHealthSession on every
+    /// auth event + app foreground.
+    ///
+    /// - `auth`: the only client allowed to read `.auth` — `HealthSyncManager`
+    ///   uses it for `setSession`/`signOut`. Neither triggers a refresh.
+    /// - `data`: every table call goes through this one instead. Its
+    ///   `accessToken` provider hands back `auth`'s current Keychain token
+    ///   WITHOUT refreshing it, so this client never needs `.auth` at all —
+    ///   reading `.auth` on it would trip supabase-swift's own "use a
+    ///   separate client" warning.
+    static let auth = SupabaseClient(
         supabaseURL: supabaseURL,
         supabaseKey: supabaseAnonKey,
         options: SupabaseClientOptions(auth: .init(autoRefreshToken: false))
+    )
+
+    static let data = SupabaseClient(
+        supabaseURL: supabaseURL,
+        supabaseKey: supabaseAnonKey,
+        options: SupabaseClientOptions(auth: .init(
+            accessToken: { try? await HealthConfig.auth.auth.currentSession?.accessToken },
+            autoRefreshToken: false
+        ))
     )
 }

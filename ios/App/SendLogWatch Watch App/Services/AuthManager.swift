@@ -27,7 +27,7 @@ final class AuthManager: NSObject {
     /// straight to the manual email form.
     var syncing = false
 
-    private var client: SupabaseClient { SupabaseService.client }
+    private var client: SupabaseClient { SupabaseService.auth }
     private var syncTimeout: Task<Void, Never>?
 
     override init() {

@@ -7,6 +7,7 @@ import type { SendLogHealthPlugin } from "./definitions";
 export class SendLogHealthWeb extends WebPlugin implements SendLogHealthPlugin {
   async requestAuthorization(): Promise<void> {}
   async setSession(): Promise<void> {}
+  async clearSession(): Promise<void> {}
   async syncNow(): Promise<void> {}
   async clearAndResync(): Promise<void> {}
   async startBackgroundSync(): Promise<void> {}
