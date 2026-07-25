@@ -1,5 +1,5 @@
 import XCTest
-@testable import SendLogWatch_Watch_App
+import SendLogWatchCore
 
 /// Regression coverage for issue #158: neither OfflineQueue nor
 /// PendingSessionQueue used to be aware of which account was signed in when

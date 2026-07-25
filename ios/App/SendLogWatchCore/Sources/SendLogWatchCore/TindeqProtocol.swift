@@ -1,15 +1,14 @@
-import CoreBluetooth
 import Foundation
 
 /// Tindeq Progressor BLE protocol — direct port of the web app's
-/// src/lib/tindeq-protocol.ts. Pure parsing, no BLE objects.
-enum Tindeq {
-    static let namePrefix = "Progressor"
-    static let service = CBUUID(string: "7E4E1701-1EA6-40C9-9DCC-13D34FFEAD57")
-    static let notifyChar = CBUUID(string: "7E4E1702-1EA6-40C9-9DCC-13D34FFEAD57")
-    static let controlChar = CBUUID(string: "7E4E1703-1EA6-40C9-9DCC-13D34FFEAD57")
+/// src/lib/tindeq-protocol.ts. Pure parsing, no BLE objects. The
+/// service/characteristic CBUUIDs live in the app target's TindeqIDs.swift
+/// (an extension on this enum) since CoreBluetooth isn't available outside
+/// Apple platforms and isn't needed for parsing.
+public enum Tindeq {
+    public static let namePrefix = "Progressor"
 
-    enum Cmd: UInt8 {
+    public enum Cmd: UInt8 {
         case tare = 0x64
         case startWeight = 0x65
         case stop = 0x66
@@ -17,21 +16,21 @@ enum Tindeq {
     }
 }
 
-enum TindeqFrame: Equatable {
+public enum TindeqFrame: Equatable, Sendable {
     case weight([WeightSample])
     case response(Data)
     case lowBattery
     case unknown(UInt8)
 
-    struct WeightSample: Equatable {
-        let us: UInt32  // device timestamp, microseconds
-        let kg: Float
+    public struct WeightSample: Equatable, Sendable {
+        public let us: UInt32  // device timestamp, microseconds
+        public let kg: Float
     }
 }
 
 /// Frames are [tag u8][length u8][payload]. Weight payload (tag 0x01) is
 /// repeated pairs of (float32 LE kg, uint32 LE µs).
-func parseTindeqNotification(_ data: Data) -> TindeqFrame {
+public func parseTindeqNotification(_ data: Data) -> TindeqFrame {
     guard data.count >= 2 else { return .unknown(0xFF) }
     let tag = data[data.startIndex]
     let len = Int(data[data.startIndex + 1])

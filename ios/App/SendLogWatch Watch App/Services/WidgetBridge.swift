@@ -1,4 +1,5 @@
 import Foundation
+import SendLogWatchCore
 import WidgetKit
 
 /// The watch app is the source of truth for its complications / Smart-Stack

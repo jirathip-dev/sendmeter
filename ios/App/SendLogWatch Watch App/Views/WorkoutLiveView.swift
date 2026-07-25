@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SwiftUI
 import WatchKit
 

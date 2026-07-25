@@ -28,7 +28,7 @@ private func ewma(_ series: [Double], span: Int) -> Double {
 /// of `[seed] + dailyLoads`. `nil` when there's no load anywhere in the
 /// window (nothing to compute a ratio from) or the chronic EWMA is 0
 /// (nothing to divide by).
-func ewmaAcwr(dailyLoads: [Double]) -> Double? {
+public func ewmaAcwr(dailyLoads: [Double]) -> Double? {
     guard !dailyLoads.isEmpty, dailyLoads.contains(where: { $0 != 0 }) else { return nil }
     let seed = dailyLoads.reduce(0, +) / Double(dailyLoads.count)
     let series = [seed] + dailyLoads
@@ -42,7 +42,7 @@ func ewmaAcwr(dailyLoads: [Double]) -> Double? {
 /// `WidgetBridge`'s old inline loop so it's testable without a live
 /// Repo/Supabase call. `now` is injectable for tests; defaults to the real
 /// clock.
-func dailyLoadSeries(rows: [SessionLoadRow], days: Int, now: Date = Date()) -> [Double] {
+public func dailyLoadSeries(rows: [SessionLoadRow], days: Int, now: Date = Date()) -> [Double] {
     let cal = Calendar.gregorianLocal
     var byDate: [String: Double] = [:]
     for r in rows { byDate[r.date, default: 0] += Double(r.load ?? 0) }

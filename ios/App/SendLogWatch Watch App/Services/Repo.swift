@@ -1,4 +1,5 @@
 import Foundation
+import SendLogWatchCore
 import Supabase
 
 enum Repo {

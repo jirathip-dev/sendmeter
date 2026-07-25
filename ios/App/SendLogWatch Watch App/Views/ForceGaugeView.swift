@@ -1,4 +1,5 @@
 import Combine
+import SendLogWatchCore
 import SwiftUI
 
 private let SIDE_OPTIONS: [(value: String, label: String)] = [

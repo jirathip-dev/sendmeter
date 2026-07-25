@@ -1,4 +1,5 @@
 import Foundation
+import SendLogWatchCore
 import Supabase
 
 /// Persist-first queue for the end-of-gauge-session insert (issue #144),

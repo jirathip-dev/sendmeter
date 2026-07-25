@@ -3,14 +3,14 @@ import Foundation
 /// Ridge-regression RPE predictor fitted on-device from past workouts with a
 /// confirmed RPE. Features mirror AttemptDetector.predictRPE: session HR
 /// reserve, mean attempt effort, attempts per 10 minutes.
-nonisolated struct RPEModel: Codable {
-    let weights: [Double]  // [w_h, w_e, w_d, bias] on standardized features
-    let means: [Double]    // [μ_h, μ_e, μ_d]
-    let stds: [Double]     // [σ_h, σ_e, σ_d]
-    let sampleCount: Int
-    let fittedAt: Date
+public nonisolated struct RPEModel: Codable {
+    public let weights: [Double]  // [w_h, w_e, w_d, bias] on standardized features
+    public let means: [Double]    // [μ_h, μ_e, μ_d]
+    public let stds: [Double]     // [σ_h, σ_e, σ_d]
+    public let sampleCount: Int
+    public let fittedAt: Date
 
-    func predict(sessionHRR: Double, meanEffort: Double, attemptsPer10min: Double) -> Double {
+    public func predict(sessionHRR: Double, meanEffort: Double, attemptsPer10min: Double) -> Double {
         let x = [sessionHRR, meanEffort, attemptsPer10min]
         var y = weights[3]
         for j in 0..<3 {
@@ -20,17 +20,24 @@ nonisolated struct RPEModel: Codable {
     }
 }
 
-nonisolated struct LabeledWorkout {
-    let sessionHRR: Double       // 0..1, 0 when HR unavailable
-    let meanEffort: Double       // 0..10
-    let attemptsPer10min: Double
-    let rpe: Double              // confirmed label, 1..10
+public nonisolated struct LabeledWorkout: Sendable {
+    public let sessionHRR: Double       // 0..1, 0 when HR unavailable
+    public let meanEffort: Double       // 0..10
+    public let attemptsPer10min: Double
+    public let rpe: Double              // confirmed label, 1..10
+
+    public init(sessionHRR: Double, meanEffort: Double, attemptsPer10min: Double, rpe: Double) {
+        self.sessionHRR = sessionHRR
+        self.meanEffort = meanEffort
+        self.attemptsPer10min = attemptsPer10min
+        self.rpe = rpe
+    }
 }
 
-nonisolated enum RPEModelFitter {
+public nonisolated enum RPEModelFitter {
     /// Solve (XᵀX + λ·diag(1,1,1,0)) w = Xᵀy on standardized features with an
     /// unregularized bias. Returns nil below minSamples or on degenerate data.
-    static func fit(rows: [LabeledWorkout], lambda: Double, minSamples: Int, now: Date = Date()) -> RPEModel? {
+    public static func fit(rows: [LabeledWorkout], lambda: Double, minSamples: Int, now: Date = Date()) -> RPEModel? {
         guard rows.count >= minSamples else { return nil }
         let n = Double(rows.count)
         let raw = rows.map { [$0.sessionHRR, $0.meanEffort, $0.attemptsPer10min] }
@@ -61,7 +68,7 @@ nonisolated enum RPEModelFitter {
     }
 
     /// Gaussian elimination with partial pivoting; nil when near-singular.
-    static func solve4x4(_ mat: [[Double]], _ rhs: [Double]) -> [Double]? {
+    public static func solve4x4(_ mat: [[Double]], _ rhs: [Double]) -> [Double]? {
         var a = mat
         var b = rhs
         for col in 0..<4 {
@@ -95,21 +102,21 @@ nonisolated enum RPEModelFitter {
 /// prediction at 0.1 precision — no rounding to half-points. That's distinct
 /// from the MANUAL RPE steppers (`GaugeFinishSheet`, phone/web log forms),
 /// which intentionally still move in 0.5 steps; don't reuse this for those.
-nonisolated enum RPEQuantization {
-    static func autoTracked(_ predicted: Double) -> Double {
+public nonisolated enum RPEQuantization {
+    public static func autoTracked(_ predicted: Double) -> Double {
         (min(10, max(1, predicted)) * 10).rounded() / 10
     }
 }
 
-nonisolated enum RPEModelStore {
+public nonisolated enum RPEModelStore {
     private static let key = "rpeModel.v1"
 
-    static func load() -> RPEModel? {
+    public static func load() -> RPEModel? {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(RPEModel.self, from: data)
     }
 
-    static func save(_ model: RPEModel) {
+    public static func save(_ model: RPEModel) {
         if let data = try? JSONEncoder().encode(model) {
             UserDefaults.standard.set(data, forKey: key)
         }
