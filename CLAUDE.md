@@ -351,7 +351,7 @@ are safe regardless.
   `.glass-bar`) shares the translucent blur-glass recipe.
 - **localStorage keys** are prefixed `sendmeter:` — `phone-workout` (resumable
   workout state machine), `rest-target-s`, `gauge-prepare`, `passkey-prompt`,
-  `theme`.
+  `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202).
 - **Chrome animates transform/opacity on the compositor**, so `getComputedStyle`
   returns the *base* value mid-animation — you can't measure a ripple's scale or a
   hidden bar's transform from JS in the browser tools; verify animations visually

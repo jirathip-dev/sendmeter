@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
 import { authRedirectUrl } from "../lib/authRedirect";
+import { getAuthDiagnosticEvents, type NullSessionReason } from "../lib/authDiagnostics";
 import {
   addPasskey,
   listPasskeys,
@@ -23,6 +24,13 @@ interface Props {
 }
 
 type TabId = "appearance" | "health" | "account";
+
+const NULL_SESSION_LABELS: Record<NullSessionReason, string> = {
+  "network-error": "Network error",
+  revoked: "Session revoked",
+  "storage-missing": "No stored session",
+  "storage-unavailable": "Storage unavailable",
+};
 
 const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
   {
@@ -77,6 +85,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [cleared, setCleared] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  // Read once at mount — issue #202's on-device record of null-session
+  // events (see authDiagnostics.ts). Read-only, so no need to re-read on an
+  // interval; a relaunch remounts this sheet fresh anyway.
+  const [authEvents] = useState(() => getAuthDiagnosticEvents());
 
   useEffect(() => {
     if (!passkeysSupported) return;
@@ -381,6 +393,33 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               >
                 {signingOut ? "Signing out…" : "Sign out"}
               </button>
+
+              {authEvents.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 6 }}>
+                    Recent sign-in diagnostics
+                  </div>
+                  {authEvents.slice(0, 5).map((e, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        fontSize: "var(--t-xs)",
+                        color: "var(--ink-muted)",
+                        lineHeight: 1.6,
+                      }}
+                    >
+                      {NULL_SESSION_LABELS[e.reason]} · {new Date(e.lastAt).toLocaleString()}
+                      {e.count > 1 ? ` · ×${e.count}` : ""}
+                      {/* Dedupe survives relaunch, so one row can span days.
+                          Showing only lastAt would read as a single moment and
+                          hide how long the incident has been running. */}
+                      {e.count > 1 && e.firstAt !== e.lastAt
+                        ? ` · since ${new Date(e.firstAt).toLocaleString()}`
+                        : ""}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
