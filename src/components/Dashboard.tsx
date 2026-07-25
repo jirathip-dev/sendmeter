@@ -17,7 +17,7 @@ import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { daysAgo } from "../lib/dates";
-import { phaseAcwrFit, suggestPhaseStepBack } from "../lib/metrics";
+import { ACWR_TRACK_GRADIENT, phaseAcwrFit, suggestPhaseStepBack } from "../lib/metrics";
 import { fetchHealthMetrics } from "../lib/repo";
 
 // A dismissal is keyed to the streak's oldest day (not just "true/false"), so
@@ -339,14 +339,9 @@ export default function Dashboard({
                 top: 0,
                 width: "100%",
                 height: "100%",
-                // Band edges match getACWRStatus's thresholds exactly (0.8 /
-                // 1.3 / 1.5 on a 0-2 scale → 40% / 65% / 75%) — the marker
-                // below shares the same `(acwr / 2) * 100%` mapping, so the
-                // dot always lands in the band that names its own status
-                // (issue #189: these used to disagree, e.g. a 1.37 dot
-                // rendering past the "1.5" gridline).
-                background:
-                  "linear-gradient(to right, var(--info) 0%,var(--info) 40%,var(--success) 40%,var(--success) 65%,var(--warning) 65%,var(--warning) 75%,var(--danger) 75%,var(--danger) 100%)",
+                // See ACWR_TRACK_GRADIENT (src/lib/metrics.ts) for the band-edge
+                // derivation and the #189/#213 history behind it.
+                background: ACWR_TRACK_GRADIENT,
                 opacity: 0.55,
                 borderRadius: 3,
               }}
