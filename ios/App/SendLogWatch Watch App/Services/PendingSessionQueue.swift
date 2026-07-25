@@ -1,4 +1,5 @@
 import Foundation
+import Supabase
 
 /// Persist-first queue for the end-of-gauge-session insert (issue #144),
 /// mirroring `OfflineQueue`: "Log Session" used to `try? await` the network
