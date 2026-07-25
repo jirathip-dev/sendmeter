@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { dailyBoxStats, type DailyBoxStats } from "../lib/forceTrend";
 import { fetchWeightHistory } from "../lib/repo";
 import BoxChip from "./BoxChip";
 import SvgChartTooltip from "./SvgChartTooltip";
@@ -34,39 +35,41 @@ function weightOn(weights: { date: string; kg: number }[], date: string): number
   return w;
 }
 
-/// Daily aggregation: each training day's best peak + rep count. The chart
-/// scatters EVERY rep faintly and highlights the daily bests (local maxima)
-/// with the global max in gold — spread stays visible, trend reads off the
-/// highlighted points, and stats derive from daily bests.
-interface DailyBest {
-  date: string; // YYYY-MM-DD
-  t: number; // ms of the day's best rep
-  best: number;
-  count: number;
-}
-
+/// Daily aggregation: each training day's box-plot stats (issue #145) — the
+/// chart scatters EVERY rep faintly underneath, then draws a Tukey box per
+/// day (quartiles/whiskers/outliers via `dailyBoxStats`/`boxStats`), with
+/// the PR day's median tick called out in gold — spread stays visible, the
+/// day's distribution reads off the box, and stats derive from daily bests.
 interface TrendPoint {
   id: string;
   recordedAt: string;
   val: number;
 }
 
-function dailyBests(sorted: TrendPoint[]): DailyBest[] {
-  const byDate = new Map<string, DailyBest>();
-  for (const r of sorted) {
-    const date = r.recordedAt.slice(0, 10);
-    const cur = byDate.get(date);
-    if (!cur) {
-      byDate.set(date, { date, t: Date.parse(r.recordedAt), best: r.val, count: 1 });
-    } else {
-      cur.count += 1;
-      if (r.val > cur.best) {
-        cur.best = r.val;
-        cur.t = Date.parse(r.recordedAt);
-      }
-    }
+const MIN_BOX_W = 4;
+const MAX_BOX_W = 16;
+const MAX_OUTLIER_DOTS = 8;
+
+/// Thins a day's outliers down to at most `max` rendered dots. Adapted from
+/// `RepBoxPlotChart.tsx`'s `pickOutlierDots` (not imported — that copy lives
+/// in an index-based per-rep chart, this one is time-scaled per-day, and the
+/// box widths/caps here are smaller): quantize to the pixel-y grid first
+/// (values landing on the same dot are redundant), then if still over the
+/// cap, take an evenly spaced sample across the sorted survivors.
+function pickOutlierDots(outliers: number[], py: (v: number) => number, max: number): number[] {
+  const byPixel = new Map<number, number>();
+  for (const v of outliers) {
+    const pixel = Math.round(py(v));
+    if (!byPixel.has(pixel)) byPixel.set(pixel, v);
   }
-  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const values = [...byPixel.values()].sort((a, b) => a - b);
+  if (values.length <= max) return values;
+  const picked: number[] = [];
+  const step = (values.length - 1) / (max - 1);
+  for (let i = 0; i < max; i++) {
+    picked.push(values[Math.round(i * step)]!);
+  }
+  return [...new Set(picked)];
 }
 
 function Chart({
@@ -74,7 +77,7 @@ function Chart({
   all,
   unit,
 }: {
-  days: DailyBest[];
+  days: DailyBoxStats[];
   all: TrendPoint[];
   unit: string;
 }) {
@@ -104,6 +107,25 @@ function Chart({
   const hoveredD = hovered !== null ? days[hovered] : undefined;
   const yMid = (yMin + yMax) / 2;
   const yTicks = [yMin, yMid, yMax];
+
+  // Box width cap: the chart is time-scaled (not evenly spaced like
+  // RepBoxPlotChart's index-based layout), so the width can't come from a
+  // fixed band — derive it from the tightest pixel gap between adjacent
+  // days' x positions instead, so close-together training days don't get
+  // overlapping boxes.
+  const dayXs = days.map((d) => px(d.t)).sort((a, b) => a - b);
+  let minGapPx = Infinity;
+  for (let i = 1; i < dayXs.length; i++) {
+    minGapPx = Math.min(minGapPx, dayXs[i]! - dayXs[i - 1]!);
+  }
+  const boxW = Math.min(
+    MAX_BOX_W,
+    Math.max(MIN_BOX_W, (Number.isFinite(minGapPx) ? minGapPx : MAX_BOX_W) * 0.7),
+  );
+  const capW = boxW * 0.5;
+  // Hit target can be a bit wider than the visible box for easier tapping,
+  // but still capped so it doesn't swallow a neighboring day's hits.
+  const hitW = Math.min(Math.max(boxW, 12), Number.isFinite(minGapPx) ? minGapPx : boxW);
 
   return (
     <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
@@ -140,18 +162,101 @@ function Chart({
           opacity={0.3}
         />
       ))}
-      {/* …with each day's best (local maximum) highlighted, PR in gold. */}
-      {days.map((d, i) => (
-        <circle
-          key={d.date}
-          cx={px(d.t)}
-          cy={py(d.best)}
-          r={hovered === i ? (i === prIdx ? 6 : 5) : i === prIdx ? 4.5 : 3.5}
-          fill={i === prIdx ? "#DDB13A" : "#5B5FC7"}
-          style={{ cursor: "pointer", transition: "r 0.1s" }}
-          {...hoverProps(i)}
-        />
-      ))}
+      {/* …with each day's box-and-whisker distribution on top, PR day's
+          median tick called out in gold (mirrors RepBoxPlotChart's
+          session-best-rep callout in History). */}
+      {days.map((d, i) => {
+        const s = d.stats;
+        const cx = px(d.t);
+        const isPr = i === prIdx;
+        const isHovered = hovered === i;
+        const color = isPr ? "#DDB13A" : "#5B5FC7";
+        const outlierDots = pickOutlierDots(s.outliers, py, MAX_OUTLIER_DOTS);
+        return (
+          <g key={d.date} opacity={hovered !== null && !isHovered ? 0.55 : 1}>
+            {/* Whisker + caps */}
+            <line
+              x1={cx}
+              y1={py(s.whiskerLo)}
+              x2={cx}
+              y2={py(s.whiskerHi)}
+              stroke="var(--ink-faint)"
+              strokeOpacity={0.7}
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+            <line
+              x1={cx - capW / 2}
+              y1={py(s.whiskerLo)}
+              x2={cx + capW / 2}
+              y2={py(s.whiskerLo)}
+              stroke="var(--ink-faint)"
+              strokeOpacity={0.7}
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+            <line
+              x1={cx - capW / 2}
+              y1={py(s.whiskerHi)}
+              x2={cx + capW / 2}
+              y2={py(s.whiskerHi)}
+              stroke="var(--ink-faint)"
+              strokeOpacity={0.7}
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+            {/* Q1–Q3 box */}
+            <rect
+              x={cx - boxW / 2}
+              y={py(s.q3)}
+              width={boxW}
+              height={Math.max(0.5, py(s.q1) - py(s.q3))}
+              rx={2}
+              fill={color}
+              fillOpacity={isHovered ? 0.32 : 0.22}
+              stroke={color}
+              strokeWidth={isHovered ? 1.5 : 1}
+              vectorEffect="non-scaling-stroke"
+            />
+            {/* Median tick — PR day in gold, same as the old best-dot */}
+            <line
+              x1={cx - boxW / 2}
+              y1={py(s.median)}
+              x2={cx + boxW / 2}
+              y2={py(s.median)}
+              stroke={color}
+              strokeWidth={2}
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+            {/* Outlier dots (thinned) — texture, not noise */}
+            {outlierDots.map((v, oi) => (
+              <circle
+                key={oi}
+                cx={cx}
+                cy={py(v)}
+                r={1.3}
+                fill="none"
+                stroke="var(--ink-faint)"
+                strokeOpacity={0.6}
+                strokeWidth={1}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+            {/* Hit target: full chart height so a scrub anywhere over this
+                day's column selects it. */}
+            <rect
+              x={cx - hitW / 2}
+              y={PAD.top}
+              width={hitW}
+              height={H - PAD.top - PAD.bottom}
+              fill="transparent"
+              style={{ cursor: "pointer" }}
+              {...hoverProps(i)}
+            />
+          </g>
+        );
+      })}
       {days[prIdx] && (
         <text
           x={Math.min(px(days[prIdx]!.t), W - 18)}
@@ -188,12 +293,13 @@ function Chart({
       {hoveredD && hovered !== null && (
         <SvgChartTooltip
           x={px(hoveredD.t)}
-          y={py(hoveredD.best)}
+          y={py(hoveredD.stats.median)}
           viewW={W}
           viewH={H}
           lines={[
             fmtDate(hoveredD.t),
-            `best ${hoveredD.best.toFixed(1)} ${unit} · ${hoveredD.count} rep${hoveredD.count === 1 ? "" : "s"}`,
+            `median ${hoveredD.stats.median.toFixed(1)} ${unit}`,
+            `Q1–Q3 ${hoveredD.stats.q1.toFixed(1)}–${hoveredD.stats.q3.toFixed(1)} ${unit} · ${hoveredD.count} rep${hoveredD.count === 1 ? "" : "s"}`,
           ]}
         />
       )}
@@ -231,7 +337,7 @@ export default function ForceTrendChart({
         ? (r.peakKg / weightOn(weights, r.recordedAt.slice(0, 10))) * 100
         : r.peakKg,
     }));
-  const days = dailyBests(sorted);
+  const days = dailyBoxStats(sorted);
 
   function pick(next: "kg" | "bw") {
     setMode(next);
