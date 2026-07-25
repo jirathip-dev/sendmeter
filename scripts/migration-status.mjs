@@ -11,12 +11,13 @@
 // The ledger only records what was REPORTED applied — it is not proof the
 // objects exist. A green table means "nothing pending", not "schemas match".
 //
-// AUTH — this repo differs from synergy-costing: the two projects live on two
-// DIFFERENT Supabase accounts, so there is no single token that reaches both.
-//   prod: SUPABASE_ACCESS_TOKEN_PROD, else SUPABASE_ACCESS_TOKEN,
-//         else ~/.supabase/access-token
-//   dev:  SUPABASE_ACCESS_TOKEN_DEV, else ~/.supabase/dev-account-token
-//         (the path CLAUDE.md documents for the second account)
+// AUTH — ONE token reaches both projects. The projects are on two different
+// Supabase accounts and the main account is only a Developer on the dev one,
+// but Developer is sufficient for the Management API: verified 2026-07-25 that
+// the main-account token can POST /database/query against the dev project.
+//   SUPABASE_ACCESS_TOKEN, else ~/.supabase/access-token
+// The per-project overrides below exist only as an escape hatch if the accounts
+// ever diverge; you should not need them.
 //
 // Usage: node scripts/migration-status.mjs
 // Exits 1 if any local migration is unrecorded on either project.
@@ -52,6 +53,8 @@ function tokenFor(which) {
   }
   return (
     process.env.SUPABASE_ACCESS_TOKEN_DEV?.trim() ||
+    process.env.SUPABASE_ACCESS_TOKEN?.trim() ||
+    fromFile(join(homedir(), ".supabase", "access-token")) ||
     fromFile(join(homedir(), ".supabase", "dev-account-token"))
   );
 }
@@ -76,8 +79,9 @@ async function ledger(which, ref) {
     console.error(`✗ Ledger query failed for ${which} (${ref}): HTTP ${res.status} ${body}`);
     if (res.status === 401 || res.status === 403) {
       console.error(
-        "  A 401/403 here usually means the token belongs to an account without rights on\n" +
-          "  that project — the two projects are on two different Supabase accounts.",
+        "  401 'JWT could not be decoded' means the token itself is expired or revoked,\n" +
+          "  not that it lacks rights. Generate a fresh one at Dashboard > Account >\n" +
+          "  Access Tokens; one token works for both projects.",
       );
     }
     process.exit(2);
