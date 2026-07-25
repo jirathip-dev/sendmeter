@@ -1,4 +1,5 @@
 import Foundation
+import Supabase
 
 /// Pure decision for whether a queued item should drain now (issue #158):
 /// Supabase RLS attributes inserts to `auth.uid()` at INSERT time, not
