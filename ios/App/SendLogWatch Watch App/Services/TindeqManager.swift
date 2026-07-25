@@ -48,6 +48,13 @@ final class TindeqManager: NSObject {
     private var measuring = false
     private var t0us: UInt32?
     private var samples: [(t: Double, kg: Double)] = []
+    // Live-force beat backfill watermark (issue #148): the last `t` a beat
+    // successfully sent, so the next beat only ships what's new instead of a
+    // fixed trailing window that leaves a permanent gap when WC reachability
+    // flaps for longer than that window. See `ForceBeatWindow`.
+    private var lastBeatT: Double?
+    private var needsBackfill = true
+    private let beatQueue = DispatchQueue(label: "com.jirathip.sendlog.forcebeat")
     private var uiTimer: Timer?
     // Distinguishes an app-initiated disconnect from a real BLE drop, so only
     // the latter triggers the finish-on-disconnect prompt.
@@ -107,6 +114,8 @@ final class TindeqManager: NSObject {
     func start() {
         samples.removeAll()
         t0us = nil
+        lastBeatT = nil
+        needsBackfill = true
         currentKg = 0
         peakKg = 0
         elapsedMs = 0
@@ -154,32 +163,6 @@ final class TindeqManager: NSObject {
         return samples.filter { $0.t >= cutoff }
     }
 
-    /// Downsampled trailing window for the phone mirror's sparkline (SL-95,
-    /// follow-up to SL-87). The on-watch `Sparkline` (ForceGaugeView) already
-    /// reads full-rate `recentSamples()` at its own 10 Hz timer; WC beats
-    /// instead carry a much coarser slice — the same ~3 s trailing window,
-    /// thinned to at most ~15 points — so a ~2 Hz beat stays a tiny JSON array
-    /// rather than shipping raw 80 Hz BLE samples over WatchConnectivity.
-    /// Each point is `[t, kg]` with `t` still milliseconds (same clock as
-    /// `elapsed_ms`, relative to this hold's start) so the phone can re-anchor
-    /// every point to wall-clock time using the beat's `updated_at` and
-    /// `elapsed_ms`, then accumulate its own rolling buffer client-side (see
-    /// `useLiveForce.ts`) — no single beat's window is trusted as the whole
-    /// history.
-    private func sparkWindow() -> [[Double]] {
-        let recent = recentSamples(windowMs: 3_000)
-        guard !recent.isEmpty else { return [] }
-        let step = max(1, recent.count / 15)
-        var out: [[Double]] = []
-        var i = 0
-        while i < recent.count {
-            let s = recent[i]
-            out.append([s.t.rounded(), (s.kg * 100).rounded() / 100])
-            i += step
-        }
-        return out
-    }
-
     // MARK: Internals
 
     private func write(_ cmd: Tindeq.Cmd) {
@@ -216,35 +199,56 @@ final class TindeqManager: NSObject {
 
     /// SL-87: fire one live-force beat over WatchConnectivity when the phone
     /// is reachable — same Bluetooth-fast mirror path as the workout beat
-    /// (the auth-bridge plugin forwards it to the WebView). Fire-and-forget;
-    /// there's deliberately no Supabase fallback (an 80 Hz gauge has no
-    /// business heartbeating the network).
+    /// (the auth-bridge plugin forwards it to the WebView). No Supabase
+    /// fallback (an 80 Hz gauge has no business heartbeating the network);
+    /// instead a skipped/failed beat sets `needsBackfill` so the next
+    /// successful beat re-sends the whole capped window rather than leaving a
+    /// gap (issue #148). `sendMessage` runs on `beatQueue`, off the main
+    /// queue CoreBluetooth/SwiftUI use, so a stalled send can't stutter
+    /// either.
     private func pushForceBeat() {
         let wc = WCSession.default
-        guard wc.activationState == .activated, wc.isReachable else { return }
+        guard wc.activationState == .activated else { return }
+        guard wc.isReachable else {
+            needsBackfill = true
+            return
+        }
         let statusStr: String
         switch status {
         case .measuring: statusStr = "measuring"
         case .connected: statusStr = "connected"
         default: statusStr = "idle"
         }
-        wc.sendMessage(
-            [
-                "kind": "liveForce",
-                "status": statusStr,
-                "kg": (currentKg * 100).rounded() / 100,
-                "peak_kg": (peakKg * 100).rounded() / 100,
-                "elapsed_ms": elapsedMs.rounded(),
-                "session_count": sessionCount,
-                "tag": liveTag,
-                "side": liveSide,
-                "updated_at": Date().timeIntervalSince1970,
-                // SL-95: only meaningful mid-hold — omitted (empty) otherwise
-                // so idle/connected beats stay tiny.
-                "spark": status == .measuring ? sparkWindow() : [],
-            ],
-            replyHandler: nil, errorHandler: nil
-        )
+        // SL-95: only meaningful mid-hold — omitted (empty) otherwise so
+        // idle/connected beats stay tiny, and the backfill watermark is left
+        // untouched by them.
+        var spark: [[Double]] = []
+        if status == .measuring {
+            spark = ForceBeatWindow.window(samples: samples, sinceT: needsBackfill ? nil : lastBeatT)
+            if let lastPoint = spark.last {
+                lastBeatT = lastPoint[0]
+                needsBackfill = false
+            }
+        }
+        let payload: [String: Any] = [
+            "kind": "liveForce",
+            "status": statusStr,
+            "kg": (currentKg * 100).rounded() / 100,
+            "peak_kg": (peakKg * 100).rounded() / 100,
+            "elapsed_ms": elapsedMs.rounded(),
+            "session_count": sessionCount,
+            "tag": liveTag,
+            "side": liveSide,
+            "updated_at": Date().timeIntervalSince1970,
+            "spark": spark,
+        ]
+        beatQueue.async {
+            wc.sendMessage(payload, replyHandler: nil, errorHandler: { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.needsBackfill = true
+                }
+            })
+        }
     }
 
     private func stopUITimer() {
