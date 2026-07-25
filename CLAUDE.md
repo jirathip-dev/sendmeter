@@ -350,6 +350,39 @@ are safe regardless.
   implementations. The ledger records only what was *reported* applied — it is not
   proof the objects exist.
 
+- **`autoRefreshToken: false` does NOT stop supabase-swift refreshing.** It only
+  disables the background *timer*; the on-demand refresh inside `auth.session`
+  still fires whenever the stored access token is expired. Both native clients
+  are therefore split in two (#196): an `auth` client (the only one that may read
+  `.auth` — `setSession`/`signIn`/`signOut`/`currentSession`, none of which
+  refresh) and a `data` client whose `accessToken` provider returns the auth
+  client's current Keychain token **without** refreshing. Every table/RPC call
+  goes through `data`. This is structural, not a convention: refresh tokens are
+  single-use and reuse detection is ON (10 s interval), so one stray refresh from
+  the watch or the health plugin revokes the whole session family and signs the
+  phone out. `SupabaseClientOptions.AuthOptions` also enforces argument order —
+  `autoRefreshToken` must precede `accessToken`.
+- **The `Preview` GitHub environment must stay unrestricted.** Vercel's
+  integration deploys *PR branches* to it, so adding a deployment-branch policy
+  (e.g. "staging only") makes every PR-branch deployment be rejected and the
+  workflow runs on those branches fail with `startup_failure` — with no error
+  that points at the environment. Cost ~25 min of broken CI on 2026-07-25.
+  `Production` → `main` only is fine and is set, because prod only ever deploys
+  from `main`. (Required *reviewers* would be better but need a paid plan on a
+  private repo.)
+- **`public` Swift types lose implicit `Sendable`.** Swift infers it for internal
+  structs but never for public ones, so moving a value type into a package
+  (`SendLogWatchCore`, #191) silently drops the conformance — the compiler stays
+  quiet until something turns on strict concurrency checking. Declare it
+  explicitly on pure-data types when making them public.
+- **A green `quality` check says nothing about Swift.** `ci.yml` is lint /
+  typecheck / vitest / vite build — all web. Only the `swift` job in `ios-ci.yml`
+  (#178, `paths: ios/**`) compiles the watch and phone targets. An iOS-only PR
+  with `quality=SUCCESS` and no `swift` result is **unverified**; #162 reached
+  staging exactly that way, and a missing-argument-order error nearly did again
+  in #196. If the macOS runner is queued, compile locally rather than merge:
+  `xcodebuild build -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -destination "id=<sim udid>" CODE_SIGNING_ALLOWED=NO`.
+
 - **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
   **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
   prompt (in-app has an Undo; the watch hides tag/side/session controls *while
