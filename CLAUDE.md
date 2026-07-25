@@ -314,6 +314,35 @@ are safe regardless.
   Vercel preview deployments the same way. The dev project is free-tier and
   auto-pauses after ~7 idle days — unpause it (second account's dashboard or its
   token) before verifying a release.
+- **CI secrets live on GitHub *environments*, not the repo (planned, #130).** The
+  two Supabase projects are on two different accounts, so there is no single token
+  that reaches both. The layout is one `SUPABASE_ACCESS_TOKEN` per environment,
+  each belonging to that project's owning account:
+
+  | GitHub environment | token belongs to | project ref |
+  |---|---|---|
+  | `Preview` | dev account owner | `mjkndfhjnipomjjhgsxv` |
+  | `Production` | prod account owner | `zznsqmcewtzlnfoiefkk` |
+
+  Same secret *name* in both, different values; a workflow picks one with
+  `environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}`.
+  **Match that capitalisation exactly** — GitHub silently *creates* an environment
+  when the name doesn't match an existing one, so a lowercase `production` would run
+  with no secrets and no error. This repo's environments are `Preview`, `Production`
+  and `testflight` (that last one lowercase).
+- **Automated migrations must apply by NAME, not version.** Prod's
+  `schema_migrations` carries apply-time versions from the MCP `apply_migration`
+  era while local files carry file timestamps, so the same migration legitimately
+  has different versions on the two projects. `supabase db push` diffs by version
+  and would re-apply recorded history. Use the Management API
+  (`POST /v1/projects/{ref}/database/query`) — access token only, no DB password,
+  no `supabase link`, so `supabase/config.toml`'s hardcoded prod ref can't misfire.
+  `synergy-costing` already solved this; its `scripts/apply-migrations.mjs`
+  (append-only, fails on an unrecorded *older* migration) and
+  `scripts/migration-status.mjs` (dev/prod parity table) are the reference
+  implementations. The ledger records only what was *reported* applied — it is not
+  proof the objects exist.
+
 - **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
   **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
   prompt (in-app has an Undo; the watch hides tag/side/session controls *while
