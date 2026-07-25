@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyZone, classifyZoneLoaded, recommendZone, zoneTrainingDays } from "./zoneHistory";
+import { classifyZone, classifyZoneLoaded, recommendZone, zoneTrainingSets } from "./zoneHistory";
 import type { ForceCurveModel } from "./force-curve";
 
 describe("classifyZone (SL-100)", () => {
@@ -78,25 +78,35 @@ describe("classifyZoneLoaded (SL-97b)", () => {
 const rec = (recordedAt: string, durationMs: number) => ({ recordedAt, durationMs });
 const NOW = new Date("2026-07-21T12:00:00Z");
 
-describe("zoneTrainingDays (SL-100)", () => {
-  it("counts distinct days per zone within the window", () => {
-    const days = zoneTrainingDays(
+describe("zoneTrainingSets (SL-100, #182)", () => {
+  it("sums hold duration per zone, normalised by that zone's protocol set length", () => {
+    const sets = zoneTrainingSets(
       [
-        rec("2026-07-20T10:00:00Z", 5000), // power, day A
-        rec("2026-07-20T10:05:00Z", 5200), // power, same day A → still 1
-        rec("2026-07-19T10:00:00Z", 5000), // power, day B → 2
-        rec("2026-07-18T10:00:00Z", 30000), // endurance
+        rec("2026-07-20T10:00:00Z", 5000), // power, 5s
+        rec("2026-07-20T10:05:00Z", 5200), // power, 5.2s, same day
+        rec("2026-07-19T10:00:00Z", 5000), // power, 5s, different day → 15.2s total
+        rec("2026-07-18T10:00:00Z", 30000), // endurance, 30s
       ],
       NOW,
     );
-    expect(days.power).toBe(2);
-    expect(days.endurance).toBe(1);
-    expect(days.strength).toBe(0);
+    // power set = 6 reps × 5s = 30s; endurance set = 8 reps × 30s = 240s.
+    expect(sets.power).toBeCloseTo(15.2 / 30, 5);
+    expect(sets.endurance).toBeCloseTo(30 / 240, 5);
+    expect(sets.strength).toBe(0);
+  });
+
+  it("gives partial credit for a short warm-up instead of requiring a full session (#182)", () => {
+    const sets = zoneTrainingSets(
+      [rec("2026-07-20T10:00:00Z", 5000), rec("2026-07-20T10:01:00Z", 5000)],
+      NOW,
+    );
+    expect(sets.power).toBeGreaterThan(0);
+    expect(sets.power).toBeLessThan(1);
   });
 
   it("ignores holds older than the window", () => {
-    const days = zoneTrainingDays([rec("2026-05-01T10:00:00Z", 5000)], NOW, 28);
-    expect(days.power).toBe(0);
+    const sets = zoneTrainingSets([rec("2026-05-01T10:00:00Z", 5000)], NOW, 28);
+    expect(sets.power).toBe(0);
   });
 });
 
@@ -107,7 +117,7 @@ const model = (cf: number | null, maxF: number): ForceCurveModel => ({
   wPrime: cf === null ? null : 500,
 });
 
-describe("recommendZone (SL-100)", () => {
+describe("recommendZone (SL-100, #182)", () => {
   it("returns null with no training at all", () => {
     expect(
       recommendZone({ power: 0, strength: 0, "power-endurance": 0, endurance: 0 }, null),
@@ -120,7 +130,31 @@ describe("recommendZone (SL-100)", () => {
       null,
     );
     expect(r?.zone).toBe("endurance");
-    expect(r?.reason).toContain("0 endurance days");
+    expect(r?.reason).toContain("0 endurance sets");
+  });
+
+  it("with no bias, picks the true minimum among banded candidates, not the first in ZONE_ORDER", () => {
+    // All four zones sit within the 0.5-set tie band of each other, so all
+    // are candidates — but with no curve model to bias the pick, the result
+    // must be the actual minimum (strength, 1.0), not `power` merely because
+    // it's first in ZONE_ORDER.
+    const r = recommendZone(
+      { power: 1.2, strength: 1.0, "power-endurance": 1.4, endurance: 1.4 },
+      null,
+    );
+    expect(r?.zone).toBe("strength");
+    expect(r?.reason).toContain("1 strength set");
+  });
+
+  it("bias can pick a within-band zone that isn't the strict minimum", () => {
+    // strength (1.0) is the true minimum; power-endurance (1.3) is within
+    // the 0.5-set band and on the bias side, so a low CF ratio should still
+    // steer the pick to power-endurance over the untied power/endurance.
+    const r = recommendZone(
+      { power: 3, strength: 1.0, "power-endurance": 1.3, endurance: 3 },
+      model(20, 60), // CF 20 of 60 peak → 33% (<35%) → endurance side
+    );
+    expect(r?.zone).toBe("power-endurance");
   });
 
   it("breaks ties toward the endurance side when CF is a low fraction of peak", () => {
@@ -140,5 +174,22 @@ describe("recommendZone (SL-100)", () => {
       model(45, 60),
     );
     expect(r?.zone).toBe("power");
+  });
+});
+
+describe("recommendZone picks the least-trained zone on the biased side", () => {
+  it("prefers the lower of two in-band biased zones, not the first in ZONE_ORDER", () => {
+    // power-endurance (0.8) is the true minimum, so an unbiased pick returns it.
+    // power (1.2) and strength (0.9) are both within the 0.5 band AND both on
+    // the strength side, so the bias must choose between them — and it must
+    // choose strength, the lower. Picking `tied.find(...)` would return power
+    // because ZONE_ORDER lists it first. Asserting "strength" therefore fails
+    // for the unbiased pick ("power-endurance") and for the find-based pick
+    // ("power") alike.
+    const r = recommendZone(
+      { power: 1.2, strength: 0.9, "power-endurance": 0.8, endurance: 5 },
+      model(45, 60), // CF 45 of 60 → 75% (>35%) → strength side
+    );
+    expect(r?.zone).toBe("strength");
   });
 });
