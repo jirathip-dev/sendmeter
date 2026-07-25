@@ -26,8 +26,8 @@ npm run lint       # eslint .
 npm run sync       # cap sync ios  (copies dist/ into the iOS app, regenerates CapApp-SPM)
 ```
 
-Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic only
-(metrics/ACWR, force-curve, dates). The **Swift** side has tests too:
+Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic, tests live
+alongside each module (`*.test.ts` in `src/lib` and `src/hooks`). The **Swift** side has tests too:
 - `cd native-plugins/sendlog-health-core && swift test` — pure readiness/ACWR math, runs on macOS.
 - `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."` — watch logic (attempt detection, RPE model, Tindeq protocol, dates).
 
@@ -155,11 +155,23 @@ are safe regardless.
   recorder in ForceView walk the same segments. Each hold saves as its own
   recording (sliced from `samplesRef`) with the correct side.
   `presetTargetKg` resolves %-of-PR targets with per-set ramps.
-- **`src/`** — the React app. `lib/` = data/logic (repo.ts = all Supabase queries,
-  metrics.ts = ACWR/EWMA + exported `ewma()`, force-curve.ts = critical-force
-  fit + `ZONE_PROTOCOLS`, protocol.ts = guided timelines, healthSync.ts +
-  watchAuthRelay.ts = native bridges). `components/` = UI (`InfoDot.tsx` =
-  the "?" explainer sheets). `hooks/` = data hooks.
+- **Routine engine** — `src/lib/routine.ts` (pure, vitest-covered):
+  `expandRoutine(steps, {prepareS})` mirrors `protocol.ts`'s `buildTimeline`,
+  expanding a `RoutineStep[]` into flat timed segments (prepare/work/rest,
+  each step repeating ×reps with a rest between reps). `routineRun.ts` holds
+  the persisted, wall-clock-derived run state (`presetId`, `startedMs`,
+  pause bookkeeping) so `elapsedS()` can resume a run exactly after a
+  refresh/relaunch; `shouldLog()` gates logging a partial session on ≥60s
+  elapsed. Consumed by `src/components/RoutineCard.tsx` (preset CRUD + run
+  launch, on the Workout tab) and `RoutineFullscreen.tsx` (the running
+  countdown UI), wired into `WorkoutView.tsx`.
+- **`src/`** — the React app. `lib/` = data/logic (`repo/` = all Supabase
+  queries, metrics.ts = ACWR/EWMA + exported `ewma()`, force-curve.ts =
+  critical-force fit + `ZONE_PROTOCOLS`, protocol.ts = guided Tindeq
+  timelines, routine.ts/routineRun.ts = guided routine-timer timelines +
+  resumable run state, healthSync.ts + watchAuthRelay.ts = native bridges).
+  `components/` = UI (`InfoDot.tsx` = the "?" explainer sheets). `hooks/` =
+  data hooks.
 - **`ios/App/App.xcodeproj`** — four product targets: the Capacitor iOS **App**,
   the **SendLogWatch Watch App** companion (SwiftUI; workout/attempt tracking,
   force gauge, readiness display), **SendmeterWidgets** (WidgetKit app
@@ -232,13 +244,16 @@ are safe regardless.
     plugin `register` → `passkey.verifyRegistration`, and the auth equivalent),
     passing all binary fields as base64url. Relies on the already-configured
     `webcredentials:sendmeter.app` associated domain + AASA. Device-only to verify.
-- **`supabase/migrations/`** — 18 migrations. Tables: `sessions` (incl.
+- **`supabase/migrations/`** — Tables: `sessions` (incl.
   `workout_source` = immutable auto/phone badge that survives type edits),
   `user_settings`, `phase_periods`, `tindeq_recordings`, `tindeq_presets`
   (hold/reps/sets/rests + target kg or %-of-PR + per-set % step + alternate
-  sides), `climb_workouts`/`climb_attempts` (both with `source` provenance),
-  `health_metrics`, `live_workouts` (one row per user, watch-heartbeat for
-  the live workout mirror). RLS scopes everything to `auth.uid()`; realtime
+  sides), `routine_presets` (user-defined guided routine steps, drives the
+  Workout tab's routine timer), `climb_workouts`/`climb_attempts` (both with
+  `source` provenance), `health_metrics`, `live_workouts` (one row per user,
+  watch-heartbeat for the live workout mirror), `tindeq_tags` (per-user tag
+  registry for rename/hide metadata; tags themselves stay denormalized on
+  `tindeq_recordings.tag`). RLS scopes everything to `auth.uid()`; realtime
   publishes the watch-writable tables + `live_workouts`.
 
 ## Non-obvious things that will bite you
