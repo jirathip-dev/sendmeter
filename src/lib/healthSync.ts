@@ -1,6 +1,10 @@
 import { Capacitor } from "@capacitor/core";
 import type { Session } from "@supabase/supabase-js";
 import { SendLogHealth } from "sendlog-health";
+import { fetchTodayHealthSignature } from "./repo/health";
+import { healthSignaturesEqual } from "./healthSignature";
+
+export { healthSignaturesEqual } from "./healthSignature";
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
@@ -22,15 +26,26 @@ export function healthLastSyncedAt(): number | null {
 /// timestamp, but a "synced" toast only makes sense for a foreground sync the
 /// user is actively looking at. The cold-launch background sync fires on
 /// every app open and would be noisy; the resync path already gets its own
-/// "Health data cleared · resyncing" toast from AccountSheet.
+/// "Health data cleared · resyncing" toast from AccountSheet. Source alone is
+/// no longer sufficient to gate the foreground toast, though — see `changed`
+/// below (#146).
 export type HealthSyncSource = "background" | "foreground" | "resync";
 
-function recordHealthSync(source: HealthSyncSource): void {
+/// Records that a sync attempt happened (drives the "Last synced Xm ago" line
+/// on ReadinessCard, unconditionally — that's correct/wanted feedback for
+/// every sync attempt, changed or not) and notifies listeners. `changed`
+/// reflects whether today's health_metrics row's content actually differed
+/// before vs. after this sync — the native plugin always re-upserts the
+/// biometric columns "locked or not" (see HealthSyncManager), so "the plugin
+/// call resolved" does NOT imply "new data landed"; only App.tsx's foreground
+/// toast reads `changed` (source === "foreground" && changed), but it's
+/// carried for every source so the event shape doesn't vary by call site.
+function recordHealthSync(source: HealthSyncSource, changed = false): void {
   try {
     localStorage.setItem(SYNCED_AT_KEY, String(Date.now()));
     // Nudge any mounted readiness card to re-read the timestamp.
     window.dispatchEvent(
-      new CustomEvent("sendmeter:health-synced", { detail: { source } }),
+      new CustomEvent("sendmeter:health-synced", { detail: { source, changed } }),
     );
   } catch {
     /* ignore */
@@ -69,14 +84,21 @@ export async function startHealthBackgroundSync(): Promise<void> {
 /// Re-read HealthKit and re-upsert today's metrics now (e.g. app foreground).
 /// No-op on web; the device otherwise picks data back up on its next background
 /// delivery, so a failure here is not fatal.
+///
+/// #146: the native plugin always re-upserts the biometric columns on every
+/// call ("locked or not"), so a successful `syncNow()` does not by itself
+/// mean anything new landed — compare today's row content before/after to
+/// decide whether the foreground "Health data synced" toast is warranted.
 export async function syncHealthNow(): Promise<void> {
   if (!IS_NATIVE) return;
   try {
+    const before = await fetchTodayHealthSignature().catch(() => undefined);
     // #109: fired from useAuth's visibilitychange foreground listener, not
     // a user gesture — "automatic". There's no explicit user-refresh action
     // in the app yet; when one's added it should pass "manual" instead.
     await SendLogHealth.syncNow({ trigger: "automatic" });
-    recordHealthSync("foreground");
+    const after = await fetchTodayHealthSignature().catch(() => undefined);
+    recordHealthSync("foreground", !healthSignaturesEqual(before, after));
   } catch {
     // plugin unavailable — safe to ignore
   }
