@@ -94,6 +94,29 @@ jobs:
             -destination "id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO
 
+      # `test-without-building` launches the watch app as the test host, which
+      # needs a booted device — and a Watch App launch also needs its paired
+      # iPhone booted, or it fails with "Simulator device failed to launch
+      # com.jirathip.sendlog.watchkitapp".
+      - name: Boot the watch simulator and its paired phone
+        run: |
+          set -euo pipefail
+          watch="${{ steps.sim.outputs.udid }}"
+          phone=$(xcrun simctl list pairs --json | python3 -c "
+          import json, sys
+          watch = sys.argv[1]
+          pairs = json.load(sys.stdin)
+          for pair in pairs.values():
+              if pair.get('watch', {}).get('udid') == watch:
+                  print(pair.get('phone', {}).get('udid', ''))
+                  break
+          " "$watch")
+          for udid in $phone $watch; do
+            echo "Booting $udid"
+            xcrun simctl boot "$udid" || true
+            xcrun simctl bootstatus "$udid" -b
+          done
+
       # SendLogWatchTests has never executed in CI (#178). The scheme already
       # lists it under <Testables>, so this runs the whole suite.
       - name: Run SendLogWatchTests
