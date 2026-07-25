@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
-import { dailyBoxStats, type DailyBoxStats } from "../lib/forceTrend";
+import { dailyBoxStats, hitWidthsPx, type DailyBoxStats } from "../lib/forceTrend";
 import { fetchWeightHistory } from "../lib/repo";
 import BoxChip from "./BoxChip";
 import SvgChartTooltip from "./SvgChartTooltip";
@@ -124,8 +124,16 @@ function Chart({
   );
   const capW = boxW * 0.5;
   // Hit target can be a bit wider than the visible box for easier tapping,
-  // but still capped so it doesn't swallow a neighboring day's hits.
-  const hitW = Math.min(Math.max(boxW, 12), Number.isFinite(minGapPx) ? minGapPx : boxW);
+  // but still capped so it doesn't swallow a neighboring day's hits. Each
+  // day gets its OWN width from its nearest-neighbor gap (`hitWidthsPx`,
+  // `days` order == x-ascending order — see its own comment) — a global
+  // min-gap-derived width used to collapse every day's hit target whenever
+  // any single pair of days landed close together (issue #145 revision).
+  const hitWidths = hitWidthsPx(
+    days.map((d) => px(d.t)),
+    boxW,
+    MIN_BOX_W,
+  );
 
   return (
     <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
@@ -244,11 +252,12 @@ function Chart({
               />
             ))}
             {/* Hit target: full chart height so a scrub anywhere over this
-                day's column selects it. */}
+                day's column selects it. Width is per-day (see `hitWidths`
+                above), not a single dataset-wide value. */}
             <rect
-              x={cx - hitW / 2}
+              x={cx - hitWidths[i]! / 2}
               y={PAD.top}
-              width={hitW}
+              width={hitWidths[i]!}
               height={H - PAD.top - PAD.bottom}
               fill="transparent"
               style={{ cursor: "pointer" }}

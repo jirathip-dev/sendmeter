@@ -9,6 +9,35 @@ export interface TrendSample {
   val: number; // peakKg or %BW, per the chart's current mode
 }
 
+/// Per-point nearest-neighbor pixel gaps for an x-position array that's
+/// already ascending (as `ForceTrendChart`'s day x-positions are, since
+/// `dailyBoxStats` sorts by date and same-day timestamps can't interleave
+/// across days). A lone point (no neighbor) gets `Infinity` — callers clamp
+/// that themselves.
+export function neighborGapsPx(xs: number[]): number[] {
+  return xs.map((x, i) => {
+    const gaps: number[] = [];
+    if (i > 0) gaps.push(x - xs[i - 1]!);
+    if (i < xs.length - 1) gaps.push(xs[i + 1]! - x);
+    return gaps.length ? Math.min(...gaps) : Infinity;
+  });
+}
+
+/// Each day's hover/tap hit-rect width, from ITS OWN nearest-neighbor gap —
+/// NOT the dataset-wide minimum gap. (Issue #145 revision: deriving one
+/// shared `hitW` from the global minimum gap meant a single close pair of
+/// days anywhere in the dataset collapsed EVERY day's hit target to
+/// near-zero, breaking hover/tap scrubbing chart-wide.) Floored to `minW` so
+/// a day with a genuinely tight neighbor still gets a tappable target — the
+/// same tradeoff the visible box width already makes elsewhere (a slightly
+/// overlapping hit-rect beats an unusable one) — and capped so it doesn't
+/// swallow a neighbor's hits.
+export function hitWidthsPx(xs: number[], boxW: number, minW: number): number[] {
+  return neighborGapsPx(xs).map((gap) =>
+    Math.max(minW, Math.min(Math.max(boxW, 12), Number.isFinite(gap) ? gap : boxW)),
+  );
+}
+
 export interface DailyBoxStats {
   date: string; // YYYY-MM-DD
   /// ms of the day's best rep — used both for the box's x-position (the
