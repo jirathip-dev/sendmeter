@@ -26,8 +26,8 @@ npm run lint       # eslint .
 npm run sync       # cap sync ios  (copies dist/ into the iOS app, regenerates CapApp-SPM)
 ```
 
-Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic in
-`src/lib` (see `*.test.ts` alongside each module). The **Swift** side has tests too:
+Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic, tests live
+alongside each module (`*.test.ts` in `src/lib` and `src/hooks`). The **Swift** side has tests too:
 - `cd native-plugins/sendlog-health-core && swift test` — pure readiness/ACWR math, runs on macOS.
 - `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."` — watch logic (attempt detection, RPE model, Tindeq protocol, dates).
 
