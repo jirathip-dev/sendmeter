@@ -4,6 +4,7 @@ import { today } from "./lib/dates";
 import {
   computeAcwr,
   computeWeeklyLoads,
+  currentPeriodStart,
   getACWRStatus,
   phaseStartFromHistory,
 } from "./lib/metrics";
@@ -189,8 +190,7 @@ function AuthedApp({
   // from history), so toggling to another phase and back doesn't reset it. The
   // open period's start (or phaseStartDate) is only the fallback when nothing's
   // been logged in the phase yet.
-  const periodStart =
-    phasePeriods.find((p) => p.endedOn === null)?.startedOn ?? phaseStartDate;
+  const periodStart = currentPeriodStart(phasePeriods, currentPhase, phaseStartDate);
   const phaseStart = phaseStartFromHistory(sessions, currentPhase, periodStart);
   const phaseDays =
     Math.floor(
@@ -364,7 +364,11 @@ function AuthedApp({
       {/* Phases bottom sheet — informational only (no tap-to-set) */}
       {showPhases && (
         <Sheet fullHeight onClose={() => setShowPhases(false)}>
-          <PhasesView currentPhase={currentPhase} phasePeriods={phasePeriods} />
+          <PhasesView
+            currentPhase={currentPhase}
+            phasePeriods={phasePeriods}
+            phaseStartDate={phaseStartDate}
+          />
           <div style={{ marginTop: 10 }}>
             <button className="btn-ghost" onClick={() => setShowPhases(false)}>
               Close
