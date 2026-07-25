@@ -104,6 +104,15 @@ jobs:
             -destination "id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO
 
+      # The App target copies the built web bundle into ios/App/App/public and
+      # resolves plugins from the generated CapApp-SPM package, so it cannot
+      # compile without this — same prep fastlane does before `build_app`
+      # (Fastfile:23). Deliberately placed after the watch steps: the watch
+      # needs none of it, so a native-only regression fails before we spend
+      # macOS minutes on a web build the Ubuntu `quality` job already did.
+      - name: Build web bundle and sync Capacitor
+        run: npm run build && npx cap sync ios
+
       # Compile-only: the phone app has no test target of its own, and a full
       # simulator test run isn't worth the minutes. This still catches type
       # errors and missing imports in the Capacitor host app.
