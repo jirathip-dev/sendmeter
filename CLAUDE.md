@@ -302,12 +302,16 @@ are safe regardless.
     non-refreshing `auth.currentSession` only. Keep both guards.
 - **Migrations aren't auto-applied — and must go to BOTH remote projects.** Files
   in `supabase/migrations/` are just SQL on disk. Apply each new migration to the
-  **prod** project (`zznsqmcewtzlnfoiefkk`, via the Supabase MCP `apply_migration`
-  or the CLI) **and** to the **dev/preview** project (`mjkndfhjnipomjjhgsxv`, issue
-  #121 — hosted on a second Supabase account; the main account is only a Developer
-  member there, so use its Management API token at `~/.supabase/dev-account-token`
-  against `POST /v1/projects/mjkndfhjnipomjjhgsxv/database/query`, and record the
-  version in `supabase_migrations.schema_migrations`). Skipping prod drifts the
+  **prod** project (`zznsqmcewtzlnfoiefkk`) **and** to the **dev/preview** project
+  (`mjkndfhjnipomjjhgsxv`, issue #121 — hosted on a second Supabase account), via
+  `POST /v1/projects/{ref}/database/query`, recording the name + version in
+  `supabase_migrations.schema_migrations`. **One Management API token reaches both**
+  (`~/.supabase/access-token`): the main account is only a *Developer* on the dev
+  project, but Developer is sufficient for the Management API — verified 2026-07-25.
+  Check parity any time with `npm run migration:status`. (The older
+  `~/.supabase/dev-account-token` is no longer needed; the token that was there had
+  expired, which presents as `401 JWT could not be decoded` — a dead token, not a
+  rights problem.) Skipping prod drifts the
   schema from the code (the `health_metrics` delete policy + date-sanity constraints
   sat unapplied for a while: with no DELETE policy, a delete silently matches zero
   rows, so "Clear health data" looked broken while succeeding); skipping dev breaks
@@ -315,16 +319,19 @@ are safe regardless.
   auto-pauses after ~7 idle days — unpause it (second account's dashboard or its
   token) before verifying a release.
 - **CI secrets live on GitHub *environments*, not the repo (planned, #130).** The
-  two Supabase projects are on two different accounts, so there is no single token
-  that reaches both. The layout is one `SUPABASE_ACCESS_TOKEN` per environment,
-  each belonging to that project's owning account:
+  two Supabase projects are on two different accounts, but **one main-account token
+  reaches both** (Developer role suffices for the Management API), so the same
+  `SUPABASE_ACCESS_TOKEN` value can go in both environments:
 
-  | GitHub environment | token belongs to | project ref |
+  | GitHub environment | project ref | deployable from |
   |---|---|---|
-  | `Preview` | dev account owner | `mjkndfhjnipomjjhgsxv` |
-  | `Production` | prod account owner | `zznsqmcewtzlnfoiefkk` |
+  | `Preview` | `mjkndfhjnipomjjhgsxv` | `staging` only |
+  | `Production` | `zznsqmcewtzlnfoiefkk` | `main` only |
 
-  Same secret *name* in both, different values; a workflow picks one with
+  The branch restriction is the real guard: prod secrets are unreachable from any
+  branch but `main`, so a mis-wired job cannot touch prod. (Required *reviewers*
+  would be better still, but need a paid plan on a private repo.) A workflow picks
+  an environment with
   `environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}`.
   **Match that capitalisation exactly** — GitHub silently *creates* an environment
   when the name doesn't match an existing one, so a lowercase `production` would run
