@@ -26,6 +26,15 @@ jobs:
       issues: write
       pull-requests: write
       id-token: write  # claude-code-action exchanges an OIDC token
+      # The auto-merge gate must read CI before merging (#187). The repo
+      # default is read-only for contents/packages and *none* for everything
+      # else, so these are silently absent unless named — which is why the
+      # pipeline saw "403 Resource not accessible by integration" on
+      # check-runs and had to hold every otherwise-mergeable PR.
+      checks: read      # check-runs (the `quality` job's conclusion)
+      statuses: read    # legacy commit statuses, for the combined rollup
+      actions: read     # workflow runs — distinguishes "CI failed" from
+                        # "CI never ran" (a run gated on action_required)
     uses: jirathip-k/agent-ops/.github/workflows/triage-pipeline.yml@main
     with:
       target_repo: ${{ github.repository }}
