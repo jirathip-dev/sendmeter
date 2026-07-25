@@ -135,6 +135,24 @@ describe("computeAcwr", () => {
   it("ratio is null when there is no load within the 90-day window", () => {
     expect(computeAcwr([session(daysAgo(200), 500)]).acwr).toBeNull();
   });
+
+  it("watch/web ACWR parity (issue #189): pins the ratio for a fixed 90-day fixture", () => {
+    // Same deterministic (integer-arithmetic, no transcendental functions —
+    // reproducible bit-for-bit) 90-day load series as
+    // SendLogWatchTests/ACWRTests.swift's testMatchesWebFixtureVector, fed
+    // in oldest → newest (dailyLoads[0] on daysAgo(89), ..., dailyLoads[89]
+    // on today()). The watch used to compute ACWR with a 28-day series
+    // seeded at the raw first-day value; the web used a 90-day,
+    // mean-seeded series — same underlying data, two different numbers.
+    // ewmaAcwr/dailyLoadSeries on the watch now mirror ewmaAcwr here
+    // exactly (see ACWR.swift's KEEP-IN-SYNC comment); this test and its
+    // Swift twin pin both sides to the same expected ratio so a future
+    // change to either implementation that silently re-diverges the math
+    // fails loudly instead of quietly drifting again.
+    const dailyLoads = Array.from({ length: 90 }, (_, i) => (i * 13 + 7) % 47);
+    const sessions = dailyLoads.map((load, i) => session(daysAgo(89 - i), load));
+    expect(computeAcwr(sessions).acwr).toBeCloseTo(1.1151915681290694, 9);
+  });
 });
 
 describe("computeWeeklyLoads", () => {

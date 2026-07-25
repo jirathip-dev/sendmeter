@@ -18,6 +18,7 @@
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		4F9BA0DA906E18E88FCDFCA8 /* DateExtensionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 929803D573A0FA4074230787 /* DateExtensionsTests.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* PendingQueueUserMatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */; };
+		D1C2B3A4F5E6708192A3B4C5 /* ACWRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
@@ -129,6 +130,7 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RPEModelTests.swift; sourceTree = "<group>"; };
 		5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PendingQueueUserMatchTests.swift; sourceTree = "<group>"; };
+		F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ACWRTests.swift; sourceTree = "<group>"; };
 		56044BF7621E26700DF3ACBC /* LiveActivityIntents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveActivityIntents.swift; sourceTree = "<group>"; };
 		6CA278E81C6E14A40B4C9C69 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		929803D573A0FA4074230787 /* DateExtensionsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DateExtensionsTests.swift; sourceTree = "<group>"; };
@@ -222,6 +224,7 @@
 			isa = PBXGroup;
 			children = (
 				1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */,
+				F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */,
 				929803D573A0FA4074230787 /* DateExtensionsTests.swift */,
 				5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */,
 				553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */,
@@ -505,6 +508,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */,
+				D1C2B3A4F5E6708192A3B4C5 /* ACWRTests.swift in Sources */,
 				4F9BA0DA906E18E88FCDFCA8 /* DateExtensionsTests.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* PendingQueueUserMatchTests.swift in Sources */,
 				607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */,
