@@ -53,9 +53,10 @@ enum HealthConfig {
     static let data = SupabaseClient(
         supabaseURL: supabaseURL,
         supabaseKey: supabaseAnonKey,
+        // autoRefreshToken must precede accessToken (initialiser order).
         options: SupabaseClientOptions(auth: .init(
-            accessToken: { try? await HealthConfig.auth.auth.currentSession?.accessToken },
-            autoRefreshToken: false
+            autoRefreshToken: false,
+            accessToken: { try? await HealthConfig.auth.auth.currentSession?.accessToken }
         ))
     )
 }

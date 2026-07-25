@@ -34,9 +34,11 @@ enum SupabaseService {
     private static func makeClient(
         accessToken: (@Sendable () async throws -> String?)?
     ) -> SupabaseClient {
+        // Argument order is enforced by the initialiser: autoRefreshToken
+        // must precede accessToken.
         let authOptions = SupabaseClientOptions.AuthOptions(
-            accessToken: accessToken,
-            autoRefreshToken: false
+            autoRefreshToken: false,
+            accessToken: accessToken
         )
         // Simulator-only: localhost is meaningless on a physical device, so
         // Debug-on-device deliberately stays on the hosted project (test
