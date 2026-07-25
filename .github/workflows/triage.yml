@@ -46,3 +46,9 @@ jobs:
       runner: blacksmith-2vcpu-ubuntu-2404
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      # Optional (agent-ops#53): lets the pipeline push as a GitHub App instead
+      # of github-actions[bot], whose pushes produce workflow runs held on
+      # manual approval — which blocks the auto-merge gate. A reusable workflow
+      # cannot read the caller's secrets, so they must be forwarded here.
+      AGENT_APP_ID: ${{ secrets.AGENT_APP_ID }}
+      AGENT_APP_PRIVATE_KEY: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
