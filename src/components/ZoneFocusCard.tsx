@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { QUALITIES } from "../lib/force-curve";
 import type { ForceCurveModel, TrainingQuality } from "../lib/force-curve";
-import { recommendZone, zoneTrainingDays } from "../lib/zoneHistory";
+import { recommendZone, zoneTrainingSets } from "../lib/zoneHistory";
 import type { TindeqRecordingMeta } from "../types";
 import { QUALITY_COLORS } from "../lib/zoneSelection";
 
@@ -15,18 +15,19 @@ interface Props {
 
 const WINDOW_DAYS = 28;
 
-/// Training-balance card (SL-100): how many days in the last 4 weeks you
-/// trained each quality on this exercise, and which one to focus on next —
-/// the least-trained zone, with the force curve breaking ties. Tapping the
-/// recommendation arms its guided zone protocol.
+/// Training-balance card (SL-100, #182): how many duration-normalised sets
+/// in the last 4 weeks you trained each quality on this exercise, and which
+/// one to focus on next — the least-trained zone, with the force curve
+/// breaking near-ties. Tapping the recommendation arms its guided zone
+/// protocol.
 export default function ZoneFocusCard({ recordings, model, onPick }: Props) {
   // `new Date()` is impure in render — freeze it once for this mount.
   const [now] = useState(() => new Date());
-  const days = zoneTrainingDays(recordings, now, WINDOW_DAYS);
-  const rec = recommendZone(days, model);
+  const sets = zoneTrainingSets(recordings, now, WINDOW_DAYS);
+  const rec = recommendZone(sets, model);
   if (!rec) return null;
 
-  const maxDays = Math.max(1, ...QUALITIES.map((q) => days[q.id]));
+  const maxSets = Math.max(1, ...QUALITIES.map((q) => sets[q.id]));
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
@@ -36,7 +37,8 @@ export default function ZoneFocusCard({ recordings, model, onPick }: Props) {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
         {QUALITIES.map((q) => {
-          const n = days[q.id];
+          const n = sets[q.id];
+          const rounded = Math.round(n * 10) / 10;
           const color = QUALITY_COLORS[q.id];
           return (
             <div key={q.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -61,7 +63,7 @@ export default function ZoneFocusCard({ recordings, model, onPick }: Props) {
               >
                 <div
                   style={{
-                    width: `${(n / maxDays) * 100}%`,
+                    width: `${(n / maxSets) * 100}%`,
                     height: "100%",
                     background: color,
                     borderRadius: 4,
@@ -77,7 +79,7 @@ export default function ZoneFocusCard({ recordings, model, onPick }: Props) {
                   flexShrink: 0,
                 }}
               >
-                {n} day{n === 1 ? "" : "s"}
+                {rounded} set{rounded === 1 ? "" : "s"}
               </span>
             </div>
           );

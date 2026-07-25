@@ -9,8 +9,9 @@ import { SendLogAuthBridge } from "sendlog-auth-bridge";
 const STALE_MS = 8_000;
 
 /// How far back the phone's own sparkline buffer reaches (SL-95). Each beat
-/// only carries a ~3s trailing window (see TindeqManager.sparkWindow) — the
-/// phone accumulates those slices into this longer rolling history itself.
+/// only carries a capped trailing/backfill window (see
+/// TindeqManager.ForceBeatWindow, issue #148) — the phone accumulates those
+/// slices into this longer rolling history itself.
 const SPARK_WINDOW_MS = 45_000;
 
 export interface LiveForceSample {

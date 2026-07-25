@@ -62,7 +62,8 @@ private struct ExistingReadinessRow: Codable {
 final class HealthSyncManager {
     static let shared = HealthSyncManager()
 
-    private let client = HealthConfig.client
+    private let authClient = HealthConfig.auth
+    private let client = HealthConfig.data
     private let reader = HealthKitReader()
     private let tunables = RecoveryTunables.default
     private var observerStarted = false
@@ -72,7 +73,17 @@ final class HealthSyncManager {
     }
 
     func setSession(accessToken: String, refreshToken: String) async throws {
-        try await client.auth.setSession(accessToken: accessToken, refreshToken: refreshToken)
+        try await authClient.auth.setSession(accessToken: accessToken, refreshToken: refreshToken)
+    }
+
+    /// Forgets this client's locally-stored session (issue #196) — called
+    /// when the phone signs out, so a later background HealthKit wake can't
+    /// keep using a stale/rotated refresh token. By the time this fires the
+    /// server-side session is already gone (the WebView's own signOut
+    /// already revoked it), so failure here is expected and harmless —
+    /// mirrors the watch's AuthManager.signOut().
+    func clearSession() async {
+        try? await authClient.auth.signOut()
     }
 
     /// Read HealthKit, upsert today's biometrics, and — subject to

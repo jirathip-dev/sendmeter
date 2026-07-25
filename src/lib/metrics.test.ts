@@ -4,13 +4,14 @@ import {
   computeAcwr,
   computeWeeklyLoads,
   computeTindeqStats,
+  currentPeriodStart,
   ewma,
   phaseAcwrFit,
   phaseStartFromHistory,
   suggestPhaseStepBack,
 } from "./metrics";
 import { today, daysAgo } from "./dates";
-import type { HealthMetric, Session, TindeqRecordingMeta } from "../types";
+import type { HealthMetric, PhasePeriod, Session, TindeqRecordingMeta } from "../types";
 
 function readiness(date: string, value: number | null): Pick<HealthMetric, "date" | "readiness"> {
   return { date, readiness: value };
@@ -31,6 +32,14 @@ function session(date: string, load: number): Session {
     groupId: null,
     workoutSource: null,
   };
+}
+
+function period(
+  phase: PhasePeriod["phase"],
+  startedOn: string,
+  endedOn: string | null,
+): Pick<PhasePeriod, "phase" | "startedOn" | "endedOn"> {
+  return { phase, startedOn, endedOn };
 }
 
 function rec(recordedAt: string, peakKg: number): TindeqRecordingMeta {
@@ -126,6 +135,25 @@ describe("computeAcwr", () => {
   it("ratio is null when there is no load within the 90-day window", () => {
     expect(computeAcwr([session(daysAgo(200), 500)]).acwr).toBeNull();
   });
+
+  it("watch/web ACWR parity (issue #189): pins the ratio for a fixed 90-day fixture", () => {
+    // Same deterministic (integer-arithmetic, no transcendental functions —
+    // reproducible bit-for-bit) 90-day load series as
+    // ios/App/SendLogWatchCore/Tests/SendLogWatchCoreTests/ACWRTests.swift's
+    // testMatchesWebFixtureVector, fed
+    // in oldest → newest (dailyLoads[0] on daysAgo(89), ..., dailyLoads[89]
+    // on today()). The watch used to compute ACWR with a 28-day series
+    // seeded at the raw first-day value; the web used a 90-day,
+    // mean-seeded series — same underlying data, two different numbers.
+    // ewmaAcwr/dailyLoadSeries on the watch now mirror ewmaAcwr here
+    // exactly (see ACWR.swift's KEEP-IN-SYNC comment); this test and its
+    // Swift twin pin both sides to the same expected ratio so a future
+    // change to either implementation that silently re-diverges the math
+    // fails loudly instead of quietly drifting again.
+    const dailyLoads = Array.from({ length: 90 }, (_, i) => (i * 13 + 7) % 47);
+    const sessions = dailyLoads.map((load, i) => session(daysAgo(89 - i), load));
+    expect(computeAcwr(sessions).acwr).toBeCloseTo(1.1151915681290694, 9);
+  });
 });
 
 describe("computeWeeklyLoads", () => {
@@ -183,6 +211,40 @@ describe("computeTindeqStats", () => {
     expect(s.lastPeak).toBe(32);
     expect(s.avg30d).toBe(32); // mean of the two earlier within 30d: (30+34)/2
     expect(s.delta).toBe(0); // 32 − 32
+  });
+});
+
+describe("currentPeriodStart", () => {
+  const fallback = "2026-07-19";
+
+  it("falls back to phaseStartDate when phasePeriods is empty", () => {
+    // e.g. first mount, before runFetch resolves
+    expect(currentPeriodStart([], "capacity", fallback)).toBe(fallback);
+  });
+
+  it("returns the open period's startedOn when its phase matches currentPhase", () => {
+    const periods = [
+      period("capacity", "2026-07-05", null), // open, matches
+    ];
+    expect(currentPeriodStart(periods, "capacity", fallback)).toBe("2026-07-05");
+  });
+
+  it("issue #170 regression: ignores a stale open period from a different phase", () => {
+    // Simulates the transient window right after setPhase optimistically
+    // flips currentPhase to "strength" before repo.switchPhase resolves and
+    // refreshes phasePeriods — the still-open period here is Capacity's.
+    const periods = [
+      period("capacity", "2026-07-11", null), // stale open period, wrong phase
+    ];
+    expect(currentPeriodStart(periods, "strength", fallback)).toBe(fallback);
+  });
+
+  it("ignores an ended period even if its phase matches currentPhase", () => {
+    const periods = [
+      period("capacity", "2026-07-01", "2026-07-10"), // ended, matches phase
+      period("strength", "2026-07-11", null), // open, different phase
+    ];
+    expect(currentPeriodStart(periods, "capacity", fallback)).toBe(fallback);
   });
 });
 

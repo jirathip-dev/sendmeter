@@ -1,0 +1,38 @@
+# Quality gate — lint, typecheck, tests, and a production build.
+# Deployment is separate (deploy-web.yml deploys via the Vercel CLI:
+# main → production, staging → preview).
+name: CI
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+  quality:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      # supabase.ts falls back to the public dev instance when VITE_ vars are
+      # absent — this step only proves the bundle compiles.
+      - name: Build
+        run: npm run build

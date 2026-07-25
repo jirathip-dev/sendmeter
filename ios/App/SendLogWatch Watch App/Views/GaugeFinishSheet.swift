@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SwiftUI
 
 /// The "log this gauge session?" prompt (SL-58 #5). Presented at the root so it
@@ -9,7 +10,6 @@ struct GaugeFinishSheet: View {
     @Environment(TindeqManager.self) private var tindeq
 
     @State private var rpe = 5.0
-    @State private var logging = false
 
     private var durationMin: Int {
         guard let started = tindeq.sessionStartedAt else { return 1 }
@@ -39,25 +39,26 @@ struct GaugeFinishSheet: View {
                             .monospacedDigit()
                     }
                 }
-                Button(logging ? "Logging…" : "Log Session") {
+                Button("Log Session") {
                     guard let groupId = tindeq.sessionId else { return }
-                    let count = tindeq.sessionCount
-                    let dur = durationMin
-                    logging = true
-                    Task {
-                        let note = "\(count) recording\(count == 1 ? "" : "s")"
-                        try? await Repo.logTindeqSession(
-                            durationMin: dur,
-                            rpe: rpe,
-                            note: note,
-                            groupId: groupId
-                        )
-                        logging = false
-                        tindeq.clearSession()
-                    }
+                    // Build the payload synchronously, at tap time — date and
+                    // duration must reflect this exact moment, not whenever
+                    // the queued upload eventually lands (issue #144: the old
+                    // `try? await` here froze mid-flight the instant the user
+                    // lowered their wrist, so the session could arrive
+                    // minutes to hours late, if at all). Persist-first +
+                    // idempotent upsert (PendingSessionQueue/Repo) means this
+                    // can dismiss immediately without waiting on the network.
+                    let pending = PendingTindeqSession.build(
+                        sessionStartedAt: tindeq.sessionStartedAt,
+                        recordingCount: tindeq.sessionCount,
+                        rpe: rpe,
+                        groupId: groupId
+                    )
+                    tindeq.clearSession()
+                    Task { await PendingSessionQueue.shared.enqueue(pending) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(logging)
                 Button("Skip") { tindeq.clearSession() }
                     .font(.footnote)
             }

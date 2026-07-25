@@ -19,6 +19,7 @@ import {
 import type { PhaseId, RoutinePreset, RoutineStep } from "../types";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
+import ConfirmDialog from "./ConfirmDialog";
 import NumInput from "./NumInput";
 import RoutineFullscreen from "./RoutineFullscreen";
 
@@ -66,6 +67,11 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [steps, setSteps] = useState<RoutineStep[]>([{ label: "", s: 60 }]);
+  // Issue #143: gate routine delete behind a confirm dialog. Holds the
+  // preset being confirmed (need its name for the dialog copy).
+  const [confirmDelete, setConfirmDelete] = useState<RoutinePreset | null>(
+    null,
+  );
 
   useEffect(() => {
     let alive = true;
@@ -198,10 +204,21 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
     });
     try {
       await deleteRoutinePreset(id);
+      // Issue #143: plain confirmation toast — no Undo (routine presets
+      // aren't soft-deleted, unlike sessions/recordings).
+      toast("Routine deleted");
     } catch {
       // no realtime/refetch wired for presets; a failed delete resurfaces on
       // next visit — acceptable (same tradeoff as tindeq PresetManager)
     }
+  }
+
+  // Issue #143: called after the confirm dialog is accepted.
+  function confirmRemove() {
+    if (!confirmDelete) return;
+    const id = confirmDelete.id;
+    setConfirmDelete(null);
+    void remove(id);
   }
 
   return (
@@ -281,7 +298,7 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
               style={{ marginLeft: 0 }}
               onClick={(e) => {
                 e.stopPropagation();
-                void remove(p.id);
+                setConfirmDelete(p);
               }}
             >
               ×
@@ -289,6 +306,17 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
           </div>
         );
       })}
+
+      {/* Delete-routine confirm (issue #143) */}
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete routine '${confirmDelete.name}'?`}
+          body="This can't be undone."
+          confirmLabel="Delete"
+          onConfirm={confirmRemove}
+          onClose={() => setConfirmDelete(null)}
+        />
+      )}
 
       {adding ? (
         <div style={{ marginTop: 4 }}>

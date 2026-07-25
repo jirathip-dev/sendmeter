@@ -1,12 +1,14 @@
 import { PHASES } from "../constants";
 import { today } from "../lib/dates";
 import { useChartHover } from "../hooks/useChartHover";
+import { currentPeriodStart } from "../lib/metrics";
 import ChartTooltip from "./ChartTooltip";
 import type { PhaseId, PhasePeriod } from "../types";
 
 interface Props {
   currentPhase: PhaseId;
   phasePeriods: PhasePeriod[];
+  phaseStartDate: string;
 }
 
 function periodDays(p: PhasePeriod): number {
@@ -26,14 +28,20 @@ const ZONES = [
   { range: "> 1.5", label: "Danger — injury risk", color: "var(--danger)" },
 ];
 
-export default function PhasesView({ currentPhase, phasePeriods }: Props) {
+export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate }: Props) {
   const [hoveredPeriod, hoverPeriodProps] = useChartHover<number>();
   const chronological = [...phasePeriods].sort((a, b) =>
     a.startedOn.localeCompare(b.startedOn),
   );
   const totalDays = chronological.reduce((s, p) => s + periodDays(p), 0);
   // Start date of the currently-open period, shown on the active phase card.
-  const openStart = phasePeriods.find((p) => p.endedOn === null)?.startedOn ?? null;
+  // Phase-aware (issue #170's sibling instance): during the async gap in a
+  // phase switch, phasePeriods can still hold the OLD phase's open period
+  // while currentPhase has already flipped to the new one. currentPeriodStart
+  // ignores a stale, wrong-phase open period and falls back to the
+  // optimistic phaseStartDate instead of showing the old phase's date under
+  // the new phase's card.
+  const openStart = currentPeriodStart(phasePeriods, currentPhase, phaseStartDate);
 
   const segments = chronological.reduce<
     { p: PhasePeriod; days: number; startPct: number; widthPct: number }[]
@@ -157,7 +165,7 @@ export default function PhasesView({ currentPhase, phasePeriods }: Props) {
                   {phaseHistory(p.id)}
                 </div>
               )}
-              {currentPhase === p.id && openStart && (
+              {currentPhase === p.id && (
                 <div style={{ fontSize: "var(--t-eyebrow)", color: p.color, marginTop: 2 }}>
                   Since {openStart}
                 </div>

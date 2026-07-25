@@ -20,6 +20,12 @@ export interface SendLogHealthPlugin {
     refreshToken: string;
   }): Promise<void>;
 
+  /// Tells the plugin to forget its stored session (issue #196) — called on
+  /// phone sign-out so a later background HealthKit wake can't keep using a
+  /// stale/rotated refresh token. Mirrors the watch auth bridge's
+  /// `clearSession`.
+  clearSession(): Promise<void>;
+
   /// Read HealthKit now, upsert today's biometrics, and — unless
   /// ReadinessWritePolicy withholds it (an `"automatic"` sync after an
   /// already-scored today's noon) — (re)compute and upsert readiness. Called

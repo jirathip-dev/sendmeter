@@ -1,5 +1,5 @@
 import XCTest
-@testable import SendLogWatch_Watch_App
+import SendLogWatchCore
 
 /// Regression coverage for the Buddhist-calendar date bug: Date.localDateString
 /// and Calendar.gregorianLocal must always produce the Gregorian (AD) year,

@@ -1,3 +1,6 @@
+require "base64"
+require "fileutils"
+
 default_platform(:ios)
 
 APP_IDENTIFIER = "com.jirathip.sendlog".freeze
@@ -25,10 +28,38 @@ platform :ios do
     #    -allowProvisioningUpdates create/refresh the app + watch provisioning
     #    profiles the same way — without a signed-in Xcode account, which is
     #    what "exportArchive No Accounts" was complaining about.
-    get_certificates(
-      api_key: api_key,
-      output_path: "fastlane/certs"
-    )
+    #
+    #    On CI (ENV["CI"] set) get_certificates is unsafe: a fresh runner has
+    #    an empty keychain, so it MINTS a new Apple Distribution cert every
+    #    run — Apple caps these at 2-3/team, and a new cert invalidates
+    #    profiles the laptop already has pinned to the old one. CI instead
+    #    imports the team's single existing cert from a secret into a
+    #    temporary keychain. Env contract for the CI job (a GitHub
+    #    "testflight" environment, per the agent-ops CI/CD doctrine):
+    #      CI=true (set automatically by GitHub Actions)
+    #      IOS_DIST_CERT_P12       — base64 of the exported SH947DTWM4.p12
+    #      IOS_DIST_CERT_PASSWORD  — that p12's export password
+    #    plus ASC_KEY_ID / ASC_ISSUER_ID as today, and the workflow must
+    #    write the ASC_KEY_P8 secret to fastlane/asc_api_key.p8 (the
+    #    File.basename below resolves ASC_KEY_PATH relative to fastlane/, so
+    #    -authenticationKeyPath needs a real file at that path either way).
+    if ENV["CI"]
+      setup_ci
+      cert_path = File.expand_path("certs/dist.p12", __dir__)
+      FileUtils.mkdir_p(File.dirname(cert_path))
+      File.binwrite(cert_path, Base64.decode64(ENV.fetch("IOS_DIST_CERT_P12")))
+      import_certificate(
+        certificate_path: cert_path,
+        certificate_password: ENV.fetch("IOS_DIST_CERT_PASSWORD"),
+        keychain_name: "fastlane_tmp_keychain",
+        keychain_password: ""
+      )
+    else
+      get_certificates(
+        api_key: api_key,
+        output_path: "fastlane/certs"
+      )
+    end
     key_abs = File.expand_path(File.basename(ENV.fetch("ASC_KEY_PATH")), __dir__)
     auth_args = "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} " \
                 "-authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')} " \

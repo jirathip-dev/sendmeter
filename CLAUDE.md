@@ -26,10 +26,15 @@ npm run lint       # eslint .
 npm run sync       # cap sync ios  (copies dist/ into the iOS app, regenerates CapApp-SPM)
 ```
 
-Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic only
-(metrics/ACWR, force-curve, dates). The **Swift** side has tests too:
+Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic, tests live
+alongside each module (`*.test.ts` in `src/lib` and `src/hooks`). The **Swift** side has tests too:
 - `cd native-plugins/sendlog-health-core && swift test` — pure readiness/ACWR math, runs on macOS.
-- `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."` — watch logic (attempt detection, RPE model, Tindeq protocol, dates).
+- `cd ios/App/SendLogWatchCore && swift test` — watch pure logic (attempt
+  detection, RPE model, Tindeq protocol, ACWR, dates). Runs on the host, no
+  simulator. The same files are still compiled into the Xcode test target, so
+  `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App"
+  -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."`
+  also runs them until #199 moves that job to Linux.
 
 Always run `npm run typecheck && npm run lint && npm test && npm run build` after web changes.
 
@@ -71,7 +76,8 @@ Work down this ladder — each rung is cheaper than the next, so push logic up i
 
 1. **Pure logic → unit tests, no simulator.** Readiness/ACWR math lives in
    `sendlog-health-core` (`swift test` on macOS); attempt detection, RPE model,
-   Tindeq protocol, and date logic live in `SendLogWatchTests`. New native logic
+   Tindeq protocol, ACWR, and date logic live in the `SendLogWatchCore` SwiftPM
+   package (`cd ios/App/SendLogWatchCore && swift test`). New native logic
    should land in one of these testable layers first, UI wiring second.
 2. **WebView UI → browser against the local stack** (`npm run dev:local` +
    `?fake-tindeq`). Everything React is fully exercisable here.
@@ -155,11 +161,23 @@ are safe regardless.
   recorder in ForceView walk the same segments. Each hold saves as its own
   recording (sliced from `samplesRef`) with the correct side.
   `presetTargetKg` resolves %-of-PR targets with per-set ramps.
-- **`src/`** — the React app. `lib/` = data/logic (repo.ts = all Supabase queries,
-  metrics.ts = ACWR/EWMA + exported `ewma()`, force-curve.ts = critical-force
-  fit + `ZONE_PROTOCOLS`, protocol.ts = guided timelines, healthSync.ts +
-  watchAuthRelay.ts = native bridges). `components/` = UI (`InfoDot.tsx` =
-  the "?" explainer sheets). `hooks/` = data hooks.
+- **Routine engine** — `src/lib/routine.ts` (pure, vitest-covered):
+  `expandRoutine(steps, {prepareS})` mirrors `protocol.ts`'s `buildTimeline`,
+  expanding a `RoutineStep[]` into flat timed segments (prepare/work/rest,
+  each step repeating ×reps with a rest between reps). `routineRun.ts` holds
+  the persisted, wall-clock-derived run state (`presetId`, `startedMs`,
+  pause bookkeeping) so `elapsedS()` can resume a run exactly after a
+  refresh/relaunch; `shouldLog()` gates logging a partial session on ≥60s
+  elapsed. Consumed by `src/components/RoutineCard.tsx` (preset CRUD + run
+  launch, on the Workout tab) and `RoutineFullscreen.tsx` (the running
+  countdown UI), wired into `WorkoutView.tsx`.
+- **`src/`** — the React app. `lib/` = data/logic (`repo/` = all Supabase
+  queries, metrics.ts = ACWR/EWMA + exported `ewma()`, force-curve.ts =
+  critical-force fit + `ZONE_PROTOCOLS`, protocol.ts = guided Tindeq
+  timelines, routine.ts/routineRun.ts = guided routine-timer timelines +
+  resumable run state, healthSync.ts + watchAuthRelay.ts = native bridges).
+  `components/` = UI (`InfoDot.tsx` = the "?" explainer sheets). `hooks/` =
+  data hooks.
 - **`ios/App/App.xcodeproj`** — four product targets: the Capacitor iOS **App**,
   the **SendLogWatch Watch App** companion (SwiftUI; workout/attempt tracking,
   force gauge, readiness display), **SendmeterWidgets** (WidgetKit app
@@ -232,13 +250,16 @@ are safe regardless.
     plugin `register` → `passkey.verifyRegistration`, and the auth equivalent),
     passing all binary fields as base64url. Relies on the already-configured
     `webcredentials:sendmeter.app` associated domain + AASA. Device-only to verify.
-- **`supabase/migrations/`** — 18 migrations. Tables: `sessions` (incl.
+- **`supabase/migrations/`** — Tables: `sessions` (incl.
   `workout_source` = immutable auto/phone badge that survives type edits),
   `user_settings`, `phase_periods`, `tindeq_recordings`, `tindeq_presets`
   (hold/reps/sets/rests + target kg or %-of-PR + per-set % step + alternate
-  sides), `climb_workouts`/`climb_attempts` (both with `source` provenance),
-  `health_metrics`, `live_workouts` (one row per user, watch-heartbeat for
-  the live workout mirror). RLS scopes everything to `auth.uid()`; realtime
+  sides), `routine_presets` (user-defined guided routine steps, drives the
+  Workout tab's routine timer), `climb_workouts`/`climb_attempts` (both with
+  `source` provenance), `health_metrics`, `live_workouts` (one row per user,
+  watch-heartbeat for the live workout mirror), `tindeq_tags` (per-user tag
+  registry for rename/hide metadata; tags themselves stay denormalized on
+  `tindeq_recordings.tag`). RLS scopes everything to `auth.uid()`; realtime
   publishes the watch-writable tables + `live_workouts`.
 
 ## Non-obvious things that will bite you
@@ -281,18 +302,54 @@ are safe regardless.
     non-refreshing `auth.currentSession` only. Keep both guards.
 - **Migrations aren't auto-applied — and must go to BOTH remote projects.** Files
   in `supabase/migrations/` are just SQL on disk. Apply each new migration to the
-  **prod** project (`zznsqmcewtzlnfoiefkk`, via the Supabase MCP `apply_migration`
-  or the CLI) **and** to the **dev/preview** project (`mjkndfhjnipomjjhgsxv`, issue
-  #121 — hosted on a second Supabase account; the main account is only a Developer
-  member there, so use its Management API token at `~/.supabase/dev-account-token`
-  against `POST /v1/projects/mjkndfhjnipomjjhgsxv/database/query`, and record the
-  version in `supabase_migrations.schema_migrations`). Skipping prod drifts the
+  **prod** project (`zznsqmcewtzlnfoiefkk`) **and** to the **dev/preview** project
+  (`mjkndfhjnipomjjhgsxv`, issue #121 — hosted on a second Supabase account), via
+  `POST /v1/projects/{ref}/database/query`, recording the name + version in
+  `supabase_migrations.schema_migrations`. **One Management API token reaches both**
+  (`~/.supabase/access-token`): the main account is only a *Developer* on the dev
+  project, but Developer is sufficient for the Management API — verified 2026-07-25.
+  Check parity any time with `npm run migration:status`. (The older
+  `~/.supabase/dev-account-token` is no longer needed; the token that was there had
+  expired, which presents as `401 JWT could not be decoded` — a dead token, not a
+  rights problem.) Skipping prod drifts the
   schema from the code (the `health_metrics` delete policy + date-sanity constraints
   sat unapplied for a while: with no DELETE policy, a delete silently matches zero
   rows, so "Clear health data" looked broken while succeeding); skipping dev breaks
   Vercel preview deployments the same way. The dev project is free-tier and
   auto-pauses after ~7 idle days — unpause it (second account's dashboard or its
   token) before verifying a release.
+- **CI secrets live on GitHub *environments*, not the repo (planned, #130).** The
+  two Supabase projects are on two different accounts, but **one main-account token
+  reaches both** (Developer role suffices for the Management API), so the same
+  `SUPABASE_ACCESS_TOKEN` value can go in both environments:
+
+  | GitHub environment | project ref | deployable from |
+  |---|---|---|
+  | `Preview` | `mjkndfhjnipomjjhgsxv` | `staging` only |
+  | `Production` | `zznsqmcewtzlnfoiefkk` | `main` only |
+
+  The branch restriction is the real guard: prod secrets are unreachable from any
+  branch but `main`, so a mis-wired job cannot touch prod. (Required *reviewers*
+  would be better still, but need a paid plan on a private repo.) A workflow picks
+  an environment with
+  `environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}`.
+  **Match that capitalisation exactly** — GitHub silently *creates* an environment
+  when the name doesn't match an existing one, so a lowercase `production` would run
+  with no secrets and no error. This repo's environments are `Preview`, `Production`
+  and `testflight` (that last one lowercase).
+- **Automated migrations must apply by NAME, not version.** Prod's
+  `schema_migrations` carries apply-time versions from the MCP `apply_migration`
+  era while local files carry file timestamps, so the same migration legitimately
+  has different versions on the two projects. `supabase db push` diffs by version
+  and would re-apply recorded history. Use the Management API
+  (`POST /v1/projects/{ref}/database/query`) — access token only, no DB password,
+  no `supabase link`, so `supabase/config.toml`'s hardcoded prod ref can't misfire.
+  `synergy-costing` already solved this; its `scripts/apply-migrations.mjs`
+  (append-only, fails on an unrecorded *older* migration) and
+  `scripts/migration-status.mjs` (dev/prod parity table) are the reference
+  implementations. The ledger records only what was *reported* applied — it is not
+  proof the objects exist.
+
 - **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
   **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
   prompt (in-app has an Undo; the watch hides tag/side/session controls *while
@@ -336,7 +393,7 @@ are safe regardless.
   `.glass-bar`) shares the translucent blur-glass recipe.
 - **localStorage keys** are prefixed `sendmeter:` — `phone-workout` (resumable
   workout state machine), `rest-target-s`, `gauge-prepare`, `passkey-prompt`,
-  `theme`.
+  `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202).
 - **Chrome animates transform/opacity on the compositor**, so `getComputedStyle`
   returns the *base* value mid-animation — you can't measure a ripple's scale or a
   hidden bar's transform from JS in the browser tools; verify animations visually
@@ -368,16 +425,34 @@ are safe regardless.
 
 - **Release flow: TestFlight builds from `staging`, by default.** TestFlight is
   the rung-4 device-verification channel, so build it from `staging` *before*
-  promoting: staging → `fastlane beta` → verify on device → promotion PR
-  staging → main (which triggers the Vercel production web deploy). Promoting
-  first would ship native code to the release branch before it's ever been
-  device-verifiable, and couples "I need a build on my phone" to a web prod
-  deploy. Exception: builds for **external testers / App Store submission** cut
-  from `main` so the promoted branch is exactly what ships. Note the branch is
-  only a *code-state* distinction for native builds — the compiled-in Supabase
-  config means every device build reads/writes **production** data.
+  promoting: staging → `bundle exec fastlane beta` → verify on device →
+  promotion PR staging → main (which triggers the Vercel production web
+  deploy). Promoting first would ship native code to the release branch
+  before it's ever been device-verifiable, and couples "I need a build on my
+  phone" to a web prod deploy. Exception: builds for **external testers /
+  App Store submission** cut from `main` so the promoted branch is exactly
+  what ships. Note the branch is only a *code-state* distinction for native
+  builds — the compiled-in Supabase config means every device build
+  reads/writes **production** data.
+- **CI TestFlight builds are opt-in, not per-merge (#150).**
+  `.github/workflows/testflight.yml` runs `fastlane beta` on a Blacksmith
+  **6vCPU** macOS runner (`blacksmith-6vcpu-macos-26`, $0.08/min — macOS
+  minutes burn the free tier at 20x the Ubuntu rate and were the dominant CI
+  cost, ~$0.5+ per build on the old always-on 12vCPU trigger). A staging push
+  only builds when the pushed commit message contains **`[testflight]`** (for
+  a squash-merged PR that's the PR title); untagged pushes show as skipped
+  runs. For an on-demand build use
+  `gh workflow run TestFlight --ref staging` (a `runner` input overrides the
+  label, e.g. back to 12vCPU for a rush build). The workflow's `concurrency`
+  queues and never cancels — build numbers come from
+  `latest_testflight_build_number + 1`, so parallel runs would race the same
+  number. Failed uploads (Apple 500s happen) still bill the full build —
+  rerun via workflow_dispatch rather than re-pushing.
 - **`fastlane beta` runs fully headless via the ASC API key** — `cd` to repo root
-  (or `ios/`) and run `LANG=en_US.UTF-8 fastlane beta`; it works from a
+  (or `ios/`) and run `LANG=en_US.UTF-8 bundle exec fastlane beta` (always via
+  `bundle exec`, never bare `fastlane beta` — the Ruby toolchain is pinned in
+  `.mise.toml` and the fastlane version in `Gemfile.lock`; a bare invocation
+  can pick up a different globally-installed fastlane). It works from a
   spawned/non-interactive shell, no signed-in Xcode account required. The lane
   (`fastlane/Fastfile`) does everything: `npm run build && cap sync ios`, then
   `get_certificates` (installs/creates the Apple Distribution cert via the API key),

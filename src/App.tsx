@@ -4,6 +4,7 @@ import { today } from "./lib/dates";
 import {
   computeAcwr,
   computeWeeklyLoads,
+  currentPeriodStart,
   getACWRStatus,
   phaseStartFromHistory,
 } from "./lib/metrics";
@@ -22,6 +23,7 @@ import WorkoutView from "./components/WorkoutView";
 import BottomNav from "./components/BottomNav";
 import PasskeyPrompt from "./components/PasskeyPrompt";
 import AccountSheet from "./components/AccountSheet";
+import ConfirmDialog from "./components/ConfirmDialog";
 import Sheet from "./components/Sheet";
 import TrashSheet from "./components/TrashSheet";
 import UnlinkedSessionNudge from "./components/UnlinkedSessionNudge";
@@ -30,7 +32,7 @@ import ToastProvider from "./components/ToastProvider";
 import { TindeqProvider } from "./hooks/TindeqProvider";
 import { useToast } from "./hooks/useToast";
 import type { HealthSyncSource } from "./lib/healthSync";
-import { insertRecording } from "./lib/repo";
+import { insertRecording, restoreSession } from "./lib/repo";
 import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
 
 export default function App() {
@@ -96,8 +98,14 @@ function AuthedApp({
   const [editingSession, setEditingSession] = useState<Session | null>(null);
   const [showPhases, setShowPhases] = useState(false);
   const [showPhaseChange, setShowPhaseChange] = useState(false);
-  const [showWatchSheet, setShowWatchSheet] = useState(false);
+  const [showAccountSheet, setShowAccountSheet] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
+  // Issue #143: session delete is gated behind a confirm dialog instead of
+  // firing instantly. Non-null while the dialog for that session id is open.
+  const [confirmDeleteSessionId, setConfirmDeleteSessionId] = useState<
+    string | null
+  >(null);
+  const [deletingSession, setDeletingSession] = useState(false);
   // The just-logged session, while it may still have same-day unlinked
   // Tindeq recordings to nudge-link (SL-21). Cleared on dismiss/link, or by
   // logging another session.
@@ -137,11 +145,17 @@ function AuthedApp({
   // SL-31 sync toast: only for a foreground resync the user is actively
   // looking at. The cold-launch background sync fires on every app open
   // (would be noisy) and the "Clear & resync" path already toasts itself.
+  // #146: source alone isn't enough — the native plugin always re-upserts
+  // on every foreground call regardless of whether anything actually
+  // changed, so also require `changed` or the toast fires on every
+  // foreground even with no new data.
   useEffect(() => {
     const onHealthSynced = (e: Event) => {
-      const source = (e as CustomEvent<{ source?: HealthSyncSource }>).detail
-        ?.source;
-      if (source === "foreground") toast("Health data synced");
+      const detail = (e as CustomEvent<{ source?: HealthSyncSource; changed?: boolean }>)
+        .detail;
+      if (detail?.source === "foreground" && detail.changed) {
+        toast("Health data synced");
+      }
     };
     window.addEventListener("sendmeter:health-synced", onHealthSynced);
     return () =>
@@ -176,8 +190,7 @@ function AuthedApp({
   // from history), so toggling to another phase and back doesn't reset it. The
   // open period's start (or phaseStartDate) is only the fallback when nothing's
   // been logged in the phase yet.
-  const periodStart =
-    phasePeriods.find((p) => p.endedOn === null)?.startedOn ?? phaseStartDate;
+  const periodStart = currentPeriodStart(phasePeriods, currentPhase, phaseStartDate);
   const phaseStart = phaseStartFromHistory(sessions, currentPhase, periodStart);
   const phaseDays =
     Math.floor(
@@ -212,6 +225,26 @@ function AuthedApp({
     setShowModal(true);
   }
 
+  // Issue #143: confirmed session delete — soft-delete then toast an Undo
+  // that restores it and reloads so the list reflects the restore.
+  async function confirmDeleteSession() {
+    const id = confirmDeleteSessionId;
+    if (!id) return;
+    setDeletingSession(true);
+    await removeSession(id);
+    setDeletingSession(false);
+    setConfirmDeleteSessionId(null);
+    toast("Session moved to Trash", "success", {
+      label: "Undo",
+      onClick: () => {
+        void (async () => {
+          await restoreSession(id);
+          await reload();
+        })();
+      },
+    });
+  }
+
   return (
     <div className={`app-shell${chromeHidden ? " chrome-hidden" : ""}`}>
       {/* Floating account button — the whole header is just this circle;
@@ -219,7 +252,7 @@ function AuthedApp({
       <button
         className="account-fab"
         aria-label="Account"
-        onClick={() => setShowWatchSheet(true)}
+        onClick={() => setShowAccountSheet(true)}
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="8.2" r="3.4" />
@@ -275,10 +308,7 @@ function AuthedApp({
                 userId={userId}
                 sessions={sessions}
                 currentPhase={currentPhase}
-                onDelete={(id) => {
-                  void removeSession(id);
-                  toast("Session moved to Trash");
-                }}
+                onDelete={(id) => setConfirmDeleteSessionId(id)}
                 onEdit={setEditingSession}
                 onOpenTrash={() => setShowTrash(true)}
               />
@@ -334,7 +364,11 @@ function AuthedApp({
       {/* Phases bottom sheet — informational only (no tap-to-set) */}
       {showPhases && (
         <Sheet fullHeight onClose={() => setShowPhases(false)}>
-          <PhasesView currentPhase={currentPhase} phasePeriods={phasePeriods} />
+          <PhasesView
+            currentPhase={currentPhase}
+            phasePeriods={phasePeriods}
+            phaseStartDate={phaseStartDate}
+          />
           <div style={{ marginTop: 10 }}>
             <button className="btn-ghost" onClick={() => setShowPhases(false)}>
               Close
@@ -415,9 +449,9 @@ function AuthedApp({
       )}
 
       {/* Account bottom sheet */}
-      {showWatchSheet && (
+      {showAccountSheet && (
         <AccountSheet
-          onClose={() => setShowWatchSheet(false)}
+          onClose={() => setShowAccountSheet(false)}
           onSignOut={onSignOut}
         />
       )}
@@ -439,6 +473,18 @@ function AuthedApp({
         <TrashSheet
           onClose={() => setShowTrash(false)}
           onSessionRestored={() => void reload()}
+        />
+      )}
+
+      {/* Delete-session confirm (issue #143) */}
+      {confirmDeleteSessionId && (
+        <ConfirmDialog
+          title="Delete session?"
+          body="It moves to Trash — you can restore it there."
+          confirmLabel="Delete"
+          busy={deletingSession}
+          onConfirm={() => void confirmDeleteSession()}
+          onClose={() => setConfirmDeleteSessionId(null)}
         />
       )}
 

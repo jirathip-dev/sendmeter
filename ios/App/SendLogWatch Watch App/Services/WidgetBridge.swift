@@ -1,4 +1,5 @@
 import Foundation
+import SendLogWatchCore
 import WidgetKit
 
 /// The watch app is the source of truth for its complications / Smart-Stack
@@ -45,31 +46,14 @@ enum WidgetBridge {
         WidgetCenter.shared.reloadAllTimelines()
     }
 
-    // ACWR = acute (7-day EWMA) / chronic (28-day EWMA) of daily training load,
-    // the same shape as the web app's metric.
+    // ACWR = acute (7-day EWMA) / chronic (28-day EWMA) of daily training
+    // load, mean-seeded, over a 90-day window — same shape and same window
+    // as the web app's metric (issue #189: the two used to disagree because
+    // they used different windows/seeding). See ACWR.swift's KEEP-IN-SYNC
+    // comment.
     private static func computeACWR() async throws -> Double? {
-        let rows = try await Repo.fetchSessionLoads(sinceDays: 28)
-        guard !rows.isEmpty else { return nil }
-        let cal = Calendar.gregorianLocal
-        var byDate: [String: Double] = [:]
-        for r in rows { byDate[r.date, default: 0] += Double(r.load ?? 0) }
-        // Trailing 28 daily totals, oldest → newest (missing days = 0 load).
-        var series: [Double] = []
-        for i in stride(from: 27, through: 0, by: -1) {
-            let d = cal.date(byAdding: .day, value: -i, to: Date())!
-            series.append(byDate[d.localDateString] ?? 0)
-        }
-        let acute = ewma(series, span: 7)
-        let chronic = ewma(series, span: 28)
-        guard chronic > 0 else { return nil }
-        return acute / chronic
-    }
-
-    private static func ewma(_ series: [Double], span: Int) -> Double {
-        guard let first = series.first else { return 0 }
-        let alpha = 2.0 / (Double(span) + 1.0)
-        var v = first
-        for x in series.dropFirst() { v = alpha * x + (1 - alpha) * v }
-        return v
+        let rows = try await Repo.fetchSessionLoads(sinceDays: 90)
+        let series = dailyLoadSeries(rows: rows, days: 90)
+        return ewmaAcwr(dailyLoads: series)
     }
 }

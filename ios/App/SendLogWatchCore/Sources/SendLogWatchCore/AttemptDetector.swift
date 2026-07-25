@@ -2,7 +2,7 @@ import Foundation
 
 /// Pure Swift boulder-attempt detector — no frameworks, unit-testable.
 /// Fed 1 Hz MotionSamples fused from CMAltimeter + CMMotionManager + HR.
-final class AttemptDetector {
+public final class AttemptDetector {
     private enum Phase {
         case rest
         case climbing(startTick: Int, startDate: Date, baselineAtStart: Double, maxAlt: Double)
@@ -23,22 +23,22 @@ final class AttemptDetector {
     private var rawAttempts: [RawAttempt] = []
     private var workoutStart: Date?
 
-    init(tunables: Tunables) {
+    public init(tunables: Tunables) {
         self.t = tunables
     }
 
     /// Live count for the workout UI (post-processing applied incrementally).
-    var liveAttemptCount: Int {
+    public var liveAttemptCount: Int {
         processedAttempts().count
     }
 
     /// True while a manual boulder is open — drives the Boulder/Stop toggle.
-    var isManualAttemptOpen: Bool {
+    public var isManualAttemptOpen: Bool {
         if case .manual = phase { return true }
         return false
     }
 
-    func ingest(_ sample: MotionSample, at date: Date) {
+    public func ingest(_ sample: MotionSample, at date: Date) {
         if workoutStart == nil { workoutStart = date }
         ticks.append(sample)
         let i = ticks.count - 1
@@ -84,7 +84,7 @@ final class AttemptDetector {
 
     /// Open a manual boulder attempt. Suspends auto detection; if an auto
     /// attempt was already open it's closed and kept first (no overlap).
-    func beginManualAttempt(at date: Date) {
+    public func beginManualAttempt(at date: Date) {
         if workoutStart == nil { workoutStart = date }
         if case .climbing(let s, let sd, let b, let m) = phase {
             rawAttempts.append((s, max(s, ticks.count - 1), sd, b, m, .auto))
@@ -96,13 +96,13 @@ final class AttemptDetector {
     }
 
     /// Close the open manual attempt (Stop). No-op if none is open.
-    func endManualAttempt(at date: Date) {
+    public func endManualAttempt(at date: Date) {
         guard case .manual(let s, let sd, let b, let m) = phase else { return }
         rawAttempts.append((s, ticks.count - 1, sd, b, m, .manual))
         phase = .rest
     }
 
-    func finalize() -> [Attempt] {
+    public func finalize() -> [Attempt] {
         // Flush an open attempt (auto or manual)
         switch phase {
         case .climbing(let s, let sd, let b, let m):
@@ -232,7 +232,7 @@ final class AttemptDetector {
         return max(0, min(10, raw))
     }
 
-    static func predictRPE(
+    public static func predictRPE(
         attempts: [Attempt],
         avgHR: Double?,
         durationS: Double,

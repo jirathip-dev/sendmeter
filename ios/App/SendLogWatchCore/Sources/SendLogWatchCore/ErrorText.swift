@@ -2,8 +2,8 @@ import Foundation
 
 /// Maps raw backend/SDK errors to short, user-facing text for the watch UI —
 /// so an auth/session hiccup reads as "signed out", not a database error.
-enum ErrorText {
-    static func friendly(_ error: Error) -> String {
+public enum ErrorText {
+    public static func friendly(_ error: Error) -> String {
         let m = error.localizedDescription.lowercased()
         if m.contains("row-level security") || m.contains("jwt")
             || m.contains("not authenticated") || m.contains("unauthorized")
