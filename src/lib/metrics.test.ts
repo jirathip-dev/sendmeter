@@ -139,7 +139,8 @@ describe("computeAcwr", () => {
   it("watch/web ACWR parity (issue #189): pins the ratio for a fixed 90-day fixture", () => {
     // Same deterministic (integer-arithmetic, no transcendental functions —
     // reproducible bit-for-bit) 90-day load series as
-    // SendLogWatchTests/ACWRTests.swift's testMatchesWebFixtureVector, fed
+    // ios/App/SendLogWatchCore/Tests/SendLogWatchCoreTests/ACWRTests.swift's
+    // testMatchesWebFixtureVector, fed
     // in oldest → newest (dailyLoads[0] on daysAgo(89), ..., dailyLoads[89]
     // on today()). The watch used to compute ACWR with a 28-day series
     // seeded at the raw first-day value; the web used a 90-day,

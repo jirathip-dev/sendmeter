@@ -1,6 +1,7 @@
 import CoreBluetooth
 import Foundation
 import Observation
+import SendLogWatchCore
 import WatchConnectivity
 
 /// CoreBluetooth central for the Tindeq Progressor. Mirrors the web app's

@@ -29,7 +29,12 @@ npm run sync       # cap sync ios  (copies dist/ into the iOS app, regenerates C
 Web tests use **Vitest** (`npm test` = `vitest run`) — pure logic, tests live
 alongside each module (`*.test.ts` in `src/lib` and `src/hooks`). The **Swift** side has tests too:
 - `cd native-plugins/sendlog-health-core && swift test` — pure readiness/ACWR math, runs on macOS.
-- `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."` — watch logic (attempt detection, RPE model, Tindeq protocol, dates).
+- `cd ios/App/SendLogWatchCore && swift test` — watch pure logic (attempt
+  detection, RPE model, Tindeq protocol, ACWR, dates). Runs on the host, no
+  simulator. The same files are still compiled into the Xcode test target, so
+  `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App"
+  -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."`
+  also runs them until #199 moves that job to Linux.
 
 Always run `npm run typecheck && npm run lint && npm test && npm run build` after web changes.
 
@@ -71,7 +76,8 @@ Work down this ladder — each rung is cheaper than the next, so push logic up i
 
 1. **Pure logic → unit tests, no simulator.** Readiness/ACWR math lives in
    `sendlog-health-core` (`swift test` on macOS); attempt detection, RPE model,
-   Tindeq protocol, and date logic live in `SendLogWatchTests`. New native logic
+   Tindeq protocol, ACWR, and date logic live in the `SendLogWatchCore` SwiftPM
+   package (`cd ios/App/SendLogWatchCore && swift test`). New native logic
    should land in one of these testable layers first, UI wiring second.
 2. **WebView UI → browser against the local stack** (`npm run dev:local` +
    `?fake-tindeq`). Everything React is fully exercisable here.

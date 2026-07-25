@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SwiftUI
 
 /// The "log this gauge session?" prompt (SL-58 #5). Presented at the root so it

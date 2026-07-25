@@ -1,5 +1,5 @@
 import XCTest
-@testable import SendLogWatch_Watch_App
+import SendLogWatchCore
 
 /// Regression coverage for issue #189: the watch and web computed ACWR with
 /// different algorithms (a 28-day series seeded at the raw first-day value,

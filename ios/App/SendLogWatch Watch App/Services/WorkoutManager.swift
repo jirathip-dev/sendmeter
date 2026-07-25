@@ -2,6 +2,7 @@ import CoreMotion
 import Foundation
 import HealthKit
 import Observation
+import SendLogWatchCore
 import WatchConnectivity
 
 /// Runs an HKWorkoutSession (climbing, indoor) with live HR from

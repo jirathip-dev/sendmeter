@@ -1,5 +1,5 @@
 import XCTest
-@testable import SendLogWatch_Watch_App
+import SendLogWatchCore
 
 final class RPEModelTests: XCTestCase {
     /// Deterministic pseudo-random source (no Date/random dependency issues).

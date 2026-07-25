@@ -1,29 +1,7 @@
 import Foundation
+import SendLogWatchCore
 
 // MARK: - Detection domain
-
-struct MotionSample {
-    let t: TimeInterval        // seconds since workout start
-    let altitude: Double       // relative altitude (m)
-    let motionRMS: Double      // |userAcceleration| RMS over trailing window (g)
-    let hr: Double?            // bpm, may lag
-}
-
-enum AttemptSource: String, Codable {
-    case auto    // altimeter/motion state machine
-    case manual  // logged via the Boulder/Stop button
-}
-
-struct Attempt {
-    let startedAt: Date
-    let durationS: Double
-    let elevationGainM: Double
-    let avgHR: Double?
-    let peakHR: Double?
-    let motionIntensity: Double
-    let effortScore: Double
-    let source: AttemptSource
-}
 
 struct WorkoutSummary {
     let workoutId: UUID    // generated at start; matches live_workouts + the final row
@@ -204,11 +182,6 @@ nonisolated struct UserSettingsRow: Codable {
     }
 }
 
-nonisolated struct SessionLoadRow: Codable {
-    var date: String
-    var load: Int?
-}
-
 /// Read-only projection of the latest health_metrics row — the iPhone writes
 /// the full row; the watch only reads the score/zone back for display.
 nonisolated struct HealthMetricRow: Codable {
@@ -263,84 +236,4 @@ nonisolated struct WorkoutSaveBundle: Codable {
     /// `nil` only for items written before this field existed (legacy
     /// on-disk files); see `shouldDrain`.
     var enqueuedUserId: UUID? = nil
-}
-
-/// A gauge session queued for upload by `PendingSessionQueue` (issue #144):
-/// "Log Session" used to await the network insert directly, right when the
-/// user lowers their wrist — watchOS then suspends the app and freezes the
-/// in-flight request, so the session row (and its group_id) could land
-/// minutes to hours later, if at all. `id` is minted client-side at enqueue
-/// time so the eventual insert is an idempotent upsert (safe to retry/replay,
-/// same pattern as `WorkoutSaveBundle`). `date`/`durationMin`/`note` are
-/// captured synchronously at tap time so a delayed drain still logs the
-/// session against the moment it actually finished.
-nonisolated struct PendingTindeqSession: Codable {
-    var id: UUID
-    var date: String           // YYYY-MM-DD, captured at enqueue time
-    var durationMin: Int
-    var rpe: Double
-    var note: String
-    var groupId: UUID          // Tindeq gauge session link — must survive the upload
-    /// Which account was signed in when this session was persisted to disk
-    /// (issue #158) — stamped by `PendingSessionQueue.persist`, checked by
-    /// `drain()` so a session queued under one account can't silently upload
-    /// under whichever account happens to be signed in when the queue next
-    /// drains. `nil` only for items written before this field existed
-    /// (legacy on-disk files); see `shouldDrain`.
-    var enqueuedUserId: UUID? = nil
-
-    /// Builds the "Log Session" payload as a pure function, so
-    /// SendLogWatchTests can exercise it without a live TindeqManager/View.
-    /// `now` defaults to the real clock but is injectable for tests.
-    /// Duration is clamped to 1-600 min, matching `SessionInsert`/
-    /// `WorkoutSaveBundle`'s bound (the DB's date-sanity constraints assume
-    /// it); `date` is the session's START day, matching the convention
-    /// `Repo.makeSaveBundle` uses for workouts (`summary.startedAt`), not the
-    /// moment it happened to be logged.
-    static func build(
-        sessionStartedAt: Date?,
-        now: Date = Date(),
-        recordingCount: Int,
-        rpe: Double,
-        groupId: UUID
-    ) -> PendingTindeqSession {
-        let started = sessionStartedAt ?? now
-        let rawMinutes = Int((now.timeIntervalSince(started) / 60).rounded())
-        let note = "\(recordingCount) recording\(recordingCount == 1 ? "" : "s")"
-        return PendingTindeqSession(
-            id: UUID(),
-            date: started.localDateString,
-            durationMin: max(1, min(600, rawMinutes)),
-            rpe: rpe,
-            note: note,
-            groupId: groupId
-        )
-    }
-}
-
-extension Calendar {
-    /// Always Gregorian, regardless of the device's Region/Calendar setting.
-    /// A Thai Region, for example, defaults to the Buddhist calendar
-    /// (Gregorian year + 543) — `Calendar.current` silently follows that,
-    /// which corrupted every date the watch wrote. Every date computed for
-    /// storage or comparison against the database must go through this.
-    static var gregorianLocal: Calendar {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = .current
-        return cal
-    }
-}
-
-extension Date {
-    /// Local calendar date as YYYY-MM-DD (mirrors web src/lib/dates.ts).
-    /// Forces the Gregorian calendar AND en_US_POSIX locale so the year is
-    /// always AD, never a locale-specific era — see Calendar.gregorianLocal.
-    var localDateString: String {
-        let f = DateFormatter()
-        f.calendar = Calendar(identifier: .gregorian)
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.timeZone = .current
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: self)
-    }
 }

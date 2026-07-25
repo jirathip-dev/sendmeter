@@ -1,5 +1,5 @@
 import XCTest
-@testable import SendLogWatch_Watch_App
+import SendLogWatchCore
 
 final class AttemptDetectorTests: XCTestCase {
     private let start = Date(timeIntervalSince1970: 1_700_000_000)

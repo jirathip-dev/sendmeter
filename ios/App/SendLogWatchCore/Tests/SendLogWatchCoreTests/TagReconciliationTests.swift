@@ -1,5 +1,5 @@
 import XCTest
-@testable import SendLogWatch_Watch_App
+import SendLogWatchCore
 
 final class TagReconciliationTests: XCTestCase {
     func testEmptyTagNeverClears() {
