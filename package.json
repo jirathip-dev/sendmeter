@@ -19,7 +19,8 @@
     "db:reset": "supabase db reset",
     "db:status": "supabase status",
     "postinstall": "patch-package",
-    "migration:status": "node scripts/migration-status.mjs"
+    "migration:status": "node scripts/migration-status.mjs",
+    "migration:apply": "node scripts/apply-migrations.mjs"
   },
   "dependencies": {
     "@capacitor-community/apple-sign-in": "^7.1.0",
