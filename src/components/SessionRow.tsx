@@ -129,7 +129,7 @@ export default function SessionRow({
   // contradict each other on the same session. Falls back to the phase
   // badge until a zone is known (e.g. no classifiable recordings yet).
   const qualityBadge = isTindeq && zone !== null;
-  const qualityColor = zone !== null ? QUALITY_COLORS[zone] : null;
+  const qualityColor = isTindeq && zone !== null ? QUALITY_COLORS[zone] : null;
   const expandable = isWorkout || isTindeq;
   // Detail opens as its OWN full-height page (sheet) instead of expanding
   // inline — long sessions were unmanageable inside the timeline (SL-86).
