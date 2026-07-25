@@ -39,6 +39,20 @@ describe("parseNotification", () => {
     });
   });
 
+  it("clamps against the 2-byte header offset, not just the raw buffer length", () => {
+    // 14-byte payload (1 full 8-byte pair + 6 dangling bytes) puts byteLength
+    // at 16, i.e. byteLength % 8 === 0. Without the header's `-2` offset,
+    // Math.min(len, dv.byteLength) would floor to 2 pairs and read past the
+    // buffer. Non-zero filler bytes so a spurious 2nd sample can't look benign.
+    const payload = [...encodePair(9.75, 555), 1, 2, 3, 4, 5, 6];
+    const dv = weightFrame(100, payload); // len claims far more than the buffer holds
+
+    expect(parseNotification(dv)).toEqual({
+      kind: "weight",
+      samples: [{ kg: 9.75, us: 555 }],
+    });
+  });
+
   it("drops a truncated/partial trailing pair without throwing", () => {
     const payload = [...encodePair(7.25, 999), 0, 0, 0, 0]; // 1 full pair + 4 leftover bytes
     const dv = weightFrame(payload.length, payload);
