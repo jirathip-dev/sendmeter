@@ -26,6 +26,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The watch suite is pure logic in the SendLogWatchCore SwiftPM package
+  # (#191), so it needs no simulator and no Xcode — run it on Ubuntu, which
+  # bills at a fraction of the macOS rate (#199). The macOS job below is
+  # deliberately build-only as a result.
+  package-tests:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    # The official image rather than a setup action: one less third-party
+    # dependency, and it pins the toolchain explicitly.
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v4
+
+      # UTC, so a date-boundary test can't pass locally and fail here (or the
+      # reverse) purely because of the runner's zone. Calendar/DateFormatter
+      # are also the Foundation surface that differs most between Apple and
+      # swift-corelibs — if anything in this package is going to behave
+      # differently on Linux, it is the date logic.
+      - name: Run SendLogWatchCore tests
+        env:
+          TZ: UTC
+        run: swift test --package-path ios/App/SendLogWatchCore
+
   swift:
     runs-on: blacksmith-6vcpu-macos-26
     timeout-minutes: 45
@@ -47,84 +70,19 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
 
-      # The scheme's test action is bound to a watchOS destination, and
-      # simulator names drift between Xcode images — resolve one from the
-      # runner instead of pinning a device that may not exist.
+      # Build-only: the test suite runs on Linux in `package-tests` above.
+      # A generic destination avoids resolving and booting a simulator
+      # entirely — verified locally that it builds the same targets.
       #
-      # Resolve to a UDID, not name+OS. The image carries the same watch model
-      # under several runtimes, each paired to a different iPhone, so
-      # "name=Apple Watch Series 11 (46mm),OS=latest" is ambiguous and
-      # xcodebuild refuses it with "multiple devices matched the request".
-      - name: Resolve a watchOS simulator
-        id: sim
+      # This is still the check that catches the #162 class of bug (a missing
+      # `import Supabase` in the offline queues that reached staging green),
+      # and it caught #196's AuthOptions argument-order error the same way.
+      - name: Compile watch app
         run: |
-          set -euo pipefail
-          read -r udid label <<<"$(xcrun simctl list devices available --json | python3 -c '
-          import json, re, sys
-          devices = json.load(sys.stdin)["devices"]
-          best = None
-          for runtime, entries in devices.items():
-              m = re.search(r"watchOS-(\d+)-(\d+)", runtime)
-              if not m:
-                  continue
-              version = (int(m.group(1)), int(m.group(2)))
-              for d in entries:
-                  if not d.get("isAvailable", True):
-                      continue
-                  if best is None or version > best[0]:
-                      best = (version, d["udid"], d["name"])
-          print(f"{best[1]} {best[2]}" if best else "")
-          ')"
-          if [ -z "${udid:-}" ]; then
-            echo "::error::No watchOS simulator available on this image."
-            xcrun simctl list runtimes
-            exit 1
-          fi
-          echo "Using watchOS simulator: $label ($udid)"
-          echo "udid=$udid" >> "$GITHUB_OUTPUT"
-
-      # Compiling the watch target is what catches the #162 class of bug (a
-      # missing `import Supabase` in OfflineQueue.swift/PendingSessionQueue.swift
-      # that reached staging green and only surfaced on a manual TestFlight run).
-      - name: Build watch app and tests
-        run: |
-          xcodebuild build-for-testing \
+          xcodebuild build \
             -project "ios/App/App.xcodeproj" \
             -scheme "SendLogWatch Watch App" \
-            -destination "id=${{ steps.sim.outputs.udid }}" \
-            CODE_SIGNING_ALLOWED=NO
-
-      # `test-without-building` launches the watch app as the test host, which
-      # needs a booted device — and a Watch App launch also needs its paired
-      # iPhone booted, or it fails with "Simulator device failed to launch
-      # com.jirathip.sendlog.watchkitapp".
-      - name: Boot the watch simulator and its paired phone
-        run: |
-          set -euo pipefail
-          watch="${{ steps.sim.outputs.udid }}"
-          phone=$(xcrun simctl list pairs --json | python3 -c "
-          import json, sys
-          watch = sys.argv[1]
-          pairs = json.load(sys.stdin)
-          for pair in pairs.values():
-              if pair.get('watch', {}).get('udid') == watch:
-                  print(pair.get('phone', {}).get('udid', ''))
-                  break
-          " "$watch")
-          for udid in $phone $watch; do
-            echo "Booting $udid"
-            xcrun simctl boot "$udid" || true
-            xcrun simctl bootstatus "$udid" -b
-          done
-
-      # SendLogWatchTests has never executed in CI (#178). The scheme already
-      # lists it under <Testables>, so this runs the whole suite.
-      - name: Run SendLogWatchTests
-        run: |
-          xcodebuild test-without-building \
-            -project "ios/App/App.xcodeproj" \
-            -scheme "SendLogWatch Watch App" \
-            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -destination "generic/platform=watchOS Simulator" \
             CODE_SIGNING_ALLOWED=NO
 
       # The App target copies the built web bundle into ios/App/App/public and
