@@ -256,6 +256,13 @@ nonisolated struct WorkoutSaveBundle: Codable {
     var session: SessionInsert
     var workout: ClimbWorkoutInsert
     var attempts: [ClimbAttemptInsert]
+    /// Which account was signed in when this bundle was persisted to disk
+    /// (issue #158) — stamped by `OfflineQueue.persist`, checked by `drain()`
+    /// so an item queued under one account can't silently upload under
+    /// whichever account happens to be signed in when the queue next drains.
+    /// `nil` only for items written before this field existed (legacy
+    /// on-disk files); see `shouldDrain`.
+    var enqueuedUserId: UUID? = nil
 }
 
 /// A gauge session queued for upload by `PendingSessionQueue` (issue #144):
@@ -274,6 +281,13 @@ nonisolated struct PendingTindeqSession: Codable {
     var rpe: Double
     var note: String
     var groupId: UUID          // Tindeq gauge session link — must survive the upload
+    /// Which account was signed in when this session was persisted to disk
+    /// (issue #158) — stamped by `PendingSessionQueue.persist`, checked by
+    /// `drain()` so a session queued under one account can't silently upload
+    /// under whichever account happens to be signed in when the queue next
+    /// drains. `nil` only for items written before this field existed
+    /// (legacy on-disk files); see `shouldDrain`.
+    var enqueuedUserId: UUID? = nil
 
     /// Builds the "Log Session" payload as a pure function, so
     /// SendLogWatchTests can exercise it without a live TindeqManager/View.

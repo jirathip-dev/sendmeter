@@ -11,6 +11,7 @@ import { QUALITIES } from "../lib/force-curve";
 import { classifyZoneLoaded } from "../lib/zoneHistory";
 import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useToast } from "../hooks/useToast";
+import { restoreAt } from "../lib/restoreAt";
 import ConfirmDialog from "./ConfirmDialog";
 import NumInput from "./NumInput";
 import type { TindeqPreset } from "../types";
@@ -208,20 +209,26 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
   }
 
   async function remove(id: string) {
+    const index = presets.findIndex((p) => p.id === id);
+    const removed = presets[index];
+    if (!removed) return; // double-fire guard
     setPresets((list) => list.filter((p) => p.id !== id));
     if (selectedId === id) onSelect(null);
     if (localStorage.getItem(SELECTED_KEY) === id) localStorage.removeItem(SELECTED_KEY);
-    toast("Preset deleted");
     try {
       await deletePreset(id);
+      toast("Preset deleted");
     } catch {
-      // realtime/refetch isn't wired for presets; a failed delete resurfaces
-      // on next visit — acceptable for v1
+      // Rollback: put it back where it was; leave it deselected (deliberate —
+      // don't re-arm a protocol the user just tried to delete).
+      setPresets((list) => restoreAt(list, removed, index));
+      toast("Couldn't delete preset — restored", "error");
     }
   }
 
-  // Issue #143: called after the confirm dialog is accepted. `remove` itself
-  // is unchanged (issue #166's separate scope covers its swallowed catch).
+  // Issue #143: called after the confirm dialog is accepted. Delegates to
+  // `remove`, which since issue #166 rolls the preset back into the list and
+  // toasts an error if the server call fails.
   function confirmRemove() {
     if (!confirmDelete) return;
     const id = confirmDelete.id;

@@ -1,5 +1,20 @@
 import Foundation
 
+/// Pure decision for whether a queued item should drain now (issue #158):
+/// Supabase RLS attributes inserts to `auth.uid()` at INSERT time, not
+/// enqueue time, so an item queued under one account must not upload once a
+/// *different* account is signed in — it would silently land under the new
+/// account. `itemUserId == nil` means the item was written before this field
+/// existed (legacy on-disk file); those are trusted to drain under whatever
+/// account is currently signed in rather than getting stuck forever.
+/// Free function (not a method) so it's directly unit-testable without an
+/// actor/async context.
+func shouldDrain(itemUserId: UUID?, currentUserId: UUID?) -> Bool {
+    guard let currentUserId else { return false } // signed out: never drain
+    guard let itemUserId else { return true } // legacy stamp: trust current session
+    return itemUserId == currentUserId
+}
+
 /// Minimal offline queue for gym basements: every workout save is first
 /// serialized to Documents/pending/<uuid>.json, then uploaded and deleted on
 /// success. Drained serially (oldest first) on launch / foreground. Replays
@@ -16,9 +31,22 @@ actor OfflineQueue {
         return dir
     }
 
+    /// Count of items pending for the currently signed-in account only
+    /// (issue #158) — otherwise Account B would see a permanently-stuck "N
+    /// pending" badge for items stranded under Account A.
     func pendingCount() -> Int {
-        (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
-            .filter { $0.pathExtension == "json" }.count ?? 0
+        let currentUserId = SupabaseService.client.auth.currentSession?.user.id
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
+            .filter { $0.pathExtension == "json" } ?? []
+        return files.filter { file in
+            guard
+                let data = try? Data(contentsOf: file),
+                let bundle = try? decoder.decode(WorkoutSaveBundle.self, from: data)
+            else { return true } // unreadable: still counts until drain() cleans it up
+            return shouldDrain(itemUserId: bundle.enqueuedUserId, currentUserId: currentUserId)
+        }.count
     }
 
     /// Persist first, then try to upload immediately (awaits the upload).
@@ -37,6 +65,11 @@ actor OfflineQueue {
     }
 
     private func persist(_ bundle: WorkoutSaveBundle) {
+        var bundle = bundle
+        // Stamp which account is signed in right now (issue #158) — same
+        // synchronous, non-refreshing accessor AuthManager.bootstrap() uses,
+        // so this never triggers a token refresh. Checked back in drain().
+        bundle.enqueuedUserId = SupabaseService.client.auth.currentSession?.user.id
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let url = pendingDir.appendingPathComponent("\(bundle.workout.id.uuidString).json")
@@ -69,6 +102,18 @@ actor OfflineQueue {
             else {
                 // unreadable file: remove so it can't wedge the queue forever
                 try? FileManager.default.removeItem(at: file)
+                continue
+            }
+            // Read fresh right before each file's check, not once before the
+            // loop (issue #158) — this is a non-@MainActor actor and `await`
+            // below is a suspension point, so a concurrent account switch
+            // could otherwise go unnoticed for the rest of the pass and let
+            // a file queued under Account A upload under Account B.
+            let currentUserId = SupabaseService.client.auth.currentSession?.user.id
+            guard shouldDrain(itemUserId: bundle.enqueuedUserId, currentUserId: currentUserId) else {
+                // Queued under a different account (or nobody's signed in):
+                // leave the file on disk untouched and keep checking the
+                // rest — this is not a network/auth error, so don't `break`.
                 continue
             }
             do {
