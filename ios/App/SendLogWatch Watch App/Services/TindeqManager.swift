@@ -122,20 +122,28 @@ final class TindeqManager: NSObject {
         stopUITimer()
         write(.stop)
         status = peripheral != nil ? .connected : .idle
-        guard !samples.isEmpty else { return nil }
-        let rounded = samples.map { (t: ($0.t).rounded(), kg: ($0.kg * 100).rounded() / 100) }
-        let kgs = rounded.map(\.kg)
-        let summary = StoppedRecording(
-            durationMs: Int(rounded.last!.t),
-            peakKg: kgs.max() ?? 0,
-            avgKg: ((kgs.reduce(0, +) / Double(kgs.count)) * 100).rounded() / 100,
-            samples: rounded
-        )
+        guard let summary = makeSummary() else { return nil }
         currentKg = 0
         peakKg = summary.peakKg
         elapsedMs = Double(summary.durationMs)
         pushForceBeat()
         return summary
+    }
+
+    /// Rounding/derivation shared by `stop()` and the disconnect-salvage path
+    /// (issue #151) so a recovered rep looks identical to a manually-stopped
+    /// one: t rounded to ms int, kg to 2 dp, duration/peak/avg from the same
+    /// samples.
+    private func makeSummary() -> StoppedRecording? {
+        guard !samples.isEmpty else { return nil }
+        let rounded = samples.map { (t: ($0.t).rounded(), kg: ($0.kg * 100).rounded() / 100) }
+        let kgs = rounded.map(\.kg)
+        return StoppedRecording(
+            durationMs: Int(rounded.last!.t),
+            peakKg: kgs.max() ?? 0,
+            avgKg: ((kgs.reduce(0, +) / Double(kgs.count)) * 100).rounded() / 100,
+            samples: rounded
+        )
     }
 
     /// Last ~10 s of samples for the sparkline (called from the UI timer cadence).
@@ -312,6 +320,7 @@ extension TindeqManager: CBCentralManagerDelegate {
     ) {
         // Keep samples so an interrupted recording can still be saved.
         stopUITimer()
+        let wasMeasuring = measuring
         measuring = false
         self.peripheral = nil
         controlChar = nil
@@ -321,10 +330,54 @@ extension TindeqManager: CBCentralManagerDelegate {
         if error != nil { errorMsg = "Device disconnected" }
         // Finish-on-disconnect: an unplanned drop mid-session with saved reps
         // surfaces the log prompt (mirrors the web status→idle effect). SL-58 #5.
-        if !wasIntentional, sessionId != nil, sessionCount > 0 {
+        // Issue #151: a drop mid-hold used to silently lose the in-flight rep —
+        // the samples buffer survived but nothing wrote it, and the next
+        // start() wiped it. Salvage it like a manual Stop & Save when there's
+        // enough of a hold to be worth keeping; otherwise fall back to the
+        // existing drop-with-saved-reps prompt unchanged.
+        if TindeqSalvagePolicy.shouldSalvage(
+            wasIntentional: wasIntentional, wasMeasuring: wasMeasuring, sampleCount: samples.count
+        ), let summary = makeSummary() {
+            salvageInterruptedRecording(summary)
+        } else if !wasIntentional, sessionId != nil, sessionCount > 0 {
             pendingFinish = true
         }
         pushForceBeat()
+    }
+
+    /// Salvages the in-flight rep after an unplanned BLE drop mid-hold
+    /// (issue #151), mirroring the web app's interruption-salvage
+    /// (`useTindeq.ts`/`ForceView.tsx`): saved with the same note text so it
+    /// reads identically in History. Claims `samples` immediately so a late
+    /// duplicate delegate callback can't double-save, then inserts on the
+    /// existing per-connect session group (minting one if this is the first
+    /// rep of the connect) just like `ForceGaugeView.saveStop()`. Does NOT
+    /// show any new discard/save prompt — `pendingFinish` at the end just
+    /// surfaces the existing `GaugeFinishSheet`, same as a manual Finish.
+    private func salvageInterruptedRecording(_ summary: StoppedRecording) {
+        currentKg = 0
+        peakKg = summary.peakKg
+        elapsedMs = Double(summary.durationMs)
+        samples.removeAll()
+        let groupId = ensureSession()
+        let tag = liveTag
+        let side = liveSide
+        Task { @MainActor in
+            do {
+                try await Repo.insertTindeqRecording(
+                    summary,
+                    note: "Recovered after connection loss",
+                    tag: tag,
+                    side: side,
+                    groupId: groupId
+                )
+                sessionCount += 1
+            } catch {
+                errorMsg = ErrorText.friendly(error)
+                if sessionCount == 0 { clearSession() }
+            }
+            pendingFinish = sessionCount > 0
+        }
     }
 }
 
