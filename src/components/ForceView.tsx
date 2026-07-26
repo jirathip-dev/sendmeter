@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveForce } from "../hooks/useLiveForce";
 import { interruptionNote, recoveredTagSide } from "../hooks/useTindeq";
@@ -43,37 +42,16 @@ import TagManagerSheet from "./TagManagerSheet";
 import TagSideEditor from "./TagSideEditor";
 import TargetZonesCard from "./TargetZonesCard";
 import {
+  applyIntensity,
   buildZoneSelection,
   loadIntensity,
   saveIntensity,
-  selectedQuality,
   type ZoneSelection,
 } from "../lib/zoneSelection";
 import ZoneFocusCard from "./ZoneFocusCard";
 import ForceFullscreen from "./ForceFullscreen";
 import ForceTrendChart from "./ForceTrendChart";
 import LiveForceSparkline from "./LiveForceSparkline";
-
-/// Compact −/+ stepper button (shared by the Protocol-presets intensity dial;
-/// formerly lived on TargetZonesCard's per-quality stepper before SL-97b
-/// lifted intensity to one global control here).
-const stepBtnStyle = (disabled: boolean): CSSProperties => ({
-  width: 24,
-  height: 24,
-  borderRadius: 6,
-  border: "1px solid var(--border)",
-  background: "var(--surface-1)",
-  color: "var(--ink-muted)",
-  fontSize: 14,
-  fontWeight: 700,
-  lineHeight: 1,
-  cursor: disabled ? "default" : "pointer",
-  opacity: disabled ? 0.4 : 1,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  WebkitTapHighlightColor: "transparent",
-});
 
 interface ForceViewProps {
   userId: string;
@@ -567,19 +545,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // tag is selected yet.
   const zoneTag = effectiveTag ? (chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag) : null;
 
-  // Move the global intensity dial: persist + update state, and if a zone is
-  // currently armed, re-arm it at the new pct so its baked target/timer
-  // numbers update immediately. Custom presets are UNAFFECTED by this dial —
-  // their load is never rescaled, only recommended zones respond to it.
-  function changeIntensity(delta: number) {
-    const next = Math.min(ZONE_INTENSITY.max, Math.max(ZONE_INTENSITY.min, intensityPct + delta));
+  // Move the global intensity dial (the slider on TargetZonesCard, #172):
+  // persist + update state, and if a zone is currently armed, re-arm it at the
+  // new pct so its baked target/timer numbers update immediately. Custom
+  // presets are UNAFFECTED by this dial — their load is never rescaled, only
+  // recommended zones respond to it (see `applyIntensity`).
+  function changeIntensity(pct: number) {
+    const next = Math.min(ZONE_INTENSITY.max, Math.max(ZONE_INTENSITY.min, pct));
     if (next === intensityPct) return;
     setIntensityPct(next);
     saveIntensity(next);
-    const q = selectedQuality(zoneSel);
-    if (q && model && zoneTag) {
-      setZoneSel(buildZoneSelection(model, q, zoneTag, zoneSel!.protocol.alternateSides, next));
-    }
+    setZoneSel(applyIntensity(zoneSel, model, zoneTag, next));
   }
 
   // Get-ready countdown preference (5s PREPARE before the first hold).
@@ -1164,57 +1140,21 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
 
       {/* Protocols: the zone target is the recommended/default protocol
           (from your force curve); custom presets follow. The session-
-          intensity dial (SL-97) applies to RECOMMENDED ZONES ONLY — it scales
-          the target load and adapts hold time to keep the training dose
-          equivalent. Custom presets are never touched by it; a preset's
-          quality badge below still reflects whatever load it actually
-          resolves to. */}
+          intensity dial (SL-97, slider on the recommended card since #172)
+          applies to RECOMMENDED ZONES ONLY — it scales the target load and
+          adapts hold time to keep the training dose equivalent. Custom
+          presets are never touched by it; a preset's quality badge below
+          still reflects whatever load it actually resolves to. */}
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
+          fontSize: "var(--t-2xs)",
+          color: "var(--ink-faint)",
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
           margin: "20px 0 10px",
         }}
       >
-        <div
-          style={{
-            fontSize: "var(--t-2xs)",
-            color: "var(--ink-faint)",
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-          }}
-        >
-          Protocol presets
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>Intensity</span>
-          <button
-            style={stepBtnStyle(intensityPct <= ZONE_INTENSITY.min)}
-            disabled={intensityPct <= ZONE_INTENSITY.min}
-            onClick={() => changeIntensity(-ZONE_INTENSITY.step)}
-          >
-            −
-          </button>
-          <span
-            style={{
-              fontSize: "var(--t-xs)",
-              color: intensityPct > 100 ? "var(--warning)" : "var(--ink)",
-              fontWeight: 700,
-              width: 34,
-              textAlign: "center",
-            }}
-          >
-            {intensityPct}%
-          </span>
-          <button
-            style={stepBtnStyle(intensityPct >= ZONE_INTENSITY.max)}
-            disabled={intensityPct >= ZONE_INTENSITY.max}
-            onClick={() => changeIntensity(ZONE_INTENSITY.step)}
-          >
-            +
-          </button>
-        </div>
+        Protocol presets
       </div>
       {zoneTag && (
         <TargetZonesCard
@@ -1223,6 +1163,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           selected={zoneSel}
           onSelect={setZoneSel}
           intensityPct={intensityPct}
+          onIntensityChange={changeIntensity}
         />
       )}
       {effectiveTag && zoneTag && (

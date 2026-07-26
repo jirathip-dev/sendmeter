@@ -68,11 +68,12 @@ export function buildZoneSelection(
 
 const INTENSITY_KEY = "sendmeter:zone-intensity";
 
-/// ONE global intensity pct (SL-97b) — a single dial at the protocol-presets
-/// header applies to both recommended zones and custom presets, rather than
-/// each zone remembering its own. Persisted as a plain number; an invalid or
-/// missing value (including a stale per-quality map from before this change)
-/// falls back to 100 (ZONE_INTENSITY.default).
+/// ONE global intensity pct (SL-97b) — a single dial (rendered in the
+/// recommended-zone card, #172) rather than each zone remembering its own.
+/// It scales RECOMMENDED ZONES ONLY; custom presets are never rescaled.
+/// Persisted as a plain number; an invalid or missing value (including a
+/// stale per-quality map from before SL-97b) falls back to 100
+/// (ZONE_INTENSITY.default).
 export function loadIntensity(): number {
   try {
     const raw = localStorage.getItem(INTENSITY_KEY);
@@ -93,6 +94,22 @@ export function saveIntensity(pct: number): void {
   } catch {
     /* quota / disabled storage — persistence is best-effort */
   }
+}
+
+/// Re-derive whatever is currently armed at a new intensity pct. RECOMMENDED
+/// ZONES ONLY: anything without a `zone:${q}` id (i.e. a custom preset) is
+/// returned untouched — that guard is what keeps the dial from ever rescaling
+/// a user-defined preset's load. Falls back to the current selection if the
+/// zone can no longer be derived, so moving the dial can't silently disarm.
+export function applyIntensity(
+  sel: ZoneSelection | null,
+  model: ForceCurveModel | null,
+  tag: string | null,
+  intensityPct: number,
+): ZoneSelection | null {
+  const q = selectedQuality(sel);
+  if (!sel || !q || !model || !tag) return sel;
+  return buildZoneSelection(model, q, tag, sel.protocol.alternateSides, intensityPct) ?? sel;
 }
 
 /// The zone a selection arms, parsed back from its `zone:${q}` protocol id —
