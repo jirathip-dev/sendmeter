@@ -8,11 +8,144 @@ import type {
 } from "../types";
 import { today } from "../lib/dates";
 import * as repo from "../lib/repo";
+import type { UserSettings } from "../lib/repo/settings";
 import { supabase } from "../lib/supabase";
 import { useRealtimeVersion } from "./useRealtimeVersion";
 
-function sortSessions(list: Session[]): Session[] {
+export function sortSessions(list: Session[]): Session[] {
   return [...list].sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/// Replaces a raw incrementing ref with an object exposing `start`/
+/// `isCurrent` — pulled out so the stale-reload guard used by `runFetch` is
+/// independently unit-testable (#220).
+export function createGenerationGuard() {
+  let generation = 0;
+  return {
+    start(): number {
+      generation += 1;
+      return generation;
+    },
+    isCurrent(candidate: number): boolean {
+      return candidate === generation;
+    },
+  };
+}
+
+export interface RunFetchDeps {
+  fetchAll: () => Promise<[Session[], UserSettings, PhasePeriod[]]>;
+  refreshSession: () => Promise<unknown>;
+  delay: (ms: number) => Promise<void>;
+  guard: { isCurrent(generation: number): boolean };
+  generation: number;
+  onSuccess: (data: {
+    sessions: Session[];
+    currentPhase: PhaseId;
+    phaseStartDate: string;
+    phasePeriods: PhasePeriod[];
+  }) => void;
+  onError: (message: string) => void;
+}
+
+/// Pure orchestrator for `runFetch`'s retry loop + stale-generation guard —
+/// a direct lift of the original inline logic, generalized over injected
+/// fakes so the retry/backoff/guard sequencing is testable without a real
+/// Supabase client or timers (#220).
+export async function runFetchAttempts(deps: RunFetchDeps): Promise<void> {
+  const { fetchAll, refreshSession, delay, guard, generation, onSuccess, onError } =
+    deps;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const [remoteSessions, settings, periods] = await fetchAll();
+      if (!guard.isCurrent(generation)) return;
+      onSuccess({
+        sessions: remoteSessions,
+        currentPhase: settings.currentPhase,
+        phaseStartDate: settings.phaseStartDate,
+        phasePeriods: periods,
+      });
+      return;
+    } catch (e) {
+      lastError = e;
+      if (!guard.isCurrent(generation)) return;
+      if (attempt < 2) {
+        // A stale/expired access token is the usual cause a full page reload
+        // "fixes" — force a refresh before retrying so an in-app Retry
+        // actually recovers (the client keeps a fresh token going forward).
+        await refreshSession().catch(() => {});
+        await delay(400 * (attempt + 1));
+      }
+    }
+  }
+  if (!guard.isCurrent(generation)) return;
+  onError(lastError instanceof Error ? lastError.message : "Failed to load data");
+}
+
+/// Generic optimistic-apply/rollback control flow shared by addSession/
+/// editSession/removeSession/setPhase — pulled out so each mutation's
+/// success/failure sequencing is independently testable (#220).
+export async function withOptimisticUpdate<T>(opts: {
+  apply: () => void;
+  action: () => Promise<T>;
+  onSuccess: (result: T) => void;
+  rollback: () => void;
+  onError: (message: string) => void;
+  fallbackMessage: string;
+}): Promise<T | undefined> {
+  opts.apply();
+  try {
+    const result = await opts.action();
+    opts.onSuccess(result);
+    return result;
+  } catch (e) {
+    opts.rollback();
+    opts.onError(e instanceof Error ? e.message : opts.fallbackMessage);
+    return undefined;
+  }
+}
+
+/// `addSession`'s optimistic-apply step: append the temp row and re-sort.
+export function applyAddSessionOptimistic(
+  list: Session[],
+  temp: Session,
+): Session[] {
+  return sortSessions([...list, temp]);
+}
+
+/// `addSession`'s success step: swap the temp row for the saved one by id.
+export function reconcileAddSession(
+  list: Session[],
+  tempId: string,
+  saved: Session,
+): Session[] {
+  return sortSessions(list.map((s) => (s.id === tempId ? saved : s)));
+}
+
+/// `addSession`'s rollback step: drop the temp row by id.
+export function rollbackAddSession(list: Session[], tempId: string): Session[] {
+  return list.filter((s) => s.id !== tempId);
+}
+
+/// `editSession`'s optimistic-apply step: merge the patch, force
+/// `rpeConfirmed` true (reaching the edit sheet means a human reviewed this
+/// RPE — issue #114), and recompute `load` to mirror the DB's generated
+/// column.
+export function applyEditSessionOptimistic(
+  list: Session[],
+  id: string,
+  patch: SessionPatch,
+): Session[] {
+  return list.map((s) =>
+    s.id === id
+      ? {
+          ...s,
+          ...patch,
+          rpeConfirmed: true,
+          load: patch.duration * patch.rpe,
+        }
+      : s,
+  );
 }
 
 export function useTrainingData(userId: string) {
@@ -25,48 +158,41 @@ export function useTrainingData(userId: string) {
   const realtimeVersion = useRealtimeVersion();
   // Guards against a stale in-flight reload clobbering a newer one's state
   // (e.g. realtimeVersion bumping again before the first fetch resolves).
-  const generationRef = useRef(0);
+  // A ref holding a single stable guard instance for this hook's lifetime —
+  // createGenerationGuard's own state (not the ref) is what actually tracks
+  // the generation counter (#220).
+  const guardRef = useRef(createGenerationGuard());
 
   // No synchronous setState before the first `await` here — the mount/
   // realtime-version effect below calls this directly (an effect calling
   // something that sets state synchronously up front causes an avoidable
   // cascading render).
   const runFetch = useCallback(async () => {
-    const generation = ++generationRef.current;
-    // Retry transient failures (Supabase cold start, a brief network blip)
-    // with backoff before surfacing an error — this is why a manual refresh
-    // used to "fix" it. Only the final attempt shows the error banner.
-    let lastError: unknown;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const [remoteSessions, settings, periods] = await Promise.all([
+    const generation = guardRef.current.start();
+    await runFetchAttempts({
+      fetchAll: () =>
+        Promise.all([
           repo.fetchSessions(),
           repo.fetchSettings(),
           repo.fetchPhasePeriods(),
-        ]);
-        if (generation !== generationRef.current) return;
-        setSessions(remoteSessions);
-        setCurrentPhase(settings.currentPhase);
-        setPhaseStartDate(settings.phaseStartDate);
-        setPhasePeriods(periods);
+        ]),
+      refreshSession: () => supabase.auth.refreshSession(),
+      delay: (ms) => new Promise((r) => setTimeout(r, ms)),
+      guard: guardRef.current,
+      generation,
+      onSuccess: (data) => {
+        setSessions(data.sessions);
+        setCurrentPhase(data.currentPhase);
+        setPhaseStartDate(data.phaseStartDate);
+        setPhasePeriods(data.phasePeriods);
         setError(null);
         setLoading(false);
-        return;
-      } catch (e) {
-        lastError = e;
-        if (generation !== generationRef.current) return;
-        if (attempt < 2) {
-          // A stale/expired access token is the usual cause a full page reload
-          // "fixes" — force a refresh before retrying so an in-app Retry
-          // actually recovers (the client keeps a fresh token going forward).
-          await supabase.auth.refreshSession().catch(() => {});
-          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
-        }
-      }
-    }
-    if (generation !== generationRef.current) return;
-    setError(lastError instanceof Error ? lastError.message : "Failed to load data");
-    setLoading(false);
+      },
+      onError: (message) => {
+        setError(message);
+        setLoading(false);
+      },
+    });
   }, []);
 
   // Public reload, for explicit user-triggered refreshes (e.g. after a
@@ -102,20 +228,17 @@ export function useTrainingData(userId: string) {
       groupId: null,
       workoutSource: null,
     };
-    setSessions((list) => sortSessions([...list, temp]));
-    try {
-      const saved = await repo.insertSession(form);
-      setSessions((list) =>
-        sortSessions(list.map((s) => (s.id === temp.id ? saved : s))),
-      );
-      // Returned so callers can offer a same-day follow-up (SL-21's
-      // unlinked-recordings nudge after the Log Session sheet saves).
-      return saved;
-    } catch (e) {
-      setSessions((list) => list.filter((s) => s.id !== temp.id));
-      setError(e instanceof Error ? e.message : "Failed to save session");
-      return undefined;
-    }
+    // Returned so callers can offer a same-day follow-up (SL-21's
+    // unlinked-recordings nudge after the Log Session sheet saves).
+    return withOptimisticUpdate({
+      apply: () => setSessions((list) => applyAddSessionOptimistic(list, temp)),
+      action: () => repo.insertSession(form),
+      onSuccess: (saved) =>
+        setSessions((list) => reconcileAddSession(list, temp.id, saved)),
+      rollback: () => setSessions((list) => rollbackAddSession(list, temp.id)),
+      onError: (message) => setError(message),
+      fallbackMessage: "Failed to save session",
+    });
   }
 
   async function addTindeqSession(input: {
@@ -139,56 +262,52 @@ export function useTrainingData(userId: string) {
     const prev = sessions;
     // Optimistic: apply the patch locally (load = duration × rpe mirrors the
     // DB's generated column), roll back on failure.
-    setSessions((list) =>
-      list.map((s) =>
-        s.id === id
-          ? {
-              ...s,
-              ...patch,
-              // Reaching the edit sheet means a human reviewed this RPE —
-              // un-mute the bar immediately (issue #114).
-              rpeConfirmed: true,
-              load: patch.duration * patch.rpe,
-            }
-          : s,
-      ),
-    );
-    try {
-      const saved = await repo.updateSession(id, patch);
-      setSessions((list) => list.map((s) => (s.id === id ? saved : s)));
-    } catch (e) {
-      setSessions(prev);
-      setError(e instanceof Error ? e.message : "Failed to update session");
-    }
+    await withOptimisticUpdate({
+      apply: () =>
+        setSessions((list) => applyEditSessionOptimistic(list, id, patch)),
+      action: () => repo.updateSession(id, patch),
+      onSuccess: (saved) =>
+        setSessions((list) => list.map((s) => (s.id === id ? saved : s))),
+      rollback: () => setSessions(prev),
+      onError: (message) => setError(message),
+      fallbackMessage: "Failed to update session",
+    });
   }
 
   async function removeSession(id: string) {
     const prev = sessions;
-    setSessions((list) => list.filter((s) => s.id !== id));
-    try {
-      await repo.deleteSession(id);
-    } catch (e) {
-      setSessions(prev);
-      setError(e instanceof Error ? e.message : "Failed to delete session");
-    }
+    await withOptimisticUpdate({
+      apply: () => setSessions((list) => list.filter((s) => s.id !== id)),
+      action: () => repo.deleteSession(id),
+      onSuccess: () => {},
+      rollback: () => setSessions(prev),
+      onError: (message) => setError(message),
+      fallbackMessage: "Failed to delete session",
+    });
   }
 
   async function setPhase(id: PhaseId) {
     const prev = { currentPhase, phaseStartDate };
     // Optimistic: show the new phase immediately; real start date arrives
     // from switchPhase (it may be earlier than today on a same-day undo).
-    setCurrentPhase(id);
-    setPhaseStartDate(today());
-    try {
-      const { periods, settings } = await repo.switchPhase(id);
-      setPhasePeriods(periods);
-      setCurrentPhase(settings.currentPhase);
-      setPhaseStartDate(settings.phaseStartDate);
-    } catch (e) {
-      setCurrentPhase(prev.currentPhase);
-      setPhaseStartDate(prev.phaseStartDate);
-      setError(e instanceof Error ? e.message : "Failed to update phase");
-    }
+    await withOptimisticUpdate({
+      apply: () => {
+        setCurrentPhase(id);
+        setPhaseStartDate(today());
+      },
+      action: () => repo.switchPhase(id),
+      onSuccess: ({ periods, settings }) => {
+        setPhasePeriods(periods);
+        setCurrentPhase(settings.currentPhase);
+        setPhaseStartDate(settings.phaseStartDate);
+      },
+      rollback: () => {
+        setCurrentPhase(prev.currentPhase);
+        setPhaseStartDate(prev.phaseStartDate);
+      },
+      onError: (message) => setError(message),
+      fallbackMessage: "Failed to update phase",
+    });
   }
 
   return {
