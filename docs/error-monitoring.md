@@ -59,6 +59,43 @@ It has to be set in each environment that builds the web bundle:
   monitoring. **Not wired up yet** — the `testflight` GitHub environment needs
   the secret added and exported to the lane.
 
+## The `environment` tag (#239)
+
+Every event is tagged with the deploy it came from. **Don't use
+`import.meta.env.MODE` for this** — `npm run build` is a plain `vite build`
+with no `--mode`, which Vite defaults to `production`, so `MODE` reads
+`production` in a Vercel preview deploy and in the TestFlight archive too. That
+was the bug: preview and native errors mixed into the real user stream.
+
+The value comes from `resolveDeployEnv` (`src/lib/deployEnv.ts`), a pure helper
+`vite.config.ts` calls at build time and inlines into the bundle via `define`
+as `import.meta.env.VITE_DEPLOY_ENV` (Vite only forwards `VITE_`-prefixed vars
+to client code, and `VERCEL_ENV` isn't one). Precedence, pinned by
+`deployEnv.test.ts`:
+
+**`VITE_DEPLOY_ENV` (explicit override) → `VERCEL_ENV` → `"local"`.**
+
+The override outranks `VERCEL_ENV` because Vercel always sets `VERCEL_ENV`; the
+other order would make the override a no-op there. Blank/whitespace counts as
+unset.
+
+| Where it's built | Tag | Comes from |
+|---|---|---|
+| Vercel Production (`main`) | `production` | `VERCEL_ENV`, set by Vercel |
+| Vercel Preview (`staging`, promotion PRs) | `preview` | `VERCEL_ENV`, set by Vercel |
+| `vercel dev` | `development` | `VERCEL_ENV`, set by Vercel |
+| TestFlight / iOS (`fastlane beta`) | `ios` | `VITE_DEPLOY_ENV=ios` exported to the lane |
+| Local `npm run dev` / `npm run build` | `local` | fallback — nothing set |
+
+Only Vercel sets its own value; the other two are a deliberate export or the
+fallback. The iOS tag is worth keeping distinct even though the code is the
+same bundle: a WebView-in-native runtime is a materially different context from
+a browser one.
+
+`fastlane beta` runs its own `npm run build`, so whatever shell runs the lane
+must export `VITE_DEPLOY_ENV=ios` — same requirement as `VITE_SENTRY_DSN`
+above, and un-set means the TestFlight build reports `local`.
+
 ## Verification (device / TestFlight — not doable headlessly)
 
 The build/typecheck/lint/test gate proves the scrub and the wiring; it cannot
@@ -74,5 +111,8 @@ prove an event reaches the dashboard. Do this once on a real build:
 4. On each, open the event in Sentry and read it end to end: user is a bare
    uuid, no email, no query strings, no `extra`/`contexts` beyond the allow-list,
    and **no health numbers anywhere**.
-5. Repeat 2–4 from a TestFlight build once the lane carries the DSN, since the
-   native WebView is a different runtime from the browser.
+5. Check the event's `environment` — a preview deploy must read `preview`, not
+   `production`. That is the one thing only a real Vercel build can prove; the
+   local gate can only show the fallback and an override.
+6. Repeat 2–5 from a TestFlight build once the lane carries the DSN, since the
+   native WebView is a different runtime from the browser. It should read `ios`.

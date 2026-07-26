@@ -208,7 +208,11 @@ export function initMonitoring(): void {
   started = true;
   Sentry.init({
     dsn: DSN,
-    environment: import.meta.env.MODE,
+    // Which deploy this is (#239) — `vercel/preview`, `ios`, `local`, … See
+    // `src/lib/deployEnv.ts`; `vite.config.ts` inlines it. `MODE` is only a
+    // backstop: it reads `production` for every build, so relying on it mixed
+    // preview and TestFlight errors into the real user stream.
+    environment: import.meta.env.VITE_DEPLOY_ENV ?? import.meta.env.MODE,
     // No performance tracing, no session replay.
     tracesSampleRate: 0,
     replaysSessionSampleRate: 0,
