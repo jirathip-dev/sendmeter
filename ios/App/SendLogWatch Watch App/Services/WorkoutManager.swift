@@ -163,6 +163,21 @@ final class WorkoutManager: NSObject {
         )
     }
 
+    /// Which phase the live view should paint itself (#243). Delegates to the
+    /// pure mapping in SendLogWatchCore — the full-screen fill and the phase
+    /// timer read the same resolver, so the colour can never disagree with the
+    /// countdown it sits behind. `now` is passed in by the caller's
+    /// `TimelineView` tick so rest-over flips without any stored state.
+    func livePhase(at now: Date) -> WorkoutPhase {
+        WorkoutPhasePalette.phase(
+            manualClimbing: manualClimbing,
+            climbingSince: climbingSince,
+            restStartedAt: restStartedAt,
+            restTargetS: restTargetS,
+            now: now
+        )
+    }
+
     /// Snapshot state and fire one best-effort live heartbeat — over Supabase
     /// (web mirror + fallback) AND, when the phone is reachable, directly over
     /// WatchConnectivity for a sub-second in-app mirror (no network hop).
