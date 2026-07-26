@@ -455,6 +455,17 @@ are safe regardless.
   The ring is pushed to `auth_events` on the next sign-in
   (`authEventFlush.ts`, upsert on `(user_id, reason, first_at)` — idempotent,
   never blocks sign-in).
+- **Sentry only ever sees an allow-listed event** (#227, `src/lib/monitoring.ts`).
+  It initializes *only* when a build-time `VITE_SENTRY_DSN` is present — no DSN
+  (dev, tests, any un-configured build) and the SDK is dead-code-eliminated
+  entirely. `beforeSend`/`beforeBreadcrumb` rebuild the event from allow-lists:
+  the auth uuid as the only identity, no query strings, no console breadcrumbs,
+  and every `HealthMetric` field name/value dropped — `monitoring.test.ts`
+  proves that on an event deliberately built carrying all of them, so **add any
+  new health field to `HEALTH_TERMS`**. It catches things that *throw* (render
+  crashes, unhandled rejections); it would NOT have caught the #202 logout,
+  which fails silently — that's what the auth diagnostics above are for. Setup
+  + the device-verification checklist: `docs/error-monitoring.md`.
 - **Chrome animates transform/opacity on the compositor**, so `getComputedStyle`
   returns the *base* value mid-animation — you can't measure a ripple's scale or a
   hidden bar's transform from JS in the browser tools; verify animations visually

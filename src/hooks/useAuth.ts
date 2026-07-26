@@ -19,6 +19,7 @@ import {
   startHealthBackgroundSync,
   syncHealthNow,
 } from "../lib/healthSync";
+import { setMonitoringUser } from "../lib/monitoring";
 
 export function useAuth() {
   const [session, setSession] = useState<Session | null>(null);
@@ -34,6 +35,9 @@ export function useAuth() {
     function onSession(s: Session | null) {
       relaySessionToWatch(s);
       relayHealthSession(s);
+      // #227: the auth uuid is the ONLY identity attached to an error report —
+      // same key `auth_events` uses, never the email.
+      setMonitoringUser(s?.user.id ?? null);
       if (s && !healthStarted) {
         healthStarted = true;
         void startHealthBackgroundSync();

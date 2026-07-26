@@ -58,6 +58,15 @@ Nothing upstream covers any of this: `@capacitor/ios` ships a manifest with an
 **empty** `NSPrivacyAccessedAPITypes` array, and `@capacitor/preferences` 8.0.1
 ships no manifest at all.
 
+**Sentry adds no manifest** (issue #227). `@sentry/react` is the *web* SDK — it
+is bundled into the WebView JavaScript in `ios/App/App/public`, not linked as a
+framework or dynamic library, so it is not a bundle that could carry a
+`PrivacyInfo.xcprivacy` and it touches no required-reason API. Its data type
+(diagnostics) is already declared on the iOS app bundle — see the Diagnostics
+row below. Native crash reporting (Sentry Cocoa) is deliberately **out of
+scope**; adding it later *would* add a framework bundle and require re-checking
+both the manifest and this file.
+
 `NSPrivacyCollectedDataTypes` mirrors the App Privacy table below — all four
 rows on the iOS app; the watch app declares the subset it actually uploads
 (health, fitness, user content, but never email or auth diagnostics); the two
@@ -76,15 +85,46 @@ Declare these under **Data Types Collected**, all with:
 | Health & fitness data (HR, HRV, sleep, workouts) | Health & Fitness → Health / Fitness |
 | Body weight | Health & Fitness → Health |
 | Training/session logs, force recordings | User Content → Other User Content |
-| Auth diagnostics (null-session cause, timestamps, app build) | Diagnostics → Other Diagnostic Data |
+| Auth + error diagnostics (null-session cause, timestamps, app build; crash/error reports) | Diagnostics → Other Diagnostic Data |
 
-The auth-diagnostics row is `supabase/migrations/20260726090000_auth_events.sql`
-(the columns are exactly what is collected) written by `src/lib/authEventFlush.ts`
-— a per-account record of why a sign-in session went away, keyed to `user_id`,
-which is why it answers "linked to identity: yes" like every other row here.
+The Diagnostics row covers two things, both keyed to `user_id`/auth uuid — which
+is why it answers "linked to identity: yes" like every other row here:
+
+1. **Auth diagnostics** — `supabase/migrations/20260726090000_auth_events.sql`
+   (the columns are exactly what is collected), written by
+   `src/lib/authEventFlush.ts`: a per-account record of why a sign-in session
+   went away. Stays on our own Supabase project; no third party involved.
+2. **Error monitoring** (issue #227) — uncaught JavaScript exceptions, React
+   render errors and unhandled promise rejections, processed by **Sentry**
+   (`sentry.io`, Functional Software, Inc.) — the one **third-party processor**
+   the app uses. `src/lib/monitoring.ts` is the only place it is configured.
+
+What Sentry receives is built from an allow-list in `beforeSend` /
+`beforeBreadcrumb`, not filtered after the fact:
+
+- **Identity is the Supabase auth uuid and nothing else** — never the email,
+  username, or IP.
+- **No health or fitness data, ever.** Every `HealthMetric` field name and value
+  is dropped before send; `src/lib/monitoring.test.ts` asserts it on an event
+  deliberately built carrying all of them.
+- URLs lose their query strings; `extra`, `contexts`, `tags` and breadcrumbs
+  keep only allow-listed keys (console breadcrumbs are dropped outright).
+- No session replay (`replaysSessionSampleRate`/`replaysOnErrorSampleRate` = 0)
+  and no performance tracing. The SDK's `dataCollection` switches are all off —
+  no inferred user, no cookies, no request/response headers or bodies, no query
+  params, no stack-frame local variables (that one defaults to *on* and a local
+  could be a whole health record). The deprecated `sendDefaultPii` is unused.
+- The SDK initializes **only** when a build-time `VITE_SENTRY_DSN` is present.
+  Dev, test and any DSN-less build send nothing — the SDK is dead-code-
+  eliminated from the bundle entirely.
+
+**Used for tracking stays "No"**: the data is never linked with third-party
+data for advertising or measurement, and there is no ad network or cross-app
+identifier — so **no ATT prompt** and `NSPrivacyTracking` stays `false`.
 
 Everything else (location, contacts, identifiers, purchases, browsing):
-**Not collected**. There are no analytics, ads, or trackers.
+**Not collected**. There are no analytics or ad SDKs and no trackers — Sentry is
+error monitoring only.
 
 ## Review notes (paste into "Notes" for the reviewer)
 
@@ -97,6 +137,10 @@ Everything else (location, contacts, identifiers, purchases, browsing):
 > the user has connected to Apple Health — to compute a daily recovery score. It
 > is stored on the user's own account row (see privacy policy) and never used for
 > advertising.
+> Crash/error diagnostics are processed by Sentry (sentry.io). Reports carry the
+> account's anonymous user id, the error and its stack trace only — health data,
+> email and request contents are stripped before the report is sent, and there
+> is no analytics, advertising, or tracking SDK in the app.
 
 **Demo account**: create a throwaway user before submitting — sign up via
 magic link on the web app with a spare email, set a password via Account →
