@@ -1,9 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   interruptionNote,
+  recoveredTagSide,
   shouldSalvageOnUnmount,
+  snapshotInterruption,
   summarize,
 } from "./useTindeq";
+import type { SalvageContext } from "./useTindeq";
+import type { TindeqSide } from "../types";
 
 describe("shouldSalvageOnUnmount", () => {
   // #106: this exact gate was shipped INVERTED once (`!sessionAliveRef`
@@ -147,6 +151,82 @@ describe("interruptionNote", () => {
 
   it("leaves a mounted interruption unlabeled — it's the normal stop path", () => {
     expect(interruptionNote(true)).toBe("");
+  });
+});
+
+describe("#119 remount-recovery label", () => {
+  function ctx(tag: string, side: TindeqSide): SalvageContext {
+    return { tag, side, groupId: null, userId: "u1", stopInFlight: false };
+  }
+  const EMPTY = { tag: "", side: "" as TindeqSide };
+
+  // The whole bug is an ordering problem, so this replays the real lifecycle:
+  // TindeqProvider (salvageContextRef + the sample buffer) outlives ForceView,
+  // which unmounts and remounts on every tab switch — the registered context
+  // is mutable shared state, and WHEN it is read decides what gets saved.
+  it("saves the pre-Start tag/side when the drop fired while ForceView was unmounted", () => {
+    // 1. ForceView mounted: user sets Half crimp / left, then presses Start.
+    let registered: SalvageContext | null = ctx("Half crimp", "left");
+
+    // 2. User switches tabs. ForceView unmounts; the provider keeps measuring
+    //    and the context ref is deliberately NOT cleared.
+
+    // 3. The Progressor drops mid-measurement. The claim — and the label
+    //    snapshot with it — is taken here, at drop time.
+    const snapshot = snapshotInterruption(registered);
+
+    // 4. ForceView remounts to recover. Its own setSalvageContext effect runs
+    //    first and re-registers a fresh, still-empty context; the async
+    //    fetchRecordings tag seeding has not landed yet either.
+    registered = ctx("", "");
+
+    // 5. The 0 ms-deferred handleStop finally runs, with empty view state.
+    expect(recoveredTagSide(EMPTY, snapshot)).toEqual({
+      tag: "Half crimp",
+      side: "left",
+    });
+    // The note is unchanged by the relabel — a recovered pull must still be
+    // distinguishable from a clean one.
+    expect(interruptionNote(false)).toBe("Recovered after connection loss");
+
+    // And this is why the snapshot is load-bearing: reading the ref at THIS
+    // point instead (what the recovery path effectively did before #119) is
+    // deterministically empty, because step 4 already clobbered it.
+    expect(recoveredTagSide(EMPTY, snapshotInterruption(registered))).toEqual(
+      EMPTY,
+    );
+  });
+
+  it("lets a remount that DID seed its own tag/side win — the snapshot is a fallback, not an override", () => {
+    const snapshot = snapshotInterruption(ctx("Half crimp", "left"));
+    expect(
+      recoveredTagSide({ tag: "Open hand", side: "right" }, snapshot),
+    ).toEqual({ tag: "Open hand", side: "right" });
+  });
+
+  it("falls back per field, so a half-seeded remount keeps what it has", () => {
+    const snapshot = snapshotInterruption(ctx("Half crimp", "left"));
+    expect(recoveredTagSide({ tag: "Open hand", side: "" }, snapshot)).toEqual({
+      tag: "Open hand",
+      side: "left",
+    });
+    expect(recoveredTagSide({ tag: "", side: "right" }, snapshot)).toEqual({
+      tag: "Half crimp",
+      side: "right",
+    });
+  });
+
+  it("stays empty when no context was ever registered — same fallback the sign-out salvage takes", () => {
+    expect(snapshotInterruption(null)).toBe(null);
+    expect(snapshotInterruption(undefined)).toBe(null);
+    expect(recoveredTagSide(EMPTY, null)).toEqual(EMPTY);
+  });
+
+  it("keeps only the label fields — a recovery blob never inherits the session group", () => {
+    expect(snapshotInterruption(ctx("Half crimp", "left"))).toEqual({
+      tag: "Half crimp",
+      side: "left",
+    });
   });
 });
 
