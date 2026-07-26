@@ -92,6 +92,42 @@ export function interruptionNote(everMeasuredThisMount: boolean): string {
   return everMeasuredThisMount ? "" : "Recovered after connection loss";
 }
 
+/// #119: the tag/side ForceView had registered at the instant a
+/// mid-measurement drop fired — i.e. the ones the user set before Start.
+export interface InterruptionContext {
+  tag: string;
+  side: TindeqSide;
+}
+
+/// #119: narrow a registered SalvageContext down to just the label fields, at
+/// DROP TIME. This must never be deferred to recovery time: a ForceView that
+/// remounts to recover the buffer (the drop fired while the user was on
+/// another tab) runs its own setSalvageContext effect first, re-registering a
+/// fresh context whose pendingTag/pendingSide are still empty — so a late read
+/// of salvageContextRef is deterministically "" again.
+export function snapshotInterruption(
+  ctx: SalvageContext | null | undefined,
+): InterruptionContext | null {
+  return ctx ? { tag: ctx.tag, side: ctx.side } : null;
+}
+
+/// #119: tag/side for an interruption-recovery save. On a remount recovery the
+/// fresh mount's view state is still empty (the 0 ms deferred stop beats the
+/// async tag seeding), so each field falls back to the drop-time snapshot —
+/// the same pre-Start label the sign-out salvage path already writes, which is
+/// the whole point of the parity fix. Live state WINS whenever it has
+/// something: a mount that did seed first is at least as current as the
+/// snapshot, so this is a fallback, never an override.
+export function recoveredTagSide(
+  live: InterruptionContext,
+  snapshot: InterruptionContext | null,
+): InterruptionContext {
+  return {
+    tag: live.tag || (snapshot?.tag ?? ""),
+    side: live.side || (snapshot?.side ?? ""),
+  };
+}
+
 /**
  * Tindeq Progressor over BleClient: Web Bluetooth in browsers, native
  * CoreBluetooth inside the Capacitor iOS app — one code path for both.
@@ -121,6 +157,12 @@ export function useTindeq() {
   // REMOUNT, when the drop fired while it was on another tab (#117); cleared
   // when any start/stop takes ownership of the buffer.
   const [pendingInterruption, setPendingInterruption] = useState(false);
+  // #119: the tag/side captured at the instant of that drop — the fallback
+  // label for the recovery save, since the recovering ForceView may be a fresh
+  // mount whose own pendingTag/pendingSide are still empty. Cleared alongside
+  // the claim.
+  const [interruptionContext, setInterruptionContext] =
+    useState<InterruptionContext | null>(null);
 
   const deviceIdRef = useRef<string | null>(null);
   const initializedRef = useRef(false);
@@ -151,6 +193,16 @@ export function useTindeq() {
     },
     [],
   );
+
+  // #119: claim a mid-measurement drop's buffer AND snapshot the tag/side that
+  // were registered at that instant. Shared by the real disconnect callback
+  // and the dev fake-drop helper below so the two can't drift — the snapshot
+  // has to happen in BOTH or the recovery flow isn't browser-verifiable.
+  const claimInterruption = useCallback(() => {
+    setInterruptionContext(snapshotInterruption(salvageContextRef.current?.()));
+    pendingInterruptionRef.current = true;
+    setPendingInterruption(true);
+  }, []);
 
   const stopRaf = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -323,10 +375,7 @@ export function useTindeq() {
         setStatus("idle");
         setErrorMsg("Device disconnected");
         // Tell the owner to save the in-flight recording (samplesRef intact).
-        if (wasMeasuring) {
-          pendingInterruptionRef.current = true;
-          setPendingInterruption(true);
-        }
+        if (wasMeasuring) claimInterruption();
       });
       await BleClient.startNotifications(
         device.deviceId,
@@ -351,7 +400,7 @@ export function useTindeq() {
       if (/cancel/i.test(msg)) return;
       setErrorMsg(msg);
     }
-  }, [cleanupDevice, handleSamples, writeCmd]);
+  }, [cleanupDevice, claimInterruption, handleSamples, writeCmd]);
 
   const disconnect = useCallback(() => {
     const deviceId = deviceIdRef.current;
@@ -373,6 +422,7 @@ export function useTindeq() {
     // buffer is void (#113).
     pendingInterruptionRef.current = false;
     setPendingInterruption(false);
+    setInterruptionContext(null);
     samplesRef.current = [];
     t0Ref.current = null;
     latestRef.current = { kg: 0, t: 0 };
@@ -408,6 +458,9 @@ export function useTindeq() {
     // queue a duplicate of an already-saved pull (#113).
     pendingInterruptionRef.current = false;
     setPendingInterruption(false);
+    // Released with the claim (#119). Safe because the recovery save reads the
+    // snapshot BEFORE awaiting stop() — see runStop in ForceView.
+    setInterruptionContext(null);
     measuringRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
@@ -448,15 +501,12 @@ export function useTindeq() {
       cleanupDevice();
       setStatus("idle");
       setErrorMsg("Device disconnected");
-      if (wasMeasuring) {
-        pendingInterruptionRef.current = true;
-        setPendingInterruption(true);
-      }
+      if (wasMeasuring) claimInterruption();
     };
     return () => {
       delete w.__tindeqFakeDrop;
     };
-  }, [cleanupDevice]);
+  }, [cleanupDevice, claimInterruption]);
 
   return {
     status,
@@ -469,6 +519,7 @@ export function useTindeq() {
     avg,
     elapsedMs,
     pendingInterruption,
+    interruptionContext,
     samplesRef,
     connect,
     disconnect,

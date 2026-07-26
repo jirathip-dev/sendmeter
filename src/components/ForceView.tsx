@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveForce } from "../hooks/useLiveForce";
-import { interruptionNote } from "../hooks/useTindeq";
+import { interruptionNote, recoveredTagSide } from "../hooks/useTindeq";
 import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
@@ -385,6 +385,19 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       void endTindeqLiveActivity();
       return;
     }
+    // #119: a recovery stop (note !== "") can be running on a FRESH mount whose
+    // pendingTag/pendingSide are still empty — this 0 ms-deferred call beats
+    // the async tag seeding — so fall back to the tag/side snapshotted when the
+    // drop fired. That's the same pre-Start label the sign-out salvage path
+    // writes from salvageContextRef; the two recovery paths were inconsistent.
+    // Read BEFORE tindeq.stop(), which releases the claim and the snapshot.
+    const { tag, side } =
+      note === ""
+        ? { tag: pendingTag.trim(), side: pendingSide }
+        : recoveredTagSide(
+            { tag: pendingTag.trim(), side: pendingSide },
+            tindeq.interruptionContext,
+          );
     const summary = await tindeq.stop();
     void endTindeqLiveActivity();
     if (!summary) return;
@@ -397,8 +410,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       peakKg: summary.peakKg,
       avgKg: summary.avgKg,
       note,
-      tag: pendingTag.trim(),
-      side: pendingSide,
+      tag,
+      side,
       groupId: ensureSession(),
       protocolRunId: null,
       setNo: null,
