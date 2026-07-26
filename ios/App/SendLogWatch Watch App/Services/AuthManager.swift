@@ -79,7 +79,10 @@ final class AuthManager: NSObject {
         let s = WCSession.default
         guard s.activationState == .activated else { return }
         syncing = true
-        let msg = ["kind": "requestSession"]
+        // Stamped with this install's build (#228) — the account sheet needs
+        // to know which watch build the phone is paired with, and this is a
+        // message the watch already sends. Nothing new goes out on this path.
+        let msg = WatchBuild.stamp(["kind": "requestSession"])
         if s.isReachable {
             s.sendMessage(msg, replyHandler: nil) { _ in
                 s.transferUserInfo(msg) // immediate send failed → queue it
