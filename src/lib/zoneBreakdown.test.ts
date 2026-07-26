@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bandFor,
+  holdOrigin,
   MIN_HOLD_S,
   ZONE_BANDS,
   zoneBreakdown,
@@ -107,6 +108,108 @@ describe("zoneBreakdownInWindow (#214)", () => {
     const { zones } = zoneBreakdownInWindow(recs, now, 28);
     expect(zones.strength.holds.map((h) => h.durationS)).toEqual([10, 12]);
     expect(zones.endurance.holds).toEqual([]);
+  });
+});
+
+describe("recorded vs inferred zones (#259)", () => {
+  it("buckets a recorded hold by its own zone, not by its duration", () => {
+    // 12s infers as strength; recorded as power it counts as power, seconds
+    // and all.
+    const rec = { ...hold("2026-07-20T10:00:00Z", 12), zone: "power" as const };
+    const { zones } = zoneBreakdown([rec]);
+    expect(zones.power.holds.map((h) => h.rec.id)).toEqual([rec.id]);
+    expect(zones.power.totalHoldS).toBe(12);
+    expect(zones.strength.holds).toEqual([]);
+  });
+
+  it("marks each hold with where its zone came from", () => {
+    const { zones } = zoneBreakdown([
+      { ...hold("2026-07-20T10:00:00Z", 10, "recorded"), zone: "strength" as const },
+      hold("2026-07-20T10:05:00Z", 10, "inferred"),
+    ]);
+    expect(zones.strength.holds.map((h) => [h.rec.id, h.source])).toEqual([
+      ["recorded", "recorded"],
+      ["inferred", "inferred"],
+    ]);
+    expect(zones.strength.recordedCount).toBe(1);
+    expect(zones.strength.inferredCount).toBe(1);
+  });
+
+  it("counts nothing as recorded for a history of pre-#259 rows", () => {
+    const { zones } = zoneBreakdown([
+      hold("2026-07-20T10:00:00Z", 10),
+      hold("2026-07-20T10:05:00Z", 5),
+    ]);
+    expect(zones.strength.recordedCount).toBe(0);
+    expect(zones.strength.inferredCount).toBe(1);
+    expect(zones.power.recordedCount).toBe(0);
+    expect(zones.power.inferredCount).toBe(1);
+  });
+
+  it("still agrees with zoneSets bit-for-bit once zones are recorded", () => {
+    const recs = [
+      { ...hold("2026-07-01T10:00:00Z", 7.3, "a"), zone: "strength" as const },
+      { ...hold("2026-07-02T10:00:00Z", 12.0, "b"), zone: "power" as const },
+      hold("2026-07-03T10:00:00Z", 9.9, "c"),
+      hold("2026-07-04T10:00:00Z", 0.4, "d"), // blip
+    ];
+    const { zones } = zoneBreakdown(recs);
+    const sets = zoneSets(recs);
+    for (const q of QUALITIES) {
+      expect(zones[q.id].sets).toBe(sets[q.id]);
+    }
+  });
+
+  it("never treats a recorded hold as an unclassified blip", () => {
+    const { zones, unclassified } = zoneBreakdown([
+      { ...hold("2026-07-20T10:00:00Z", 0.4, "recorded-blip"), zone: "power" as const },
+      hold("2026-07-20T10:05:00Z", 0.4, "plain-blip"),
+    ]);
+    expect(unclassified.map((h) => h.rec.id)).toEqual(["plain-blip"]);
+    expect(zones.power.holds.map((h) => h.rec.id)).toEqual(["recorded-blip"]);
+  });
+});
+
+describe("holdOrigin (#259)", () => {
+  it("says a recorded hold was recorded, and names the zone", () => {
+    expect(holdOrigin({ durationMs: 12_000, zone: "strength" })).toEqual({
+      zone: "strength",
+      source: "recorded",
+      label: "Strength",
+      short: "recorded",
+      long: "recorded as Strength",
+    });
+  });
+
+  it("says an inferred hold was inferred, and from what", () => {
+    expect(holdOrigin({ durationMs: 9_000 })).toEqual({
+      zone: "strength",
+      source: "inferred",
+      label: "Strength",
+      short: "8.5–20s",
+      long: "inferred from a 9s hold",
+    });
+    expect(holdOrigin({ durationMs: 9_350, zone: null }).long).toBe(
+      "inferred from a 9.4s hold",
+    );
+  });
+
+  it("has nothing to say about a sub-1s blip", () => {
+    expect(holdOrigin({ durationMs: 400 })).toEqual({
+      zone: null,
+      source: "inferred",
+      label: null,
+      short: null,
+      long: null,
+    });
+  });
+
+  it("quotes the same band `bandFor` does for an inferred hold", () => {
+    for (const durationMs of [1_000, 6_000, 6_100, 8_500, 8_600, 20_000, 45_000]) {
+      const o = holdOrigin({ durationMs });
+      expect(o.short).toBe(bandFor(durationMs / 1000)!.band);
+      expect(o.zone).toBe(bandFor(durationMs / 1000)!.zone);
+    }
   });
 });
 

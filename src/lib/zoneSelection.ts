@@ -4,6 +4,7 @@ import {
   type ForceCurveModel,
   type TrainingQuality,
 } from "./force-curve";
+import { classifyZoneLoaded } from "./zoneHistory";
 import type { GaugeTarget } from "../components/ForceCurveCard";
 import type { TindeqPreset } from "../types";
 
@@ -112,13 +113,43 @@ export function applyIntensity(
   return buildZoneSelection(model, q, tag, sel.protocol.alternateSides, intensityPct) ?? sel;
 }
 
-/// The zone a selection arms, parsed back from its `zone:${q}` protocol id —
-/// so the chips highlight from `selected` alone. Null for custom presets.
+/// The zone a PROTOCOL arms, parsed back from the `zone:${q}` id
+/// `buildZoneSelection` mints. Null for a custom preset, which has no
+/// declared quality — only a load and a hold time.
+export function protocolQuality(p: TindeqPreset): TrainingQuality | null {
+  const m = /^zone:(.+)$/.exec(p.id);
+  const q = m?.[1] as TrainingQuality | undefined;
+  return q && q in QUALITY_COLORS ? q : null;
+}
+
+/// The zone a selection arms — so the chips highlight from `selected` alone.
+/// Null for custom presets.
 export function selectedQuality(
   sel: ZoneSelection | null,
 ): TrainingQuality | null {
-  if (!sel) return null;
-  const m = /^zone:(.+)$/.exec(sel.protocol.id);
-  const q = m?.[1] as TrainingQuality | undefined;
-  return q && q in QUALITY_COLORS ? q : null;
+  return sel ? protocolQuality(sel.protocol) : null;
+}
+
+/// The quality a hold saved from this protocol was PERFORMED under (#259) —
+/// what the recording stores, so neither History nor the training-balance
+/// chart has to re-derive it from duration afterwards.
+///
+/// An armed zone states its own quality outright. A custom preset doesn't, so
+/// it gets the LOAD-AWARE classification — the exact call `PresetManager`'s
+/// badge makes (`classifyZoneLoaded`, duration AND resolved load), so what
+/// gets stored is what the user was shown when they armed it. That load half
+/// is precisely what a later duration-only re-derivation throws away: a 7s
+/// hold at 85% of max is Strength on the badge and Power Endurance by
+/// duration alone, and before this the second one silently won.
+///
+/// `targetKg` is the preset's target for the SET being saved (per-set ramps
+/// mean set 3 can classify differently from set 1). Null with no protocol —
+/// a freehand hold records no zone rather than a guess.
+export function performedQuality(
+  p: TindeqPreset | null,
+  targetKg: number | null,
+  refs: { maxF: number | null; cf: number | null },
+): TrainingQuality | null {
+  if (!p) return null;
+  return protocolQuality(p) ?? classifyZoneLoaded(p.holdS, targetKg, refs);
 }

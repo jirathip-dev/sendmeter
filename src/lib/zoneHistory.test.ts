@@ -5,11 +5,12 @@ import {
   CURVE_BIAS_RATIO,
   dominantZone,
   recommendZone,
+  recordingZone,
   TIE_BAND_SETS,
   zoneSets,
   zoneTrainingSets,
 } from "./zoneHistory";
-import type { ForceCurveModel } from "./force-curve";
+import type { ForceCurveModel, TrainingQuality } from "./force-curve";
 
 describe("classifyZone (SL-100)", () => {
   it("buckets by hold duration around the zone anchors", () => {
@@ -22,6 +23,137 @@ describe("classifyZone (SL-100)", () => {
     expect(classifyZone(20)).toBe("strength");
     expect(classifyZone(30)).toBe("endurance");
     expect(classifyZone(90)).toBe("endurance");
+  });
+});
+
+describe("recordingZone (#259)", () => {
+  it("uses the zone the recording was performed under when it has one", () => {
+    // 12s would be inferred as strength; recorded as power, it IS power.
+    expect(recordingZone({ durationMs: 12_000, zone: "power" })).toEqual({
+      zone: "power",
+      source: "recorded",
+    });
+  });
+
+  it("falls back to the duration inference when the zone is null", () => {
+    expect(recordingZone({ durationMs: 12_000, zone: null })).toEqual({
+      zone: "strength",
+      source: "inferred",
+    });
+  });
+
+  it("treats an absent zone field the same as null (pre-#259 shapes)", () => {
+    expect(recordingZone({ durationMs: 5_000 })).toEqual({
+      zone: "power",
+      source: "inferred",
+    });
+  });
+
+  it("honours a recorded zone at any duration — only an inference can fail", () => {
+    // The sub-1s stray-blip rule exists to throw away accidental taps in a
+    // GUESS. A recorded zone is a fact about how the hold was performed, so
+    // it isn't second-guessed; nothing else can produce a null `zone` with
+    // source "recorded".
+    expect(recordingZone({ durationMs: 400, zone: "strength" })).toEqual({
+      zone: "strength",
+      source: "recorded",
+    });
+    expect(recordingZone({ durationMs: 400, zone: null })).toEqual({
+      zone: null,
+      source: "inferred",
+    });
+  });
+});
+
+/// The proof that #259 shifted no historical data. Every recording that
+/// exists today has no zone column value, so `recordingZone` must reproduce
+/// `classifyZone` for all of them — not approximately, identically. The
+/// legacy rule is re-implemented here verbatim rather than imported, so this
+/// still fails if someone "helpfully" changes classifyZone too.
+describe("null-zone fallback is byte-for-byte today's behaviour (#259)", () => {
+  function legacyClassify(durationS: number): TrainingQuality | null {
+    if (durationS < 1) return null;
+    if (durationS <= 6) return "power";
+    if (durationS <= 8.5) return "power-endurance";
+    if (durationS <= 20) return "strength";
+    return "endurance";
+  }
+  function legacyZoneSets(recs: { durationMs: number }[]) {
+    const secondsByZone: Record<TrainingQuality, number> = {
+      power: 0,
+      strength: 0,
+      "power-endurance": 0,
+      endurance: 0,
+    };
+    for (const r of recs) {
+      const durationS = r.durationMs / 1000;
+      const zone = legacyClassify(durationS);
+      if (!zone) continue;
+      secondsByZone[zone] += durationS;
+    }
+    // Divisors written out from ZONE_PROTOCOLS (holdS × reps) as they stand;
+    // #259 doesn't touch them, so a change here would be a different bug and
+    // should fail this test loudly rather than be absorbed.
+    return {
+      power: secondsByZone.power / (5 * 6),
+      strength: secondsByZone.strength / (10 * 5),
+      "power-endurance": secondsByZone["power-endurance"] / (7 * 6),
+      endurance: secondsByZone.endurance / (30 * 8),
+    };
+  }
+
+  // 0.0s → 60.0s in 0.1s steps: every band boundary, both sides of each.
+  const DURATIONS_MS = Array.from({ length: 601 }, (_, i) => i * 100);
+
+  it("resolves every duration to exactly what classifyZone resolves it to", () => {
+    for (const durationMs of DURATIONS_MS) {
+      const expected = legacyClassify(durationMs / 1000);
+      // Both existing row shapes: the column absent (older client types) and
+      // explicitly null (what the DB returns for un-backfilled rows).
+      expect(recordingZone({ durationMs }).zone).toBe(expected);
+      expect(recordingZone({ durationMs, zone: null }).zone).toBe(expected);
+      expect(recordingZone({ durationMs }).source).toBe("inferred");
+      expect(classifyZone(durationMs / 1000)).toBe(expected);
+    }
+  });
+
+  it("gives zoneSets the identical numbers it gave before the column existed", () => {
+    const recs = DURATIONS_MS.map((durationMs) => ({ durationMs }));
+    expect(zoneSets(recs)).toEqual(legacyZoneSets(recs));
+    expect(zoneSets(recs.map((r) => ({ ...r, zone: null })))).toEqual(
+      legacyZoneSets(recs),
+    );
+    // …and for a realistic mixed history, not just the sweep.
+    const history = [
+      { durationMs: 5_000 },
+      { durationMs: 5_200 },
+      { durationMs: 7_100 },
+      { durationMs: 9_900 },
+      { durationMs: 13_600 },
+      { durationMs: 31_400 },
+      { durationMs: 400 },
+    ];
+    expect(zoneSets(history)).toEqual(legacyZoneSets(history));
+  });
+
+  it("only diverges once a recording actually carries a zone", () => {
+    // Same hold, twice: 12s inferred is strength, 12s recorded as power is
+    // power — and the seconds move with it, wholesale.
+    const inferred = zoneSets([{ durationMs: 12_000 }]);
+    const recorded = zoneSets([{ durationMs: 12_000, zone: "power" as const }]);
+    expect(inferred.strength).toBeCloseTo(12 / 50, 10);
+    expect(inferred.power).toBe(0);
+    expect(recorded.power).toBeCloseTo(12 / 30, 10);
+    expect(recorded.strength).toBe(0);
+  });
+
+  it("windows recorded holds by the same rule as inferred ones", () => {
+    const recs = [
+      { recordedAt: "2026-07-20T10:00:00Z", durationMs: 12_000, zone: "power" as const },
+      { recordedAt: "2026-05-01T10:00:00Z", durationMs: 12_000, zone: "power" as const },
+    ];
+    const sets = zoneTrainingSets(recs, NOW, 28);
+    expect(sets.power).toBeCloseTo(12 / 30, 10); // only the in-window one
   });
 });
 

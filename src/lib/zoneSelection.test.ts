@@ -3,12 +3,16 @@ import {
   applyIntensity,
   buildZoneSelection,
   loadIntensity,
+  performedQuality,
   saveIntensity,
   selectedQuality,
   QUALITY_COLORS,
   type ZoneSelection,
 } from "./zoneSelection";
 import { ZONE_INTENSITY, type ForceCurveModel } from "./force-curve";
+import { classifyZone, classifyZoneLoaded } from "./zoneHistory";
+import { presetTargetKg } from "./protocol";
+import type { TindeqPreset } from "../types";
 
 const INTENSITY_KEY = "sendmeter:zone-intensity";
 
@@ -258,5 +262,83 @@ describe("selectedQuality", () => {
 
   it("returns null for a null selection", () => {
     expect(selectedQuality(null)).toBeNull();
+  });
+});
+
+describe("performedQuality (#259)", () => {
+  /// A custom preset, i.e. one whose id is NOT `zone:${q}` — it declares no
+  /// quality of its own, so its zone has to be classified from hold + load.
+  function customPreset(over: Partial<TindeqPreset> = {}): TindeqPreset {
+    return {
+      id: "preset-uuid",
+      name: "My hangs",
+      holdS: 7,
+      reps: 5,
+      sets: 3,
+      restRepsS: 150,
+      restSetsS: 180,
+      targetKg: 34,
+      targetPct: null,
+      pctBasis: "pr",
+      pctStep: 0,
+      targetCurve: false,
+      alternateSides: false,
+      ...over,
+    };
+  }
+
+  const refs = { maxF: 40, cf: 20 };
+
+  it("records an armed zone's own quality, whatever its numbers would classify as", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 500 };
+    const sel = buildZoneSelection(model, "strength", "FDP", false)!;
+    expect(sel).not.toBeNull();
+    expect(performedQuality(sel.protocol, sel.protocol.targetKg, refs)).toBe(
+      "strength",
+    );
+    // …and it is the zone the user armed, not a re-derivation: even fed
+    // deliberately contradictory references it still answers strength.
+    expect(
+      performedQuality(sel.protocol, 1, { maxF: 1000, cf: 900 }),
+    ).toBe("strength");
+  });
+
+  it("records a custom preset's LOAD-AWARE badge, which duration alone would get wrong", () => {
+    // 7s at 34kg of a 40kg max = 85% → Strength on the preset's badge…
+    const p = customPreset({ holdS: 7, targetKg: 34 });
+    expect(performedQuality(p, 34, refs)).toBe("strength");
+    // …while a duration-only re-derivation of the saved 7s hold says Power
+    // Endurance. That divergence is the bug #259 exists to close.
+    expect(classifyZone(7)).toBe("power-endurance");
+  });
+
+  it("matches classifyZoneLoaded exactly — the same call PresetManager's badge makes", () => {
+    const p = customPreset({ holdS: 10 });
+    for (const kg of [null, 15, 24, 34, 38]) {
+      expect(performedQuality(p, kg, refs)).toBe(
+        classifyZoneLoaded(p.holdS, kg, refs),
+      );
+    }
+  });
+
+  it("classifies a custom preset per SET, so a ramp can move the zone", () => {
+    // %-of-PR with a per-set step: set 1 at 70% of 40kg is power-endurance,
+    // set 3 at 90% is strength. The saved rep gets its own set's answer.
+    const p = customPreset({ holdS: 10, targetKg: null, targetPct: 70, pctStep: 10 });
+    expect(performedQuality(p, presetTargetKg(p, { ...refs, prKg: 40, wPrime: null }, 1), refs)).toBe(
+      "power-endurance",
+    );
+    expect(performedQuality(p, presetTargetKg(p, { ...refs, prKg: 40, wPrime: null }, 3), refs)).toBe(
+      "strength",
+    );
+  });
+
+  it("falls back to duration for an untargeted preset with no resolvable load", () => {
+    const p = customPreset({ holdS: 12, targetKg: null });
+    expect(performedQuality(p, null, refs)).toBe(classifyZone(12));
+  });
+
+  it("records nothing at all for a freehand hold (no protocol armed)", () => {
+    expect(performedQuality(null, 34, refs)).toBeNull();
   });
 });

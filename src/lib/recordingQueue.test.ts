@@ -22,6 +22,7 @@ function rec(id: string, tag = "FDP", samples = 2): NewTindeqRecording & { id: s
     groupId: "group-1",
     protocolRunId: null,
     setNo: null,
+    zone: null,
     samples: Array.from({ length: samples }, (_, i) => ({ t: i * 500, kg: 10 + i })),
   };
 }

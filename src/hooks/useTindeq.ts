@@ -344,6 +344,10 @@ export function useTindeq() {
             groupId: ctx.groupId,
             protocolRunId: null,
             setNo: null,
+            // …and no zone either (#259), for the same reason: a raw buffer
+            // slice isn't a hold performed under a protocol, so there's no
+            // performed quality to record. It falls back to inference.
+            zone: null,
             samples: summary.samples,
           },
           // null only via the no-context fallback above — a REGISTERED

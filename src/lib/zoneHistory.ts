@@ -5,21 +5,63 @@ import {
   type TrainingQuality,
 } from "./force-curve";
 
-/// SL-100: which training QUALITY a saved hold belongs to, inferred from its
-/// duration. Recordings don't store the zone they were done under, so we
-/// bucket by hold length around each zone's anchor hold (power 5s · power-
-/// endurance 7s · strength 10s · endurance 30s — see ZONE_PROTOCOLS). The
-/// power/PE/strength anchors sit close together so short holds are inherently
-/// fuzzy; `zoneTrainingSets` (below) turns each bucketed hold into a
-/// duration-normalised set count, so — unlike the old distinct-day count —
-/// a hold that lands on the wrong side of a fuzzy 6s/8.5s boundary isn't
-/// smoothed away, it shows up as fractional credit in the neighboring zone.
+/// SL-100: which training QUALITY a saved hold belongs to, INFERRED from its
+/// duration — the fallback for a recording that doesn't carry the zone it was
+/// performed under (#259 added that column; everything saved before it, plus
+/// every freehand hold, is null). Buckets by hold length around each zone's
+/// anchor hold (power 5s · power-endurance 7s · strength 10s · endurance 30s
+/// — see ZONE_PROTOCOLS). The power/PE/strength anchors sit close together so
+/// short holds are inherently fuzzy; `zoneTrainingSets` (below) turns each
+/// bucketed hold into a duration-normalised set count, so — unlike the old
+/// distinct-day count — a hold that lands on the wrong side of a fuzzy
+/// 6s/8.5s boundary isn't smoothed away, it shows up as fractional credit in
+/// the neighboring zone.
+///
+/// Do NOT call this directly on a recording: go through `recordingZone`, which
+/// prefers the recorded zone and only falls back here.
 export function classifyZone(durationS: number): TrainingQuality | null {
   if (durationS < 1) return null; // stray blip, not a real hold
   if (durationS <= 6) return "power";
   if (durationS <= 8.5) return "power-endurance";
   if (durationS <= 20) return "strength";
   return "endurance";
+}
+
+/// Where a hold's zone came from (#259).
+///   recorded — the recording carries the zone it was performed under
+///   inferred — re-derived from hold duration by `classifyZone`
+export type ZoneSource = "recorded" | "inferred";
+
+export interface ZoneAttribution {
+  zone: TrainingQuality | null;
+  source: ZoneSource;
+}
+
+/// The shape every zone reader needs from a recording. `zone` is optional so
+/// callers with older/partial shapes (the offline queue, tests, fixtures)
+/// still typecheck — an absent field reads the same as an explicit null.
+export interface ZonedHold {
+  durationMs: number;
+  zone?: TrainingQuality | null;
+}
+
+/// THE read path for "which zone is this hold" (#259). Prefers the zone the
+/// recording was performed under; falls back to inferring it from duration
+/// when there is none — which is every recording made before the column
+/// existed, plus every freehand hold. The fallback is byte-for-byte the old
+/// behaviour (`classifyZone(durationMs / 1000)`), so historical data does not
+/// shift; `zoneHistory.test.ts` pins that.
+///
+/// `source` comes back with it so the UI can say WHICH it is looking at —
+/// "recorded as Strength" reads very differently from "inferred from a 9s
+/// hold", and conflating the two is the thing this issue exists to stop.
+///
+/// A recorded zone wins regardless of duration: it's a fact about how the
+/// hold was performed, not a guess to be second-guessed. Only an INFERRED
+/// zone can come back null (the sub-1s stray-blip rule).
+export function recordingZone(rec: ZonedHold): ZoneAttribution {
+  if (rec.zone != null) return { zone: rec.zone, source: "recorded" };
+  return { zone: classifyZone(rec.durationMs / 1000), source: "inferred" };
 }
 
 /// Load-aware classifier (SL-97b): once a preset's target resolves to an
@@ -65,8 +107,13 @@ export function zoneSetDurationS(zone: TrainingQuality): number {
 /// worth of holds to show up at all. No time-window filtering — callers that
 /// want a trailing window should filter `recs` first (see
 /// `zoneTrainingSets` below) or pre-filter for a per-session mix (#214).
+///
+/// Buckets by `recordingZone` (#259), so a hold that stored its zone counts
+/// toward THAT zone; only holds without one are bucketed by duration. Time is
+/// still the weight either way — a recorded zone changes which bucket a hold
+/// lands in, never how much it's worth.
 export function zoneSets(
-  recs: { durationMs: number }[],
+  recs: ZonedHold[],
 ): Record<TrainingQuality, number> {
   const secondsByZone: Record<TrainingQuality, number> = {
     power: 0,
@@ -76,7 +123,7 @@ export function zoneSets(
   };
   for (const r of recs) {
     const durationS = r.durationMs / 1000;
-    const zone = classifyZone(durationS);
+    const { zone } = recordingZone(r);
     if (!zone) continue;
     secondsByZone[zone] += durationS;
   }
@@ -93,7 +140,7 @@ export function zoneSets(
 /// same as `zoneSets`, but restricted to recordings within `windowDays` of
 /// `now` — the window training-balance is scoped to.
 export function zoneTrainingSets(
-  recs: { recordedAt: string; durationMs: number }[],
+  recs: (ZonedHold & { recordedAt: string })[],
   now: Date,
   windowDays = 28,
 ): Record<TrainingQuality, number> {

@@ -7,11 +7,12 @@ import type {
   TindeqSample,
   TindeqSide,
 } from "../../types";
+import type { TrainingQuality } from "../force-curve";
 import { localDayRange } from "../dates";
 import { unwrap, makeSoftDeleteOps } from "./shared";
 
 const RECORDING_COLS =
-  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no";
+  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone";
 
 type RecordingRow = {
   id: string;
@@ -26,6 +27,7 @@ type RecordingRow = {
   group_id: string | null;
   protocol_run_id: string | null;
   set_no: number | null;
+  zone: string | null;
 };
 
 function toRecording(r: RecordingRow): TindeqRecordingMeta {
@@ -42,6 +44,9 @@ function toRecording(r: RecordingRow): TindeqRecordingMeta {
     groupId: r.group_id,
     protocolRunId: r.protocol_run_id,
     setNo: r.set_no,
+    // Constrained to the four quality ids by a DB check (#259); null on every
+    // row saved before it, and on freehand/watch holds.
+    zone: r.zone as TrainingQuality | null,
   };
 }
 
@@ -171,6 +176,10 @@ export async function insertRecording(
         group_id: rec.groupId,
         protocol_run_id: rec.protocolRunId,
         set_no: rec.setNo,
+        // `?? null` rather than a pass-through: entries queued before #259
+        // (localStorage survives the update) carry no `zone` at all, and an
+        // explicit null is what "we don't know" means for this column.
+        zone: rec.zone ?? null,
         samples: rec.samples.map((s) => [s.t, s.kg]),
       })
       .select(RECORDING_COLS)

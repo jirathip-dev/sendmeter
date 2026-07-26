@@ -455,6 +455,7 @@ export type Database = {
           side: string
           tag: string
           user_id: string
+          zone: string | null
         }
         Insert: {
           avg_kg: number
@@ -472,6 +473,7 @@ export type Database = {
           side?: string
           tag?: string
           user_id?: string
+          zone?: string | null
         }
         Update: {
           avg_kg?: number
@@ -489,6 +491,7 @@ export type Database = {
           side?: string
           tag?: string
           user_id?: string
+          zone?: string | null
         }
         Relationships: []
       }

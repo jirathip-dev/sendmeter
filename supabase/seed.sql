@@ -143,12 +143,17 @@ from generate_series(1, 5) as n;
 -- samples are [[t_ms, kg], ...] (t in MILLISECONDS — charts divide by 1000).
 -- 7s holds at 10Hz: ~1.2s ramp to peak, then a plateau with slight decay.
 
-with spec(days_ago, group_id, side, peak) as (
+-- The older session has a NULL zone, like every recording made before #259 —
+-- its quality gets inferred from the 7s hold (power-endurance). The newer one
+-- was run under an armed Strength preset and stores that, which is exactly the
+-- case duration alone gets wrong: both surfaces should show the two sessions
+-- classified differently despite identical holds.
+with spec(days_ago, group_id, side, peak, zone) as (
   values
-    (10, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'left',  38.0),
-    (10, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'right', 40.0),
-    ( 3, 'aaaaaaaa-0000-0000-0000-000000000002'::uuid, 'left',  40.0),
-    ( 3, 'aaaaaaaa-0000-0000-0000-000000000002'::uuid, 'right', 42.5)
+    (10, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'left',  38.0, null),
+    (10, 'aaaaaaaa-0000-0000-0000-000000000001'::uuid, 'right', 40.0, null),
+    ( 3, 'aaaaaaaa-0000-0000-0000-000000000002'::uuid, 'left',  40.0, 'strength'),
+    ( 3, 'aaaaaaaa-0000-0000-0000-000000000002'::uuid, 'right', 42.5, 'strength')
 ),
 curves as (
   select
@@ -164,7 +169,7 @@ curves as (
 )
 insert into public.tindeq_recordings (
   user_id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count,
-  samples, tag, side, group_id
+  samples, tag, side, group_id, zone
 )
 select
   '11111111-1111-1111-1111-111111111111',
@@ -173,6 +178,6 @@ select
   7000,
   max(kg), round(avg(kg)::numeric, 2), count(*),
   jsonb_agg(jsonb_build_array(t, kg) order by t),
-  'Half crimp', side, group_id
+  'Half crimp', side, group_id, zone
 from curves
-group by days_ago, group_id, side, peak;
+group by days_ago, group_id, side, peak, zone;
