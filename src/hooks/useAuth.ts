@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, SUPABASE_URL } from "../lib/supabase";
-import { getSessionWithDiagnostics } from "../lib/authDiagnostics";
+import {
+  getSessionWithDiagnostics,
+  initAuthDiagnostics,
+  markUserSignOut,
+  recordAuthStateChange,
+  recordSessionHeartbeat,
+} from "../lib/authDiagnostics";
+import { flushAuthEvents } from "../lib/authEventFlush";
+import { upsertAuthEvents } from "../lib/repo";
+import { loadBuildTag } from "../lib/appVersion";
 import {
   onWatchSessionRequest,
   relaySessionToWatch,
@@ -30,7 +39,23 @@ export function useAuth() {
         healthStarted = true;
         void startHealthBackgroundSync();
       }
+      if (s) {
+        // Last-known-good heartbeat (#202): every moment we hold a live
+        // session, stamp when we saw it and when it was due to expire. The
+        // gap to the next recorded event is what turns a bare cause into
+        // "valid at 23:40, gone at 06:50, cause X".
+        recordSessionHeartbeat(s);
+        // Ship whatever the ring holds. Fire-and-forget and idempotent —
+        // flushAuthEvents never throws and skips the network entirely when
+        // nothing changed since the last successful send.
+        void flushAuthEvents(s.user.id, { upsert: upsertAuthEvents });
+      }
     }
+
+    // Moves the ring onto Preferences (native) and checks the storage-wipe
+    // canary. Order-independent: anything recorded before it resolves is
+    // merged in, so the auth path below never waits on it.
+    void loadBuildTag().then((build) => initAuthDiagnostics({ build }));
 
     // A null session here (issue #194) is otherwise indistinguishable
     // between "never logged in", a network hiccup, and auth-js having
@@ -44,6 +69,14 @@ export function useAuth() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, s) => {
       if (event === "PASSWORD_RECOVERY") setRecovery(true);
+      // #202: THE gap the previous instrumentation had. auth-js runs its own
+      // refresh loop; when `_callRefreshToken` fails non-retryably on an
+      // already-expired access token it calls `_removeSession()` and emits
+      // SIGNED_OUT itself (GoTrueClient `_callRefreshToken` → `_removeSession`
+      // → `_notifyAllSubscribers('SIGNED_OUT', null)`). That is the overnight
+      // logout, and this line used to just `setSession(null)` — no record, no
+      // console line, nothing to find the next morning.
+      if (!s) recordAuthStateChange(event);
       setSession(s);
       setLoading(false);
       onSession(s);
@@ -101,6 +134,11 @@ export function useAuth() {
     loading,
     recovery,
     clearRecovery: () => setRecovery(false),
-    signOut: () => supabase.auth.signOut(),
+    signOut: () => {
+      // Tell the diagnostics ring the SIGNED_OUT about to arrive is one the
+      // user asked for, so a deliberate logout doesn't read as a revocation.
+      markUserSignOut();
+      return supabase.auth.signOut();
+    },
   };
 }

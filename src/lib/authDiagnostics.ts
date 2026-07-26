@@ -3,6 +3,12 @@ import {
   type AuthError,
   type Session,
 } from "@supabase/supabase-js";
+import {
+  createDurableAuthStore,
+  createLocalStorageStore,
+  type AuthEventStoreKind,
+  type DurableAuthStore,
+} from "./authEventStore";
 
 /// Issue #194: a null `getSession()` result on foreground currently drops the
 /// user straight to the login screen with no record of *why* — storage never
@@ -10,11 +16,17 @@ import {
 /// a revoked one (it removes an invalid stored session without emitting
 /// SIGNED_OUT — see useAuth.ts). Those three need different fixes, so
 /// classify and record which one happened rather than staying silent.
+///
+/// Issue #202 adds two causes that aren't `getSession()` results at all: a
+/// sign-out the *user* asked for (so a deliberate logout doesn't read as an
+/// incident), and the WebView's own storage being wiped underneath us.
 export type NullSessionReason =
   | "network-error"
   | "revoked"
   | "storage-missing"
-  | "storage-unavailable";
+  | "storage-unavailable"
+  | "user-signed-out"
+  | "storage-wiped";
 
 /// Tri-state deliberately, not a boolean. "storage threw" and "storage held
 /// nothing" are opposite diagnoses — the first says we cannot tell whether a
@@ -22,6 +34,13 @@ export type NullSessionReason =
 /// a private-browsing/quota failure read as "never logged in", inverting the
 /// signal this module exists to produce.
 export type StoredSessionProbe = "present" | "absent" | "unavailable";
+
+/// Which observer saw the null session. The #202 diagnosis was that only
+/// `get-session` was ever instrumented, so the likeliest logout path — the
+/// auto-refresh tick failing and auth-js tearing the session down itself —
+/// left no trace at all. Carrying the origin makes "we asked and got null"
+/// distinguishable from "auth-js signed us out".
+export type AuthEventSource = "get-session" | "auth-state-change" | "init";
 
 export interface NullSessionEvent {
   reason: NullSessionReason;
@@ -31,15 +50,48 @@ export interface NullSessionEvent {
   count: number;
 }
 
+/// Everything besides the cause that makes a record readable weeks later:
+/// where it came from, which build produced it, which store it landed in, and
+/// when we last held a session we know was good.
+export interface AuthEventMeta {
+  source?: AuthEventSource;
+  /// The auth-js event name (`SIGNED_OUT`, `TOKEN_REFRESHED`, …) when the
+  /// record came from `onAuthStateChange`.
+  authEvent?: string;
+  build?: string;
+  /// Last-known-good session heartbeat, captured at the moment the incident
+  /// STARTED — so an event reads "valid at 23:40, gone at 06:50, cause X"
+  /// rather than a bare cause.
+  lastGoodAt?: string;
+  lastGoodExpiresAt?: string;
+  store?: AuthEventStoreKind;
+}
+
 /// Issue #202: `NullSessionEvent` plus the timestamps a persisted, on-device
 /// record needs to be readable — when the incident started and when it last
-/// recurred.
-export interface AuthDiagnosticEvent extends NullSessionEvent {
+/// recurred — plus the attribution metadata above.
+export interface AuthDiagnosticEvent extends NullSessionEvent, AuthEventMeta {
   firstAt: string; // ISO
   lastAt: string; // ISO
 }
 
 const AUTH_EVENTS_KEY = "sendmeter:auth-events";
+const HEARTBEAT_KEY = "sendmeter:auth-heartbeat";
+/// Written into BOTH the durable store and `localStorage`. Coming back from
+/// the durable store while the `localStorage` copy is gone is the one
+/// observation that separates "iOS threw the WebView's data away" from "the
+/// session was revoked server-side".
+const CANARY_KEY = "sendmeter:webview-canary";
+/// Owned by `authEventFlush.ts`, listed here so the whole diagnostics working
+/// set comes off the durable store in one hydration pass at launch.
+export const FLUSH_MARKER_KEY = "sendmeter:auth-events-flushed";
+
+export const AUTH_DIAGNOSTIC_KEYS = [
+  AUTH_EVENTS_KEY,
+  HEARTBEAT_KEY,
+  CANARY_KEY,
+  FLUSH_MARKER_KEY,
+] as const;
 
 /// Ring cap — small, since each entry is a few bytes and a burst of the same
 /// reason collapses into one entry via the count.
@@ -50,6 +102,8 @@ const NULL_SESSION_REASONS: readonly NullSessionReason[] = [
   "revoked",
   "storage-missing",
   "storage-unavailable",
+  "user-signed-out",
+  "storage-wiped",
 ];
 
 /// Hydrated lazily from storage on first access so dedupe (matching against
@@ -76,20 +130,68 @@ export function classifyNullSession(
   return isAuthRetryableFetchError(error) ? "network-error" : "revoked";
 }
 
-interface AuthStorage {
+/// Classifies a null session that arrived via `onAuthStateChange` rather than
+/// from a `getSession()` call. Returns null for events we deliberately don't
+/// record.
+///
+/// `INITIAL_SESSION` is skipped because `getSessionWithDiagnostics` covers the
+/// same moment with a better classification (it probes storage BEFORE auth-js
+/// can clear it); recording both would double every cold start.
+///
+/// A `SIGNED_OUT` we didn't ask for is `revoked`, not `storage-missing`:
+/// auth-js only tears the session down (`_callRefreshToken` →
+/// `_removeSession`) on a NON-retryable refresh failure whose access token has
+/// already expired — i.e. the refresh token itself was rejected. Probing
+/// storage at that point finds the key already deleted and would misreport it
+/// as "never had a session".
+export function classifyAuthStateChange(
+  event: string,
+  userInitiated: boolean,
+): NullSessionReason | null {
+  if (event === "INITIAL_SESSION") return null;
+  if (event === "SIGNED_OUT")
+    return userInitiated ? "user-signed-out" : "revoked";
+  // TOKEN_REFRESHED/USER_UPDATED/… with a null session shouldn't happen; if
+  // one does, record it rather than dropping the only trace of it. The
+  // auth-js event name rides along in the metadata.
+  return "revoked";
+}
+
+export interface AuthStorage {
   getItem(key: string): string | null;
 }
 
-interface AuthEventStorage extends AuthStorage {
+export interface AuthEventStorage extends AuthStorage {
   setItem(key: string, value: string): void;
 }
 
-function defaultStorage(): AuthEventStorage | null {
+/// The WebView's own `localStorage` — where supabase-js keeps the session.
+/// Deliberately distinct from the ring store below: on native the ring moves
+/// out of the WebView, but the session probe must keep reading the store
+/// supabase-js actually writes to.
+function webStorage(): AuthEventStorage | null {
   try {
     return typeof localStorage === "undefined" ? null : localStorage;
   } catch {
     return null; // storage disabled (private mode, native shell quirks, …)
   }
+}
+
+/// The durable ring store. `localStorage`-backed until `initAuthDiagnostics()`
+/// swaps in Preferences on native — memoized so events recorded before init
+/// still accumulate in one place.
+let ringStore: DurableAuthStore | null = null;
+
+function defaultStorage(): DurableAuthStore {
+  ringStore ??= createLocalStorageStore();
+  return ringStore;
+}
+
+/// The durable ring store, for the modules that persist alongside the ring
+/// (`authEventFlush.ts` keeps its "already sent" marker there, so a flush
+/// isn't re-sent on every launch).
+export function getAuthEventStore(): DurableAuthStore {
+  return defaultStorage();
 }
 
 function isAuthDiagnosticEvent(v: unknown): v is AuthDiagnosticEvent {
@@ -138,24 +240,91 @@ function saveAuthEvents(
   }
 }
 
+/// Two occurrences belong to the same incident only when cause, origin AND
+/// build match. Collapsing across builds would hide "the build with the fix
+/// still did it", which is the question the record exists to answer.
+function sameIncident(
+  entry: AuthDiagnosticEvent,
+  reason: NullSessionReason,
+  meta: AuthEventMeta,
+): boolean {
+  return (
+    entry.reason === reason &&
+    entry.source === meta.source &&
+    entry.authEvent === meta.authEvent &&
+    entry.build === meta.build
+  );
+}
+
 /// Pure: append one occurrence of `reason`. Collapses into the newest entry
-/// (bumping `count` + `lastAt`) when it matches the same reason, else pushes
+/// (bumping `count` + `lastAt`) when it matches the same incident, else pushes
 /// a new entry and evicts the oldest beyond `MAX_AUTH_EVENTS`. Returns a NEW
 /// array — doesn't mutate `prev`.
+///
+/// A collapse keeps the FIRST occurrence's metadata: the heartbeat captured
+/// when the incident started ("valid at 23:40") is the informative one, and
+/// overwriting it with the fifth foreground retry's heartbeat would erase
+/// exactly the interval we're trying to read.
 export function appendAuthEvent(
   prev: AuthDiagnosticEvent[],
   reason: NullSessionReason,
   nowIso: string,
+  meta: AuthEventMeta = {},
 ): AuthDiagnosticEvent[] {
   const last = prev[prev.length - 1];
-  if (last && last.reason === reason) {
+  if (last && sameIncident(last, reason, meta)) {
     return [
       ...prev.slice(0, -1),
       { ...last, count: last.count + 1, lastAt: nowIso },
     ];
   }
-  const next = [...prev, { reason, count: 1, firstAt: nowIso, lastAt: nowIso }];
+  const next = [
+    ...prev,
+    { reason, count: 1, firstAt: nowIso, lastAt: nowIso, ...meta },
+  ];
   return next.length > MAX_AUTH_EVENTS ? next.slice(-MAX_AUTH_EVENTS) : next;
+}
+
+/// Identity of an incident across rings: same cause, same start, same origin
+/// and build. `firstAt` never changes once an entry exists (collapses only
+/// move `lastAt`/`count`), which is what makes it usable as a key — the same
+/// key is also the `auth_events` upsert conflict target.
+function incidentKey(e: AuthDiagnosticEvent): string {
+  return [e.reason, e.firstAt, e.source ?? "", e.authEvent ?? "", e.build ?? ""].join(
+    "|",
+  );
+}
+
+/// Union two rings by incident identity, keeping the further-along version of
+/// each (highest count, latest `lastAt`). Used at boot to reconcile the
+/// durable ring with the legacy `localStorage` one and with anything recorded
+/// before the durable store finished hydrating.
+///
+/// Deliberately a UNION, not an addition: the same ring gets reconciled again
+/// on every launch (the legacy copy isn't erased — it's evidence), and summing
+/// counts would inflate a one-off incident into a nightly epidemic.
+export function mergeAuthEvents(
+  a: readonly AuthDiagnosticEvent[],
+  b: readonly AuthDiagnosticEvent[],
+): AuthDiagnosticEvent[] {
+  const byKey = new Map<string, AuthDiagnosticEvent>();
+  for (const entry of [...a, ...b]) {
+    const key = incidentKey(entry);
+    const seen = byKey.get(key);
+    if (!seen || seen.count < entry.count || seen.lastAt < entry.lastAt) {
+      byKey.set(key, {
+        ...entry,
+        count: Math.max(seen?.count ?? 0, entry.count),
+        lastAt: seen && seen.lastAt > entry.lastAt ? seen.lastAt : entry.lastAt,
+      });
+    }
+  }
+  const merged = [...byKey.values()].sort((x, y) =>
+    x.firstAt.localeCompare(y.firstAt),
+  );
+  return merged.length > MAX_AUTH_EVENTS
+    ? merged.slice(-MAX_AUTH_EVENTS)
+    : merged;
 }
 
 /// Records a null-session classification: updates the in-memory ring
@@ -164,13 +333,19 @@ export function appendAuthEvent(
 /// unavailable storage write (the storage-unavailable reason making its own
 /// persistence fail is the expected irony here) is swallowed, and the
 /// console path plus the in-memory ring keep working regardless.
+///
+/// Synchronous by contract even though the native store is async: the durable
+/// write is queued behind a write-behind cache (see `authEventStore.ts`), so
+/// the auth path never awaits Preferences and a rejected write cannot surface
+/// here.
 export function recordAuthNullSession(
   reason: NullSessionReason,
   storage: AuthEventStorage | null = defaultStorage(),
   now: () => string = () => new Date().toISOString(),
+  meta: AuthEventMeta = {},
 ): NullSessionEvent {
   if (events === null) events = loadAuthEvents(storage);
-  events = appendAuthEvent(events, reason, now());
+  events = appendAuthEvent(events, reason, now(), meta);
   saveAuthEvents(events, storage);
   // appendAuthEvent always pushes or replaces an entry, so the ring is
   // never empty here.
@@ -178,9 +353,151 @@ export function recordAuthNullSession(
   // Not "on foreground": this also runs at mount, where a null session on a
   // logged-out cold start is entirely normal. Keep the message neutral so an
   // ordinary launch doesn't read as an incident in the console.
-  console.warn(`[auth] null session: ${reason} (x${latest.count})`);
+  const via = meta.authEvent ? ` via ${meta.authEvent}` : "";
+  console.warn(`[auth] null session: ${reason}${via} (x${latest.count})`);
   return { reason: latest.reason, count: latest.count };
 }
+
+/// Metadata every real (non-test) record carries: origin, the current build,
+/// the store the ring lives in, and the last-known-good heartbeat.
+function currentMeta(
+  source: AuthEventSource,
+  authEvent: string | undefined,
+  storage: DurableAuthStore | null,
+  build: string | null,
+): AuthEventMeta {
+  const beat = storage ? loadSessionHeartbeat(storage) : null;
+  return {
+    source,
+    ...(authEvent ? { authEvent } : {}),
+    ...(build ? { build } : {}),
+    ...(beat
+      ? {
+          lastGoodAt: beat.at,
+          ...(beat.expiresAt ? { lastGoodExpiresAt: beat.expiresAt } : {}),
+        }
+      : {}),
+    ...(storage ? { store: storage.kind } : {}),
+  };
+}
+
+/// Issue #202's headline fix: record the null sessions auth-js hands *us*,
+/// not only the ones we went and asked for. Returns null when the event is
+/// one we deliberately don't record (see `classifyAuthStateChange`).
+export function recordAuthStateChange(
+  event: string,
+  opts: {
+    storage?: DurableAuthStore | null;
+    now?: () => string;
+    build?: string | null;
+    userInitiated?: boolean;
+  } = {},
+): NullSessionEvent | null {
+  const storage = opts.storage === undefined ? defaultStorage() : opts.storage;
+  const userInitiated = opts.userInitiated ?? consumeUserSignOut();
+  const reason = classifyAuthStateChange(event, userInitiated);
+  if (!reason) return null;
+  return recordAuthNullSession(
+    reason,
+    storage,
+    opts.now,
+    currentMeta(
+      "auth-state-change",
+      event,
+      storage,
+      opts.build === undefined ? status.build : opts.build,
+    ),
+  );
+}
+
+/// A sign-out the user asked for must not read as an incident. Set right
+/// before `supabase.auth.signOut()` and consumed by the SIGNED_OUT that
+/// follows. Time-boxed, so a sign-out that never completes can't silently
+/// absolve a genuine revocation hours later.
+const USER_SIGNOUT_TTL_MS = 15_000;
+let userSignOutAt = 0;
+let clock: () => number = () => Date.now();
+
+export function markUserSignOut(): void {
+  userSignOutAt = clock();
+}
+
+function consumeUserSignOut(): boolean {
+  if (!userSignOutAt) return false;
+  const fresh = clock() - userSignOutAt < USER_SIGNOUT_TTL_MS;
+  userSignOutAt = 0;
+  return fresh;
+}
+
+/// Test seam for the sign-out TTL above.
+export function setDiagnosticsClock(fn: () => number): void {
+  clock = fn;
+}
+
+// ---------------------------------------------------------------------------
+// Last-known-good session heartbeat
+// ---------------------------------------------------------------------------
+
+/// When we last held a session we know was live, and when that session's
+/// access token was due to expire. Refreshed on foreground while signed in,
+/// so the gap between `at` and the next recorded event bounds the window the
+/// logout happened in.
+export interface SessionHeartbeat {
+  at: string; // ISO
+  expiresAt: string | null; // ISO, from session.expires_at
+}
+
+export function heartbeatFromSession(
+  session: { expires_at?: number | null },
+  nowIso: string,
+): SessionHeartbeat {
+  return {
+    at: nowIso,
+    // supabase-js stores expiry as unix SECONDS.
+    expiresAt: session.expires_at
+      ? new Date(session.expires_at * 1000).toISOString()
+      : null,
+  };
+}
+
+export function recordSessionHeartbeat(
+  session: { expires_at?: number | null } | null,
+  storage: AuthEventStorage | null = defaultStorage(),
+  now: () => string = () => new Date().toISOString(),
+): SessionHeartbeat | null {
+  if (!session || !storage) return null;
+  const beat = heartbeatFromSession(session, now());
+  try {
+    storage.setItem(HEARTBEAT_KEY, JSON.stringify(beat));
+  } catch {
+    // Same contract as the ring: never throw into the auth path.
+  }
+  return beat;
+}
+
+export function loadSessionHeartbeat(
+  storage: AuthStorage | null = defaultStorage(),
+): SessionHeartbeat | null {
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(HEARTBEAT_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const b = parsed as Record<string, unknown>;
+    if (typeof b.at !== "string") return null;
+    return {
+      at: b.at,
+      expiresAt: typeof b.expiresAt === "string" ? b.expiresAt : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Reads for the UI
+// ---------------------------------------------------------------------------
 
 /// The most recently classified null-session event — the "attributable, not
 /// silent" distinction issue #194 asks for, surfaced for inspection.
@@ -198,6 +515,136 @@ export function getAuthDiagnosticEvents(): AuthDiagnosticEvent[] {
   return [...events].reverse();
 }
 
+export interface AuthDiagnosticsStatus {
+  /// Which backend the ring is on right now — shown in the account sheet so
+  /// "nothing recorded" can be read against "…and it only ever lived in the
+  /// WebView's localStorage".
+  store: AuthEventStoreKind;
+  /// True when the durable store held our canary but the WebView's copy was
+  /// gone at launch: iOS wiped the website data, taking the session with it.
+  webviewWiped: boolean;
+  build: string | null;
+}
+
+let status: AuthDiagnosticsStatus = {
+  store: "local-storage",
+  webviewWiped: false,
+  build: null,
+};
+
+export function getAuthDiagnosticsStatus(): AuthDiagnosticsStatus {
+  return status;
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
+/// Pure: what the canary says about the WebView's storage. Only a durable
+/// store that OUTLIVES the WebView (Preferences) can tell us anything — on
+/// web both copies are the same store, so a missing web copy there means
+/// "first run", not "wiped".
+/// A WebView store that THROWS on read is not evidence of a wipe — that's
+/// storage-unavailable, the opposite diagnosis (we can't tell), so
+/// `webReadable` gates the claim.
+export function detectWebviewWipe(
+  storeKind: AuthEventStoreKind,
+  durableCanary: string | null,
+  webCanary: string | null,
+  webReadable = true,
+): boolean {
+  return (
+    storeKind === "preferences" && webReadable && !!durableCanary && !webCanary
+  );
+}
+
+let initPromise: Promise<AuthDiagnosticsStatus> | null = null;
+
+/// Installs the durable ring store, migrates whatever the old
+/// `localStorage`-only ring holds, and checks the storage-wipe canary.
+/// Order-independent: events recorded before this resolves are merged into
+/// the hydrated ring rather than lost, so callers can fire it without
+/// awaiting on the auth path.
+export function initAuthDiagnostics(
+  opts: {
+    store?: DurableAuthStore;
+    web?: AuthEventStorage | null;
+    build?: string | null;
+    now?: () => string;
+  } = {},
+): Promise<AuthDiagnosticsStatus> {
+  initPromise ??= runInit(opts);
+  return initPromise;
+}
+
+async function runInit(opts: {
+  store?: DurableAuthStore;
+  web?: AuthEventStorage | null;
+  build?: string | null;
+  now?: () => string;
+}): Promise<AuthDiagnosticsStatus> {
+  const now = opts.now ?? (() => new Date().toISOString());
+  const store =
+    opts.store ?? (await createDurableAuthStore(AUTH_DIAGNOSTIC_KEYS));
+  const web = opts.web === undefined ? webStorage() : opts.web;
+
+  // Anything this lifetime recorded before the durable store was ready.
+  const preInit = events ?? [];
+  // The legacy ring: on native, evidence written by already-shipped builds
+  // sits in localStorage and would otherwise be dropped by the move. Left in
+  // place rather than erased — a wiped WebView is a finding, and rewriting
+  // that store here would destroy the very thing the canary reads.
+  const legacy = store.kind === "preferences" ? loadAuthEvents(web) : [];
+
+  const merged = mergeAuthEvents(
+    mergeAuthEvents(loadAuthEvents(store), legacy),
+    preInit,
+  );
+
+  ringStore = store;
+  events = merged;
+  status = { store: store.kind, webviewWiped: false, build: opts.build ?? null };
+
+  const durableCanary = store.getItem(CANARY_KEY);
+  let webCanary: string | null = null;
+  let webReadable = true;
+  try {
+    webCanary = web?.getItem(CANARY_KEY) ?? null;
+  } catch {
+    webReadable = false;
+  }
+  const wiped = detectWebviewWipe(
+    store.kind,
+    durableCanary,
+    webCanary,
+    webReadable,
+  );
+  status = { ...status, webviewWiped: wiped };
+
+  const stamp = durableCanary ?? now();
+  store.setItem(CANARY_KEY, stamp);
+  try {
+    web?.setItem(CANARY_KEY, stamp);
+  } catch {
+    // A WebView that can't hold the canary can't hold the session either —
+    // that surfaces as storage-unavailable on the next classification.
+  }
+
+  if (wiped) {
+    // Recorded, not merely flagged: this is the finding the ring exists to
+    // deliver, and it has to survive to the next sign-in flush.
+    recordAuthNullSession("storage-wiped", store, now, {
+      source: "init",
+      ...(status.build ? { build: status.build } : {}),
+      store: store.kind,
+    });
+  } else {
+    saveAuthEvents(events, store);
+  }
+
+  return status;
+}
+
 /// Resets the in-memory ring, and the persisted ring when a storage is
 /// given — pass `null` (as the tests do) to reset memory only. Exported
 /// for tests; not currently wired to any UI action.
@@ -206,6 +653,16 @@ export function clearAuthDiagnostics(
 ): void {
   events = [];
   saveAuthEvents(events, storage);
+}
+
+/// Test seam: forget the installed store, the init memoization and the
+/// status, so a case can boot the module again from scratch.
+export function resetAuthDiagnosticsForTest(): void {
+  events = null;
+  ringStore = null;
+  initPromise = null;
+  userSignOutAt = 0;
+  status = { store: "local-storage", webviewWiped: false, build: null };
 }
 
 /// Absent storage, and storage that throws on read, both mean "we cannot tell"
@@ -240,15 +697,25 @@ interface SessionClient {
 /// storage key MUST be read BEFORE calling getSession() — auth-js deletes an
 /// invalid stored session as a side effect of that call, so reading after
 /// would misclassify every revocation as storage-missing.
+///
+/// The `storage` argument is the WEBVIEW's localStorage (where supabase-js
+/// keeps the session), NOT the ring store — on native those are deliberately
+/// different places.
 export async function getSessionWithDiagnostics(
   client: SessionClient,
   url: string,
-  storage: AuthStorage | null = defaultStorage(),
+  storage: AuthStorage | null = webStorage(),
 ): Promise<{ session: Session | null; reason: NullSessionReason | null }> {
   const stored = probeStoredSession(storage, url);
   const { data, error } = await client.auth.getSession();
   if (data.session) return { session: data.session, reason: null };
   const reason = classifyNullSession(stored, error);
-  recordAuthNullSession(reason);
+  const ring = defaultStorage();
+  recordAuthNullSession(
+    reason,
+    ring,
+    undefined,
+    currentMeta("get-session", undefined, ring, status.build),
+  );
   return { session: null, reason };
 }
