@@ -19,6 +19,7 @@ import EditRecordingSheet from "./EditRecordingSheet";
 import RecordingRow from "./RecordingRow";
 import RepBoxPlotChart from "./RepBoxPlotChart";
 import WorkoutDetailPanel from "./WorkoutDetailPanel";
+import ZoneBreakdownPanel from "./ZoneBreakdownPanel";
 
 interface Props {
   s: Session;
@@ -437,6 +438,46 @@ export default function SessionRow({
                 {tindeqRecs !== null && tindeqRecs.length === 0 && (
                   <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
                     No recordings in this session
+                  </div>
+                )}
+                {/* #214: why this session carries the zone badge it does —
+                    the hold durations and the band each one fell in, in the
+                    same layout the Training-balance page uses. The two
+                    surfaces measure different things (this is one session;
+                    that is one exercise over 4 weeks), so both show their
+                    working rather than leaving the difference unexplained. */}
+                {tindeqRecs !== null && tindeqRecs.length > 0 && (
+                  <div
+                    className="card"
+                    style={{ marginBottom: 10 }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <span className="label-eyebrow">
+                        Why this session is{" "}
+                        {zone ? QUALITIES.find((q) => q.id === zone)!.label : "unzoned"}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "var(--t-2xs)",
+                        color: "var(--ink-muted)",
+                        lineHeight: 1.6,
+                        marginBottom: 10,
+                      }}
+                    >
+                      This session alone, all exercises in it — not the
+                      trailing-4-week, one-exercise window the Force tab’s
+                      Training balance card counts.
+                    </div>
+                    <ZoneBreakdownPanel recs={tindeqRecs} showTag />
                   </div>
                 )}
                 {tagGroups.map((g) => (
