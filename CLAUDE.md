@@ -430,6 +430,22 @@ are safe regardless.
   `RealtimeVersionProvider.tsx` — the watch heartbeats it every ~5s, which
   would refetch every card in the app every 5s. The Workout tab subscribes to
   it on its own payload-reading channel (`useLiveWorkout`).
+- **Haptics are delegated, not per-call-site** (#171). `installTapHaptics()` in
+  `main.tsx` puts ONE capture-phase pointer listener set on `document`; every
+  `<button>`, toggle label, checkbox and `.card.tappable` ticks for free, so
+  don't add a haptic call to a new button. Non-button tappables opt in with
+  `data-haptic="light" | "medium"`; `data-haptic="off"` (and `.chart-scrub`) is
+  a **mute boundary** — `closest()` nearest-match-wins, so the boundary silences
+  everything under it that isn't itself interactive. Three rules that will bite:
+  (1) the tick resolves on **pointerup** with a 10px slop, never pointerdown, or
+  every scroll that starts on a button buzzes; (2) `aria-disabled` (the #222
+  refused-but-clickable Start controls) fires the **warning** pattern, never the
+  accepted one, while a real `disabled` fires nothing — a refused tap must not
+  feel like an accepted one; (3) one tick per gesture, so a button inside a
+  tappable card, an explicit `tapHaptic()` and a sheet's mount effect on the
+  same tap collapse to one. `selectionHaptic()` is the deliberate exception —
+  unguarded, for per-value-change ticks (chart scrub, the #172 slider), which is
+  why those controls are muted for the delegated path.
 - **React-compiler lint is strict**: no `Date.now()`/impure calls in render
   (hold `now` in state ticked by an interval), no synchronous `setState` in
   effect bodies (derive instead, or write state only inside async callbacks —

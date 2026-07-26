@@ -111,6 +111,9 @@ export default function TargetZonesCard({
             <input
               type="range"
               aria-label="Session intensity"
+              // #171: this control ticks PER STEP below; mute it for the
+              // delegated tap listener so a drag isn't also a tap.
+              data-haptic="off"
               min={ZONE_INTENSITY.min}
               max={ZONE_INTENSITY.max}
               step={ZONE_INTENSITY.step}

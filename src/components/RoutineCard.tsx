@@ -271,6 +271,10 @@ export default function RoutineCard({
         return (
           <div
             key={p.id}
+            // #171: selecting a preset is a selection, not a button — opt
+            // into the delegated tick. The row's own Edit/Delete buttons sit
+            // inside it and win the nearest-match, so they tick once, not twice.
+            data-haptic="light"
             onClick={() => setSelectedId(p.id)}
             style={{
               display: "flex",

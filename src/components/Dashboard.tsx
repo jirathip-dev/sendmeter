@@ -133,6 +133,8 @@ export default function Dashboard({
         <div
           className="phase-banner"
           title="Phase details"
+          // #171: tappable strip, not a button — opt into the delegated tick.
+          data-haptic="light"
           onClick={onOpenPhases}
           style={{
             flex: 2,
