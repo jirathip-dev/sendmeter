@@ -9,6 +9,7 @@ import {
 } from "../lib/repo";
 import { today } from "../lib/dates";
 import { expandRoutine, routineDurationS } from "../lib/routine";
+import { restoreAt } from "../lib/restoreAt";
 import {
   clearRoutineRun,
   loadRoutineRun,
@@ -197,19 +198,24 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
   }
 
   async function remove(id: string) {
-    setPresets((list) => {
-      const next = list.filter((p) => p.id !== id);
-      if (selectedId === id) setSelectedId(next[0]?.id ?? null);
-      return next;
-    });
+    const index = presets.findIndex((p) => p.id === id);
+    const removed = presets[index];
+    if (!removed) return; // double-fire guard
+    setPresets((list) => list.filter((p) => p.id !== id));
+    if (selectedId === id) {
+      setSelectedId(presets.filter((p) => p.id !== id)[0]?.id ?? null);
+    }
     try {
       await deleteRoutinePreset(id);
       // Issue #143: plain confirmation toast — no Undo (routine presets
       // aren't soft-deleted, unlike sessions/recordings).
       toast("Routine deleted");
     } catch {
-      // no realtime/refetch wired for presets; a failed delete resurfaces on
-      // next visit — acceptable (same tradeoff as tindeq PresetManager)
+      // Rollback: put it back where it was (issue #215/#166 — the same
+      // swallowed-failure bug PresetManager.tsx fixed via restoreAt).
+      setPresets((list) => restoreAt(list, removed, index));
+      setSelectedId((cur) => cur ?? removed.id);
+      toast("Couldn't delete routine — restored", "error");
     }
   }
 
