@@ -50,6 +50,50 @@ private enum WatchBuildStore {
     }
 }
 
+/// The watch's last-reported offline-queue depth (#21), stored the same way
+/// and for the same reason as `WatchBuildStore`: the watch only talks when it
+/// has something to say, so a count held in memory would answer "how backed up
+/// is the watch?" only for watches that happened to send something while this
+/// account sheet was open.
+private enum WatchSyncStore {
+    private static let countKey = "sendmeter.watchSync.pending"
+    private static let reportedAtKey = "sendmeter.watchSync.reportedAt"
+
+    /// nil when nothing has ever been reported — which must not be read as an
+    /// empty queue (see `WatchSyncStatus.notReported`).
+    static var pendingCount: Int? {
+        guard UserDefaults.standard.object(forKey: countKey) != nil else { return nil }
+        return UserDefaults.standard.integer(forKey: countKey)
+    }
+
+    /// Epoch seconds, or nil if nothing has ever been reported.
+    static var reportedAt: Double? {
+        let t = UserDefaults.standard.double(forKey: reportedAtKey)
+        return t > 0 ? t : nil
+    }
+
+    private static let lock = NSLock()
+    private static var lastWrite: (count: Int, at: Double)?
+
+    static func record(_ count: Int) {
+        let now = Date().timeIntervalSince1970
+        lock.lock()
+        // Same throttle as the build store — the force beat runs at ~2 Hz and
+        // an unchanged count says nothing new. A *changed* count always
+        // writes: that's the transition worth seeing.
+        if let last = lastWrite, last.count == count, now - last.at < 60 {
+            lock.unlock()
+            return
+        }
+        lastWrite = (count, now)
+        lock.unlock()
+
+        let defaults = UserDefaults.standard
+        defaults.set(count, forKey: countKey)
+        defaults.set(now, forKey: reportedAtKey)
+    }
+}
+
 /// Relays the Supabase session to the paired Watch app so it can sign in
 /// without its own login flow. No token persistence here — supabase-js
 /// already owns the session copy in the WebView; this plugin's only job
@@ -141,6 +185,22 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
         if let phone {
             result["phoneDisplay"] = phone.display
         }
+        // The watch's offline-queue depth (#21) — same read-only terms: it
+        // reports what already arrived on the watch's own messages.
+        let pending = WatchSyncStore.pendingCount
+        let pendingReportedAt = WatchSyncStore.reportedAt
+        result["syncStatus"] = WatchBuildReport.syncStatus(
+            pendingSync: pending, pairing: pairing
+        ).rawValue
+        result["pendingSyncStale"] = WatchBuildReport.isPendingSyncStale(
+            reportedAt: pendingReportedAt, now: Date().timeIntervalSince1970
+        )
+        if let pending {
+            result["pendingSyncCount"] = pending
+        }
+        if let pendingReportedAt {
+            result["pendingSyncReportedAt"] = pendingReportedAt
+        }
         call.resolve(result)
     }
 
@@ -196,6 +256,11 @@ extension SendLogAuthBridge: WCSessionDelegate {
         // still tells us which watch build sent it.
         if let identity = WatchBuildReport.identity(in: message) {
             WatchBuildStore.record(identity)
+        }
+        // #21: and its offline-queue depth, on the same terms — recorded here
+        // so any message the watch sends refreshes the answer.
+        if let pending = WatchBuildReport.pendingSync(in: message) {
+            WatchSyncStore.record(pending)
         }
         guard let kind = message["kind"] as? String else { return }
         switch kind {
