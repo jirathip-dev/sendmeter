@@ -15,6 +15,41 @@ export function daysAgo(n: number): string {
   return dateStr(d);
 }
 
+export function daysAhead(n: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return dateStr(d);
+}
+
+/// Local midnight for a "YYYY-MM-DD" date — never `new Date(str)`, which
+/// parses a bare date as UTC and lands on the previous day west of Greenwich.
+export function parseLocalDate(date: string): Date {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y!, m! - 1, d!, 0, 0, 0, 0);
+}
+
+/// Whole local days from today to `date` (negative = past). Rounded, so a DST
+/// boundary (a 23h or 25h "day") still counts as one day.
+export function dayOffsetFromToday(date: string): number {
+  const ms = parseLocalDate(date).getTime() - parseLocalDate(today()).getTime();
+  return Math.round(ms / 86400000);
+}
+
+/// How a nearby day is named in prose: "yesterday" / "today" / "tomorrow" /
+/// the plain weekday inside the coming week. Past ~6 days out a bare weekday
+/// is ambiguous (which Thursday?), so it falls back to a short date.
+export function relativeDayLabel(date: string): string {
+  const offset = dayOffsetFromToday(date);
+  if (offset === -1) return "yesterday";
+  if (offset === 0) return "today";
+  if (offset === 1) return "tomorrow";
+  const d = parseLocalDate(date);
+  if (offset > 1 && offset <= 6) {
+    return d.toLocaleDateString(undefined, { weekday: "long" });
+  }
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 /// Local-day boundaries for a "YYYY-MM-DD" date, as ISO instants suitable for
 /// range-querying a `timestamptz` column against a LOCAL calendar day (the
 /// Gregorian/local-date rule in CLAUDE.md — never toISOString()-derive the
