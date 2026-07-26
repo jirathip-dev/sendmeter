@@ -16,12 +16,16 @@ vi.mock("../lib/supabase", () => ({
 import {
   applyAddSessionOptimistic,
   applyEditSessionOptimistic,
+  applyRemoveSessionOptimistic,
+  applySetPhaseOptimistic,
   createGenerationGuard,
   reconcileAddSession,
   rollbackAddSession,
+  rollbackSetPhase,
   runFetchAttempts,
   sortSessions,
   withOptimisticUpdate,
+  type PhaseSnapshot,
   type RunFetchDeps,
 } from "./useTrainingData";
 import type { PhasePeriod, Session, SessionPatch } from "../types";
@@ -135,6 +139,54 @@ describe("runFetchAttempts", () => {
     expect(deps.onError).toHaveBeenCalledWith("boom");
     expect(deps.refreshSession).toHaveBeenCalledTimes(2);
     expect(deps.delay).toHaveBeenCalledTimes(2);
+    // Backoff is 400 * (attempt + 1) — verify the actual millisecond values,
+    // not just the call count, so a broken multiplier/offset still fails
+    // this test.
+    expect(deps.delay).toHaveBeenNthCalledWith(1, 400);
+    expect(deps.delay).toHaveBeenNthCalledWith(2, 800);
+  });
+
+  it("post-failure guard (checkpoint 2): a stale generation after the first failure stops the retry loop before refreshSession/delay run", async () => {
+    // fetchAll always rejects, so the success-path guard check (checkpoint 1)
+    // is never reached — this isolates the guard check that sits at the top
+    // of the catch block, immediately after the first failed attempt and
+    // before refreshSession/delay. Mutating that check to a no-op would let
+    // fetchAll/refreshSession/delay keep running across all 3 attempts.
+    const fetchAll = vi.fn().mockRejectedValue(new Error("boom"));
+    const guard = { isCurrent: vi.fn().mockReturnValue(false) };
+    const deps = baseDeps({ fetchAll, guard });
+    await runFetchAttempts(deps);
+    expect(fetchAll).toHaveBeenCalledTimes(1);
+    expect(guard.isCurrent).toHaveBeenCalledTimes(1);
+    expect(deps.refreshSession).not.toHaveBeenCalled();
+    expect(deps.delay).not.toHaveBeenCalled();
+    expect(deps.onSuccess).not.toHaveBeenCalled();
+    expect(deps.onError).not.toHaveBeenCalled();
+  });
+
+  it("final guard (checkpoint 3): a generation that goes stale only after the last attempt suppresses onError despite all 3 attempts running", async () => {
+    // guard.isCurrent is called once per failed attempt (checkpoint 2, at
+    // the top of the catch block) plus once more after the loop exits
+    // (checkpoint 3, right before onError). Staying "current" for the first
+    // 3 calls and going stale only on the 4th isolates checkpoint 3: the
+    // retry loop runs to completion exactly as it would on a real error,
+    // and only the final onError dispatch is suppressed.
+    const fetchAll = vi.fn().mockRejectedValue(new Error("boom"));
+    let calls = 0;
+    const guard = {
+      isCurrent: vi.fn(() => {
+        calls += 1;
+        return calls <= 3;
+      }),
+    };
+    const deps = baseDeps({ fetchAll, guard });
+    await runFetchAttempts(deps);
+    expect(fetchAll).toHaveBeenCalledTimes(3);
+    expect(deps.refreshSession).toHaveBeenCalledTimes(2);
+    expect(deps.delay).toHaveBeenCalledTimes(2);
+    expect(guard.isCurrent).toHaveBeenCalledTimes(4);
+    expect(deps.onSuccess).not.toHaveBeenCalled();
+    expect(deps.onError).not.toHaveBeenCalled();
   });
 
   it("a non-Error rejection surfaces the generic fallback message", async () => {
@@ -276,6 +328,53 @@ describe("applyEditSessionOptimistic", () => {
     expect(edited.load).toBe(45 * 8);
     const untouched = result.find((s) => s.id === "b")!;
     expect(untouched).toEqual(other);
+  });
+});
+
+describe("applyRemoveSessionOptimistic", () => {
+  it("removes exactly the row with the given id, leaving others untouched and in order", () => {
+    const a = makeSession({ id: "a", date: "2026-07-18" });
+    const b = makeSession({ id: "b", date: "2026-07-19" });
+    const c = makeSession({ id: "c", date: "2026-07-20" });
+    const result = applyRemoveSessionOptimistic([a, b, c], "b");
+    expect(result).toEqual([a, c]);
+  });
+
+  it("is a no-op when the id isn't present", () => {
+    const a = makeSession({ id: "a" });
+    const b = makeSession({ id: "b" });
+    const result = applyRemoveSessionOptimistic([a, b], "missing");
+    expect(result).toEqual([a, b]);
+  });
+});
+
+describe("applySetPhaseOptimistic / rollbackSetPhase", () => {
+  it("applySetPhaseOptimistic maps the target phase id and today's date into the next snapshot", () => {
+    const result = applySetPhaseOptimistic("strength", "2026-07-26");
+    expect(result).toEqual<PhaseSnapshot>({
+      currentPhase: "strength",
+      phaseStartDate: "2026-07-26",
+    });
+  });
+
+  it("rollbackSetPhase restores the pre-mutation snapshot's fields exactly", () => {
+    const prev: PhaseSnapshot = {
+      currentPhase: "capacity",
+      phaseStartDate: "2026-06-01",
+    };
+    const result = rollbackSetPhase(prev);
+    expect(result).toEqual(prev);
+  });
+
+  it("apply then rollback round-trips back to the original snapshot", () => {
+    const prev: PhaseSnapshot = {
+      currentPhase: "capacity",
+      phaseStartDate: "2026-06-01",
+    };
+    const applied = applySetPhaseOptimistic("strength", "2026-07-26");
+    expect(applied).not.toEqual(prev);
+    const rolledBack = rollbackSetPhase(prev);
+    expect(rolledBack).toEqual(prev);
   });
 });
 

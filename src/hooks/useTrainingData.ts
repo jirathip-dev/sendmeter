@@ -127,6 +127,36 @@ export function rollbackAddSession(list: Session[], tempId: string): Session[] {
   return list.filter((s) => s.id !== tempId);
 }
 
+/// `removeSession`'s optimistic-apply step: drop the row by id.
+export function applyRemoveSessionOptimistic(
+  list: Session[],
+  id: string,
+): Session[] {
+  return list.filter((s) => s.id !== id);
+}
+
+export interface PhaseSnapshot {
+  currentPhase: PhaseId;
+  phaseStartDate: string;
+}
+
+/// `setPhase`'s optimistic-apply step: switch to the new phase immediately,
+/// dating the start from today — the real start date (which may be earlier
+/// than today on a same-day undo) arrives from switchPhase's onSuccess.
+export function applySetPhaseOptimistic(
+  id: PhaseId,
+  todayDate: string,
+): PhaseSnapshot {
+  return { currentPhase: id, phaseStartDate: todayDate };
+}
+
+/// `setPhase`'s rollback step: restore the pre-mutation snapshot, picked
+/// field-by-field (rather than returned verbatim) so a field swap/typo here
+/// is caught the same way rollbackAddSession's filter would be.
+export function rollbackSetPhase(prev: PhaseSnapshot): PhaseSnapshot {
+  return { currentPhase: prev.currentPhase, phaseStartDate: prev.phaseStartDate };
+}
+
 /// `editSession`'s optimistic-apply step: merge the patch, force
 /// `rpeConfirmed` true (reaching the edit sheet means a human reviewed this
 /// RPE — issue #114), and recompute `load` to mirror the DB's generated
@@ -277,7 +307,7 @@ export function useTrainingData(userId: string) {
   async function removeSession(id: string) {
     const prev = sessions;
     await withOptimisticUpdate({
-      apply: () => setSessions((list) => list.filter((s) => s.id !== id)),
+      apply: () => setSessions((list) => applyRemoveSessionOptimistic(list, id)),
       action: () => repo.deleteSession(id),
       onSuccess: () => {},
       rollback: () => setSessions(prev),
@@ -287,13 +317,14 @@ export function useTrainingData(userId: string) {
   }
 
   async function setPhase(id: PhaseId) {
-    const prev = { currentPhase, phaseStartDate };
+    const prev: PhaseSnapshot = { currentPhase, phaseStartDate };
     // Optimistic: show the new phase immediately; real start date arrives
     // from switchPhase (it may be earlier than today on a same-day undo).
     await withOptimisticUpdate({
       apply: () => {
-        setCurrentPhase(id);
-        setPhaseStartDate(today());
+        const next = applySetPhaseOptimistic(id, today());
+        setCurrentPhase(next.currentPhase);
+        setPhaseStartDate(next.phaseStartDate);
       },
       action: () => repo.switchPhase(id),
       onSuccess: ({ periods, settings }) => {
@@ -302,8 +333,9 @@ export function useTrainingData(userId: string) {
         setPhaseStartDate(settings.phaseStartDate);
       },
       rollback: () => {
-        setCurrentPhase(prev.currentPhase);
-        setPhaseStartDate(prev.phaseStartDate);
+        const restored = rollbackSetPhase(prev);
+        setCurrentPhase(restored.currentPhase);
+        setPhaseStartDate(restored.phaseStartDate);
       },
       onError: (message) => setError(message),
       fallbackMessage: "Failed to update phase",
