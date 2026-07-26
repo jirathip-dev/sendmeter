@@ -171,6 +171,20 @@ are safe regardless.
   elapsed. Consumed by `src/components/RoutineCard.tsx` (preset CRUD + run
   launch, on the Workout tab) and `RoutineFullscreen.tsx` (the running
   countdown UI), wired into `WorkoutView.tsx`.
+- **Dynamometer layer** — `src/lib/dynamometer/` (#173): a device-agnostic
+  `DynamometerDriver` interface (connect/disconnect, `{us, kg}` sample stream,
+  tare, start/stop, device info, and a `capabilities` flag set for what a
+  device *lacks*) plus the Tindeq driver that implements it (`tindeq.ts` =
+  BLE transport, `tindeq-protocol.ts` = the pure packet parsing, unchanged and
+  still mirroring `SendLogWatchCore/TindeqProtocol.swift`). `registry.ts` is
+  the one place a driver is registered; `useTindeq` resolves
+  `activeDynamometerDriver()` at module load and never sees a UUID or a
+  command byte. `contract.ts` is the conformance suite a new driver must pass
+  — it runs against the real Tindeq driver (BLE mocked) *and* stub drivers, so
+  the seam is proven without hardware. Two things are honestly NOT behind the
+  seam and say so in comments: `?fake-tindeq` FAKE_MODE (a property of the
+  hook, not a driver) and the Force tab's Tindeq-specific UI copy. Adding a
+  real second device is still blocked on owning one.
 - **`src/`** — the React app. `lib/` = data/logic (`repo/` = all Supabase
   queries, metrics.ts = ACWR/EWMA + exported `ewma()`, force-curve.ts =
   critical-force fit + `ZONE_PROTOCOLS`, protocol.ts = guided Tindeq
