@@ -364,13 +364,13 @@ describe("recordAuthStateChange (issue #202)", () => {
   it("records the overnight logout path that previously left NOTHING behind", () => {
     resetAuthDiagnosticsForTest();
     const store = createMemoryStore("preferences");
-    const event = recordAuthStateChange("SIGNED_OUT", {
+    const reason = recordAuthStateChange("SIGNED_OUT", {
       storage: store,
       now: () => "2026-07-26T06:50:00.000Z",
       build: "1.4.0 (57)",
       userInitiated: false,
     });
-    expect(event).toEqual({ reason: "revoked", count: 1 });
+    expect(reason).toBe("revoked");
 
     const [stored] = loadAuthEvents(store);
     expect(stored).toMatchObject({
@@ -413,11 +413,11 @@ describe("recordAuthStateChange (issue #202)", () => {
     setDiagnosticsClock(() => 1_000);
     const store = createMemoryStore("preferences");
     markUserSignOut();
-    expect(recordAuthStateChange("SIGNED_OUT", { storage: store })?.reason).toBe(
+    expect(recordAuthStateChange("SIGNED_OUT", { storage: store })).toBe(
       "user-signed-out",
     );
     // The flag is consumed: a second SIGNED_OUT is a real incident again.
-    expect(recordAuthStateChange("SIGNED_OUT", { storage: store })?.reason).toBe("revoked");
+    expect(recordAuthStateChange("SIGNED_OUT", { storage: store })).toBe("revoked");
     setDiagnosticsClock(() => Date.now());
   });
 
@@ -428,7 +428,7 @@ describe("recordAuthStateChange (issue #202)", () => {
     const store = createMemoryStore("preferences");
     markUserSignOut();
     t += 60_000; // an hour-later revocation must not read as "you signed out"
-    expect(recordAuthStateChange("SIGNED_OUT", { storage: store })?.reason).toBe("revoked");
+    expect(recordAuthStateChange("SIGNED_OUT", { storage: store })).toBe("revoked");
     setDiagnosticsClock(() => Date.now());
   });
 
@@ -607,5 +607,148 @@ describe("initAuthDiagnostics (issue #202)", () => {
       build: "1.4.1 (58)",
     });
     expect(getAuthDiagnosticsStatus().store).toBe("preferences");
+  });
+});
+
+describe("attribution across the init race (issue #202 review)", () => {
+  const HEARTBEAT_AT = "2026-07-25T23:40:00.000Z";
+  const EXPIRES_AT = Math.floor(Date.parse("2026-07-26T00:40:00.000Z") / 1000);
+
+  it("attributes a record made BEFORE init resolves to the durable store and build", async () => {
+    resetAuthDiagnosticsForTest();
+    const store = createMemoryStore("preferences");
+    // useAuth fires init without awaiting it and then reads the session, so a
+    // cold-start event routinely beats init. Filed against the pre-init store
+    // it would say `store: "local-storage"` with no build — on a native
+    // build — which is precisely the attribution this instrumentation adds.
+    const init = initAuthDiagnostics({
+      store,
+      web: fakeStorage(),
+      build: "1.4.1 (58)",
+    });
+    const reason = recordAuthStateChange("SIGNED_OUT", {
+      now: () => "2026-07-26T06:50:00.000Z",
+    });
+    expect(reason).toBe("revoked");
+    await init;
+
+    expect(loadAuthEvents(store)).toHaveLength(1);
+    expect(loadAuthEvents(store)[0]).toMatchObject({
+      reason: "revoked",
+      build: "1.4.1 (58)",
+      store: "preferences",
+      // Stamped when it happened, not when the store finished hydrating.
+      lastAt: "2026-07-26T06:50:00.000Z",
+      firstAt: "2026-07-26T06:50:00.000Z",
+    });
+  });
+
+  it("keeps one incident as ONE entry across the init boundary", async () => {
+    resetAuthDiagnosticsForTest();
+    const store = createMemoryStore("preferences");
+    const init = initAuthDiagnostics({ store, web: fakeStorage(), build: "1.4.1 (58)" });
+    recordAuthStateChange("SIGNED_OUT", { now: () => "2026-07-26T06:50:00.000Z" });
+    await init;
+    recordAuthStateChange("SIGNED_OUT", { now: () => "2026-07-26T06:51:00.000Z" });
+
+    // `build` is part of the incident identity, so a pre-init record stamped
+    // with no build would split this into two ring entries — and two
+    // auth_events rows for one incident.
+    const stored = loadAuthEvents(store);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ count: 2, build: "1.4.1 (58)" });
+  });
+
+  it("routes a cold-start getSession null through the same deferral", async () => {
+    resetAuthDiagnosticsForTest();
+    const store = createMemoryStore("preferences");
+    const init = initAuthDiagnostics({ store, web: fakeStorage(), build: "1.4.1 (58)" });
+    const client = { auth: { getSession: async () => ({ data: { session: null }, error: null }) } };
+    // storage-missing resolves with no network at all, so it usually wins the
+    // race against init.
+    expect(await getSessionWithDiagnostics(client, HOSTED_URL, fakeStorage())).toEqual({
+      session: null,
+      reason: "storage-missing",
+    });
+    await init;
+    expect(loadAuthEvents(store)[0]).toMatchObject({
+      reason: "storage-missing",
+      source: "get-session",
+      build: "1.4.1 (58)",
+      store: "preferences",
+    });
+  });
+
+  it("writes the first heartbeat of a launch to the durable store, not the WebView's", async () => {
+    resetAuthDiagnosticsForTest();
+    const store = createMemoryStore("preferences");
+    const web = fakeStorage();
+    const init = initAuthDiagnostics({ store, web });
+
+    const beat = recordSessionHeartbeat({ expires_at: EXPIRES_AT }, undefined, () => HEARTBEAT_AT);
+    // Stamped and returned synchronously…
+    expect(beat?.at).toBe(HEARTBEAT_AT);
+    // …but not written into the store the canary exists to prove unreliable.
+    expect(web.getItem("sendmeter:auth-heartbeat")).toBeNull();
+
+    await init;
+    expect(loadSessionHeartbeat(store)).toEqual({
+      at: HEARTBEAT_AT,
+      expiresAt: "2026-07-26T00:40:00.000Z",
+    });
+    expect(web.getItem("sendmeter:auth-heartbeat")).toBeNull();
+  });
+
+  it("writes straight through once init has resolved", async () => {
+    resetAuthDiagnosticsForTest();
+    const store = createMemoryStore("preferences");
+    await initAuthDiagnostics({ store, web: fakeStorage() });
+    recordSessionHeartbeat({ expires_at: EXPIRES_AT }, undefined, () => HEARTBEAT_AT);
+    // No await: the steady state stays synchronous.
+    expect(loadSessionHeartbeat(store)?.at).toBe(HEARTBEAT_AT);
+  });
+
+  it("still records when init fails, rather than swallowing the evidence", async () => {
+    resetAuthDiagnosticsForTest();
+    const init = initAuthDiagnostics({
+      store: Promise.reject(new Error("no store")),
+      web: fakeStorage(),
+    });
+    recordAuthStateChange("SIGNED_OUT", { now: () => "2026-07-26T06:50:00.000Z" });
+    await expect(init).rejects.toThrow();
+    // Falls back to the default store, but the event is not lost.
+    expect(getAuthDiagnosticEvents()[0]).toMatchObject({ reason: "revoked" });
+  });
+});
+
+describe("the storage-wiped event carries the heartbeat (issue #202 review)", () => {
+  it("dates the wipe against the last session known to be good", async () => {
+    resetAuthDiagnosticsForTest();
+    const store = createMemoryStore("preferences");
+    store.setItem("sendmeter:webview-canary", "2026-07-01T00:00:00.000Z");
+    recordSessionHeartbeat(
+      { expires_at: Math.floor(Date.parse("2026-07-26T00:40:00.000Z") / 1000) },
+      store,
+      () => "2026-07-25T23:40:00.000Z",
+    );
+
+    await initAuthDiagnostics({
+      store,
+      web: fakeStorage(),
+      build: "1.4.1 (58)",
+      now: () => "2026-07-26T06:50:00.000Z",
+    });
+
+    // The one event whose entire purpose is bounding when the session died
+    // must not be the only one without the bounds.
+    expect(loadAuthEvents(store).at(-1)).toMatchObject({
+      reason: "storage-wiped",
+      source: "init",
+      build: "1.4.1 (58)",
+      store: "preferences",
+      lastGoodAt: "2026-07-25T23:40:00.000Z",
+      lastGoodExpiresAt: "2026-07-26T00:40:00.000Z",
+      lastAt: "2026-07-26T06:50:00.000Z",
+    });
   });
 });

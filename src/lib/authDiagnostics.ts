@@ -381,9 +381,37 @@ function currentMeta(
   };
 }
 
+/// Runs `write` once the durable store and the build tag are installed —
+/// immediately when init has already finished (or was never started, e.g. in
+/// tests and on a caller that manages its own storage).
+///
+/// Until `initAuthDiagnostics` resolves, `defaultStorage()` is still the
+/// WebView's localStorage and `status.build` is null. Writing then would
+/// misattribute the launch-time event — `store: "local-storage"` on a native
+/// build, no build tag — which is exactly the attribution this instrumentation
+/// exists to add. Worse, `build` is part of the incident identity
+/// (`sameIncident`/`incidentKey`), so one ongoing incident recorded either
+/// side of init would split into two ring entries and two `auth_events` rows.
+///
+/// Deferring is safe precisely because nothing awaits this: the caller has
+/// already returned, and the event's timestamp is captured at CALL time, not
+/// at write time, so the record still says when it happened.
+function whenReady(write: () => void): void {
+  if (!initPromise || initReady) {
+    write();
+    return;
+  }
+  // Runs on both settle paths: a failed init must not swallow the evidence,
+  // it just means the record lands on the fallback store.
+  void initPromise.then(write, write);
+}
+
 /// Issue #202's headline fix: record the null sessions auth-js hands *us*,
-/// not only the ones we went and asked for. Returns null when the event is
-/// one we deliberately don't record (see `classifyAuthStateChange`).
+/// not only the ones we went and asked for. Returns the classification, or
+/// null for an event we deliberately don't record (see
+/// `classifyAuthStateChange`). Not the resulting ring entry: with no explicit
+/// storage the write may land after `initAuthDiagnostics` resolves, so the
+/// occurrence count isn't known yet at call time.
 export function recordAuthStateChange(
   event: string,
   opts: {
@@ -392,22 +420,33 @@ export function recordAuthStateChange(
     build?: string | null;
     userInitiated?: boolean;
   } = {},
-): NullSessionEvent | null {
-  const storage = opts.storage === undefined ? defaultStorage() : opts.storage;
+): NullSessionReason | null {
   const userInitiated = opts.userInitiated ?? consumeUserSignOut();
   const reason = classifyAuthStateChange(event, userInitiated);
   if (!reason) return null;
-  return recordAuthNullSession(
-    reason,
-    storage,
-    opts.now,
-    currentMeta(
-      "auth-state-change",
-      event,
+  // Captured now, written later: the record must carry the moment auth-js
+  // signed us out, not the moment the durable store finished hydrating.
+  const at = (opts.now ?? (() => new Date().toISOString()))();
+  const write = () => {
+    const storage =
+      opts.storage === undefined ? defaultStorage() : opts.storage;
+    recordAuthNullSession(
+      reason,
       storage,
-      opts.build === undefined ? status.build : opts.build,
-    ),
-  );
+      () => at,
+      currentMeta(
+        "auth-state-change",
+        event,
+        storage,
+        opts.build === undefined ? status.build : opts.build,
+      ),
+    );
+  };
+  // An explicit storage means the caller owns placement — write straight
+  // through, and keep the whole path synchronous for it.
+  if (opts.storage === undefined) whenReady(write);
+  else write();
+  return reason;
 }
 
 /// A sign-out the user asked for must not read as an incident. Set right
@@ -460,18 +499,28 @@ export function heartbeatFromSession(
   };
 }
 
+/// With no explicit storage the write waits for the durable store, same as
+/// the record path: the FIRST heartbeat of every launch would otherwise land
+/// in the WebView's localStorage — the store the canary exists to prove is
+/// unreliable — and be gone in exactly the scenario the heartbeat is meant to
+/// date. The beat itself is stamped and returned synchronously.
 export function recordSessionHeartbeat(
   session: { expires_at?: number | null } | null,
-  storage: AuthEventStorage | null = defaultStorage(),
+  storage?: AuthEventStorage | null,
   now: () => string = () => new Date().toISOString(),
 ): SessionHeartbeat | null {
-  if (!session || !storage) return null;
+  if (!session) return null;
   const beat = heartbeatFromSession(session, now());
-  try {
-    storage.setItem(HEARTBEAT_KEY, JSON.stringify(beat));
-  } catch {
-    // Same contract as the ring: never throw into the auth path.
-  }
+  const write = (target: AuthEventStorage | null) => {
+    if (!target) return;
+    try {
+      target.setItem(HEARTBEAT_KEY, JSON.stringify(beat));
+    } catch {
+      // Same contract as the ring: never throw into the auth path.
+    }
+  };
+  if (storage === undefined) whenReady(() => write(defaultStorage()));
+  else write(storage);
   return beat;
 }
 
@@ -559,6 +608,9 @@ export function detectWebviewWipe(
 }
 
 let initPromise: Promise<AuthDiagnosticsStatus> | null = null;
+/// Set when the durable store + build tag are installed. `whenReady` writes
+/// straight through from then on, so the steady state stays synchronous.
+let initReady = false;
 
 /// Installs the durable ring store, migrates whatever the old
 /// `localStorage`-only ring holds, and checks the storage-wipe canary.
@@ -567,7 +619,10 @@ let initPromise: Promise<AuthDiagnosticsStatus> | null = null;
 /// awaiting on the auth path.
 export function initAuthDiagnostics(
   opts: {
-    store?: DurableAuthStore;
+    /// May be a promise: the real store is resolved asynchronously (a native
+    /// Preferences hydration), and tests need that pending window to exercise
+    /// the deferral in `whenReady`.
+    store?: DurableAuthStore | Promise<DurableAuthStore>;
     web?: AuthEventStorage | null;
     build?: string | null;
     now?: () => string;
@@ -578,14 +633,16 @@ export function initAuthDiagnostics(
 }
 
 async function runInit(opts: {
-  store?: DurableAuthStore;
+  store?: DurableAuthStore | Promise<DurableAuthStore>;
   web?: AuthEventStorage | null;
   build?: string | null;
   now?: () => string;
 }): Promise<AuthDiagnosticsStatus> {
   const now = opts.now ?? (() => new Date().toISOString());
-  const store =
-    opts.store ?? (await createDurableAuthStore(AUTH_DIAGNOSTIC_KEYS));
+  // Always awaited, even for an injected store: on native this is a real
+  // native round-trip, and a caller (or a test) must never see an init that
+  // happens to be synchronous and so never exercises the deferral above.
+  const store = await (opts.store ?? createDurableAuthStore(AUTH_DIAGNOSTIC_KEYS));
   const web = opts.web === undefined ? webStorage() : opts.web;
 
   // Anything this lifetime recorded before the durable store was ready.
@@ -630,14 +687,22 @@ async function runInit(opts: {
     // that surfaces as storage-unavailable on the next classification.
   }
 
+  // Installed: from here on `whenReady` writes straight through, and every
+  // deferred record picks up this store and build tag.
+  initReady = true;
+
   if (wiped) {
     // Recorded, not merely flagged: this is the finding the ring exists to
-    // deliver, and it has to survive to the next sign-in flush.
-    recordAuthNullSession("storage-wiped", store, now, {
-      source: "init",
-      ...(status.build ? { build: status.build } : {}),
-      store: store.kind,
-    });
+    // deliver, and it has to survive to the next sign-in flush. Through
+    // `currentMeta` like every other record — the heartbeat is already
+    // hydrated in `store`, and the event whose whole job is bounding "when
+    // did the session die" is the last one that should lack it.
+    recordAuthNullSession(
+      "storage-wiped",
+      store,
+      now,
+      currentMeta("init", undefined, store, status.build),
+    );
   } else {
     saveAuthEvents(events, store);
   }
@@ -661,6 +726,7 @@ export function resetAuthDiagnosticsForTest(): void {
   events = null;
   ringStore = null;
   initPromise = null;
+  initReady = false;
   userSignOutAt = 0;
   status = { store: "local-storage", webviewWiped: false, build: null };
 }
@@ -710,12 +776,18 @@ export async function getSessionWithDiagnostics(
   const { data, error } = await client.auth.getSession();
   if (data.session) return { session: data.session, reason: null };
   const reason = classifyNullSession(stored, error);
-  const ring = defaultStorage();
-  recordAuthNullSession(
-    reason,
-    ring,
-    undefined,
-    currentMeta("get-session", undefined, ring, status.build),
-  );
+  const at = new Date().toISOString();
+  // Same deferral as `recordAuthStateChange`: the cold-start null session
+  // (storage-missing resolves with no network, so it usually beats init)
+  // must not be filed against the pre-init store with no build tag.
+  whenReady(() => {
+    const ring = defaultStorage();
+    recordAuthNullSession(
+      reason,
+      ring,
+      () => at,
+      currentMeta("get-session", undefined, ring, status.build),
+    );
+  });
   return { session: null, reason };
 }
