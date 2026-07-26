@@ -31,6 +31,7 @@ import RealtimeVersionProvider from "./components/RealtimeVersionProvider";
 import ToastProvider from "./components/ToastProvider";
 import { TindeqProvider } from "./hooks/TindeqProvider";
 import { useToast } from "./hooks/useToast";
+import { useRealtimeBump } from "./hooks/useRealtimeVersion";
 import type { HealthSyncSource } from "./lib/healthSync";
 import { insertRecording, restoreSession } from "./lib/repo";
 import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
@@ -93,6 +94,7 @@ function AuthedApp({
   } = useTrainingData(userId);
 
   const toast = useToast();
+  const bumpRealtime = useRealtimeBump();
   const [view, setView] = useState<ViewId>("dashboard");
   const [showModal, setShowModal] = useState(false);
   const [editingSession, setEditingSession] = useState<Session | null>(null);
@@ -149,10 +151,16 @@ function AuthedApp({
   // on every foreground call regardless of whether anything actually
   // changed, so also require `changed` or the toast fires on every
   // foreground even with no new data.
+  // #223: bump realtime unconditionally (all sources), not just when
+  // toasting — the Supabase Realtime echo that normally bumps this isn't
+  // reliably delivered on a cold launch, so readiness/recovery cards (keyed
+  // on `realtimeVersion`) can stay stale until the app is restarted. Same
+  // defensive bump already used after "Clear & resync" in AccountSheet.tsx.
   useEffect(() => {
     const onHealthSynced = (e: Event) => {
       const detail = (e as CustomEvent<{ source?: HealthSyncSource; changed?: boolean }>)
         .detail;
+      bumpRealtime();
       if (detail?.source === "foreground" && detail.changed) {
         toast("Health data synced");
       }
@@ -160,7 +168,7 @@ function AuthedApp({
     window.addEventListener("sendmeter:health-synced", onHealthSynced);
     return () =>
       window.removeEventListener("sendmeter:health-synced", onHealthSynced);
-  }, [toast]);
+  }, [toast, bumpRealtime]);
 
   // Auto-hide the topbar + bottom nav on scroll-down, reveal on scroll-up
   // (modern app chrome). Both overlay the content, so hiding frees the screen.
