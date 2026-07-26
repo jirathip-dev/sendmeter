@@ -242,8 +242,9 @@ final class TindeqManager: NSObject {
             "updated_at": Date().timeIntervalSince1970,
             "spark": spark,
         ]
+        let stamped = WatchBuild.stamp(payload)
         beatQueue.async {
-            wc.sendMessage(payload, replyHandler: nil, errorHandler: { [weak self] _ in
+            wc.sendMessage(stamped, replyHandler: nil, errorHandler: { [weak self] _ in
                 DispatchQueue.main.async {
                     self?.needsBackfill = true
                 }

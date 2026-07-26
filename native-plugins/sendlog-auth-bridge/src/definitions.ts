@@ -38,6 +38,43 @@ export interface LiveForceMessage {
   spark?: [number, number][];
 }
 
+/// Verdict on the paired watch's build vs the phone's (#228). Computed in
+/// Swift (`WatchBuildReport.status` in SendLogWatchCore) so the comparison is
+/// unit-tested on Linux CI rather than living in a view. The three
+/// "no build to show" cases stay distinct on purpose: a watch that has never
+/// reported must never read as up to date.
+export type WatchBuildStatus =
+  /// No watch paired, or a device that can't have one (iPad).
+  | "not-paired"
+  /// Watch paired, Sendmeter not installed on it.
+  | "app-not-installed"
+  /// Installed, but it has never sent a message this phone install saw.
+  | "not-reported"
+  | "match"
+  | "watch-behind"
+  | "watch-ahead"
+  /// Different, but the build numbers aren't orderable.
+  | "differs"
+  /// WCSession hasn't activated yet, or the phone's own build is unreadable.
+  | "unknown";
+
+export interface WatchBuildInfo {
+  status: WatchBuildStatus;
+  supported: boolean;
+  activated: boolean;
+  paired: boolean;
+  appInstalled: boolean;
+  /// Present only once the watch has actually reported.
+  watchVersion?: string;
+  watchBuild?: string;
+  /// `"1.4.0 (57)"`.
+  watchDisplay?: string;
+  /// Epoch SECONDS of the last report.
+  reportedAt?: number;
+  /// This phone's own `"1.4.0 (57)"`, for rendering the pair together.
+  phoneDisplay?: string;
+}
+
 export interface SendLogAuthBridgePlugin {
   /// Relays the current Supabase session to the paired Watch app via
   /// WatchConnectivity. No-op (resolves immediately) on platforms without
@@ -50,6 +87,11 @@ export interface SendLogAuthBridgePlugin {
 
   /// Tells the paired Watch app to sign out.
   clearSession(): Promise<void>;
+
+  /// What build the paired watch last reported, and how it compares to this
+  /// phone's (#228). Reads what the watch already piggybacked onto its
+  /// existing messages — sends the watch nothing.
+  getWatchInfo(): Promise<WatchBuildInfo>;
 
   /// Live-workout beats from the watch (native only; never fires on web).
   addListener(

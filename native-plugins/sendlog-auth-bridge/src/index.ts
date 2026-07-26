@@ -12,4 +12,6 @@ export type {
   LiveForceMessage,
   LiveWorkoutMessage,
   SendLogAuthBridgePlugin,
+  WatchBuildInfo,
+  WatchBuildStatus,
 } from "./definitions";

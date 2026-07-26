@@ -10,6 +10,7 @@ import {
 } from "../lib/authDiagnostics";
 import type { AuthEventStoreKind } from "../lib/authEventStore";
 import { buildTag, loadBuildTag } from "../lib/appVersion";
+import { loadWatchBuildInfo, watchBuildLine, type WatchBuildInfo } from "../lib/watchBuild";
 import {
   addPasskey,
   listPasskeys,
@@ -120,6 +121,22 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       alive = false;
     };
   }, []);
+
+  // The paired watch's build (#228). The watch installs from TestFlight on
+  // its own schedule, so it can sit builds behind the phone — and a watch on
+  // a pre-#208 build still revokes this phone's session family. Null on web,
+  // or if the native shell predates the plugin method.
+  const [watchInfo, setWatchInfo] = useState<WatchBuildInfo | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void loadWatchBuildInfo().then((info) => {
+      if (alive) setWatchInfo(info);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const watchLine = watchBuildLine(watchInfo);
 
   useEffect(() => {
     if (!passkeysSupported) return;
@@ -433,6 +450,25 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                   {build ? `Sendmeter ${build}` : "Sendmeter (web)"} ·{" "}
                   {STORE_LABELS[diagStatus.store]}
                 </div>
+                {watchLine && (
+                  <div
+                    style={{
+                      fontSize: "var(--t-xs)",
+                      // A build difference is the actionable state (#228) —
+                      // it has to be readable as different from the muted
+                      // "same build" / "not paired" lines at a glance.
+                      color:
+                        watchLine.tone === "warning" ? "var(--warning)" : "var(--ink-muted)",
+                      fontWeight: watchLine.tone === "warning" ? 600 : undefined,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {watchLine.text}
+                    {watchLine.reportedAt !== undefined
+                      ? ` · reported ${new Date(watchLine.reportedAt * 1000).toLocaleString()}`
+                      : ""}
+                  </div>
+                )}
                 {diagStatus.webviewWiped && (
                   <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", lineHeight: 1.6 }}>
                     App storage was wiped since last launch — the session went

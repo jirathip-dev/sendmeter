@@ -203,7 +203,7 @@ final class WorkoutManager: NSObject {
             msg["active_kcal"] = kcal
             if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
             if let rs { msg["rest_started_at"] = rs.timeIntervalSince1970 }
-            session.sendMessage(msg, replyHandler: nil, errorHandler: nil)
+            session.sendMessage(WatchBuild.stamp(msg), replyHandler: nil, errorHandler: nil)
         }
     }
 
@@ -245,8 +245,10 @@ final class WorkoutManager: NSObject {
         let wc = WCSession.default
         if wc.activationState == .activated, wc.isReachable {
             wc.sendMessage(
-                ["kind": "liveWorkout", "status": "ended",
-                 "updated_at": Date().timeIntervalSince1970],
+                WatchBuild.stamp(
+                    ["kind": "liveWorkout", "status": "ended",
+                     "updated_at": Date().timeIntervalSince1970]
+                ),
                 replyHandler: nil, errorHandler: nil
             )
         }
