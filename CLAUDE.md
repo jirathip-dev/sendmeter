@@ -226,7 +226,12 @@ are safe regardless.
     watch over WatchConnectivity; also **receives** watch→phone live-workout
     beats (`didReceiveMessage`) and forwards them to the WebView via
     `notifyListeners("liveWorkout")` (the Bluetooth-fast mirror path — works even
-    while the WebView is suspended).
+    while the WebView is suspended). It also records the **watch's build**
+    (#228): every watch→phone message carries `watch_app_version` /
+    `watch_app_build` (see "watch build report" below), which the plugin
+    stores in `UserDefaults` and reports via `getWatchInfo()`. It depends on
+    `ios/App/SendLogWatchCore` for that contract — same shape as
+    `sendlog-health` → `sendlog-health-core`.
   - `sendlog-live-activity` — lock-screen **Live Activities** (ActivityKit) for
     the phone workout (CLIMBING/RESTING timers + tappable Boulder/Stop) and the
     Tindeq guided protocol (per-segment countdown). `LiveActivityManager` owns
@@ -300,6 +305,17 @@ are safe regardless.
     (this bit after a TestFlight update). AuthManager therefore ignores relays
     whose `expiresAt` is past and reads the Keychain fallback via the
     non-refreshing `auth.currentSession` only. Keep both guards.
+- **Every watch→phone WC message carries the watch's build** (#228) — the watch
+  app updates from TestFlight on its own schedule, so a phone on the fixed
+  build can be paired with a pre-#208 watch that is still revoking the session
+  family, and the phone had no way to see it. `WatchBuild.stamp(...)` adds
+  `watch_app_version` / `watch_app_build` to the live-workout beat, the
+  live-force beat and `requestSession`; **stamp any new watch→phone message
+  the same way** — the account sheet reads whatever last arrived. The phone
+  plugin `WatchBuildReport.stripped(...)`s them back off before forwarding, so
+  `LiveWorkoutMessage` / `LiveForceMessage` keep their exact shape. The verdict
+  (behind / ahead / differs / never reported) lives in `SendLogWatchCore` so
+  it's tested on Linux CI; the sheet only renders it.
 - **Migrations aren't auto-applied — and must go to BOTH remote projects.** Files
   in `supabase/migrations/` are just SQL on disk. Apply each new migration to the
   **prod** project (`zznsqmcewtzlnfoiefkk`) **and** to the **dev/preview** project
