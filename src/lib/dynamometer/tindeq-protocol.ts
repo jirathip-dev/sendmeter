@@ -1,4 +1,10 @@
 // Tindeq Progressor BLE protocol. Pure parsing — no BLE objects here.
+//
+// The wire-format half of the Tindeq driver (#173): `./tindeq.ts` owns the
+// transport and implements the device-agnostic `DynamometerDriver`, this file
+// owns the bytes. The split is deliberate — it keeps this module free of
+// Capacitor/BLE imports (so its tests stay pure, and it stays a 1:1 mirror of
+// SendLogWatchCore's `TindeqProtocol.swift`, which the watch app parses with).
 
 export const TINDEQ = {
   namePrefix: "Progressor",

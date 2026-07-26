@@ -171,6 +171,20 @@ are safe regardless.
   elapsed. Consumed by `src/components/RoutineCard.tsx` (preset CRUD + run
   launch, on the Workout tab) and `RoutineFullscreen.tsx` (the running
   countdown UI), wired into `WorkoutView.tsx`.
+- **Dynamometer layer** — `src/lib/dynamometer/` (#173): a device-agnostic
+  `DynamometerDriver` interface (connect/disconnect, `{us, kg}` sample stream,
+  tare, start/stop, device info, and a `capabilities` flag set for what a
+  device *lacks*) plus the Tindeq driver that implements it (`tindeq.ts` =
+  BLE transport, `tindeq-protocol.ts` = the pure packet parsing, unchanged and
+  still mirroring `SendLogWatchCore/TindeqProtocol.swift`). `registry.ts` is
+  the one place a driver is registered; `useTindeq` resolves
+  `activeDynamometerDriver()` at module load and never sees a UUID or a
+  command byte. `contract.ts` is the conformance suite a new driver must pass
+  — it runs against the real Tindeq driver (BLE mocked) *and* stub drivers, so
+  the seam is proven without hardware. Two things are honestly NOT behind the
+  seam and say so in comments: `?fake-tindeq` FAKE_MODE (a property of the
+  hook, not a driver) and the Force tab's Tindeq-specific UI copy. Adding a
+  real second device is still blocked on owning one.
 - **`src/`** — the React app. `lib/` = data/logic (`repo/` = all Supabase
   queries, metrics.ts = ACWR/EWMA + exported `ewma()`, force-curve.ts =
   critical-force fit + `ZONE_PROTOCOLS`, protocol.ts = guided Tindeq
@@ -226,7 +240,12 @@ are safe regardless.
     watch over WatchConnectivity; also **receives** watch→phone live-workout
     beats (`didReceiveMessage`) and forwards them to the WebView via
     `notifyListeners("liveWorkout")` (the Bluetooth-fast mirror path — works even
-    while the WebView is suspended).
+    while the WebView is suspended). It also records the **watch's build**
+    (#228): every watch→phone message carries `watch_app_version` /
+    `watch_app_build` (see "watch build report" below), which the plugin
+    stores in `UserDefaults` and reports via `getWatchInfo()`. It depends on
+    `ios/App/SendLogWatchCore` for that contract — same shape as
+    `sendlog-health` → `sendlog-health-core`.
   - `sendlog-live-activity` — lock-screen **Live Activities** (ActivityKit) for
     the phone workout (CLIMBING/RESTING timers + tappable Boulder/Stop) and the
     Tindeq guided protocol (per-segment countdown). `LiveActivityManager` owns
@@ -300,6 +319,28 @@ are safe regardless.
     (this bit after a TestFlight update). AuthManager therefore ignores relays
     whose `expiresAt` is past and reads the Keychain fallback via the
     non-refreshing `auth.currentSession` only. Keep both guards.
+- **Every watch→phone WC message carries the watch's build** (#228) — the watch
+  app updates from TestFlight on its own schedule, so a phone on the fixed
+  build can be paired with a pre-#208 watch that is still revoking the session
+  family, and the phone had no way to see it. `WatchBuild.stamp(...)` adds
+  `watch_app_version` / `watch_app_build` to the live-workout beat, the
+  live-force beat and `requestSession`; **stamp any new watch→phone message
+  the same way** — the account sheet reads whatever last arrived. The phone
+  plugin `WatchBuildReport.stripped(...)`s them back off before forwarding, so
+  `LiveWorkoutMessage` / `LiveForceMessage` keep their exact shape. The verdict
+  (behind / ahead / differs / never reported) lives in `SendLogWatchCore` so
+  it's tested on Linux CI; the sheet only renders it.
+  - **…and its offline-queue depth** (#21, `watch_pending_sync`). Same channel,
+    same rules: unknown values are left off, `stripped(...)` removes all three
+    keys, the verdict (empty / pending / backed-up / never reported, plus
+    staleness) lives in Core. The non-obvious part is the *read*:
+    `OfflineQueue` / `PendingSessionQueue` are actors, so their counts can't be
+    awaited on the synchronous WC send paths — each publishes into
+    `PendingSyncCache` (sync-readable, process-wide) whenever it counts,
+    persists or drains, and `WatchBuild.stamp` reads the cached sum. **Any new
+    queue whose depth should show up on the phone has to publish there too**,
+    and nil (never counted) must keep reading as "not reported", never as an
+    empty queue.
 - **Migrations aren't auto-applied — and must go to BOTH remote projects.** Files
   in `supabase/migrations/` are just SQL on disk. Apply each new migration to the
   **prod** project (`zznsqmcewtzlnfoiefkk`) **and** to the **dev/preview** project
@@ -350,6 +391,39 @@ are safe regardless.
   implementations. The ledger records only what was *reported* applied — it is not
   proof the objects exist.
 
+- **`autoRefreshToken: false` does NOT stop supabase-swift refreshing.** It only
+  disables the background *timer*; the on-demand refresh inside `auth.session`
+  still fires whenever the stored access token is expired. Both native clients
+  are therefore split in two (#196): an `auth` client (the only one that may read
+  `.auth` — `setSession`/`signIn`/`signOut`/`currentSession`, none of which
+  refresh) and a `data` client whose `accessToken` provider returns the auth
+  client's current Keychain token **without** refreshing. Every table/RPC call
+  goes through `data`. This is structural, not a convention: refresh tokens are
+  single-use and reuse detection is ON (10 s interval), so one stray refresh from
+  the watch or the health plugin revokes the whole session family and signs the
+  phone out. `SupabaseClientOptions.AuthOptions` also enforces argument order —
+  `autoRefreshToken` must precede `accessToken`.
+- **The `Preview` GitHub environment must stay unrestricted.** Vercel's
+  integration deploys *PR branches* to it, so adding a deployment-branch policy
+  (e.g. "staging only") makes every PR-branch deployment be rejected and the
+  workflow runs on those branches fail with `startup_failure` — with no error
+  that points at the environment. Cost ~25 min of broken CI on 2026-07-25.
+  `Production` → `main` only is fine and is set, because prod only ever deploys
+  from `main`. (Required *reviewers* would be better but need a paid plan on a
+  private repo.)
+- **`public` Swift types lose implicit `Sendable`.** Swift infers it for internal
+  structs but never for public ones, so moving a value type into a package
+  (`SendLogWatchCore`, #191) silently drops the conformance — the compiler stays
+  quiet until something turns on strict concurrency checking. Declare it
+  explicitly on pure-data types when making them public.
+- **A green `quality` check says nothing about Swift.** `ci.yml` is lint /
+  typecheck / vitest / vite build — all web. Only the `swift` job in `ios-ci.yml`
+  (#178, `paths: ios/**`) compiles the watch and phone targets. An iOS-only PR
+  with `quality=SUCCESS` and no `swift` result is **unverified**; #162 reached
+  staging exactly that way, and a missing-argument-order error nearly did again
+  in #196. If the macOS runner is queued, compile locally rather than merge:
+  `xcodebuild build -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -destination "id=<sim udid>" CODE_SIGNING_ALLOWED=NO`.
+
 - **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
   **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
   prompt (in-app has an Undo; the watch hides tag/side/session controls *while
@@ -370,6 +444,22 @@ are safe regardless.
   `RealtimeVersionProvider.tsx` — the watch heartbeats it every ~5s, which
   would refetch every card in the app every 5s. The Workout tab subscribes to
   it on its own payload-reading channel (`useLiveWorkout`).
+- **Haptics are delegated, not per-call-site** (#171). `installTapHaptics()` in
+  `main.tsx` puts ONE capture-phase pointer listener set on `document`; every
+  `<button>`, toggle label, checkbox and `.card.tappable` ticks for free, so
+  don't add a haptic call to a new button. Non-button tappables opt in with
+  `data-haptic="light" | "medium"`; `data-haptic="off"` (and `.chart-scrub`) is
+  a **mute boundary** — `closest()` nearest-match-wins, so the boundary silences
+  everything under it that isn't itself interactive. Three rules that will bite:
+  (1) the tick resolves on **pointerup** with a 10px slop, never pointerdown, or
+  every scroll that starts on a button buzzes; (2) `aria-disabled` (the #222
+  refused-but-clickable Start controls) fires the **warning** pattern, never the
+  accepted one, while a real `disabled` fires nothing — a refused tap must not
+  feel like an accepted one; (3) one tick per gesture, so a button inside a
+  tappable card, an explicit `tapHaptic()` and a sheet's mount effect on the
+  same tap collapse to one. `selectionHaptic()` is the deliberate exception —
+  unguarded, for per-value-change ticks (chart scrub, the #172 slider), which is
+  why those controls are muted for the delegated path.
 - **React-compiler lint is strict**: no `Date.now()`/impure calls in render
   (hold `now` in state ticked by an interval), no synchronous `setState` in
   effect bodies (derive instead, or write state only inside async callbacks —
@@ -394,6 +484,29 @@ are safe regardless.
 - **localStorage keys** are prefixed `sendmeter:` — `phone-workout` (resumable
   workout state machine), `rest-target-s`, `gauge-prepare`, `passkey-prompt`,
   `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202).
+- **Auth diagnostics don't live in localStorage on native.** `auth-events`,
+  `auth-heartbeat`, `webview-canary` and `auth-events-flushed` go through
+  `authEventStore.ts`: Capacitor **Preferences** (NSUserDefaults) on native,
+  `localStorage` on web — because the WebView store is exactly what may be
+  getting wiped, and evidence stored next to the session dies with it. The
+  seam is synchronous by contract (write-behind cache + serialized async
+  writes) so the auth path never awaits a disk write and a failed write can't
+  throw into it. `webview-canary` is written to BOTH stores: present in
+  Preferences but gone from `localStorage` = the WebView's data was purged.
+  The ring is pushed to `auth_events` on the next sign-in
+  (`authEventFlush.ts`, upsert on `(user_id, reason, first_at)` — idempotent,
+  never blocks sign-in).
+- **Sentry only ever sees an allow-listed event** (#227, `src/lib/monitoring.ts`).
+  It initializes *only* when a build-time `VITE_SENTRY_DSN` is present — no DSN
+  (dev, tests, any un-configured build) and the SDK is dead-code-eliminated
+  entirely. `beforeSend`/`beforeBreadcrumb` rebuild the event from allow-lists:
+  the auth uuid as the only identity, no query strings, no console breadcrumbs,
+  and every `HealthMetric` field name/value dropped — `monitoring.test.ts`
+  proves that on an event deliberately built carrying all of them, so **add any
+  new health field to `HEALTH_TERMS`**. It catches things that *throw* (render
+  crashes, unhandled rejections); it would NOT have caught the #202 logout,
+  which fails silently — that's what the auth diagnostics above are for. Setup
+  + the device-verification checklist: `docs/error-monitoring.md`.
 - **Chrome animates transform/opacity on the compositor**, so `getComputedStyle`
   returns the *base* value mid-animation — you can't measure a ripple's scale or a
   hidden bar's transform from JS in the browser tools; verify animations visually

@@ -1,6 +1,9 @@
-import { useChartHover } from "../hooks/useChartHover";
-import type { WorkoutDetail } from "../types";
-import ChartTooltip from "./ChartTooltip";
+import { useEffect, useRef, useState } from "react";
+import { fetchWorkoutRaw } from "../lib/repo";
+import { useCancellableFetch } from "../hooks/useCancellableFetch";
+import { workoutTimeMaxS } from "../lib/workoutChartAxis";
+import type { WorkoutDetail, WorkoutHrSample } from "../types";
+import WorkoutEffortChart from "./WorkoutEffortChart";
 import WorkoutHrChart from "./WorkoutHrChart";
 
 interface Props {
@@ -24,12 +27,40 @@ function StatRow({ label, value }: { label: string; value: string }) {
 }
 
 export default function WorkoutDetailPanel({ detail }: Props) {
-  const [hovered, hoverProps] = useChartHover<number>();
-  const attemptCount = detail.attempts.length;
-  const edgeThird = Math.max(1, Math.floor(attemptCount / 3));
+  // The HR trace is fetched here, not inside the HR chart, because the effort
+  // chart needs the same x domain — and that domain depends on where the
+  // trace ends (SL-183).
+  const samples = useCancellableFetch<WorkoutHrSample[] | null>(
+    () => fetchWorkoutRaw(detail.id),
+    null,
+    detail.id,
+  );
+
+  // One measured width for the whole stack: PAD is in viewBox units, so two
+  // charts with different viewBox widths would reserve different fractions
+  // of their rendered width for the y-label gutter and drift apart.
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [chartW, setChartW] = useState(300);
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setChartW(Math.max(200, el.clientWidth)));
+    ro.observe(el);
+    setChartW(Math.max(200, el.clientWidth));
+    return () => ro.disconnect();
+  }, []);
+
+  const tMax = workoutTimeMaxS({
+    startedAt: detail.startedAt,
+    endedAt: detail.endedAt,
+    attempts: detail.attempts,
+    samples,
+  });
+  const hasAttempts = detail.attempts.length > 0;
 
   return (
     <div
+      ref={hostRef}
       style={{
         marginTop: 10,
         paddingTop: 10,
@@ -76,13 +107,17 @@ export default function WorkoutDetailPanel({ detail }: Props) {
       {/* Continuous HR timeline with climb/rest segments (SL-42); renders
           nothing when the workout kept no raw trace */}
       <WorkoutHrChart
-        workoutId={detail.id}
         startedAt={detail.startedAt}
         attempts={detail.attempts}
+        samples={samples}
+        tMax={tMax}
+        width={chartW}
+        // The effort chart below carries the shared time axis when it renders.
+        showTimeAxis={!hasAttempts}
         source={detail.source}
       />
 
-      {detail.attempts.length === 0 ? (
+      {!hasAttempts ? (
         <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
           No attempts detected
         </div>
@@ -91,68 +126,13 @@ export default function WorkoutDetailPanel({ detail }: Props) {
           <div className="label-eyebrow" style={{ margin: "10px 0 6px" }}>
             Attempts · effort
           </div>
-          <div
-            className="chart-scrub"
-            style={{
-              display: "flex",
-              gap: 3,
-              alignItems: "flex-end",
-              height: 56,
-            }}
-          >
-            {detail.attempts.map((a, i) => (
-              <div
-                key={i}
-                style={{
-                  flex: 1,
-                  maxWidth: 22,
-                  position: "relative",
-                  height: "100%",
-                  display: "flex",
-                  alignItems: "flex-end",
-                  cursor: "pointer",
-                }}
-                {...hoverProps(i)}
-              >
-                {hovered === i && (
-                  <ChartTooltip
-                    align={
-                      i < edgeThird
-                        ? "start"
-                        : i > attemptCount - 1 - edgeThird
-                          ? "end"
-                          : "center"
-                    }
-                  >
-                    <div>Attempt {i + 1}</div>
-                    {a.effortScore != null && (
-                      <div>Effort {a.effortScore.toFixed(1)}</div>
-                    )}
-                    <div>
-                      {Math.round(a.durationS)}s · +{a.elevationGainM.toFixed(1)}m
-                    </div>
-                    {a.avgHr != null && (
-                      <div>
-                        avg {Math.round(a.avgHr)}
-                        {a.peakHr != null ? ` / peak ${Math.round(a.peakHr)}` : ""} bpm
-                      </div>
-                    )}
-                  </ChartTooltip>
-                )}
-                <div
-                  style={{
-                    width: "100%",
-                    height: Math.max(4, ((a.effortScore ?? 0) / 10) * 48),
-                    background: "var(--success)",
-                    borderRadius: 2,
-                    opacity: hovered === null || hovered === i ? 1 : 0.5,
-                    boxShadow: hovered === i ? "0 0 0 1.5px var(--ink)" : "none",
-                    transition: "opacity 0.1s",
-                  }}
-                />
-              </div>
-            ))}
-          </div>
+          <WorkoutEffortChart
+            startedAt={detail.startedAt}
+            attempts={detail.attempts}
+            tMax={tMax}
+            width={chartW}
+            showTimeAxis
+          />
         </>
       )}
     </div>

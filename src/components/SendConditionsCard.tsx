@@ -103,6 +103,9 @@ export default function SendConditionsCard() {
     <>
     <div
       className="card"
+      // #171: tappable card without the `.tappable` class (it has its own
+      // compact column layout) — opt into the delegated tick by attribute.
+      data-haptic="light"
       onClick={() => setShowSheet(true)}
       style={{
         // 1/3-width column next to the 2/3 phase card — vertical layout.

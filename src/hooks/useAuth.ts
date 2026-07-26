@@ -1,7 +1,15 @@
 import { useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, SUPABASE_URL } from "../lib/supabase";
-import { getSessionWithDiagnostics } from "../lib/authDiagnostics";
+import {
+  getSessionWithDiagnostics,
+  initAuthDiagnostics,
+  markUserSignOut,
+  recordAuthStateChange,
+  recordSessionHeartbeat,
+} from "../lib/authDiagnostics";
+import { flushAuthEvents } from "../lib/authEventFlush";
+import { upsertAuthEvents } from "../lib/repo";
 import {
   onWatchSessionRequest,
   relaySessionToWatch,
@@ -11,6 +19,7 @@ import {
   startHealthBackgroundSync,
   syncHealthNow,
 } from "../lib/healthSync";
+import { setMonitoringUser } from "../lib/monitoring";
 
 export function useAuth() {
   const [session, setSession] = useState<Session | null>(null);
@@ -26,11 +35,37 @@ export function useAuth() {
     function onSession(s: Session | null) {
       relaySessionToWatch(s);
       relayHealthSession(s);
+      // #227: the auth uuid is the ONLY identity attached to an error report —
+      // same key `auth_events` uses, never the email.
+      setMonitoringUser(s?.user.id ?? null);
       if (s && !healthStarted) {
         healthStarted = true;
         void startHealthBackgroundSync();
       }
+      if (s) {
+        // Last-known-good heartbeat (#202): every moment we hold a live
+        // session, stamp when we saw it and when it was due to expire. The
+        // gap to the next recorded event is what turns a bare cause into
+        // "valid at 23:40, gone at 06:50, cause X".
+        recordSessionHeartbeat(s);
+        // Ship whatever the ring holds. Fire-and-forget and idempotent —
+        // flushAuthEvents never throws and skips the network entirely when
+        // nothing changed since the last successful send.
+        void flushAuthEvents(s.user.id, { upsert: upsertAuthEvents });
+      }
     }
+
+    // Moves the ring onto Preferences (native) and checks the storage-wipe
+    // canary. Must be called SYNCHRONOUSLY, on this tick, before anything
+    // below can record: writes are deferred only while an init is in
+    // FLIGHT, so a not-yet-started init is indistinguishable from "there
+    // will never be one" and writes through to the pre-init store. This
+    // used to await the build tag first — a native `App.getInfo()` bridge
+    // round-trip — and `getSession()` for a logged-out user (a storage read
+    // behind auth-js's lock, no network) wins that race, so the launch-time
+    // event recorded with no build and `store: "local-storage"` on native.
+    // init resolves the build tag itself now; there is nothing to await here.
+    void initAuthDiagnostics();
 
     // A null session here (issue #194) is otherwise indistinguishable
     // between "never logged in", a network hiccup, and auth-js having
@@ -44,6 +79,14 @@ export function useAuth() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, s) => {
       if (event === "PASSWORD_RECOVERY") setRecovery(true);
+      // #202: THE gap the previous instrumentation had. auth-js runs its own
+      // refresh loop; when `_callRefreshToken` fails non-retryably on an
+      // already-expired access token it calls `_removeSession()` and emits
+      // SIGNED_OUT itself (GoTrueClient `_callRefreshToken` → `_removeSession`
+      // → `_notifyAllSubscribers('SIGNED_OUT', null)`). That is the overnight
+      // logout, and this line used to just `setSession(null)` — no record, no
+      // console line, nothing to find the next morning.
+      if (!s) recordAuthStateChange(event);
       setSession(s);
       setLoading(false);
       onSession(s);
@@ -101,6 +144,11 @@ export function useAuth() {
     loading,
     recovery,
     clearRecovery: () => setRecovery(false),
-    signOut: () => supabase.auth.signOut(),
+    signOut: () => {
+      // Tell the diagnostics ring the SIGNED_OUT about to arrive is one the
+      // user asked for, so a deliberate logout doesn't read as a revocation.
+      markUserSignOut();
+      return supabase.auth.signOut();
+    },
   };
 }

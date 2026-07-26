@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BleClient } from "@capacitor-community/bluetooth-le";
-import { Capacitor } from "@capacitor/core";
-import { parseNotification, TINDEQ } from "../lib/tindeq-protocol";
+import {
+  activeDynamometerDriver,
+  DynamometerCancelledError,
+} from "../lib/dynamometer";
+import type { DynamometerConnection, ForceSample } from "../lib/dynamometer";
 import { enqueueRecording, loadQueue, saveQueue } from "../lib/recordingQueue";
 import type { TindeqSample, TindeqSide } from "../types";
 
@@ -23,7 +25,13 @@ export interface StoppedRecording {
 // (up to 240s smart-CF targets) and full guided endurance protocols never get
 // cut off — it's only a runaway guard, not a normal stop.
 const MAX_RECORDING_MS = 1_800_000; // 30 min
-const IS_NATIVE = Capacitor.isNativePlatform();
+/// #173: the one device-layer lookup. Everything below talks to the
+/// `DynamometerDriver` interface — service UUIDs, packet parsing and command
+/// bytes all live behind it. Resolved (and probed) at module load because the
+/// answer can't change at runtime, and because react-compiler lint forbids
+/// impure calls in render.
+const DRIVER = activeDynamometerDriver();
+const AVAILABILITY = DRIVER.availability();
 const FAKE_MODE =
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).has("fake-tindeq");
@@ -92,18 +100,56 @@ export function interruptionNote(everMeasuredThisMount: boolean): string {
   return everMeasuredThisMount ? "" : "Recovered after connection loss";
 }
 
+/// #119: the tag/side ForceView had registered at the instant a
+/// mid-measurement drop fired — i.e. the ones the user set before Start.
+export interface InterruptionContext {
+  tag: string;
+  side: TindeqSide;
+}
+
+/// #119: narrow a registered SalvageContext down to just the label fields, at
+/// DROP TIME. This must never be deferred to recovery time: a ForceView that
+/// remounts to recover the buffer (the drop fired while the user was on
+/// another tab) runs its own setSalvageContext effect first, re-registering a
+/// fresh context whose pendingTag/pendingSide are still empty — so a late read
+/// of salvageContextRef is deterministically "" again.
+export function snapshotInterruption(
+  ctx: SalvageContext | null | undefined,
+): InterruptionContext | null {
+  return ctx ? { tag: ctx.tag, side: ctx.side } : null;
+}
+
+/// #119: tag/side for an interruption-recovery save. On a remount recovery the
+/// fresh mount's view state is still empty (the 0 ms deferred stop beats the
+/// async tag seeding), so each field falls back to the drop-time snapshot —
+/// the same pre-Start label the sign-out salvage path already writes, which is
+/// the whole point of the parity fix. Live state WINS whenever it has
+/// something: a mount that did seed first is at least as current as the
+/// snapshot, so this is a fallback, never an override.
+export function recoveredTagSide(
+  live: InterruptionContext,
+  snapshot: InterruptionContext | null,
+): InterruptionContext {
+  return {
+    tag: live.tag || (snapshot?.tag ?? ""),
+    side: live.side || (snapshot?.side ?? ""),
+  };
+}
+
 /**
- * Tindeq Progressor over BleClient: Web Bluetooth in browsers, native
- * CoreBluetooth inside the Capacitor iOS app — one code path for both.
+ * The app's single dynamometer connection: connection lifecycle, the live
+ * sample buffer, and the recovery/salvage rules around an interrupted pull.
+ *
+ * Device-agnostic since #173 — it drives whatever `activeDynamometerDriver()`
+ * returns (today: the Tindeq Progressor over BLE). The name is unchanged
+ * because renaming it touches every consumer for no behavioural gain; rename
+ * to `useDynamometer` whenever a second driver actually lands.
  */
 export function useTindeq() {
-  // Native always has BLE; web needs Web Bluetooth + secure context.
-  const supported =
-    FAKE_MODE ||
-    IS_NATIVE ||
-    (typeof navigator !== "undefined" && "bluetooth" in navigator);
-  const secure =
-    IS_NATIVE || typeof window === "undefined" || window.isSecureContext;
+  // Whether the driver's transport exists here, plus (for web BLE) whether the
+  // page context permits it — the UI words the two cases differently.
+  const supported = FAKE_MODE || AVAILABILITY.supported;
+  const secure = AVAILABILITY.secure;
 
   const [status, setStatus] = useState<TindeqStatus>(
     supported && secure ? "idle" : "unsupported",
@@ -121,9 +167,14 @@ export function useTindeq() {
   // REMOUNT, when the drop fired while it was on another tab (#117); cleared
   // when any start/stop takes ownership of the buffer.
   const [pendingInterruption, setPendingInterruption] = useState(false);
+  // #119: the tag/side captured at the instant of that drop — the fallback
+  // label for the recovery save, since the recovering ForceView may be a fresh
+  // mount whose own pendingTag/pendingSide are still empty. Cleared alongside
+  // the claim.
+  const [interruptionContext, setInterruptionContext] =
+    useState<InterruptionContext | null>(null);
 
-  const deviceIdRef = useRef<string | null>(null);
-  const initializedRef = useRef(false);
+  const connectionRef = useRef<DynamometerConnection | null>(null);
   const samplesRef = useRef<TindeqSample[]>([]);
   const t0Ref = useRef<number | null>(null);
   const measuringRef = useRef(false);
@@ -152,6 +203,16 @@ export function useTindeq() {
     [],
   );
 
+  // #119: claim a mid-measurement drop's buffer AND snapshot the tag/side that
+  // were registered at that instant. Shared by the real disconnect callback
+  // and the dev fake-drop helper below so the two can't drift — the snapshot
+  // has to happen in BOTH or the recovery flow isn't browser-verifiable.
+  const claimInterruption = useCallback(() => {
+    setInterruptionContext(snapshotInterruption(salvageContextRef.current?.()));
+    pendingInterruptionRef.current = true;
+    setPendingInterruption(true);
+  }, []);
+
   const stopRaf = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
@@ -171,8 +232,11 @@ export function useTindeq() {
     rafRef.current = requestAnimationFrame(tick);
   }, []);
 
+  // Device readings → the session buffer. `us` is a device-clock timestamp
+  // whose epoch is the device's own, so the first sample of a pull sets t0 and
+  // everything after it is milliseconds since then (what the DB stores).
   const handleSamples = useCallback(
-    (incoming: { us: number; kg: number }[]) => {
+    (incoming: ForceSample[]) => {
       if (!measuringRef.current) return;
       for (const s of incoming) {
         if (t0Ref.current === null) t0Ref.current = s.us;
@@ -190,8 +254,21 @@ export function useTindeq() {
     measuringRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
-    deviceIdRef.current = null;
+    connectionRef.current = null;
   }, [stopRaf]);
+
+  /// The device (or the OS) dropped the link. Shared by the driver's
+  /// `onDisconnected` callback and the FAKE_MODE drop helper below so the two
+  /// can never drift.
+  const handleDeviceDropped = useCallback(() => {
+    // keep samples so an interrupted recording can still be saved
+    const wasMeasuring = measuringRef.current;
+    cleanupDevice();
+    setStatus("idle");
+    setErrorMsg("Device disconnected");
+    // Tell the owner to save the in-flight recording (samplesRef intact).
+    if (wasMeasuring) claimInterruption();
+  }, [cleanupDevice, claimInterruption]);
 
   // #106: this hook's owner is TindeqProvider, which sits ABOVE the tab
   // switch (SL-58 #5) — ForceView unmounts and remounts freely underneath it
@@ -215,9 +292,9 @@ export function useTindeq() {
       const wasMeasuring = measuringRef.current;
       const pendingInterruption = pendingInterruptionRef.current;
       const sampleCount = samplesRef.current.length;
-      const deviceId = deviceIdRef.current;
+      const connection = connectionRef.current;
       cleanupDevice();
-      if (deviceId) void BleClient.disconnect(deviceId).catch(() => {});
+      if (connection) void connection.disconnect().catch(() => {});
 
       // No ForceView ever registered a context this session (e.g. the
       // session died while the user was on a different tab, or measuring
@@ -267,6 +344,10 @@ export function useTindeq() {
             groupId: ctx.groupId,
             protocolRunId: null,
             setNo: null,
+            // …and no zone either (#259), for the same reason: a raw buffer
+            // slice isn't a hold performed under a protocol, so there's no
+            // performed quality to record. It falls back to inference.
+            zone: null,
             samples: summary.samples,
           },
           // null only via the no-context fallback above — a REGISTERED
@@ -287,17 +368,23 @@ export function useTindeq() {
     };
   }, [cleanupDevice]);
 
-  const writeCmd = useCallback(async (cmd: number) => {
-    if (FAKE_MODE) return;
-    const deviceId = deviceIdRef.current;
-    if (!deviceId) throw new Error("Not connected");
-    await BleClient.write(
-      deviceId,
-      TINDEQ.service,
-      TINDEQ.controlChar,
-      new DataView(new Uint8Array([cmd]).buffer),
-    );
-  }, []);
+  /// Run one command against the live connection.
+  ///
+  /// FAKE_MODE never has a connection at all (`?fake-tindeq` synthesizes the
+  /// sample stream from a timer instead of a device), so every command is a
+  /// no-op there — the pre-#173 `writeCmd` had exactly this early return. This
+  /// is the seam's honest edge: fake mode is a property of the HOOK, not a
+  /// driver, and turning it into one would change what "connected" means on
+  /// the only path anyone can test.
+  const runCommand = useCallback(
+    async (fn: (c: DynamometerConnection) => Promise<void>) => {
+      if (FAKE_MODE) return;
+      const connection = connectionRef.current;
+      if (!connection) throw new Error("Not connected");
+      await fn(connection);
+    },
+    [],
+  );
 
   const connect = useCallback(async () => {
     setErrorMsg(null);
@@ -308,71 +395,50 @@ export function useTindeq() {
       return;
     }
     try {
-      if (!initializedRef.current) {
-        await BleClient.initialize();
-        initializedRef.current = true;
-      }
-      const device = await BleClient.requestDevice({
-        namePrefix: TINDEQ.namePrefix,
-        optionalServices: [TINDEQ.service],
+      const connection = await DRIVER.connect({
+        onSamples: handleSamples,
+        onLowBattery: () => setLowBattery(true),
+        onDisconnected: handleDeviceDropped,
       });
-      await BleClient.connect(device.deviceId, () => {
-        // keep samples so an interrupted recording can still be saved
-        const wasMeasuring = measuringRef.current;
-        cleanupDevice();
-        setStatus("idle");
-        setErrorMsg("Device disconnected");
-        // Tell the owner to save the in-flight recording (samplesRef intact).
-        if (wasMeasuring) {
-          pendingInterruptionRef.current = true;
-          setPendingInterruption(true);
-        }
-      });
-      await BleClient.startNotifications(
-        device.deviceId,
-        TINDEQ.service,
-        TINDEQ.notifyChar,
-        (dv) => {
-          const frame = parseNotification(dv);
-          if (frame.kind === "weight") handleSamples(frame.samples);
-          else if (frame.kind === "lowBattery") setLowBattery(true);
-        },
-      );
-      deviceIdRef.current = device.deviceId;
+      connectionRef.current = connection;
       setStatus("connected");
-      // battery status arrives as a tag-0x02 push when low
-      await writeCmd(TINDEQ.cmd.sampleBattery).catch(() => {});
+      // Devices that report battery only when asked need the poke; ones that
+      // don't report it at all leave the capability false and skip it.
+      if (DRIVER.capabilities.deviceInfo) {
+        await connection.refreshDeviceInfo().catch(() => {});
+      }
     } catch (e) {
       cleanupDevice();
       setStatus("idle");
       // user cancelling the device chooser is not an error worth showing
-      if (e instanceof DOMException && e.name === "NotFoundError") return;
-      const msg = e instanceof Error ? e.message : "Connection failed";
-      if (/cancel/i.test(msg)) return;
-      setErrorMsg(msg);
+      if (e instanceof DynamometerCancelledError) return;
+      setErrorMsg(e instanceof Error ? e.message : "Connection failed");
     }
-  }, [cleanupDevice, handleSamples, writeCmd]);
+  }, [cleanupDevice, handleDeviceDropped, handleSamples]);
 
   const disconnect = useCallback(() => {
-    const deviceId = deviceIdRef.current;
+    const connection = connectionRef.current;
     cleanupDevice();
-    if (deviceId) void BleClient.disconnect(deviceId).catch(() => {});
+    if (connection) void connection.disconnect().catch(() => {});
     setStatus("idle");
   }, [cleanupDevice]);
 
   const tare = useCallback(async () => {
     try {
-      await writeCmd(TINDEQ.cmd.tare);
+      // A driver without `capabilities.tare` resolves this as a no-op rather
+      // than throwing, so there's nothing to branch on here.
+      await runCommand((c) => c.tare());
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "Tare failed");
     }
-  }, [writeCmd]);
+  }, [runCommand]);
 
   const start = useCallback(async () => {
     // A new pull resets samplesRef, so any stale salvage claim on the old
     // buffer is void (#113).
     pendingInterruptionRef.current = false;
     setPendingInterruption(false);
+    setInterruptionContext(null);
     samplesRef.current = [];
     t0Ref.current = null;
     latestRef.current = { kg: 0, t: 0 };
@@ -383,7 +449,7 @@ export function useTindeq() {
     setElapsedMs(0);
     setErrorMsg(null);
     try {
-      await writeCmd(TINDEQ.cmd.startWeight);
+      await runCommand((c) => c.startMeasuring());
       measuringRef.current = true;
       setStatus("measuring");
       startRaf();
@@ -400,7 +466,7 @@ export function useTindeq() {
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "Failed to start");
     }
-  }, [writeCmd, startRaf, handleSamples]);
+  }, [runCommand, startRaf, handleSamples]);
 
   const stop = useCallback(async (): Promise<StoppedRecording | null> => {
     // The Stop flow now owns this data (save or queue-on-failure), so the
@@ -408,15 +474,18 @@ export function useTindeq() {
     // queue a duplicate of an already-saved pull (#113).
     pendingInterruptionRef.current = false;
     setPendingInterruption(false);
+    // Released with the claim (#119). Safe because the recovery save reads the
+    // snapshot BEFORE awaiting stop() — see runStop in ForceView.
+    setInterruptionContext(null);
     measuringRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
     try {
-      await writeCmd(TINDEQ.cmd.stop);
+      await runCommand((c) => c.stopMeasuring());
     } catch {
       // device may already be gone; the recording is still valid
     }
-    setStatus(deviceIdRef.current || FAKE_MODE ? "connected" : "idle");
+    setStatus(connectionRef.current || FAKE_MODE ? "connected" : "idle");
     const summary = summarize(samplesRef.current);
     if (summary) {
       setCurrent(0);
@@ -424,7 +493,7 @@ export function useTindeq() {
       setPeak(summary.peakKg);
     }
     return summary;
-  }, [stopRaf, writeCmd]);
+  }, [stopRaf, runCommand]);
 
   // Auto-stop guard: cap recording length
   useEffect(() => {
@@ -435,28 +504,24 @@ export function useTindeq() {
     return () => clearInterval(id);
   }, [status, stop]);
 
-  // Dev-only (#117): the fake connect() registers no disconnect callback, so
-  // fake mode otherwise has NO way to simulate a mid-measurement drop — and
-  // the interruption/recovery path would be unverifiable in a browser. Run
-  // `window.__tindeqFakeDrop()` from the console; same body as the real
-  // disconnect callback in connect() above. Strictly FAKE_MODE-gated.
+  // Dev-only (#117): the fake connect() never reaches a driver, so fake mode
+  // otherwise has NO way to simulate a mid-measurement drop — and the
+  // interruption/recovery path would be unverifiable in a browser. Run
+  // `window.__tindeqFakeDrop()` from the console; it invokes the same
+  // handler the driver's `onDisconnected` does. Strictly FAKE_MODE-gated.
+  //
+  // #173: still named `__tindeqFakeDrop` (and gated on `?fake-tindeq`)
+  // because that's the documented dev workflow and the console handle people
+  // have muscle memory for — renaming it is churn, not a seam. It is
+  // device-agnostic in everything but its name.
   useEffect(() => {
     if (!FAKE_MODE) return;
     const w = window as Window & { __tindeqFakeDrop?: () => void };
-    w.__tindeqFakeDrop = () => {
-      const wasMeasuring = measuringRef.current;
-      cleanupDevice();
-      setStatus("idle");
-      setErrorMsg("Device disconnected");
-      if (wasMeasuring) {
-        pendingInterruptionRef.current = true;
-        setPendingInterruption(true);
-      }
-    };
+    w.__tindeqFakeDrop = handleDeviceDropped;
     return () => {
       delete w.__tindeqFakeDrop;
     };
-  }, [cleanupDevice]);
+  }, [handleDeviceDropped]);
 
   return {
     status,
@@ -469,6 +534,7 @@ export function useTindeq() {
     avg,
     elapsedMs,
     pendingInterruption,
+    interruptionContext,
     samplesRef,
     connect,
     disconnect,
@@ -477,5 +543,10 @@ export function useTindeq() {
     stop,
     setSalvageContext,
     fakeMode: FAKE_MODE,
+    /// #173: the connected device's product name, for UI copy. The Force tab's
+    /// strings are still hardcoded ("Connect Progressor" and friends) — see the
+    /// comments there — so nothing reads this yet; it's the handle for whoever
+    /// does that copy pass when a second driver exists.
+    deviceName: DRIVER.deviceName,
   };
 }

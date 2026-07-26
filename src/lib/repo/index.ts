@@ -4,3 +4,4 @@ export * from "./phases";
 export * from "./tindeq";
 export * from "./health";
 export * from "./workouts";
+export * from "./authEvents";

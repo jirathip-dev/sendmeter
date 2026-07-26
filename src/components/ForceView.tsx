@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveForce } from "../hooks/useLiveForce";
-import { interruptionNote } from "../hooks/useTindeq";
+import { interruptionNote, recoveredTagSide } from "../hooks/useTindeq";
 import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
@@ -43,37 +42,17 @@ import TagManagerSheet from "./TagManagerSheet";
 import TagSideEditor from "./TagSideEditor";
 import TargetZonesCard from "./TargetZonesCard";
 import {
+  applyIntensity,
   buildZoneSelection,
   loadIntensity,
+  performedQuality,
   saveIntensity,
-  selectedQuality,
   type ZoneSelection,
 } from "../lib/zoneSelection";
 import ZoneFocusCard from "./ZoneFocusCard";
 import ForceFullscreen from "./ForceFullscreen";
 import ForceTrendChart from "./ForceTrendChart";
 import LiveForceSparkline from "./LiveForceSparkline";
-
-/// Compact −/+ stepper button (shared by the Protocol-presets intensity dial;
-/// formerly lived on TargetZonesCard's per-quality stepper before SL-97b
-/// lifted intensity to one global control here).
-const stepBtnStyle = (disabled: boolean): CSSProperties => ({
-  width: 24,
-  height: 24,
-  borderRadius: 6,
-  border: "1px solid var(--border)",
-  background: "var(--surface-1)",
-  color: "var(--ink-muted)",
-  fontSize: 14,
-  fontWeight: 700,
-  lineHeight: 1,
-  cursor: disabled ? "default" : "pointer",
-  opacity: disabled ? 0.4 : 1,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  WebkitTapHighlightColor: "transparent",
-});
 
 interface ForceViewProps {
   userId: string;
@@ -310,6 +289,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       groupId: ensureSession(),
       protocolRunId: protocolRunIdRef.current,
       setNo: seg.set,
+      // #259: stamp the quality this rep was PERFORMED under — the armed
+      // zone's own quality, or the custom preset's load-aware badge at THIS
+      // set's target (per-set ramps can move it). Without this the load half
+      // of that decision is thrown away and the hold gets re-classified from
+      // duration alone on every later read.
+      zone: performedQuality(
+        activeProtocol,
+        activeProtocol ? presetTargetKg(activeProtocol, presetRefs, seg.set) : null,
+        presetRefs,
+      ),
       samples: slice,
     };
     try {
@@ -385,6 +374,19 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       void endTindeqLiveActivity();
       return;
     }
+    // #119: a recovery stop (note !== "") can be running on a FRESH mount whose
+    // pendingTag/pendingSide are still empty — this 0 ms-deferred call beats
+    // the async tag seeding — so fall back to the tag/side snapshotted when the
+    // drop fired. That's the same pre-Start label the sign-out salvage path
+    // writes from salvageContextRef; the two recovery paths were inconsistent.
+    // Read BEFORE tindeq.stop(), which releases the claim and the snapshot.
+    const { tag, side } =
+      note === ""
+        ? { tag: pendingTag.trim(), side: pendingSide }
+        : recoveredTagSide(
+            { tag: pendingTag.trim(), side: pendingSide },
+            tindeq.interruptionContext,
+          );
     const summary = await tindeq.stop();
     void endTindeqLiveActivity();
     if (!summary) return;
@@ -397,11 +399,15 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       peakKg: summary.peakKg,
       avgKg: summary.avgKg,
       note,
-      tag: pendingTag.trim(),
-      side: pendingSide,
+      tag,
+      side,
       groupId: ensureSession(),
       protocolRunId: null,
       setNo: null,
+      // Freehand pull — this branch only runs with no protocol armed, so
+      // there is no zone the hold was performed under. Null, not a guess:
+      // readers infer one from duration and can say that they did (#259).
+      zone: null,
       samples: summary.samples,
     };
     try {
@@ -554,19 +560,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // tag is selected yet.
   const zoneTag = effectiveTag ? (chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag) : null;
 
-  // Move the global intensity dial: persist + update state, and if a zone is
-  // currently armed, re-arm it at the new pct so its baked target/timer
-  // numbers update immediately. Custom presets are UNAFFECTED by this dial —
-  // their load is never rescaled, only recommended zones respond to it.
-  function changeIntensity(delta: number) {
-    const next = Math.min(ZONE_INTENSITY.max, Math.max(ZONE_INTENSITY.min, intensityPct + delta));
+  // Move the global intensity dial (the slider on TargetZonesCard, #172):
+  // persist + update state, and if a zone is currently armed, re-arm it at the
+  // new pct so its baked target/timer numbers update immediately. Custom
+  // presets are UNAFFECTED by this dial — their load is never rescaled, only
+  // recommended zones respond to it (see `applyIntensity`).
+  function changeIntensity(pct: number) {
+    const next = Math.min(ZONE_INTENSITY.max, Math.max(ZONE_INTENSITY.min, pct));
     if (next === intensityPct) return;
     setIntensityPct(next);
     saveIntensity(next);
-    const q = selectedQuality(zoneSel);
-    if (q && model && zoneTag) {
-      setZoneSel(buildZoneSelection(model, q, zoneTag, zoneSel!.protocol.alternateSides, next));
-    }
+    setZoneSel(applyIntensity(zoneSel, model, zoneTag, next));
   }
 
   // Get-ready countdown preference (5s PREPARE before the first hold).
@@ -780,6 +784,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           <span style={{ fontSize: "var(--t-2xs)", color: "var(--warning)" }}>(fake mode)</span>
         )}
       </div>
+      {/* #173: this copy — and "Connect Progressor" below — is still written
+          for the Tindeq specifically, even though the hook underneath it is
+          now device-agnostic. Deliberately NOT templated off
+          `tindeq.deviceName`: these strings are hand-tuned prose ("Progressor"
+          alone reads better than the full product name here), and a second
+          device needs a copy pass, not a variable. That pass belongs with the
+          driver that motivates it. */}
       <div className="section-sub">
         Grip-force analysis &amp; training — Tindeq Progressor via Bluetooth.
       </div>
@@ -1151,57 +1162,21 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
 
       {/* Protocols: the zone target is the recommended/default protocol
           (from your force curve); custom presets follow. The session-
-          intensity dial (SL-97) applies to RECOMMENDED ZONES ONLY — it scales
-          the target load and adapts hold time to keep the training dose
-          equivalent. Custom presets are never touched by it; a preset's
-          quality badge below still reflects whatever load it actually
-          resolves to. */}
+          intensity dial (SL-97, slider on the recommended card since #172)
+          applies to RECOMMENDED ZONES ONLY — it scales the target load and
+          adapts hold time to keep the training dose equivalent. Custom
+          presets are never touched by it; a preset's quality badge below
+          still reflects whatever load it actually resolves to. */}
       <div
         style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
+          fontSize: "var(--t-2xs)",
+          color: "var(--ink-faint)",
+          textTransform: "uppercase",
+          letterSpacing: "0.1em",
           margin: "20px 0 10px",
         }}
       >
-        <div
-          style={{
-            fontSize: "var(--t-2xs)",
-            color: "var(--ink-faint)",
-            textTransform: "uppercase",
-            letterSpacing: "0.1em",
-          }}
-        >
-          Protocol presets
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>Intensity</span>
-          <button
-            style={stepBtnStyle(intensityPct <= ZONE_INTENSITY.min)}
-            disabled={intensityPct <= ZONE_INTENSITY.min}
-            onClick={() => changeIntensity(-ZONE_INTENSITY.step)}
-          >
-            −
-          </button>
-          <span
-            style={{
-              fontSize: "var(--t-xs)",
-              color: intensityPct > 100 ? "var(--warning)" : "var(--ink)",
-              fontWeight: 700,
-              width: 34,
-              textAlign: "center",
-            }}
-          >
-            {intensityPct}%
-          </span>
-          <button
-            style={stepBtnStyle(intensityPct >= ZONE_INTENSITY.max)}
-            disabled={intensityPct >= ZONE_INTENSITY.max}
-            onClick={() => changeIntensity(ZONE_INTENSITY.step)}
-          >
-            +
-          </button>
-        </div>
+        Protocol presets
       </div>
       {zoneTag && (
         <TargetZonesCard
@@ -1210,11 +1185,15 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           selected={zoneSel}
           onSelect={setZoneSel}
           intensityPct={intensityPct}
+          onIntensityChange={changeIntensity}
         />
       )}
       {effectiveTag && zoneTag && (
         <ZoneFocusCard
           recordings={recordings.filter((r) => r.tag === effectiveTag)}
+          // The card is scoped to the TAG (both sides), not `zoneTag` — which
+          // carries the selected side and would overclaim (#214).
+          exercise={effectiveTag}
           model={model}
           onPick={(q) => setZoneSel(buildZoneSelection(model, q, zoneTag, false, intensityPct))}
         />

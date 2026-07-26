@@ -14,6 +14,54 @@ export type Database = {
   }
   public: {
     Tables: {
+      auth_events: {
+        Row: {
+          app_build: string | null
+          auth_event: string | null
+          created_at: string
+          event_store: string | null
+          first_at: string
+          id: string
+          last_at: string
+          last_good_at: string | null
+          last_good_expires_at: string | null
+          occurrences: number
+          reason: string
+          source: string | null
+          user_id: string
+        }
+        Insert: {
+          app_build?: string | null
+          auth_event?: string | null
+          created_at?: string
+          event_store?: string | null
+          first_at: string
+          id?: string
+          last_at: string
+          last_good_at?: string | null
+          last_good_expires_at?: string | null
+          occurrences?: number
+          reason: string
+          source?: string | null
+          user_id?: string
+        }
+        Update: {
+          app_build?: string | null
+          auth_event?: string | null
+          created_at?: string
+          event_store?: string | null
+          first_at?: string
+          id?: string
+          last_at?: string
+          last_good_at?: string | null
+          last_good_expires_at?: string | null
+          occurrences?: number
+          reason?: string
+          source?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       climb_attempts: {
         Row: {
           avg_hr: number | null
@@ -407,6 +455,7 @@ export type Database = {
           side: string
           tag: string
           user_id: string
+          zone: string | null
         }
         Insert: {
           avg_kg: number
@@ -424,6 +473,7 @@ export type Database = {
           side?: string
           tag?: string
           user_id?: string
+          zone?: string | null
         }
         Update: {
           avg_kg?: number
@@ -441,6 +491,7 @@ export type Database = {
           side?: string
           tag?: string
           user_id?: string
+          zone?: string | null
         }
         Relationships: []
       }

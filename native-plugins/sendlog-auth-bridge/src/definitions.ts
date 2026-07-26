@@ -38,6 +38,72 @@ export interface LiveForceMessage {
   spark?: [number, number][];
 }
 
+/// Verdict on the paired watch's build vs the phone's (#228). Computed in
+/// Swift (`WatchBuildReport.status` in SendLogWatchCore) so the comparison is
+/// unit-tested on Linux CI rather than living in a view. The three
+/// "no build to show" cases stay distinct on purpose: a watch that has never
+/// reported must never read as up to date.
+export type WatchBuildStatus =
+  /// No watch paired, or a device that can't have one (iPad).
+  | "not-paired"
+  /// Watch paired, Sendmeter not installed on it.
+  | "app-not-installed"
+  /// Installed, but it has never sent a message this phone install saw.
+  | "not-reported"
+  | "match"
+  | "watch-behind"
+  | "watch-ahead"
+  /// Different, but the build numbers aren't orderable.
+  | "differs"
+  /// WCSession hasn't activated yet, or the phone's own build is unreadable.
+  | "unknown";
+
+/// Verdict on the watch's offline upload queues (#21), computed in Swift
+/// (`WatchBuildReport.syncStatus`) for the same reason as the build verdict.
+/// "empty" and "not-reported" stay distinct: a watch that has never reported a
+/// count must not render as a healthy, drained queue.
+export type WatchSyncStatus =
+  | "not-paired"
+  | "app-not-installed"
+  /// Installed, but no queue depth has ever arrived — nothing is known.
+  | "not-reported"
+  /// WCSession hasn't activated yet.
+  | "unknown"
+  /// Reported zero pending items.
+  | "empty"
+  /// A few items waiting — normal right after an offline session.
+  | "pending"
+  /// Enough queued that the watch probably isn't draining at all.
+  | "backed-up";
+
+export interface WatchBuildInfo {
+  status: WatchBuildStatus;
+  supported: boolean;
+  activated: boolean;
+  paired: boolean;
+  appInstalled: boolean;
+  /// Present only once the watch has actually reported.
+  watchVersion?: string;
+  watchBuild?: string;
+  /// `"1.4.0 (57)"`.
+  watchDisplay?: string;
+  /// Epoch SECONDS of the last report.
+  reportedAt?: number;
+  /// This phone's own `"1.4.0 (57)"`, for rendering the pair together.
+  phoneDisplay?: string;
+
+  /// The watch's offline-queue state (#21). Absent entirely on a native shell
+  /// whose compiled-in plugin predates the field.
+  syncStatus?: WatchSyncStatus;
+  /// Items the watch last reported as waiting to upload. Present only once it
+  /// has actually reported one — absent is "unknown", not zero.
+  pendingSyncCount?: number;
+  /// Epoch SECONDS of that count's report.
+  pendingSyncReportedAt?: number;
+  /// The count is old enough (>24h) that the queue may have drained since.
+  pendingSyncStale?: boolean;
+}
+
 export interface SendLogAuthBridgePlugin {
   /// Relays the current Supabase session to the paired Watch app via
   /// WatchConnectivity. No-op (resolves immediately) on platforms without
@@ -50,6 +116,11 @@ export interface SendLogAuthBridgePlugin {
 
   /// Tells the paired Watch app to sign out.
   clearSession(): Promise<void>;
+
+  /// What build the paired watch last reported, and how it compares to this
+  /// phone's (#228). Reads what the watch already piggybacked onto its
+  /// existing messages — sends the watch nothing.
+  getWatchInfo(): Promise<WatchBuildInfo>;
 
   /// Live-workout beats from the watch (native only; never fires on web).
   addListener(

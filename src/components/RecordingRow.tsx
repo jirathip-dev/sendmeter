@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchRecordingSamples } from "../lib/repo";
+import { holdOrigin } from "../lib/zoneBreakdown";
+import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
@@ -169,15 +171,19 @@ export default function RecordingRow({
     }
   }
 
+  const origin = holdOrigin(rec);
   const date = new Date(rec.recordedAt);
-  const dateLabel = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const dateLabel =`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 
   return (
     <div
       className="session-row"
       style={{ flexDirection: "column", alignItems: "stretch", gap: 0 }}
     >
+      {/* #171: on the header only — the expanded chart below carries its own
+          per-point scrub tick and must not also fire the row's. */}
       <div
+        data-haptic="light"
         style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
         onClick={() => void toggle()}
       >
@@ -263,6 +269,17 @@ export default function RecordingRow({
             {rec.avgKg.toFixed(1)} kg
             {rec.setNo !== null && (
               <span style={{ color: "var(--info)" }}> · set {rec.setNo}</span>
+            )}
+            {/* #214: the zone this hold counts toward, and what put it there
+                — visible next to the hold length rather than only aggregated
+                into a chart elsewhere. #259: that's either the zone the hold
+                was recorded under (a fact) or the duration band it was
+                inferred from (a guess), and the row says which. */}
+            {origin.zone && (
+              <span style={{ color: QUALITY_COLORS[origin.zone] }}>
+                {" "}
+                · {origin.label} ({origin.short})
+              </span>
             )}
           </div>
           {rec.note && (

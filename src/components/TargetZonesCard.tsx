@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { QUALITIES, zoneTarget } from "../lib/force-curve";
+import { QUALITIES, ZONE_INTENSITY, zoneTarget } from "../lib/force-curve";
 import type { ForceCurveModel } from "../lib/force-curve";
+import { selectionHaptic } from "../lib/haptics";
 import { buildTimeline, timelineDurationS } from "../lib/protocol";
 import {
   QUALITY_COLORS,
@@ -17,9 +18,11 @@ interface Props {
   model: ForceCurveModel | null;
   selected: ZoneSelection | null;
   onSelect: (sel: ZoneSelection | null) => void;
-  /// The global session-intensity dial (SL-97b), owned by ForceView and
-  /// applied at the "Protocol presets" header — this card just reads it.
+  /// The global session-intensity dial (SL-97b) — one value owned by
+  /// ForceView (persisted + used to re-arm the zone), driven by the slider
+  /// this card renders (#172). Scales recommended zones only.
   intensityPct: number;
+  onIntensityChange: (pct: number) => void;
 }
 
 function fmt(sec: number): string {
@@ -34,8 +37,19 @@ function fmt(sec: number): string {
 /// the band on the live gauge AND its guided timer (hold/rest/reps from the
 /// zone's prescription). Alternate ticks L⇄R per rep; otherwise the global
 /// side applies.
-export default function TargetZonesCard({ tag, model, selected, onSelect, intensityPct }: Props) {
+export default function TargetZonesCard({
+  tag,
+  model,
+  selected,
+  onSelect,
+  intensityPct,
+  onIntensityChange,
+}: Props) {
   const [alternate, setAlternate] = useState(false);
+  // Above the recommended load — the number, the slider fill and the note all
+  // switch to the warning hue together (100% IS the recommendation, so it
+  // stays neutral).
+  const heavy = intensityPct > 100;
 
   // Which zone is armed is derived from `selected` (its `zone:${q}` id) so the
   // SL-100 recommendation card arming the same `zoneSel` lights the right chip.
@@ -88,6 +102,49 @@ export default function TargetZonesCard({ tag, model, selected, onSelect, intens
               );
             })}
           </div>
+          {/* #172: the session-intensity dial sits on the card whose numbers
+              it moves (SL-97b had it as a −/+ stepper in the "Protocol
+              presets" header). Still ONE global value owned by ForceView —
+              recommended zones only, custom presets are never rescaled. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+            <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>Intensity</span>
+            <input
+              type="range"
+              aria-label="Session intensity"
+              // #171: this control ticks PER STEP below; mute it for the
+              // delegated tap listener so a drag isn't also a tap.
+              data-haptic="off"
+              min={ZONE_INTENSITY.min}
+              max={ZONE_INTENSITY.max}
+              step={ZONE_INTENSITY.step}
+              value={intensityPct}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                // A range input only emits when its *stepped* value changes,
+                // and this guard swallows a repeat of the same value — so the
+                // tick is one per 5% step, not one per drag pixel.
+                if (next === intensityPct) return;
+                selectionHaptic();
+                onIntensityChange(next);
+              }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                accentColor: heavy ? "var(--warning)" : "var(--primary)",
+              }}
+            />
+            <span
+              style={{
+                fontSize: "var(--t-xs)",
+                fontWeight: 700,
+                color: heavy ? "var(--warning)" : "var(--ink)",
+                width: 34,
+                textAlign: "right",
+              }}
+            >
+              {intensityPct}%
+            </span>
+          </div>
           {active && zoneT && selected ? (
             <div style={{ marginTop: 10 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -113,14 +170,12 @@ export default function TargetZonesCard({ tag, model, selected, onSelect, intens
                   ` · ${selected.protocol.sets} sets (${fmt(selected.protocol.restSetsS)} between)`}{" "}
                 · total {fmt(timelineDurationS(buildTimeline(selected.protocol, { switchS: 3 })))}
               </div>
-              {/* SL-97b: the actual dial lives at the "Protocol presets"
-                  header now (ForceView) — this is just the contextual note
-                  for whatever it's currently set to. */}
+              {/* The contextual note for whatever the slider above is set to. */}
               {quality && intensityPct !== 100 && (
                 <div
                   style={{
                     fontSize: "var(--t-2xs)",
-                    color: intensityPct > 100 ? "var(--warning)" : "var(--ink-faint)",
+                    color: heavy ? "var(--warning)" : "var(--ink-faint)",
                     marginTop: 8,
                   }}
                 >

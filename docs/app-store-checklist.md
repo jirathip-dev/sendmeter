@@ -17,6 +17,60 @@ for the App Store Connect forms.
   are painful to review).
 - **Usage strings**: Bluetooth (iOS + watch), HealthKit share/read, Motion — all set.
 - **No Sign in with Apple requirement**: only email-based auth, no third-party login.
+- **Privacy manifests** (`PrivacyInfo.xcprivacy`, issue #226): one per shipped
+  bundle — see the section below. Without them App Store Connect bounces the
+  upload with **ITMS-91053: Missing API declaration** before review even starts.
+
+## Privacy manifests (`PrivacyInfo.xcprivacy`)
+
+Apple's rule is per-bundle, not per-app: *"For each executable or dynamic library
+in an app that uses a required reason API, the bundle that includes the
+executable or dynamic library needs to include a privacy manifest file that
+reports the API."* The watch app and both widget extensions ship as their own
+bundles inside the `.ipa`, so each needs its own file.
+
+| Bundle | File | Required-reason APIs declared |
+|---|---|---|
+| iOS app | `ios/App/App/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1` |
+| Watch app | `ios/App/SendLogWatch Watch App/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1` + `1C8F.1`; FileTimestamp → `C617.1` |
+| Watch complications extension | `ios/App/SendLogWatchWidgets/PrivacyInfo.xcprivacy` | UserDefaults → `1C8F.1` |
+| Phone Live Activity extension | `ios/App/SendmeterWidgets/PrivacyInfo.xcprivacy` | none (uses no required-reason API) |
+
+Reason codes, and why they differ per bundle:
+
+- **`CA92.1`** — user defaults "only accessible to the app itself". Covers every
+  `UserDefaults.standard` caller: `LiveActivityManager`'s pending-action queue
+  (linked into the App from `native-plugins/sendlog-live-activity`),
+  `@capacitor/preferences`, and on the watch `WorkoutManager`, `ForceGaugeView`
+  and `SendLogWatchCore`'s `RPEModel`.
+- **`1C8F.1`** — the App Group variant. `WidgetShared.swift` (both copies) uses
+  `UserDefaults(suiteName: "group.com.jirathip.sendlog")`, which is readable by
+  another bundle. CA92.1 explicitly does *not* permit "writing information that
+  can be accessed by other apps", so the App Group sites need 1C8F.1 instead.
+  The iOS App target has no App Group entitlement and so declares only CA92.1.
+- **`C617.1`** — file metadata "inside the app container". `OfflineQueue` and
+  `PendingSessionQueue` read `.creationDateKey` to drain
+  `Documents/pending{,-sessions}/*.json` oldest-first. `NSPrivacyAccessedAPI`
+  `CategoryFileTimestamp` is a required-reason API too, so it would have
+  triggered the same ITMS-91053 mail.
+
+Nothing upstream covers any of this: `@capacitor/ios` ships a manifest with an
+**empty** `NSPrivacyAccessedAPITypes` array, and `@capacitor/preferences` 8.0.1
+ships no manifest at all.
+
+**Sentry adds no manifest** (issue #227). `@sentry/react` is the *web* SDK — it
+is bundled into the WebView JavaScript in `ios/App/App/public`, not linked as a
+framework or dynamic library, so it is not a bundle that could carry a
+`PrivacyInfo.xcprivacy` and it touches no required-reason API. Its data type
+(diagnostics) is already declared on the iOS app bundle — see the Diagnostics
+row below. Native crash reporting (Sentry Cocoa) is deliberately **out of
+scope**; adding it later *would* add a framework bundle and require re-checking
+both the manifest and this file.
+
+`NSPrivacyCollectedDataTypes` mirrors the App Privacy table below — all four
+rows on the iOS app; the watch app declares the subset it actually uploads
+(health, fitness, user content, but never email or auth diagnostics); the two
+widget extensions collect nothing.
 
 ## App Store Connect: App Privacy answers ("nutrition label")
 
@@ -31,9 +85,46 @@ Declare these under **Data Types Collected**, all with:
 | Health & fitness data (HR, HRV, sleep, workouts) | Health & Fitness → Health / Fitness |
 | Body weight | Health & Fitness → Health |
 | Training/session logs, force recordings | User Content → Other User Content |
+| Auth + error diagnostics (null-session cause, timestamps, app build; crash/error reports) | Diagnostics → Other Diagnostic Data |
 
-Everything else (location, contacts, identifiers, purchases, browsing,
-diagnostics): **Not collected**. There are no analytics, ads, or trackers.
+The Diagnostics row covers two things, both keyed to `user_id`/auth uuid — which
+is why it answers "linked to identity: yes" like every other row here:
+
+1. **Auth diagnostics** — `supabase/migrations/20260726090000_auth_events.sql`
+   (the columns are exactly what is collected), written by
+   `src/lib/authEventFlush.ts`: a per-account record of why a sign-in session
+   went away. Stays on our own Supabase project; no third party involved.
+2. **Error monitoring** (issue #227) — uncaught JavaScript exceptions, React
+   render errors and unhandled promise rejections, processed by **Sentry**
+   (`sentry.io`, Functional Software, Inc.) — the one **third-party processor**
+   the app uses. `src/lib/monitoring.ts` is the only place it is configured.
+
+What Sentry receives is built from an allow-list in `beforeSend` /
+`beforeBreadcrumb`, not filtered after the fact:
+
+- **Identity is the Supabase auth uuid and nothing else** — never the email,
+  username, or IP.
+- **No health or fitness data, ever.** Every `HealthMetric` field name and value
+  is dropped before send; `src/lib/monitoring.test.ts` asserts it on an event
+  deliberately built carrying all of them.
+- URLs lose their query strings; `extra`, `contexts`, `tags` and breadcrumbs
+  keep only allow-listed keys (console breadcrumbs are dropped outright).
+- No session replay (`replaysSessionSampleRate`/`replaysOnErrorSampleRate` = 0)
+  and no performance tracing. The SDK's `dataCollection` switches are all off —
+  no inferred user, no cookies, no request/response headers or bodies, no query
+  params, no stack-frame local variables (that one defaults to *on* and a local
+  could be a whole health record). The deprecated `sendDefaultPii` is unused.
+- The SDK initializes **only** when a build-time `VITE_SENTRY_DSN` is present.
+  Dev, test and any DSN-less build send nothing — the SDK is dead-code-
+  eliminated from the bundle entirely.
+
+**Used for tracking stays "No"**: the data is never linked with third-party
+data for advertising or measurement, and there is no ad network or cross-app
+identifier — so **no ATT prompt** and `NSPrivacyTracking` stays `false`.
+
+Everything else (location, contacts, identifiers, purchases, browsing):
+**Not collected**. There are no analytics or ad SDKs and no trackers — Sentry is
+error monitoring only.
 
 ## Review notes (paste into "Notes" for the reviewer)
 
@@ -46,6 +137,10 @@ diagnostics): **Not collected**. There are no analytics, ads, or trackers.
 > the user has connected to Apple Health — to compute a daily recovery score. It
 > is stored on the user's own account row (see privacy policy) and never used for
 > advertising.
+> Crash/error diagnostics are processed by Sentry (sentry.io). Reports carry the
+> account's anonymous user id, the error and its stack trace only — health data,
+> email and request contents are stripped before the report is sent, and there
+> is no analytics, advertising, or tracking SDK in the app.
 
 **Demo account**: create a throwaway user before submitting — sign up via
 magic link on the web app with a spare email, set a password via Account →
@@ -66,4 +161,10 @@ Put that email/password in the review notes.
 6. Export compliance: uses only standard TLS → answer "standard encryption,
    exempt" (France declaration auto-handled).
 7. Age rating questionnaire: all "None" → 4+.
-8. Xcode → Archive → Distribute (per app) → TestFlight first, then Submit.
+8. **Generate the privacy report** — Xcode → Product → Archive → right-click the
+   archive in the Organizer → **Generate Privacy Report**. Diff the PDF against
+   the App Privacy table above: the aggregated data types must match row for row,
+   and the required-reason section must list UserDefaults (`CA92.1`, `1C8F.1`)
+   and FileTimestamp (`C617.1`) and nothing else. This can only be done from
+   Xcode on a real archive — it is not reproducible in CI.
+9. Xcode → Archive → Distribute (per app) → TestFlight first, then Submit.

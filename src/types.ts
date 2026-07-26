@@ -1,3 +1,7 @@
+// Type-only, and therefore erased at build time — force-curve.ts imports
+// TindeqSample back from here, so a value import would be a real cycle.
+import type { TrainingQuality } from "./lib/force-curve";
+
 export type PhaseId = "capacity" | "strength" | "power" | "execution";
 export type ViewId = "dashboard" | "workout" | "history" | "tindeq";
 
@@ -135,6 +139,13 @@ export interface TindeqRecordingMeta {
   /// carry their set number; null for free holds / older rows.
   protocolRunId: string | null;
   setNo: number | null;
+  /// The training quality this hold was actually PERFORMED under (#259),
+  /// stamped from the armed zone/preset at save time — the LOAD-AWARE
+  /// classification, which a duration-only re-derivation can't recover.
+  /// Null when there is nothing to record (freehand hold, watch recording) or
+  /// the row predates the column; readers then infer it from `durationMs`
+  /// (see lib/zoneHistory.ts `recordingZone`). Deliberately not backfilled.
+  zone: TrainingQuality | null;
 }
 
 /// A saved hang protocol (hold / reps / sets / rests) — drives the guided
@@ -210,6 +221,14 @@ export interface NewTindeqRecording {
   /// carry their set number. Null for free holds.
   protocolRunId: string | null;
   setNo: number | null;
+  /// The quality this hold was performed under (#259) — the armed zone's own
+  /// quality, or a custom preset's LOAD-AWARE badge. Null for a freehand hold:
+  /// with no protocol armed there is no intent to record, and storing a
+  /// duration guess here would make it indistinguishable from a real one.
+  /// Required (not optional) so every save path has to make that call
+  /// deliberately; queue entries written before #259 simply carry `undefined`
+  /// and insert as null.
+  zone: TrainingQuality | null;
   samples: TindeqSample[];
 }
 

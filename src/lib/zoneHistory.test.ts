@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { classifyZone, classifyZoneLoaded, recommendZone, zoneTrainingSets } from "./zoneHistory";
-import type { ForceCurveModel } from "./force-curve";
+import {
+  classifyZone,
+  classifyZoneLoaded,
+  CURVE_BIAS_RATIO,
+  dominantZone,
+  recommendZone,
+  recordingZone,
+  TIE_BAND_SETS,
+  zoneSets,
+  zoneTrainingSets,
+} from "./zoneHistory";
+import type { ForceCurveModel, TrainingQuality } from "./force-curve";
 
 describe("classifyZone (SL-100)", () => {
   it("buckets by hold duration around the zone anchors", () => {
@@ -13,6 +23,137 @@ describe("classifyZone (SL-100)", () => {
     expect(classifyZone(20)).toBe("strength");
     expect(classifyZone(30)).toBe("endurance");
     expect(classifyZone(90)).toBe("endurance");
+  });
+});
+
+describe("recordingZone (#259)", () => {
+  it("uses the zone the recording was performed under when it has one", () => {
+    // 12s would be inferred as strength; recorded as power, it IS power.
+    expect(recordingZone({ durationMs: 12_000, zone: "power" })).toEqual({
+      zone: "power",
+      source: "recorded",
+    });
+  });
+
+  it("falls back to the duration inference when the zone is null", () => {
+    expect(recordingZone({ durationMs: 12_000, zone: null })).toEqual({
+      zone: "strength",
+      source: "inferred",
+    });
+  });
+
+  it("treats an absent zone field the same as null (pre-#259 shapes)", () => {
+    expect(recordingZone({ durationMs: 5_000 })).toEqual({
+      zone: "power",
+      source: "inferred",
+    });
+  });
+
+  it("honours a recorded zone at any duration — only an inference can fail", () => {
+    // The sub-1s stray-blip rule exists to throw away accidental taps in a
+    // GUESS. A recorded zone is a fact about how the hold was performed, so
+    // it isn't second-guessed; nothing else can produce a null `zone` with
+    // source "recorded".
+    expect(recordingZone({ durationMs: 400, zone: "strength" })).toEqual({
+      zone: "strength",
+      source: "recorded",
+    });
+    expect(recordingZone({ durationMs: 400, zone: null })).toEqual({
+      zone: null,
+      source: "inferred",
+    });
+  });
+});
+
+/// The proof that #259 shifted no historical data. Every recording that
+/// exists today has no zone column value, so `recordingZone` must reproduce
+/// `classifyZone` for all of them — not approximately, identically. The
+/// legacy rule is re-implemented here verbatim rather than imported, so this
+/// still fails if someone "helpfully" changes classifyZone too.
+describe("null-zone fallback is byte-for-byte today's behaviour (#259)", () => {
+  function legacyClassify(durationS: number): TrainingQuality | null {
+    if (durationS < 1) return null;
+    if (durationS <= 6) return "power";
+    if (durationS <= 8.5) return "power-endurance";
+    if (durationS <= 20) return "strength";
+    return "endurance";
+  }
+  function legacyZoneSets(recs: { durationMs: number }[]) {
+    const secondsByZone: Record<TrainingQuality, number> = {
+      power: 0,
+      strength: 0,
+      "power-endurance": 0,
+      endurance: 0,
+    };
+    for (const r of recs) {
+      const durationS = r.durationMs / 1000;
+      const zone = legacyClassify(durationS);
+      if (!zone) continue;
+      secondsByZone[zone] += durationS;
+    }
+    // Divisors written out from ZONE_PROTOCOLS (holdS × reps) as they stand;
+    // #259 doesn't touch them, so a change here would be a different bug and
+    // should fail this test loudly rather than be absorbed.
+    return {
+      power: secondsByZone.power / (5 * 6),
+      strength: secondsByZone.strength / (10 * 5),
+      "power-endurance": secondsByZone["power-endurance"] / (7 * 6),
+      endurance: secondsByZone.endurance / (30 * 8),
+    };
+  }
+
+  // 0.0s → 60.0s in 0.1s steps: every band boundary, both sides of each.
+  const DURATIONS_MS = Array.from({ length: 601 }, (_, i) => i * 100);
+
+  it("resolves every duration to exactly what classifyZone resolves it to", () => {
+    for (const durationMs of DURATIONS_MS) {
+      const expected = legacyClassify(durationMs / 1000);
+      // Both existing row shapes: the column absent (older client types) and
+      // explicitly null (what the DB returns for un-backfilled rows).
+      expect(recordingZone({ durationMs }).zone).toBe(expected);
+      expect(recordingZone({ durationMs, zone: null }).zone).toBe(expected);
+      expect(recordingZone({ durationMs }).source).toBe("inferred");
+      expect(classifyZone(durationMs / 1000)).toBe(expected);
+    }
+  });
+
+  it("gives zoneSets the identical numbers it gave before the column existed", () => {
+    const recs = DURATIONS_MS.map((durationMs) => ({ durationMs }));
+    expect(zoneSets(recs)).toEqual(legacyZoneSets(recs));
+    expect(zoneSets(recs.map((r) => ({ ...r, zone: null })))).toEqual(
+      legacyZoneSets(recs),
+    );
+    // …and for a realistic mixed history, not just the sweep.
+    const history = [
+      { durationMs: 5_000 },
+      { durationMs: 5_200 },
+      { durationMs: 7_100 },
+      { durationMs: 9_900 },
+      { durationMs: 13_600 },
+      { durationMs: 31_400 },
+      { durationMs: 400 },
+    ];
+    expect(zoneSets(history)).toEqual(legacyZoneSets(history));
+  });
+
+  it("only diverges once a recording actually carries a zone", () => {
+    // Same hold, twice: 12s inferred is strength, 12s recorded as power is
+    // power — and the seconds move with it, wholesale.
+    const inferred = zoneSets([{ durationMs: 12_000 }]);
+    const recorded = zoneSets([{ durationMs: 12_000, zone: "power" as const }]);
+    expect(inferred.strength).toBeCloseTo(12 / 50, 10);
+    expect(inferred.power).toBe(0);
+    expect(recorded.power).toBeCloseTo(12 / 30, 10);
+    expect(recorded.strength).toBe(0);
+  });
+
+  it("windows recorded holds by the same rule as inferred ones", () => {
+    const recs = [
+      { recordedAt: "2026-07-20T10:00:00Z", durationMs: 12_000, zone: "power" as const },
+      { recordedAt: "2026-05-01T10:00:00Z", durationMs: 12_000, zone: "power" as const },
+    ];
+    const sets = zoneTrainingSets(recs, NOW, 28);
+    expect(sets.power).toBeCloseTo(12 / 30, 10); // only the in-window one
   });
 });
 
@@ -110,6 +251,70 @@ describe("zoneTrainingSets (SL-100, #182)", () => {
   });
 });
 
+describe("zoneSets (#214)", () => {
+  it("sums/normalises per zone with no window filtering — an ancient recordedAt still counts", () => {
+    const sets = zoneSets([
+      { durationMs: 5000 }, // power, 5s
+      { durationMs: 5200 }, // power, 5.2s
+      { durationMs: 30000 }, // endurance, 30s
+    ]);
+    // power set = 6 reps × 5s = 30s; endurance set = 8 reps × 30s = 240s.
+    expect(sets.power).toBeCloseTo(10.2 / 30, 5);
+    expect(sets.endurance).toBeCloseTo(30 / 240, 5);
+    expect(sets.strength).toBe(0);
+    expect(sets["power-endurance"]).toBe(0);
+  });
+
+  it("ignores sub-1s blips and returns all-zeros for an empty array", () => {
+    expect(zoneSets([])).toEqual({
+      power: 0,
+      strength: 0,
+      "power-endurance": 0,
+      endurance: 0,
+    });
+    expect(zoneSets([{ durationMs: 500 }])).toEqual({
+      power: 0,
+      strength: 0,
+      "power-endurance": 0,
+      endurance: 0,
+    });
+  });
+
+  it("matches zoneTrainingSets when nothing falls outside the window (no time-window behavior lost)", () => {
+    const recs = [
+      rec("2026-07-20T10:00:00Z", 5000),
+      rec("2026-07-19T10:00:00Z", 30000),
+    ];
+    expect(zoneTrainingSets(recs, NOW)).toEqual(zoneSets(recs));
+  });
+});
+
+describe("dominantZone (#214)", () => {
+  it("returns the highest-count zone — the issue's own numbers (Power 4 / Endurance 0.8) yield power", () => {
+    expect(
+      dominantZone({ power: 4, strength: 0, "power-endurance": 0, endurance: 0.8 }),
+    ).toBe("power");
+  });
+
+  it("returns null when all zero", () => {
+    expect(
+      dominantZone({ power: 0, strength: 0, "power-endurance": 0, endurance: 0 }),
+    ).toBeNull();
+  });
+
+  it("breaks ties deterministically by ZONE_ORDER (power, strength, power-endurance, endurance)", () => {
+    expect(
+      dominantZone({ power: 2, strength: 2, "power-endurance": 0, endurance: 0 }),
+    ).toBe("power");
+    expect(
+      dominantZone({ power: 0, strength: 2, "power-endurance": 2, endurance: 0 }),
+    ).toBe("strength");
+    expect(
+      dominantZone({ power: 0, strength: 0, "power-endurance": 2, endurance: 2 }),
+    ).toBe("power-endurance");
+  });
+});
+
 const model = (cf: number | null, maxF: number): ForceCurveModel => ({
   points: [{ windowS: 5, kg: maxF }],
   maxF,
@@ -174,6 +379,58 @@ describe("recommendZone (SL-100, #182)", () => {
       model(45, 60),
     );
     expect(r?.zone).toBe("power");
+  });
+});
+
+describe("recommendZone explanation payload (#214)", () => {
+  it("reports the candidates and the minimum the pick came from", () => {
+    const r = recommendZone(
+      { power: 3, strength: 2, "power-endurance": 1, endurance: 0 },
+      null,
+    );
+    expect(r?.detail.minSets).toBe(0);
+    // Only endurance (0) is within 0.5 sets of the minimum.
+    expect(r?.detail.tied).toEqual(["endurance"]);
+    expect(r?.detail.unbiasedZone).toBe("endurance");
+    expect(r?.detail.curveRatio).toBeNull();
+    expect(r?.detail.curveBias).toBeNull();
+    expect(r?.detail.biasChangedPick).toBe(false);
+  });
+
+  it("reports the curve ratio and which side it steers toward, and whether it moved the pick", () => {
+    const r = recommendZone(
+      { power: 0, strength: 2, "power-endurance": 2, endurance: 0 },
+      model(20, 60), // CF 20 of 60 peak → 33% → endurance side
+    );
+    expect(r?.zone).toBe("endurance");
+    expect(r?.detail.tied).toEqual(["power", "endurance"]);
+    // Unbiased, the tie between two zeros resolves to power (first-seen
+    // minimum); the curve is what moved it to endurance.
+    expect(r?.detail.unbiasedZone).toBe("power");
+    expect(r?.detail.curveRatio).toBeCloseTo(20 / 60, 5);
+    expect(r?.detail.curveBias).toBe("endurance");
+    expect(r?.detail.biasChangedPick).toBe(true);
+  });
+
+  it("says the curve did NOT move the pick when it agrees with the unbiased one", () => {
+    const r = recommendZone(
+      { power: 0, strength: 2, "power-endurance": 2, endurance: 0 },
+      model(45, 60), // 75% → strength side; unbiased pick is already power
+    );
+    expect(r?.zone).toBe("power");
+    expect(r?.detail.unbiasedZone).toBe("power");
+    expect(r?.detail.curveBias).toBe("strength");
+    expect(r?.detail.biasChangedPick).toBe(false);
+  });
+
+  it("puts the bias boundary exactly at CURVE_BIAS_RATIO", () => {
+    // Ratio exactly 0.35 is NOT below the threshold → strength side.
+    const at = recommendZone(
+      { power: 0, strength: 2, "power-endurance": 2, endurance: 0 },
+      model(CURVE_BIAS_RATIO * 60, 60),
+    );
+    expect(at?.detail.curveBias).toBe("strength");
+    expect(TIE_BAND_SETS).toBe(0.5);
   });
 });
 

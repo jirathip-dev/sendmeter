@@ -16,6 +16,10 @@ struct WorkoutLiveView: View {
     /// "stuck until sign-in" without touching `drain()`/`shouldDrain`.
     @State private var stillQueued = false
     @State private var restAlarmTask: Task<Void, Never>?
+    /// True in the always-on dimmed state. watchOS dims hard on its own, and a
+    /// full-screen tint left at full value on top of that is a burn-in and
+    /// battery liability — the palette has a reduced variant for it (#243).
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     private let restTargets = [60, 120, 180, 300]
 
@@ -99,8 +103,71 @@ struct WorkoutLiveView: View {
     // Same logic as the phone fullscreen: CLIMBING counts up from the boulder
     // start; stopping drops straight into a RESTING countdown toward the
     // persisted target. One screen, no scrolling — End lives in the toolbar.
+    //
+    // One TimelineView drives BOTH the full-screen phase fill and the phase
+    // timer (#243) so they flip on the same tick — a background that says
+    // RESTING behind a countdown that says REST OVER would be worse than no
+    // fill at all. It also replaces the timer's own per-second timeline
+    // rather than adding a second one.
     @ViewBuilder
     private var liveContent: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let phase = workout.livePhase(at: context.date)
+            liveStack(phase: phase)
+                .background(phaseFill(phase).ignoresSafeArea())
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(ending ? "…" : "End") {
+                    endAndSave()
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                // Neutral, not red: at REST OVER the whole screen is red, and
+                // a red-on-red chip is the first thing to disappear. The word
+                // carries the meaning; the fill owns the colour now.
+                .tint(.white)
+                .disabled(ending)
+            }
+        }
+        .onAppear { scheduleRestAlarm() }
+        .onDisappear { cancelRestAlarm() }
+    }
+
+    /// The whole screen, painted by phase. A solid animated colour with a
+    /// static wash toward black at the bottom — the wash buys contrast under
+    /// the secondary readouts and the action button without touching the hue
+    /// at the top, where the phase label and countdown live. `Rectangle().fill`
+    /// rather than a bare `Color` because a filled shape style interpolates
+    /// between colours; the cross-fade is the point, a hard cut is not.
+    private func phaseFill(_ phase: WorkoutPhase) -> some View {
+        let fill = WorkoutPhasePalette.fill(for: phase, luminanceReduced: isLuminanceReduced)
+        return ZStack {
+            Rectangle().fill(color(fill.background))
+            LinearGradient(
+                colors: [.clear, .black.opacity(WorkoutPhasePalette.bottomShade)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .animation(.easeInOut(duration: WorkoutPhasePalette.transitionSeconds), value: phase)
+    }
+
+    private func color(_ rgb: PhaseRGB) -> Color {
+        Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
+    }
+
+    /// Text that sits on the fill — the palette's label colour for that
+    /// phase, never the phase's own hue. Green "CLIMBING" on a green fill is
+    /// how this feature fails; the package tests hold every pairing here at
+    /// AAA contrast, dimmed and not.
+    private func onFill(_ phase: WorkoutPhase) -> Color {
+        color(WorkoutPhasePalette.fill(for: phase, luminanceReduced: isLuminanceReduced).label)
+    }
+
+    @ViewBuilder
+    private func liveStack(phase: WorkoutPhase) -> some View {
         VStack(spacing: 4) {
             // HR + total elapsed stacked on the LEFT — the elapsed time used to
             // sit top-right, where it collided with the End toolbar button.
@@ -122,7 +189,7 @@ struct WorkoutLiveView: View {
 
             Spacer(minLength: 0)
 
-            phaseTimer
+            phaseTimer(phase: phase)
 
             Spacer(minLength: 0)
 
@@ -164,67 +231,55 @@ struct WorkoutLiveView: View {
             .tint(workout.manualClimbing ? .orange : .green)
             .frame(maxWidth: .infinity)
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(ending ? "…" : "End") {
-                    endAndSave()
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .tint(.red)
-                .disabled(ending)
-            }
-        }
-        .onAppear { scheduleRestAlarm() }
-        .onDisappear { cancelRestAlarm() }
     }
 
-    // CLIMBING count-up / RESTING countdown, colored like the phone. The
-    // TimelineView re-evaluates each second so "rest over" flips to red
-    // without any stored state.
+    // CLIMBING count-up / RESTING countdown. The phase now comes from the
+    // enclosing TimelineView, so "rest over" flips the label and the
+    // full-screen fill on the same tick — still no stored state. The text
+    // itself is the on-fill colour rather than the phase's hue: the whole
+    // background is already saying which phase this is.
     @ViewBuilder
-    private var phaseTimer: some View {
-        if workout.manualClimbing, let since = workout.climbingSince {
+    private func phaseTimer(phase: WorkoutPhase) -> some View {
+        if phase == .climbing, let since = workout.climbingSince {
             VStack(spacing: 0) {
                 Text("CLIMBING")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(onFill(phase))
                 Text(timerInterval: since...since.addingTimeInterval(3600), countsDown: false)
                     .font(.system(size: 40, weight: .heavy, design: .rounded))
                     .monospacedDigit()
                     .multilineTextAlignment(.center)
+                    .foregroundStyle(onFill(phase))
             }
         } else if let rest = workout.restStartedAt {
             let end = rest.addingTimeInterval(Double(workout.restTargetS))
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let over = context.date >= end
-                VStack(spacing: 0) {
-                    Text(over ? "REST OVER" : "RESTING")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(over ? .red : .blue)
-                    Text(timerInterval: rest...end, countsDown: true)
-                        .font(.system(size: 40, weight: .heavy, design: .rounded))
-                        .monospacedDigit()
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(over ? .red : .primary)
-                    // Rest-target chips (1/2/3/5m) — obvious selector like the
-                    // phone's; persisted + mirrored via the live heartbeat.
-                    HStack(spacing: 4) {
-                        ForEach(restTargets, id: \.self) { t in
-                            let selected = workout.restTargetS == t
-                            Button("\(t / 60)m") {
-                                workout.restTargetS = t
-                                scheduleRestAlarm()
-                            }
-                            .font(.system(size: 11, weight: selected ? .bold : .regular))
-                            .buttonStyle(.bordered)
-                            .controlSize(.mini)
-                            .tint(selected ? .blue : .gray)
+            VStack(spacing: 0) {
+                Text(phase == .restOver ? "REST OVER" : "RESTING")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(onFill(phase))
+                Text(timerInterval: rest...end, countsDown: true)
+                    .font(.system(size: 40, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(onFill(phase))
+                // Rest-target chips (1/2/3/5m) — obvious selector like the
+                // phone's; persisted + mirrored via the live heartbeat. The
+                // selected chip is neutral, not blue: RESTING paints the
+                // screen blue, and a blue chip on it stops reading as chosen.
+                HStack(spacing: 4) {
+                    ForEach(restTargets, id: \.self) { t in
+                        let selected = workout.restTargetS == t
+                        Button("\(t / 60)m") {
+                            workout.restTargetS = t
+                            scheduleRestAlarm()
                         }
+                        .font(.system(size: 11, weight: selected ? .bold : .regular))
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .tint(selected ? .white : .gray)
                     }
-                    .padding(.top, 2)
                 }
+                .padding(.top, 2)
             }
         }
     }

@@ -1,0 +1,56 @@
+# Applies pending migrations on merge — staging → dev project, main → prod
+# (issue #130).
+#
+# Apply is BY NAME via scripts/apply-migrations.mjs, NOT `supabase db push`:
+# prod's ledger carries apply-time versions from the MCP apply_migration era,
+# so push's version-based diff would re-apply recorded history. The script is
+# append-only — an unrecorded *older* migration fails the run (backfill the
+# ledger row by hand; never re-run history).
+#
+# The Management API needs only an access token: no DB password, and no
+# `supabase link`, so supabase/config.toml's hardcoded prod ref cannot
+# misfire. Dependency-free (node 18+ fetch), so no npm ci.
+#
+# ⚠️ Merging to main applies DDL to production. `Production` is restricted to
+# the main branch, but required-reviewer approval is not available on this
+# plan — so the merge itself is the only human gate. See #130.
+name: Deploy Migrations
+
+on:
+  push:
+    branches:
+      - staging
+      - main
+    paths:
+      - "supabase/migrations/**"
+      - ".github/workflows/deploy-migrations.yml"
+      - "scripts/apply-migrations.mjs"
+  workflow_dispatch:
+
+# Queue, never cancel: a cancelled run mid-apply would leave the ledger
+# disagreeing with the schema. Same reasoning as testflight.yml.
+concurrency:
+  group: deploy-migrations-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    # Case matters: the environments are `Preview` and `Production`. GitHub
+    # silently CREATES an environment when the name doesn't match an existing
+    # one, so a lowercase name here would run with no secrets and no error.
+    environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply pending migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          node scripts/apply-migrations.mjs \
+            --target ${{ github.ref == 'refs/heads/main' && 'prod' || 'dev' }}

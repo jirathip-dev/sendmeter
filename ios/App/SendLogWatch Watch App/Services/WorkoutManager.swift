@@ -163,6 +163,21 @@ final class WorkoutManager: NSObject {
         )
     }
 
+    /// Which phase the live view should paint itself (#243). Delegates to the
+    /// pure mapping in SendLogWatchCore — the full-screen fill and the phase
+    /// timer read the same resolver, so the colour can never disagree with the
+    /// countdown it sits behind. `now` is passed in by the caller's
+    /// `TimelineView` tick so rest-over flips without any stored state.
+    func livePhase(at now: Date) -> WorkoutPhase {
+        WorkoutPhasePalette.phase(
+            manualClimbing: manualClimbing,
+            climbingSince: climbingSince,
+            restStartedAt: restStartedAt,
+            restTargetS: restTargetS,
+            now: now
+        )
+    }
+
     /// Snapshot state and fire one best-effort live heartbeat — over Supabase
     /// (web mirror + fallback) AND, when the phone is reachable, directly over
     /// WatchConnectivity for a sub-second in-app mirror (no network hop).
@@ -203,7 +218,7 @@ final class WorkoutManager: NSObject {
             msg["active_kcal"] = kcal
             if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
             if let rs { msg["rest_started_at"] = rs.timeIntervalSince1970 }
-            session.sendMessage(msg, replyHandler: nil, errorHandler: nil)
+            session.sendMessage(WatchBuild.stamp(msg), replyHandler: nil, errorHandler: nil)
         }
     }
 
@@ -245,8 +260,10 @@ final class WorkoutManager: NSObject {
         let wc = WCSession.default
         if wc.activationState == .activated, wc.isReachable {
             wc.sendMessage(
-                ["kind": "liveWorkout", "status": "ended",
-                 "updated_at": Date().timeIntervalSince1970],
+                WatchBuild.stamp(
+                    ["kind": "liveWorkout", "status": "ended",
+                     "updated_at": Date().timeIntervalSince1970]
+                ),
                 replyHandler: nil, errorHandler: nil
             )
         }

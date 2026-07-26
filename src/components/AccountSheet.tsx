@@ -3,7 +3,20 @@ import type { ReactNode } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
 import { authRedirectUrl } from "../lib/authRedirect";
-import { getAuthDiagnosticEvents, type NullSessionReason } from "../lib/authDiagnostics";
+import {
+  getAuthDiagnosticEvents,
+  getAuthDiagnosticsStatus,
+  type NullSessionReason,
+} from "../lib/authDiagnostics";
+import type { AuthEventStoreKind } from "../lib/authEventStore";
+import { buildTag, loadBuildTag } from "../lib/appVersion";
+import {
+  loadWatchBuildInfo,
+  watchBuildLine,
+  watchSyncLine,
+  type WatchBuildInfo,
+  type WatchBuildTone,
+} from "../lib/watchBuild";
 import {
   addPasskey,
   listPasskeys,
@@ -30,6 +43,17 @@ const NULL_SESSION_LABELS: Record<NullSessionReason, string> = {
   revoked: "Session revoked",
   "storage-missing": "No stored session",
   "storage-unavailable": "Storage unavailable",
+  "user-signed-out": "Signed out (by you)",
+  "storage-wiped": "App storage wiped",
+};
+
+/// Where the diagnostics ring is being kept. Worth showing: "nothing
+/// recorded" means something very different on a ring that only ever lived in
+/// the WebView's localStorage (#202).
+const STORE_LABELS: Record<AuthEventStoreKind, string> = {
+  preferences: "Preferences (survives a WebView wipe)",
+  "local-storage": "Browser storage",
+  unavailable: "Not persisted",
 };
 
 const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
@@ -64,6 +88,33 @@ const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
   },
 ];
 
+/// One paired-watch diagnostics row: the watch's build (#228) or its
+/// offline-queue state (#21). Shared so the pair reads as one block — the
+/// actionable state (a build difference, a queue that isn't draining) has to
+/// be readable as different from the muted lines at a glance, and the same way
+/// in both.
+function WatchDiagLine({
+  line,
+}: {
+  line: { text: string; tone: WatchBuildTone; reportedAt?: number };
+}) {
+  return (
+    <div
+      style={{
+        fontSize: "var(--t-xs)",
+        color: line.tone === "warning" ? "var(--warning)" : "var(--ink-muted)",
+        fontWeight: line.tone === "warning" ? 600 : undefined,
+        lineHeight: 1.6,
+      }}
+    >
+      {line.text}
+      {line.reportedAt !== undefined
+        ? ` · reported ${new Date(line.reportedAt * 1000).toLocaleString()}`
+        : ""}
+    </div>
+  );
+}
+
 export default function AccountSheet({ onClose, onSignOut }: Props) {
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
@@ -89,6 +140,40 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   // events (see authDiagnostics.ts). Read-only, so no need to re-read on an
   // interval; a relaunch remounts this sheet fresh anyway.
   const [authEvents] = useState(() => getAuthDiagnosticEvents());
+  const [diagStatus] = useState(() => getAuthDiagnosticsStatus());
+  // App version + build (#202): a recorded event is only attributable if the
+  // build that produced it can be read off the same screen. Native-only —
+  // `loadBuildTag` resolves to null on web.
+  const [build, setBuild] = useState<string | null>(() => buildTag());
+  useEffect(() => {
+    let alive = true;
+    void loadBuildTag().then((tag) => {
+      if (alive) setBuild(tag);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // The paired watch's build (#228). The watch installs from TestFlight on
+  // its own schedule, so it can sit builds behind the phone — and a watch on
+  // a pre-#208 build still revokes this phone's session family. Null on web,
+  // or if the native shell predates the plugin method.
+  const [watchInfo, setWatchInfo] = useState<WatchBuildInfo | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void loadWatchBuildInfo().then((info) => {
+      if (alive) setWatchInfo(info);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const watchLine = watchBuildLine(watchInfo);
+  // The same report carries the watch's offline-queue depth (#21) — a workout
+  // stuck in its upload queue is otherwise invisible until you pick the watch
+  // up.
+  const syncLine = watchSyncLine(watchInfo);
 
   useEffect(() => {
     if (!passkeysSupported) return;
@@ -394,18 +479,38 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 {signingOut ? "Signing out…" : "Sign out"}
               </button>
 
-              {authEvents.length > 0 && (
-                <div style={{ marginTop: 14 }}>
-                  <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 6 }}>
-                    Recent sign-in diagnostics
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 6 }}>
+                  Recent sign-in diagnostics
+                </div>
+                <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
+                  {build ? `Sendmeter ${build}` : "Sendmeter (web)"} ·{" "}
+                  {STORE_LABELS[diagStatus.store]}
+                </div>
+                {watchLine && <WatchDiagLine line={watchLine} />}
+                {syncLine && <WatchDiagLine line={syncLine} />}
+                {diagStatus.webviewWiped && (
+                  <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", lineHeight: 1.6 }}>
+                    App storage was wiped since last launch — the session went
+                    with it.
                   </div>
-                  {authEvents.slice(0, 5).map((e, i) => (
+                )}
+                {authEvents.length === 0 ? (
+                  <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
+                    {/* An empty list must say so. A section that renders
+                        nothing (as this one did on the c07c071 build) is
+                        indistinguishable from a section that isn't there. */}
+                    No events recorded.
+                  </div>
+                ) : (
+                  authEvents.slice(0, 5).map((e, i) => (
                     <div
                       key={i}
                       style={{
                         fontSize: "var(--t-xs)",
                         color: "var(--ink-muted)",
                         lineHeight: 1.6,
+                        marginTop: 4,
                       }}
                     >
                       {NULL_SESSION_LABELS[e.reason]} · {new Date(e.lastAt).toLocaleString()}
@@ -416,10 +521,24 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                       {e.count > 1 && e.firstAt !== e.lastAt
                         ? ` · since ${new Date(e.firstAt).toLocaleString()}`
                         : ""}
+                      {/* Origin: "auth-js signed us out" vs "we asked and got
+                          null" are different bugs (#202). */}
+                      {e.authEvent ? ` · ${e.authEvent}` : e.source ? ` · ${e.source}` : ""}
+                      {e.lastGoodAt && (
+                        <div style={{ opacity: 0.75 }}>
+                          last valid session {new Date(e.lastGoodAt).toLocaleString()}
+                          {e.lastGoodExpiresAt
+                            ? `, token expiring ${new Date(e.lastGoodExpiresAt).toLocaleString()}`
+                            : ""}
+                        </div>
+                      )}
+                      {e.build && e.build !== build ? (
+                        <div style={{ opacity: 0.75 }}>on build {e.build}</div>
+                      ) : null}
                     </div>
-                  ))}
-                </div>
-              )}
+                  ))
+                )}
+              </div>
             </div>
 
             <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>

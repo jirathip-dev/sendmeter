@@ -6,7 +6,9 @@ import {
   workRestRatio,
 } from "../lib/workoutStats";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
+import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import ChartTooltip from "./ChartTooltip";
 import type { Session, WorkoutDetail } from "../types";
 
 // `iso` here is always a full climb_workouts timestamp (started_at), so
@@ -30,35 +32,75 @@ function dateLabel(dateStr: string): string {
 /// `muted` (issue #114) dims a row whose value hasn't been human-reviewed —
 /// e.g. an unconfirmed phone auto-save RPE — so it doesn't read as
 /// indistinguishable from a confirmed one.
+///
+/// A row carrying a `tooltip` (issue #181) makes the whole trend
+/// hoverable/scrubbable: the hovered row is outlined, the others dim, and the
+/// string shows in a `ChartTooltip`. Trends whose rows have no tooltip stay
+/// inert — no hit area, no `.chart-scrub`, no haptic tick.
 function BarTrend({
   rows,
   color,
   fmt,
 }: {
-  rows: { label: string; value: number | null; muted?: boolean }[];
+  rows: { label: string; value: number | null; muted?: boolean; tooltip?: string }[];
   color: string;
   fmt: (v: number) => string;
 }) {
+  const [hovered, hoverProps] = useChartHover<number>();
   const max = Math.max(1, ...rows.map((r) => r.value ?? 0));
+  const interactive = rows.some((r) => r.tooltip);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
       {rows.map((r, i) => (
-        <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div
+          key={i}
+          className={interactive ? "chart-scrub" : undefined}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            cursor: interactive ? "pointer" : undefined,
+          }}
+          {...(interactive ? hoverProps(i) : {})}
+        >
           <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", width: 30, flexShrink: 0 }}>
             {r.label}
           </span>
-          <div style={{ flex: 1, height: 8, borderRadius: 4, background: "var(--surface-1)", overflow: "hidden" }}>
-            {r.value !== null && (
-              <div
-                style={{
-                  width: `${(r.value / max) * 100}%`,
-                  height: "100%",
-                  background: color,
-                  opacity: r.muted ? 0.4 : 1,
-                  borderRadius: 4,
-                }}
-              />
+          {/* Anchor for the tooltip — the track itself clips its bar's radius */}
+          <div style={{ flex: 1, position: "relative" }}>
+            {hovered === i && r.tooltip && (
+              // The topmost row flips below, like the heatmap's top cells, so
+              // the tooltip doesn't cover the trend's own caption.
+              <ChartTooltip
+                style={i === 0 ? { bottom: "auto", top: "100%", marginTop: 6 } : undefined}
+              >
+                {r.tooltip}
+              </ChartTooltip>
             )}
+            <div
+              style={{
+                height: 8,
+                borderRadius: 4,
+                background: "var(--surface-1)",
+                overflow: "hidden",
+                outline: hovered === i ? "1.5px solid var(--ink)" : "none",
+              }}
+            >
+              {r.value !== null && (
+                <div
+                  style={{
+                    width: `${(r.value / max) * 100}%`,
+                    height: "100%",
+                    background: color,
+                    // Muting (#114) and hover de-emphasis compound: an
+                    // unconfirmed bar stays dimmer than a confirmed one either way.
+                    opacity:
+                      (r.muted ? 0.4 : 1) * (hovered === null || hovered === i ? 1 : 0.5),
+                    borderRadius: 4,
+                  }}
+                />
+              )}
+            </div>
           </div>
           <span
             style={{
@@ -143,6 +185,14 @@ export default function WorkoutStatsCard({ sessions }: { sessions: Session[] }) 
               label: dateLabel(r.date),
               value: r.rpe,
               muted: !r.confirmed,
+              // `<M/D> · <rpe> · <type label(s)>`, mirroring the load heatmap
+              // (#181) — a Force day's RPE reads oddly next to a climbing
+              // day's until the chart says which is which.
+              tooltip: [
+                dateLabel(r.date),
+                r.rpe.toFixed(1),
+                ...(r.typeLabels.length ? [r.typeLabels.join(" + ")] : []),
+              ].join(" · "),
             }))}
             color="var(--warning)"
             fmt={(v) => v.toFixed(1)}

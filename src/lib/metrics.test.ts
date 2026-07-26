@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  ACUTE_SPAN_DAYS,
+  ACWR_TRACK_GRADIENT,
+  CHRONIC_SPAN_DAYS,
+  ewmaLoadState,
   getACWRStatus,
   computeAcwr,
   computeWeeklyLoads,
@@ -54,6 +58,7 @@ function rec(recordedAt: string, peakKg: number): TindeqRecordingMeta {
     tag: "FDP",
     side: "",
     groupId: null,
+    zone: null,
     protocolRunId: null,
     setNo: null,
   };
@@ -70,6 +75,48 @@ describe("getACWRStatus", () => {
     expect(getACWRStatus(1.4).label).toBe("Caution");
     expect(getACWRStatus(1.5).label).toBe("Caution");
     expect(getACWRStatus(1.6).label).toBe("Danger");
+  });
+});
+
+describe("ACWR_TRACK_GRADIENT", () => {
+  // Parse "var(--color) NN%" stops out of the linear-gradient string, in
+  // declared order.
+  function parseStops(gradient: string): { color: string; pct: number }[] {
+    const matches = [...gradient.matchAll(/var\(--([\w-]+)\)\s+(\d+(?:\.\d+)?)%/g)];
+    return matches.map((m) => ({ color: m[1]!, pct: Number(m[2]) }));
+  }
+
+  it("has no two consecutive stops at the same position (issue #213: hard stops flatten the blend)", () => {
+    const stops = parseStops(ACWR_TRACK_GRADIENT);
+    for (let i = 0; i < stops.length - 1; i++) {
+      expect(stops[i]!.pct).not.toBe(stops[i + 1]!.pct);
+    }
+  });
+
+  it("blends symmetrically so each true threshold (40/65/75) sits at the midpoint of its blend", () => {
+    const stops = parseStops(ACWR_TRACK_GRADIENT);
+    const pcts = stops.map((s) => s.pct);
+    // info -> success blend brackets the 0.8 threshold (40%)
+    const infoEnd = pcts[1]!;
+    const successStart = pcts[2]!;
+    expect((infoEnd + successStart) / 2).toBe(40);
+    // success -> warning blend brackets the 1.3 threshold (65%)
+    const successEnd = pcts[3]!;
+    const warningStart = pcts[4]!;
+    expect((successEnd + warningStart) / 2).toBe(65);
+    // warning -> danger blend brackets the 1.5 threshold (75%)
+    const warningEnd = pcts[4]!;
+    const dangerStart = pcts[5]!;
+    expect((warningEnd + dangerStart) / 2).toBe(75);
+  });
+
+  it("stop colors appear in risk order: info -> success -> warning -> danger", () => {
+    const stops = parseStops(ACWR_TRACK_GRADIENT);
+    const order: string[] = [];
+    for (const s of stops) {
+      if (order[order.length - 1] !== s.color) order.push(s.color);
+    }
+    expect(order).toEqual(["info", "success", "warning", "danger"]);
   });
 });
 
@@ -153,6 +200,24 @@ describe("computeAcwr", () => {
     const dailyLoads = Array.from({ length: 90 }, (_, i) => (i * 13 + 7) % 47);
     const sessions = dailyLoads.map((load, i) => session(daysAgo(89 - i), load));
     expect(computeAcwr(sessions).acwr).toBeCloseTo(1.1151915681290694, 9);
+  });
+});
+
+describe("ewmaLoadState", () => {
+  it("is null when there's no load in the lookback window", () => {
+    expect(ewmaLoadState([])).toBeNull();
+    expect(ewmaLoadState([session(daysAgo(200), 500)])).toBeNull();
+  });
+
+  it("its acute/chronic pair IS computeAcwr's ratio — not a second opinion", () => {
+    const sessions = Array.from({ length: 40 }, (_, i) => session(daysAgo(i), 90 + i * 7));
+    const state = ewmaLoadState(sessions)!;
+    expect(state.acute / state.chronic).toBe(computeAcwr(sessions).acwr);
+  });
+
+  it("exposes the spans the ratio is built from", () => {
+    expect(ACUTE_SPAN_DAYS).toBe(7);
+    expect(CHRONIC_SPAN_DAYS).toBe(28);
   });
 });
 

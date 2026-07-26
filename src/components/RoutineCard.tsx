@@ -9,6 +9,7 @@ import {
 } from "../lib/repo";
 import { today } from "../lib/dates";
 import { expandRoutine, routineDurationS } from "../lib/routine";
+import { restoreAt } from "../lib/restoreAt";
 import {
   clearRoutineRun,
   loadRoutineRun,
@@ -48,7 +49,20 @@ function fmtTotal(steps: RoutineStep[]): string {
 /// conditioning circuits, mobility flows). Same interaction model as the Force
 /// tab's PresetManager: selectable rows, pencil edit, inline add form.
 /// Selecting a row arms it; Start runs it in the fullscreen guided timer.
-export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId }) {
+export default function RoutineCard({
+  currentPhase,
+  blockedReason = null,
+  onRunningChange,
+}: {
+  currentPhase: PhaseId;
+  /// Why a routine can't be started right now — a phone or watch workout is
+  /// already running (#222). Null when free to start. Never blocks the
+  /// auto-resume path: an interrupted routine still comes back on mount.
+  blockedReason?: string | null;
+  /// Reports the running flag up to WorkoutView so the phone-workout card can
+  /// refuse to start a second timer (#222).
+  onRunningChange?: (running: boolean) => void;
+}) {
   const toast = useToast();
   const bumpRealtime = useRealtimeBump();
   const [presets, setPresets] = useState<RoutinePreset[]>([]);
@@ -73,6 +87,14 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
     null,
   );
 
+  /// Every write to `running` goes through here so WorkoutView sees it too
+  /// (#222). Called from event handlers and async callbacks only — never from
+  /// an effect body, per this codebase's react-compiler rules.
+  function setRunningState(next: boolean) {
+    setRunning(next);
+    onRunningChange?.(next);
+  }
+
   useEffect(() => {
     let alive = true;
     fetchRoutinePresets()
@@ -84,7 +106,9 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
         const resume = resumeRun && list.some((p) => p.id === resumeRun.presetId);
         if (resume) {
           setSelectedId(resumeRun!.presetId);
-          setRunning(true);
+          // Auto-resume is deliberately NOT guarded (#222): a routine that was
+          // already in progress must come back, blocked-state or not.
+          setRunningState(true);
         } else {
           setSelectedId(list[0]?.id ?? null);
           if (resumeRun) {
@@ -197,19 +221,24 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
   }
 
   async function remove(id: string) {
-    setPresets((list) => {
-      const next = list.filter((p) => p.id !== id);
-      if (selectedId === id) setSelectedId(next[0]?.id ?? null);
-      return next;
-    });
+    const index = presets.findIndex((p) => p.id === id);
+    const removed = presets[index];
+    if (!removed) return; // double-fire guard
+    setPresets((list) => list.filter((p) => p.id !== id));
+    if (selectedId === id) {
+      setSelectedId(presets.filter((p) => p.id !== id)[0]?.id ?? null);
+    }
     try {
       await deleteRoutinePreset(id);
       // Issue #143: plain confirmation toast — no Undo (routine presets
       // aren't soft-deleted, unlike sessions/recordings).
       toast("Routine deleted");
     } catch {
-      // no realtime/refetch wired for presets; a failed delete resurfaces on
-      // next visit — acceptable (same tradeoff as tindeq PresetManager)
+      // Rollback: put it back where it was (issue #215/#166 — the same
+      // swallowed-failure bug PresetManager.tsx fixed via restoreAt).
+      setPresets((list) => restoreAt(list, removed, index));
+      setSelectedId((cur) => cur ?? removed.id);
+      toast("Couldn't delete routine — restored", "error");
     }
   }
 
@@ -242,6 +271,10 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
         return (
           <div
             key={p.id}
+            // #171: selecting a preset is a selection, not a button — opt
+            // into the delegated tick. The row's own Edit/Delete buttons sit
+            // inside it and win the nearest-match, so they tick once, not twice.
+            data-haptic="light"
             onClick={() => setSelectedId(p.id)}
             style={{
               display: "flex",
@@ -414,29 +447,59 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
         <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
           <button
             className="btn-primary"
-            style={{ flex: 1 }}
+            style={blockedReason ? { flex: 1, opacity: 0.5 } : { flex: 1 }}
+            // #222: one timer at a time. Kept clickable while blocked (rather
+            // than `disabled`) so the tap names the reason instead of doing
+            // nothing — the aria-disabled + dimming carry the "off" state.
+            aria-disabled={blockedReason ? true : undefined}
             onClick={() => {
+              if (blockedReason) {
+                toast(blockedReason, "info");
+                return;
+              }
               // A fresh Start must not resume a stale saved run.
               if (resumeRun) {
                 clearRoutineRun();
                 setResumeRun(null);
               }
-              setRunning(true);
+              setRunningState(true);
             }}
           >
             Start Routine
           </button>
           <button
             className="btn-ghost"
-            style={{ width: "auto", flexShrink: 0, whiteSpace: "nowrap" }}
-            onClick={() => setAdding(true)}
+            style={
+              blockedReason
+                ? { width: "auto", flexShrink: 0, whiteSpace: "nowrap", opacity: 0.5 }
+                : { width: "auto", flexShrink: 0, whiteSpace: "nowrap" }
+            }
+            aria-disabled={blockedReason ? true : undefined}
+            onClick={() => {
+              if (blockedReason) {
+                toast(blockedReason, "info");
+                return;
+              }
+              setAdding(true);
+            }}
           >
             + New Routine
           </button>
         </div>
       ) : (
         <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
-          <button className="btn-primary" style={{ flex: 1 }} onClick={() => setAdding(true)}>
+          <button
+            className="btn-primary"
+            style={blockedReason ? { flex: 1, opacity: 0.5 } : { flex: 1 }}
+            aria-disabled={blockedReason ? true : undefined}
+            onClick={() => {
+              if (blockedReason) {
+                toast(blockedReason, "info");
+                return;
+              }
+              setAdding(true);
+            }}
+          >
             + New Routine
           </button>
           <button
@@ -462,11 +525,11 @@ export default function RoutineCard({ currentPhase }: { currentPhase: PhaseId })
           }
           onClose={() => {
             setResumeRun(null);
-            setRunning(false);
+            setRunningState(false);
           }}
           onExitEarly={(elapsed) => {
             setResumeRun(null);
-            setRunning(false);
+            setRunningState(false);
             // Left before finishing — log the partial time (SL-97) unless it
             // barely ran, with an Undo since it wasn't an explicit save.
             if (!shouldLog(elapsed)) return;

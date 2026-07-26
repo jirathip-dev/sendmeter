@@ -1,7 +1,14 @@
 import { useState } from "react";
 import Sheet from "./Sheet";
 
-export type InfoTopic = "acwr" | "readiness" | "forceCurve" | "gaugeTarget" | "phaseStepBack";
+export type InfoTopic =
+  | "acwr"
+  | "acwrProjection"
+  | "readiness"
+  | "forceCurve"
+  | "gaugeTarget"
+  | "phaseStepBack"
+  | "trainingBalance";
 
 const CONTENT: Record<
   InfoTopic,
@@ -28,6 +35,39 @@ const CONTENT: Record<
       {
         heading: "Take it as a guide",
         text: "ACWR is a screening heuristic, not a prescription. Treat sustained red zones as a prompt to look at sleep, finger niggles and volume — not as a hard rule.",
+      },
+    ],
+  },
+  acwrProjection: {
+    title: "How the 7-day projection works",
+    body: [
+      {
+        heading: "It assumes you train nothing",
+        text: "Every day on this curve is a full rest day — no climbing, no board, no hangs. It is not a forecast of what will happen; it's what happens if you do nothing. Log a session and the curve is redrawn from the new number.",
+      },
+      {
+        heading: "Why it slides down",
+        text: "The acute (≈7-day) average decays faster than the chronic (≈28-day) one, so a rest day multiplies ACWR by about 0.81 — roughly 19% a day, and by the same factor whatever ratio you start from. From 1.20, two rest days already put you under 0.80.",
+      },
+      {
+        heading: "Measured against your phase band",
+        text: "The shaded band is the current phase's target band — the same one the phase strip shows — not the universal 0.8–1.3 risk zone. A power phase legitimately sits lower than a capacity phase, so the phase band is the honest comparison.",
+      },
+      {
+        heading: "The session it quotes",
+        text: "Session load is duration × RPE, so a load target is also a session. The suggestion prices the band floor at RPE 6 on the day the curve would drop out, assuming you rest until then. It's one day's arithmetic, not a training plan — the same load at a different RPE works just as well.",
+      },
+      {
+        heading: "Seven days is the honest limit",
+        text: "Every day you deviate from 'no training' the rest of the curve becomes fiction, and deviation is the normal case. A 4-week version would look more useful while being less true.",
+      },
+      {
+        heading: "Readiness is today's, never projected",
+        text: "HRV, resting heart rate and sleep can't be forecast — the readiness shown here is the current score, sitting alongside the projection rather than inside it.",
+      },
+      {
+        heading: "A guardrail, not a target",
+        text: "This card doesn't say whether to train. It shows what happens if you don't, and what it would take to change that; whether that's the right call is yours — readiness, how your fingers feel, and what's in the week all outrank a ratio.",
       },
     ],
   },
@@ -65,7 +105,7 @@ const CONTENT: Record<
       },
       {
         heading: "Using a target",
-        text: "Picking a zone draws its band on the live gauge and arms its guided timer — keep the trace inside the band for the prescribed work time. Zones sharpen as your curve gets more data (especially one all-out 30–60s hold). The Intensity dial next to \"Protocol presets\" (60–110%) applies to the RECOMMENDED ZONES only: it scales the target load and adapts hold time to keep the training dose equivalent — dial it down for a lighter session, or above 100% for a heavier one (shorter holds, extra strain on your pulleys — only when fully warmed up). Custom presets are never modified by this dial; a preset's quality badge still reflects whatever load it actually resolves to (fixed kg, or a %-of-PR/CF/curve target).",
+        text: "Picking a zone draws its band on the live gauge and arms its guided timer — keep the trace inside the band for the prescribed work time. Zones sharpen as your curve gets more data (especially one all-out 30–60s hold). The Intensity slider on this card (60–110%) applies to the RECOMMENDED ZONES only: it scales the target load and adapts hold time to keep the training dose equivalent — dial it down for a lighter session, or above 100% for a heavier one (shorter holds, extra strain on your pulleys — only when fully warmed up). Custom presets are never modified by this dial; a preset's quality badge still reflects whatever load it actually resolves to (fixed kg, or a %-of-PR/CF/curve target).",
       },
     ],
   },
@@ -83,6 +123,27 @@ const CONTENT: Record<
       {
         heading: "It's a suggestion, not a rule",
         text: "Capacity work (volume, lower intensity) lets you keep training while your recovery catches up, instead of grinding a high-intensity phase on an empty tank. Dismiss it if you'd rather push through — it won't nag again for this same low streak.",
+      },
+    ],
+  },
+  trainingBalance: {
+    title: "What Training balance counts",
+    body: [
+      {
+        heading: "One exercise, four weeks",
+        text: "Only holds tagged with the exercise named on the card, recorded in the last 28 days. Every other exercise is excluded, and so is anything older — so this is one exercise's balance, not your training as a whole. Left, right and both-hands holds all count toward it.",
+      },
+      {
+        heading: "Sets, not sessions",
+        text: "Each zone's total hold time in the window, divided by that zone's own protocol set length (power 6 × 5s = 30s; strength 5 × 10s = 50s; pow end 6 × 7s = 42s; endurance 8 × 30s = 240s). A short warm-up shows up as a fraction of a set rather than needing a whole session to register.",
+      },
+      {
+        heading: "The zone is inferred, not stored",
+        text: "Recordings don't record which zone you meant to train, so it's re-inferred from hold length: 1–6s power · 6–8.5s pow end · 8.5–20s strength · over 20s endurance. Those anchors sit close together, so short holds are inherently fuzzy and land as fractional credit either side of a boundary.",
+      },
+      {
+        heading: "Why History looks different",
+        text: "History lists every session for every exercise over all time, and badges each one with the zone that session alone was mostly in. Different scope, different window, different unit — the two are expected to disagree. Tap the card to see every number here traced back to the holds behind it.",
       },
     ],
   },

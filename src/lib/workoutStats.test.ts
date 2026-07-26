@@ -63,11 +63,20 @@ describe("hrRecoveryBpm (SL-85)", () => {
   });
 });
 
+/// A session as `recentDailyRpe` sees it. `typeLabel` defaults to the gym
+/// session label so the older cases stay about RPE, not naming.
+const sess = (
+  date: string,
+  rpe: number,
+  rpeConfirmed = true,
+  typeLabel = "Gym Session",
+) => ({ date, rpe, rpeConfirmed, typeLabel });
+
 describe("recentDailyRpe (#108)", () => {
   it("keeps decimal RPE — no rounding", () => {
-    expect(
-      recentDailyRpe([{ date: "2026-07-21", rpe: 5.5, rpeConfirmed: true }], 8),
-    ).toEqual([{ date: "2026-07-21", rpe: 5.5, confirmed: true }]);
+    expect(recentDailyRpe([sess("2026-07-21", 5.5)], 8)).toEqual([
+      { date: "2026-07-21", rpe: 5.5, confirmed: true, typeLabels: ["Gym Session"] },
+    ]);
   });
 
   it("includes a manually-logged session with no attempts/workout row", () => {
@@ -75,9 +84,9 @@ describe("recentDailyRpe (#108)", () => {
     // straight off the session list, unlike the attempt-based stats above.
     const rows = recentDailyRpe(
       [
-        { date: "2026-07-19", rpe: 6, rpeConfirmed: true },
-        { date: "2026-07-21", rpe: 7.5, rpeConfirmed: true }, // logged on the 21st
-        { date: "2026-07-23", rpe: 4, rpeConfirmed: true },
+        sess("2026-07-19", 6),
+        sess("2026-07-21", 7.5), // logged on the 21st
+        sess("2026-07-23", 4),
       ],
       8,
     );
@@ -91,18 +100,17 @@ describe("recentDailyRpe (#108)", () => {
 
   it("averages same-day sessions", () => {
     const rows = recentDailyRpe(
-      [
-        { date: "2026-07-21", rpe: 5, rpeConfirmed: true },
-        { date: "2026-07-21", rpe: 8, rpeConfirmed: true },
-      ],
+      [sess("2026-07-21", 5), sess("2026-07-21", 8)],
       8,
     );
-    expect(rows).toEqual([{ date: "2026-07-21", rpe: 6.5, confirmed: true }]);
+    expect(rows).toEqual([
+      { date: "2026-07-21", rpe: 6.5, confirmed: true, typeLabels: ["Gym Session"] },
+    ]);
   });
 
   it("keeps only the most recent `days` distinct dates, oldest → newest", () => {
-    const sessions = ["07-17", "07-18", "07-19", "07-20", "07-21"].map(
-      (md) => ({ date: `2026-${md}`, rpe: 5, rpeConfirmed: true }),
+    const sessions = ["07-17", "07-18", "07-19", "07-20", "07-21"].map((md) =>
+      sess(`2026-${md}`, 5),
     );
     const rows = recentDailyRpe(sessions, 3);
     expect(rows.map((r) => r.date)).toEqual([
@@ -114,11 +122,7 @@ describe("recentDailyRpe (#108)", () => {
 
   it("is order-independent — sorts by date, not input order", () => {
     const rows = recentDailyRpe(
-      [
-        { date: "2026-07-21", rpe: 7, rpeConfirmed: true },
-        { date: "2026-07-19", rpe: 5, rpeConfirmed: true },
-        { date: "2026-07-20", rpe: 6, rpeConfirmed: true },
-      ],
+      [sess("2026-07-21", 7), sess("2026-07-19", 5), sess("2026-07-20", 6)],
       8,
     );
     expect(rows.map((r) => r.date)).toEqual([
@@ -133,21 +137,106 @@ describe("recentDailyRpe (#108)", () => {
   });
 
   it("marks a day unconfirmed for an unreviewed phone auto-save (#114)", () => {
-    const rows = recentDailyRpe(
-      [{ date: "2026-07-21", rpe: 6, rpeConfirmed: false }],
-      8,
-    );
-    expect(rows).toEqual([{ date: "2026-07-21", rpe: 6, confirmed: false }]);
+    const rows = recentDailyRpe([sess("2026-07-21", 6, false)], 8);
+    expect(rows).toEqual([
+      { date: "2026-07-21", rpe: 6, confirmed: false, typeLabels: ["Gym Session"] },
+    ]);
   });
 
   it("mixed day: any unconfirmed session mutes the whole day's average (#114)", () => {
     const rows = recentDailyRpe(
       [
-        { date: "2026-07-21", rpe: 6, rpeConfirmed: false }, // unreviewed phone auto-save
-        { date: "2026-07-21", rpe: 8, rpeConfirmed: true }, // user-logged, same day
+        sess("2026-07-21", 6, false), // unreviewed phone auto-save
+        sess("2026-07-21", 8, true), // user-logged, same day
       ],
       8,
     );
-    expect(rows).toEqual([{ date: "2026-07-21", rpe: 7, confirmed: false }]);
+    expect(rows).toEqual([
+      { date: "2026-07-21", rpe: 7, confirmed: false, typeLabels: ["Gym Session"] },
+    ]);
+  });
+
+  describe("type labels (#181)", () => {
+    it("returns the day's own session label", () => {
+      const rows = recentDailyRpe(
+        [sess("2026-07-21", 6, true, "Fingerboard")],
+        8,
+      );
+      expect(rows[0]!.typeLabels).toEqual(["Fingerboard"]);
+    });
+
+    it("lists a multi-session day's distinct labels in session order", () => {
+      const rows = recentDailyRpe(
+        [
+          sess("2026-07-21", 6, true, "Gym Session"),
+          sess("2026-07-21", 8, true, "Fingerboard"),
+        ],
+        8,
+      );
+      expect(rows[0]!.typeLabels).toEqual(["Gym Session", "Fingerboard"]);
+    });
+
+    it("dedupes repeated labels on the same day", () => {
+      const rows = recentDailyRpe(
+        [
+          sess("2026-07-21", 6, true, "Gym Session"),
+          sess("2026-07-21", 8, true, "Fingerboard"),
+          sess("2026-07-21", 7, true, "Gym Session"),
+        ],
+        8,
+      );
+      expect(rows[0]!.typeLabels).toEqual(["Gym Session", "Fingerboard"]);
+    });
+
+    it("keeps each day's labels to its own sessions", () => {
+      const rows = recentDailyRpe(
+        [
+          sess("2026-07-20", 6, true, "Fingerboard"),
+          sess("2026-07-21", 8, true, "Gym Session"),
+        ],
+        8,
+      );
+      expect(rows.map((r) => r.typeLabels)).toEqual([
+        ["Fingerboard"],
+        ["Gym Session"],
+      ]);
+    });
+
+    it("skips a blank label rather than listing an empty one", () => {
+      const rows = recentDailyRpe(
+        [sess("2026-07-21", 6, true, "  "), sess("2026-07-21", 8, true, "Gym Session")],
+        8,
+      );
+      expect(rows[0]!.typeLabels).toEqual(["Gym Session"]);
+      expect(rows[0]!.rpe).toBe(7); // still averaged in
+    });
+
+    it("Tindeq sessions still count — labelling only, no filtering (#181)", () => {
+      // The scope decision: `computeAcwr` filters by date, never by type, so a
+      // Force session's load already reaches the ACWR ratio, the weekly bars
+      // and the load heatmap. This trend must agree with them.
+      const rows = recentDailyRpe(
+        [
+          sess("2026-07-20", 4, true, "Fingerboard"), // Tindeq-only day
+          sess("2026-07-21", 6, true, "Gym Session"),
+          sess("2026-07-21", 8, true, "Fingerboard"), // mixed day
+        ],
+        8,
+      );
+      expect(rows).toEqual([
+        {
+          date: "2026-07-20",
+          rpe: 4,
+          confirmed: true,
+          typeLabels: ["Fingerboard"],
+        },
+        {
+          date: "2026-07-21",
+          rpe: 7, // averaged over BOTH sessions
+          confirmed: true,
+          typeLabels: ["Gym Session", "Fingerboard"],
+        },
+      ]);
+    });
   });
 });

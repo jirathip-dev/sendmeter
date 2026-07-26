@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import {
+  WORKOUT_ACTION_CIRCLE,
+  WORKOUT_TIMER_FONT,
+  clampCss,
+  heroFontCss,
+} from "../lib/fullscreenLayout";
 import { syncWorkoutActivity } from "../lib/liveActivity";
 import type { PhoneWorkoutAction, PhoneWorkoutState } from "../lib/phoneWorkout";
 
@@ -117,10 +123,11 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         flexDirection: "column",
         padding: "max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))",
         boxSizing: "border-box",
+        minHeight: 0,
       }}
     >
       {/* Top bar — glass chip (minimize) · centered timer · glass pill (End) */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexShrink: 0 }}>
         <button onClick={onMinimize} aria-label="Minimize" className="glass-chip">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M6 9l6 6 6-6" />
@@ -165,7 +172,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
             fontFamily: "Inter, sans-serif",
             fontWeight: 800,
             fontVariantNumeric: "tabular-nums",
-            fontSize: "clamp(64px, 22vw, 140px)",
+            fontSize: heroFontCss(WORKOUT_TIMER_FONT),
             lineHeight: 1,
             color: "var(--ink)",
           }}
@@ -182,7 +189,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
 
         {/* Rest target chips — only while resting */}
         {!climbing && (
-          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+          <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap", justifyContent: "center" }}>
             {REST_TARGETS.map((s) => (
               <button
                 key={s}
@@ -213,7 +220,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
       </div>
 
       {/* Big centered action — End lives in the top bar */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         {/* Big circular action button — ring shows rest progress */}
         <button
           onClick={() => {
@@ -225,8 +232,10 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
           }}
           style={{
             position: "relative",
-            width: 132,
-            height: 132,
+            // Shrinks with the viewport so it can never leave the screen on a
+            // small phone (#221); pinned to the 132px design size above ~776px.
+            width: clampCss(WORKOUT_ACTION_CIRCLE),
+            height: clampCss(WORKOUT_ACTION_CIRCLE),
             borderRadius: "50%",
             border: "none",
             background: "transparent",
@@ -234,7 +243,9 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
             flexShrink: 0,
           }}
         >
-          <svg width="132" height="132" viewBox="0 0 132 132" style={{ position: "absolute", inset: 0, transform: "rotate(-90deg)" }}>
+          {/* Sized by the button, not in px — the viewBox keeps the ring maths
+              (r=54 of 132) intact at any resolved diameter. */}
+          <svg width="100%" height="100%" viewBox="0 0 132 132" style={{ position: "absolute", inset: 0, transform: "rotate(-90deg)" }}>
             <circle cx="66" cy="66" r={R} fill="none" stroke="var(--surface-2)" strokeWidth="8" />
             {!climbing && (
               <circle

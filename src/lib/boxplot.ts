@@ -34,6 +34,16 @@ export function fiveNumberSummary(values: number[]): FiveNumberSummary | null {
   };
 }
 
+/// The median on its own, for callers that want a single typical-value
+/// reference line rather than a whole box (SL-184). Shares `quantile` with
+/// `fiveNumberSummary` so the two can never disagree: an even-length series
+/// averages the two middle values, a single reading is itself. Null for empty
+/// input so callers skip drawing the line instead of plotting a NaN.
+export function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  return quantile([...values].sort((a, b) => a - b), 0.5);
+}
+
 export interface BoxStats {
   q1: number;
   median: number;
