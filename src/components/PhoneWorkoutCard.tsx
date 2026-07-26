@@ -1,3 +1,4 @@
+import { useToast } from "../hooks/useToast";
 import type {
   PhoneWorkoutAction,
   PhoneWorkoutState,
@@ -8,6 +9,9 @@ interface Props {
   dispatch: (action: PhoneWorkoutAction) => void;
   /// Open the full-screen immersive view (fresh start, or resume from the bar).
   onOpen: () => void;
+  /// Why Start is blocked right now — a guided routine is running (#222).
+  /// Null when free to start.
+  blockedReason?: string | null;
 }
 
 /// Phone-only workout logging (SL-41): Start opens the immersive full-screen
@@ -18,7 +22,9 @@ export default function PhoneWorkoutCard({
   state,
   dispatch,
   onOpen,
+  blockedReason = null,
 }: Props) {
+  const toast = useToast();
   const onResume = onOpen;
 
   if (state.phase === "idle") {
@@ -33,7 +39,16 @@ export default function PhoneWorkoutCard({
         </div>
         <button
           className="btn-primary"
+          // #222: one timer at a time. Kept clickable while blocked (rather
+          // than `disabled`) so the tap names the reason instead of doing
+          // nothing — the aria-disabled + dimming carry the "off" state.
+          aria-disabled={blockedReason ? true : undefined}
+          style={blockedReason ? { opacity: 0.5 } : undefined}
           onClick={() => {
+            if (blockedReason) {
+              toast(blockedReason, "info");
+              return;
+            }
             onOpen();
             dispatch({ type: "start", at: new Date().toISOString() });
           }}

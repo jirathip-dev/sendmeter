@@ -5,6 +5,10 @@ import { usePhoneWorkout } from "../hooks/usePhoneWorkout";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
 import { insertPhoneWorkout, updateSession } from "../lib/repo";
+import {
+  phoneWorkoutBlockedReason,
+  routineBlockedReason,
+} from "../lib/workoutGuard";
 import type { PhaseId, Session, SessionPatch } from "../types";
 import EditSessionSheet from "./EditSessionSheet";
 import LiveWorkoutCard from "./LiveWorkoutCard";
@@ -48,6 +52,15 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
   // The just-saved workout, opened for editing from the toast's "Set RPE"
   // action (auto-save-on-stop has no blocking confirm form anymore).
   const [editingSession, setEditingSession] = useState<Session | null>(null);
+  // #222: RoutineCard's running flag, lifted here so the phone-workout card can
+  // refuse to start a second timer (and vice-versa — this view owns live/phone).
+  const [routineRunning, setRoutineRunning] = useState(false);
+
+  const activity = {
+    liveWorkout: !!live,
+    phoneWorkout: phone.phase === "running",
+    routine: routineRunning,
+  };
 
   // Stopping a workout SAVES it immediately — no RPE/type confirm form (that
   // was friction). It banks a default RPE + the last-used type; the success
@@ -135,6 +148,7 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
           state={phone}
           dispatch={dispatch}
           onOpen={() => setMinimized(false)}
+          blockedReason={phoneWorkoutBlockedReason(activity)}
         />
       )}
 
@@ -164,8 +178,14 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
         </div>
       )}
 
-      {/* Guided routine presets (warm-ups, circuits) — utility, saves nothing */}
-      <RoutineCard currentPhase={currentPhase} />
+      {/* Guided routine presets (warm-ups, circuits). A completed run — and an
+          early exit past a minute — IS logged as a `routine` session (SL-83 /
+          SL-97), so it feeds ACWR and History like any other workout. */}
+      <RoutineCard
+        currentPhase={currentPhase}
+        blockedReason={routineBlockedReason(activity)}
+        onRunningChange={setRoutineRunning}
+      />
 
       {/* Summary stats across recent workouts (SL-85 / #108) */}
       <WorkoutStatsCard sessions={sessions} />
