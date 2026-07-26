@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from "react";
+import { tapHaptic } from "../lib/haptics";
 
 /// Numeric input that lets you TYPE freely — including clearing the field and
 /// intermediate values — and clamps only when you leave it (blur/Enter).
@@ -22,11 +23,16 @@ export default function NumInput({
 
   function commit(raw: string) {
     const v = Number(raw);
-    onCommit(
+    const next =
       Number.isFinite(v) && raw.trim() !== ""
         ? Math.max(min, Math.min(max, v))
-        : value,
-    );
+        : value;
+    // #171: tick when the field actually lands on a new value (including a
+    // clamp) — the equal-value guard from #172, so re-blurring an unchanged
+    // field is silent. Guarded, so a blur caused by tapping a button next to
+    // it doesn't tick twice.
+    if (next !== value) tapHaptic();
+    onCommit(next);
     setDraft(null);
   }
 

@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PointerEvent, ReactNode } from "react";
+import { sheetHaptic, tapHaptic } from "../lib/haptics";
 
 interface Props {
   /// Omit to make the sheet non-dismissable by backdrop click (e.g. a
@@ -20,6 +21,15 @@ export default function Sheet({ onClose, fullHeight, children }: Props) {
   const startY = useRef(0);
   const dragYRef = useRef(0);
 
+  // #171: the sheet appearing IS the feedback for whatever opened it. The
+  // gesture guard means the opening tap (a button, a card) has usually spent
+  // this gesture's tick already, so this only actually fires for openers with
+  // no tappable element of their own — and stays silent for a sheet that
+  // mounts with no recent gesture behind it at all.
+  useEffect(() => {
+    sheetHaptic();
+  }, []);
+
   function onDown(e: PointerEvent<HTMLDivElement>) {
     if (!onClose) return;
     dragging.current = true;
@@ -35,7 +45,10 @@ export default function Sheet({ onClose, fullHeight, children }: Props) {
   function onUp() {
     if (!dragging.current) return;
     dragging.current = false;
-    if (dragYRef.current > CLOSE_THRESHOLD) onClose?.();
+    if (dragYRef.current > CLOSE_THRESHOLD) {
+      tapHaptic();
+      onClose?.();
+    }
     dragYRef.current = 0;
     setDragY(0);
   }
@@ -43,7 +56,16 @@ export default function Sheet({ onClose, fullHeight, children }: Props) {
   return (
     <div
       className="modal-bg"
-      onClick={(e) => onClose && e.target === e.currentTarget && onClose()}
+      // The backdrop dismisses on its own tap (below) — but it is also an
+      // ancestor of everything in the sheet, so without muting it a tap on
+      // plain sheet copy would resolve to whatever tappable card the sheet
+      // happens to be rendered inside and tick for an action that never ran.
+      data-haptic="off"
+      onClick={(e) => {
+        if (!onClose || e.target !== e.currentTarget) return;
+        tapHaptic();
+        onClose();
+      }}
     >
       <div
         className={`modal-sheet${fullHeight ? " full" : ""}`}

@@ -262,6 +262,8 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
         return (
           <Fragment key={p.id}>
           <div
+            // #171: arming/disarming a preset is a selection, not a button.
+            data-haptic="light"
             onClick={() => {
               if (selected) localStorage.removeItem(SELECTED_KEY);
               else localStorage.setItem(SELECTED_KEY, p.id);

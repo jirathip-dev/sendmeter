@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { tapHaptic } from "../lib/haptics";
 
 const CLOSE_THRESHOLD = 90; // px dragged right before release dismisses
 const SLIDE_MS = 260;
@@ -68,6 +69,10 @@ export default function DetailPage({
     if (!dragging.current) return;
     dragging.current = false;
     if (engaged.current && dragXRef.current > CLOSE_THRESHOLD) {
+      // #171: swipe-back dismisses the page, same as the back button — so it
+      // gets the same tick. The gesture guard makes it one, even when the
+      // swipe happened to start on top of a button.
+      tapHaptic();
       close();
     }
     engaged.current = false;

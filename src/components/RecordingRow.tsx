@@ -177,7 +177,10 @@ export default function RecordingRow({
       className="session-row"
       style={{ flexDirection: "column", alignItems: "stretch", gap: 0 }}
     >
+      {/* #171: on the header only — the expanded chart below carries its own
+          per-point scrub tick and must not also fire the row's. */}
       <div
+        data-haptic="light"
         style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
         onClick={() => void toggle()}
       >

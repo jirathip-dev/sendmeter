@@ -273,7 +273,14 @@ export default function SessionRow({
       }}
       onClick={() => void open()}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      {/* #171: the tick sits on the header, not on the `.session-row` wrapper
+          — the expanded panel below is inside that wrapper but stops its own
+          clicks, so a tap there must stay silent. Only when the row actually
+          expands: a non-expandable row's tap does nothing. */}
+      <div
+        data-haptic={expandable ? "light" : undefined}
+        style={{ display: "flex", alignItems: "center", gap: 12 }}
+      >
         <div
           className="session-phase-bar"
           style={{ background: qualityColor || ph?.color || "var(--border)" }}

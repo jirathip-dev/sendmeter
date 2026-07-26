@@ -55,6 +55,11 @@ export default function ConfirmDialog({
       </div>
       <button
         className={danger ? undefined : "btn-primary"}
+        // #171: the one confirm/destructive step gets the heavier tick, so
+        // "delete forever" doesn't feel like the Cancel below it. While busy
+        // the button is `disabled`, which the resolver reads as inert — no
+        // tick for a tap that does nothing.
+        data-haptic="medium"
         disabled={busy}
         onClick={onConfirm}
         style={
