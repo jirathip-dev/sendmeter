@@ -2,6 +2,7 @@ import { supabase } from "../supabase";
 import type { PhaseId } from "../../types";
 import { today } from "../dates";
 import { unwrap } from "./shared";
+import { markUserSignOut } from "../authDiagnostics";
 
 export interface UserSettings {
   currentPhase: PhaseId;
@@ -42,5 +43,7 @@ export async function updateSettings(s: UserSettings): Promise<void> {
 /// goes with it. Required by App Store guideline 5.1.1(v).
 export async function deleteAccount(): Promise<void> {
   unwrap(await supabase.rpc("delete_account"));
+  // The SIGNED_OUT this fires is expected, not an incident (#202).
+  markUserSignOut();
   await supabase.auth.signOut();
 }

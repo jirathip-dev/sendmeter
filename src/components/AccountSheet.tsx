@@ -3,7 +3,13 @@ import type { ReactNode } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
 import { authRedirectUrl } from "../lib/authRedirect";
-import { getAuthDiagnosticEvents, type NullSessionReason } from "../lib/authDiagnostics";
+import {
+  getAuthDiagnosticEvents,
+  getAuthDiagnosticsStatus,
+  type NullSessionReason,
+} from "../lib/authDiagnostics";
+import type { AuthEventStoreKind } from "../lib/authEventStore";
+import { buildTag, loadBuildTag } from "../lib/appVersion";
 import {
   addPasskey,
   listPasskeys,
@@ -30,6 +36,17 @@ const NULL_SESSION_LABELS: Record<NullSessionReason, string> = {
   revoked: "Session revoked",
   "storage-missing": "No stored session",
   "storage-unavailable": "Storage unavailable",
+  "user-signed-out": "Signed out (by you)",
+  "storage-wiped": "App storage wiped",
+};
+
+/// Where the diagnostics ring is being kept. Worth showing: "nothing
+/// recorded" means something very different on a ring that only ever lived in
+/// the WebView's localStorage (#202).
+const STORE_LABELS: Record<AuthEventStoreKind, string> = {
+  preferences: "Preferences (survives a WebView wipe)",
+  "local-storage": "Browser storage",
+  unavailable: "Not persisted",
 };
 
 const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
@@ -89,6 +106,20 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   // events (see authDiagnostics.ts). Read-only, so no need to re-read on an
   // interval; a relaunch remounts this sheet fresh anyway.
   const [authEvents] = useState(() => getAuthDiagnosticEvents());
+  const [diagStatus] = useState(() => getAuthDiagnosticsStatus());
+  // App version + build (#202): a recorded event is only attributable if the
+  // build that produced it can be read off the same screen. Native-only —
+  // `loadBuildTag` resolves to null on web.
+  const [build, setBuild] = useState<string | null>(() => buildTag());
+  useEffect(() => {
+    let alive = true;
+    void loadBuildTag().then((tag) => {
+      if (alive) setBuild(tag);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!passkeysSupported) return;
@@ -394,18 +425,36 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 {signingOut ? "Signing out…" : "Sign out"}
               </button>
 
-              {authEvents.length > 0 && (
-                <div style={{ marginTop: 14 }}>
-                  <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 6 }}>
-                    Recent sign-in diagnostics
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 6 }}>
+                  Recent sign-in diagnostics
+                </div>
+                <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
+                  {build ? `Sendmeter ${build}` : "Sendmeter (web)"} ·{" "}
+                  {STORE_LABELS[diagStatus.store]}
+                </div>
+                {diagStatus.webviewWiped && (
+                  <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", lineHeight: 1.6 }}>
+                    App storage was wiped since last launch — the session went
+                    with it.
                   </div>
-                  {authEvents.slice(0, 5).map((e, i) => (
+                )}
+                {authEvents.length === 0 ? (
+                  <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
+                    {/* An empty list must say so. A section that renders
+                        nothing (as this one did on the c07c071 build) is
+                        indistinguishable from a section that isn't there. */}
+                    No events recorded.
+                  </div>
+                ) : (
+                  authEvents.slice(0, 5).map((e, i) => (
                     <div
                       key={i}
                       style={{
                         fontSize: "var(--t-xs)",
                         color: "var(--ink-muted)",
                         lineHeight: 1.6,
+                        marginTop: 4,
                       }}
                     >
                       {NULL_SESSION_LABELS[e.reason]} · {new Date(e.lastAt).toLocaleString()}
@@ -416,10 +465,24 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                       {e.count > 1 && e.firstAt !== e.lastAt
                         ? ` · since ${new Date(e.firstAt).toLocaleString()}`
                         : ""}
+                      {/* Origin: "auth-js signed us out" vs "we asked and got
+                          null" are different bugs (#202). */}
+                      {e.authEvent ? ` · ${e.authEvent}` : e.source ? ` · ${e.source}` : ""}
+                      {e.lastGoodAt && (
+                        <div style={{ opacity: 0.75 }}>
+                          last valid session {new Date(e.lastGoodAt).toLocaleString()}
+                          {e.lastGoodExpiresAt
+                            ? `, token expiring ${new Date(e.lastGoodExpiresAt).toLocaleString()}`
+                            : ""}
+                        </div>
+                      )}
+                      {e.build && e.build !== build ? (
+                        <div style={{ opacity: 0.75 }}>on build {e.build}</div>
+                      ) : null}
                     </div>
-                  ))}
-                </div>
-              )}
+                  ))
+                )}
+              </div>
             </div>
 
             <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>

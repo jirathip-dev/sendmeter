@@ -31,9 +31,15 @@ Declare these under **Data Types Collected**, all with:
 | Health & fitness data (HR, HRV, sleep, workouts) | Health & Fitness → Health / Fitness |
 | Body weight | Health & Fitness → Health |
 | Training/session logs, force recordings | User Content → Other User Content |
+| Auth diagnostics (null-session cause, timestamps, app build) | Diagnostics → Other Diagnostic Data |
 
-Everything else (location, contacts, identifiers, purchases, browsing,
-diagnostics): **Not collected**. There are no analytics, ads, or trackers.
+The auth-diagnostics row is `supabase/migrations/20260726090000_auth_events.sql`
+(the columns are exactly what is collected) written by `src/lib/authEventFlush.ts`
+— a per-account record of why a sign-in session went away, keyed to `user_id`,
+which is why it answers "linked to identity: yes" like every other row here.
+
+Everything else (location, contacts, identifiers, purchases, browsing):
+**Not collected**. There are no analytics, ads, or trackers.
 
 ## Review notes (paste into "Notes" for the reviewer)
 
