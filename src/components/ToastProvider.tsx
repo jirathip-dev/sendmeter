@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import {
   ToastContext,
   type Toast,
@@ -13,9 +13,9 @@ const KIND_COLOR: Record<ToastKind, string> = {
   info: "var(--primary)",
 };
 
-/// App-level toaster (SL-66): renders a stack of transient confirmations above
-/// the bottom nav and exposes `showToast` via context. Auto-dismisses after a
-/// few seconds; the accent bar is colored by kind (blue/orange/purple).
+/// App-level toaster (SL-66): renders a stack of transient confirmations below
+/// the top chrome (#142) and exposes `showToast` via context. Auto-dismisses
+/// after a few seconds; the accent bar is colored by kind (blue/orange/purple).
 export default function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(1);
@@ -43,7 +43,11 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
           position: "fixed",
           left: 0,
           right: 0,
-          bottom: "calc(96px + env(safe-area-inset-bottom))",
+          // Below the account fab (top: safe-area + 10px, 40px tall), never
+          // beside it: an actioned toast takes pointer events, so overlapping
+          // the fab would swallow taps on the account button. 58px also lines
+          // the stack up with `.content-area.with-chrome`'s top padding.
+          top: "calc(env(safe-area-inset-top) + 58px)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -57,15 +61,19 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={t.id}
             className="toast-item"
-            style={{
-              borderLeft: `3px solid ${KIND_COLOR[t.kind]}`,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              // The bar itself ignores pointer events; a toast with an action
-              // must accept taps on its button.
-              pointerEvents: t.action ? "auto" : "none",
-            }}
+            style={
+              {
+                // Drives the `.toast-item::after` accent bar, which sits inside
+                // the iridescent hairline ring rather than replacing it.
+                "--toast-accent": KIND_COLOR[t.kind],
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                // The bar itself ignores pointer events; a toast with an action
+                // must accept taps on its button.
+                pointerEvents: t.action ? "auto" : "none",
+              } as CSSProperties
+            }
           >
             <span>{t.message}</span>
             {t.action && (
