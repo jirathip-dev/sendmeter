@@ -77,24 +77,47 @@ export function hrRecoveryBpm(
 /// to its average is an unreviewed phone auto-save still sitting at the
 /// hardcoded default RPE — the chart mutes that bar rather than rendering it
 /// indistinguishably from a user-confirmed value.
+///
+/// `typeLabels` (issue #181) names what the day was, for the chart's
+/// hover/scrub tooltip: each contributing session's own label, deduped, in
+/// the order the sessions appear. Every type counts here, Tindeq gauge
+/// sessions included — `computeAcwr` filters only by date, so a fingerboard
+/// session's load already reaches the ACWR ratio, the weekly bars and the
+/// load heatmap; dropping it from this one trend would make adjacent
+/// surfaces disagree about whether it was training. Labelling, not filtering.
 export function recentDailyRpe(
-  sessions: Pick<Session, "date" | "rpe" | "rpeConfirmed">[],
+  sessions: Pick<Session, "date" | "rpe" | "rpeConfirmed" | "typeLabel">[],
   days: number,
-): { date: string; rpe: number; confirmed: boolean }[] {
-  const byDate = new Map<string, { sum: number; n: number; confirmed: boolean }>();
+): { date: string; rpe: number; confirmed: boolean; typeLabels: string[] }[] {
+  const byDate = new Map<
+    string,
+    { sum: number; n: number; confirmed: boolean; typeLabels: string[] }
+  >();
   for (const s of sessions) {
+    const label = s.typeLabel.trim();
     const e = byDate.get(s.date);
     if (e) {
       e.sum += s.rpe;
       e.n += 1;
       if (s.rpeConfirmed === false) e.confirmed = false;
+      if (label && !e.typeLabels.includes(label)) e.typeLabels.push(label);
     } else {
-      byDate.set(s.date, { sum: s.rpe, n: 1, confirmed: s.rpeConfirmed !== false });
+      byDate.set(s.date, {
+        sum: s.rpe,
+        n: 1,
+        confirmed: s.rpeConfirmed !== false,
+        typeLabels: label ? [label] : [],
+      });
     }
   }
   return [...byDate.entries()]
     .sort((a, b) => b[0].localeCompare(a[0]))
     .slice(0, days)
     .reverse()
-    .map(([date, e]) => ({ date, rpe: e.sum / e.n, confirmed: e.confirmed }));
+    .map(([date, e]) => ({
+      date,
+      rpe: e.sum / e.n,
+      confirmed: e.confirmed,
+      typeLabels: e.typeLabels,
+    }));
 }
