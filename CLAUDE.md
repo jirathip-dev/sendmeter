@@ -316,6 +316,17 @@ are safe regardless.
   `LiveWorkoutMessage` / `LiveForceMessage` keep their exact shape. The verdict
   (behind / ahead / differs / never reported) lives in `SendLogWatchCore` so
   it's tested on Linux CI; the sheet only renders it.
+  - **…and its offline-queue depth** (#21, `watch_pending_sync`). Same channel,
+    same rules: unknown values are left off, `stripped(...)` removes all three
+    keys, the verdict (empty / pending / backed-up / never reported, plus
+    staleness) lives in Core. The non-obvious part is the *read*:
+    `OfflineQueue` / `PendingSessionQueue` are actors, so their counts can't be
+    awaited on the synchronous WC send paths — each publishes into
+    `PendingSyncCache` (sync-readable, process-wide) whenever it counts,
+    persists or drains, and `WatchBuild.stamp` reads the cached sum. **Any new
+    queue whose depth should show up on the phone has to publish there too**,
+    and nil (never counted) must keep reading as "not reported", never as an
+    empty queue.
 - **Migrations aren't auto-applied — and must go to BOTH remote projects.** Files
   in `supabase/migrations/` are just SQL on disk. Apply each new migration to the
   **prod** project (`zznsqmcewtzlnfoiefkk`) **and** to the **dev/preview** project
