@@ -1,6 +1,8 @@
+import type { CSSProperties } from "react";
 import Sheet from "./Sheet";
 import ChartTooltip from "./ChartTooltip";
 import { useChartHover } from "../hooks/useChartHover";
+import { median } from "../lib/boxplot";
 import {
   humidityFrictionScore,
   isTempRangeSaturated,
@@ -14,11 +16,52 @@ import {
   type SendConditions,
 } from "../lib/weather";
 
+const CHART_H = 56;
+
+/// Right gutter reserved for the reference lines' inline end labels (SL-184).
+/// Shared with the under-axis label row so the "N days ago" / "today" ticks
+/// keep landing on the plot area rather than on the gutter (the same
+/// shared-axis-constant lesson as SL-183's `WORKOUT_CHART_PAD`). An inline
+/// end label beats a legend here: this is a narrow phone sheet, a legend
+/// would cost its own row and introduce a colour-swatch vocabulary the chart
+/// doesn't otherwise use, and the label sits where the eye already is — at
+/// the line.
+const CHART_LABEL_GUTTER = 44;
+/// Line box of a reference-line label, in px — used to keep it inside the plot.
+const CHART_LABEL_H = 11;
+
+/// Shared look for both end labels — same size/weight as the chart's own
+/// under-axis ticks, so they read as part of the axis furniture. Colour is
+/// per-line.
+const refLabelStyle: CSSProperties = {
+  position: "absolute",
+  right: 0,
+  width: CHART_LABEL_GUTTER,
+  paddingLeft: 5,
+  fontSize: "var(--t-eyebrow)",
+  lineHeight: `${CHART_LABEL_H}px`,
+  fontWeight: 700,
+  whiteSpace: "nowrap",
+  pointerEvents: "none",
+};
+
+/// Where a reference line's label sits, in px from the chart's bottom edge.
+/// `side` is +1 to sit above the line, -1 below; callers put each label on
+/// the side away from the *other* line, so the two can never collide even
+/// when today lands exactly on the median. Clamped into the plot so a line at
+/// the very top (today is the best day — always true for the today line when
+/// it sets `max`) doesn't push its label out of the chart.
+function refLabelBottom(valuePct: number, side: 1 | -1): number {
+  const line = (valuePct / 100) * CHART_H;
+  const raw = side === 1 ? line + 2 : line - CHART_LABEL_H - 2;
+  return Math.min(Math.max(raw, 0), CHART_H - CHART_LABEL_H);
+}
+
 /// Same-hour-of-day comparison chart (issue #99): one bar per day at the
 /// SAME local hour as the current reading, chronological, with today's bar
 /// appended on the right — the countable claim the banner makes ("better
 /// than N of the last M days at this time of day") made visible as bars
-/// under a dotted "today" line. Replaces the old absolute-score histogram,
+/// under a dashed "today" line. Replaces the old absolute-score histogram,
 /// which collapsed to a single bin in a hot climate where every hour scores
 /// the same "Poor". `days` (from `sameHourScores`) is computed by the caller
 /// so it can also drive the under-axis "N days ago" label off the same
@@ -26,6 +69,12 @@ import {
 /// (`useChartHover` + `ChartTooltip`) rather than native `title` attributes —
 /// `title` tooltips don't work on touch, and this is primarily a Capacitor
 /// iOS app. `days.length` is used as the sentinel index for today's bar.
+///
+/// Both reference lines carry an inline end label (SL-184). The "today" line
+/// used to be the only one and was unlabelled, which left readers guessing
+/// what it meant; the median of the plotted days is the second reference,
+/// deliberately styled *down* from it (muted + dotted vs. the percentile
+/// colour + dashed) so the two never read as the same kind of thing.
 function DayComparisonChart({
   score,
   percentile,
@@ -38,85 +87,119 @@ function DayComparisonChart({
   const max = Math.max(1, ...days, score);
   const todayColor = percentileColor(percentile);
   const [hoveredIdx, hoverProps] = useChartHover<number>();
+  // Median of the days plotted — today is excluded, matching the banner's
+  // "better than N of the last M days" which also ranks today *against* the
+  // history rather than including it.
+  const med = median(days);
+  const scorePct = (score / max) * 100;
+  const medPct = med === null ? 0 : (med / max) * 100;
+  // Each label goes on the side facing away from the other line.
+  const todayAbove = med === null || score >= med;
   return (
-    <div
-      className="chart-scrub"
-      style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 56, position: "relative" }}
-    >
-      {/* Dotted line at today's level — days under it are the ones today beats. */}
+    <div style={{ position: "relative", height: CHART_H, paddingRight: CHART_LABEL_GUTTER }}>
       <div
-        style={{
-          position: "absolute",
-          left: 0,
-          right: 0,
-          bottom: `${(score / max) * 100}%`,
-          borderTop: "1px dashed var(--ink-faint)",
-        }}
-      />
-      {days.map((s, i) => {
-        const daysAgo = sameHourDaysAgo(i, days.length);
-        const isHovered = hoveredIdx === i;
-        return (
-          <div
-            key={i}
-            style={{
-              flex: 1,
-              position: "relative",
-              height: "100%",
-              display: "flex",
-              alignItems: "flex-end",
-              cursor: "pointer",
-            }}
-            {...hoverProps(i)}
-          >
-            {isHovered && (
-              <ChartTooltip align={i < 5 ? "start" : i > days.length - 5 ? "end" : "center"}>
-                {daysAgo} days ago: {s}
-              </ChartTooltip>
-            )}
-            <div
-              style={{
-                width: "100%",
-                height: `${(s / max) * 100}%`,
-                minHeight: s > 0 ? 2 : 0,
-                background: "var(--ink-faint)",
-                opacity: hoveredIdx === null ? 0.55 : isHovered ? 0.85 : 0.35,
-                borderRadius: 2,
-                boxShadow: isHovered ? "0 0 0 1.5px var(--ink)" : "none",
-                transition: "opacity 0.1s",
-              }}
-            />
-          </div>
-        );
-      })}
-      {/* Today's bar, appended on the right — coloured + full opacity so it pops. */}
-      <div
-        style={{
-          flex: 1.3,
-          position: "relative",
-          height: "100%",
-          display: "flex",
-          alignItems: "flex-end",
-          cursor: "pointer",
-        }}
-        {...hoverProps(days.length)}
+        className="chart-scrub"
+        style={{ display: "flex", alignItems: "flex-end", gap: 2, height: "100%", position: "relative" }}
       >
-        {hoveredIdx === days.length && <ChartTooltip align="end">Today: {score}</ChartTooltip>}
+        {/* Median of the plotted days — the "typical day here" baseline. Dotted
+            and muted so it reads as background reference, not as today. */}
+        {med !== null && (
+          <div
+            style={{
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: `${medPct}%`,
+              borderTop: "1px dotted var(--ink-muted)",
+            }}
+          />
+        )}
+        {/* Dashed line at today's level — days under it are the ones today
+            beats. Carries today's percentile colour, tying it to today's bar. */}
         <div
           style={{
-            width: "100%",
-            height: `${(score / max) * 100}%`,
-            minHeight: score > 0 ? 2 : 0,
-            background: todayColor,
-            outline: `2px solid ${todayColor}`,
-            outlineOffset: 1,
-            borderRadius: 2,
-            opacity: hoveredIdx === null || hoveredIdx === days.length ? 1 : 0.55,
-            boxShadow: hoveredIdx === days.length ? "0 0 0 1.5px var(--ink)" : "none",
-            transition: "opacity 0.1s",
+            position: "absolute",
+            left: 0,
+            right: 0,
+            bottom: `${scorePct}%`,
+            borderTop: `1px dashed ${todayColor}`,
           }}
         />
-      </div>
+        {days.map((s, i) => {
+          const daysAgo = sameHourDaysAgo(i, days.length);
+          const isHovered = hoveredIdx === i;
+          return (
+            <div
+              key={i}
+              style={{
+                flex: 1,
+                position: "relative",
+                height: "100%",
+                display: "flex",
+                alignItems: "flex-end",
+                cursor: "pointer",
+              }}
+              {...hoverProps(i)}
+            >
+              {isHovered && (
+                <ChartTooltip align={i < 5 ? "start" : i > days.length - 5 ? "end" : "center"}>
+                  {daysAgo} days ago: {s}
+                </ChartTooltip>
+              )}
+              <div
+                style={{
+                  width: "100%",
+                  height: `${(s / max) * 100}%`,
+                  minHeight: s > 0 ? 2 : 0,
+                  background: "var(--ink-faint)",
+                  opacity: hoveredIdx === null ? 0.55 : isHovered ? 0.85 : 0.35,
+                  borderRadius: 2,
+                  boxShadow: isHovered ? "0 0 0 1.5px var(--ink)" : "none",
+                  transition: "opacity 0.1s",
+                }}
+              />
+            </div>
+          );
+        })}
+        {/* Today's bar, appended on the right — coloured + full opacity so it pops. */}
+        <div
+          style={{
+            flex: 1.3,
+            position: "relative",
+            height: "100%",
+            display: "flex",
+            alignItems: "flex-end",
+            cursor: "pointer",
+          }}
+          {...hoverProps(days.length)}
+        >
+          {hoveredIdx === days.length && <ChartTooltip align="end">Today: {score}</ChartTooltip>}
+          <div
+            style={{
+              width: "100%",
+              height: `${(score / max) * 100}%`,
+              minHeight: score > 0 ? 2 : 0,
+              background: todayColor,
+              outline: `2px solid ${todayColor}`,
+              outlineOffset: 1,
+              borderRadius: 2,
+              opacity: hoveredIdx === null || hoveredIdx === days.length ? 1 : 0.55,
+              boxShadow: hoveredIdx === days.length ? "0 0 0 1.5px var(--ink)" : "none",
+              transition: "opacity 0.1s",
+            }}
+          />
+        </div>
+        </div>
+      {/* Inline end labels, in the reserved gutter — every reference line on
+          this chart is identifiable without hovering. */}
+      {med !== null && (
+        <span style={{ ...refLabelStyle, bottom: refLabelBottom(medPct, todayAbove ? -1 : 1), color: "var(--ink-muted)" }}>
+          median
+        </span>
+      )}
+      <span style={{ ...refLabelStyle, bottom: refLabelBottom(scorePct, todayAbove ? 1 : -1), color: todayColor }}>
+        today
+      </span>
     </div>
   );
 }
@@ -278,18 +361,22 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
               guard against a stale pre-#99 localStorage cache. */}
           {cond.hist && cond.percentile !== null && chartDays && (
             <div style={{ marginBottom: 16 }}>
-              <div
-                className="label-eyebrow"
-                style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}
-              >
-                <span>Same time of day · last 30 days</span>
-                <span style={{ color: percentileColor(cond.percentile) }}>today</span>
+              {/* The right-hand "today" swatch this row used to carry is gone
+                  (SL-184) — the chart's own dashed "today" line label is in
+                  the same percentile colour, right next to today's bar, and
+                  the axis below still says "today". Three of them in a 60px
+                  band was the noise, not the signal. */}
+              <div className="label-eyebrow" style={{ marginBottom: 6 }}>
+                Same time of day · last 30 days
               </div>
               <DayComparisonChart score={cond.score} percentile={cond.percentile} days={chartDays} />
+              {/* Same right gutter as the chart, so these ticks stay aligned
+                  with the plot area rather than with the label gutter. */}
               <div
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
+                  paddingRight: CHART_LABEL_GUTTER,
                   fontSize: "var(--t-eyebrow)",
                   color: "var(--ink-faint)",
                   marginTop: 4,
