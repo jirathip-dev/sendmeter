@@ -103,3 +103,11 @@ jobs:
           ASC_KEY_PATH: fastlane/asc_api_key.p8
           IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
           IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          # Error monitoring (#227/#239). `fastlane beta` runs its own
+          # `npm run build` to produce ios/App/App/public, so the DSN has to be
+          # in this step's environment or the shipped app has the SDK bundled
+          # and permanently inert. VERCEL_ENV doesn't exist here, so the
+          # environment tag is set explicitly — without it these events would
+          # report `local` alongside a developer's laptop builds.
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          VITE_DEPLOY_ENV: ios
