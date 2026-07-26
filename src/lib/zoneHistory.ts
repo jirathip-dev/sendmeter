@@ -55,18 +55,17 @@ function zoneSetDurationS(zone: TrainingQuality): number {
   return zp.holdS * zp.reps;
 }
 
-/// Duration-normalised set count per zone over the trailing window (#182):
-/// total hold time recorded in a zone, divided by that zone's own protocol
-/// set length, so training balance is weighted by how much time you actually
+/// Duration-normalised set count per zone (#182, extracted for #214): total
+/// hold time recorded in a zone, divided by that zone's own protocol set
+/// length, so training balance is weighted by how much time you actually
 /// spent, not by how many distinct days you touched it. A 5-10 minute warm-up
 /// now registers as a fraction of a set instead of needing a whole day's
-/// worth of holds to show up at all.
-export function zoneTrainingSets(
-  recs: { recordedAt: string; durationMs: number }[],
-  now: Date,
-  windowDays = 28,
+/// worth of holds to show up at all. No time-window filtering — callers that
+/// want a trailing window should filter `recs` first (see
+/// `zoneTrainingSets` below) or pre-filter for a per-session mix (#214).
+export function zoneSets(
+  recs: { durationMs: number }[],
 ): Record<TrainingQuality, number> {
-  const cutoff = now.getTime() - windowDays * 86_400_000;
   const secondsByZone: Record<TrainingQuality, number> = {
     power: 0,
     strength: 0,
@@ -74,8 +73,6 @@ export function zoneTrainingSets(
     endurance: 0,
   };
   for (const r of recs) {
-    const t = Date.parse(r.recordedAt);
-    if (isNaN(t) || t < cutoff) continue;
     const durationS = r.durationMs / 1000;
     const zone = classifyZone(durationS);
     if (!zone) continue;
@@ -90,12 +87,41 @@ export function zoneTrainingSets(
   };
 }
 
+/// Duration-normalised set count per zone over the trailing window (#182):
+/// same as `zoneSets`, but restricted to recordings within `windowDays` of
+/// `now` — the window training-balance is scoped to.
+export function zoneTrainingSets(
+  recs: { recordedAt: string; durationMs: number }[],
+  now: Date,
+  windowDays = 28,
+): Record<TrainingQuality, number> {
+  const cutoff = now.getTime() - windowDays * 86_400_000;
+  const kept = recs.filter((r) => {
+    const t = Date.parse(r.recordedAt);
+    return !isNaN(t) && t >= cutoff;
+  });
+  return zoneSets(kept);
+}
+
 const ZONE_ORDER: TrainingQuality[] = [
   "power",
   "strength",
   "power-endurance",
   "endurance",
 ];
+
+/// The zone with the highest duration-normalised set count (#214) — used to
+/// badge a Tindeq session by the training quality its recordings actually
+/// belong to, instead of the app-wide phase. Null when every zone is zero
+/// (no classifiable holds in the session). Ties broken deterministically by
+/// `ZONE_ORDER`.
+export function dominantZone(
+  sets: Record<TrainingQuality, number>,
+): TrainingQuality | null {
+  const max = Math.max(...ZONE_ORDER.map((z) => sets[z]));
+  if (max === 0) return null;
+  return ZONE_ORDER.find((z) => sets[z] === max) ?? null;
+}
 
 // Zones within this many sets of the true minimum are treated as tied
 // candidates for the curve bias to break between (#182 follow-up): with a

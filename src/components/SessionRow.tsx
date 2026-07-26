@@ -4,6 +4,7 @@ import {
   useRealtimeBump,
   useRealtimeVersion,
 } from "../hooks/useRealtimeVersion";
+import { QUALITIES, type TrainingQuality } from "../lib/force-curve";
 import {
   deleteRecording,
   fetchRecordingsByGroup,
@@ -11,6 +12,7 @@ import {
   fetchWorkoutForSession,
   recalcTindeqSessionDuration,
 } from "../lib/repo";
+import { QUALITY_COLORS } from "../lib/zoneSelection";
 import type { Session, TindeqRecordingMeta, WorkoutDetail } from "../types";
 import DetailPage from "./DetailPage";
 import EditRecordingSheet from "./EditRecordingSheet";
@@ -22,6 +24,13 @@ interface Props {
   s: Session;
   onDelete: (id: string) => void;
   onEdit?: (s: Session) => void;
+  /// Dominant training quality of this Tindeq session's own recordings
+  /// (#214) — badges the session by what it actually trained instead of the
+  /// app-wide phase. Null for non-Tindeq sessions or when no zone could be
+  /// classified (e.g. the session has no recordings yet).
+  zone?: TrainingQuality | null;
+  /// Per-zone set-count mix backing `zone`, for the badge's title tooltip.
+  zoneMix?: Record<TrainingQuality, number> | null;
 }
 
 /// One collapsible section per exercise tag inside a Tindeq session's detail
@@ -102,12 +111,25 @@ function TagGroup({
   );
 }
 
-export default function SessionRow({ s, onDelete, onEdit }: Props) {
+export default function SessionRow({
+  s,
+  onDelete,
+  onEdit,
+  zone = null,
+  zoneMix = null,
+}: Props) {
   const ph = PHASES.find((p) => p.id === s.phase);
   // workoutSource (not type) marks a device workout — it survives type edits
   // (SL-43), so an auto-tracked session re-typed to "Board" still expands.
   const isWorkout = s.workoutSource !== null;
   const isTindeq = s.type === "tindeq" && s.groupId !== null;
+  // #214: a Tindeq session badges by the training quality its own
+  // recordings belong to (same classification as the Training-balance
+  // card), not the app-wide phase — the two vocabularies otherwise
+  // contradict each other on the same session. Falls back to the phase
+  // badge until a zone is known (e.g. no classifiable recordings yet).
+  const qualityBadge = isTindeq && zone !== null;
+  const qualityColor = isTindeq && zone !== null ? QUALITY_COLORS[zone] : null;
   const expandable = isWorkout || isTindeq;
   // Detail opens as its OWN full-height page (sheet) instead of expanding
   // inline — long sessions were unmanageable inside the timeline (SL-86).
@@ -254,7 +276,7 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div
           className="session-phase-bar"
-          style={{ background: ph?.color || "var(--border)" }}
+          style={{ background: qualityColor || ph?.color || "var(--border)" }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div
@@ -269,16 +291,37 @@ export default function SessionRow({ s, onDelete, onEdit }: Props) {
             <span style={{ fontSize: "var(--t-base)", color: "var(--ink)" }}>
               {s.typeLabel}
             </span>
-            <span
-              className="tag"
-              style={{
-                background: ph?.bg || "var(--border)",
-                color: ph?.color || "var(--ink-muted)",
-                border: `1px solid ${ph?.border || "var(--border)"}`,
-              }}
-            >
-              {ph?.name || s.phase}
-            </span>
+            {qualityBadge ? (
+              <span
+                className="tag"
+                title={
+                  zoneMix
+                    ? QUALITIES.map((q) => {
+                        const n = Math.round(zoneMix[q.id] * 10) / 10;
+                        return `${q.label} ${n} set${n === 1 ? "" : "s"}`;
+                      }).join(" · ")
+                    : undefined
+                }
+                style={{
+                  background: `color-mix(in srgb, ${qualityColor} 12%, transparent)`,
+                  color: qualityColor ?? "var(--ink-muted)",
+                  border: `1px solid color-mix(in srgb, ${qualityColor} 35%, transparent)`,
+                }}
+              >
+                {QUALITIES.find((q) => q.id === zone)!.label}
+              </span>
+            ) : (
+              <span
+                className="tag"
+                style={{
+                  background: ph?.bg || "var(--border)",
+                  color: ph?.color || "var(--ink-muted)",
+                  border: `1px solid ${ph?.border || "var(--border)"}`,
+                }}
+              >
+                {ph?.name || s.phase}
+              </span>
+            )}
             {/* Immutable provenance badge — survives type edits */}
             {isWorkout && (
               <span

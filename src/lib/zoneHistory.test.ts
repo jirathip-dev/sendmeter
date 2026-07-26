@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { classifyZone, classifyZoneLoaded, recommendZone, zoneTrainingSets } from "./zoneHistory";
+import {
+  classifyZone,
+  classifyZoneLoaded,
+  dominantZone,
+  recommendZone,
+  zoneSets,
+  zoneTrainingSets,
+} from "./zoneHistory";
 import type { ForceCurveModel } from "./force-curve";
 
 describe("classifyZone (SL-100)", () => {
@@ -107,6 +114,70 @@ describe("zoneTrainingSets (SL-100, #182)", () => {
   it("ignores holds older than the window", () => {
     const sets = zoneTrainingSets([rec("2026-05-01T10:00:00Z", 5000)], NOW, 28);
     expect(sets.power).toBe(0);
+  });
+});
+
+describe("zoneSets (#214)", () => {
+  it("sums/normalises per zone with no window filtering — an ancient recordedAt still counts", () => {
+    const sets = zoneSets([
+      { durationMs: 5000 }, // power, 5s
+      { durationMs: 5200 }, // power, 5.2s
+      { durationMs: 30000 }, // endurance, 30s
+    ]);
+    // power set = 6 reps × 5s = 30s; endurance set = 8 reps × 30s = 240s.
+    expect(sets.power).toBeCloseTo(10.2 / 30, 5);
+    expect(sets.endurance).toBeCloseTo(30 / 240, 5);
+    expect(sets.strength).toBe(0);
+    expect(sets["power-endurance"]).toBe(0);
+  });
+
+  it("ignores sub-1s blips and returns all-zeros for an empty array", () => {
+    expect(zoneSets([])).toEqual({
+      power: 0,
+      strength: 0,
+      "power-endurance": 0,
+      endurance: 0,
+    });
+    expect(zoneSets([{ durationMs: 500 }])).toEqual({
+      power: 0,
+      strength: 0,
+      "power-endurance": 0,
+      endurance: 0,
+    });
+  });
+
+  it("matches zoneTrainingSets when nothing falls outside the window (no time-window behavior lost)", () => {
+    const recs = [
+      rec("2026-07-20T10:00:00Z", 5000),
+      rec("2026-07-19T10:00:00Z", 30000),
+    ];
+    expect(zoneTrainingSets(recs, NOW)).toEqual(zoneSets(recs));
+  });
+});
+
+describe("dominantZone (#214)", () => {
+  it("returns the highest-count zone — the issue's own numbers (Power 4 / Endurance 0.8) yield power", () => {
+    expect(
+      dominantZone({ power: 4, strength: 0, "power-endurance": 0, endurance: 0.8 }),
+    ).toBe("power");
+  });
+
+  it("returns null when all zero", () => {
+    expect(
+      dominantZone({ power: 0, strength: 0, "power-endurance": 0, endurance: 0 }),
+    ).toBeNull();
+  });
+
+  it("breaks ties deterministically by ZONE_ORDER (power, strength, power-endurance, endurance)", () => {
+    expect(
+      dominantZone({ power: 2, strength: 2, "power-endurance": 0, endurance: 0 }),
+    ).toBe("power");
+    expect(
+      dominantZone({ power: 0, strength: 2, "power-endurance": 2, endurance: 0 }),
+    ).toBe("strength");
+    expect(
+      dominantZone({ power: 0, strength: 0, "power-endurance": 2, endurance: 2 }),
+    ).toBe("power-endurance");
   });
 });
 
