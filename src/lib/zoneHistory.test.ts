@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   classifyZone,
   classifyZoneLoaded,
+  CURVE_BIAS_RATIO,
   dominantZone,
   recommendZone,
+  TIE_BAND_SETS,
   zoneSets,
   zoneTrainingSets,
 } from "./zoneHistory";
@@ -245,6 +247,58 @@ describe("recommendZone (SL-100, #182)", () => {
       model(45, 60),
     );
     expect(r?.zone).toBe("power");
+  });
+});
+
+describe("recommendZone explanation payload (#214)", () => {
+  it("reports the candidates and the minimum the pick came from", () => {
+    const r = recommendZone(
+      { power: 3, strength: 2, "power-endurance": 1, endurance: 0 },
+      null,
+    );
+    expect(r?.detail.minSets).toBe(0);
+    // Only endurance (0) is within 0.5 sets of the minimum.
+    expect(r?.detail.tied).toEqual(["endurance"]);
+    expect(r?.detail.unbiasedZone).toBe("endurance");
+    expect(r?.detail.curveRatio).toBeNull();
+    expect(r?.detail.curveBias).toBeNull();
+    expect(r?.detail.biasChangedPick).toBe(false);
+  });
+
+  it("reports the curve ratio and which side it steers toward, and whether it moved the pick", () => {
+    const r = recommendZone(
+      { power: 0, strength: 2, "power-endurance": 2, endurance: 0 },
+      model(20, 60), // CF 20 of 60 peak → 33% → endurance side
+    );
+    expect(r?.zone).toBe("endurance");
+    expect(r?.detail.tied).toEqual(["power", "endurance"]);
+    // Unbiased, the tie between two zeros resolves to power (first-seen
+    // minimum); the curve is what moved it to endurance.
+    expect(r?.detail.unbiasedZone).toBe("power");
+    expect(r?.detail.curveRatio).toBeCloseTo(20 / 60, 5);
+    expect(r?.detail.curveBias).toBe("endurance");
+    expect(r?.detail.biasChangedPick).toBe(true);
+  });
+
+  it("says the curve did NOT move the pick when it agrees with the unbiased one", () => {
+    const r = recommendZone(
+      { power: 0, strength: 2, "power-endurance": 2, endurance: 0 },
+      model(45, 60), // 75% → strength side; unbiased pick is already power
+    );
+    expect(r?.zone).toBe("power");
+    expect(r?.detail.unbiasedZone).toBe("power");
+    expect(r?.detail.curveBias).toBe("strength");
+    expect(r?.detail.biasChangedPick).toBe(false);
+  });
+
+  it("puts the bias boundary exactly at CURVE_BIAS_RATIO", () => {
+    // Ratio exactly 0.35 is NOT below the threshold → strength side.
+    const at = recommendZone(
+      { power: 0, strength: 2, "power-endurance": 2, endurance: 0 },
+      model(CURVE_BIAS_RATIO * 60, 60),
+    );
+    expect(at?.detail.curveBias).toBe("strength");
+    expect(TIE_BAND_SETS).toBe(0.5);
   });
 });
 

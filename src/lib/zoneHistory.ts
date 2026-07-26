@@ -49,8 +49,10 @@ export function classifyZoneLoaded(
 }
 
 /// One zone's protocol "set" length in seconds — reps × hold, from
-/// ZONE_PROTOCOLS — the unit `zoneTrainingSets` normalises against.
-function zoneSetDurationS(zone: TrainingQuality): number {
+/// ZONE_PROTOCOLS — the unit `zoneTrainingSets` normalises against. Exported
+/// for #214's breakdown, which shows the division rather than asserting the
+/// quotient (see lib/zoneBreakdown.ts).
+export function zoneSetDurationS(zone: TrainingQuality): number {
   const zp = ZONE_PROTOCOLS[zone];
   return zp.holdS * zp.reps;
 }
@@ -127,7 +129,33 @@ export function dominantZone(
 // candidates for the curve bias to break between (#182 follow-up): with a
 // continuous, duration-normalised count, exact equality almost never
 // happens, so a fixed band stands in for "roughly equally under-trained".
-const TIE_BAND_SETS = 0.5;
+// Exported so the detail page can state the band it applied (#214).
+export const TIE_BAND_SETS = 0.5;
+
+/// CF-to-peak ratio below which the curve reads as endurance-limited (and at
+/// or above which, strength-limited). Exported for the same reason.
+export const CURVE_BIAS_RATIO = 0.35;
+
+export interface ZoneRecommendation {
+  zone: TrainingQuality;
+  reason: string;
+  /// Everything the pick was made from, so #214's detail page can show the
+  /// reasoning instead of restating the conclusion.
+  detail: {
+    /// Lowest set count across all four zones.
+    minSets: number;
+    /// Zones within TIE_BAND_SETS of `minSets` — the candidates.
+    tied: TrainingQuality[];
+    /// The pick before any curve bias: the least-trained tied candidate.
+    unbiasedZone: TrainingQuality;
+    /// CF as a fraction of predicted 5s peak force; null without a usable fit.
+    curveRatio: number | null;
+    /// Which side of the tie the curve steers toward, if it has an opinion.
+    curveBias: "endurance" | "strength" | null;
+    /// True when the bias actually moved the pick off `unbiasedZone`.
+    biasChangedPick: boolean;
+  };
+}
 
 /// Recommend the quality to focus on next: the least-trained zone by
 /// duration-normalised set count, with the force curve breaking near-ties.
@@ -138,7 +166,7 @@ const TIE_BAND_SETS = 0.5;
 export function recommendZone(
   sets: Record<TrainingQuality, number>,
   model: ForceCurveModel | null,
-): { zone: TrainingQuality; reason: string } | null {
+): ZoneRecommendation | null {
   const total = ZONE_ORDER.reduce((s, z) => s + sets[z], 0);
   if (total === 0) return null;
 
@@ -154,14 +182,21 @@ export function recommendZone(
   }
   const enduranceSide: TrainingQuality[] = ["endurance", "power-endurance"];
   const strengthSide: TrainingQuality[] = ["power", "strength"];
+  const curveBias: "endurance" | "strength" | null =
+    ratio === null ? null : ratio < CURVE_BIAS_RATIO ? "endurance" : "strength";
   const bias =
-    ratio === null ? null : ratio < 0.35 ? enduranceSide : strengthSide;
+    curveBias === null
+      ? null
+      : curveBias === "endurance"
+        ? enduranceSide
+        : strengthSide;
 
   // Unbiased pick is the true minimum among the tied candidates, not the
   // first one in ZONE_ORDER — the band above admits candidates that aren't
   // the actual minimum, so picking tied[0] would favor `power` (first in
   // ZONE_ORDER) any time it's within band of a genuinely lower zone.
   let zone = tied.reduce((a, b) => (sets[b] < sets[a] ? b : a));
+  const unbiasedZone = zone;
   if (tied.length > 1 && bias) {
     // Same reasoning on the biased side: take the least-trained zone the curve
     // steers toward, not the first one in ZONE_ORDER. `find` would return
@@ -184,5 +219,16 @@ export function recommendZone(
   if (ratio !== null) {
     reason += ` · CF is ${Math.round(ratio * 100)}% of peak`;
   }
-  return { zone, reason };
+  return {
+    zone,
+    reason,
+    detail: {
+      minSets: min,
+      tied,
+      unbiasedZone,
+      curveRatio: ratio,
+      curveBias,
+      biasChangedPick: zone !== unbiasedZone,
+    },
+  };
 }
