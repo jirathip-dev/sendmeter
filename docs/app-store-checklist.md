@@ -17,6 +17,51 @@ for the App Store Connect forms.
   are painful to review).
 - **Usage strings**: Bluetooth (iOS + watch), HealthKit share/read, Motion — all set.
 - **No Sign in with Apple requirement**: only email-based auth, no third-party login.
+- **Privacy manifests** (`PrivacyInfo.xcprivacy`, issue #226): one per shipped
+  bundle — see the section below. Without them App Store Connect bounces the
+  upload with **ITMS-91053: Missing API declaration** before review even starts.
+
+## Privacy manifests (`PrivacyInfo.xcprivacy`)
+
+Apple's rule is per-bundle, not per-app: *"For each executable or dynamic library
+in an app that uses a required reason API, the bundle that includes the
+executable or dynamic library needs to include a privacy manifest file that
+reports the API."* The watch app and both widget extensions ship as their own
+bundles inside the `.ipa`, so each needs its own file.
+
+| Bundle | File | Required-reason APIs declared |
+|---|---|---|
+| iOS app | `ios/App/App/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1` |
+| Watch app | `ios/App/SendLogWatch Watch App/PrivacyInfo.xcprivacy` | UserDefaults → `CA92.1` + `1C8F.1`; FileTimestamp → `C617.1` |
+| Watch complications extension | `ios/App/SendLogWatchWidgets/PrivacyInfo.xcprivacy` | UserDefaults → `1C8F.1` |
+| Phone Live Activity extension | `ios/App/SendmeterWidgets/PrivacyInfo.xcprivacy` | none (uses no required-reason API) |
+
+Reason codes, and why they differ per bundle:
+
+- **`CA92.1`** — user defaults "only accessible to the app itself". Covers every
+  `UserDefaults.standard` caller: `LiveActivityManager`'s pending-action queue
+  (linked into the App from `native-plugins/sendlog-live-activity`),
+  `@capacitor/preferences`, and on the watch `WorkoutManager`, `ForceGaugeView`
+  and `SendLogWatchCore`'s `RPEModel`.
+- **`1C8F.1`** — the App Group variant. `WidgetShared.swift` (both copies) uses
+  `UserDefaults(suiteName: "group.com.jirathip.sendlog")`, which is readable by
+  another bundle. CA92.1 explicitly does *not* permit "writing information that
+  can be accessed by other apps", so the App Group sites need 1C8F.1 instead.
+  The iOS App target has no App Group entitlement and so declares only CA92.1.
+- **`C617.1`** — file metadata "inside the app container". `OfflineQueue` and
+  `PendingSessionQueue` read `.creationDateKey` to drain
+  `Documents/pending{,-sessions}/*.json` oldest-first. `NSPrivacyAccessedAPI`
+  `CategoryFileTimestamp` is a required-reason API too, so it would have
+  triggered the same ITMS-91053 mail.
+
+Nothing upstream covers any of this: `@capacitor/ios` ships a manifest with an
+**empty** `NSPrivacyAccessedAPITypes` array, and `@capacitor/preferences` 8.0.1
+ships no manifest at all.
+
+`NSPrivacyCollectedDataTypes` mirrors the App Privacy table below — all four
+rows on the iOS app; the watch app declares the subset it actually uploads
+(health, fitness, user content, but never email or auth diagnostics); the two
+widget extensions collect nothing.
 
 ## App Store Connect: App Privacy answers ("nutrition label")
 
@@ -72,4 +117,10 @@ Put that email/password in the review notes.
 6. Export compliance: uses only standard TLS → answer "standard encryption,
    exempt" (France declaration auto-handled).
 7. Age rating questionnaire: all "None" → 4+.
-8. Xcode → Archive → Distribute (per app) → TestFlight first, then Submit.
+8. **Generate the privacy report** — Xcode → Product → Archive → right-click the
+   archive in the Organizer → **Generate Privacy Report**. Diff the PDF against
+   the App Privacy table above: the aggregated data types must match row for row,
+   and the required-reason section must list UserDefaults (`CA92.1`, `1C8F.1`)
+   and FileTimestamp (`C617.1`) and nothing else. This can only be done from
+   Xcode on a real archive — it is not reproducible in CI.
+9. Xcode → Archive → Distribute (per app) → TestFlight first, then Submit.
