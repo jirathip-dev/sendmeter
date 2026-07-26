@@ -5,15 +5,10 @@ import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { useRipple } from "../hooks/useRipple";
 import { healthLastSyncedAt } from "../lib/healthSync";
 import { fetchHealthMetrics } from "../lib/repo";
+import { ZONE_COLORS } from "../lib/readinessZones";
 import ChartTooltip from "./ChartTooltip";
 import InfoDot from "./InfoDot";
 import type { HealthMetric } from "../types";
-
-const ZONE_COLORS: Record<string, string> = {
-  push: "var(--success)",
-  maintain: "var(--warning)",
-  recover: "var(--danger)",
-};
 
 /// Local wall-clock "7:12" for the score-as-of line (#112).
 function timeOfDay(iso: string): string {

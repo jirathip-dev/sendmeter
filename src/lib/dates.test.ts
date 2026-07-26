@@ -1,5 +1,14 @@
-import { describe, it, expect } from "vitest";
-import { dateStr, today, daysAgo, localDayRange } from "./dates";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import {
+  dateStr,
+  dayOffsetFromToday,
+  daysAgo,
+  daysAhead,
+  localDayRange,
+  parseLocalDate,
+  relativeDayLabel,
+  today,
+} from "./dates";
 
 describe("dateStr", () => {
   it("formats a local date as zero-padded YYYY-MM-DD", () => {
@@ -27,6 +36,69 @@ describe("today / daysAgo", () => {
     const d = new Date();
     d.setDate(d.getDate() - 10);
     expect(daysAgo(10)).toBe(dateStr(d));
+  });
+});
+
+describe("daysAhead", () => {
+  it("daysAhead(0) is today and daysAhead(n) is strictly later", () => {
+    expect(daysAhead(0)).toBe(today());
+    expect(daysAhead(7) > today()).toBe(true);
+  });
+
+  it("mirrors daysAgo across zero and rolls over months", () => {
+    expect(daysAhead(-3)).toBe(daysAgo(3));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 1, 26, 9, 0, 0));
+    expect(daysAhead(3)).toBe("2026-03-01"); // 2026 is not a leap year
+    vi.useRealTimers();
+  });
+});
+
+describe("parseLocalDate / dayOffsetFromToday", () => {
+  it("parses at LOCAL midnight, not UTC", () => {
+    const d = parseLocalDate("2026-03-14");
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(2);
+    expect(d.getDate()).toBe(14);
+    expect(d.getHours()).toBe(0);
+  });
+
+  it("counts whole days either side of today", () => {
+    expect(dayOffsetFromToday(today())).toBe(0);
+    expect(dayOffsetFromToday(daysAhead(4))).toBe(4);
+    expect(dayOffsetFromToday(daysAgo(2))).toBe(-2);
+  });
+});
+
+describe("relativeDayLabel", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("names the near days in prose", () => {
+    expect(relativeDayLabel(daysAgo(1))).toBe("yesterday");
+    expect(relativeDayLabel(today())).toBe("today");
+    expect(relativeDayLabel(daysAhead(1))).toBe("tomorrow");
+  });
+
+  it("uses the bare weekday inside the coming week", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 2, 15, 12, 0, 0)); // Sunday
+    expect(relativeDayLabel("2026-03-19")).toBe(
+      parseLocalDate("2026-03-19").toLocaleDateString(undefined, { weekday: "long" }),
+    );
+  });
+
+  it("falls back to a date once a weekday would be ambiguous", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 2, 15, 12, 0, 0));
+    // 7 days out is the SAME weekday as today — name it by date instead.
+    expect(relativeDayLabel("2026-03-22")).toBe(
+      parseLocalDate("2026-03-22").toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      }),
+    );
   });
 });
 

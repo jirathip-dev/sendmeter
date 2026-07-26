@@ -1,7 +1,13 @@
 import { useState } from "react";
 import Sheet from "./Sheet";
 
-export type InfoTopic = "acwr" | "readiness" | "forceCurve" | "gaugeTarget" | "phaseStepBack";
+export type InfoTopic =
+  | "acwr"
+  | "acwrProjection"
+  | "readiness"
+  | "forceCurve"
+  | "gaugeTarget"
+  | "phaseStepBack";
 
 const CONTENT: Record<
   InfoTopic,
@@ -28,6 +34,39 @@ const CONTENT: Record<
       {
         heading: "Take it as a guide",
         text: "ACWR is a screening heuristic, not a prescription. Treat sustained red zones as a prompt to look at sleep, finger niggles and volume — not as a hard rule.",
+      },
+    ],
+  },
+  acwrProjection: {
+    title: "How the 7-day projection works",
+    body: [
+      {
+        heading: "It assumes you train nothing",
+        text: "Every day on this curve is a full rest day — no climbing, no board, no hangs. It is not a forecast of what will happen; it's what happens if you do nothing. Log a session and the curve is redrawn from the new number.",
+      },
+      {
+        heading: "Why it slides down",
+        text: "The acute (≈7-day) average decays faster than the chronic (≈28-day) one, so a rest day multiplies ACWR by about 0.81 — roughly 19% a day, and by the same factor whatever ratio you start from. From 1.20, two rest days already put you under 0.80.",
+      },
+      {
+        heading: "Measured against your phase band",
+        text: "The shaded band is the current phase's target band — the same one the phase strip shows — not the universal 0.8–1.3 risk zone. A power phase legitimately sits lower than a capacity phase, so the phase band is the honest comparison.",
+      },
+      {
+        heading: "The session it quotes",
+        text: "Session load is duration × RPE, so a load target is also a session. The suggestion prices the band floor at RPE 6 on the day the curve would drop out, assuming you rest until then. It's one day's arithmetic, not a training plan — the same load at a different RPE works just as well.",
+      },
+      {
+        heading: "Seven days is the honest limit",
+        text: "Every day you deviate from 'no training' the rest of the curve becomes fiction, and deviation is the normal case. A 4-week version would look more useful while being less true.",
+      },
+      {
+        heading: "Readiness is today's, never projected",
+        text: "HRV, resting heart rate and sleep can't be forecast — the readiness shown here is the current score, sitting alongside the projection rather than inside it.",
+      },
+      {
+        heading: "A guardrail, not a target",
+        text: "This card doesn't say whether to train. It shows what happens if you don't, and what it would take to change that; whether that's the right call is yours — readiness, how your fingers feel, and what's in the week all outrank a ratio.",
       },
     ],
   },

@@ -164,6 +164,13 @@ export function suggestPhaseStepBack(
 
 const EWMA_LOOKBACK_DAYS = 90;
 
+/// The two EWMA windows behind the acute:chronic ratio. Exported so the
+/// forward projection (`acwrProjection.ts`) derives its decay constants from
+/// the same spans rather than restating them — a projection that disagrees
+/// with the ratio it extends is worse than no projection.
+export const ACUTE_SPAN_DAYS = 7;
+export const CHRONIC_SPAN_DAYS = 28;
+
 /// Exponentially-weighted moving average over a daily series, null-aware:
 /// leading nulls stay null (nothing to average yet — the EMA seeds at the
 /// first non-null value), and interior nulls carry the previous EMA forward
@@ -185,15 +192,18 @@ export function ewma(
   return out;
 }
 
-/// Exponentially-weighted acute:chronic ratio (Williams et al. 2016), which
-/// the literature now favors over the plain rolling-average ratio: it
-/// weights recent days more heavily and avoids "mathematical coupling"
-/// (the acute window being a literal subset of the chronic window), giving
-/// a more sensitive, more responsive signal. Both EWMAs are seeded with the
-/// window's mean load (not a raw first-day value) to shrink the start-up
-/// bias inherent to any EWMA — by 90 daily steps the seed's influence on
-/// the chronic term has decayed to under 1%.
-function ewmaAcwr(sessions: Session[]): number | null {
+/// The pair of exponentially-weighted load averages the ACWR ratio is built
+/// from, as of today. Both are in the same AU units as `Session.load`.
+export interface EwmaLoadState {
+  acute: number;
+  chronic: number;
+}
+
+/// The acute/chronic EWMA terms behind `ewmaAcwr` — the ratio's numerator and
+/// denominator, kept separately so they can be stepped forward day by day
+/// (`acwrProjection.ts`). Null when there is no load at all in the lookback
+/// window (nothing to average).
+export function ewmaLoadState(sessions: Session[]): EwmaLoadState | null {
   const loadByDate = new Map<string, number>();
   for (const s of sessions) {
     loadByDate.set(s.date, (loadByDate.get(s.date) ?? 0) + s.load);
@@ -208,9 +218,24 @@ function ewmaAcwr(sessions: Session[]): number | null {
   // window mean reproduces the original mean-seeded recurrence exactly.
   const seed = dailyLoads.reduce((s, v) => s + v, 0) / dailyLoads.length;
   const series = [seed, ...dailyLoads];
-  const emaAcute = ewma(series, 7)[series.length - 1]!;
-  const emaChronic = ewma(series, 28)[series.length - 1]!;
-  return emaChronic > 0 ? emaAcute / emaChronic : null;
+  return {
+    acute: ewma(series, ACUTE_SPAN_DAYS)[series.length - 1]!,
+    chronic: ewma(series, CHRONIC_SPAN_DAYS)[series.length - 1]!,
+  };
+}
+
+/// Exponentially-weighted acute:chronic ratio (Williams et al. 2016), which
+/// the literature now favors over the plain rolling-average ratio: it
+/// weights recent days more heavily and avoids "mathematical coupling"
+/// (the acute window being a literal subset of the chronic window), giving
+/// a more sensitive, more responsive signal. Both EWMAs are seeded with the
+/// window's mean load (not a raw first-day value) to shrink the start-up
+/// bias inherent to any EWMA — by 90 daily steps the seed's influence on
+/// the chronic term has decayed to under 1%.
+function ewmaAcwr(sessions: Session[]): number | null {
+  const state = ewmaLoadState(sessions);
+  if (state === null) return null;
+  return state.chronic > 0 ? state.acute / state.chronic : null;
 }
 
 export function computeAcwr(sessions: Session[]): AcwrData {

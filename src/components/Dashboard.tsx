@@ -7,6 +7,7 @@ import type {
   Session,
   WeeklyLoad,
 } from "../types";
+import AcwrProjectionCard from "./AcwrProjectionCard";
 import ChartTooltip from "./ChartTooltip";
 import ContributionHeatmap from "./ContributionHeatmap";
 import InfoDot from "./InfoDot";
@@ -409,6 +410,15 @@ export default function Dashboard({
             </span>
           </div>
         </div>
+
+        {/* Where that ratio goes with no training (#224) — sits directly
+            under the ACWR it extends, and reuses this component's readiness
+            fetch rather than opening a third one. */}
+        <AcwrProjectionCard
+          phase={phase}
+          sessions={sessions}
+          latestReadiness={readinessHistory[readinessHistory.length - 1] ?? null}
+        />
 
         {/* Weekly totals */}
         <div className="card">
