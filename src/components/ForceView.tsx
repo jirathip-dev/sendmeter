@@ -1176,6 +1176,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       {effectiveTag && zoneTag && (
         <ZoneFocusCard
           recordings={recordings.filter((r) => r.tag === effectiveTag)}
+          // The card is scoped to the TAG (both sides), not `zoneTag` — which
+          // carries the selected side and would overclaim (#214).
+          exercise={effectiveTag}
           model={model}
           onPick={(q) => setZoneSel(buildZoneSelection(model, q, zoneTag, false, intensityPct))}
         />

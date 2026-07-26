@@ -7,7 +7,8 @@ export type InfoTopic =
   | "readiness"
   | "forceCurve"
   | "gaugeTarget"
-  | "phaseStepBack";
+  | "phaseStepBack"
+  | "trainingBalance";
 
 const CONTENT: Record<
   InfoTopic,
@@ -122,6 +123,27 @@ const CONTENT: Record<
       {
         heading: "It's a suggestion, not a rule",
         text: "Capacity work (volume, lower intensity) lets you keep training while your recovery catches up, instead of grinding a high-intensity phase on an empty tank. Dismiss it if you'd rather push through — it won't nag again for this same low streak.",
+      },
+    ],
+  },
+  trainingBalance: {
+    title: "What Training balance counts",
+    body: [
+      {
+        heading: "One exercise, four weeks",
+        text: "Only holds tagged with the exercise named on the card, recorded in the last 28 days. Every other exercise is excluded, and so is anything older — so this is one exercise's balance, not your training as a whole. Left, right and both-hands holds all count toward it.",
+      },
+      {
+        heading: "Sets, not sessions",
+        text: "Each zone's total hold time in the window, divided by that zone's own protocol set length (power 6 × 5s = 30s; strength 5 × 10s = 50s; pow end 6 × 7s = 42s; endurance 8 × 30s = 240s). A short warm-up shows up as a fraction of a set rather than needing a whole session to register.",
+      },
+      {
+        heading: "The zone is inferred, not stored",
+        text: "Recordings don't record which zone you meant to train, so it's re-inferred from hold length: 1–6s power · 6–8.5s pow end · 8.5–20s strength · over 20s endurance. Those anchors sit close together, so short holds are inherently fuzzy and land as fractional credit either side of a boundary.",
+      },
+      {
+        heading: "Why History looks different",
+        text: "History lists every session for every exercise over all time, and badges each one with the zone that session alone was mostly in. Different scope, different window, different unit — the two are expected to disagree. Tap the card to see every number here traced back to the holds behind it.",
       },
     ],
   },

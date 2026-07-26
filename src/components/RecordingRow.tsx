@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchRecordingSamples } from "../lib/repo";
+import { QUALITIES } from "../lib/force-curve";
+import { bandFor } from "../lib/zoneBreakdown";
+import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
@@ -169,8 +172,9 @@ export default function RecordingRow({
     }
   }
 
+  const band = bandFor(rec.durationMs / 1000);
   const date = new Date(rec.recordedAt);
-  const dateLabel = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  const dateLabel =`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 
   return (
     <div
@@ -266,6 +270,16 @@ export default function RecordingRow({
             {rec.avgKg.toFixed(1)} kg
             {rec.setNo !== null && (
               <span style={{ color: "var(--info)" }}> · set {rec.setNo}</span>
+            )}
+            {/* #214: the zone this hold counts toward, and the duration band
+                that put it there — the classification is inferred from hold
+                length, so it should be visible next to that length rather
+                than only aggregated into a chart elsewhere. */}
+            {band && (
+              <span style={{ color: QUALITY_COLORS[band.zone] }}>
+                {" "}
+                · {QUALITIES.find((q) => q.id === band.zone)!.label} ({band.band})
+              </span>
             )}
           </div>
           {rec.note && (
