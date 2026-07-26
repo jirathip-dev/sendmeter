@@ -151,16 +151,24 @@ function AuthedApp({
   // on every foreground call regardless of whether anything actually
   // changed, so also require `changed` or the toast fires on every
   // foreground even with no new data.
-  // #223: bump realtime unconditionally (all sources), not just when
-  // toasting — the Supabase Realtime echo that normally bumps this isn't
-  // reliably delivered on a cold launch, so readiness/recovery cards (keyed
-  // on `realtimeVersion`) can stay stale until the app is restarted. Same
-  // defensive bump already used after "Clear & resync" in AccountSheet.tsx.
+  // #223: bump realtime on any source that actually landed new data — the
+  // Supabase Realtime echo that normally bumps this isn't reliably delivered
+  // on a cold launch, so readiness/recovery cards (keyed on `realtimeVersion`)
+  // can stay stale until the app is restarted. Same defensive bump already
+  // used after "Clear & resync" in AccountSheet.tsx.
+  //
+  // Gated on `changed`, NOT on source, and not unconditional: this event
+  // fires on every foreground including the cold-launch background sync, and
+  // a bump forces every realtime-keyed consumer to refetch (~10 components).
+  // Bumping unconditionally would trade a stale card for a full refetch on
+  // every app open. `changed` is the right gate — per healthSync.ts it
+  // reflects whether today's health_metrics row content actually differed,
+  // and it's carried for every source (unlike the toast's source check).
   useEffect(() => {
     const onHealthSynced = (e: Event) => {
       const detail = (e as CustomEvent<{ source?: HealthSyncSource; changed?: boolean }>)
         .detail;
-      bumpRealtime();
+      if (detail?.changed) bumpRealtime();
       if (detail?.source === "foreground" && detail.changed) {
         toast("Health data synced");
       }
