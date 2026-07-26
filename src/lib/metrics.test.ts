@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  ACUTE_SPAN_DAYS,
   ACWR_TRACK_GRADIENT,
+  CHRONIC_SPAN_DAYS,
+  ewmaLoadState,
   getACWRStatus,
   computeAcwr,
   computeWeeklyLoads,
@@ -196,6 +199,24 @@ describe("computeAcwr", () => {
     const dailyLoads = Array.from({ length: 90 }, (_, i) => (i * 13 + 7) % 47);
     const sessions = dailyLoads.map((load, i) => session(daysAgo(89 - i), load));
     expect(computeAcwr(sessions).acwr).toBeCloseTo(1.1151915681290694, 9);
+  });
+});
+
+describe("ewmaLoadState", () => {
+  it("is null when there's no load in the lookback window", () => {
+    expect(ewmaLoadState([])).toBeNull();
+    expect(ewmaLoadState([session(daysAgo(200), 500)])).toBeNull();
+  });
+
+  it("its acute/chronic pair IS computeAcwr's ratio — not a second opinion", () => {
+    const sessions = Array.from({ length: 40 }, (_, i) => session(daysAgo(i), 90 + i * 7));
+    const state = ewmaLoadState(sessions)!;
+    expect(state.acute / state.chronic).toBe(computeAcwr(sessions).acwr);
+  });
+
+  it("exposes the spans the ratio is built from", () => {
+    expect(ACUTE_SPAN_DAYS).toBe(7);
+    expect(CHRONIC_SPAN_DAYS).toBe(28);
   });
 });
 
