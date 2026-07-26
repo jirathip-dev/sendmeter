@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ZoneBreakdownPanel from "./ZoneBreakdownPanel";
 import ZoneFocusCard from "./ZoneFocusCard";
 import { zoneTrainingSets } from "../lib/zoneHistory";
+import { holdOrigin } from "../lib/zoneBreakdown";
 import type { TindeqRecordingMeta } from "../types";
 
 /// #214 — the disclosure this change is FOR: the card has to name its scope,
@@ -28,6 +29,10 @@ function rec(
     groupId: null,
     protocolRunId: null,
     setNo: null,
+    // Default: a pre-#259 recording, with no zone stored — the shape every
+    // existing row has, so these tests keep asserting the inferred path
+    // unless a case opts into a recorded zone.
+    zone: null,
     ...over,
   };
 }
@@ -73,7 +78,56 @@ describe("ZoneBreakdownPanel (#214)", () => {
     expect(t).toContain("over 20s");
     expect(t).toContain("anchor hold 5s");
     expect(t).toContain("inherently fuzzy");
-    expect(t).toContain("Recordings don't store which zone you meant to train");
+    // #259 split the caveat in two: recorded holds use the zone they were
+    // performed under, everything else is still inferred from hold length.
+    expect(t).toContain("stores the zone it was performed under");
+    expect(t).toContain("has its zone inferred from how long the hold lasted");
+  });
+
+  // #259 — the distinction the column exists to make, on screen.
+  describe("recorded vs inferred (#259)", () => {
+    const mixed = [
+      rec("2026-07-20T10:00:00Z", 10, { zone: "strength" }),
+      rec("2026-07-20T10:05:00Z", 12, { zone: "strength" }),
+      rec("2026-07-20T10:10:00Z", 12), // pre-#259 row — inferred
+    ];
+
+    it("says how many of a zone's holds were recorded and how many were guessed", () => {
+      const t = text(renderToStaticMarkup(<ZoneBreakdownPanel recs={mixed} />));
+      expect(t).toContain("2 recorded as Strength · 1 inferred from hold length");
+    });
+
+    it("says nothing about sources when every hold is a pre-#259 row", () => {
+      const t = text(
+        renderToStaticMarkup(
+          <ZoneBreakdownPanel recs={[rec("2026-07-20T10:00:00Z", 10)]} />,
+        ),
+      );
+      expect(t).not.toContain("recorded as");
+      expect(t).not.toContain("inferred from hold length");
+    });
+
+    it("labels each hold in the expanded list with its own source", () => {
+      // The list is behind a disclosure button, so render the holds directly
+      // through the same helper the row uses.
+      expect(holdOrigin(mixed[0]!).short).toBe("recorded");
+      expect(holdOrigin(mixed[2]!).short).toBe("8.5–20s");
+      expect(holdOrigin(mixed[2]!).long).toBe("inferred from a 12s hold");
+    });
+
+    it("keeps a recorded hold in the zone it was recorded under, not its duration band", () => {
+      // A 12s hold recorded as Power: the panel must show it under Power,
+      // with power's own divisor — the whole point of storing it.
+      const t = text(
+        renderToStaticMarkup(
+          <ZoneBreakdownPanel
+            recs={[rec("2026-07-20T10:00:00Z", 12, { zone: "power" })]}
+          />,
+        ),
+      );
+      expect(t).toContain("12.0s of holds ÷ 30s per set (5s × 6 reps) = 0.4");
+      expect(t).toContain("1 recorded as Power");
+    });
   });
 });
 

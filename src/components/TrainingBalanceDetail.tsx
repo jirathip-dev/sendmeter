@@ -2,7 +2,12 @@ import type { ReactNode } from "react";
 import { dateStr } from "../lib/dates";
 import { QUALITIES, type TrainingQuality } from "../lib/force-curve";
 import { holdsInWindow } from "../lib/zoneBreakdown";
-import { CURVE_BIAS_RATIO, TIE_BAND_SETS, type ZoneRecommendation } from "../lib/zoneHistory";
+import {
+  CURVE_BIAS_RATIO,
+  recordingZone,
+  TIE_BAND_SETS,
+  type ZoneRecommendation,
+} from "../lib/zoneHistory";
 import { QUALITY_COLORS } from "../lib/zoneSelection";
 import type { TindeqRecordingMeta } from "../types";
 import DetailPage from "./DetailPage";
@@ -73,6 +78,9 @@ export default function TrainingBalanceDetail({
   // Scoped with the same filter the bars use (`holdsInWindow`), not a second
   // copy of the cutoff rule.
   const windowRecs = holdsInWindow(recordings, now, windowDays);
+  const recorded = windowRecs.filter(
+    (r) => recordingZone(r).source === "recorded",
+  ).length;
   const d = rec.detail;
   const tiedOthers = d.tied.filter((z) => z !== rec.zone);
 
@@ -100,6 +108,27 @@ export default function TrainingBalanceDetail({
           length, so a 5-minute warm-up registers as a fraction of a set instead
           of a whole session. {windowRecs.length} recording
           {windowRecs.length === 1 ? "" : "s"} fed the numbers below.
+        </ScopeRow>
+        {/* #259: the page's numbers are part fact, part inference — say how
+            much of each rather than letting the reader assume all fact. */}
+        <ScopeRow label="Recorded vs inferred zones">
+          {recorded === 0 ? (
+            <>
+              None of these holds store the zone they were performed under, so
+              every one is bucketed by how long it lasted. Only holds recorded
+              under an armed zone or preset carry the real thing.
+            </>
+          ) : (
+            <>
+              {recorded} of {windowRecs.length} hold
+              {windowRecs.length === 1 ? "" : "s"} store the zone they were
+              performed under and are counted as that;{" "}
+              {windowRecs.length - recorded === 0
+                ? "none are inferred"
+                : `the other ${windowRecs.length - recorded} have it inferred from hold length`}
+              .
+            </>
+          )}
         </ScopeRow>
         <ScopeRow label="Why History reads differently">
           History lists every session for every exercise over all time, and

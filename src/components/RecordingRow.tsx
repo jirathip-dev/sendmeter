@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchRecordingSamples } from "../lib/repo";
-import { QUALITIES } from "../lib/force-curve";
-import { bandFor } from "../lib/zoneBreakdown";
+import { holdOrigin } from "../lib/zoneBreakdown";
 import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
@@ -172,7 +171,7 @@ export default function RecordingRow({
     }
   }
 
-  const band = bandFor(rec.durationMs / 1000);
+  const origin = holdOrigin(rec);
   const date = new Date(rec.recordedAt);
   const dateLabel =`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 
@@ -271,14 +270,15 @@ export default function RecordingRow({
             {rec.setNo !== null && (
               <span style={{ color: "var(--info)" }}> · set {rec.setNo}</span>
             )}
-            {/* #214: the zone this hold counts toward, and the duration band
-                that put it there — the classification is inferred from hold
-                length, so it should be visible next to that length rather
-                than only aggregated into a chart elsewhere. */}
-            {band && (
-              <span style={{ color: QUALITY_COLORS[band.zone] }}>
+            {/* #214: the zone this hold counts toward, and what put it there
+                — visible next to the hold length rather than only aggregated
+                into a chart elsewhere. #259: that's either the zone the hold
+                was recorded under (a fact) or the duration band it was
+                inferred from (a guess), and the row says which. */}
+            {origin.zone && (
+              <span style={{ color: QUALITY_COLORS[origin.zone] }}>
                 {" "}
-                · {QUALITIES.find((q) => q.id === band.zone)!.label} ({band.band})
+                · {origin.label} ({origin.short})
               </span>
             )}
           </div>

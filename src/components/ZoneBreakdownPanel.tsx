@@ -5,7 +5,7 @@ import {
   type TrainingQuality,
 } from "../lib/force-curve";
 import {
-  bandFor,
+  holdOrigin,
   ZONE_BAND_CAVEAT,
   ZONE_BANDS,
   zoneBreakdown,
@@ -49,7 +49,7 @@ function HoldList({
   return (
     <div style={{ marginTop: 6, marginLeft: 14 }}>
       {holds.map((h) => {
-        const band = bandFor(h.durationS);
+        const origin = holdOrigin(h.rec);
         const side = sideLabel(h.rec.side);
         return (
           <div
@@ -68,8 +68,9 @@ function HoldList({
               {showTag && h.rec.tag ? ` · ${h.rec.tag}` : ""}
               {side ? ` · ${side}` : ""}
             </span>
+            {/* "recorded" or the duration band it was inferred from (#259). */}
             <span style={{ flexShrink: 0, color: "var(--ink)" }}>
-              {fmt1(h.durationS)}s{band ? ` · ${band.band}` : ""}
+              {fmt1(h.durationS)}s{origin.short ? ` · ${origin.short}` : ""}
             </span>
           </div>
         );
@@ -86,6 +87,8 @@ function ZoneRow({
   sets,
   reps,
   holdS,
+  recordedCount,
+  inferredCount,
   showTag,
 }: {
   zone: TrainingQuality;
@@ -95,6 +98,8 @@ function ZoneRow({
   sets: number;
   reps: number;
   holdS: number;
+  recordedCount: number;
+  inferredCount: number;
   showTag?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -141,6 +146,24 @@ function ZoneRow({
           </>
         )}
       </div>
+      {/* #259: where these holds' zone came from. Only shown once at least
+          one hold carries its own — with none, everything here is inferred
+          and the caveat at the foot of the panel already says so. */}
+      {recordedCount > 0 && (
+        <div
+          style={{
+            fontSize: "var(--t-2xs)",
+            color: "var(--ink-faint)",
+            marginLeft: 15,
+            marginTop: 2,
+          }}
+        >
+          {recordedCount} recorded as {label}
+          {inferredCount > 0
+            ? ` · ${inferredCount} inferred from hold length`
+            : ""}
+        </div>
+      )}
       {holds.length > 0 && (
         <>
           <button
@@ -189,6 +212,8 @@ export default function ZoneBreakdownPanel({ recs, showTag }: Props) {
             sets={e.sets}
             holdS={zp.holdS}
             reps={zp.reps}
+            recordedCount={e.recordedCount}
+            inferredCount={e.inferredCount}
             showTag={showTag}
           />
         );

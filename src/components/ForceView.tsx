@@ -45,6 +45,7 @@ import {
   applyIntensity,
   buildZoneSelection,
   loadIntensity,
+  performedQuality,
   saveIntensity,
   type ZoneSelection,
 } from "../lib/zoneSelection";
@@ -288,6 +289,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       groupId: ensureSession(),
       protocolRunId: protocolRunIdRef.current,
       setNo: seg.set,
+      // #259: stamp the quality this rep was PERFORMED under — the armed
+      // zone's own quality, or the custom preset's load-aware badge at THIS
+      // set's target (per-set ramps can move it). Without this the load half
+      // of that decision is thrown away and the hold gets re-classified from
+      // duration alone on every later read.
+      zone: performedQuality(
+        activeProtocol,
+        activeProtocol ? presetTargetKg(activeProtocol, presetRefs, seg.set) : null,
+        presetRefs,
+      ),
       samples: slice,
     };
     try {
@@ -393,6 +404,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       groupId: ensureSession(),
       protocolRunId: null,
       setNo: null,
+      // Freehand pull — this branch only runs with no protocol armed, so
+      // there is no zone the hold was performed under. Null, not a guess:
+      // readers infer one from duration and can say that they did (#259).
+      zone: null,
       samples: summary.samples,
     };
     try {
