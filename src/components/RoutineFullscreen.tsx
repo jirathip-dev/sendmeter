@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import { ROUTINE_TIMER_FONT, heroFontCss } from "../lib/fullscreenLayout";
 import { expandRoutine, routineDurationS } from "../lib/routine";
 import {
   clearRoutineRun,
@@ -267,7 +268,9 @@ export default function RoutineFullscreen({
           <div
             style={{
               fontWeight: 800,
-              fontSize: "clamp(56px, 20vw, 120px)",
+              // Height-aware (#221): this overlay already fits 375×667, but a
+              // width-only clamp would still overflow a short viewport.
+              fontSize: heroFontCss(ROUTINE_TIMER_FONT),
               lineHeight: 1.1,
               color: "var(--ink)",
             }}
