@@ -49,3 +49,7 @@ fastlane/certs/
 
 .worktrees/
 .agent-runs/
+.vercel
+.env*
+# ...but keep the committed template the Fastfile points at.
+!fastlane/.env.example
