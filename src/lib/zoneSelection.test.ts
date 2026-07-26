@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
+  applyIntensity,
   buildZoneSelection,
   loadIntensity,
   saveIntensity,
@@ -71,6 +72,62 @@ describe("buildZoneSelection", () => {
     const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
     const result = buildZoneSelection(model, "strength", "FDP L", false);
     expect(result!.protocol.alternateSides).toBe(false);
+  });
+});
+
+describe("applyIntensity", () => {
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+  const custom: ZoneSelection = {
+    target: { kg: 30, lowKg: 28, highKg: 32, workS: 10, label: "Custom" },
+    protocol: {
+      id: "custom-1",
+      name: "Custom",
+      holdS: 10,
+      reps: 5,
+      sets: 1,
+      restRepsS: 150,
+      restSetsS: 0,
+      targetKg: 30,
+      targetPct: null,
+      pctBasis: "pr",
+      pctStep: 0,
+      targetCurve: false,
+      alternateSides: true,
+    },
+  };
+
+  it("re-derives an armed zone at the new intensity", () => {
+    const armed = buildZoneSelection(model, "strength", "FDP L", false, 100)!;
+    const lighter = applyIntensity(armed, model, "FDP L", 80)!;
+    expect(lighter.target.kg).toBeCloseTo(armed.target.kg * 0.8, 5);
+    expect(lighter.protocol.targetKg).toBe(lighter.target.kg);
+    // Lighter load ⇒ the hold is extended to keep the dose equivalent.
+    expect(lighter.protocol.holdS).toBeGreaterThan(armed.protocol.holdS);
+  });
+
+  it("preserves the zone's alternate-sides setting", () => {
+    const armed = buildZoneSelection(model, "strength", "FDP L", true, 100)!;
+    expect(applyIntensity(armed, model, "FDP L", 90)!.protocol.alternateSides).toBe(true);
+  });
+
+  it("leaves a custom preset completely untouched (the dial is zones-only)", () => {
+    // The boundary that matters: PresetManager presets keep the load the user
+    // configured no matter where the intensity dial sits.
+    expect(applyIntensity(custom, model, "FDP L", 60)).toBe(custom);
+    expect(applyIntensity(custom, model, "FDP L", 110)).toBe(custom);
+  });
+
+  it("passes a null selection through", () => {
+    expect(applyIntensity(null, model, "FDP L", 80)).toBeNull();
+  });
+
+  it("keeps the current selection when the zone can no longer be derived", () => {
+    const armed = buildZoneSelection(model, "endurance", "FDP L", false, 100)!;
+    const noCf: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
+    // Endurance needs a CF fit — rather than silently disarming, keep it armed.
+    expect(applyIntensity(armed, noCf, "FDP L", 80)).toBe(armed);
+    expect(applyIntensity(armed, null, "FDP L", 80)).toBe(armed);
+    expect(applyIntensity(armed, model, null, 80)).toBe(armed);
   });
 });
 
