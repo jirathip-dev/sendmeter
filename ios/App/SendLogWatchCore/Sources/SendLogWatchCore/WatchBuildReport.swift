@@ -63,6 +63,28 @@ public enum WatchBuildStatus: String, Sendable, Equatable {
     case unknown
 }
 
+/// What the account sheet should say about the watch's offline upload queues
+/// (#21). Same honest-states rule as `WatchBuildStatus`: an empty queue and a
+/// watch that has never reported one are different facts, and only the first
+/// of them means "nothing is stuck".
+public enum WatchSyncStatus: String, Sendable, Equatable {
+    /// No watch paired, or a device that can't have one (iPad).
+    case notPaired = "not-paired"
+    /// Watch paired, Sendmeter not installed on it.
+    case appNotInstalled = "app-not-installed"
+    /// Watch app installed but has never reported a queue depth to this phone
+    /// install — nothing is known, which is NOT the same as nothing pending.
+    case notReported = "not-reported"
+    /// WCSession hasn't activated yet — "can't tell", not "fine".
+    case unknown
+    /// Reported zero pending items: everything the watch recorded has landed.
+    case empty
+    /// A few items waiting — normal right after an offline session.
+    case pending
+    /// Enough items queued that the watch is probably not draining at all.
+    case backedUp = "backed-up"
+}
+
 /// Pairing facts as WatchConnectivity reports them on the phone. `paired` /
 /// `appInstalled` are only meaningful once the session has activated, which
 /// is why activation is carried alongside them rather than collapsed away.
@@ -87,18 +109,29 @@ public struct WatchPairing: Sendable, Equatable {
 public enum WatchBuildReport {
     public static let versionKey = "watch_app_version"
     public static let buildKey = "watch_app_build"
+    /// Depth of the watch's offline upload queues at send time (#21) — the
+    /// same telemetry channel as the build, so a stuck queue is visible from
+    /// the phone without picking the watch up.
+    public static let pendingSyncKey = "watch_pending_sync"
 
-    /// Adds the build fields to an outgoing watch→phone message. A nil
-    /// identity leaves the message untouched — reporting is observability, so
-    /// it must never be able to break the message it rides on.
+    /// Adds the report fields to an outgoing watch→phone message. Anything
+    /// unknown is simply left off — reporting is observability, so it must
+    /// never be able to break the message it rides on, and the two facts are
+    /// independent (a build with no queue reading still identifies the
+    /// sender). A negative count is treated as no reading at all.
     public static func stamped(
         _ message: [String: Any],
-        with identity: BuildIdentity?
+        with identity: BuildIdentity?,
+        pendingSync: Int? = nil
     ) -> [String: Any] {
-        guard let identity else { return message }
         var out = message
-        out[versionKey] = identity.version
-        out[buildKey] = identity.build
+        if let identity {
+            out[versionKey] = identity.version
+            out[buildKey] = identity.build
+        }
+        if let pendingSync, pendingSync >= 0 {
+            out[pendingSyncKey] = pendingSync
+        }
         return out
     }
 
@@ -110,12 +143,31 @@ public enum WatchBuildReport {
         )
     }
 
-    /// Drops the build fields before the payload is forwarded to the WebView —
+    /// Pulls the reported queue depth back out on the phone side. nil when the
+    /// message carries no reading (an older watch build, or a watch that has
+    /// not counted its queues yet) — "we don't know" must stay distinguishable
+    /// from "the queue is empty". WatchConnectivity round-trips the number as
+    /// whatever `NSNumber` fits it, hence the widening reads.
+    public static func pendingSync(in message: [String: Any]) -> Int? {
+        let raw: Int?
+        if let i = message[pendingSyncKey] as? Int {
+            raw = i
+        } else if let n = message[pendingSyncKey] as? Double {
+            raw = Int(n)
+        } else {
+            raw = nil
+        }
+        guard let raw, raw >= 0 else { return nil }
+        return raw
+    }
+
+    /// Drops the report fields before the payload is forwarded to the WebView —
     /// the live-workout / live-force message shapes stay exactly as they were.
     public static func stripped(_ message: [String: Any]) -> [String: Any] {
         var out = message
         out.removeValue(forKey: versionKey)
         out.removeValue(forKey: buildKey)
+        out.removeValue(forKey: pendingSyncKey)
         return out
     }
 
@@ -135,5 +187,36 @@ public enum WatchBuildReport {
             return w < p ? .watchBehind : .watchAhead
         }
         return .differs
+    }
+
+    /// At this many queued items the queue reads as stuck rather than as a
+    /// session waiting for signal: the watch drains on every launch and
+    /// foreground, so a handful of items means several sessions in a row
+    /// failed to upload.
+    public static let backedUpThreshold = 5
+
+    /// A report older than this describes a queue that may well have drained
+    /// since — the count is still the only number we have, but it can no
+    /// longer be read as current.
+    public static let pendingSyncStaleAfterS: Double = 24 * 60 * 60
+
+    public static func syncStatus(
+        pendingSync: Int?,
+        pairing: WatchPairing
+    ) -> WatchSyncStatus {
+        guard pairing.supported else { return .notPaired }
+        guard pairing.activated else { return .unknown }
+        guard pairing.paired else { return .notPaired }
+        guard pairing.appInstalled else { return .appNotInstalled }
+        guard let pendingSync, pendingSync >= 0 else { return .notReported }
+        if pendingSync == 0 { return .empty }
+        return pendingSync >= backedUpThreshold ? .backedUp : .pending
+    }
+
+    /// Whether a reported count is old enough that it describes the past
+    /// rather than the present. `now` is injected so this is testable.
+    public static func isPendingSyncStale(reportedAt: Double?, now: Double) -> Bool {
+        guard let reportedAt, reportedAt > 0 else { return false }
+        return now - reportedAt > pendingSyncStaleAfterS
     }
 }

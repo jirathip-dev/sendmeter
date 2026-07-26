@@ -32,7 +32,7 @@ actor OfflineQueue {
         decoder.dateDecodingStrategy = .iso8601
         let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension == "json" } ?? []
-        return files.filter { file in
+        let count = files.filter { file in
             guard
                 let data = try? Data(contentsOf: file),
                 let bundle = try? decoder.decode(WorkoutSaveBundle.self, from: data)
@@ -40,6 +40,10 @@ actor OfflineQueue {
             return shouldDrain(itemUserId: bundle.enqueuedUserId, currentUserId: currentUserId)
                 || currentUserId == nil
         }.count
+        // Publish for the sync-readable stamp (#21): reading this actor is an
+        // await, which the WatchConnectivity send paths can't do.
+        PendingSyncCache.shared.record(count, for: .workouts)
+        return count
     }
 
     /// Persist first, then try to upload immediately (awaits the upload).
@@ -69,6 +73,7 @@ actor OfflineQueue {
         if let data = try? encoder.encode(bundle) {
             try? data.write(to: url, options: .atomic)
         }
+        _ = pendingCount() // refresh the reported depth (#21)
     }
 
     func drain() async {
@@ -116,5 +121,6 @@ actor OfflineQueue {
                 break // no network (or auth) — stop, retry next drain
             }
         }
+        _ = pendingCount() // refresh the reported depth (#21)
     }
 }

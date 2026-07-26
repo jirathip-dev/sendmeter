@@ -11,6 +11,7 @@ export class SendLogAuthBridgeWeb extends WebPlugin implements SendLogAuthBridge
   async getWatchInfo(): Promise<WatchBuildInfo> {
     return {
       status: "not-paired",
+      syncStatus: "not-paired",
       supported: false,
       activated: false,
       paired: false,

@@ -38,7 +38,7 @@ actor PendingSessionQueue {
         decoder.dateDecodingStrategy = .iso8601
         let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension == "json" } ?? []
-        return files.filter { file in
+        let count = files.filter { file in
             guard
                 let data = try? Data(contentsOf: file),
                 let session = try? decoder.decode(PendingTindeqSession.self, from: data)
@@ -46,6 +46,10 @@ actor PendingSessionQueue {
             return shouldDrain(itemUserId: session.enqueuedUserId, currentUserId: currentUserId)
                 || currentUserId == nil
         }.count
+        // Publish for the sync-readable stamp (#21): reading this actor is an
+        // await, which the WatchConnectivity send paths can't do.
+        PendingSyncCache.shared.record(count, for: .tindeqSessions)
+        return count
     }
 
     /// Persist the session and return as soon as it's on disk — the upload
@@ -69,6 +73,7 @@ actor PendingSessionQueue {
         if let data = try? encoder.encode(session) {
             try? data.write(to: url, options: .atomic)
         }
+        _ = pendingCount() // refresh the reported depth (#21)
     }
 
     func drain() async {
@@ -116,5 +121,6 @@ actor PendingSessionQueue {
                 break // no network (or auth) — stop, retry next drain
             }
         }
+        _ = pendingCount() // refresh the reported depth (#21)
     }
 }

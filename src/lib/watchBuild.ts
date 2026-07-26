@@ -1,8 +1,8 @@
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
-import type { WatchBuildInfo, WatchBuildStatus } from "sendlog-auth-bridge";
+import type { WatchBuildInfo, WatchBuildStatus, WatchSyncStatus } from "sendlog-auth-bridge";
 
-export type { WatchBuildInfo, WatchBuildStatus };
+export type { WatchBuildInfo, WatchBuildStatus, WatchSyncStatus };
 
 /// Issue #228: the watch app updates from TestFlight independently of the
 /// phone, so the two can sit builds apart — and a pre-#208 watch still rotates
@@ -75,5 +75,63 @@ export function watchBuildLine(info: WatchBuildInfo | null): WatchBuildLine | nu
     text,
     tone: WARNING_STATUSES.has(info.status) ? "warning" : "muted",
     ...(showsBuild && info.reportedAt !== undefined ? { reportedAt: info.reportedAt } : {}),
+  };
+}
+
+export interface WatchSyncLine {
+  /// The whole line minus the report timestamp, e.g. "Watch queue · 3 items
+  /// pending sync".
+  text: string;
+  /// "warning" is the actionable state — items that look stuck (#21).
+  tone: WatchBuildTone;
+  /// Epoch seconds of the report the count came from, whenever a count is
+  /// being shown. A count is only ever as current as its report.
+  reportedAt?: number;
+}
+
+/// Issue #21: the watch saves workouts and gauge sessions to a persist-first
+/// disk queue and drains them on launch/foreground — so a watch that can't
+/// reach Supabase (a gym basement, a stale token) holds real training data
+/// that never appears on the phone, and nothing on the phone says so. The
+/// watch stamps its queue depth onto the messages it already sends, the plugin
+/// records it, and this renders the state.
+///
+/// The honest-states rule matters more here than for the build: an empty queue
+/// and a watch that has never reported one look identical if both render as
+/// silence, so they say different things. A count also ages — the watch only
+/// reports when it talks to the phone, so a three-day-old "4 pending"
+/// describes a queue that may since have drained, and says so rather than
+/// claiming four items are stuck right now.
+///
+/// Returns null when there is no queue to describe (web, a paired-watch-less
+/// device, a pre-#21 native shell) or when the pairing itself is the story —
+/// the build line already says "not paired" / "Sendmeter not installed", and
+/// repeating it as a queue state would be noise.
+export function watchSyncLine(info: WatchBuildInfo | null): WatchSyncLine | null {
+  if (!info) return null;
+  const status = info.syncStatus;
+  if (status === undefined) return null;
+  if (status === "not-paired" || status === "app-not-installed" || status === "unknown") {
+    return null;
+  }
+  if (status === "not-reported") {
+    return { text: "Watch queue · sync state not reported yet", tone: "muted" };
+  }
+  const reported =
+    info.pendingSyncReportedAt !== undefined ? { reportedAt: info.pendingSyncReportedAt } : {};
+  if (status === "empty") {
+    return { text: "Watch queue · empty, everything synced", tone: "muted", ...reported };
+  }
+  const count = info.pendingSyncCount ?? 0;
+  const items = `${count} item${count === 1 ? "" : "s"} pending sync`;
+  const stale = info.pendingSyncStale === true;
+  return {
+    // A stale count must not be read as live: it's what the queue held the
+    // last time the watch spoke to this phone, not what it holds now.
+    text: `Watch queue · ${items}${stale ? " at last report" : ""}`,
+    // Backed up is the "it isn't draining" case; a stale count with items in
+    // it is the "and the watch stopped talking" case. Both are actionable.
+    tone: status === "backed-up" || stale ? "warning" : "muted",
+    ...reported,
   };
 }

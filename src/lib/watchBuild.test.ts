@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { watchBuildLine, type WatchBuildInfo, type WatchBuildStatus } from "./watchBuild";
+import {
+  watchBuildLine,
+  watchSyncLine,
+  type WatchBuildInfo,
+  type WatchBuildStatus,
+  type WatchSyncStatus,
+} from "./watchBuild";
 
 function info(status: WatchBuildStatus, over: Partial<WatchBuildInfo> = {}): WatchBuildInfo {
   return {
@@ -81,5 +87,93 @@ describe("watchBuildLine", () => {
 
   it("omits the timestamp when the watch never reported one", () => {
     expect(watchBuildLine(info("match", { watchDisplay: "1.4.0 (57)" }))?.reportedAt).toBeUndefined();
+  });
+});
+
+function sync(status: WatchSyncStatus, over: Partial<WatchBuildInfo> = {}): WatchBuildInfo {
+  return info("match", { watchDisplay: "1.4.0 (57)", syncStatus: status, ...over });
+}
+
+describe("watchSyncLine", () => {
+  it("renders nothing without info (web)", () => {
+    expect(watchSyncLine(null)).toBeNull();
+  });
+
+  it("renders nothing on a native shell that predates the field", () => {
+    // A phone whose compiled-in plugin has no syncStatus knows nothing about
+    // the queue — inventing a state for it would be a lie either way.
+    expect(watchSyncLine(info("match", { watchDisplay: "1.4.0 (57)" }))).toBeNull();
+  });
+
+  it("reports a queue that is actually draining", () => {
+    const line = watchSyncLine(sync("empty", { pendingSyncReportedAt: 1_780_000_000 }));
+    expect(line).toEqual({
+      text: "Watch queue · empty, everything synced",
+      tone: "muted",
+      reportedAt: 1_780_000_000,
+    });
+  });
+
+  it("never lets a watch that has never reported read as an empty queue", () => {
+    // The honest-states rule (#21/#228): silence and "nothing pending" are
+    // different facts, and only one of them means the watch is fine.
+    const line = watchSyncLine(sync("not-reported"));
+    expect(line?.text).toBe("Watch queue · sync state not reported yet");
+    expect(line?.text).not.toMatch(/empty|synced/);
+    expect(line?.tone).toBe("muted");
+    expect(line?.reportedAt).toBeUndefined();
+  });
+
+  it("counts pending items, singular and plural", () => {
+    expect(watchSyncLine(sync("pending", { pendingSyncCount: 1 }))?.text).toBe(
+      "Watch queue · 1 item pending sync",
+    );
+    expect(watchSyncLine(sync("pending", { pendingSyncCount: 3 }))?.text).toBe(
+      "Watch queue · 3 items pending sync",
+    );
+  });
+
+  it("keeps a handful of pending items muted", () => {
+    // Normal right after an offline session — the queue drains on the watch's
+    // next launch or foreground.
+    expect(watchSyncLine(sync("pending", { pendingSyncCount: 2 }))?.tone).toBe("muted");
+  });
+
+  it("flags a backed-up queue as the actionable state", () => {
+    // The point of #21: this is training data sitting on a wrist, invisible.
+    const line = watchSyncLine(sync("backed-up", { pendingSyncCount: 9 }));
+    expect(line?.text).toBe("Watch queue · 9 items pending sync");
+    expect(line?.tone).toBe("warning");
+  });
+
+  it("says when a count describes the past rather than the present", () => {
+    const line = watchSyncLine(
+      sync("pending", {
+        pendingSyncCount: 4,
+        pendingSyncStale: true,
+        pendingSyncReportedAt: 1_779_000_000,
+      }),
+    );
+    // A three-day-old "4 pending" may well have drained since — and a watch
+    // that stopped talking with items queued is worth flagging.
+    expect(line?.text).toBe("Watch queue · 4 items pending sync at last report");
+    expect(line?.tone).toBe("warning");
+    expect(line?.reportedAt).toBe(1_779_000_000);
+  });
+
+  it("carries the report time so a count can be judged for age", () => {
+    expect(
+      watchSyncLine(sync("pending", { pendingSyncCount: 2, pendingSyncReportedAt: 1_780_000_000 }))
+        ?.reportedAt,
+    ).toBe(1_780_000_000);
+  });
+
+  it("stays silent when the pairing itself is the story", () => {
+    // The build line already says "not paired" / "Sendmeter not installed" /
+    // "build unknown"; repeating it as a queue state would be noise, and a
+    // stale count from an unpaired watch is history.
+    expect(watchSyncLine(sync("not-paired", { paired: false, pendingSyncCount: 3 }))).toBeNull();
+    expect(watchSyncLine(sync("app-not-installed", { appInstalled: false }))).toBeNull();
+    expect(watchSyncLine(sync("unknown", { activated: false }))).toBeNull();
   });
 });
