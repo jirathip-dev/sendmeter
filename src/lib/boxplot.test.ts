@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boxStats, fiveNumberSummary } from "./boxplot";
+import { boxStats, fiveNumberSummary, median } from "./boxplot";
 
 describe("fiveNumberSummary (issue #100)", () => {
   it("is null for empty input", () => {
@@ -54,6 +54,47 @@ describe("fiveNumberSummary (issue #100)", () => {
       q3: 4,
       max: 5,
     });
+  });
+});
+
+describe("median (issue #184)", () => {
+  it("is null for empty input", () => {
+    expect(median([])).toBeNull();
+  });
+
+  it("is the value itself for a single reading", () => {
+    expect(median([7])).toBe(7);
+  });
+
+  it("averages the two middle values for an even count", () => {
+    expect(median([1, 2, 3, 4])).toBe(2.5);
+    expect(median([1, 2])).toBe(1.5);
+  });
+
+  it("is the middle value for an odd count", () => {
+    expect(median([1, 2, 3, 4, 5])).toBe(3);
+    expect(median([1, 2, 3])).toBe(2);
+  });
+
+  it("sorts unsorted input before picking the middle", () => {
+    expect(median([5, 1, 4, 2, 3])).toBe(3);
+    expect(median([9, 1, 8, 2])).toBe(5);
+  });
+
+  it("does not mutate the caller's array", () => {
+    const values = [3, 1, 2];
+    median(values);
+    expect(values).toEqual([3, 1, 2]);
+  });
+
+  it("agrees with fiveNumberSummary's median", () => {
+    for (const values of [[4], [1, 9], [5, 3, 8], [2, 7, 1, 6], [0, 0, 0, 1, 100]]) {
+      expect(median(values)).toBe(fiveNumberSummary(values)!.median);
+    }
+  });
+
+  it("handles a flat series (every day the same score)", () => {
+    expect(median([42, 42, 42, 42])).toBe(42);
   });
 });
 
