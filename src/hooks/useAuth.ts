@@ -10,7 +10,6 @@ import {
 } from "../lib/authDiagnostics";
 import { flushAuthEvents } from "../lib/authEventFlush";
 import { upsertAuthEvents } from "../lib/repo";
-import { loadBuildTag } from "../lib/appVersion";
 import {
   onWatchSessionRequest,
   relaySessionToWatch,
@@ -53,9 +52,16 @@ export function useAuth() {
     }
 
     // Moves the ring onto Preferences (native) and checks the storage-wipe
-    // canary. Order-independent: anything recorded before it resolves is
-    // merged in, so the auth path below never waits on it.
-    void loadBuildTag().then((build) => initAuthDiagnostics({ build }));
+    // canary. Must be called SYNCHRONOUSLY, on this tick, before anything
+    // below can record: writes are deferred only while an init is in
+    // FLIGHT, so a not-yet-started init is indistinguishable from "there
+    // will never be one" and writes through to the pre-init store. This
+    // used to await the build tag first — a native `App.getInfo()` bridge
+    // round-trip — and `getSession()` for a logged-out user (a storage read
+    // behind auth-js's lock, no network) wins that race, so the launch-time
+    // event recorded with no build and `store: "local-storage"` on native.
+    // init resolves the build tag itself now; there is nothing to await here.
+    void initAuthDiagnostics();
 
     // A null session here (issue #194) is otherwise indistinguishable
     // between "never logged in", a network hiccup, and auth-js having

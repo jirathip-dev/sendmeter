@@ -27,6 +27,7 @@ import {
   type AuthDiagnosticEvent,
 } from "./authDiagnostics";
 import { createMemoryStore } from "./authEventStore";
+import { setBuildTagForTest } from "./appVersion";
 
 const HOSTED_URL = "https://zznsqmcewtzlnfoiefkk.supabase.co";
 const LOCAL_URL = "http://127.0.0.1:54321";
@@ -750,5 +751,94 @@ describe("the storage-wiped event carries the heartbeat (issue #202 review)", ()
       lastGoodExpiresAt: "2026-07-26T00:40:00.000Z",
       lastAt: "2026-07-26T06:50:00.000Z",
     });
+  });
+});
+
+describe("useAuth's launch sequence (issue #202 review, round 2)", () => {
+  /// A promise the test releases by hand — stands in for the native
+  /// `App.getInfo()` bridge round-trip that `loadBuildTag()` really is.
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  it("attributes the launch-time event even though getSession resolves before the build tag", async () => {
+    resetAuthDiagnosticsForTest();
+    const store = createMemoryStore("preferences");
+    const build = deferred<string | null>();
+    const web = fakeStorage();
+    const client = {
+      auth: { getSession: async () => ({ data: { session: null }, error: null }) },
+    };
+
+    // --- useAuth's effect body, same tick, same order ---
+    const init = initAuthDiagnostics({ store, web, build: build.promise });
+    const pending = getSessionWithDiagnostics(client, HOSTED_URL, web);
+    // ----------------------------------------------------
+
+    // A logged-out getSession() is a storage read behind auth-js's lock with
+    // no network, so it beats the bridge call every time. Previously that
+    // meant the record landed with no build and store "local-storage" on a
+    // native build — the exact attribution this instrumentation adds.
+    expect(await pending).toEqual({ session: null, reason: "storage-missing" });
+    expect(loadAuthEvents(store)).toEqual([]); // deferred, not written blind
+
+    build.resolve("1.4.1 (58)");
+    await init;
+
+    expect(loadAuthEvents(store)[0]).toMatchObject({
+      reason: "storage-missing",
+      source: "get-session",
+      build: "1.4.1 (58)",
+      store: "preferences",
+    });
+  });
+
+  it("keeps that event and a later one as ONE incident", async () => {
+    resetAuthDiagnosticsForTest();
+    const store = createMemoryStore("preferences");
+    const build = deferred<string | null>();
+    const web = fakeStorage();
+    const client = {
+      auth: { getSession: async () => ({ data: { session: null }, error: null }) },
+    };
+
+    const init = initAuthDiagnostics({ store, web, build: build.promise });
+    await getSessionWithDiagnostics(client, HOSTED_URL, web);
+    build.resolve("1.4.1 (58)");
+    await init;
+    // Same cause and origin, after init: an unattributed first record would
+    // have had a different incident identity (`build` is part of the key) and
+    // split this into two ring entries and two auth_events rows.
+    await getSessionWithDiagnostics(client, HOSTED_URL, web);
+
+    const stored = loadAuthEvents(store);
+    expect(stored).toHaveLength(1);
+    expect(stored[0]).toMatchObject({ count: 2, build: "1.4.1 (58)" });
+  });
+
+  it("resolves the build tag itself, so no caller can reopen the window by awaiting it first", async () => {
+    resetAuthDiagnosticsForTest();
+    setBuildTagForTest("9.9.9 (99)");
+    try {
+      const store = createMemoryStore("preferences");
+      // No build argument: this is exactly how useAuth calls it, and there is
+      // nothing left for the caller to await before starting init.
+      const init = initAuthDiagnostics({ store, web: fakeStorage() });
+      recordAuthStateChange("SIGNED_OUT", { now: () => "2026-07-26T06:50:00.000Z" });
+      await init;
+
+      expect(getAuthDiagnosticsStatus().build).toBe("9.9.9 (99)");
+      expect(loadAuthEvents(store)[0]).toMatchObject({
+        reason: "revoked",
+        build: "9.9.9 (99)",
+        store: "preferences",
+      });
+    } finally {
+      setBuildTagForTest(null);
+    }
   });
 });

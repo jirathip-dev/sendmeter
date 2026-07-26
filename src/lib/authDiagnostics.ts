@@ -9,6 +9,7 @@ import {
   type AuthEventStoreKind,
   type DurableAuthStore,
 } from "./authEventStore";
+import { loadBuildTag } from "./appVersion";
 
 /// Issue #194: a null `getSession()` result on foreground currently drops the
 /// user straight to the login screen with no record of *why* — storage never
@@ -624,7 +625,14 @@ export function initAuthDiagnostics(
     /// the deferral in `whenReady`.
     store?: DurableAuthStore | Promise<DurableAuthStore>;
     web?: AuthEventStorage | null;
-    build?: string | null;
+    /// Defaults to `loadBuildTag()`, resolved INSIDE init. The caller must
+    /// not await the build tag first: `App.getInfo()` is a native bridge
+    /// round-trip, and until `initAuthDiagnostics` has been called there is
+    /// no `initPromise` for `whenReady` to defer against — so a record made
+    /// during that wait (a logged-out `getSession()` beats the bridge)
+    /// writes through to the pre-init store with no build. Overridable, as a
+    /// value or a promise, for tests.
+    build?: string | null | Promise<string | null>;
     now?: () => string;
   } = {},
 ): Promise<AuthDiagnosticsStatus> {
@@ -635,14 +643,19 @@ export function initAuthDiagnostics(
 async function runInit(opts: {
   store?: DurableAuthStore | Promise<DurableAuthStore>;
   web?: AuthEventStorage | null;
-  build?: string | null;
+  build?: string | null | Promise<string | null>;
   now?: () => string;
 }): Promise<AuthDiagnosticsStatus> {
   const now = opts.now ?? (() => new Date().toISOString());
-  // Always awaited, even for an injected store: on native this is a real
-  // native round-trip, and a caller (or a test) must never see an init that
-  // happens to be synchronous and so never exercises the deferral above.
-  const store = await (opts.store ?? createDurableAuthStore(AUTH_DIAGNOSTIC_KEYS));
+  // Both always awaited, even when injected: on native each is a real bridge
+  // round-trip, and a caller (or a test) must never see an init that happens
+  // to be synchronous and so never exercises the deferral above. Resolved
+  // together so the Preferences hydration and `App.getInfo()` overlap instead
+  // of serializing.
+  const [store, build] = await Promise.all([
+    opts.store ?? createDurableAuthStore(AUTH_DIAGNOSTIC_KEYS),
+    opts.build ?? loadBuildTag(),
+  ]);
   const web = opts.web === undefined ? webStorage() : opts.web;
 
   // Anything this lifetime recorded before the durable store was ready.
@@ -660,7 +673,7 @@ async function runInit(opts: {
 
   ringStore = store;
   events = merged;
-  status = { store: store.kind, webviewWiped: false, build: opts.build ?? null };
+  status = { store: store.kind, webviewWiped: false, build };
 
   const durableCanary = store.getItem(CANARY_KEY);
   let webCanary: string | null = null;
