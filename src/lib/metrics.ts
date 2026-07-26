@@ -22,6 +22,23 @@ export function getACWRStatus(acwr: number | null): AcwrStatus {
   return { label: "Danger", color: "var(--danger)" };
 }
 
+// Track background for the ACWR range bar in Dashboard.tsx. Band edges match
+// getACWRStatus's thresholds exactly (0.8 / 1.3 / 1.5 on a 0-2 scale → 40% /
+// 65% / 75%) — the marker dot shares the same `(acwr / 2) * 100%` mapping, so
+// the dot always lands in the band that names its own status (issue #189:
+// these used to disagree, e.g. a 1.37 dot rendering past the "1.5"
+// gridline). Stops are placed symmetrically around each true threshold so
+// the 50/50 blend midpoint lands exactly on the original band edge (issue
+// #213: a previous edit collapsed every transition into a same-position
+// hard stop, losing the gradient blend entirely):
+//   - 0.8 -> 40%: blend spans 32%-48%, midpoint 40%
+//   - 1.3 -> 65%: blend spans 58%-72%, midpoint 65%
+//   - 1.5 -> 75%: blend spans 72%-78%, midpoint 75%
+// Pure --info 0-32%, pure --success 48-58%, pure --warning at 72% (a single
+// point, still a visible color moment), pure --danger 78-100%.
+export const ACWR_TRACK_GRADIENT =
+  "linear-gradient(to right, var(--info) 0%, var(--info) 32%, var(--success) 48%, var(--success) 58%, var(--warning) 72%, var(--danger) 78%, var(--danger) 100%)";
+
 export type PhaseAcwrFit = "below" | "on" | "above";
 
 /// Whether the current ACWR sits below / within / above the target band the
