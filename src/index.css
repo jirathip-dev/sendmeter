@@ -550,14 +550,18 @@ textarea.field { resize: none; }
   letter-spacing: -0.01em;
 }
 
-/* Transient action toasts (SL-66) — glass pill above the bottom nav. */
-@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+/* Transient action toasts (SL-66) — glass pill under the top chrome (#142).
+   Top-anchored, so it drops in from the top edge rather than rising. */
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 .toast-item {
+  position: relative;
+  overflow: hidden;
   pointer-events: auto;
   width: max-content;
   max-width: 100%;
   padding: 11px 16px;
   border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
   font-family: Inter, sans-serif;
   font-size: var(--t-base);
   font-weight: 500;
@@ -567,6 +571,26 @@ textarea.field { resize: none; }
   -webkit-backdrop-filter: blur(20px) saturate(1.6);
   box-shadow: var(--shadow-card);
   animation: toast-in 0.18s ease;
+}
+/* Iridescent hairline — the same masked 1px gradient ring as .card::before,
+   so a toast reads as part of the same glass family as the cards and nav. */
+.toast-item::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  padding: 1px;
+  background: var(--iris);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.45;
+}
+/* Per-kind accent (success/error/info), set inline as --toast-accent. It sits
+   *inside* the iris ring as a solid bar rather than replacing the border, so
+   the ring and "which kind fired" both stay readable. */
+.toast-item::after {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--toast-accent, var(--primary));
+  pointer-events: none;
 }
 
 /* Loading spinner + centered layout */
