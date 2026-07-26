@@ -10,7 +10,13 @@ import {
 } from "../lib/authDiagnostics";
 import type { AuthEventStoreKind } from "../lib/authEventStore";
 import { buildTag, loadBuildTag } from "../lib/appVersion";
-import { loadWatchBuildInfo, watchBuildLine, type WatchBuildInfo } from "../lib/watchBuild";
+import {
+  loadWatchBuildInfo,
+  watchBuildLine,
+  watchSyncLine,
+  type WatchBuildInfo,
+  type WatchBuildTone,
+} from "../lib/watchBuild";
 import {
   addPasskey,
   listPasskeys,
@@ -82,6 +88,33 @@ const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
   },
 ];
 
+/// One paired-watch diagnostics row: the watch's build (#228) or its
+/// offline-queue state (#21). Shared so the pair reads as one block — the
+/// actionable state (a build difference, a queue that isn't draining) has to
+/// be readable as different from the muted lines at a glance, and the same way
+/// in both.
+function WatchDiagLine({
+  line,
+}: {
+  line: { text: string; tone: WatchBuildTone; reportedAt?: number };
+}) {
+  return (
+    <div
+      style={{
+        fontSize: "var(--t-xs)",
+        color: line.tone === "warning" ? "var(--warning)" : "var(--ink-muted)",
+        fontWeight: line.tone === "warning" ? 600 : undefined,
+        lineHeight: 1.6,
+      }}
+    >
+      {line.text}
+      {line.reportedAt !== undefined
+        ? ` · reported ${new Date(line.reportedAt * 1000).toLocaleString()}`
+        : ""}
+    </div>
+  );
+}
+
 export default function AccountSheet({ onClose, onSignOut }: Props) {
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
@@ -137,6 +170,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     };
   }, []);
   const watchLine = watchBuildLine(watchInfo);
+  // The same report carries the watch's offline-queue depth (#21) — a workout
+  // stuck in its upload queue is otherwise invisible until you pick the watch
+  // up.
+  const syncLine = watchSyncLine(watchInfo);
 
   useEffect(() => {
     if (!passkeysSupported) return;
@@ -450,25 +487,8 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                   {build ? `Sendmeter ${build}` : "Sendmeter (web)"} ·{" "}
                   {STORE_LABELS[diagStatus.store]}
                 </div>
-                {watchLine && (
-                  <div
-                    style={{
-                      fontSize: "var(--t-xs)",
-                      // A build difference is the actionable state (#228) —
-                      // it has to be readable as different from the muted
-                      // "same build" / "not paired" lines at a glance.
-                      color:
-                        watchLine.tone === "warning" ? "var(--warning)" : "var(--ink-muted)",
-                      fontWeight: watchLine.tone === "warning" ? 600 : undefined,
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    {watchLine.text}
-                    {watchLine.reportedAt !== undefined
-                      ? ` · reported ${new Date(watchLine.reportedAt * 1000).toLocaleString()}`
-                      : ""}
-                  </div>
-                )}
+                {watchLine && <WatchDiagLine line={watchLine} />}
+                {syncLine && <WatchDiagLine line={syncLine} />}
                 {diagStatus.webviewWiped && (
                   <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", lineHeight: 1.6 }}>
                     App storage was wiped since last launch — the session went
