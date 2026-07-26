@@ -1,6 +1,16 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { useTindeq } from "../hooks/useTindeq";
+import {
+  BANNER_PAD_Y,
+  FORCE_ACTION_CIRCLE,
+  FORCE_HERO_SM_FONT,
+  FORCE_TIMER_FONT,
+  SECTION_GAP,
+  TAG_STRIP_MAX,
+  clampCss,
+  heroFontCss,
+} from "../lib/fullscreenLayout";
 import { presetTargetKg, timelineAt, timelineDurationS } from "../lib/protocol";
 import type { PresetRefs, ProtocolSegment } from "../lib/protocol";
 import type { TindeqPreset, TindeqSide } from "../types";
@@ -200,11 +210,15 @@ export default function ForceFullscreen({
           flexDirection: "column",
           padding: "max(14px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))",
           boxSizing: "border-box",
-          gap: 10,
+          // Everything but the chart is intrinsically sized; minHeight:0 is
+          // what lets the chart below actually give ground instead of the
+          // column growing past the screen (#221).
+          minHeight: 0,
+          gap: clampCss(SECTION_GAP),
         }}
       >
         {/* Top bar */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <button onClick={onMinimize} aria-label="Minimize" className="glass-chip">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M6 9l6 6 6-6" />
@@ -264,11 +278,12 @@ export default function ForceFullscreen({
         <div
           style={{
             borderRadius: 18,
-            padding: "18px 16px",
+            padding: `${clampCss(BANNER_PAD_Y)} 16px`,
             background: `color-mix(in srgb, ${bannerColor} ${pos || done ? 22 : 12}%, var(--surface-1))`,
             border: `1px solid color-mix(in srgb, ${bannerColor} 50%, transparent)`,
             textAlign: "center",
             transition: "background 0.25s, border-color 0.25s",
+            flexShrink: 0,
           }}
         >
           {done && protocol ? (
@@ -280,7 +295,7 @@ export default function ForceFullscreen({
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
-                  fontSize: "clamp(56px, 18vw, 96px)",
+                  fontSize: heroFontCss(FORCE_HERO_SM_FONT),
                   lineHeight: 1,
                 }}
               >
@@ -310,7 +325,7 @@ export default function ForceFullscreen({
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                   fontVariantNumeric: "tabular-nums",
-                  fontSize: "clamp(64px, 20vw, 112px)",
+                  fontSize: heroFontCss(FORCE_TIMER_FONT),
                   lineHeight: 1,
                 }}
               >
@@ -340,7 +355,7 @@ export default function ForceFullscreen({
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                   fontVariantNumeric: "tabular-nums",
-                  fontSize: "clamp(56px, 18vw, 96px)",
+                  fontSize: heroFontCss(FORCE_HERO_SM_FONT),
                   lineHeight: 1,
                 }}
               >
@@ -380,8 +395,19 @@ export default function ForceFullscreen({
             dropdowns (SL-82); a freshly typed tag with no recordings yet is
             included so the armed tag shows (SL-81). */}
         {!measuring && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+            {/* A user with many tags used to wrap this strip to four or five
+                rows and shove START off the bottom (#221). Cap it at roughly
+                two rows and let the strip scroll instead of the overlay. */}
+            <div
+              style={{
+                display: "flex",
+                gap: 6,
+                flexWrap: "wrap",
+                maxHeight: clampCss(TAG_STRIP_MAX),
+                overflowY: "auto",
+              }}
+            >
               {(allTags.includes(tag.trim()) || !tag.trim()
                 ? allTags
                 : [tag.trim(), ...allTags]
@@ -422,8 +448,11 @@ export default function ForceFullscreen({
           </div>
         )}
 
-        {/* Fullscreen live force chart */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        {/* Fullscreen live force chart — the ONE flexible block. Everything
+            above and below is intrinsically sized, so the trace takes the
+            leftover height (down to its own floor) and the overlay fits one
+            screen instead of scrolling (#221). */}
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <ForceGauge
             current={tindeq.current}
             peak={tindeq.peak}
@@ -432,12 +461,12 @@ export default function ForceFullscreen({
             samplesRef={tindeq.samplesRef}
             live={measuring}
             target={band}
-            chartHeight={240}
+            fill
           />
         </div>
 
         {/* Big circular action (like the workout timer) */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {/* Pause / Skip — guided runs only. Both finalize the current rep in
               the parent before touching the protocol clock. */}
           {measuring && timeline && !done && (
@@ -493,8 +522,9 @@ export default function ForceFullscreen({
             }}
             disabled={measuring ? saving : !canStart}
             style={{
-              width: 118,
-              height: 118,
+              width: clampCss(FORCE_ACTION_CIRCLE),
+              height: clampCss(FORCE_ACTION_CIRCLE),
+              flexShrink: 0,
               borderRadius: "50%",
               border: `3px solid ${measuring ? "var(--danger)" : "var(--success)"}`,
               background: `color-mix(in srgb, ${measuring ? "var(--danger)" : "var(--success)"} 16%, transparent)`,

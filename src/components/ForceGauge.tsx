@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
+import { CHART_MIN_PX } from "../lib/fullscreenLayout";
 import type { TindeqSample } from "../types";
 
 const WINDOW_MS = 10_000;
@@ -21,8 +22,13 @@ interface Props {
   samplesRef: RefObject<TindeqSample[]>;
   live: boolean;
   target?: GaugeTargetZone | null;
-  /// Trace height in px (fullscreen passes a taller chart).
+  /// Trace height in px. Ignored when `fill` is set.
   chartHeight?: number;
+  /// Fill the parent's height instead of sizing to `chartHeight` (#221): the
+  /// card becomes a flex column and the trace absorbs whatever vertical space
+  /// the fullscreen overlay has left over, down to a readable floor. That is
+  /// what keeps START/STOP on-screen on a 375×667 phone.
+  fill?: boolean;
 }
 
 function drawTrace(
@@ -101,6 +107,7 @@ export default function ForceGauge({
   live,
   target,
   chartHeight = 140,
+  fill = false,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -128,13 +135,27 @@ export default function ForceGauge({
   const workDone = target && elapsedMs >= target.workS * 1000;
 
   return (
-    <div className="card">
+    <div
+      className="card"
+      style={
+        fill
+          ? {
+              display: "flex",
+              flexDirection: "column",
+              height: "100%",
+              minHeight: 0,
+              boxSizing: "border-box",
+            }
+          : undefined
+      }
+    >
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "flex-end",
           marginBottom: 12,
+          flexShrink: 0,
         }}
       >
         <div>
@@ -204,7 +225,11 @@ export default function ForceGauge({
       </div>
       <canvas
         ref={canvasRef}
-        style={{ width: "100%", height: chartHeight, display: "block" }}
+        style={
+          fill
+            ? { width: "100%", flex: 1, minHeight: CHART_MIN_PX, display: "block" }
+            : { width: "100%", height: chartHeight, display: "block" }
+        }
       />
       {target && (
         <div
@@ -214,6 +239,7 @@ export default function ForceGauge({
             fontSize: "var(--t-2xs)",
             color: "var(--ink-muted)",
             marginTop: 6,
+            flexShrink: 0,
           }}
         >
           <span>

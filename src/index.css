@@ -232,6 +232,13 @@ input[type="number"] {
    or they fall back to the browser serif. */
 .fullscreen-overlay {
   position: fixed; inset: 0; z-index: 900;
+  /* SMALL viewport height (#221): in a browser, `inset: 0` on a fixed element
+     can resolve against the LARGE viewport, hiding the bottom of the overlay —
+     and its primary action — under a collapsible toolbar. `svh` is the
+     always-visible height, and unlike `dvh` it doesn't resize mid-workout as
+     the toolbar slides. Native (Capacitor) has no toolbar, so this is a no-op
+     there. `height` wins over `bottom` when both are set. */
+  height: 100svh;
   font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
   font-variant-numeric: tabular-nums;
   color: var(--ink);
