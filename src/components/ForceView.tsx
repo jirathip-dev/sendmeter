@@ -769,6 +769,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           <span style={{ fontSize: "var(--t-2xs)", color: "var(--warning)" }}>(fake mode)</span>
         )}
       </div>
+      {/* #173: this copy — and "Connect Progressor" below — is still written
+          for the Tindeq specifically, even though the hook underneath it is
+          now device-agnostic. Deliberately NOT templated off
+          `tindeq.deviceName`: these strings are hand-tuned prose ("Progressor"
+          alone reads better than the full product name here), and a second
+          device needs a copy pass, not a variable. That pass belongs with the
+          driver that motivates it. */}
       <div className="section-sub">
         Grip-force analysis &amp; training — Tindeq Progressor via Bluetooth.
       </div>
