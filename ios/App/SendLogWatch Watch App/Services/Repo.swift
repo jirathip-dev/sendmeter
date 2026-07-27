@@ -30,11 +30,17 @@ enum Repo {
 
     /// Distinct tags from recent recordings, most recently used first, minus
     /// any hidden via the `tindeq_tags` registry (SL-92/SL-94) — mirrors the
-    /// web/iPhone Force-tab pickers (`fetchHiddenTags` + client-side filter
+    /// web/iPhone Force-tab pickers (the registry read + client-side filter
     /// in `src/components/ForceView.tsx`). A renamed tag simply never shows
     /// up here under its old name (the rename repoints every recording), so
     /// no separate rename handling is needed on the read side.
-    static func fetchRecentTindeqTags() async throws -> [String] {
+    ///
+    /// Each tag carries its persisted force curve (#280) — the SAME registry
+    /// select that already fetched the hidden flags now also pulls `cf_kg` /
+    /// `w_prime_kgs`, so the RPE prediction costs no extra round trip. The
+    /// watch never fits a curve (that needs the raw sample streams, which it
+    /// doesn't keep); it only reads the two numbers back.
+    static func fetchRecentTindeqTags() async throws -> [TindeqTagInfo] {
         async let recordingsTask: [TindeqTagRow] = client
             .from("tindeq_recordings")
             .select("tag")
@@ -43,30 +49,33 @@ enum Repo {
             .limit(100)
             .execute()
             .value
-        async let hiddenTask: [String] = fetchHiddenTags()
+        async let registryTask: [TagRegistryRow] = fetchTagRegistry()
 
         let rows = try await recordingsTask
-        let hidden = Set(try await hiddenTask)
+        let registry = try await registryTask
+        let hidden = Set(registry.filter(\.hidden).map(\.name))
+        let curves = Dictionary(registry.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
 
         var seen = Set<String>()
-        var tags: [String] = []
+        var tags: [TindeqTagInfo] = []
         for r in rows where !seen.contains(r.tag) && !hidden.contains(r.tag) {
             seen.insert(r.tag)
-            tags.append(r.tag)
+            tags.append(
+                TindeqTagInfo(name: r.tag, cf: curves[r.tag]?.cfKg, wPrime: curves[r.tag]?.wPrimeKgs)
+            )
         }
         return tags
     }
 
-    /// Names of the user's hidden tags (SL-92 registry) — filtered out of
-    /// `fetchRecentTindeqTags`. Mirrors the web app's `fetchHiddenTags`.
-    static func fetchHiddenTags() async throws -> [String] {
-        let rows: [HiddenTagRow] = try await client
+    /// The user's whole `tindeq_tags` registry (SL-92 hidden flags + #280
+    /// curve params). Small by construction — one row per tag the user has
+    /// ever hidden or fitted a curve for.
+    static func fetchTagRegistry() async throws -> [TagRegistryRow] {
+        try await client
             .from("tindeq_tags")
-            .select("name")
-            .eq("hidden", value: true)
+            .select("name, hidden, cf_kg, w_prime_kgs")
             .execute()
             .value
-        return rows.map(\.name)
     }
 
     /// Log a finished gauge session into the training log (mirrors the web
@@ -87,6 +96,11 @@ enum Repo {
             typeLabel: "Tindeq",
             durationMin: max(1, min(600, pending.durationMin)),
             rpe: pending.rpe,
+            // #280: the watch predicts this RPE from W' depletion and logs
+            // without asking, so it is unreviewed by definition (#114's
+            // column). `nil` means a legacy queued item whose RPE the user
+            // typed into the old finish sheet — that one IS confirmed.
+            rpeConfirmed: pending.rpeConfirmed ?? true,
             note: pending.note,
             phase: phase,
             groupId: pending.groupId,

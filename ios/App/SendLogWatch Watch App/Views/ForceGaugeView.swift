@@ -194,7 +194,12 @@ struct ForceGaugeView: View {
                     seconds: TagFetchPolicy.perAttemptTimeoutSeconds,
                     operation: { try await Repo.fetchRecentTindeqTags() }
                 ) {
-                    fetched = tags
+                    fetched = tags.map(\.name)
+                    // Same round trip carries each tag's fitted curve (#280),
+                    // which the manager needs to predict the session's RPE.
+                    // Merged, never replaced: a later empty/failed fetch must
+                    // not drop curves an earlier one already provided.
+                    for t in tags { tindeq.tagCurves[t.name] = t }
                     if !tags.isEmpty { break }
                 }
                 if Task.isCancelled { return }
@@ -246,20 +251,17 @@ struct ForceGaugeView: View {
     }
 
     private func finish() {
-        // A session only exists after ≥1 saved rep, so there's always something
-        // to log — hand off to the root-level GaugeFinishSheet via the manager.
-        if tindeq.sessionCount > 0 {
-            tindeq.pendingFinish = true
-        } else {
-            tindeq.clearSession()
-        }
+        // A session only exists after ≥1 saved rep, so there's always
+        // something to log. #280: no prompt any more — the RPE is predicted
+        // from the session's W' depletion and the session logs immediately.
+        tindeq.logSessionNow()
     }
 
-    /// Deliberate disconnect (SL-75: there was no button). With saved reps it
-    /// first surfaces the finish prompt so the session gets logged instead of
-    /// orphaned; the sheet doesn't need the BLE link, so disconnect right away.
+    /// Deliberate disconnect (SL-75: there was no button). Logs any saved reps
+    /// on the way out so the session isn't orphaned; logging doesn't need the
+    /// BLE link, so disconnect right away.
     private func disconnectTapped() {
-        if tindeq.sessionCount > 0 { tindeq.pendingFinish = true }
+        tindeq.logSessionNow()
         tindeq.disconnect()
     }
 
@@ -422,6 +424,12 @@ struct ForceGaugeView: View {
                 let tagLabel = savedTag.isEmpty ? "" : " · \(savedTag)"
                 savedMsg = String(format: "Saved · %.1f kg%@", rec.peakKg, tagLabel)
                 tindeq.sessionCount += 1
+                // Fold this rep into the session's W' depletion (#280) — only
+                // once it's actually persisted, so the prediction describes
+                // the reps the session will really contain.
+                tindeq.recordRepDepletion(
+                    peakKg: rec.peakKg, durationMs: rec.durationMs, tag: savedTag
+                )
                 // Remember for next launch (SL-75: instant, correct defaults).
                 UserDefaults.standard.set(savedTag, forKey: LAST_TAG_KEY)
                 UserDefaults.standard.set(savedSide, forKey: LAST_SIDE_KEY)

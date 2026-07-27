@@ -13,7 +13,6 @@ struct RootView: View {
     @State private var path: [WatchDest] = []
 
     var body: some View {
-        @Bindable var tindeq = tindeq
         switch auth.state {
         case .signedOut:
             WaitingForPhoneView()
@@ -31,11 +30,10 @@ struct RootView: View {
                         }
                     }
             }
-            // Finish-gauge-session prompt lives at the root so it surfaces even
-            // when the Progressor drops after leaving the Force screen (SL-58 #5).
-            .sheet(isPresented: $tindeq.pendingFinish) {
-                GaugeFinishSheet()
-            }
+            // No finish-gauge-session prompt any more (#280): the session's
+            // RPE is predicted from W' depletion and logged the moment it
+            // ends — including on an unplanned Progressor drop, which is
+            // exactly when nobody is looking at the watch to answer a sheet.
             // Quick-launch complications open the app to a screen.
             .onOpenURL { url in
                 switch url.host {

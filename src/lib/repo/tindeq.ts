@@ -398,9 +398,10 @@ export async function updateRecordingsMeta(
 }
 
 // MARK: Tag management (SL-92) — rename across the whole dataset + hide.
-// Tags stay denormalized as tindeq_recordings.tag; tindeq_tags only holds the
-// hidden flag (see the migration comment). A tag needs a row here only when
-// hidden — visible tags come from distinct recording tags.
+// Tags stay denormalized as tindeq_recordings.tag; tindeq_tags only holds
+// per-tag metadata: the hidden flag and, since #280, the fitted force-curve
+// params (see the migration comments). A tag needs a row here only once it's
+// hidden or has a curve — visible tags come from distinct recording tags.
 
 /// Names of the user's hidden tags, filtered out of the Force-tab pickers,
 /// trend and curve (the recordings themselves are untouched).
@@ -409,6 +410,55 @@ export async function fetchHiddenTags(): Promise<string[]> {
     await supabase.from("tindeq_tags").select("name").eq("hidden", true),
   );
   return data.map((r) => r.name);
+}
+
+/// A tag's persisted critical-force fit (#280). Null params = never fitted.
+export interface TagCurve {
+  name: string;
+  cf: number | null;
+  wPrime: number | null;
+}
+
+/// Every tag that has a stored curve — the phone's read side of #280, used to
+/// predict a gauge session's RPE from W' depletion across whatever mix of
+/// exercises the session contained. (The watch reads the same columns as part
+/// of its tag fetch, so it costs no extra round trip there.)
+export async function fetchTagCurves(): Promise<TagCurve[]> {
+  const data = unwrap<{ name: string; cf_kg: number | null; w_prime_kgs: number | null }[]>(
+    await supabase
+      .from("tindeq_tags")
+      .select("name, cf_kg, w_prime_kgs")
+      .not("cf_kg", "is", null),
+  );
+  return data.map((r) => ({ name: r.name, cf: r.cf_kg, wPrime: r.w_prime_kgs }));
+}
+
+/// Persist a tag's fitted curve (#280) so the watch — which can't refit it,
+/// having no raw sample streams — can still predict session RPE from two
+/// numbers. Upserts the registry row, creating it when the tag has never been
+/// hidden.
+///
+/// The payload deliberately carries ONLY the curve columns: PostgREST's upsert
+/// sets exactly the keys it's given, so `hidden` is left untouched on an
+/// existing row (and takes its `false` default on a fresh one). Adding
+/// `hidden` here would silently unhide a hidden tag on every recompute.
+export async function saveTagCurve(input: {
+  name: string;
+  cf: number;
+  wPrime: number;
+  recordingCount: number;
+}): Promise<void> {
+  const { error } = await supabase.from("tindeq_tags").upsert(
+    {
+      name: input.name,
+      cf_kg: input.cf,
+      w_prime_kgs: input.wPrime,
+      curve_fitted_at: new Date().toISOString(),
+      curve_recording_count: input.recordingCount,
+    },
+    { onConflict: "user_id,name" },
+  );
+  if (error) throw error;
 }
 
 /// Rename a tag EVERYWHERE — repoints every recording carrying `oldName` to

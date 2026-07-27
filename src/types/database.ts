@@ -416,25 +416,37 @@ export type Database = {
       }
       tindeq_tags: {
         Row: {
+          cf_kg: number | null
           created_at: string
+          curve_fitted_at: string | null
+          curve_recording_count: number | null
           hidden: boolean
           id: string
           name: string
           user_id: string
+          w_prime_kgs: number | null
         }
         Insert: {
+          cf_kg?: number | null
           created_at?: string
+          curve_fitted_at?: string | null
+          curve_recording_count?: number | null
           hidden?: boolean
           id?: string
           name: string
           user_id?: string
+          w_prime_kgs?: number | null
         }
         Update: {
+          cf_kg?: number | null
           created_at?: string
+          curve_fitted_at?: string | null
+          curve_recording_count?: number | null
           hidden?: boolean
           id?: string
           name?: string
           user_id?: string
+          w_prime_kgs?: number | null
         }
         Relationships: []
       }
