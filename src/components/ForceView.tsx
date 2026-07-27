@@ -28,7 +28,8 @@ import {
   updateTindeqLivePeak,
 } from "../lib/liveActivity";
 import { reportPersistFailure } from "../lib/lostRecordings";
-import { persistRecording } from "../lib/recordingQueue";
+import { pendingRecordingCount, persistRecordingToMainQueue } from "../lib/recordingQueue";
+import { phoneQueueLine } from "../lib/pendingDepth";
 import type {
   NewTindeqRecording,
   TindeqPreset,
@@ -82,11 +83,27 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     [],
   );
   const [retryingUnqueued, setRetryingUnqueued] = useState(false);
-  function queueFailedRecording(rec: NewTindeqRecording & { id: string }) {
+  // #269: how many recordings are sitting in the queue right now (main +
+  // salvage lane combined) — the ambient readout that replaces the silent
+  // eviction this component used to just not mention. Null until the first
+  // read lands; `phoneQueueLine` treats that the same as "nothing to show".
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  const queueLine = phoneQueueLine(pendingCount);
+  function refreshPendingCount() {
+    void pendingRecordingCount().then((n) => setPendingCount(n));
+  }
+  useEffect(() => {
+    // Read once on mount — queueFailedRecording/retryUnqueued below call
+    // refreshPendingCount() again after they actually change the queue;
+    // nothing else here needs to re-trigger a re-read.
+    refreshPendingCount();
+  }, []);
+  async function queueFailedRecording(rec: NewTindeqRecording & { id: string }) {
     const isNewOutage = !outageRef.current;
     outageRef.current = true;
-    const result = persistRecording(rec, userId);
+    const result = await persistRecordingToMainQueue(rec, userId);
     reportPersistFailure("save-failed", result, rec.samples.length);
+    refreshPendingCount();
     if (!result.persisted) {
       // Always banner (one row per lost rep) but keep the toast on the same
       // once-per-outage gate as the queued case, so a guided protocol whose
@@ -117,7 +134,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       try {
         saved.push(await insertRecording(rec));
       } catch {
-        const result = persistRecording(rec, userId);
+        const result = await persistRecordingToMainQueue(rec, userId);
         reportPersistFailure("save-failed", result, rec.samples.length);
         if (result.persisted) queued += 1;
         else stillLost.push(rec);
@@ -130,6 +147,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     }
     setUnqueued(stillLost);
     setRetryingUnqueued(false);
+    if (queued > 0) refreshPendingCount();
     if (saved.length > 0) {
       toast(`Saved ${saved.length} recording${saved.length === 1 ? "" : "s"}`);
     } else if (queued > 0) {
@@ -363,7 +381,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // time has passed and insert the FULL segment — landing both the
       // queued partial and the live full rep as two rows for one hold (the
       // exact double-count hazard CLAUDE.md warns about for guided protocols).
-      queueFailedRecording(rec);
+      await queueFailedRecording(rec);
       setListError(e instanceof Error ? e.message : "Failed to save recording");
     }
   }
@@ -466,7 +484,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // keep tag and side — set once, tweak side between reps
     } catch (e) {
       // Queue instead of dropping (#106) — see saveHoldSlice above.
-      queueFailedRecording(rec);
+      await queueFailedRecording(rec);
       setListError(e instanceof Error ? e.message : "Failed to save recording");
     } finally {
       setSaving(false);
@@ -1205,6 +1223,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       {listError && (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 10 }}>
           {listError}
+        </div>
+      )}
+
+      {/* #269: ambient depth readout for the offline queue (main + salvage
+          lane) — mirrors AccountSheet's watch-queue line. Muted, because a
+          nonzero count is expected, ordinary behavior mid-outage, not an
+          alarm; the #264 banner above/below is what escalates. */}
+      {queueLine && (
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 6 }}>
+          {queueLine.text}
         </div>
       )}
 

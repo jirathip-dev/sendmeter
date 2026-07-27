@@ -17,6 +17,8 @@ import {
   type WatchBuildInfo,
   type WatchBuildTone,
 } from "../lib/watchBuild";
+import { pendingRecordingCount } from "../lib/recordingQueue";
+import { phoneQueueLine } from "../lib/pendingDepth";
 import {
   addPasskey,
   listPasskeys,
@@ -174,6 +176,21 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   // stuck in its upload queue is otherwise invisible until you pick the watch
   // up.
   const syncLine = watchSyncLine(watchInfo);
+
+  // #269: the PHONE's own recording queue depth (main IndexedDB queue +
+  // localStorage salvage lane) — same "otherwise invisible" problem as the
+  // watch's queue above, now that eviction no longer silently caps it.
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void pendingRecordingCount().then((n) => {
+      if (alive) setPendingCount(n);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const queueLine = phoneQueueLine(pendingCount);
 
   useEffect(() => {
     if (!passkeysSupported) return;
@@ -489,6 +506,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 </div>
                 {watchLine && <WatchDiagLine line={watchLine} />}
                 {syncLine && <WatchDiagLine line={syncLine} />}
+                {/* #269: reused despite the "Watch" name — the component is
+                    just {text, tone, reportedAt}, and this line reads as part
+                    of the same diagnostics block. */}
+                {queueLine && <WatchDiagLine line={queueLine} />}
                 {diagStatus.webviewWiped && (
                   <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", lineHeight: 1.6 }}>
                     App storage was wiped since last launch — the session went

@@ -449,20 +449,36 @@ are safe regardless.
   measuring* so the live gauge fits one screen). End-session logs the **actual
   wall-clock duration** (read-only); only RPE is asked. Don't reintroduce the
   discard/save prompt or an editable duration.
-- **A recording that can't be persisted is reported, never swallowed** (#264).
-  The offline queue's last line of defence is `localStorage`, and that write
-  can itself fail (quota exhausted, storage disabled) — the failure the queue
-  exists to protect against, at the one moment it can't. The decided policy
-  lives in full above `persistRecording` in `src/lib/recordingQueue.ts`; the
-  short version: **the new recording wins** (a refused write retries after
-  dropping the oldest queued entry, repeatedly, down to the new entry alone),
-  and if the lone entry still won't write, the loss is real and gets said out
-  loud — `reportPersistFailure` (`src/lib/lostRecordings.ts`) is the single
-  reporting path for both call sites, emitting a Sentry `data-loss:` event
-  plus a durable one-shot notice that `App.tsx` surfaces on the next
-  mount/foreground. `useTindeq`'s salvage-on-unmount can only report (no UI is
-  reachable from a cleanup); `ForceView` additionally holds the samples in
-  memory behind a Retry/Discard banner. **Never phrase a `persisted: false`
+- **A recording that can't be persisted is reported, never swallowed** (#264,
+  reworked into a two-store queue by #269). The MAIN queue is IndexedDB
+  (`src/lib/recordingDB.ts`'s `MainQueueStore`, via
+  `persistRecordingToMainQueue` in `src/lib/recordingQueue.ts`) — orders of
+  magnitude more headroom than the old single `localStorage` queue's ~1.5 MB
+  budget shared with every other `sendmeter:` key, so its own eviction
+  backstop is a device-nearly-out-of-disk case, not something a normal long
+  session reaches. A SECOND, synchronous, `localStorage`-backed lane
+  (`persistRecording`, same file) still exists for exactly one reason:
+  `useTindeq`'s unmount-salvage cleanup runs synchronously (a React cleanup)
+  and cannot `await` an IndexedDB write. `drainSalvageLane` moves whatever
+  lands there into the main queue on the next mount/foreground — idempotent
+  (IDB `put` under the same id overwrites), so it also serves as the one-time
+  migration off the old localStorage-only queue with no separate migration
+  code. Both lanes share the same failure policy, decided in full in the
+  comment blocks above `persistRecordingToMainQueue` and `persistRecording`:
+  **the new recording wins** (a refused write retries after dropping the
+  oldest queued entry, repeatedly), and if a lane's write still won't land —
+  main queue exhausted AND the salvage-lane fallback also refuses, or
+  IndexedDB was unavailable/blocked and the sole salvage-lane write refuses —
+  the loss is real and gets said out loud: `reportPersistFailure`
+  (`src/lib/lostRecordings.ts`) is the single reporting path for both call
+  sites, emitting a Sentry `data-loss:` event plus a durable one-shot notice
+  that `App.tsx` surfaces on the next mount/foreground. `useTindeq`'s
+  salvage-on-unmount can only report (no UI is reachable from a cleanup);
+  `ForceView` additionally holds the samples in memory behind a Retry/Discard
+  banner, and shows the queue's pending depth as an ambient line
+  (`src/lib/pendingDepth.ts`'s `phoneQueueLine`, also surfaced in
+  `AccountSheet`, mirroring `watchBuild.ts`'s `watchSyncLine` pattern for the
+  watch's own offline queue, #21). **Never phrase a `persisted: false`
   outcome as "queued" or "will sync"** — nothing is holding it.
 - **Recording samples store `t` in milliseconds.** `tindeq_recordings.samples`
   time is ms — charts must divide by 1000 to show seconds (a mislabeled axis once

@@ -326,6 +326,12 @@ export function useTindeq() {
       }
       const summary = summarize(samplesRef.current);
       if (!summary) return;
+      // #269: this cleanup runs synchronously (a React unmount effect) and
+      // cannot `await` the async, IndexedDB-backed main queue — so it writes
+      // the SALVAGE LANE (`persistRecording`, localStorage) directly rather
+      // than `persistRecordingToMainQueue`. `drainSalvageLane` moves it into
+      // the main queue on the next mount/foreground; see the comment above
+      // `persistRecording` in recordingQueue.ts for the full two-lane split.
       const result = persistRecording(
         {
           id: crypto.randomUUID(),

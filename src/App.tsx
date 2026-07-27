@@ -135,15 +135,41 @@ function AuthedApp({
   // No manual list refresh needed on success — `tindeq_recordings` is a
   // WATCHED_TABLES table, so each recovered insert bumps the realtime
   // version and ForceView's own fetch effect picks it up.
+  //
+  // #269: mount alone used to be the only trigger — fine when the queue was
+  // capped at ~1.5 MB and a drain was cheap/rare, less fine now that the main
+  // queue is IndexedDB and a real outage can leave tens of reps sitting there
+  // for as long as the tab happens to stay mounted. Also drain on foreground
+  // (appStateChange natively, visibilitychange on web/PWA) so a queue built
+  // up while backgrounded doesn't just wait for the next cold start —
+  // mirrors the lost-recordings-notice effect just below.
   useEffect(() => {
     let cancelled = false;
-    void drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
-      if (!cancelled && n > 0) {
-        toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
-      }
+    function runDrain() {
+      void drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
+        if (!cancelled && n > 0) {
+          toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
+        }
+      });
+    }
+    runDrain();
+    function onVisible() {
+      if (document.visibilityState === "visible") runDrain();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    if (!Capacitor.isNativePlatform()) {
+      return () => {
+        cancelled = true;
+        document.removeEventListener("visibilitychange", onVisible);
+      };
+    }
+    const sub = CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) runDrain();
     });
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      void sub.then((h) => h.remove());
     };
   }, [userId, toast]);
 
