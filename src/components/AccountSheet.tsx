@@ -17,6 +17,8 @@ import {
   type WatchBuildInfo,
   type WatchBuildTone,
 } from "../lib/watchBuild";
+import { pendingUploadsLine } from "../lib/pendingUploads";
+import { usePendingUploads } from "../hooks/usePendingUploads";
 import {
   addPasskey,
   listPasskeys,
@@ -174,6 +176,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   // stuck in its upload queue is otherwise invisible until you pick the watch
   // up.
   const syncLine = watchSyncLine(watchInfo);
+  // …and the same story for THIS device (#269): recordings queued locally
+  // because the insert failed. Read live — the hook re-reads on foreground and
+  // whenever anything queues or drains.
+  const pendingLine = pendingUploadsLine(usePendingUploads());
 
   useEffect(() => {
     if (!passkeysSupported) return;
@@ -489,6 +495,13 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 </div>
                 {watchLine && <WatchDiagLine line={watchLine} />}
                 {syncLine && <WatchDiagLine line={syncLine} />}
+                {/* #269: the phone's own upload queue, next to the watch's —
+                    the two devices each hold recordings that haven't reached
+                    Supabase yet, and only one of them used to say so. Always
+                    rendered, including the empty state: a row that vanishes
+                    when there's nothing pending is indistinguishable from a
+                    row that's broken. */}
+                <WatchDiagLine line={pendingLine} />
                 {diagStatus.webviewWiped && (
                   <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", lineHeight: 1.6 }}>
                     App storage was wiped since last launch — the session went

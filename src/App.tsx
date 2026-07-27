@@ -132,6 +132,11 @@ function AuthedApp({
   // renders once `session` exists, so a fresh mount here IS "auth just
   // succeeded" (login or a session restore). drainPendingRecordingsQueue
   // guards its own re-entrancy, so a duplicate mount can't double-insert.
+  // #269: this is also where the two stores reconcile — the drain first moves
+  // anything in the synchronous localStorage lane (a salvage-on-unmount, or a
+  // pre-#269 queue left behind by an older build) into the IndexedDB main
+  // queue, then attempts the lot. That migration is idempotent, so a run
+  // interrupted halfway re-copies rather than duplicating.
   // No manual list refresh needed on success — `tindeq_recordings` is a
   // WATCHED_TABLES table, so each recovered insert bumps the realtime
   // version and ForceView's own fetch effect picks it up.
