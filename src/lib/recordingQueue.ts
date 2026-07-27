@@ -183,6 +183,43 @@ export interface PersistResult {
 //
 // Deliberately NOT done: no compression, no down-sampled partial save. Both
 // trade away the exactness of the curve, which is the product.
+//
+// #273 — WHEN A QUEUED RECORDING IS ALLOWED TO LEAVE THE DEVICE'S STORAGE.
+//
+// Nothing used to clear either store, ever. Signing out is the action a user
+// takes when they want their data off a device, and it left every unsynced rep
+// sitting there indefinitely. The rule now:
+//
+//   * A USER-INITIATED sign-out DRAINS FIRST, then clears only what actually
+//     uploaded. On a normal online sign-out that empties both stores with no
+//     prompt and no loss, which is the overwhelmingly common case. The drain
+//     has to finish BEFORE `supabase.auth.signOut()` — afterwards there is no
+//     token and every insert 401s — but it is deadlined (see
+//     `DRAIN_TIMEOUT_MS` in `signOut.ts`), because a slow network must not
+//     hang sign-out. A drain that times out is simply "could not upload".
+//   * ANY REMAINDER IS THE USER'S CALL, asked once, with the count. Only
+//     entries that genuinely cannot upload (offline, or the server refusing)
+//     reach this, so the prompt is rare and always has something to decide.
+//     An UNCONDITIONAL confirm was rejected: it would fire mostly on an empty
+//     queue and train the user to dismiss the one that matters.
+//   * A FORCED OR REVOKED SIGN-OUT NEVER DISCARDS ANYTHING. #265 was a real
+//     production session revocation with no user action behind it; under a
+//     flat clear-on-sign-out rule that auth bug would have destroyed every
+//     unsynced rep on the device. An auth failure escalating into data loss is
+//     strictly worse than the problem being fixed here. The two paths are told
+//     apart by `markUserSignOut()`'s marker (`authDiagnostics.ts`), which a
+//     revocation has no way to set — and `clearRecordingQueue` is only ever
+//     reached through `discardQueueOnUserSignOut`, which checks it.
+//   * CLEARING COVERS BOTH STORES. An entry absorbed into IndexedDB and one
+//     still sitting in the sync lane are equally the user's data.
+//
+// ACCEPTED RESIDUAL, deliberately: a user who signs out with entries that
+// cannot upload and chooses to KEEP them leaves those entries on the device
+// until the same account signs back in and drains them. Nothing ages them out.
+// That is the right trade for a personal training app on a personal phone —
+// the alternative is destroying training data to satisfy a privacy property
+// the user just declined — and the wrong one for a shared device. If this app
+// ever runs on shared hardware, revisit it here first.
 
 /// SYNCHRONOUS emergency lane — see the policy block above. Read the lane,
 /// append `input`, write it back, making room by dropping the oldest entries if
@@ -325,6 +362,47 @@ export async function pendingRecordingsCount(
     for (const k of keys) ids.add(k);
   }
   return ids.size;
+}
+
+/// Remove EVERY queued recording from BOTH stores — the "#273" section of the
+/// policy block above is the decision this carries out, and is where to look
+/// before calling it.
+///
+/// DO NOT CALL THIS DIRECTLY. `discardQueueOnUserSignOut` in `signOut.ts` is
+/// the only caller, because it is the only place that first checks the
+/// sign-out was one the user asked for; a revoked session must never reach
+/// here. `signOutInvariants.test.ts` pins that as a structural property rather
+/// than a convention, since the cost of the two paths drifting is the user's
+/// training data.
+///
+/// Returns how many DISTINCT entries were actually removed — not how many were
+/// there. A store that refuses the clear contributes nothing to the count, so
+/// a caller can tell "deleted" from "asked to delete" (the sign-out path
+/// reports the gap to monitoring). De-duplicated across the stores for the
+/// same reason `pendingRecordingsCount` is: an interrupted absorb legitimately
+/// leaves the same entry in both.
+export async function clearRecordingQueue(
+  loadDb: RecordingDbLoader = openRecordingDb,
+  storage: QueueStorage | null = defaultStorage(),
+): Promise<number> {
+  const removed = new Set<string>();
+  const db = await loadDb().catch(() => null);
+  if (db) {
+    // Read the ids first (only for the count) and clear in one transaction —
+    // `delete(await keys())` would leave behind anything written in between.
+    const keys = await db.keys().catch(() => [] as string[]);
+    const cleared = await db.clear().then(
+      () => true,
+      () => false,
+    );
+    if (cleared) for (const k of keys) removed.add(k);
+  }
+  const lane = loadQueue(storage);
+  if (lane.length > 0 && saveQueue([], storage)) {
+    for (const p of lane) removed.add(p.id);
+  }
+  notifyPendingUploadsChanged();
+  return removed.size;
 }
 
 export interface DrainResult {

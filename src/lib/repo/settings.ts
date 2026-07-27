@@ -2,7 +2,7 @@ import { supabase } from "../supabase";
 import type { PhaseId } from "../../types";
 import { today } from "../dates";
 import { unwrap } from "./shared";
-import { markUserSignOut } from "../authDiagnostics";
+import { signOutUser } from "../signOut";
 
 export interface UserSettings {
   currentPhase: PhaseId;
@@ -43,7 +43,10 @@ export async function updateSettings(s: UserSettings): Promise<void> {
 /// goes with it. Required by App Store guideline 5.1.1(v).
 export async function deleteAccount(): Promise<void> {
   unwrap(await supabase.rpc("delete_account"));
-  // The SIGNED_OUT this fires is expected, not an incident (#202).
-  markUserSignOut();
-  await supabase.auth.signOut();
+  // Through the shared sign-out (#273), which marks the SIGNED_OUT as expected
+  // rather than an incident (#202) — that used to be a second hand-rolled copy
+  // of the pair. `discard` rather than `drain`: the rows this queue would
+  // upload into no longer exist, so there is nothing to attempt and nothing to
+  // ask the user to keep.
+  await signOutUser({ userId: null, queue: "discard" });
 }

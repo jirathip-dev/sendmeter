@@ -466,6 +466,23 @@ are safe regardless.
   don't "simplify" the salvage path onto the async one. IndexedDB unavailable
   (private mode, storage disabled, a blocked open) degrades to the lane —
   `openRecordingDb` resolves `null`, never throws.
+- **Sign-out is ONE function, and it is the only thing that may delete a queued
+  recording** (#273). `signOutUser` in `src/lib/signOut.ts` is the single
+  implementation behind both `useAuth().signOut` and `deleteAccount` — those
+  two used to hold a copy each of `markUserSignOut()` + `supabase.auth.signOut()`.
+  A **user-initiated** sign-out drains the offline queue first (it needs a live
+  token, so the drain must finish BEFORE `signOut()`, deadlined by
+  `DRAIN_TIMEOUT_MS` so a dead network can't hang it), clears what uploaded,
+  and asks about any remainder — never an unconditional confirm, which would
+  fire mostly on an empty queue. A **forced or revoked** sign-out (#265 —
+  it really happened) **discards nothing**: the two paths are told apart by
+  `markUserSignOut()`'s marker, and `clearRecordingQueue` is reachable only via
+  `discardQueueOnUserSignOut`, which checks it. `signOutInvariants.test.ts`
+  pins "one implementation, one deletion site" structurally, because the cost
+  of the paths drifting is the user's training data. Accepted residual, on
+  purpose: kept-but-undrainable entries live on the device until the same
+  account signs back in. Full reasoning: the "#273" section of the policy block
+  in `recordingQueue.ts`.
 - **A recording that can't be persisted is reported, never swallowed** (#264).
   The queue's last line of defence is a storage write, and that write can
   itself fail (quota exhausted, storage disabled) — the failure the queue

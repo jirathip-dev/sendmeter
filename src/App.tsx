@@ -38,6 +38,7 @@ import type { HealthSyncSource } from "./lib/healthSync";
 import { insertRecording, restoreSession } from "./lib/repo";
 import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
 import { takeLostRecordingsNotice } from "./lib/lostRecordings";
+import type { SignOut } from "./lib/signOut";
 
 export default function App() {
   const { session, loading, recovery, clearRecovery, signOut } = useAuth();
@@ -78,7 +79,7 @@ function AuthedApp({
   onSignOut,
 }: {
   userId: string;
-  onSignOut: () => Promise<{ error: Error | null }>;
+  onSignOut: SignOut;
 }) {
   const {
     sessions,
