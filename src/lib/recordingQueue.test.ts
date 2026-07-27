@@ -5,6 +5,7 @@ import {
   drainQueue,
   enqueueRecording,
   loadQueue,
+  persistRecording,
   saveQueue,
   type PendingRecording,
 } from "./recordingQueue";
@@ -131,6 +132,89 @@ describe("loadQueue / saveQueue", () => {
   it("treats a null storage handle as a no-op (private mode etc.)", () => {
     expect(saveQueue([], null)).toBe(false);
     expect(loadQueue(null)).toEqual([]);
+  });
+});
+
+/// A store pre-seeded with `queue`, whose setItem refuses its first `refusals`
+/// calls and then behaves — the shape of a quota-exhausted origin that has
+/// room again once the value being written has shed its oldest entries.
+function seededStorage(queue: PendingRecording[], refusals = 0) {
+  const map = new Map<string, string>();
+  map.set("sendmeter:pending-recordings", JSON.stringify(queue));
+  let refused = 0;
+  return {
+    getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      if (refused < refusals) {
+        refused += 1;
+        throw new Error("QuotaExceededError");
+      }
+      map.set(k, v);
+    },
+  };
+}
+
+/// Build a queue of the given recordings, oldest first.
+function queueOf(...ids: string[]): PendingRecording[] {
+  return ids.reduce<PendingRecording[]>(
+    (q, id) => enqueueRecording(q, rec(id), "user-1", () => "2026-07-01T00:00:00.000Z"),
+    [],
+  );
+}
+
+describe("persistRecording (#264 — the saveQueue-returned-false branch)", () => {
+  it("reports persisted with nothing evicted on the happy path", () => {
+    const storage = fakeStorage();
+    const result = persistRecording(rec("id-1"), "user-1", storage);
+    expect(result).toEqual({ persisted: true, evicted: 0 });
+    expect(loadQueue(storage).map((p) => p.id)).toEqual(["id-1"]);
+  });
+
+  it("drops the OLDEST queued entries and retries until the write lands", () => {
+    // Refuses twice: the write only fits once the two oldest are gone.
+    const storage = seededStorage(queueOf("old-1", "old-2", "old-3"), 2);
+    const result = persistRecording(rec("new-1"), "user-1", storage);
+    expect(result).toEqual({ persisted: true, evicted: 2 });
+    // The new rep survived; the two oldest were the price.
+    expect(loadQueue(storage).map((p) => p.id)).toEqual(["old-3", "new-1"]);
+  });
+
+  it("reports the loss rather than pretending, when even the lone entry won't write", () => {
+    const result = persistRecording(rec("id-1"), "user-1", throwingStorage());
+    expect(result.persisted).toBe(false);
+    // Nothing was in the queue to evict — the new rep alone was refused.
+    expect(result.evicted).toBe(0);
+  });
+
+  it("counts every entry it dropped on the way down before giving up", () => {
+    // Refuses forever — both older entries are sacrificed and it STILL fails.
+    const storage = seededStorage(queueOf("old-1", "old-2"), Infinity);
+    expect(persistRecording(rec("new-1"), "user-1", storage)).toEqual({
+      persisted: false,
+      evicted: 2,
+    });
+  });
+
+  it("reports a null storage handle (disabled storage) as not persisted", () => {
+    expect(persistRecording(rec("id-1"), "user-1", null)).toEqual({
+      persisted: false,
+      evicted: 0,
+    });
+  });
+
+  it("also counts what the byte budget evicted before the store was asked", () => {
+    const storage = fakeStorage();
+    // 30 × ~80 KB clears MAX_QUEUE_BYTES, so adding one more must evict.
+    let queue: PendingRecording[] = [];
+    for (let i = 0; i < 30; i++) {
+      queue = enqueueRecording(queue, bigRec(`big-${i}`), "user-1");
+    }
+    saveQueue(queue, storage);
+    const before = loadQueue(storage).length;
+    const result = persistRecording(bigRec("big-new"), "user-1", storage);
+    expect(result.persisted).toBe(true);
+    expect(result.evicted).toBeGreaterThan(0);
+    expect(loadQueue(storage).length).toBe(before + 1 - result.evicted);
   });
 });
 

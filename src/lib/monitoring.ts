@@ -252,6 +252,30 @@ export function setMonitoringUser(userId: string | null): void {
   Sentry.setUser(userId ? { id: userId } : null);
 }
 
+/**
+ * Report user data that was lost because a durable write refused (#264) — the
+ * one failure class that produces no exception, no stack and no retry, so
+ * nothing else here would ever see it.
+ *
+ * `what` must be a CONSTANT the code chose (e.g. `"tindeq-recording:
+ * salvage-on-unmount"`), never anything derived from user input, and `detail`
+ * is restricted to numbers/booleans by type so a future caller cannot smuggle
+ * a free-text value in through it. Both are folded into the message rather
+ * than into `extra`, whose allow-list would drop them; the message still goes
+ * through `beforeSend`'s scrub like everything else.
+ */
+export function captureDataLoss(
+  what: string,
+  detail: Record<string, number | boolean> = {},
+): void {
+  if (!started) return;
+  const parts = Object.entries(detail).map(([k, v]) => `${k}=${v}`);
+  Sentry.captureMessage(
+    `data-loss: ${what}${parts.length ? ` (${parts.join(", ")})` : ""}`,
+    "error",
+  );
+}
+
 /** Report an uncaught render error from the ErrorBoundary. */
 export function captureAppError(error: unknown, componentStack?: string): void {
   if (!started) return;
