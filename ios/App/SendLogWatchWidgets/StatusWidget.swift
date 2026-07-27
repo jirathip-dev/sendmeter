@@ -22,23 +22,8 @@ struct StatusProvider: TimelineProvider {
     }
 }
 
-// MARK: Colors
-
-private func acwrColor(_ risk: String?) -> Color {
-    switch risk {
-    case "high": return .orange
-    case "low": return .purple
-    default: return .blue // optimal / unknown
-    }
-}
-
-private func readinessColor(_ zone: String?) -> Color {
-    switch zone {
-    case "push": return .blue
-    case "recover": return .orange
-    default: return .yellow // maintain / unknown
-    }
-}
+// Colours (acwrColor / readinessColor) live in StatusColors.swift — the watch
+// app's status page (#278) renders the same two values and must agree.
 
 // MARK: Views (one per accessory family)
 
