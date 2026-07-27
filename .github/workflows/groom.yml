@@ -4,10 +4,12 @@
 # Requires the same setup as the triage stub: CLAUDE_CODE_OAUTH_TOKEN secret
 # and workflow-reuse access on the agent-ops repo.
 #
-# WARNING: with the triage pipeline's go-ahead override and auto_merge: true,
-# a groom promotion feeds straight into implementation on the next triage
-# tick — filed → groomed → implemented → staged, no human touch until
-# promotion to main. Deploy this stub only where that's intended.
+# WARNING: with the triage pipeline's go-ahead override, a groom promotion
+# feeds straight into implementation on the next triage tick — filed →
+# groomed → implemented → PR opened, no human touch. The merge is where a
+# human comes back in (the triage stub sets auto_merge: false); flipping
+# that back to true also removes the staging gate, leaving no human touch
+# until promotion to main. Deploy this stub only where that's intended.
 
 name: Daily Agent Groom
 
