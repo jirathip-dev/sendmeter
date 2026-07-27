@@ -149,11 +149,13 @@ final class WorkoutPhaseFillTests: XCTestCase {
     }
 
     /// The band has to read as a block of colour against the black around it,
-    /// or it is just dark text-backing. 3:1 (WCAG 1.4.11, non-text) is
-    /// arithmetically unreachable *together with* 7:1 white label on the same
-    /// band — 3:1 on black needs luminance ≥ 0.1, 7:1 under white needs ≤ 0.1
-    /// — and the label, not the band, is what carries the meaning. So hold the
-    /// band well clear of black and let the label keep AAA.
+    /// or it is just dark text-backing. 3:1 (WCAG 1.4.11, non-text) and a 7:1
+    /// white label on that same band intersect at exactly one value: 3:1 over
+    /// black needs luminance ≥ 0.10, 7:1 under white needs ≤ 0.10. So both are
+    /// satisfiable, but only at L = 0.10 on the nose, with no margin either
+    /// way for the OLED's own gamma — and the label, not the band, is what
+    /// carries the meaning. So the label keeps AAA with room to spare and the
+    /// band is held well clear of black instead.
     func testEveryLiveBandReadsAsABlockAgainstTheScreen() {
         for phase in [WorkoutPhase.climbing, .resting, .restOver] {
             for reduced in [false, true] {

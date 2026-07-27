@@ -43,7 +43,11 @@ struct WorkoutLiveView: View {
                 startContent
             }
         }
-        .navigationTitle("Climb")
+        // No title while running. watchOS floats the nav bar OVER the content
+        // rather than insetting it, so "Climb" was being drawn straight
+        // through the elapsed-time readout — and once the band says RESTING
+        // next to an End button, the title is telling nobody anything.
+        .navigationTitle(workout.isRunning ? "" : "Climb")
         .navigationBarBackButtonHidden(workout.isRunning)
     }
 
@@ -183,23 +187,28 @@ struct WorkoutLiveView: View {
 
     @ViewBuilder
     private func liveStack(phase: WorkoutPhase, fill: PhaseFill) -> some View {
-        VStack(spacing: 4) {
-            // HR + total elapsed stacked on the LEFT — the elapsed time used to
-            // sit top-right, where it collided with the End toolbar button.
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "heart.fill")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                        Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
-                            .font(.body).monospacedDigit()
-                    }
-                    Text(timeString(workout.elapsed))
-                        .font(.footnote).monospacedDigit()
-                        .foregroundStyle(.secondary)
+        // Spacing is 2, not the usual 4: RESTING stacks the HR line, the band,
+        // the rest chips and the action row, and on a 40mm screen the gaps are
+        // the difference between the button clearing the bottom edge and
+        // sitting flush against it.
+        VStack(spacing: 2) {
+            // HR + total elapsed on ONE line at the LEFT. They used to be
+            // stacked, which cost a whole footnote line of height that RESTING
+            // — the tall phase, band + chips + action row — does not have on a
+            // 40mm screen. Still left-aligned: the elapsed time sat top-right
+            // once and collided with the End toolbar button.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(spacing: 4) {
+                    Image(systemName: "heart.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                    Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
+                        .font(.body).monospacedDigit()
                 }
-                Spacer()
+                Text(timeString(workout.elapsed))
+                    .font(.footnote).monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
 
             Spacer(minLength: 0)
@@ -299,7 +308,7 @@ struct WorkoutLiveView: View {
             }
         } else if let rest = workout.restStartedAt {
             let end = rest.addingTimeInterval(Double(workout.restTargetS))
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
                 phaseBand(phase: phase, fill: fill) {
                     VStack(spacing: 0) {
                         Text(phase == .restOver ? "REST OVER" : "RESTING")
@@ -389,7 +398,8 @@ extension WorkoutManager {
 private enum PreviewScreen {
     /// Apple Watch SE / Series 4-6, 40mm.
     static let mm40 = CGSize(width: 162, height: 197)
-    /// Apple Watch Ultra, 49mm.
+    /// Apple Watch Ultra / Ultra 2, 49mm — the tighter of the two Ultra
+    /// panels (Ultra 3 is 211x257).
     static let mm49 = CGSize(width: 205, height: 251)
 }
 
