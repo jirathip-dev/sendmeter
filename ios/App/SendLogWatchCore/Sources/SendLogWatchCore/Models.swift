@@ -78,6 +78,12 @@ public nonisolated struct PendingTindeqSession: Codable {
     public var date: String           // YYYY-MM-DD, captured at enqueue time
     public var durationMin: Int
     public var rpe: Double
+    /// #114's column, for the session row this becomes. `false` for the #280
+    /// W'-depletion prediction the watch now logs without asking (or its
+    /// fallback) — nobody reviewed that number. `nil` ONLY for legacy on-disk
+    /// items enqueued by a build whose finish sheet still asked the user for
+    /// an RPE: those were typed by a human, so a drain reads nil as confirmed.
+    public var rpeConfirmed: Bool?
     public var note: String
     public var groupId: UUID          // Tindeq gauge session link — must survive the upload
     /// Which account was signed in when this session was persisted to disk
@@ -93,6 +99,7 @@ public nonisolated struct PendingTindeqSession: Codable {
         date: String,
         durationMin: Int,
         rpe: Double,
+        rpeConfirmed: Bool? = nil,
         note: String,
         groupId: UUID,
         enqueuedUserId: UUID? = nil
@@ -101,6 +108,7 @@ public nonisolated struct PendingTindeqSession: Codable {
         self.date = date
         self.durationMin = durationMin
         self.rpe = rpe
+        self.rpeConfirmed = rpeConfirmed
         self.note = note
         self.groupId = groupId
         self.enqueuedUserId = enqueuedUserId
@@ -114,11 +122,14 @@ public nonisolated struct PendingTindeqSession: Codable {
     /// it); `date` is the session's START day, matching the convention
     /// `Repo.makeSaveBundle` uses for workouts (`summary.startedAt`), not the
     /// moment it happened to be logged.
+    /// `rpeConfirmed` defaults to false because since #280 the watch never
+    /// asks: every session it logs carries a predicted (or fallback) RPE.
     public static func build(
         sessionStartedAt: Date?,
         now: Date = Date(),
         recordingCount: Int,
         rpe: Double,
+        rpeConfirmed: Bool = false,
         groupId: UUID
     ) -> PendingTindeqSession {
         let started = sessionStartedAt ?? now
@@ -129,6 +140,7 @@ public nonisolated struct PendingTindeqSession: Codable {
             date: started.localDateString,
             durationMin: max(1, min(600, rawMinutes)),
             rpe: rpe,
+            rpeConfirmed: rpeConfirmed,
             note: note,
             groupId: groupId
         )

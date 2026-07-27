@@ -32,6 +32,10 @@ nonisolated struct SessionInsert: Codable {
     var typeLabel: String
     var durationMin: Int
     var rpe: Double            // decimal (SL-89): 0.5-step manual entry, or 0.1-precision auto-tracked (#107); DB column is numeric(3,1)
+    /// #114: false for an RPE nobody reviewed — the #280 W'-depletion
+    /// prediction the gauge session logs on its own. Defaults to true, which
+    /// is what an auto-tracked workout's user-confirmed RPE is.
+    var rpeConfirmed: Bool = true
     var note: String
     var phase: String
     var groupId: UUID?         // Tindeq gauge session link
@@ -39,6 +43,7 @@ nonisolated struct SessionInsert: Codable {
 
     enum CodingKeys: String, CodingKey {
         case id, date, type, rpe, note, phase
+        case rpeConfirmed = "rpe_confirmed"
         case typeLabel = "type_label"
         case durationMin = "duration_min"
         case groupId = "group_id"
@@ -169,9 +174,29 @@ nonisolated struct TindeqTagRow: Codable {
     var tag: String
 }
 
-/// SL-94: a row from the `tindeq_tags` registry (SL-92) selected `hidden`.
-nonisolated struct HiddenTagRow: Codable {
+/// A row of the `tindeq_tags` registry (SL-92): the hidden flag SL-94 filters
+/// on, plus the force-curve params the phone banks there (#280) so the watch
+/// can predict a session's RPE from W' depletion. Both curve columns are null
+/// until that tag has enough long holds for the phone to fit a curve.
+nonisolated struct TagRegistryRow: Codable {
     var name: String
+    var hidden: Bool
+    var cfKg: Double?
+    var wPrimeKgs: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case name, hidden
+        case cfKg = "cf_kg"
+        case wPrimeKgs = "w_prime_kgs"
+    }
+}
+
+/// A visible tag as the Force screen needs it: the name for the picker, plus
+/// its persisted curve for the #280 RPE prediction (nil until fitted).
+nonisolated struct TindeqTagInfo: Sendable, Equatable {
+    var name: String
+    var cf: Double?
+    var wPrime: Double?
 }
 
 nonisolated struct UserSettingsRow: Codable {

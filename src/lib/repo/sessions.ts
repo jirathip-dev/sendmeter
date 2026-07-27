@@ -138,6 +138,11 @@ export async function insertTindeqSession(input: {
   /// Defaults to today — History's create-from-recordings passes the
   /// recordings' own date.
   date?: string;
+  /// False for an RPE nobody reviewed (issue #114) — which is what a #280
+  /// W'-depletion prediction is, and equally what its fallback default is.
+  /// Omitted keeps the column's `true` default, for paths where the number
+  /// came from a human.
+  rpeConfirmed?: boolean;
 }): Promise<Session> {
   const data = unwrap(
     await supabase
@@ -148,6 +153,7 @@ export async function insertTindeqSession(input: {
         type_label: "Tindeq",
         duration_min: Math.max(1, Math.min(600, input.durationMin)),
         rpe: input.rpe,
+        rpe_confirmed: input.rpeConfirmed ?? true,
         note: input.note,
         phase: input.phase,
         group_id: input.groupId,
