@@ -1,10 +1,10 @@
 import XCTest
 import SendLogWatchCore
 
-/// Issue #243 (221b): the watch live-workout view tints its whole background
-/// by phase. Colour cannot be judged headlessly, but the two things that make
-/// it fail *can* be: resolving the wrong phase, and picking a fill the text
-/// can't be read on. Both live here rather than in the view.
+/// Issue #243 (221b): the watch live-workout view colours itself by phase.
+/// Colour cannot be judged headlessly, but the two things that make it fail
+/// *can* be: resolving the wrong phase, and picking a colour the text can't be
+/// read on. Both live here rather than in the view.
 final class WorkoutPhaseResolutionTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
 
@@ -34,8 +34,8 @@ final class WorkoutPhaseResolutionTests: XCTestCase {
     }
 
     func testClimbingFlagWithoutAStartTimeIsNotClimbing() {
-        // The view can't draw a count-up without a start; the fill must agree
-        // with what the timer shows rather than tint green over nothing.
+        // The view can't draw a count-up without a start; the band must agree
+        // with what the timer shows rather than go green over nothing.
         XCTAssertEqual(phase(climbing: true, climbingSince: nil, restStartedAt: t0), .resting)
     }
 
@@ -43,7 +43,7 @@ final class WorkoutPhaseResolutionTests: XCTestCase {
         XCTAssertEqual(phase(restStartedAt: t0, restTargetS: 180, after: 0), .resting)
         XCTAssertEqual(phase(restStartedAt: t0, restTargetS: 180, after: 179.9), .resting)
         // Exactly at zero already counts as over — the countdown reads 0:00
-        // and the haptic has fired, so the screen must not still say rest.
+        // and the haptic has fired, so the band must not still say rest.
         XCTAssertEqual(phase(restStartedAt: t0, restTargetS: 180, after: 180), .restOver)
         XCTAssertEqual(phase(restStartedAt: t0, restTargetS: 180, after: 600), .restOver)
     }
@@ -61,13 +61,14 @@ final class WorkoutPhaseResolutionTests: XCTestCase {
 
 final class WorkoutPhaseFillTests: XCTestCase {
     /// The failure this feature invites: text in the phase's own colour on a
-    /// fill of the phase's own colour. Every fill has to carry white body text
-    /// at AAA, at full brightness and dimmed.
-    func testEveryFillCarriesItsLabelAtAAAContrast() {
+    /// block of the phase's own colour. Since #277 the block is a band behind
+    /// the eyebrow and the countdown rather than the whole screen — the
+    /// pairing to hold is label-on-*band*, at full brightness and dimmed.
+    func testEveryBandCarriesItsLabelAtAAAContrast() {
         for phase in WorkoutPhase.allCases {
             for reduced in [false, true] {
                 let fill = WorkoutPhasePalette.fill(for: phase, luminanceReduced: reduced)
-                let ratio = fill.background.contrastRatio(to: fill.label)
+                let ratio = fill.band.contrastRatio(to: fill.label)
                 XCTAssertGreaterThanOrEqual(
                     ratio, WorkoutPhasePalette.minimumContrast,
                     "\(phase) (reduced: \(reduced)) contrast \(ratio)"
@@ -76,60 +77,90 @@ final class WorkoutPhaseFillTests: XCTestCase {
         }
     }
 
-    /// `.secondary` on watchOS is roughly white at 60% — the elapsed time,
-    /// kcal and altitude readouts. They only need AA (4.5:1), but they must
-    /// not have been quietly dropped below it by the fill.
-    func testSecondaryTextStillClearsAAOnEveryFill() {
+    /// The screen is black for every phase (#277) — the whole point of the
+    /// band is that the colour stopped flooding the display. If a phase ever
+    /// tints the screen again, the on-black assertions below stop meaning
+    /// anything, so pin it here.
+    func testScreenIsBlackForEveryPhase() {
         for phase in WorkoutPhase.allCases {
-            let bg = WorkoutPhasePalette.fill(for: phase).background
-            let secondary = PhaseRGB(
-                bg.red + (1 - bg.red) * 0.6,
-                bg.green + (1 - bg.green) * 0.6,
-                bg.blue + (1 - bg.blue) * 0.6
-            )
+            for reduced in [false, true] {
+                XCTAssertEqual(
+                    WorkoutPhasePalette.fill(for: phase, luminanceReduced: reduced).screen,
+                    .black, "\(phase) (reduced: \(reduced))"
+                )
+            }
+        }
+    }
+
+    /// HR, elapsed, BOULDERS, kcal and altitude used to sit on the phase fill
+    /// (behind a wash); they now sit on black either side of the band. watchOS
+    /// draws them with `.secondary` — white at ~60% — which clears AAA on
+    /// black, and unlike the old fill it does so identically in every phase.
+    func testSecondaryReadoutsClearAAAOnTheBlackScreen() {
+        for phase in WorkoutPhase.allCases {
+            for reduced in [false, true] {
+                let fill = WorkoutPhasePalette.fill(for: phase, luminanceReduced: reduced)
+                let secondary = PhaseRGB.white.over(
+                    fill.screen, opacity: WorkoutPhasePalette.secondaryOpacity
+                )
+                let ratio = fill.screen.contrastRatio(to: secondary)
+                XCTAssertGreaterThanOrEqual(
+                    ratio, WorkoutPhasePalette.minimumContrast,
+                    "\(phase) (reduced: \(reduced)) secondary contrast \(ratio)"
+                )
+            }
+        }
+    }
+
+    /// Primary readouts (the HR number, the boulder count) are full-strength
+    /// white on the same black — the ceiling, but assert it so a future
+    /// non-black screen can't slip past the secondary check's margin.
+    func testPrimaryReadoutsClearAAAOnTheBlackScreen() {
+        for phase in WorkoutPhase.allCases {
+            let fill = WorkoutPhasePalette.fill(for: phase)
             XCTAssertGreaterThanOrEqual(
-                bg.contrastRatio(to: secondary), 4.5,
-                "\(phase) secondary contrast \(bg.contrastRatio(to: secondary))"
+                fill.screen.contrastRatio(to: .white), WorkoutPhasePalette.minimumContrast, "\(phase)"
             )
         }
     }
 
-    /// Dimming may only ever help legibility — white text on a darker fill is
+    /// Dimming may only ever help legibility — white text on a darker band is
     /// a higher ratio, never a lower one.
     func testDimmingNeverReducesContrast() {
         for phase in WorkoutPhase.allCases {
             let full = WorkoutPhasePalette.fill(for: phase)
             let dim = WorkoutPhasePalette.fill(for: phase, luminanceReduced: true)
-            XCTAssertLessThanOrEqual(dim.background.relativeLuminance, full.background.relativeLuminance)
+            XCTAssertLessThanOrEqual(dim.band.relativeLuminance, full.band.relativeLuminance)
             XCTAssertGreaterThanOrEqual(
-                dim.background.contrastRatio(to: dim.label),
-                full.background.contrastRatio(to: full.label)
+                dim.band.contrastRatio(to: dim.label),
+                full.band.contrastRatio(to: full.label)
             )
         }
     }
 
-    /// The always-on fill has to stay genuinely dark — a full-screen tint left
-    /// bright in the dimmed state is a burn-in and battery liability.
-    func testDimmedFillsAreDark() {
+    /// The always-on band has to stay genuinely dark. A band is a much smaller
+    /// lit area than the full-screen fill it replaced, but always-on is
+    /// measured in hours — the scaling stays and so does this bound.
+    func testDimmedBandsAreDark() {
         for phase in WorkoutPhase.allCases {
             let dim = WorkoutPhasePalette.fill(for: phase, luminanceReduced: true)
-            XCTAssertLessThan(dim.background.relativeLuminance, 0.02, "\(phase)")
+            XCTAssertLessThan(dim.band.relativeLuminance, 0.02, "\(phase)")
         }
     }
 
-    /// The bottom wash sits under the secondary readouts and the action
-    /// button; it must darken, never lighten.
-    func testBottomShadeOnlyDarkens() {
-        let shade = WorkoutPhasePalette.bottomShade
-        XCTAssertGreaterThan(shade, 0)
-        XCTAssertLessThan(shade, 1)
-        for phase in WorkoutPhase.allCases {
-            let bg = WorkoutPhasePalette.fill(for: phase).background
-            let shaded = bg.scaled(1 - shade) // black at `shade` opacity over it
-            XCTAssertLessThan(shaded.relativeLuminance, bg.relativeLuminance + 1e-12)
-            XCTAssertGreaterThanOrEqual(
-                shaded.contrastRatio(to: .white), WorkoutPhasePalette.minimumContrast
-            )
+    /// The band has to read as a block of colour against the black around it,
+    /// or it is just dark text-backing. 3:1 (WCAG 1.4.11, non-text) is
+    /// arithmetically unreachable *together with* 7:1 white label on the same
+    /// band — 3:1 on black needs luminance ≥ 0.1, 7:1 under white needs ≤ 0.1
+    /// — and the label, not the band, is what carries the meaning. So hold the
+    /// band well clear of black and let the label keep AAA.
+    func testEveryLiveBandReadsAsABlockAgainstTheScreen() {
+        for phase in [WorkoutPhase.climbing, .resting, .restOver] {
+            for reduced in [false, true] {
+                let fill = WorkoutPhasePalette.fill(for: phase, luminanceReduced: reduced)
+                let ratio = fill.band.contrastRatio(to: fill.screen)
+                XCTAssertGreaterThan(ratio, reduced ? 1.15 : 2, "\(phase) (reduced: \(reduced)) \(ratio)")
+            }
         }
     }
 
@@ -139,9 +170,9 @@ final class WorkoutPhaseFillTests: XCTestCase {
     func testLivePhasesAreVisiblyDistinct() {
         let live: [WorkoutPhase] = [.climbing, .resting, .restOver]
         for reduced in [false, true] {
-            let fills = live.map { WorkoutPhasePalette.fill(for: $0, luminanceReduced: reduced).background }
-            for (i, a) in fills.enumerated() {
-                for b in fills[(i + 1)...] {
+            let bands = live.map { WorkoutPhasePalette.fill(for: $0, luminanceReduced: reduced).band }
+            for (i, a) in bands.enumerated() {
+                for b in bands[(i + 1)...] {
                     // Each pair differs by a clear margin on at least one channel.
                     let delta = max(abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue))
                     XCTAssertGreaterThan(delta, 0.08, "\(a) vs \(b) (reduced: \(reduced))")
@@ -152,10 +183,12 @@ final class WorkoutPhaseFillTests: XCTestCase {
         }
     }
 
-    /// Idle draws no tint at all — the view keeps the stock black background
+    /// Idle draws no band at all — the view keeps the stock black background
     /// until there is a phase to report.
-    func testIdleIsUntinted() {
-        XCTAssertEqual(WorkoutPhasePalette.fill(for: .idle).background, .black)
+    func testIdleDrawsNoBand() {
+        let fill = WorkoutPhasePalette.fill(for: .idle)
+        XCTAssertEqual(fill.band, .black)
+        XCTAssertEqual(fill.band, fill.screen)
     }
 
     func testTransitionIsAnimatedButNotSluggish() {
@@ -186,7 +219,7 @@ final class PhaseRGBTests: XCTestCase {
 
     func testLuminanceUsesTheLinearSegmentNearBlack() {
         // Below 0.04045 sRGB is linear, not a power curve — getting this wrong
-        // would overstate how dark the dimmed fills are.
+        // would overstate how dark the dimmed bands are.
         XCTAssertEqual(PhaseRGB(0.02, 0.02, 0.02).relativeLuminance, 0.02 / 12.92, accuracy: 1e-9)
         XCTAssertEqual(PhaseRGB.black.relativeLuminance, 0, accuracy: 1e-12)
         XCTAssertEqual(PhaseRGB.white.relativeLuminance, 1, accuracy: 1e-9)
@@ -196,5 +229,14 @@ final class PhaseRGBTests: XCTestCase {
         // Out-of-range components must not produce nonsense luminance.
         XCTAssertEqual(PhaseRGB(2, 2, 2).relativeLuminance, 1, accuracy: 1e-9)
         XCTAssertEqual(PhaseRGB(-1, -1, -1).relativeLuminance, 0, accuracy: 1e-12)
+    }
+
+    func testCompositingOverABackground() {
+        XCTAssertEqual(PhaseRGB.white.over(.black, opacity: 0.6), PhaseRGB(0.6, 0.6, 0.6))
+        XCTAssertEqual(PhaseRGB.white.over(.black, opacity: 1), .white)
+        XCTAssertEqual(PhaseRGB.white.over(.black, opacity: 0), .black)
+        // Opacity is clamped, so a caller can't manufacture an out-of-gamut colour.
+        XCTAssertEqual(PhaseRGB.white.over(.black, opacity: 4), .white)
+        XCTAssertEqual(PhaseRGB.white.over(.black, opacity: -1), .black)
     }
 }
