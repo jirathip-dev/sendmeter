@@ -20,11 +20,26 @@ struct HomeView: View {
                     .foregroundStyle(.orange)
             }
 
-            Button(role: .destructive) {
-                Task { await auth.signOut() }
-            } label: {
-                Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+            // The offline window (#265): the relayed access token has expired
+            // and only the phone can supply another. Recording still works —
+            // everything is persist-first and drains later — so say that
+            // rather than dumping the user on a sign-in screen mid-session.
+            if auth.needsToken {
+                Label(
+                    "Waiting for iPhone — new saves upload once it's in range",
+                    systemImage: "iphone.badge.exclamationmark"
+                )
+                .font(.footnote)
+                .foregroundStyle(.orange)
             }
+
+            // No Sign Out here any more. The watch has no session of its own
+            // to end — it mirrors the phone's — and the old button called
+            // supabase-swift's globally-scoped signOut, which revoked every
+            // session on the account, including the phone's.
+            Text("Signed in from your iPhone")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
         }
         .navigationTitle("Sendmeter")
         .task {

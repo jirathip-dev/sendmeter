@@ -23,9 +23,9 @@ actor LiveWorkoutSync {
 
     private func resolveUserId() async -> UUID? {
         if let userId { return userId }
-        // `currentSession` (not `.session`) — the latter refreshes an
-        // expired token, which this client must never do (issue #196).
-        userId = SupabaseService.auth.auth.currentSession?.user.id
+        // The relayed session's `sub` claim (#265). No auth client is
+        // involved, so there is no accessor here that could refresh anything.
+        userId = WatchSessionStore.shared.userId
         return userId
     }
 

@@ -21,6 +21,12 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
 
     private let manager = HealthSyncManager.shared
 
+    override public func load() {
+        // No rotating credential may survive on this device — including one
+        // left in the Keychain by a build that predates #265.
+        HealthSessionStore.shared.purgeLegacySupabaseKeychain()
+    }
+
     @objc func requestAuthorization(_ call: CAPPluginCall) {
         Task {
             do { try await manager.requestAuthorization(); call.resolve() }
@@ -28,27 +34,21 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /// Access token only (#265) — this plugin never holds a refresh token, so
+    /// it can never present one to `/token` and trip Supabase's reuse
+    /// detection. Synchronous now: storing a token is a Keychain write.
     @objc func setSession(_ call: CAPPluginCall) {
-        guard
-            let accessToken = call.getString("accessToken"),
-            let refreshToken = call.getString("refreshToken")
-        else {
-            call.reject("Missing accessToken/refreshToken")
+        guard let accessToken = call.getString("accessToken") else {
+            call.reject("Missing accessToken")
             return
         }
-        Task {
-            do {
-                try await manager.setSession(accessToken: accessToken, refreshToken: refreshToken)
-                call.resolve()
-            } catch { call.reject(error.localizedDescription) }
-        }
+        manager.setSession(accessToken: accessToken)
+        call.resolve()
     }
 
     @objc func clearSession(_ call: CAPPluginCall) {
-        Task {
-            await manager.clearSession()
-            call.resolve()
-        }
+        manager.clearSession()
+        call.resolve()
     }
 
     // #109: `trigger` is read from the JS-facing call, NOT assumed —

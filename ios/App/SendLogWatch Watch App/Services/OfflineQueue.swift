@@ -27,7 +27,7 @@ actor OfflineQueue {
     /// (it still never uploads a mismatched or signed-out item) — widening
     /// this count is display-only.
     func pendingCount() -> Int {
-        let currentUserId = SupabaseService.auth.auth.currentSession?.user.id
+        let currentUserId = WatchSessionStore.shared.userId
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
@@ -63,10 +63,10 @@ actor OfflineQueue {
 
     private func persist(_ bundle: WorkoutSaveBundle) {
         var bundle = bundle
-        // Stamp which account is signed in right now (issue #158) — same
-        // synchronous, non-refreshing accessor AuthManager.bootstrap() uses,
-        // so this never triggers a token refresh. Checked back in drain().
-        bundle.enqueuedUserId = SupabaseService.auth.auth.currentSession?.user.id
+        // Stamp which account is signed in right now (issue #158) — the
+        // relayed access token's `sub` claim, read synchronously from the
+        // Keychain cache (#265). Checked back in drain().
+        bundle.enqueuedUserId = WatchSessionStore.shared.userId
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let url = pendingDir.appendingPathComponent("\(bundle.workout.id.uuidString).json")
@@ -107,7 +107,7 @@ actor OfflineQueue {
             // below is a suspension point, so a concurrent account switch
             // could otherwise go unnoticed for the rest of the pass and let
             // a file queued under Account A upload under Account B.
-            let currentUserId = SupabaseService.auth.auth.currentSession?.user.id
+            let currentUserId = WatchSessionStore.shared.userId
             guard shouldDrain(itemUserId: bundle.enqueuedUserId, currentUserId: currentUserId) else {
                 // Queued under a different account (or nobody's signed in):
                 // leave the file on disk untouched and keep checking the

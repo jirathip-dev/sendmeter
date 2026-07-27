@@ -105,13 +105,26 @@ export interface WatchBuildInfo {
 }
 
 export interface SendLogAuthBridgePlugin {
-  /// Relays the current Supabase session to the paired Watch app via
+  /// Relays the current Supabase **access token** to the paired Watch app via
   /// WatchConnectivity. No-op (resolves immediately) on platforms without
   /// a paired watch (iPad, or no watch paired) — see Plugin.swift.
+  ///
+  /// There is deliberately no `refreshToken` field (#265). The watch cannot
+  /// refresh — only supabase-js on the phone owns rotation — and a copy of a
+  /// rotating credential on the wrist is what replayed a twelve-hour-stale
+  /// token in production and revoked the whole session family. Removing the
+  /// field from the contract is the point: no call site can pass one.
   setSession(options: {
     accessToken: string;
-    refreshToken: string;
+    /// Unix SECONDS. A hint — the watch reads `exp` out of the token itself.
     expiresAt: number;
+    /// A hint too; the watch reads `sub` from the token. Carried so a relay is
+    /// readable in a log without decoding the JWT.
+    userId?: string;
+    /// Answer to a watch-initiated pull: also queue the payload with
+    /// `transferUserInfo` so it is delivered exactly once even if the
+    /// application context is unchanged or undelivered (#266).
+    guaranteed?: boolean;
   }): Promise<void>;
 
   /// Tells the paired Watch app to sign out.

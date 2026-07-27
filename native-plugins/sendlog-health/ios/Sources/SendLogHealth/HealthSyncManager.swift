@@ -62,7 +62,6 @@ private struct ExistingReadinessRow: Codable {
 final class HealthSyncManager {
     static let shared = HealthSyncManager()
 
-    private let authClient = HealthConfig.auth
     private let client = HealthConfig.data
     private let reader = HealthKitReader()
     private let tunables = RecoveryTunables.default
@@ -72,18 +71,19 @@ final class HealthSyncManager {
         try await reader.requestAuthorization()
     }
 
-    func setSession(accessToken: String, refreshToken: String) async throws {
-        try await authClient.auth.setSession(accessToken: accessToken, refreshToken: refreshToken)
+    /// Stores the relayed access token (#265). Purely local — no network call
+    /// at all, where `auth.setSession` used to spend a `GET /user` on every
+    /// relay (and refresh outright if the token it was handed had expired).
+    func setSession(accessToken: String) {
+        HealthSessionStore.shared.store(accessToken)
     }
 
-    /// Forgets this client's locally-stored session (issue #196) — called
-    /// when the phone signs out, so a later background HealthKit wake can't
-    /// keep using a stale/rotated refresh token. By the time this fires the
-    /// server-side session is already gone (the WebView's own signOut
-    /// already revoked it), so failure here is expected and harmless —
-    /// mirrors the watch's AuthManager.signOut().
-    func clearSession() async {
-        try? await authClient.auth.signOut()
+    /// Forgets this client's stored token — called when the phone signs out,
+    /// so a later background HealthKit wake can't keep writing as that user.
+    /// Local only: the WebView's own signOut has already revoked the session
+    /// server-side, and this client has no session of its own to end.
+    func clearSession() {
+        HealthSessionStore.shared.clear()
     }
 
     /// Read HealthKit, upsert today's biometrics, and — subject to

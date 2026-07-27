@@ -11,19 +11,22 @@ export interface SendLogHealthPlugin {
   /// respiratory rate). No-op resolve on non-iOS.
   requestAuthorization(): Promise<void>;
 
-  /// Hands the plugin's own Supabase client the current session so it can
-  /// read sessions / write health_metrics from native code, including in the
-  /// background (the WebView's supabase-js session isn't reachable natively).
-  /// Relayed on every auth event, same as the watch auth bridge.
-  setSession(options: {
-    accessToken: string;
-    refreshToken: string;
-  }): Promise<void>;
+  /// Hands the plugin's own Supabase client the current **access token** so it
+  /// can read sessions / write health_metrics from native code, including in
+  /// the background (the WebView's supabase-js session isn't reachable
+  /// natively). Relayed on every auth event, same as the watch auth bridge.
+  ///
+  /// No `refreshToken` field, deliberately (#265): supabase-js on this phone
+  /// is the only holder that owns rotation, and a second holder presenting a
+  /// rotated token makes Supabase revoke the whole session family. The plugin
+  /// never refreshed on purpose, but `auth.setSession` refreshes on its own
+  /// whenever the token it is handed has already expired — so the credential
+  /// is removed rather than the call forbidden.
+  setSession(options: { accessToken: string }): Promise<void>;
 
-  /// Tells the plugin to forget its stored session (issue #196) — called on
-  /// phone sign-out so a later background HealthKit wake can't keep using a
-  /// stale/rotated refresh token. Mirrors the watch auth bridge's
-  /// `clearSession`.
+  /// Tells the plugin to forget its stored access token — called on phone
+  /// sign-out so a later background HealthKit wake can't keep writing as that
+  /// user. Mirrors the watch auth bridge's `clearSession`.
   clearSession(): Promise<void>;
 
   /// Read HealthKit now, upsert today's biometrics, and — unless

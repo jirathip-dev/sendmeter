@@ -17,6 +17,10 @@ struct SendLogWatchApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                // An access token expires by the clock alone, with no event to
+                // react to (#265) — re-evaluate on every foreground, which also
+                // re-asks the phone when the token has gone stale.
+                Task { @MainActor in auth.refreshState() }
                 Task { await OfflineQueue.shared.drain() }
                 Task { await PendingSessionQueue.shared.drain() }
                 // Keep the complications/Smart-Stack readiness + ACWR fresh.

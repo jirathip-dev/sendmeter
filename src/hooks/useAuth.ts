@@ -117,12 +117,20 @@ export function useAuth() {
     };
     document.addEventListener("visibilitychange", onVisible);
 
-    // The watch, stuck on its sign-in screen with a stale token, can ask us to
-    // re-relay a session (native only). getSession() returns a phone-refreshed
-    // token — the watch consumes it and signs back in without a manual login.
-    onWatchSessionRequest(() => {
+    // The watch, waiting on an expired access token, can ask us to re-relay
+    // (native only). getSession() returns a phone-refreshed token — the watch
+    // consumes it and signs back in with no manual login and no refresh token.
+    //
+    // `guaranteed: true` queues it with transferUserInfo as well as setting the
+    // application context (#266): answering a pull while our token is still
+    // valid re-sends the same session, and an unchanged application context is
+    // the leading explanation for the pull path never landing.
+    //
+    // The handle is kept and detached below. Discarding it (the old behaviour)
+    // meant nothing could ever remove the listener.
+    const watchRequest = onWatchSessionRequest(() => {
       void supabase.auth.getSession().then(({ data }) => {
-        relaySessionToWatch(data.session);
+        relaySessionToWatch(data.session, { guaranteed: true });
       });
     });
 
@@ -136,6 +144,10 @@ export function useAuth() {
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("sendmeter:recovery", onRecovery);
+      // addListener is async, so the handle may still be in flight when an
+      // effect that mounted and unmounted on the same tick cleans up (React
+      // StrictMode in dev does exactly that) — detach whenever it arrives.
+      void watchRequest.then((handle) => handle?.remove());
     };
   }, []);
 

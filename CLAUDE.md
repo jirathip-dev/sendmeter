@@ -123,10 +123,14 @@ xcrun simctl launch booted com.jirathip.sendlog.watchkitapp
   reinstall via simctl. The watch app is a
   separate install on the watch sim: rebuilding/reinstalling the phone app
   does NOT refresh it.
-- **Watch sign-in:** the watch gets its session relayed from the running,
-  signed-in phone app over WatchConnectivity (works between *paired* sims).
-  Watch running alone = manual password sign-in — expected, not a bug; the
-  seeded local user's password works there directly.
+- **Watch sign-in:** the watch gets its access token relayed from the running,
+  signed-in phone app over WatchConnectivity (works between *paired* sims —
+  `simctl pair <watch> <phone>` first; `updateApplicationContext` is delivered,
+  `transferUserInfo` was NOT observed being delivered watch-ward in the sim).
+  There is no manual sign-in on the watch any more (#265) — a watch running
+  alone waits on the "Waiting for iPhone" screen, which is expected, not a bug.
+  For a sim experiment you can mint a token directly:
+  `curl -X POST "http://127.0.0.1:54321/auth/v1/token?grant_type=password"`.
 
 **Caveat for rung 4:** device builds still have the hosted Supabase config
 **compiled in** (localhost is meaningless on a physical device) — a Debug
@@ -304,21 +308,35 @@ are safe regardless.
   `health_metrics` (it sees the merged HealthKit store incl. third-party wearables).
   The watch only *reads* the computed score back for display — it no longer reads
   HealthKit or writes health rows. Don't reintroduce watch-side health writes.
-- **One Supabase session, three clients — only supabase-js refreshes it.** The web
-  (supabase-js), the watch, and the iPhone health plugin all share the user's
-  session via relays. The watch + plugin clients set `autoRefreshToken: false` and
-  only *consume* tokens re-relayed on every auth event + app foreground (the
-  `useAuth` visibilitychange listener). With refresh-token rotation on, a second
-  client refreshing the shared token trips Supabase's replay detection and revokes
-  the whole session family — writes then fail RLS as anon. Don't re-enable
-  auto-refresh on the watch/plugin clients.
-  - The refresh trap is **indirect too**: `receivedApplicationContext` is
-    persisted, so on a cold watch launch the last relayed payload may be hours
-    old — `auth.setSession` with an expired access token *refreshes* with the
-    (long-rotated) relayed refresh token → family revoked → watch logged out
-    (this bit after a TestFlight update). AuthManager therefore ignores relays
-    whose `expiresAt` is past and reads the Keychain fallback via the
-    non-refreshing `auth.currentSession` only. Keep both guards.
+- **Only supabase-js holds a refresh token. The relays carry access tokens only**
+  (#265). The web (supabase-js), the watch and the iPhone health plugin all share
+  the user's session, but the two native consumers are handed a short-lived
+  **access token** and nothing else, re-relayed on every auth event + app
+  foreground (the `useAuth` visibilitychange listener). Refresh tokens are
+  single-use with reuse detection ON: a second holder presenting one the phone
+  has since rotated makes Supabase revoke the entire session family, signing the
+  phone out too. That is not prevented by discipline any more — the credential is
+  simply not on the wire (`SendLogAuthBridge.setSession` / `SendLogHealth.setSession`
+  have no `refreshToken` field) and not on the device (both native clients are a
+  single `SupabaseClient` with an `accessToken` provider and no `AuthClient`;
+  `WatchSessionStore` / `HealthSessionStore` keep the bearer token in the Keychain
+  and purge supabase-swift's own item on every launch).
+  - **Two earlier attempts failed by convention.** #196 split each native side
+    into an `auth` + `data` client and forbade every refreshing accessor; the
+    rules were right and a twelve-hour-stale token was replayed in production
+    anyway. `src/lib/nativeAuthInvariants.test.ts` now pins the structural
+    property from vitest, because the `quality` job never compiles the Swift.
+  - **The watch cannot sign itself in, by design** — no email/password form. It
+    consumes what the phone relays; when the token expires it asks
+    (`requestSession`) and waits, staying `signedIn` with `tokenFresh: false` so
+    the offline queues keep their account stamp. Don't reintroduce a watch-native
+    login: it would create a second rotating session on the wrist.
+  - **Relayed payloads must always differ.** Verified in paired simulators
+    (2026-07-27): `updateApplicationContext` does **not** deliver a payload
+    identical to the one already set, which is why answering a watch's pull while
+    the phone's token was still valid landed nothing (#266). The plugin stamps
+    every relay with a fresh `relayId` + `relayedAt`; a pull is additionally sent
+    via `transferUserInfo`. Never relay a payload whose content could repeat.
 - **Every watch→phone WC message carries the watch's build** (#228) — the watch
   app updates from TestFlight on its own schedule, so a phone on the fixed
   build can be paired with a pre-#208 watch that is still revoking the session
@@ -392,17 +410,18 @@ are safe regardless.
   proof the objects exist.
 
 - **`autoRefreshToken: false` does NOT stop supabase-swift refreshing.** It only
-  disables the background *timer*; the on-demand refresh inside `auth.session`
-  still fires whenever the stored access token is expired. Both native clients
-  are therefore split in two (#196): an `auth` client (the only one that may read
-  `.auth` — `setSession`/`signIn`/`signOut`/`currentSession`, none of which
-  refresh) and a `data` client whose `accessToken` provider returns the auth
-  client's current Keychain token **without** refreshing. Every table/RPC call
-  goes through `data`. This is structural, not a convention: refresh tokens are
-  single-use and reuse detection is ON (10 s interval), so one stray refresh from
-  the watch or the health plugin revokes the whole session family and signs the
-  phone out. `SupabaseClientOptions.AuthOptions` also enforces argument order —
-  `autoRefreshToken` must precede `accessToken`.
+  disables the background *timer*. Two accessors refresh anyway, and both were
+  live in shipped builds: `auth.session` (refreshes whenever the stored access
+  token is expired — the #196 finding) and **`auth.setSession(accessToken:
+  refreshToken:)`, which calls `refreshSession` outright when the access token it
+  is handed has already expired** — the #265 finding, and the one #196's guards
+  were left standing in front of. Neither native client has an `AuthClient` any
+  more (#265): each is a single `SupabaseClient` whose `accessToken` provider
+  returns the relayed bearer token, so there is nothing to refresh, recover or
+  rotate. `SupabaseClientOptions.AuthOptions` enforces argument order —
+  `autoRefreshToken` must precede `accessToken` — and the main
+  `SupabaseClientOptions` init is `(db:auth:global:functions:realtime:storage:)`,
+  so `auth:` must precede `global:`.
 - **The `Preview` GitHub environment must stay unrestricted.** Vercel's
   integration deploys *PR branches* to it, so adding a deployment-branch policy
   (e.g. "staging only") makes every PR-branch deployment be rejected and the
