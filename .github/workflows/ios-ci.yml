@@ -55,8 +55,23 @@ jobs:
         run: swift test --package-path ios/App/SendLogWatchCore
 
   swift:
+    # Drafts skip the macOS compile; `package-tests` above still runs, so a
+    # draft keeps its Swift feedback at the Ubuntu rate. A draft that gets
+    # force-pushed repeatedly before it is ready was paying the macOS rate for
+    # every one of those pushes, and marking it ready for review re-triggers
+    # this job — so nothing reaches a reviewable state uncompiled. Not
+    # expressible as a workflow-level filter like `paths` is, so this one does
+    # allocate the runner before evaluating; the waste is seconds of idle
+    # runner against minutes of Xcode.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     runs-on: blacksmith-6vcpu-macos-26
-    timeout-minutes: 45
+    # 15, not 45: the p50 of this job is ~2 minutes and it has never legitimately
+    # needed more than 3. The old ceiling was theoretical until a hung run on
+    # fix/issue-196 sat for 30 minutes before anything cancelled it — 24% of
+    # that month's entire macOS spend from one incident (#290).
+    # `cancel-in-progress` does not cover this: it only fires on a superseding
+    # push, so a hang on the newest commit runs to the timeout unopposed.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
