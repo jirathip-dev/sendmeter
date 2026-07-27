@@ -307,6 +307,7 @@ struct ForceGaugeView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+                sidePickerTitled
             } else if recentTags.isEmpty {
                 Text("No exercise tags found — record once in the iPhone app, or check the phone app is signed in.")
                     .font(.caption2)
@@ -315,33 +316,28 @@ struct ForceGaugeView: View {
                     .font(.caption2)
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
+                sidePickerTitled
             } else {
-                Picker("Exercise", selection: $tag) {
-                    // Explicit empty choice — a rep is never silently mislabeled.
-                    Text("pick…").tag("")
-                    ForEach(recentTags, id: \.self) { t in
-                        Text(t).tag(t)
-                    }
-                }
-                .pickerStyle(.navigationLink)
-                .font(.caption2)
-                .controlSize(.small)
-            }
-            Picker("Side", selection: $side) {
-                ForEach(SIDE_OPTIONS, id: \.value) { o in
-                    Text(o.label).tag(o.value)
+                // One row for both, so connected + pickers + Start fit a 40mm
+                // screen without scrolling (#279). Neither carries a visible
+                // title at that width — the selected values are the labels,
+                // and VoiceOver still hears "Exercise" / "Side".
+                HStack(spacing: 4) {
+                    exercisePicker
+                    sidePickerCompact
+                        .frame(width: 60)
                 }
             }
-            .pickerStyle(.navigationLink)
-            .font(.caption2)
-            .controlSize(.small)
 
-            Button("Start") {
+            Button {
                 savedMsg = nil
                 tindeq.start()
+            } label: {
+                Text("Start").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .controlSize(.mini)
+            .font(.caption2)
             .disabled(saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
             if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
                 Text("Pick an exercise to start.")
@@ -349,6 +345,88 @@ struct ForceGaugeView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    /// Exercise selector — deliberately NOT a `.navigationLink` Picker any
+    /// more (#279). A Picker can only *display* a value that also exists as a
+    /// row in its list, which is why the placeholder used to be an explicit
+    /// `Text("pick…").tag("")` row: selectable, so "no exercise" was something
+    /// the user could actively choose, which reads as broken. A NavigationLink
+    /// over an explicit list splits the two — the placeholder is displayed,
+    /// never offered. The SL-75 guard is untouched: nothing here can set `tag`
+    /// to "", and Start stays disabled while it is.
+    private var exercisePicker: some View {
+        pickerLink(
+            display: tag.isEmpty ? "pick…" : tag,
+            isPlaceholder: tag.isEmpty,
+            label: "Exercise"
+        ) {
+            OptionPickerList(
+                title: "Exercise",
+                options: recentTags.map { (value: $0, label: $0) },
+                selection: $tag
+            )
+        }
+    }
+
+    /// Side, sharing the row with the exercise picker. Same link-shaped control
+    /// rather than a `.navigationLink` Picker because that style stacks its
+    /// title *above* the value — two lines where one has to do (#279), and
+    /// `.labelsHidden()` doesn't suppress it on watchOS. Unset shows "Side",
+    /// which doubles as the missing title; an unspecified side stays a real,
+    /// pickable option here (unlike an empty exercise).
+    private var sidePickerCompact: some View {
+        pickerLink(
+            display: side.isEmpty ? "Side" : sideLabel(side),
+            isPlaceholder: side.isEmpty,
+            label: "Side"
+        ) {
+            OptionPickerList(title: "Side", options: SIDE_OPTIONS, selection: $side)
+        }
+    }
+
+    /// The titled, full-width Side picker kept for the loading/empty-tag
+    /// states: with no exercise value beside it, a lone "—" has nothing to give
+    /// it context.
+    private var sidePickerTitled: some View {
+        Picker("Side", selection: $side) {
+            ForEach(SIDE_OPTIONS, id: \.value) { o in
+                Text(o.label).tag(o.value)
+            }
+        }
+        .pickerStyle(.navigationLink)
+        .font(.caption2)
+        .controlSize(.small)
+    }
+
+    private func sideLabel(_ value: String) -> String {
+        SIDE_OPTIONS.first { $0.value == value }?.label ?? value
+    }
+
+    /// One compact row of the setup screen: current value (or placeholder) on a
+    /// mini bordered button that pushes its own list. Titles are dropped in the
+    /// side-by-side row — there's no width for them at 40mm — so VoiceOver gets
+    /// the name via `accessibilityLabel`.
+    private func pickerLink<Destination: View>(
+        display: String,
+        isPlaceholder: Bool,
+        label: String,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            Text(display)
+                .font(.caption2)
+                .foregroundStyle(isPlaceholder ? Color.secondary : Color.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.mini)
+        .accessibilityLabel(label)
     }
 
     // MARK: Measuring — the live gauge owns the whole screen.
@@ -451,5 +529,39 @@ struct ForceGaugeView: View {
             try? await Task.sleep(for: .seconds(2.5))
             if generation == savedMsgGeneration { savedMsg = nil }
         }
+    }
+}
+
+/// The list behind the setup pickers (#279). Only the options handed to it are
+/// offered — the exercise list is built from `recentTags`, so unlike the old
+/// `Text("pick…").tag("")` row there is nothing here that labels a rep with no
+/// exercise. Tapping selects and pops straight back, same feel as the
+/// `.navigationLink` Picker it replaces.
+private struct OptionPickerList: View {
+    let title: String
+    let options: [(value: String, label: String)]
+    @Binding var selection: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        List {
+            ForEach(options, id: \.value) { o in
+                Button {
+                    selection = o.value
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(o.label)
+                            .lineLimit(2)
+                        Spacer(minLength: 4)
+                        if o.value == selection {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle(title)
     }
 }
