@@ -1,10 +1,12 @@
 require "base64"
 require "fileutils"
+require "xcodeproj"
 
 default_platform(:ios)
 
 APP_IDENTIFIER = "com.jirathip.sendlog".freeze
 XCODEPROJ = "ios/App/App.xcodeproj".freeze
+TEAM_ID = "9244PWFYD7".freeze
 
 platform :ios do
   desc "Build the web app, sync Capacitor, and ship a build to TestFlight"
@@ -24,10 +26,10 @@ platform :ios do
 
     # 2. Headless signing. get_certificates creates/installs an Apple
     #    Distribution certificate via the API key (no Xcode account, no match
-    #    repo). The -authenticationKey* flags below then let
-    #    -allowProvisioningUpdates create/refresh the app + watch provisioning
-    #    profiles the same way — without a signed-in Xcode account, which is
-    #    what "exportArchive No Accounts" was complaining about.
+    #    repo). The -authenticationKey* flags below then let the EXPORT step
+    #    talk to App Store Connect without a signed-in Xcode account, which is
+    #    what "exportArchive No Accounts" was complaining about. They are
+    #    deliberately not given to the archive — see step 4.
     #
     #    On CI (ENV["CI"] set) get_certificates is unsafe: a fresh runner has
     #    an empty keychain, so it MINTS a new Apple Distribution cert every
@@ -61,9 +63,9 @@ platform :ios do
       )
     end
     key_abs = File.expand_path(File.basename(ENV.fetch("ASC_KEY_PATH")), __dir__)
-    auth_args = "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} " \
-                "-authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')} " \
-                "-authenticationKeyPath #{key_abs} -allowProvisioningUpdates"
+    export_auth_args = "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} " \
+                       "-authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')} " \
+                       "-authenticationKeyPath #{key_abs} -allowProvisioningUpdates"
 
     # The widget-extension App ID must exist before sigh can fetch a profile
     # for it — sigh does NOT create App IDs, and `produce`'s API-key support
@@ -88,15 +90,28 @@ platform :ios do
     # Capabilities → App Groups). Until then, get_provisioning_profile below
     # will fail for the watch-widgets App ID with a capability-mismatch error.
 
+    # Every signable target in the archive, mapped to its bundle id. Drives both
+    # the profile fetch below and the per-target manual-signing pin in step 4, so
+    # the two can't drift apart. (SendLogWatchTests is signable but isn't part of
+    # the App scheme's archive action, so it stays on automatic signing.)
+    signable = {
+      "App" => APP_IDENTIFIER,
+      "SendLogWatch Watch App" => "#{APP_IDENTIFIER}.watchkitapp",
+      "SendmeterWidgets" => widgets_id,
+      "SendLogWatchWidgets" => watch_widgets_id,
+    }
+
     # App Store provisioning profiles that include the distribution cert above,
-    # for the app + its embedded watch app + the widget extension. force: true
+    # for the app + its embedded watch app + both widget extensions. force: true
     # regenerates them so they carry the current cert (the account's auto
     # "Team Store" profile referenced an older cert → "profile doesn't include
-    # signing certificate"). Export then uses manual signing with these,
-    # avoiding Xcode cloud-managed signing, which the API key isn't permitted
-    # to drive.
+    # signing certificate"). Archive AND export then use manual signing with
+    # these, avoiding Xcode cloud-managed signing, which the API key isn't
+    # permitted to drive. sigh also installs each profile into
+    # ~/Library/MobileDevice/Provisioning Profiles, which is where xcodebuild
+    # looks them up by name at archive time.
     profiles = {}
-    [APP_IDENTIFIER, "#{APP_IDENTIFIER}.watchkitapp", widgets_id, watch_widgets_id].each do |bundle_id|
+    signable.each_value do |bundle_id|
       get_provisioning_profile(
         api_key: api_key,
         app_identifier: bundle_id,
@@ -115,24 +130,98 @@ platform :ios do
       initial_build_number: 0
     ) + 1
 
-    # 4. Archive + export, automatic signing. gym applies `xcargs` to BOTH the
-    #    archive and the export xcodebuild invocations, so the API-key auth
-    #    flags belong here only — repeating them in export_xcargs makes
-    #    xcodebuild reject "-authenticationKeyID may only be provided once".
-    build_app(
-      project: XCODEPROJ,
-      scheme: "App",
-      configuration: "Release",
-      export_method: "app-store",
-      xcargs: "CURRENT_PROJECT_VERSION=#{build} #{auth_args}",
-      export_options: {
-        signingStyle: "manual",
-        signingCertificate: "Apple Distribution",
-        provisioningProfiles: profiles
-      }
-    )
+    # 4. Pin the ARCHIVE to manual signing (#263).
+    #
+    #    gym runs two xcodebuild invocations: `archive`, then `-exportArchive`.
+    #    export_options below governs only the export. The archive used whatever
+    #    project.pbxproj says — and every target there is CODE_SIGN_STYLE =
+    #    Automatic. On a fresh CI runner the keychain holds only the distribution
+    #    cert imported above, so automatic signing found no Development identity,
+    #    and `-allowProvisioningUpdates` plus the API key authorised xcodebuild to
+    #    create one. That is where the "Created via API" Apple Development
+    #    certificates came from: one per CI run, until the account hit Apple's cap
+    #    and the build started failing. The ENV["CI"] branch above was never the
+    #    hole — it guards Distribution certs, and no Distribution cert leaked.
+    #
+    #    The cert and all four profiles are in hand by this point, so point the
+    #    archive at them and xcodebuild has nothing left to create. Two guards,
+    #    because one of them is a build setting and build settings drift:
+    #      a) every archived target signs manually against a named profile, and
+    #      b) the archive no longer gets -allowProvisioningUpdates at all (the
+    #         auth flags moved to export_xcargs), so even a target that somehow
+    #         reverted to Automatic can only fail loudly, never mint a cert.
+    #
+    #    Why the pbxproj is edited here at runtime instead of in git:
+    #      - the profile names are whatever sigh just produced (SIGH_NAME); a
+    #        hardcoded PROVISIONING_PROFILE_SPECIFIER silently goes stale the
+    #        next time a profile comes back under a different name,
+    #      - a command-line build setting (xcargs) applies to EVERY target, and
+    #        these four targets need four different profiles — there is no
+    #        per-target form of an xcargs setting,
+    #      - the committed project has to stay Automatic or Xcode on the laptop
+    #        (signing against a personal Apple Development team) stops building.
+    #    The edit is reverted in the ensure below, so it never reaches git.
+    #
+    #    Deliberately NOT gated on ENV["CI"]: the export step already requires
+    #    exactly this cert and these profiles, so demanding them at archive time
+    #    adds no new requirement to a laptop run — and it makes a local
+    #    `fastlane beta` a faithful rehearsal of the CI archive, which is
+    #    otherwise only observable on a paid macOS runner. The old divergence
+    #    (local worked under Automatic) is what let this hide for so long.
+    project_abs = File.expand_path("../#{XCODEPROJ}", __dir__)
+    pbxproj = File.join(project_abs, "project.pbxproj")
+    pbxproj_original = File.binread(pbxproj)
 
-    # 5. Upload. Internal testers on your team get it automatically once
+    begin
+      signable.each do |target, bundle_id|
+        update_code_signing_settings(
+          path: project_abs,
+          use_automatic_signing: false,
+          targets: [target],
+          build_configurations: ["Release"],
+          team_id: TEAM_ID,
+          code_sign_identity: "Apple Distribution",
+          profile_name: profiles.fetch(bundle_id)
+        )
+      end
+
+      # CODE_SIGN_STYLE (set above) is what xcodebuild reads; ProvisioningStyle
+      # under TargetAttributes is the Xcode-8-era mirror of it, which
+      # update_code_signing_settings leaves alone. Flip it too so nothing can
+      # still read "Automatic" from anywhere in the project.
+      proj = Xcodeproj::Project.open(project_abs)
+      proj.root_object.attributes.fetch("TargetAttributes", {}).each_value do |attrs|
+        attrs["ProvisioningStyle"] = "Manual" if attrs.key?("ProvisioningStyle")
+      end
+      proj.save
+
+      # 5. Archive + export, manual signing on both. gym appends `xcargs` to the
+      #    archive AND the export invocation but `export_xcargs` only to the
+      #    export (gym/generators/package_command_generator_xcode7.rb) — so the
+      #    auth flags live in export_xcargs alone. Putting them in both is what
+      #    makes xcodebuild reject "-authenticationKeyID may only be provided
+      #    once"; moving them is fine and is what keeps the archive unable to
+      #    create signing assets.
+      build_app(
+        project: XCODEPROJ,
+        scheme: "App",
+        configuration: "Release",
+        export_method: "app-store",
+        xcargs: "CURRENT_PROJECT_VERSION=#{build}",
+        export_xcargs: export_auth_args,
+        export_options: {
+          signingStyle: "manual",
+          signingCertificate: "Apple Distribution",
+          provisioningProfiles: profiles
+        }
+      )
+    ensure
+      # Restore the checked-in signing config whatever happened, so a failed
+      # build never leaves Manual/Distribution settings in the working tree.
+      File.binwrite(pbxproj, pbxproj_original)
+    end
+
+    # 6. Upload. Internal testers on your team get it automatically once
     #    processing finishes (no App Review for internal testing).
     upload_to_testflight(
       api_key: api_key,

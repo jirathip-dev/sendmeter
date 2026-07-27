@@ -574,11 +574,31 @@ are safe regardless.
   `.widgets` App ID via `Spaceship::ConnectAPI::BundleId.create` since sigh won't),
   `latest_testflight_build_number + 1` (so **never hand-bump
   `CURRENT_PROJECT_VERSION`** — the lane injects it via `xcargs` at archive time
-  into app + watch + widget), then `build_app` with **manual** signing +
-  `-allowProvisioningUpdates` (the auth-key flags go in `xcargs` only, not
-  `export_xcargs`), then `upload_to_testflight`. Config lives in `fastlane/.env`
-  (`ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_PATH`) + `fastlane/asc_api_key.p8`
-  (git-ignored) — fastlane auto-loads `.env`.
+  into app + watch + widget), then `build_app` with **manual** signing on both
+  the archive and the export, then `upload_to_testflight`. Config lives in
+  `fastlane/.env` (`ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_PATH`) +
+  `fastlane/asc_api_key.p8` (git-ignored) — fastlane auto-loads `.env`.
+  - **The archive signs manually via a runtime pbxproj edit (#263), and
+    `-allowProvisioningUpdates` is export-only.** gym runs two xcodebuild
+    invocations and `export_options` governs only the second one; the archive
+    obeys `project.pbxproj`, where every target is `CODE_SIGN_STYLE = Automatic`
+    for local Xcode dev on a personal team. On a fresh CI runner that meant
+    automatic signing found no Development identity and — authorised by the API
+    key plus `-allowProvisioningUpdates` — **minted a new "Created via API"
+    Apple Development certificate on every run** until the account hit Apple's
+    cap. The lane now flips the four archived targets' *Release* configs to
+    Manual + `Apple Distribution` + the profile sigh just fetched
+    (`update_code_signing_settings`, reverted in an `ensure`), and the auth
+    flags moved from `xcargs` to `export_xcargs`. That split is load-bearing:
+    gym appends `xcargs` to **both** invocations but `export_xcargs` to the
+    export only, so this is the only way to keep the export's API-key access
+    (the original `exportArchive "No Accounts"` fix) while denying the archive
+    any authority to create signing assets. Putting the flags in both is what
+    trips `-authenticationKeyID may only be provided once`. **Never commit
+    Manual signing into `project.pbxproj`** — it would break local Xcode
+    builds — and never hardcode a `PROVISIONING_PROFILE_SPECIFIER` there; the
+    names come from `SharedValues::SIGH_NAME` at runtime. See
+    `ios/COMPANION_SETUP.md` → "Why the archive signs manually".
   - **Two hard requirements:** (1) the Apple Distribution cert must be installable —
     `get_certificates` reuses it if already in the login keychain, else creates it
     via the API key (a key with Admin/App Manager access); (2) `LANG=en_US.UTF-8`,

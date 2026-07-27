@@ -186,6 +186,75 @@ watch app (re-checks for it).
   if you hit it while adding another person's devices, that's the
   point where a paid membership becomes the practical unblock.
 
+## Why the archive signs manually (issue #263)
+
+**Symptom.** `fastlane beta` on CI intermittently failed at the archive
+step, and the developer account kept accumulating Apple Development
+certificates named *"Created via API"* — one per CI run — until it hit
+Apple's per-team cap and every subsequent run failed. Because a run
+only fails once the account is *at* the cap, re-running after a manual
+revoke "fixed" it, which is what made this look intermittent rather
+than a leak on every single run.
+
+**Mechanism.** `build_app` (gym) issues *two* `xcodebuild`
+invocations — `archive`, then `-exportArchive`. Three things that
+looked like they covered signing each cover only part of it:
+
+| Guard | Covers | Doesn't cover |
+| --- | --- | --- |
+| `if ENV["CI"]` cert import | Distribution certs (correctly — none leaked) | anything about *Development* certs |
+| `export_options: signingStyle: "manual"` | the export invocation | the archive invocation |
+| `project.pbxproj` | the archive | — but every target there is `CODE_SIGN_STYLE = Automatic` |
+
+So the archive ran with automatic signing against a fresh runner
+keychain that held only the imported *Distribution* cert. Automatic
+signing wants a Development identity, found none, and — because the
+lane passed `-authenticationKeyID/-IssuerID/-Path` plus
+`-allowProvisioningUpdates` through `xcargs`, which gym applies to the
+archive — was **authorised to create one**. It did, every run.
+
+There is no team mismatch involved: the distribution cert is
+`Apple Distribution: JIRATHIP KUNKANJANATHORN (9244PWFYD7)`, matching
+the project's `DEVELOPMENT_TEAM`. `SH947DTWM4` is only the exported
+p12's filename.
+
+**Fix.** Two independent guards, in `fastlane/Fastfile`:
+
+1. Before `build_app`, flip the *Release* configuration of the four
+   archived targets (`App`, `SendLogWatch Watch App`,
+   `SendmeterWidgets`, `SendLogWatchWidgets`) to `CODE_SIGN_STYLE =
+   Manual`, `CODE_SIGN_IDENTITY = "Apple Distribution"` and the
+   `PROVISIONING_PROFILE_SPECIFIER` that `get_provisioning_profile`
+   just returned via `SharedValues::SIGH_NAME`. The archive now signs
+   with material the lane already has, so there is nothing left for
+   `xcodebuild` to create.
+2. Move the auth flags from `xcargs` to `export_xcargs`, so the archive
+   no longer receives `-allowProvisioningUpdates` at all. Even if a
+   target's signing settings ever drift back to Automatic, the worst
+   case becomes a loud failure instead of a silent certificate.
+
+**Why the edit is applied at lane runtime and reverted afterwards,
+rather than committed:**
+
+- The committed project has to stay `Automatic`, or local Xcode
+  development — which signs against a *personal* Apple Development team
+  (`ZY74K2NK8Z`), not `9244PWFYD7` — stops building. Only the Release
+  configs are touched, and only for the duration of the archive; an
+  `ensure` block restores `project.pbxproj` byte-for-byte even if the
+  build fails.
+- Profile names are whatever sigh produced on this run. A hardcoded
+  `PROVISIONING_PROFILE_SPECIFIER` in the pbxproj silently goes stale
+  the first time a profile comes back under a different name.
+- `xcargs` alone cannot express this: a command-line build setting
+  applies to *every* target, and these four need four *different*
+  profiles. There is no per-target form.
+
+**The check that actually proves it.** A green run does not, on its
+own — a run only exercises the failure when the account is at its cap.
+The durable proof is negative: after a successful CI run, Certificates,
+IDs & Profiles should contain **no new "Created via API" Apple
+Development certificate**. Check that, not the build's exit code.
+
 ## Other decisions worth knowing about
 
 - **`WATCHOS_DEPLOYMENT_TARGET` is 10.0**, not whatever Xcode's wizard
