@@ -1,44 +1,51 @@
 import Foundation
+import SendLogWatchCore
 import Supabase
 
 enum SupabaseService {
-    /// Session (incl. refresh token) persists in the Keychain automatically —
-    /// KeychainLocalStorage is the SDK default on Apple platforms.
+    /// ONE client, and it has no auth session of its own (issue #265).
     ///
-    /// Two clients, not one (issue #196): `autoRefreshToken: false` alone
-    /// does NOT stop a refresh — supabase-swift's default `.auth` accessor
-    /// still refreshes an expired token on demand (inside `auth.session`),
-    /// and the watch must never do that. It's a *consumer* of the session
-    /// the iPhone relays; Supabase refresh tokens are single-use, and the
-    /// phone's supabase-js owns the rotation, so a watch refresh attempt
-    /// with the (already-rotated) shared token trips the "compromised
-    /// refresh token" replay detection, which revokes the whole session
-    /// family — the watch then falls back to anon and every write fails
-    /// RLS. Fresh access tokens arrive via the phone relay instead (on
-    /// every auth event + app foreground).
+    /// The history here matters, because the previous two attempts both looked
+    /// right on inspection:
     ///
-    /// - `auth`: the only client allowed to read `.auth` — `AuthManager`
-    ///   uses it for `setSession`/`signIn`/`signOut`/`currentSession`. None
-    ///   of those trigger a refresh.
-    /// - `data`: every table/RPC call goes through this one instead. Its
-    ///   `accessToken` provider hands back `auth`'s current Keychain token
-    ///   WITHOUT refreshing it, so this client never needs `.auth` at all —
-    ///   reading `.auth` on it would trip supabase-swift's own "use a
-    ///   separate client" warning.
-    static let auth: SupabaseClient = makeClient(accessToken: nil)
+    /// - Originally the watch called `setSession(accessToken:refreshToken:)`
+    ///   with the pair the phone relayed. supabase-swift persisted both to the
+    ///   Keychain and refreshed on demand, so the watch would eventually
+    ///   present a refresh token the phone had long since rotated — Supabase's
+    ///   reuse detection then revoked the entire session family, signing the
+    ///   phone out too.
+    /// - #196 split the client in two and forbade every refreshing accessor by
+    ///   convention. The convention held everywhere it was applied, and a
+    ///   twelve-hour-stale token was still replayed in production on
+    ///   2026-07-26 (#265).
+    ///
+    /// So the refresh token is gone from the wire and from the device. The
+    /// watch is handed a short-lived access token, keeps it in
+    /// `WatchSessionStore`, and sends it as a bearer token. There is no
+    /// `AuthClient` here to refresh anything, no Keychain session for the SDK
+    /// to recover, and nothing a future call site could accidentally rotate.
+    /// When the token expires the watch asks the phone for another
+    /// (`AuthManager.requestSessionFromPhone`); only the phone's supabase-js
+    /// owns rotation.
+    ///
+    /// `data` keeps its name — every existing `Repo`/queue/live-sync call site
+    /// already goes through it.
+    static let data: SupabaseClient = makeClient()
 
-    static let data: SupabaseClient = makeClient(accessToken: {
-        try? await SupabaseService.auth.auth.currentSession?.accessToken
-    })
-
-    private static func makeClient(
-        accessToken: (@Sendable () async throws -> String?)?
-    ) -> SupabaseClient {
-        // Argument order is enforced by the initialiser: autoRefreshToken
-        // must precede accessToken.
+    private static func makeClient() -> SupabaseClient {
+        // No `AuthClient` involvement at all: `accessToken` makes the client
+        // ask us for a bearer token per request. `autoRefreshToken` must
+        // precede `accessToken` (initialiser argument order).
         let authOptions = SupabaseClientOptions.AuthOptions(
             autoRefreshToken: false,
-            accessToken: accessToken
+            accessToken: { WatchSessionStore.shared.accessToken }
+        )
+        // Names this process in Supabase's logs (#265 asked for origin
+        // attribution). The watch can no longer reach /token at all, so an
+        // auth-log entry is by definition not from here — but every PostgREST
+        // request it does make is now labelled.
+        let globalOptions = SupabaseClientOptions.GlobalOptions(
+            headers: ["X-Client-Info": "sendmeter-watch/\(WatchBuild.identity?.display ?? "?")"]
         )
         // Simulator-only: localhost is meaningless on a physical device, so
         // Debug-on-device deliberately stays on the hosted project (test
@@ -48,7 +55,7 @@ enum SupabaseService {
         return SupabaseClient(
             supabaseURL: URL(string: "http://127.0.0.1:54321")!,
             supabaseKey: "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH",
-            options: SupabaseClientOptions(auth: authOptions)
+            options: SupabaseClientOptions(auth: authOptions, global: globalOptions)
         )
         #else
         guard
@@ -62,7 +69,7 @@ enum SupabaseService {
         return SupabaseClient(
             supabaseURL: supabaseURL,
             supabaseKey: anonKey,
-            options: SupabaseClientOptions(auth: authOptions)
+            options: SupabaseClientOptions(auth: authOptions, global: globalOptions)
         )
         #endif
     }

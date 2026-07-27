@@ -7,7 +7,11 @@ project at `watch/`, own email+password login). It's now a **true
 companion app**, built as a second target inside
 `ios/App/App.xcodeproj` alongside the Capacitor iOS app. Signing in on
 the iPhone relays the session to the watch automatically over
-WatchConnectivity — no separate watch login in normal use.
+WatchConnectivity — and since #265 there is no separate watch login at
+all: the relay carries a short-lived **access token only**, so the watch
+has nothing to sign in *with* and can never hold a refresh token whose
+rotation the phone owns. A watch with an expired token asks the phone
+(`requestSession`) and waits.
 
 The old standalone project at `watch/` has been deleted — every Swift
 file in it was confirmed byte-identical to the companion target before
@@ -25,27 +29,34 @@ ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatc
    exposes `setSession`/`clearSession`, relayed via
    `WCSession.default.updateApplicationContext(...)`. Guards
    `WCSession.isSupported()` since the app is universal (iPad has no
-   watch pairing).
+   watch pairing). Since #265 `setSession` takes an **access token
+   only** — no `refreshToken` field exists on the contract — and stamps
+   every payload with a fresh `relayId`, because WatchConnectivity does
+   not deliver an application context identical to the one already set.
 2. `src/lib/watchAuthRelay.ts` calls the plugin from
    `src/hooks/useAuth.ts`'s `onAuthStateChange`, on **every** event
    that carries a session (`SIGNED_IN`/`TOKEN_REFRESHED`/`USER_UPDATED`)
-   — not just initial sign-in, since Supabase refresh tokens are
-   single-use/rotating.
+   and on every foreground — access tokens last an hour and the watch
+   cannot renew one itself.
 3. On the watch, `ios/App/SendLogWatch Watch App/Services/AuthManager.swift`
    implements `WCSessionDelegate`. At launch it reads
    `WCSession.default.receivedApplicationContext` **synchronously**
    (not just the `didReceiveApplicationContext` delegate callback,
    which only fires for context received *after* that point — a cold
-   watch launch would otherwise miss data already queued), decodes an
-   explicit `{"event": "signedIn"|"signedOut", ...}` payload, and
-   calls `client.auth.setSession(accessToken:refreshToken:)` to
-   hydrate. **This makes a network call** (verified against
-   supabase-swift source — it validates/refreshes the token against
-   Supabase, it's not purely local), so the watch needs connectivity
-   the first time it hydrates, same as a normal login would.
-4. Falls back to the existing Keychain session, then to manual
-   `SignInView` (unchanged, still works standalone) if the relay
-   hasn't delivered yet.
+   watch launch would otherwise miss data already queued) and decodes an
+   explicit `{"event": "signedIn"|"signedOut", ...}` payload through
+   `SessionRelay` (SendLogWatchCore). Hydration is now **purely local**:
+   `sub`/`exp` are read out of the JWT and the token is stored in
+   `WatchSessionStore`'s own Keychain entry. There is no `AuthClient` on
+   the watch at all, so nothing here can refresh, rotate or spend a
+   credential — and no `GET /user` round-trip is spent per relay, which
+   is what the old `auth.setSession` cost.
+4. Falls back to the stored token. There is **no manual sign-in** — an
+   access-token-only watch has nothing to sign in with. A watch without a
+   usable token shows `WaitingForPhoneView`, which explains what it is
+   waiting for and why the last relay was refused, and re-asks the phone
+   (`requestSession`) on launch, on reachability, on foreground, on
+   Retry, and from a slow poll.
 
 **The relay only fires when the phone app's JS actually runs.** If
 you reinstall/rebuild and the phone app was already idle from before,
