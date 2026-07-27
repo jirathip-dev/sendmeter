@@ -326,6 +326,15 @@ export function useTindeq() {
       }
       const summary = summarize(samplesRef.current);
       if (!summary) return;
+      // #269: THE synchronous store, deliberately. This is a React cleanup
+      // function — it cannot await, and `samplesRef.current` is gone the moment
+      // it returns, so an async write here would not "finish later", it would
+      // lose the recording. `persistRecording` is the localStorage emergency
+      // lane kept for exactly this call site; the main queue is IndexedDB and
+      // every other caller uses `persistRecordingDurable`. The lane is drained
+      // into IndexedDB by `absorbSyncLane` on the next foreground. Do not
+      // "simplify" this to the async path — see the policy block in
+      // recordingQueue.ts.
       const result = persistRecording(
         {
           id: crypto.randomUUID(),

@@ -449,9 +449,26 @@ are safe regardless.
   measuring* so the live gauge fits one screen). End-session logs the **actual
   wall-clock duration** (read-only); only RPE is asked. Don't reintroduce the
   discard/save prompt or an editable duration.
+- **The recording queue is TWO stores, and the split is load-bearing** (#269).
+  **IndexedDB** (`src/lib/recordingDb.ts`) is the main queue — every path that
+  can await (ForceView's failed-insert handler, the drain, the manual retry)
+  uses `persistRecordingDurable`. **localStorage** keeps only a *synchronous
+  emergency lane*, written by exactly one caller: `useTindeq`'s
+  salvage-on-unmount cleanup, which is a React cleanup function and **cannot
+  await** — an async write there doesn't finish later, it loses the buffer.
+  `absorbSyncLane` moves the lane into IndexedDB on the next drain/foreground,
+  and that same function IS the one-time migration of pre-#269
+  `sendmeter:pending-recordings` entries (same shape, so no migration flag
+  exists to get out of step). The migration is **interrupt-safe by
+  construction**: the copy is one transaction, the lane is cleared only after
+  it commits, and the store's keyPath is the entry `id`, so re-copying after a
+  kill overwrites instead of duplicating. Don't collapse the two stores, and
+  don't "simplify" the salvage path onto the async one. IndexedDB unavailable
+  (private mode, storage disabled, a blocked open) degrades to the lane —
+  `openRecordingDb` resolves `null`, never throws.
 - **A recording that can't be persisted is reported, never swallowed** (#264).
-  The offline queue's last line of defence is `localStorage`, and that write
-  can itself fail (quota exhausted, storage disabled) — the failure the queue
+  The queue's last line of defence is a storage write, and that write can
+  itself fail (quota exhausted, storage disabled) — the failure the queue
   exists to protect against, at the one moment it can't. The decided policy
   lives in full above `persistRecording` in `src/lib/recordingQueue.ts`; the
   short version: **the new recording wins** (a refused write retries after
@@ -463,7 +480,16 @@ are safe regardless.
   mount/foreground. `useTindeq`'s salvage-on-unmount can only report (no UI is
   reachable from a cleanup); `ForceView` additionally holds the samples in
   memory behind a Retry/Discard banner. **Never phrase a `persisted: false`
-  outcome as "queued" or "will sync"** — nothing is holding it.
+  outcome as "queued" or "will sync"** — nothing is holding it. Eviction
+  survives #269 as a *backstop* (`MAX_IDB_QUEUE_BYTES` = 64 MB, ~20 heavy
+  offline sessions) and still reports to monitoring — a non-zero `evicted` on
+  the IndexedDB path is now a finding, not routine degradation.
+- **Queue depth is ambient, never an interrupt** (#269). `usePendingUploads` →
+  a muted line on the Force tab and a "This iPhone · N recordings pending sync"
+  row in the account sheet, next to the watch's own queue line (#21). A toast
+  or alert per failed upload fires exactly when the user is mid-outage and can
+  do nothing, and then repeats per rep — don't add one. Same honest-states rule
+  as `watchSyncLine`: "not read yet" must not render as "empty".
 - **Recording samples store `t` in milliseconds.** `tindeq_recordings.samples`
   time is ms — charts must divide by 1000 to show seconds (a mislabeled axis once
   showed "25152.0s").

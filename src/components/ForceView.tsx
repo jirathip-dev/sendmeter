@@ -28,7 +28,9 @@ import {
   updateTindeqLivePeak,
 } from "../lib/liveActivity";
 import { reportPersistFailure } from "../lib/lostRecordings";
-import { persistRecording } from "../lib/recordingQueue";
+import { persistRecordingDurable } from "../lib/recordingQueue";
+import { usePendingUploads } from "../hooks/usePendingUploads";
+import { PENDING_BACKED_UP } from "../lib/pendingUploads";
 import type {
   NewTindeqRecording,
   TindeqPreset,
@@ -68,24 +70,30 @@ interface ForceViewProps {
 export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const toast = useToast();
   // #106: a rep whose insert fails (dead auth session, dropped connection)
-  // gets queued to localStorage instead of dropped — App.tsx drains it once
-  // a session comes back. Tracks whether the PREVIOUS attempt (of either
-  // kind) failed, so the toast below fires once per outage rather than once
-  // per queue-empty check — a queue that's still non-empty from an earlier
-  // outage must not swallow the notice for a brand-new one.
+  // gets queued instead of dropped — App.tsx drains it once a session comes
+  // back. Tracks whether the PREVIOUS attempt (of either kind) failed, so the
+  // toast below fires once per outage rather than once per queue-empty check —
+  // a queue that's still non-empty from an earlier outage must not swallow the
+  // notice for a brand-new one.
   const outageRef = useRef(false);
-  // #264: reps that the insert AND the localStorage queue both refused. Their
-  // samples exist nowhere but this array, so the banner below says exactly
-  // that and offers a real retry while the view is still mounted. Never told
-  // "will sync automatically" — nothing is holding them but this component.
+  // #269: the queue's ambient depth. Not an interrupt — see pendingUploads.ts
+  // for why a per-failure toast is the wrong shape.
+  const pendingUploads = usePendingUploads();
+  // #264: reps that the insert AND both stores refused. Their samples exist
+  // nowhere but this array, so the banner below says exactly that and offers a
+  // real retry while the view is still mounted. Never told "will sync
+  // automatically" — nothing is holding them but this component.
   const [unqueued, setUnqueued] = useState<(NewTindeqRecording & { id: string })[]>(
     [],
   );
   const [retryingUnqueued, setRetryingUnqueued] = useState(false);
-  function queueFailedRecording(rec: NewTindeqRecording & { id: string }) {
+  // #269: async, and free to be — unlike useTindeq's unmount cleanup this
+  // caller stays mounted for the whole write, so it uses the IndexedDB main
+  // queue rather than the synchronous emergency lane.
+  async function queueFailedRecording(rec: NewTindeqRecording & { id: string }) {
     const isNewOutage = !outageRef.current;
     outageRef.current = true;
-    const result = persistRecording(rec, userId);
+    const result = await persistRecordingDurable(rec, userId);
     reportPersistFailure("save-failed", result, rec.samples.length);
     if (!result.persisted) {
       // Always banner (one row per lost rep) but keep the toast on the same
@@ -117,7 +125,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       try {
         saved.push(await insertRecording(rec));
       } catch {
-        const result = persistRecording(rec, userId);
+        const result = await persistRecordingDurable(rec, userId);
         reportPersistFailure("save-failed", result, rec.samples.length);
         if (result.persisted) queued += 1;
         else stillLost.push(rec);
@@ -363,8 +371,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // time has passed and insert the FULL segment — landing both the
       // queued partial and the live full rep as two rows for one hold (the
       // exact double-count hazard CLAUDE.md warns about for guided protocols).
-      queueFailedRecording(rec);
       setListError(e instanceof Error ? e.message : "Failed to save recording");
+      await queueFailedRecording(rec);
     }
   }
 
@@ -466,8 +474,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // keep tag and side — set once, tweak side between reps
     } catch (e) {
       // Queue instead of dropping (#106) — see saveHoldSlice above.
-      queueFailedRecording(rec);
       setListError(e instanceof Error ? e.message : "Failed to save recording");
+      await queueFailedRecording(rec);
     } finally {
       setSaving(false);
     }
@@ -1205,6 +1213,46 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       {listError && (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 10 }}>
           {listError}
+        </div>
+      )}
+
+      {/* #269: ambient backlog depth. Muted, no buttons, no interrupt — a rep
+          waiting to upload is not a problem the user can act on mid-session,
+          and a toast per failure would fire during exactly the outage they
+          can do nothing about. What this buys is that a backlog which ISN'T
+          draining becomes visible while the data is still there, instead of
+          being discovered as a missing rep in History weeks later. Absent when
+          the queue is empty (or not yet read) — this is the one place silence
+          is honest, because the recordings list right above it is the positive
+          signal that saving works. */}
+      {pendingUploads !== null && pendingUploads > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginTop: 10,
+            fontSize: "var(--t-xs)",
+            color:
+              pendingUploads >= PENDING_BACKED_UP ? "var(--warning)" : "var(--ink-muted)",
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background:
+                pendingUploads >= PENDING_BACKED_UP ? "var(--warning)" : "var(--ink-faint)",
+              flexShrink: 0,
+            }}
+          />
+          <span>
+            {pendingUploads} recording{pendingUploads === 1 ? "" : "s"} waiting to
+            upload — saved on this device, {pendingUploads === 1 ? "it" : "they"} will
+            sync when the connection is back.
+          </span>
         </div>
       )}
 

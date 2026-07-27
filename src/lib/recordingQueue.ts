@@ -1,4 +1,17 @@
 import type { NewTindeqRecording } from "../types";
+import {
+  approxByteSize,
+  byQueuedAt,
+  isPendingRecording,
+  type PendingRecording,
+} from "./pendingRecording";
+import { notifyPendingUploadsChanged } from "./pendingUploads";
+import {
+  isQuotaError,
+  openRecordingDb,
+  type RecordingDb,
+  type RecordingDbLoader,
+} from "./recordingDb";
 
 // #106: a tindeq_recordings insert that failed because the auth session had
 // died (e.g. refresh-token-family revocation — see CLAUDE.md) or the network
@@ -6,39 +19,41 @@ import type { NewTindeqRecording } from "../types";
 // lived only in a local `try` variable, so the rep was gone the instant the
 // catch returned (and gone for good the moment App.tsx's `if (!session)
 // return <LoginScreen />` unmounted the tab on logout). This module persists
-// a failed insert's payload to localStorage instead, so it survives both the
-// failed request AND a logout-triggered unmount, and can be retried once a
-// session comes back.
+// a failed insert's payload instead, so it survives both the failed request
+// AND a logout-triggered unmount, and can be retried once a session comes back.
+//
+// #269: "persists" means TWO stores now — IndexedDB for the queue proper and
+// localStorage as a synchronous emergency lane. The policy block above
+// `persistRecording` is where that split is written down; read it before
+// changing either path.
+
+export type { PendingRecording };
 
 const STORAGE_KEY = "sendmeter:pending-recordings";
 
-// Byte budget, not item count: a rep's samples array dominates an entry's
-// size — a 5-min free hold serializes to ~544 KB, and useTindeq.ts's
-// MAX_RECORDING_MS safety cap (30 min) tops out around 3.3 MB. Capping by
-// COUNT let a handful of long holds blow straight through what some WebKit
-// builds allow for a single localStorage value; capping by approximate
-// serialized bytes instead degrades gracefully (drop the oldest entries
-// first) rather than silently failing to persist at all. ~1.5 MB leaves
-// headroom under everything else already living under the `sendmeter:`
-// prefix.
+// Byte budget for the SYNC LANE only (#269 — before that, for the whole
+// queue). A rep's samples array dominates an entry's size: a 5-min free hold
+// serializes to ~544 KB, and useTindeq.ts's MAX_RECORDING_MS safety cap
+// (30 min) tops out around 3.3 MB. Capping by COUNT let a handful of long holds
+// blow straight through what some WebKit builds allow for a single localStorage
+// value; capping by approximate serialized bytes instead degrades gracefully
+// (drop the oldest entries first) rather than silently failing to persist at
+// all. ~1.5 MB leaves headroom under everything else already living under the
+// `sendmeter:` prefix — and the lane is only ever meant to hold ONE entry
+// between a salvage and the next foreground, so the budget is now a backstop
+// against a lane that failed to drain, not a working limit.
 export const MAX_QUEUE_BYTES = 1_500_000;
 
-/// A recording queued for retry. `input.id` is a client-generated uuid,
-/// supplied to insertRecording as the row's primary key — a retry of an
-/// insert that actually landed server-side (but whose response the client
-/// never saw, e.g. the session died mid-request) then collides on the
-/// unique constraint (Postgres 23505) instead of creating a duplicate row.
-/// `id` mirrors `input.id` for convenient local dedup/lookup.
-export interface PendingRecording {
-  id: string;
-  queuedAt: string; // ISO — display + FIFO eviction order
-  /// The session that captured it, when known. A drain only ever attempts
-  /// entries matching the CURRENT user, so a stale queue can never attribute
-  /// a rep to whoever happens to sign in next (solo-user app today, but
-  /// cheap to get right).
-  userId: string | null;
-  input: NewTindeqRecording & { id: string };
-}
+// Byte budget for the MAIN (IndexedDB) queue. The working assumption about
+// session size, stated so the next reader can check it rather than trust it:
+// the heaviest realistic offline session is a guided protocol run end to end —
+// call it 60 holds of 30 s. At the ~1.8 KB/s that samples serialize to, that's
+// ~54 KB a rep, ~3.2 MB for the session. 64 MB is ~20 such sessions stacked up,
+// or ~19 back-to-back recordings at the 30-min MAX_RECORDING_MS cap. Eviction
+// is therefore not something a real session reaches — it is the backstop for a
+// queue that has silently failed to drain for weeks, which is a different bug
+// and one we would rather cap than let grow without bound.
+export const MAX_IDB_QUEUE_BYTES = 64_000_000;
 
 interface QueueStorage {
   getItem(key: string): string | null;
@@ -53,24 +68,8 @@ function defaultStorage(): QueueStorage | null {
   }
 }
 
-function isPendingRecording(v: unknown): v is PendingRecording {
-  if (!v || typeof v !== "object") return false;
-  const r = v as Record<string, unknown>;
-  if (
-    typeof r.id !== "string" ||
-    typeof r.queuedAt !== "string" ||
-    !(r.userId === null || typeof r.userId === "string") ||
-    !r.input ||
-    typeof r.input !== "object"
-  ) {
-    return false;
-  }
-  const input = r.input as Record<string, unknown>;
-  return typeof input.id === "string" && Array.isArray(input.samples);
-}
-
-/// Read the persisted queue. Tolerant of missing/corrupt storage — a bad
-/// blob is treated as an empty queue rather than throwing.
+/// Read the sync lane. Tolerant of missing/corrupt storage — a bad blob is
+/// treated as an empty queue rather than throwing.
 export function loadQueue(
   storage: QueueStorage | null = defaultStorage(),
 ): PendingRecording[] {
@@ -85,7 +84,7 @@ export function loadQueue(
   }
 }
 
-/// Persist the queue. Returns whether the write actually landed — a full or
+/// Persist the sync lane. Returns whether the write actually landed — a full or
 /// disabled store (private browsing, a native shell quirk, a single entry
 /// over quota on its own) throws on setItem, and callers need to know that
 /// happened rather than assume "queued" succeeded.
@@ -102,16 +101,14 @@ export function saveQueue(
   }
 }
 
-function approxByteSize(queue: PendingRecording[]): number {
-  return JSON.stringify(queue).length;
-}
-
-/// Pure: append one recording, evicting the OLDEST entries first until the
-/// queue's approximate serialized size is back under MAX_QUEUE_BYTES (or
-/// only the just-added entry is left — it's never dropped here even if it
-/// alone is over budget; saveQueue's return value is what tells the caller
-/// whether that still fit in practice). Returns a NEW array — doesn't
-/// mutate `queue`.
+/// Pure: append one recording to the SYNC LANE, evicting the OLDEST entries
+/// first until the lane's approximate serialized size is back under
+/// MAX_QUEUE_BYTES (or only the just-added entry is left — it's never dropped
+/// here even if it alone is over budget; the store's own answer is what tells
+/// the caller whether that fit in practice). Returns a NEW array — doesn't
+/// mutate `queue`. The IndexedDB path applies the same shape against
+/// MAX_IDB_QUEUE_BYTES inline, since it writes one entry rather than rewriting
+/// the whole queue.
 export function enqueueRecording(
   queue: PendingRecording[],
   input: NewTindeqRecording & { id: string },
@@ -129,50 +126,69 @@ export interface PersistResult {
   /// Whether the recording now has a durable home. `false` means the samples
   /// exist ONLY in the caller's memory.
   persisted: boolean;
-  /// How many PREVIOUSLY-queued recordings were dropped to make room — by
-  /// enqueueRecording's own byte budget, and then one at a time by the retry
-  /// loop below. Each one is itself a lost rep, so callers report it.
+  /// How many PREVIOUSLY-queued recordings were dropped to make room — by the
+  /// byte budget, and then one at a time by the retry loop when the store
+  /// refuses a write outright. Each one is itself a lost rep, so callers
+  /// report it. Expected to be 0 forever on the IndexedDB path; see
+  /// MAX_IDB_QUEUE_BYTES for why, and treat a non-zero value as a finding.
   evicted: number;
 }
 
-// #264 — WHAT HAPPENS WHEN THE PERSIST WRITE ITSELF FAILS.
+// #264 / #269 — WHERE A RECORDING GOES WHEN IT CAN'T BE SENT, AND WHAT HAPPENS
+// WHEN THAT WRITE ITSELF FAILS.
 //
-// saveQueue returns false when localStorage.setItem throws: the origin quota
-// is exhausted (MAX_QUEUE_BYTES bounds what THIS queue adds, but not what the
-// rest of the `sendmeter:` keys already occupy, and WebKit's per-origin limit
-// is smaller than some builds admit) or storage is disabled outright. Before
-// #264 both call sites treated that as a dead end — the salvage-on-unmount
-// path console.warn'd into a console no deployed device surfaces, and
-// ForceView toasted a failure with no way to act on it.
+// TWO STORES, ON PURPOSE. Do not collapse them into one.
 //
-// The policy, in order:
+//   * IndexedDB (`recordingDb.ts`) is THE QUEUE. Every path that can await uses
+//     it: ForceView's failed-insert handler, the drain, the manual retry. It is
+//     here for headroom — see MAX_IDB_QUEUE_BYTES.
+//   * localStorage (this file's STORAGE_KEY) is a SYNCHRONOUS EMERGENCY LANE,
+//     written by exactly one caller: useTindeq's salvage-on-unmount cleanup.
+//     A React cleanup function cannot await — the sample buffer is gone the
+//     moment it returns — so an async write there does not "finish later", it
+//     loses the recording. That is the whole reason this store still exists,
+//     and it is not a style preference. The lane holds at most the one rep
+//     being rescued, and `absorbSyncLane` moves it into IndexedDB on the next
+//     foreground/drain, so nothing lives there for long.
+//   * IndexedDB unavailable (private mode, storage disabled, a blocked open)
+//     degrades to the lane rather than throwing. A smaller queue beats no queue.
+//
+// WHEN A WRITE IS REFUSED. Both stores can refuse — the origin quota is
+// exhausted, or storage is disabled outright. Before #264 both call sites
+// treated that as a dead end: the salvage path console.warn'd into a console no
+// deployed device surfaces, and ForceView toasted a failure with no way to act
+// on it. The policy, in order:
 //
 //   1. THE NEW RECORDING WINS. It is the rep the user just pulled and the only
 //      one they are still thinking about; a queued entry is by definition one
 //      that has already failed to sync at least once. So a refused write is
 //      retried after dropping the OLDEST queued entry, repeatedly, down to the
-//      new entry alone. This is the same oldest-first degradation
-//      enqueueRecording already applies at the byte budget, just driven by the
-//      store's actual answer instead of an estimate.
-//   2. IF THE LONE ENTRY STILL WON'T WRITE, THE LOSS IS REAL AND MUST BE SAID
-//      OUT LOUD. There is no third store to fall back to, so the contract is
-//      to report rather than to pretend: `persisted: false` is returned, and
-//      `reportPersistFailure` in `./lostRecordings` emits a Sentry event plus
-//      a durable one-shot user notice. Callers must NOT show copy implying the
-//      recording will sync later.
+//      new entry alone. This is the same oldest-first degradation the byte
+//      budget applies, just driven by the store's actual answer instead of an
+//      estimate. #269 did NOT delete this — it made it unreachable in practice
+//      by giving the main queue real headroom, and kept it as the backstop.
+//      Every eviction is still reported to monitoring, and now genuinely means
+//      something is wrong rather than "Tuesday".
+//   2. IF THE LONE ENTRY STILL WON'T WRITE — to IndexedDB, and then not to the
+//      lane either — THE LOSS IS REAL AND MUST BE SAID OUT LOUD. There is no
+//      third store, so the contract is to report rather than to pretend:
+//      `persisted: false` is returned, and `reportPersistFailure` in
+//      `./lostRecordings` emits a Sentry event plus a durable one-shot user
+//      notice. Callers must NOT show copy implying the recording will sync.
 //   3. IN-MEMORY SAMPLES ARE STILL WORTH SOMETHING. `persisted: false` does
 //      not mean "gone yet" — it means "gone when this scope ends". A caller
 //      that is still mounted (ForceView) holds the payload and offers Retry;
 //      a caller that is unmounting (useTindeq's salvage cleanup) cannot, and
 //      only reports.
 //
-// Deliberately NOT done: no compression, no IndexedDB fallback, no partial
-// (down-sampled) save. Each trades away the exactness of the curve or adds a
-// second async store to the one path that must stay synchronous.
+// Deliberately NOT done: no compression, no down-sampled partial save. Both
+// trade away the exactness of the curve, which is the product.
 
-/// Read the queue, append `input`, and write it back — making room by
-/// dropping the oldest entries if the store refuses the write. See the policy
-/// block above for why the new recording is the one that survives.
+/// SYNCHRONOUS emergency lane — see the policy block above. Read the lane,
+/// append `input`, write it back, making room by dropping the oldest entries if
+/// the store refuses. The ONLY caller that should use this is a path that
+/// genuinely cannot await (useTindeq's unmount cleanup); everything else wants
+/// `persistRecordingDurable`.
 export function persistRecording(
   input: NewTindeqRecording & { id: string },
   userId: string | null,
@@ -181,15 +197,134 @@ export function persistRecording(
 ): PersistResult {
   const before = loadQueue(storage);
   let next = enqueueRecording(before, input, userId, now);
-  // What enqueueRecording's byte budget already dropped (it added exactly one).
+  // What the byte budget already dropped (enqueueRecording added exactly one).
   let evicted = before.length + 1 - next.length;
   // Bounded: `next` shrinks by one every iteration and stops at length 1.
   for (;;) {
-    if (saveQueue(next, storage)) return { persisted: true, evicted };
+    if (saveQueue(next, storage)) {
+      notifyPendingUploadsChanged();
+      return { persisted: true, evicted };
+    }
     if (next.length <= 1) return { persisted: false, evicted };
     next = next.slice(1);
     evicted += 1;
   }
+}
+
+/// THE MAIN PATH — see the policy block above. Queue `input` in IndexedDB,
+/// falling back to the synchronous lane if IndexedDB is unavailable or refuses
+/// the write outright. Async, which every caller but the unmount cleanup can be.
+export async function persistRecordingDurable(
+  input: NewTindeqRecording & { id: string },
+  userId: string | null,
+  loadDb: RecordingDbLoader = openRecordingDb,
+  storage: QueueStorage | null = defaultStorage(),
+  now: () => string = () => new Date().toISOString(),
+): Promise<PersistResult> {
+  const db = await loadDb().catch(() => null);
+  // No IndexedDB at all → the lane is the queue. Strictly worse (that is the
+  // whole point of #269) but still durable.
+  if (!db) return persistRecording(input, userId, storage, now);
+
+  const existing = await db.getAll().catch(() => null);
+  if (existing === null) return persistRecording(input, userId, storage, now);
+
+  const entry: PendingRecording = { id: input.id, queuedAt: now(), userId, input };
+  // Budget eviction first, so the retry loop below only ever deals with the
+  // store refusing something the budget already thinks should fit.
+  let keep = [...existing, entry];
+  while (keep.length > 1 && approxByteSize(keep) > MAX_IDB_QUEUE_BYTES) {
+    keep = keep.slice(1);
+  }
+  let evicted = existing.length + 1 - keep.length;
+  const overBudget = existing.slice(0, evicted).map((e) => e.id);
+  if (overBudget.length > 0) await db.delete(overBudget).catch(() => {});
+
+  // Survivors other than the new entry, oldest first — what the retry loop is
+  // allowed to drop.
+  let droppable = keep.filter((e) => e.id !== entry.id);
+  for (;;) {
+    try {
+      await db.put([entry]);
+      notifyPendingUploadsChanged();
+      return { persisted: true, evicted };
+    } catch (e) {
+      // Only a quota refusal is worth evicting for; anything else (a
+      // structurally unwritable record, a dead connection) would refuse the
+      // lone entry just as hard, and dropping queued reps to learn that would
+      // be pure loss.
+      const oldest = isQuotaError(e) ? droppable[0] : undefined;
+      if (!oldest) break;
+      droppable = droppable.slice(1);
+      await db.delete([oldest.id]).catch(() => {});
+      evicted += 1;
+    }
+  }
+
+  // IndexedDB refused even the lone entry. The lane is a different store with a
+  // different budget, so it is worth one honest attempt before declaring loss.
+  const lane = persistRecording(input, userId, storage, now);
+  return { persisted: lane.persisted, evicted: evicted + lane.evicted };
+}
+
+/// Move everything in the synchronous lane into the main queue and clear the
+/// lane. This is BOTH the one-time migration of pre-#269
+/// `sendmeter:pending-recordings` entries AND the ongoing drain of the salvage
+/// lane — they are the same operation on the same entry shape, so there is no
+/// separate migration flag to get out of step with reality.
+///
+/// SAFE TO INTERRUPT, which is the property that matters:
+///   * `put` is ONE transaction, so the copy either lands whole or not at all;
+///     a rejected copy leaves the lane untouched and is retried next launch.
+///   * the lane is only cleared AFTER that transaction commits, so a process
+///     killed in between leaves entries in both stores — and the next run
+///     re-puts them under the same keyPath id, which OVERWRITES rather than
+///     duplicating. (The drain is idempotent for the same reason one layer
+///     further out: the id is the row's primary key, so a re-inserted recording
+///     collides 23505 and is treated as already-saved.)
+///   * the lane is cleared by RE-READING it and removing only the ids we
+///     actually copied, so a salvage that raced in during the copy isn't
+///     clobbered.
+///
+/// Returns how many entries moved.
+export async function absorbSyncLane(
+  loadDb: RecordingDbLoader = openRecordingDb,
+  storage: QueueStorage | null = defaultStorage(),
+): Promise<number> {
+  const lane = loadQueue(storage);
+  if (lane.length === 0) return 0;
+  const db = await loadDb().catch(() => null);
+  if (!db) return 0; // no main store to move into — the lane stays the queue
+  try {
+    await db.put(lane);
+  } catch {
+    return 0; // nothing committed; the lane still holds them
+  }
+  const movedIds = new Set(lane.map((p) => p.id));
+  saveQueue(
+    loadQueue(storage).filter((p) => !movedIds.has(p.id)),
+    storage,
+  );
+  notifyPendingUploadsChanged();
+  return lane.length;
+}
+
+/// How many recordings are waiting to upload, across BOTH stores. Ids, not
+/// payloads — `keys()` is a getAllKeys, so this doesn't deserialize the
+/// samples. De-duplicated because the interrupted-migration window (committed
+/// to IndexedDB, not yet cleared from the lane) legitimately has an entry in
+/// both, and showing it twice would make a stall look worse than it is.
+export async function pendingRecordingsCount(
+  loadDb: RecordingDbLoader = openRecordingDb,
+  storage: QueueStorage | null = defaultStorage(),
+): Promise<number> {
+  const ids = new Set(loadQueue(storage).map((p) => p.id));
+  const db = await loadDb().catch(() => null);
+  if (db) {
+    const keys = await db.keys().catch(() => [] as string[]);
+    for (const k of keys) ids.add(k);
+  }
+  return ids.size;
 }
 
 export interface DrainResult {
@@ -257,32 +392,47 @@ export async function drainQueue(
 // racing the same queue is an accepted, rare edge case.
 let draining = false;
 
-/// Load the queue, attempt everything for `userId`, persist whatever's
-/// still pending, and report how many were recovered.
+/// Absorb the sync lane, attempt everything queued for `userId` across both
+/// stores, remove whatever landed, and report how many were recovered.
+///
+/// Both stores are read even though `absorbSyncLane` normally empties the lane
+/// first: if the absorb couldn't commit (IndexedDB refused, or isn't there at
+/// all) the lane still holds real recordings, and leaving them unattempted
+/// until IndexedDB recovers would strand them for no reason.
 export async function drainPendingRecordingsQueue(
   userId: string,
   insert: (input: NewTindeqRecording & { id: string }) => Promise<unknown>,
+  loadDb: RecordingDbLoader = openRecordingDb,
   storage: QueueStorage | null = defaultStorage(),
 ): Promise<number> {
   if (draining) return 0;
-  const queue = loadQueue(storage);
-  if (queue.length === 0) return 0;
   draining = true;
   try {
+    await absorbSyncLane(loadDb, storage);
+    const db: RecordingDb | null = await loadDb().catch(() => null);
+    const main = db ? await db.getAll().catch(() => [] as PendingRecording[]) : [];
+    const lane = loadQueue(storage);
+    // An interrupted absorb leaves the same entry in both stores; attempt it once.
+    const mainIds = new Set(main.map((p) => p.id));
+    const queue = [...main, ...lane.filter((p) => !mainIds.has(p.id))].sort(byQueuedAt);
+    if (queue.length === 0) return 0;
+
     const { succeeded } = await drainQueue(queue, userId, insert);
     if (succeeded.length === 0) return 0;
-    // The drain's inserts are awaited one at a time, so a NEW failure can be
-    // queued (a synchronous read-modify-write of storage — see
-    // ForceView.queueFailedRecording) while we're mid-drain. Re-read storage
-    // now and drop only what THIS pass actually resolved, by id, instead of
-    // writing back the pre-drain `remaining` snapshot — that would silently
-    // clobber the entry that raced in.
-    const current = loadQueue(storage);
     const succeededIds = new Set(succeeded.map((p) => p.id));
-    saveQueue(
-      current.filter((p) => !succeededIds.has(p.id)),
-      storage,
-    );
+    // Deleting by id is inherently race-safe on the main store — unlike the
+    // lane's read-modify-write below, it can't clobber an entry that arrived
+    // mid-drain (the drain awaits one insert at a time, so a salvage really can
+    // land in between).
+    if (db) await db.delete([...succeededIds]).catch(() => {});
+    const currentLane = loadQueue(storage);
+    if (currentLane.some((p) => succeededIds.has(p.id))) {
+      saveQueue(
+        currentLane.filter((p) => !succeededIds.has(p.id)),
+        storage,
+      );
+    }
+    notifyPendingUploadsChanged();
     return succeeded.length;
   } finally {
     draining = false;
