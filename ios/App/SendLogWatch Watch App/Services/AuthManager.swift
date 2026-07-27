@@ -32,8 +32,9 @@ final class AuthManager: NSObject {
 
     private(set) var state: WatchAuthState = .signedOut
     /// True while we've asked the phone and are waiting for an answer — the
-    /// waiting screen says "Signing in from your iPhone…" rather than sitting
-    /// on a dead-looking explanation.
+    /// waiting screen shows a small spinner and disables its Retry, so a tap
+    /// doesn't look dropped. It no longer replaces the explanation with a
+    /// "signing in…" state (#278); routine auto sign-in isn't worth narrating.
     private(set) var syncing = false
     /// Why the last relay was refused, if it was (#266: a rejected relay must
     /// be visible, not dropped silently). Cleared by the next good relay.

@@ -33,17 +33,21 @@ struct WaitingForPhoneView: View {
                         .multilineTextAlignment(.center)
                 }
 
+                // No dedicated "Signing in from your iPhone…" state any more
+                // (#278): signing in from the phone IS the normal path, and a
+                // screen that swapped its whole explanation for a spinner every
+                // time a request was in flight narrated the routine case at the
+                // expense of the one the user is actually here to read. The
+                // explanation stays put; the spinner below it is the only thing
+                // that comes and goes.
+                Text(explanation)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
                 if auth.syncing {
                     ProgressView()
-                    Text("Signing in from your iPhone…")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                } else {
-                    Text(explanation)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                        .controlSize(.small)
                 }
 
                 // The refusal reason, when there was one — the difference
