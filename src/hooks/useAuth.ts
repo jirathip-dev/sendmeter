@@ -4,10 +4,10 @@ import { supabase, SUPABASE_URL } from "../lib/supabase";
 import {
   getSessionWithDiagnostics,
   initAuthDiagnostics,
-  markUserSignOut,
   recordAuthStateChange,
   recordSessionHeartbeat,
 } from "../lib/authDiagnostics";
+import { signOutUser, type SignOutOptions } from "../lib/signOut";
 import { flushAuthEvents } from "../lib/authEventFlush";
 import { upsertAuthEvents } from "../lib/repo";
 import {
@@ -156,11 +156,12 @@ export function useAuth() {
     loading,
     recovery,
     clearRecovery: () => setRecovery(false),
-    signOut: () => {
-      // Tell the diagnostics ring the SIGNED_OUT about to arrive is one the
-      // user asked for, so a deliberate logout doesn't read as a revocation.
-      markUserSignOut();
-      return supabase.auth.signOut();
-    },
+    // #273: one implementation, shared with `deleteAccount` — it marks the
+    // SIGNED_OUT as user-initiated (so a deliberate logout doesn't read as a
+    // revocation), and first drains the offline recording queue while the
+    // token is still alive. The caller supplies the prompt for anything that
+    // wouldn't upload; see `signOut.ts`.
+    signOut: (opts: Omit<SignOutOptions, "userId"> = {}) =>
+      signOutUser({ ...opts, userId: session?.user.id ?? null }),
   };
 }

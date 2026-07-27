@@ -462,6 +462,19 @@ export function markUserSignOut(): void {
   userSignOutAt = clock();
 }
 
+/// Is the sign-out happening RIGHT NOW one the user asked for? A read, not a
+/// take — `recordAuthStateChange` consumes the mark (one SIGNED_OUT, one
+/// absolution) and this must not, because #273's destructive decision (discard
+/// the offline recording queue) can be taken either side of that event.
+///
+/// The same TTL applies, and for the same reason: an unbounded mark left by a
+/// sign-out that never completed would silently absolve a genuine revocation
+/// hours later — and here that would mean deleting unsynced training data on
+/// an auth failure, which is exactly what #265 makes unacceptable.
+export function isUserSignOutPending(): boolean {
+  return userSignOutAt !== 0 && clock() - userSignOutAt < USER_SIGNOUT_TTL_MS;
+}
+
 function consumeUserSignOut(): boolean {
   if (!userSignOutAt) return false;
   const fresh = clock() - userSignOutAt < USER_SIGNOUT_TTL_MS;

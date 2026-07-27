@@ -47,6 +47,12 @@ export interface RecordingDb {
   put(entries: PendingRecording[]): Promise<void>;
   /// Delete by id. Missing ids are not an error.
   delete(ids: string[]): Promise<void>;
+  /// Empty the store in ONE transaction. Separate from `delete(await keys())`
+  /// on purpose: the sign-out discard (#273) is the user asking for their
+  /// recordings to be off this device, and a read-then-delete would leave
+  /// behind anything written between the two. Rejects if the transaction
+  /// aborts, so a caller can tell "removed" from "asked to remove".
+  clear(): Promise<void>;
 }
 
 export type RecordingDbLoader = () => Promise<RecordingDb | null>;
@@ -137,6 +143,9 @@ function wrap(db: IDBDatabase): RecordingDb {
     delete(ids) {
       if (ids.length === 0) return Promise.resolve();
       return writeTx(db, (store) => ids.map((id) => store.delete(id)));
+    },
+    clear() {
+      return writeTx(db, (store) => [store.clear()]);
     },
   };
 }

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import {
   MAX_QUEUE_BYTES,
   absorbSyncLane,
+  clearRecordingQueue,
   drainPendingRecordingsQueue,
   drainQueue,
   enqueueRecording,
@@ -114,6 +115,10 @@ function fakeDb(
     },
     delete: (ids) => {
       for (const id of ids) map.delete(id);
+      return Promise.resolve();
+    },
+    clear: () => {
+      map.clear();
       return Promise.resolve();
     },
   };
@@ -711,6 +716,67 @@ describe("pendingRecordingsCount", () => {
 
   it("is 0, not an error, with nothing queued anywhere", async () => {
     expect(await pendingRecordingsCount(noDb, fakeStorage())).toBe(0);
+  });
+});
+
+describe("clearRecordingQueue", () => {
+  // The mechanics only. WHEN this is allowed to run — user-initiated sign-out
+  // and nothing else — is `signOut.ts`'s job and lives in `signOut.test.ts`.
+
+  it("empties BOTH stores, not just the main one", async () => {
+    const storage = fakeStorage();
+    const { loader, map } = fakeDb(queueOf("idb-1", "idb-2"));
+    saveQueue(queueOf("lane-1"), storage);
+
+    expect(await clearRecordingQueue(loader, storage)).toBe(3);
+    expect([...map.keys()]).toEqual([]);
+    expect(loadQueue(storage)).toEqual([]);
+  });
+
+  it("counts an entry sitting in both stores once", async () => {
+    const storage = fakeStorage();
+    const lane = queueOf("legacy-1");
+    saveQueue(lane, storage);
+    const { loader } = fakeDb(lane);
+    expect(await clearRecordingQueue(loader, storage)).toBe(1);
+  });
+
+  it("still clears the lane when IndexedDB isn't there at all", async () => {
+    const storage = fakeStorage();
+    saveQueue(queueOf("lane-1", "lane-2"), storage);
+    expect(await clearRecordingQueue(noDb, storage)).toBe(2);
+    expect(loadQueue(storage)).toEqual([]);
+  });
+
+  it("reports what it actually removed, not what it was asked to", async () => {
+    // A store that refuses the clear must not be counted as emptied — the
+    // sign-out path reports the gap rather than assuming success.
+    const storage = fakeStorage();
+    const { db } = fakeDb(queueOf("idb-1", "idb-2"));
+    const refusing: RecordingDb = { ...db, clear: () => Promise.reject(quotaError()) };
+    saveQueue(queueOf("lane-1"), storage);
+
+    expect(await clearRecordingQueue(() => Promise.resolve(refusing), storage)).toBe(1);
+    expect(loadQueue(storage)).toEqual([]);
+  });
+
+  it("is a no-op on an empty queue", async () => {
+    const storage = fakeStorage();
+    const { loader } = fakeDb();
+    expect(await clearRecordingQueue(loader, storage)).toBe(0);
+  });
+
+  it("empties a real IndexedDB store", async () => {
+    const storage = fakeStorage();
+    const db = await openRecordingDb(new IDBFactory());
+    if (!db) throw new Error("expected fake-indexeddb to open");
+    const loader: RecordingDbLoader = () => Promise.resolve(db);
+    await persistRecordingDurable(rec("id-1"), "user-1", loader, storage);
+    await persistRecordingDurable(rec("id-2"), "user-1", loader, storage);
+
+    expect(await clearRecordingQueue(loader, storage)).toBe(2);
+    expect(await db.getAll()).toEqual([]);
+    expect(await pendingRecordingsCount(loader, storage)).toBe(0);
   });
 });
 
