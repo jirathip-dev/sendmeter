@@ -27,7 +27,10 @@ import {
   startTindeqLiveActivity,
   updateTindeqLivePeak,
 } from "../lib/liveActivity";
-import { enqueueRecording, loadQueue, saveQueue } from "../lib/recordingQueue";
+import { reportPersistFailure } from "../lib/lostRecordings";
+import { persistRecordingDurable } from "../lib/recordingQueue";
+import { usePendingUploads } from "../hooks/usePendingUploads";
+import { PENDING_BACKED_UP } from "../lib/pendingUploads";
 import type {
   NewTindeqRecording,
   TindeqPreset,
@@ -67,28 +70,81 @@ interface ForceViewProps {
 export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const toast = useToast();
   // #106: a rep whose insert fails (dead auth session, dropped connection)
-  // gets queued to localStorage instead of dropped — App.tsx drains it once
-  // a session comes back. Tracks whether the PREVIOUS attempt (of either
-  // kind) failed, so the toast below fires once per outage rather than once
-  // per queue-empty check — a queue that's still non-empty from an earlier
-  // outage must not swallow the notice for a brand-new one.
+  // gets queued instead of dropped — App.tsx drains it once a session comes
+  // back. Tracks whether the PREVIOUS attempt (of either kind) failed, so the
+  // toast below fires once per outage rather than once per queue-empty check —
+  // a queue that's still non-empty from an earlier outage must not swallow the
+  // notice for a brand-new one.
   const outageRef = useRef(false);
-  function persistRecordingToQueue(
-    rec: NewTindeqRecording & { id: string },
-  ): boolean {
-    return saveQueue(enqueueRecording(loadQueue(), rec, userId));
-  }
-  function queueFailedRecording(rec: NewTindeqRecording & { id: string }) {
+  // #269: the queue's ambient depth. Not an interrupt — see pendingUploads.ts
+  // for why a per-failure toast is the wrong shape.
+  const pendingUploads = usePendingUploads();
+  // #264: reps that the insert AND both stores refused. Their samples exist
+  // nowhere but this array, so the banner below says exactly that and offers a
+  // real retry while the view is still mounted. Never told "will sync
+  // automatically" — nothing is holding them but this component.
+  const [unqueued, setUnqueued] = useState<(NewTindeqRecording & { id: string })[]>(
+    [],
+  );
+  const [retryingUnqueued, setRetryingUnqueued] = useState(false);
+  // #269: async, and free to be — unlike useTindeq's unmount cleanup this
+  // caller stays mounted for the whole write, so it uses the IndexedDB main
+  // queue rather than the synchronous emergency lane.
+  async function queueFailedRecording(rec: NewTindeqRecording & { id: string }) {
     const isNewOutage = !outageRef.current;
     outageRef.current = true;
-    const persisted = persistRecordingToQueue(rec);
+    const result = await persistRecordingDurable(rec, userId);
+    reportPersistFailure("save-failed", result, rec.samples.length);
+    if (!result.persisted) {
+      // Always banner (one row per lost rep) but keep the toast on the same
+      // once-per-outage gate as the queued case, so a guided protocol whose
+      // every rep fails doesn't stack a toast per rep.
+      setUnqueued((list) => [...list, rec]);
+      if (isNewOutage) {
+        toast("Storage full — this recording is not saved anywhere", "error");
+      }
+      return;
+    }
     if (!isNewOutage) return;
-    toast(
-      persisted
-        ? "Couldn't save — recording queued, will sync automatically"
-        : "Couldn't save this recording",
-      "error",
-    );
+    toast("Couldn't save — recording queued, will sync automatically", "error");
+  }
+
+  /// Retry everything in the banner: the server first (the outage may be
+  /// over), then the durable queue (storage may have room again — a drain or
+  /// an eviction elsewhere frees it), and only what fails both stays in
+  /// memory. A rep that reaches the queue leaves the banner: it is durable
+  /// now, which is the whole point of the queue.
+  async function retryUnqueued() {
+    if (retryingUnqueued || unqueued.length === 0) return;
+    setRetryingUnqueued(true);
+    const pending = unqueued;
+    const saved: TindeqRecordingMeta[] = [];
+    const stillLost: (NewTindeqRecording & { id: string })[] = [];
+    let queued = 0;
+    for (const rec of pending) {
+      try {
+        saved.push(await insertRecording(rec));
+      } catch {
+        const result = await persistRecordingDurable(rec, userId);
+        reportPersistFailure("save-failed", result, rec.samples.length);
+        if (result.persisted) queued += 1;
+        else stillLost.push(rec);
+      }
+    }
+    if (saved.length > 0) {
+      outageRef.current = false;
+      setRecordings((list) => [...saved, ...list]);
+      setListError(null);
+    }
+    setUnqueued(stillLost);
+    setRetryingUnqueued(false);
+    if (saved.length > 0) {
+      toast(`Saved ${saved.length} recording${saved.length === 1 ? "" : "s"}`);
+    } else if (queued > 0) {
+      toast(`Queued ${queued} recording${queued === 1 ? "" : "s"} — will sync`);
+    } else {
+      toast("Still can't save — storage is full", "error");
+    }
   }
   // Connection + active gauge session live in an app-level provider so the
   // Progressor stays connected and the session survives leaving fullscreen /
@@ -315,8 +371,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // time has passed and insert the FULL segment — landing both the
       // queued partial and the live full rep as two rows for one hold (the
       // exact double-count hazard CLAUDE.md warns about for guided protocols).
-      queueFailedRecording(rec);
       setListError(e instanceof Error ? e.message : "Failed to save recording");
+      await queueFailedRecording(rec);
     }
   }
 
@@ -418,8 +474,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // keep tag and side — set once, tweak side between reps
     } catch (e) {
       // Queue instead of dropping (#106) — see saveHoldSlice above.
-      queueFailedRecording(rec);
       setListError(e instanceof Error ? e.message : "Failed to save recording");
+      await queueFailedRecording(rec);
     } finally {
       setSaving(false);
     }
@@ -1157,6 +1213,113 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       {listError && (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 10 }}>
           {listError}
+        </div>
+      )}
+
+      {/* #269: ambient backlog depth. Muted, no buttons, no interrupt — a rep
+          waiting to upload is not a problem the user can act on mid-session,
+          and a toast per failure would fire during exactly the outage they
+          can do nothing about. What this buys is that a backlog which ISN'T
+          draining becomes visible while the data is still there, instead of
+          being discovered as a missing rep in History weeks later. Absent when
+          the queue is empty (or not yet read) — this is the one place silence
+          is honest, because the recordings list right above it is the positive
+          signal that saving works. */}
+      {pendingUploads !== null && pendingUploads > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginTop: 10,
+            fontSize: "var(--t-xs)",
+            color:
+              pendingUploads >= PENDING_BACKED_UP ? "var(--warning)" : "var(--ink-muted)",
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background:
+                pendingUploads >= PENDING_BACKED_UP ? "var(--warning)" : "var(--ink-faint)",
+              flexShrink: 0,
+            }}
+          />
+          <span>
+            {pendingUploads} recording{pendingUploads === 1 ? "" : "s"} waiting to
+            upload — saved on this device, {pendingUploads === 1 ? "it" : "they"} will
+            sync when the connection is back.
+          </span>
+        </div>
+      )}
+
+      {/* #264: the honest banner for reps that reached NO durable store —
+          neither the server nor the offline queue took them. It stays put
+          (not a toast) because it is the only thing holding those samples,
+          and it says so: "will be lost when you leave" is the truth, and a
+          Retry that can actually still succeed is the only recovery there is.
+          Discard makes the loss the user's explicit choice rather than a
+          silent consequence of navigating away. */}
+      {unqueued.length > 0 && (
+        <div
+          className="card"
+          style={{
+            marginTop: 10,
+            borderColor: "var(--danger)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <div style={{ fontSize: "var(--t-sm)", color: "var(--danger)", fontWeight: 700 }}>
+            {unqueued.length} recording{unqueued.length === 1 ? "" : "s"} not saved
+          </div>
+          <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
+            Device storage is full, so {unqueued.length === 1 ? "it" : "they"}{" "}
+            couldn&apos;t be queued for later either.{" "}
+            {unqueued.length === 1 ? "It is" : "They are"} only held on this
+            screen and will be lost when you leave it. Free up storage, then
+            retry.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => void retryUnqueued()}
+              disabled={retryingUnqueued}
+              style={{
+                flex: 1,
+                background: "var(--danger)",
+                border: "none",
+                color: "#fff",
+                padding: "8px 12px",
+                borderRadius: 8,
+                fontSize: "var(--t-xs)",
+                fontWeight: 700,
+                fontFamily: "Inter, sans-serif",
+                cursor: "pointer",
+              }}
+            >
+              {retryingUnqueued ? "Retrying…" : "Retry"}
+            </button>
+            <button
+              onClick={() => setUnqueued([])}
+              disabled={retryingUnqueued}
+              style={{
+                background: "none",
+                border: "1px solid var(--ink-faint)",
+                color: "var(--ink-muted)",
+                padding: "8px 12px",
+                borderRadius: 8,
+                fontSize: "var(--t-xs)",
+                fontFamily: "Inter, sans-serif",
+                cursor: "pointer",
+              }}
+            >
+              Discard
+            </button>
+          </div>
         </div>
       )}
 

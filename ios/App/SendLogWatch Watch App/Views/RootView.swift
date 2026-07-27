@@ -1,4 +1,5 @@
 import SwiftUI
+import SendLogWatchCore
 
 /// Navigation destinations reachable from the home list — also the targets the
 /// quick-launch complications deep-link to (see .onOpenURL below).
@@ -14,11 +15,13 @@ struct RootView: View {
     var body: some View {
         @Bindable var tindeq = tindeq
         switch auth.state {
-        case .loading:
-            ProgressView()
         case .signedOut:
-            SignInView()
-        case .signedIn:
+            WaitingForPhoneView()
+        // Deliberately includes `tokenFresh: false` — an expired access token
+        // keeps the watch usable (recording is offline-first and queues), and
+        // HomeView shows the "waiting for iPhone" banner instead of throwing
+        // the user back to a sign-in screen (#265's offline window).
+        case .signedIn(_, _):
             NavigationStack(path: $path) {
                 HomeView()
                     .navigationDestination(for: WatchDest.self) { dest in

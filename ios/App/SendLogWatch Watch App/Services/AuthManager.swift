@@ -1,96 +1,138 @@
 import Foundation
 import Observation
-import Supabase
+import OSLog
+import SendLogWatchCore
 import WatchConnectivity
 
-/// Companion-app auth: the paired iPhone app relays the Supabase session
-/// over WatchConnectivity (see sendlog-auth-bridge on the iOS side) so the
-/// watch signs in automatically. `updateApplicationContext` is opportunistic
-/// (delivered next time the counterpart is reachable/launches), not a push —
-/// bootstrap() reads `receivedApplicationContext` synchronously so a cold
-/// watch launch doesn't miss data already queued, rather than only relying
-/// on the didReceiveApplicationContext delegate callback firing later.
-/// Manual email+password sign-in (SignInView) stays as a fallback for
-/// first-ever launch before any phone sync, or if hydration fails.
+/// Companion-app auth. The paired iPhone relays its Supabase **access token**
+/// over WatchConnectivity (see sendlog-auth-bridge on the iOS side) and the
+/// watch signs in from that alone — no refresh token ever crosses, and none is
+/// stored (issue #265; see `SupabaseService` for the two failed attempts that
+/// preceded this one).
+///
+/// Two consequences follow, and both are deliberate:
+///
+/// 1. **There is no manual sign-in.** An access token is all the watch can
+///    hold, and only the phone can mint one, so an email+password form here
+///    would have to create an independent session — which the next relay would
+///    overwrite anyway, putting a refresh token back on the wrist. The screen
+///    it used to occupy now explains what the watch is waiting for (#266).
+/// 2. **The watch stays signed in when its token expires.** Identity outlives
+///    the token; only an explicit `signedOut` relay clears it. See
+///    `SessionRelay.state` for why the offline queues depend on that.
+///
+/// Recovery is a pull: `requestSession` → the phone's WebView answers by
+/// relaying again. Triggered on launch, on reachability, on foreground, from
+/// the waiting screen's Retry, and by a slow poll while the token is stale.
 @Observable
 final class AuthManager: NSObject {
-    enum State {
-        case loading
-        case signedOut
-        case signedIn(userId: UUID)
-    }
+    private static let log = Logger(
+        subsystem: "com.jirathip.sendlog.watchkitapp", category: "auth"
+    )
 
-    var state: State = .loading
-    var errorMsg: String?
-    /// True while we've asked the phone for a fresh session and are waiting —
-    /// the sign-in screen shows "Signing in from iPhone…" instead of jumping
-    /// straight to the manual email form.
-    var syncing = false
+    private(set) var state: WatchAuthState = .signedOut
+    /// True while we've asked the phone and are waiting for an answer — the
+    /// waiting screen says "Signing in from your iPhone…" rather than sitting
+    /// on a dead-looking explanation.
+    private(set) var syncing = false
+    /// Why the last relay was refused, if it was (#266: a rejected relay must
+    /// be visible, not dropped silently). Cleared by the next good relay.
+    private(set) var lastRejection: RelayRejection?
+    /// When a relay last arrived at all — the difference between "the phone
+    /// isn't answering" and "the phone answered with something unusable".
+    private(set) var lastRelayAt: Date?
 
-    private var client: SupabaseClient { SupabaseService.auth }
     private var syncTimeout: Task<Void, Never>?
+    private var poll: Task<Void, Never>?
+    private var lastRequestAt: TimeInterval?
+    /// One queued (guaranteed-delivery) ask per stale episode — `transferUserInfo`
+    /// piles up while the phone app isn't running, and a backlog of asks would
+    /// all be delivered at once the moment it launches.
+    private var queuedRequest = false
+
+    private var now: TimeInterval { Date().timeIntervalSince1970 }
 
     override init() {
         super.init()
+        // Nothing on the watch may hold a rotating credential — including one
+        // left behind in the Keychain by a build that predates #265.
+        WatchSessionStore.shared.purgeLegacySupabaseKeychain()
         if WCSession.isSupported() {
             WCSession.default.delegate = self
             WCSession.default.activate()
         }
-        Task { await bootstrap() }
+        Task { @MainActor in bootstrap() }
+    }
+
+    deinit {
+        poll?.cancel()
+        syncTimeout?.cancel()
     }
 
     @MainActor
-    func bootstrap() async {
+    func bootstrap() {
         if WCSession.isSupported() {
+            // `receivedApplicationContext` is read synchronously here rather
+            // than waiting for the delegate callback: it is persisted, so a
+            // cold launch may already be holding a payload that will never be
+            // re-delivered. It may equally be hours old, which `decode`
+            // refuses on freshness grounds.
             let context = WCSession.default.receivedApplicationContext
-            // An empty dict means "nothing synced yet", not a sign-out —
-            // only an explicit event should ever end the fallback chain.
-            if !context.isEmpty, await applyWatchConnectivityEvent(context) {
-                return
-            }
+            // An empty dict means "nothing synced yet", not a sign-out — only
+            // an explicit event may end the fallback chain.
+            if !context.isEmpty { apply(context) }
         }
-        // Fall back to the Keychain session WITHOUT refreshing it
-        // (`auth.session` refreshes when expired — with a refresh token the
-        // phone has since rotated, that trips replay detection and revokes
-        // the whole session family; that's how the watch "randomly" signed
-        // itself out after an app update). An expired local session just
-        // waits: the next phone-app foreground relays fresh tokens.
-        if let session = client.auth.currentSession,
-           session.expiresAt > Date().timeIntervalSince1970 + 60 {
-            state = .signedIn(userId: session.user.id)
-        } else {
-            // No usable local session — instead of parking on the manual login
-            // form, PULL a fresh one from the phone (only supabase-js on the
-            // phone can refresh tokens; the watch just consumes what it relays).
-            state = .signedOut
-            requestSessionFromPhone()
+        refreshState()
+        startPolling()
+    }
+
+    /// Recomputes `state` from the stored session against the clock. Called
+    /// after every relay, on foreground, and from the poll — an access token
+    /// goes stale by the passage of time alone, with no event to react to.
+    @MainActor
+    func refreshState() {
+        let previous = state
+        state = SessionRelay.state(for: WatchSessionStore.shared.current, now: now)
+        if state != previous {
+            Self.log.info("auth state \(String(describing: previous)) → \(String(describing: self.state))")
+        }
+        if needsToken { requestSessionFromPhone() }
+    }
+
+    /// True when the watch cannot make an authenticated request right now:
+    /// signed out entirely, or signed in with an expired token.
+    var needsToken: Bool {
+        switch state {
+        case .signedOut: return true
+        case let .signedIn(_, tokenFresh): return !tokenFresh
         }
     }
 
-    /// Ask the paired iPhone to relay a fresh session. The phone's supabase-js
-    /// is the sole refresher, so this is the watch's recovery path when its
-    /// last-relayed token has gone stale (e.g. after a TestFlight update). The
-    /// phone answers by re-relaying via `updateApplicationContext`, which lands
-    /// in `didReceiveApplicationContext` below. Reachable → immediate message;
-    /// otherwise queue it so it's delivered when the phone app next runs.
+    /// Ask the paired iPhone to relay a fresh access token. The phone's
+    /// supabase-js is the sole refresher, so this is the watch's only recovery
+    /// path. Reachable → immediate message; otherwise queue it so it lands
+    /// when the phone app next runs.
     @MainActor
-    func requestSessionFromPhone() {
+    func requestSessionFromPhone(force: Bool = false) {
         guard WCSession.isSupported() else { return }
         let s = WCSession.default
         guard s.activationState == .activated else { return }
+        guard force || SessionRelay.shouldRequestRelay(now: now, lastRequestAt: lastRequestAt)
+        else { return }
+        lastRequestAt = now
         syncing = true
-        // Stamped with this install's build (#228) — the account sheet needs
-        // to know which watch build the phone is paired with, and this is a
-        // message the watch already sends. Nothing new goes out on this path.
+        // Stamped with this install's build + queue depth (#228, #21) — the
+        // account sheet on the phone reads whatever last arrived.
         let msg = WatchBuild.stamp(["kind": "requestSession"])
         if s.isReachable {
-            s.sendMessage(msg, replyHandler: nil) { _ in
-                s.transferUserInfo(msg) // immediate send failed → queue it
+            s.sendMessage(msg, replyHandler: nil) { [weak self] error in
+                Self.log.error("requestSession send failed: \(error.localizedDescription)")
+                Task { @MainActor in self?.queueRequest(msg) }
             }
         } else {
-            s.transferUserInfo(msg)
+            queueRequest(msg)
         }
-        // Reveal the manual form if the phone never answers (app not running).
+        // Stop claiming we're mid-sign-in if the phone never answers.
         syncTimeout?.cancel()
         syncTimeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(6))
@@ -99,77 +141,76 @@ final class AuthManager: NSObject {
         }
     }
 
-    /// Applies a `{"event": "signedIn"|"signedOut", ...}` payload relayed
-    /// from the phone. Returns true if it resolved auth state (bootstrap
-    /// should stop there); false if there was nothing actionable (e.g. a
-    /// signedIn event whose network hydration failed) — bootstrap then
-    /// falls back to the existing Keychain session / manual login.
     @MainActor
-    @discardableResult
-    private func applyWatchConnectivityEvent(_ context: [String: Any]) async -> Bool {
-        guard let event = context["event"] as? String else { return false }
-        switch event {
-        case "signedIn":
-            guard
-                let accessToken = context["accessToken"] as? String,
-                let refreshToken = context["refreshToken"] as? String
-            else { return false }
-            // receivedApplicationContext is PERSISTED — on a cold launch this
-            // payload can be hours old. setSession with an expired access
-            // token immediately refreshes using the relayed refresh token,
-            // which the phone's supabase-js has since rotated → Supabase's
-            // replay detection revokes the whole session family. Only consume
-            // a still-fresh pair; a stale one is ignored and the next phone
-            // foreground re-relays a live session.
-            let expiresAt = (context["expiresAt"] as? Double) ?? 0
-            guard expiresAt > Date().timeIntervalSince1970 + 60 else { return false }
-            do {
-                let session = try await client.auth.setSession(
-                    accessToken: accessToken, refreshToken: refreshToken
-                )
-                syncTimeout?.cancel()
-                syncing = false
-                state = .signedIn(userId: session.user.id)
-                return true
-            } catch {
-                return false
-            }
-        case "signedOut":
-            await signOut()
-            return true
-        default:
-            return false
+    private func queueRequest(_ msg: [String: Any]) {
+        guard !queuedRequest else { return }
+        queuedRequest = true
+        WCSession.default.transferUserInfo(msg)
+    }
+
+    /// Applies a relay payload from the phone. Every outcome is recorded:
+    /// silence about a refusal is what left users with a watch that offered a
+    /// login form and no explanation (#266).
+    @MainActor
+    private func apply(_ context: [String: Any]) {
+        let outcome = SessionRelay.decode(context, now: now)
+        switch outcome {
+        case let .signedIn(session):
+            lastRelayAt = Date()
+            lastRejection = nil
+            queuedRequest = false
+            WatchSessionStore.shared.store(session)
+            syncTimeout?.cancel()
+            syncing = false
+            state = SessionRelay.state(for: session, now: now)
+            Self.log.info("relay accepted (relayId \(session.relayId ?? "none"))")
+        case .signedOut:
+            lastRelayAt = Date()
+            lastRejection = nil
+            queuedRequest = false
+            signOutLocally()
+            Self.log.info("relay: phone signed out")
+        case let .rejected(reason):
+            // `notARelay` is not an auth payload at all — some other
+            // application context. Recording it would only add noise.
+            guard reason != .notARelay else { return }
+            lastRelayAt = Date()
+            lastRejection = reason
+            syncing = false
+            syncTimeout?.cancel()
+            Self.log.error("relay rejected: \(reason.rawValue)")
         }
     }
 
-    /// Email + password sign-in — manual fallback. The password is set via
-    /// the Account sheet's password-reset email; web login itself stays magic-link.
+    /// Clears this watch's copy of the session. Local only — the watch has no
+    /// business ending the phone's session, and the old implementation called
+    /// supabase-swift's globally-scoped `signOut`, which revoked every session
+    /// the account had, phone included.
     @MainActor
-    func signIn(email: String, password: String) async {
-        errorMsg = nil
-        do {
-            let session = try await client.auth.signIn(
-                email: email.trimmingCharacters(in: .whitespaces),
-                password: password
-            )
-            state = .signedIn(userId: session.user.id)
-        } catch {
-            errorMsg = friendlyAuthError(error)
-        }
-    }
-
-    @MainActor
-    func signOut() async {
-        try? await client.auth.signOut()
+    func signOutLocally() {
+        WatchSessionStore.shared.clear()
         state = .signedOut
+        syncing = false
+        syncTimeout?.cancel()
     }
 
-    private func friendlyAuthError(_ error: Error) -> String {
-        let text = error.localizedDescription
-        if text.localizedCaseInsensitiveContains("invalid login credentials") {
-            return "Wrong email or password. Open Sendmeter on your iPhone to sign in automatically, or set a password from the app's Account settings (password reset email)."
+    /// Slow poll, only while the watch needs a token. watchOS suspends the app
+    /// (and this task with it) when it isn't on screen, so this costs nothing
+    /// in the background; its job is the case where the user is *looking* at
+    /// the watch, the phone is in a pocket nearby, and nothing else would fire
+    /// an event to retry on.
+    private func startPolling() {
+        poll?.cancel()
+        poll = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(20))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self, self.needsToken else { return }
+                    self.refreshState()
+                }
+            }
         }
-        return text
     }
 }
 
@@ -178,21 +219,30 @@ extension AuthManager: WCSessionDelegate {
         _ session: WCSession,
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
-    ) {}
-
-    func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+    ) {
         Task { @MainActor in
-            await applyWatchConnectivityEvent(applicationContext)
+            if self.needsToken { self.requestSessionFromPhone() }
         }
     }
 
-    /// The phone became reachable — if we're still signed out, this is the
-    /// moment to (re)ask for a session; the request would have failed silently
-    /// while the phone was asleep.
+    func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        Task { @MainActor in self.apply(applicationContext) }
+    }
+
+    /// Guaranteed-delivery variant. The phone answers a `requestSession` this
+    /// way (#266): `updateApplicationContext` keeps only the latest payload and
+    /// is the suspected reason a pull went undelivered, whereas a queued
+    /// `transferUserInfo` is always delivered exactly once.
+    func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        Task { @MainActor in self.apply(userInfo) }
+    }
+
+    /// The phone became reachable — if we still need a token this is the
+    /// moment to (re)ask; an earlier attempt would have failed while it slept.
     func sessionReachabilityDidChange(_ session: WCSession) {
         guard session.isReachable else { return }
         Task { @MainActor in
-            if case .signedOut = state { requestSessionFromPhone() }
+            if self.needsToken { self.requestSessionFromPhone() }
         }
     }
 }

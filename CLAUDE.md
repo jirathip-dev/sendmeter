@@ -123,10 +123,14 @@ xcrun simctl launch booted com.jirathip.sendlog.watchkitapp
   reinstall via simctl. The watch app is a
   separate install on the watch sim: rebuilding/reinstalling the phone app
   does NOT refresh it.
-- **Watch sign-in:** the watch gets its session relayed from the running,
-  signed-in phone app over WatchConnectivity (works between *paired* sims).
-  Watch running alone = manual password sign-in — expected, not a bug; the
-  seeded local user's password works there directly.
+- **Watch sign-in:** the watch gets its access token relayed from the running,
+  signed-in phone app over WatchConnectivity (works between *paired* sims —
+  `simctl pair <watch> <phone>` first; `updateApplicationContext` is delivered,
+  `transferUserInfo` was NOT observed being delivered watch-ward in the sim).
+  There is no manual sign-in on the watch any more (#265) — a watch running
+  alone waits on the "Waiting for iPhone" screen, which is expected, not a bug.
+  For a sim experiment you can mint a token directly:
+  `curl -X POST "http://127.0.0.1:54321/auth/v1/token?grant_type=password"`.
 
 **Caveat for rung 4:** device builds still have the hosted Supabase config
 **compiled in** (localhost is meaningless on a physical device) — a Debug
@@ -304,21 +308,35 @@ are safe regardless.
   `health_metrics` (it sees the merged HealthKit store incl. third-party wearables).
   The watch only *reads* the computed score back for display — it no longer reads
   HealthKit or writes health rows. Don't reintroduce watch-side health writes.
-- **One Supabase session, three clients — only supabase-js refreshes it.** The web
-  (supabase-js), the watch, and the iPhone health plugin all share the user's
-  session via relays. The watch + plugin clients set `autoRefreshToken: false` and
-  only *consume* tokens re-relayed on every auth event + app foreground (the
-  `useAuth` visibilitychange listener). With refresh-token rotation on, a second
-  client refreshing the shared token trips Supabase's replay detection and revokes
-  the whole session family — writes then fail RLS as anon. Don't re-enable
-  auto-refresh on the watch/plugin clients.
-  - The refresh trap is **indirect too**: `receivedApplicationContext` is
-    persisted, so on a cold watch launch the last relayed payload may be hours
-    old — `auth.setSession` with an expired access token *refreshes* with the
-    (long-rotated) relayed refresh token → family revoked → watch logged out
-    (this bit after a TestFlight update). AuthManager therefore ignores relays
-    whose `expiresAt` is past and reads the Keychain fallback via the
-    non-refreshing `auth.currentSession` only. Keep both guards.
+- **Only supabase-js holds a refresh token. The relays carry access tokens only**
+  (#265). The web (supabase-js), the watch and the iPhone health plugin all share
+  the user's session, but the two native consumers are handed a short-lived
+  **access token** and nothing else, re-relayed on every auth event + app
+  foreground (the `useAuth` visibilitychange listener). Refresh tokens are
+  single-use with reuse detection ON: a second holder presenting one the phone
+  has since rotated makes Supabase revoke the entire session family, signing the
+  phone out too. That is not prevented by discipline any more — the credential is
+  simply not on the wire (`SendLogAuthBridge.setSession` / `SendLogHealth.setSession`
+  have no `refreshToken` field) and not on the device (both native clients are a
+  single `SupabaseClient` with an `accessToken` provider and no `AuthClient`;
+  `WatchSessionStore` / `HealthSessionStore` keep the bearer token in the Keychain
+  and purge supabase-swift's own item on every launch).
+  - **Two earlier attempts failed by convention.** #196 split each native side
+    into an `auth` + `data` client and forbade every refreshing accessor; the
+    rules were right and a twelve-hour-stale token was replayed in production
+    anyway. `src/lib/nativeAuthInvariants.test.ts` now pins the structural
+    property from vitest, because the `quality` job never compiles the Swift.
+  - **The watch cannot sign itself in, by design** — no email/password form. It
+    consumes what the phone relays; when the token expires it asks
+    (`requestSession`) and waits, staying `signedIn` with `tokenFresh: false` so
+    the offline queues keep their account stamp. Don't reintroduce a watch-native
+    login: it would create a second rotating session on the wrist.
+  - **Relayed payloads must always differ.** Verified in paired simulators
+    (2026-07-27): `updateApplicationContext` does **not** deliver a payload
+    identical to the one already set, which is why answering a watch's pull while
+    the phone's token was still valid landed nothing (#266). The plugin stamps
+    every relay with a fresh `relayId` + `relayedAt`; a pull is additionally sent
+    via `transferUserInfo`. Never relay a payload whose content could repeat.
 - **Every watch→phone WC message carries the watch's build** (#228) — the watch
   app updates from TestFlight on its own schedule, so a phone on the fixed
   build can be paired with a pre-#208 watch that is still revoking the session
@@ -392,17 +410,18 @@ are safe regardless.
   proof the objects exist.
 
 - **`autoRefreshToken: false` does NOT stop supabase-swift refreshing.** It only
-  disables the background *timer*; the on-demand refresh inside `auth.session`
-  still fires whenever the stored access token is expired. Both native clients
-  are therefore split in two (#196): an `auth` client (the only one that may read
-  `.auth` — `setSession`/`signIn`/`signOut`/`currentSession`, none of which
-  refresh) and a `data` client whose `accessToken` provider returns the auth
-  client's current Keychain token **without** refreshing. Every table/RPC call
-  goes through `data`. This is structural, not a convention: refresh tokens are
-  single-use and reuse detection is ON (10 s interval), so one stray refresh from
-  the watch or the health plugin revokes the whole session family and signs the
-  phone out. `SupabaseClientOptions.AuthOptions` also enforces argument order —
-  `autoRefreshToken` must precede `accessToken`.
+  disables the background *timer*. Two accessors refresh anyway, and both were
+  live in shipped builds: `auth.session` (refreshes whenever the stored access
+  token is expired — the #196 finding) and **`auth.setSession(accessToken:
+  refreshToken:)`, which calls `refreshSession` outright when the access token it
+  is handed has already expired** — the #265 finding, and the one #196's guards
+  were left standing in front of. Neither native client has an `AuthClient` any
+  more (#265): each is a single `SupabaseClient` whose `accessToken` provider
+  returns the relayed bearer token, so there is nothing to refresh, recover or
+  rotate. `SupabaseClientOptions.AuthOptions` enforces argument order —
+  `autoRefreshToken` must precede `accessToken` — and the main
+  `SupabaseClientOptions` init is `(db:auth:global:functions:realtime:storage:)`,
+  so `auth:` must precede `global:`.
 - **The `Preview` GitHub environment must stay unrestricted.** Vercel's
   integration deploys *PR branches* to it, so adding a deployment-branch policy
   (e.g. "staging only") makes every PR-branch deployment be rejected and the
@@ -430,6 +449,64 @@ are safe regardless.
   measuring* so the live gauge fits one screen). End-session logs the **actual
   wall-clock duration** (read-only); only RPE is asked. Don't reintroduce the
   discard/save prompt or an editable duration.
+- **The recording queue is TWO stores, and the split is load-bearing** (#269).
+  **IndexedDB** (`src/lib/recordingDb.ts`) is the main queue — every path that
+  can await (ForceView's failed-insert handler, the drain, the manual retry)
+  uses `persistRecordingDurable`. **localStorage** keeps only a *synchronous
+  emergency lane*, written by exactly one caller: `useTindeq`'s
+  salvage-on-unmount cleanup, which is a React cleanup function and **cannot
+  await** — an async write there doesn't finish later, it loses the buffer.
+  `absorbSyncLane` moves the lane into IndexedDB on the next drain/foreground,
+  and that same function IS the one-time migration of pre-#269
+  `sendmeter:pending-recordings` entries (same shape, so no migration flag
+  exists to get out of step). The migration is **interrupt-safe by
+  construction**: the copy is one transaction, the lane is cleared only after
+  it commits, and the store's keyPath is the entry `id`, so re-copying after a
+  kill overwrites instead of duplicating. Don't collapse the two stores, and
+  don't "simplify" the salvage path onto the async one. IndexedDB unavailable
+  (private mode, storage disabled, a blocked open) degrades to the lane —
+  `openRecordingDb` resolves `null`, never throws.
+- **Sign-out is ONE function, and it is the only thing that may delete a queued
+  recording** (#273). `signOutUser` in `src/lib/signOut.ts` is the single
+  implementation behind both `useAuth().signOut` and `deleteAccount` — those
+  two used to hold a copy each of `markUserSignOut()` + `supabase.auth.signOut()`.
+  A **user-initiated** sign-out drains the offline queue first (it needs a live
+  token, so the drain must finish BEFORE `signOut()`, deadlined by
+  `DRAIN_TIMEOUT_MS` so a dead network can't hang it), clears what uploaded,
+  and asks about any remainder — never an unconditional confirm, which would
+  fire mostly on an empty queue. A **forced or revoked** sign-out (#265 —
+  it really happened) **discards nothing**: the two paths are told apart by
+  `markUserSignOut()`'s marker, and `clearRecordingQueue` is reachable only via
+  `discardQueueOnUserSignOut`, which checks it. `signOutInvariants.test.ts`
+  pins "one implementation, one deletion site" structurally, because the cost
+  of the paths drifting is the user's training data. Accepted residual, on
+  purpose: kept-but-undrainable entries live on the device until the same
+  account signs back in. Full reasoning: the "#273" section of the policy block
+  in `recordingQueue.ts`.
+- **A recording that can't be persisted is reported, never swallowed** (#264).
+  The queue's last line of defence is a storage write, and that write can
+  itself fail (quota exhausted, storage disabled) — the failure the queue
+  exists to protect against, at the one moment it can't. The decided policy
+  lives in full above `persistRecording` in `src/lib/recordingQueue.ts`; the
+  short version: **the new recording wins** (a refused write retries after
+  dropping the oldest queued entry, repeatedly, down to the new entry alone),
+  and if the lone entry still won't write, the loss is real and gets said out
+  loud — `reportPersistFailure` (`src/lib/lostRecordings.ts`) is the single
+  reporting path for both call sites, emitting a Sentry `data-loss:` event
+  plus a durable one-shot notice that `App.tsx` surfaces on the next
+  mount/foreground. `useTindeq`'s salvage-on-unmount can only report (no UI is
+  reachable from a cleanup); `ForceView` additionally holds the samples in
+  memory behind a Retry/Discard banner. **Never phrase a `persisted: false`
+  outcome as "queued" or "will sync"** — nothing is holding it. Eviction
+  survives #269 as a *backstop* (`MAX_IDB_QUEUE_BYTES` = 64 MB, ~20 heavy
+  offline sessions) and still reports to monitoring — a non-zero `evicted` on
+  the IndexedDB path is now a finding, not routine degradation.
+- **Queue depth is ambient, never an interrupt** (#269). `usePendingUploads` →
+  a muted line on the Force tab and a "This iPhone · N recordings pending sync"
+  row in the account sheet, next to the watch's own queue line (#21). A toast
+  or alert per failed upload fires exactly when the user is mid-outage and can
+  do nothing, and then repeats per rep — don't add one. Same honest-states rule
+  as `watchSyncLine`: "not read yet" must not render as "empty".
 - **Recording samples store `t` in milliseconds.** `tindeq_recordings.samples`
   time is ms — charts must divide by 1000 to show seconds (a mislabeled axis once
   showed "25152.0s").
@@ -574,11 +651,31 @@ are safe regardless.
   `.widgets` App ID via `Spaceship::ConnectAPI::BundleId.create` since sigh won't),
   `latest_testflight_build_number + 1` (so **never hand-bump
   `CURRENT_PROJECT_VERSION`** — the lane injects it via `xcargs` at archive time
-  into app + watch + widget), then `build_app` with **manual** signing +
-  `-allowProvisioningUpdates` (the auth-key flags go in `xcargs` only, not
-  `export_xcargs`), then `upload_to_testflight`. Config lives in `fastlane/.env`
-  (`ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_PATH`) + `fastlane/asc_api_key.p8`
-  (git-ignored) — fastlane auto-loads `.env`.
+  into app + watch + widget), then `build_app` with **manual** signing on both
+  the archive and the export, then `upload_to_testflight`. Config lives in
+  `fastlane/.env` (`ASC_KEY_ID`/`ASC_ISSUER_ID`/`ASC_KEY_PATH`) +
+  `fastlane/asc_api_key.p8` (git-ignored) — fastlane auto-loads `.env`.
+  - **The archive signs manually via a runtime pbxproj edit (#263), and
+    `-allowProvisioningUpdates` is export-only.** gym runs two xcodebuild
+    invocations and `export_options` governs only the second one; the archive
+    obeys `project.pbxproj`, where every target is `CODE_SIGN_STYLE = Automatic`
+    for local Xcode dev on a personal team. On a fresh CI runner that meant
+    automatic signing found no Development identity and — authorised by the API
+    key plus `-allowProvisioningUpdates` — **minted a new "Created via API"
+    Apple Development certificate on every run** until the account hit Apple's
+    cap. The lane now flips the four archived targets' *Release* configs to
+    Manual + `Apple Distribution` + the profile sigh just fetched
+    (`update_code_signing_settings`, reverted in an `ensure`), and the auth
+    flags moved from `xcargs` to `export_xcargs`. That split is load-bearing:
+    gym appends `xcargs` to **both** invocations but `export_xcargs` to the
+    export only, so this is the only way to keep the export's API-key access
+    (the original `exportArchive "No Accounts"` fix) while denying the archive
+    any authority to create signing assets. Putting the flags in both is what
+    trips `-authenticationKeyID may only be provided once`. **Never commit
+    Manual signing into `project.pbxproj`** — it would break local Xcode
+    builds — and never hardcode a `PROVISIONING_PROFILE_SPECIFIER` there; the
+    names come from `SharedValues::SIGH_NAME` at runtime. See
+    `ios/COMPANION_SETUP.md` → "Why the archive signs manually".
   - **Two hard requirements:** (1) the Apple Distribution cert must be installable —
     `get_certificates` reuses it if already in the login keychain, else creates it
     via the API key (a key with Admin/App Manager access); (2) `LANG=en_US.UTF-8`,

@@ -17,6 +17,9 @@ import {
   type WatchBuildInfo,
   type WatchBuildTone,
 } from "../lib/watchBuild";
+import { pendingUploadsLine } from "../lib/pendingUploads";
+import { usePendingUploads } from "../hooks/usePendingUploads";
+import type { QueueRemainderChoice, SignOut, SignOutPhase } from "../lib/signOut";
 import {
   addPasskey,
   listPasskeys,
@@ -29,11 +32,12 @@ import { useToast } from "../hooks/useToast";
 import { supabase } from "../lib/supabase";
 import HelpSheet from "./HelpSheet";
 import Sheet from "./Sheet";
+import SignOutPendingSheet from "./SignOutPendingSheet";
 import ThemeSection from "./ThemeSection";
 
 interface Props {
   onClose: () => void;
-  onSignOut: () => Promise<{ error: Error | null }>;
+  onSignOut: SignOut;
 }
 
 type TabId = "appearance" | "health" | "account";
@@ -135,6 +139,16 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [clearing, setClearing] = useState(false);
   const [cleared, setCleared] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  // #273: the sign-out drains the offline recording queue first, which on a
+  // bad connection is the slow part — say which is happening rather than
+  // showing "Signing out…" for the length of a network timeout.
+  const [signOutPhase, setSignOutPhase] = useState<SignOutPhase | null>(null);
+  // Non-null while the user is being asked about recordings that wouldn't
+  // upload. `resolve` is the suspended `onRemainder` promise below.
+  const [remainder, setRemainder] = useState<{
+    count: number;
+    resolve: (choice: QueueRemainderChoice) => void;
+  } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   // Read once at mount — issue #202's on-device record of null-session
   // events (see authDiagnostics.ts). Read-only, so no need to re-read on an
@@ -174,6 +188,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   // stuck in its upload queue is otherwise invisible until you pick the watch
   // up.
   const syncLine = watchSyncLine(watchInfo);
+  // …and the same story for THIS device (#269): recordings queued locally
+  // because the insert failed. Read live — the hook re-reads on foreground and
+  // whenever anything queues or drains.
+  const pendingLine = pendingUploadsLine(usePendingUploads());
 
   useEffect(() => {
     if (!passkeysSupported) return;
@@ -188,9 +206,25 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
 
   async function handleSignOut() {
     setSigningOut(true);
-    await onSignOut();
-    // auth gate unmounts this sheet once the session clears; no need to
-    // reset signingOut or call onClose.
+    const outcome = await onSignOut({
+      onPhase: setSignOutPhase,
+      // #273: only ever called when the drain left something behind, so this
+      // resolver sits idle on every ordinary sign-out. The promise is what
+      // keeps the whole sequence one call — the queue must not be discarded
+      // before the answer, nor the sign-out issued after it is forgotten.
+      onRemainder: (count) =>
+        new Promise<QueueRemainderChoice>((resolve) => {
+          setRemainder({ count, resolve });
+        }),
+    });
+    // On a real sign-out the auth gate unmounts this sheet once the session
+    // clears — nothing below runs. It only comes back when the user backed
+    // out at the prompt, and then the sheet has to look untouched again.
+    setRemainder(null);
+    if (!outcome.signedOut) {
+      setSigningOut(false);
+      setSignOutPhase(null);
+    }
   }
 
   async function runAddPasskey() {
@@ -476,7 +510,11 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 disabled={signingOut}
                 onClick={() => void handleSignOut()}
               >
-                {signingOut ? "Signing out…" : "Sign out"}
+                {!signingOut
+                  ? "Sign out"
+                  : signOutPhase === "draining"
+                    ? "Uploading recordings…"
+                    : "Signing out…"}
               </button>
 
               <div style={{ marginTop: 14 }}>
@@ -489,6 +527,13 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 </div>
                 {watchLine && <WatchDiagLine line={watchLine} />}
                 {syncLine && <WatchDiagLine line={syncLine} />}
+                {/* #269: the phone's own upload queue, next to the watch's —
+                    the two devices each hold recordings that haven't reached
+                    Supabase yet, and only one of them used to say so. Always
+                    rendered, including the empty state: a row that vanishes
+                    when there's nothing pending is indistinguishable from a
+                    row that's broken. */}
+                <WatchDiagLine line={pendingLine} />
                 {diagStatus.webviewWiped && (
                   <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", lineHeight: 1.6 }}>
                     App storage was wiped since last launch — the session went
@@ -606,6 +651,13 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       </div>
 
       {showHelp && <HelpSheet onClose={() => setShowHelp(false)} />}
+
+      {remainder && (
+        <SignOutPendingSheet
+          count={remainder.count}
+          onChoose={remainder.resolve}
+        />
+      )}
 
       <div style={{ marginTop: 16 }}>
         <button className="btn-ghost" onClick={onClose}>

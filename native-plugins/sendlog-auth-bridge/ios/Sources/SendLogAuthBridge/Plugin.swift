@@ -94,14 +94,14 @@ private enum WatchSyncStore {
     }
 }
 
-/// Relays the Supabase session to the paired Watch app so it can sign in
-/// without its own login flow. No token persistence here — supabase-js
-/// already owns the session copy in the WebView; this plugin's only job
-/// is forwarding it over WatchConnectivity. `updateApplicationContext` is
-/// opportunistic (delivered next time the watch is reachable/launches),
-/// not a push — the watch reads `receivedApplicationContext` synchronously
-/// at its own launch too, so it never depends on catching a live delegate
-/// callback.
+/// Relays the Supabase **access token** to the paired Watch app so it can sign
+/// in without its own login flow (#265 — never the refresh token; see
+/// `setSession`). No token persistence here: supabase-js already owns the
+/// session copy in the WebView, and this plugin's only job is forwarding it
+/// over WatchConnectivity. `updateApplicationContext` is opportunistic
+/// (delivered next time the watch is reachable/launches), not a push — the
+/// watch reads `receivedApplicationContext` synchronously at its own launch
+/// too, so it never depends on catching a live delegate callback.
 @objc(SendLogAuthBridge)
 public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "SendLogAuthBridge"
@@ -126,21 +126,28 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
         session.activate()
     }
 
+    /// Relays the **access token only** (#265). The refresh token used to ride
+    /// along here; supabase-swift on the watch then persisted it and would
+    /// eventually present a copy the phone had long since rotated, which trips
+    /// Supabase's reuse detection and revokes the whole session family — phone
+    /// included. Nothing on the watch can refresh a token, so nothing on the
+    /// watch needs one.
+    ///
+    /// `guaranteed` picks the WatchConnectivity channel — see `relay`.
     @objc func setSession(_ call: CAPPluginCall) {
-        guard
-            let accessToken = call.getString("accessToken"),
-            let refreshToken = call.getString("refreshToken")
-        else {
-            call.reject("Missing accessToken/refreshToken")
+        guard let accessToken = call.getString("accessToken") else {
+            call.reject("Missing accessToken")
             return
         }
         let expiresAt = call.getDouble("expiresAt") ?? 0
-        relay([
+        var context: [String: Any] = [
             "event": "signedIn",
             "accessToken": accessToken,
-            "refreshToken": refreshToken,
             "expiresAt": expiresAt
-        ])
+        ]
+        // A hint only — the watch reads `sub` out of the token itself.
+        if let userId = call.getString("userId") { context["userId"] = userId }
+        relay(context, guaranteed: call.getBool("guaranteed") ?? false)
         call.resolve()
     }
 
@@ -207,9 +214,30 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
     /// Silently no-ops if there's no supported/activated session (no paired
     /// watch, or activation hasn't completed yet) — a later auth event
     /// (e.g. the next silent token refresh) will relay successfully.
-    private func relay(_ context: [String: Any]) {
+    ///
+    /// Every payload is stamped with a fresh `relayId` (#266). Two relays of
+    /// the *same* Supabase session — which is what answering a watch's
+    /// `requestSession` produces while the phone's access token is still valid
+    /// — would otherwise be byte-identical dictionaries, and an application
+    /// context identical to the one already set gives WatchConnectivity nothing
+    /// new to deliver. That is the leading explanation for why the push path
+    /// (sign out / sign in on the phone: genuinely different payloads) worked
+    /// while the pull path never landed.
+    ///
+    /// `guaranteed` additionally queues the payload with `transferUserInfo`,
+    /// used when answering a pull. Application context keeps only the latest
+    /// value and is delivered opportunistically; a queued transfer is delivered
+    /// exactly once, in order, whenever the watch app next runs. Push relays
+    /// stay context-only on purpose — they fire on every foreground, and
+    /// queueing each one would build a backlog of dead tokens for a watch
+    /// that's been in a drawer.
+    private func relay(_ context: [String: Any], guaranteed: Bool = false) {
         guard let session, session.activationState == .activated else { return }
-        try? session.updateApplicationContext(context)
+        var payload = context
+        payload["relayId"] = UUID().uuidString
+        payload["relayedAt"] = Date().timeIntervalSince1970
+        try? session.updateApplicationContext(payload)
+        if guaranteed { session.transferUserInfo(payload) }
     }
 }
 

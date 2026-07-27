@@ -4,10 +4,10 @@ import { supabase, SUPABASE_URL } from "../lib/supabase";
 import {
   getSessionWithDiagnostics,
   initAuthDiagnostics,
-  markUserSignOut,
   recordAuthStateChange,
   recordSessionHeartbeat,
 } from "../lib/authDiagnostics";
+import { signOutUser, type SignOutOptions } from "../lib/signOut";
 import { flushAuthEvents } from "../lib/authEventFlush";
 import { upsertAuthEvents } from "../lib/repo";
 import {
@@ -117,12 +117,20 @@ export function useAuth() {
     };
     document.addEventListener("visibilitychange", onVisible);
 
-    // The watch, stuck on its sign-in screen with a stale token, can ask us to
-    // re-relay a session (native only). getSession() returns a phone-refreshed
-    // token — the watch consumes it and signs back in without a manual login.
-    onWatchSessionRequest(() => {
+    // The watch, waiting on an expired access token, can ask us to re-relay
+    // (native only). getSession() returns a phone-refreshed token — the watch
+    // consumes it and signs back in with no manual login and no refresh token.
+    //
+    // `guaranteed: true` queues it with transferUserInfo as well as setting the
+    // application context (#266): answering a pull while our token is still
+    // valid re-sends the same session, and an unchanged application context is
+    // the leading explanation for the pull path never landing.
+    //
+    // The handle is kept and detached below. Discarding it (the old behaviour)
+    // meant nothing could ever remove the listener.
+    const watchRequest = onWatchSessionRequest(() => {
       void supabase.auth.getSession().then(({ data }) => {
-        relaySessionToWatch(data.session);
+        relaySessionToWatch(data.session, { guaranteed: true });
       });
     });
 
@@ -136,6 +144,10 @@ export function useAuth() {
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("sendmeter:recovery", onRecovery);
+      // addListener is async, so the handle may still be in flight when an
+      // effect that mounted and unmounted on the same tick cleans up (React
+      // StrictMode in dev does exactly that) — detach whenever it arrives.
+      void watchRequest.then((handle) => handle?.remove());
     };
   }, []);
 
@@ -144,11 +156,12 @@ export function useAuth() {
     loading,
     recovery,
     clearRecovery: () => setRecovery(false),
-    signOut: () => {
-      // Tell the diagnostics ring the SIGNED_OUT about to arrive is one the
-      // user asked for, so a deliberate logout doesn't read as a revocation.
-      markUserSignOut();
-      return supabase.auth.signOut();
-    },
+    // #273: one implementation, shared with `deleteAccount` — it marks the
+    // SIGNED_OUT as user-initiated (so a deliberate logout doesn't read as a
+    // revocation), and first drains the offline recording queue while the
+    // token is still alive. The caller supplies the prompt for anything that
+    // wouldn't upload; see `signOut.ts`.
+    signOut: (opts: Omit<SignOutOptions, "userId"> = {}) =>
+      signOutUser({ ...opts, userId: session?.user.id ?? null }),
   };
 }
