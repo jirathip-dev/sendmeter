@@ -98,10 +98,11 @@ public nonisolated enum RPEModelFitter {
 }
 
 /// Rounding policy for banking a model-predicted RPE (#107). The
-/// auto-tracked save path (`WorkoutLiveView.endAndSave`) banks the raw
-/// prediction at 0.1 precision — no rounding to half-points. That's distinct
-/// from the MANUAL RPE steppers (`GaugeFinishSheet`, phone/web log forms),
-/// which intentionally still move in 0.5 steps; don't reuse this for those.
+/// auto-tracked save paths — `WorkoutLiveView.endAndSave` and, since #280,
+/// the gauge session's W'-depletion prediction (`RPEDepletion`) — bank the
+/// raw prediction at 0.1 precision, no rounding to half-points. That's
+/// distinct from the MANUAL RPE steppers (phone/web log forms), which
+/// intentionally still move in 0.5 steps; don't reuse this for those.
 public nonisolated enum RPEQuantization {
     public static func autoTracked(_ predicted: Double) -> Double {
         (min(10, max(1, predicted)) * 10).rounded() / 10

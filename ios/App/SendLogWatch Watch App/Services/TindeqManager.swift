@@ -28,10 +28,16 @@ final class TindeqManager: NSObject {
     var sessionId: UUID?
     var sessionStartedAt: Date?
     var sessionCount = 0
-    /// Set when an unplanned disconnect (or the Finish button) should surface
-    /// the "log this session?" prompt. Presented at the root so it shows even
-    /// after the user has navigated away from the Force screen.
-    var pendingFinish = false
+
+    /// Per-tag force curves (#280), refreshed by `ForceGaugeView`'s tag fetch
+    /// — the same round trip that fills the exercise picker. Lives here, not
+    /// on the view, because the disconnect-salvage path below saves reps too,
+    /// long after the Force screen may have gone away.
+    var tagCurves: [String: TindeqTagInfo] = [:]
+    /// Running Σ d_i of the session (#280): each saved rep's W' depletion,
+    /// measured against ITS OWN tag's curve. Reps whose tag has no fitted
+    /// curve contribute nothing; if none of them did, `predicted` falls back.
+    private var depletion = SessionDepletionAccumulator()
 
     // SL-87 live mirror: the phone Force tab shows what the watch gauge is
     // doing. The view keeps these in sync with its pickers so beats carry the
@@ -77,7 +83,52 @@ final class TindeqManager: NSObject {
         sessionId = nil
         sessionStartedAt = nil
         sessionCount = 0
-        pendingFinish = false
+        depletion.reset()
+    }
+
+    /// Fold one just-saved rep into the session's W' depletion (#280). Called
+    /// from every path that persists a rep — the Stop & Save button and the
+    /// disconnect salvage — so the prediction covers the whole session.
+    func recordRepDepletion(peakKg: Double, durationMs: Int, tag: String) {
+        let curve = tagCurves[tag]
+        depletion.add(
+            DepletionRep(
+                peakKg: peakKg,
+                durationS: Double(durationMs) / 1000,
+                cf: curve?.cf,
+                wPrime: curve?.wPrime
+            )
+        )
+    }
+
+    /// The RPE this session would be logged at right now.
+    var predictedRPE: PredictedRPE { depletion.predicted }
+
+    /// End the gauge session and log it immediately at the predicted RPE
+    /// (#280) — there is no prompt any more. Every caller (the Finish button,
+    /// the explicit disconnect, and an unplanned BLE drop) goes through here,
+    /// so a session can't be orphaned by the user simply walking away.
+    ///
+    /// The payload is built synchronously, at call time: date and duration
+    /// must reflect this exact moment, not whenever the queued upload
+    /// eventually lands (issue #144 — the old sheet's `try? await` froze
+    /// mid-flight the instant the user lowered their wrist, so the session
+    /// could arrive minutes to hours late, if at all). Persist-first +
+    /// idempotent upsert (`PendingSessionQueue`/`Repo`) is unchanged: this
+    /// returns immediately without waiting on the network.
+    func logSessionNow() {
+        guard let groupId = sessionId, sessionCount > 0 else {
+            clearSession()
+            return
+        }
+        let pending = PendingTindeqSession.build(
+            sessionStartedAt: sessionStartedAt,
+            recordingCount: sessionCount,
+            rpe: predictedRPE.rpe,
+            groupId: groupId
+        )
+        clearSession()
+        Task { await PendingSessionQueue.shared.enqueue(pending) }
     }
 
     // MARK: Controls
@@ -346,7 +397,11 @@ extension TindeqManager: CBCentralManagerDelegate {
         ), let summary = makeSummary() {
             salvageInterruptedRecording(summary)
         } else if !wasIntentional, sessionId != nil, sessionCount > 0 {
-            pendingFinish = true
+            // #280: the drop used to raise the finish prompt at the root. It
+            // now logs the session itself at the predicted RPE — the user may
+            // be nowhere near the watch when the Progressor dies, and a
+            // prompt nobody sees orphans the session.
+            logSessionNow()
         }
         pushForceBeat()
     }
@@ -358,8 +413,9 @@ extension TindeqManager: CBCentralManagerDelegate {
     /// duplicate delegate callback can't double-save, then inserts on the
     /// existing per-connect session group (minting one if this is the first
     /// rep of the connect) just like `ForceGaugeView.saveStop()`. Does NOT
-    /// show any new discard/save prompt — `pendingFinish` at the end just
-    /// surfaces the existing `GaugeFinishSheet`, same as a manual Finish.
+    /// show any discard/save prompt — since #280 the salvaged rep is folded
+    /// into the session's depletion and the session logs itself, exactly as a
+    /// manual Finish would.
     private func salvageInterruptedRecording(_ summary: StoppedRecording) {
         currentKg = 0
         peakKg = summary.peakKg
@@ -378,11 +434,14 @@ extension TindeqManager: CBCentralManagerDelegate {
                     groupId: groupId
                 )
                 sessionCount += 1
+                recordRepDepletion(peakKg: summary.peakKg, durationMs: summary.durationMs, tag: tag)
             } catch {
                 errorMsg = ErrorText.friendly(error)
                 if sessionCount == 0 { clearSession() }
             }
-            pendingFinish = sessionCount > 0
+            // Log whatever the session ended up with — including the reps
+            // saved before the drop when this one failed to upload (#280).
+            logSessionNow()
         }
     }
 }

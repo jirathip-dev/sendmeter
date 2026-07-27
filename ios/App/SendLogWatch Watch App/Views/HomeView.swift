@@ -1,6 +1,33 @@
 import SwiftUI
 
+/// The watch home: two swipeable pages (#278). Page 1 is status — what shape
+/// am I in — and page 2 is the things you can start. Swiping starts nothing;
+/// page 2 has the same taps it always had.
+///
+/// Horizontal `.page` paging, not `.verticalPage`: page 2 is a List and page 1
+/// scrolls when the text wraps, and both of those are driven by the Digital
+/// Crown — vertical paging would fight the scroll on every page. Sideways also
+/// matches the mental model better, since neither page is "below" the other.
+///
+/// This stays the root of RootView's NavigationStack, so the two
+/// `NavigationLink(value:)`s below and the complication deep links push onto
+/// the same path. The `.navigationDestination` lives up in RootView, outside
+/// the TabView — a destination declared inside a paged TabView is only
+/// registered while its page is realized, which is exactly how a deep link
+/// arriving on the wrong page silently does nothing.
 struct HomeView: View {
+    var body: some View {
+        TabView {
+            StatusView()
+            ActionsView()
+        }
+        .tabViewStyle(.page)
+        .navigationTitle("Sendmeter")
+    }
+}
+
+/// Page 2 — the things you can start from the wrist.
+private struct ActionsView: View {
     @Environment(AuthManager.self) private var auth
     @State private var pendingUploads = 0
 
@@ -33,15 +60,14 @@ struct HomeView: View {
                 .foregroundStyle(.orange)
             }
 
-            // No Sign Out here any more. The watch has no session of its own
-            // to end — it mirrors the phone's — and the old button called
-            // supabase-swift's globally-scoped signOut, which revoked every
-            // session on the account, including the phone's.
-            Text("Signed in from your iPhone")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
+            // No Sign Out here, and none anywhere else on the watch (#278).
+            // The watch has no session of its own to end — it mirrors the
+            // phone's — and the old button called supabase-swift's
+            // globally-scoped signOut, which revoked every session on the
+            // account, including the phone's. The "Signed in from your iPhone"
+            // footer went with it: automatic sign-in is the normal path and
+            // doesn't need narrating.
         }
-        .navigationTitle("Sendmeter")
         .task {
             async let workouts = OfflineQueue.shared.pendingCount()
             async let sessions = PendingSessionQueue.shared.pendingCount()

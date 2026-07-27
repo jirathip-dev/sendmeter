@@ -17,11 +17,21 @@ struct WorkoutLiveView: View {
     @State private var stillQueued = false
     @State private var restAlarmTask: Task<Void, Never>?
     /// True in the always-on dimmed state. watchOS dims hard on its own, and a
-    /// full-screen tint left at full value on top of that is a burn-in and
-    /// battery liability — the palette has a reduced variant for it (#243).
+    /// saturated colour block left at full value on top of that is a burn-in
+    /// and battery liability — the palette has a reduced variant for it (#243).
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     private let restTargets = [60, 120, 180, 300]
+
+    init() {}
+
+    #if DEBUG
+    /// Preview-only seam: poses the view mid-workout so the live layout can be
+    /// checked at 40mm and 49mm (#277) without an `HKWorkoutSession`.
+    init(previewWorkout: WorkoutManager) {
+        _workout = State(initialValue: previewWorkout)
+    }
+    #endif
 
     var body: some View {
         Group {
@@ -33,7 +43,11 @@ struct WorkoutLiveView: View {
                 startContent
             }
         }
-        .navigationTitle("Climb")
+        // No title while running. watchOS floats the nav bar OVER the content
+        // rather than insetting it, so "Climb" was being drawn straight
+        // through the elapsed-time readout — and once the band says RESTING
+        // next to an End button, the title is telling nobody anything.
+        .navigationTitle(workout.isRunning ? "" : "Climb")
         .navigationBarBackButtonHidden(workout.isRunning)
     }
 
@@ -104,17 +118,20 @@ struct WorkoutLiveView: View {
     // start; stopping drops straight into a RESTING countdown toward the
     // persisted target. One screen, no scrolling — End lives in the toolbar.
     //
-    // One TimelineView drives BOTH the full-screen phase fill and the phase
-    // timer (#243) so they flip on the same tick — a background that says
-    // RESTING behind a countdown that says REST OVER would be worse than no
-    // fill at all. It also replaces the timer's own per-second timeline
-    // rather than adding a second one.
+    // One TimelineView drives BOTH the phase band and the phase timer (#243)
+    // so they flip on the same tick — a band that says RESTING behind a
+    // countdown that says REST OVER would be worse than no colour at all. It
+    // also replaces the timer's own per-second timeline rather than adding a
+    // second one.
     @ViewBuilder
     private var liveContent: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let phase = workout.livePhase(at: context.date)
-            liveStack(phase: phase)
-                .background(phaseFill(phase).ignoresSafeArea())
+            // Resolved once per tick and threaded down, so the band and the
+            // text on it can never be read from two different resolutions.
+            let fill = WorkoutPhasePalette.fill(for: phase, luminanceReduced: isLuminanceReduced)
+            liveStack(phase: phase, fill: fill)
+                .background(color(fill.screen).ignoresSafeArea())
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -124,9 +141,9 @@ struct WorkoutLiveView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
-                // Neutral, not red: at REST OVER the whole screen is red, and
-                // a red-on-red chip is the first thing to disappear. The word
-                // carries the meaning; the fill owns the colour now.
+                // Neutral, not red: it sits on the black screen next to a
+                // band that can itself be red, and the word carries the
+                // meaning — the band owns the colour.
                 .tint(.white)
                 .disabled(ending)
             }
@@ -135,85 +152,104 @@ struct WorkoutLiveView: View {
         .onDisappear { cancelRestAlarm() }
     }
 
-    /// The whole screen, painted by phase. A solid animated colour with a
-    /// static wash toward black at the bottom — the wash buys contrast under
-    /// the secondary readouts and the action button without touching the hue
-    /// at the top, where the phase label and countdown live. `Rectangle().fill`
-    /// rather than a bare `Color` because a filled shape style interpolates
-    /// between colours; the cross-fade is the point, a hard cut is not.
-    private func phaseFill(_ phase: WorkoutPhase) -> some View {
-        let fill = WorkoutPhasePalette.fill(for: phase, luminanceReduced: isLuminanceReduced)
-        return ZStack {
-            Rectangle().fill(color(fill.background))
-            LinearGradient(
-                colors: [.clear, .black.opacity(WorkoutPhasePalette.bottomShade)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .animation(.easeInOut(duration: WorkoutPhasePalette.transitionSeconds), value: phase)
-    }
-
     private func color(_ rgb: PhaseRGB) -> Color {
         Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
 
-    /// Text that sits on the fill — the palette's label colour for that
-    /// phase, never the phase's own hue. Green "CLIMBING" on a green fill is
-    /// how this feature fails; the package tests hold every pairing here at
-    /// AAA contrast, dimmed and not.
-    private func onFill(_ phase: WorkoutPhase) -> Color {
-        color(WorkoutPhasePalette.fill(for: phase, luminanceReduced: isLuminanceReduced).label)
+    /// The phase colour, as a rounded block behind the eyebrow and the
+    /// countdown (#277) — TimerPlus-style, rather than flooded across the
+    /// whole display. Everything else on the screen is now on black, which is
+    /// why the old bottom wash is gone: it existed purely to buy contrast on
+    /// top of a full-screen fill.
+    ///
+    /// `RoundedRectangle().fill` rather than a bare `Color` because a filled
+    /// shape style interpolates between colours; the cross-fade is the point,
+    /// a hard cut is not. The text on it takes the palette's label colour for
+    /// the phase, never the phase's own hue — green "CLIMBING" on a green band
+    /// is how this feature fails, and the package tests hold every pairing
+    /// here at AAA contrast, dimmed and not.
+    private func phaseBand<Content: View>(
+        phase: WorkoutPhase,
+        fill: PhaseFill,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .foregroundStyle(color(fill.label))
+            .padding(.vertical, 3)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(color(fill.band))
+                    .animation(.easeInOut(duration: WorkoutPhasePalette.transitionSeconds), value: phase)
+            )
     }
 
     @ViewBuilder
-    private func liveStack(phase: WorkoutPhase) -> some View {
-        VStack(spacing: 4) {
-            // HR + total elapsed stacked on the LEFT — the elapsed time used to
-            // sit top-right, where it collided with the End toolbar button.
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "heart.fill")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
-                        Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
-                            .font(.body).monospacedDigit()
-                    }
-                    Text(timeString(workout.elapsed))
-                        .font(.footnote).monospacedDigit()
-                        .foregroundStyle(.secondary)
+    private func liveStack(phase: WorkoutPhase, fill: PhaseFill) -> some View {
+        // Spacing is 2, not the usual 4: RESTING stacks the HR line, the band,
+        // the rest chips and the action row, and on a 40mm screen the gaps are
+        // the difference between the button clearing the bottom edge and
+        // sitting flush against it.
+        VStack(spacing: 2) {
+            // HR + total elapsed on ONE line at the LEFT. They used to be
+            // stacked, which cost a whole footnote line of height that RESTING
+            // — the tall phase, band + chips + action row — does not have on a
+            // 40mm screen. Still left-aligned: the elapsed time sat top-right
+            // once and collided with the End toolbar button.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(spacing: 4) {
+                    Image(systemName: "heart.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                    Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
+                        .font(.body).monospacedDigit()
                 }
-                Spacer()
+                Text(timeString(workout.elapsed))
+                    .font(.footnote).monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
 
             Spacer(minLength: 0)
 
-            phaseTimer(phase: phase)
+            phaseTimer(phase: phase, fill: fill)
 
             Spacer(minLength: 0)
 
-            HStack {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("BOULDERS").font(.system(size: 9)).foregroundStyle(.secondary)
-                    Text("\(workout.liveAttempts)")
-                        .font(.title3).monospacedDigit()
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text("\(Int(workout.activeKcal)) kcal")
-                        .font(.system(size: 11)).monospacedDigit()
-                        .foregroundStyle(.secondary)
-                    Text(String(format: "%+.1fm", workout.relativeAltitude))
-                        .font(.system(size: 11)).monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
+            actionRow
+        }
+    }
+
+    /// BOULDERS · play/stop · kcal + altitude, all on one line (#277). The
+    /// button used to own a full-width row of its own underneath this one,
+    /// which left it stranded bottom-left with dead space beside it and spent
+    /// ~50pt of a 40mm screen on nothing. Between the two readouts it reads as
+    /// the row's action and the screen gets that height back.
+    ///
+    /// Both readout columns take an equal share of the leftover width, so the
+    /// button stays optically centred whatever the numbers do.
+    @ViewBuilder
+    private var actionRow: some View {
+        HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("BOULDERS")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text("\(workout.liveAttempts)")
+                    .font(.title3).monospacedDigit()
+                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // Play = start a boulder, stop = drop off into the rest countdown
-            // (phone-workout logic; icons instead of words). Compact circular
-            // button so the whole screen fits a 40mm watch without scrolling
-            // (SL-59) — still the biggest tap target on screen.
+            // (phone-workout logic; icons instead of words). 44pt is Apple's
+            // minimum tap target and here the visual circle IS the tap target
+            // — no invisible padding to get out of step with the artwork.
+            // `fixedSize` keeps it at 44 whatever the readouts either side ask
+            // for, down to 40mm.
             Button {
                 workout.toggleManualAttempt()
                 if workout.manualClimbing {
@@ -223,49 +259,71 @@ struct WorkoutLiveView: View {
                 }
             } label: {
                 Image(systemName: workout.manualClimbing ? "stop.fill" : "play.fill")
-                    .font(.system(size: 17, weight: .bold))
-                    .frame(width: 46, height: 46)
+                    .font(.system(size: 16, weight: .bold))
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.circle)
             .tint(workout.manualClimbing ? .orange : .green)
-            .frame(maxWidth: .infinity)
+            .fixedSize()
+            .accessibilityLabel(workout.manualClimbing ? "Stop boulder" : "Start boulder")
+
+            VStack(alignment: .trailing, spacing: 0) {
+                Text("\(Int(workout.activeKcal)) kcal")
+                    .font(.system(size: 11)).monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(String(format: "%+.1fm", workout.relativeAltitude))
+                    .font(.system(size: 11)).monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 
-    // CLIMBING count-up / RESTING countdown. The phase now comes from the
-    // enclosing TimelineView, so "rest over" flips the label and the
-    // full-screen fill on the same tick — still no stored state. The text
-    // itself is the on-fill colour rather than the phase's hue: the whole
-    // background is already saying which phase this is.
+    // CLIMBING count-up / RESTING countdown, inside the phase band. The phase
+    // comes from the enclosing TimelineView, so "rest over" flips the label
+    // and the band on the same tick — still no stored state. The text takes
+    // the palette's label colour rather than the phase's hue: the band behind
+    // it is already saying which phase this is.
+    //
+    // 34pt, not the old 40: the band's padding has to fit inside a 40mm
+    // screen alongside the rest chips and the action row, and at this size the
+    // countdown still fills most of the band's width.
     @ViewBuilder
-    private func phaseTimer(phase: WorkoutPhase) -> some View {
+    private func phaseTimer(phase: WorkoutPhase, fill: PhaseFill) -> some View {
         if phase == .climbing, let since = workout.climbingSince {
-            VStack(spacing: 0) {
-                Text("CLIMBING")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(onFill(phase))
-                Text(timerInterval: since...since.addingTimeInterval(3600), countsDown: false)
-                    .font(.system(size: 40, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(onFill(phase))
+            phaseBand(phase: phase, fill: fill) {
+                VStack(spacing: 0) {
+                    Text("CLIMBING")
+                        .font(.system(size: 11, weight: .bold))
+                    Text(timerInterval: since...since.addingTimeInterval(3600), countsDown: false)
+                        .font(.system(size: 34, weight: .heavy, design: .rounded))
+                        .monospacedDigit()
+                        .multilineTextAlignment(.center)
+                }
             }
         } else if let rest = workout.restStartedAt {
             let end = rest.addingTimeInterval(Double(workout.restTargetS))
-            VStack(spacing: 0) {
-                Text(phase == .restOver ? "REST OVER" : "RESTING")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(onFill(phase))
-                Text(timerInterval: rest...end, countsDown: true)
-                    .font(.system(size: 40, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(onFill(phase))
+            VStack(spacing: 3) {
+                phaseBand(phase: phase, fill: fill) {
+                    VStack(spacing: 0) {
+                        Text(phase == .restOver ? "REST OVER" : "RESTING")
+                            .font(.system(size: 11, weight: .bold))
+                        Text(timerInterval: rest...end, countsDown: true)
+                            .font(.system(size: 34, weight: .heavy, design: .rounded))
+                            .monospacedDigit()
+                            .multilineTextAlignment(.center)
+                    }
+                }
                 // Rest-target chips (1/2/3/5m) — obvious selector like the
-                // phone's; persisted + mirrored via the live heartbeat. The
-                // selected chip is neutral, not blue: RESTING paints the
-                // screen blue, and a blue chip on it stops reading as chosen.
+                // phone's; persisted + mirrored via the live heartbeat. They
+                // stay OUTSIDE the band: it holds what the phase *is*, not the
+                // controls that change it. The selected chip is neutral, not
+                // blue, so it reads as chosen next to a blue RESTING band.
                 HStack(spacing: 4) {
                     ForEach(restTargets, id: \.self) { t in
                         let selected = workout.restTargetS == t
@@ -279,7 +337,6 @@ struct WorkoutLiveView: View {
                         .tint(selected ? .white : .gray)
                     }
                 }
-                .padding(.top, 2)
             }
         }
     }
@@ -311,3 +368,70 @@ struct WorkoutLiveView: View {
         return String(format: "%d:%02d", s / 60, s % 60)
     }
 }
+
+#if DEBUG
+extension WorkoutManager {
+    /// Preview-only: a manager posed mid-workout, so the live layout can be
+    /// checked without HealthKit. `restTargetS` is deliberately left at its
+    /// stored default — its `didSet` writes UserDefaults and fires a heartbeat.
+    @MainActor
+    static func posed(climbing: Bool, restStartedS: TimeInterval = 45) -> WorkoutManager {
+        let m = WorkoutManager()
+        m.isRunning = true
+        m.heartRate = 148
+        m.activeKcal = 327
+        m.elapsed = 2_712
+        m.relativeAltitude = -3.4
+        m.liveAttempts = 12
+        m.manualClimbing = climbing
+        m.climbingSince = climbing ? Date().addingTimeInterval(-73) : nil
+        m.restStartedAt = climbing ? nil : Date().addingTimeInterval(-restStartedS)
+        return m
+    }
+}
+
+/// The two screens the layout has to hold, in points: the smallest supported
+/// watch and the largest. Pinned as a frame rather than a `previewDevice` —
+/// the `#Preview` macro ignores `previewDevice` (it takes the device from the
+/// Canvas picker), and a hard frame plus `clipped()` is what actually shows
+/// overflow as overflow instead of quietly growing the canvas.
+private enum PreviewScreen {
+    /// Apple Watch SE / Series 4-6, 40mm.
+    static let mm40 = CGSize(width: 162, height: 197)
+    /// Apple Watch Ultra / Ultra 2, 49mm — the tighter of the two Ultra
+    /// panels (Ultra 3 is 211x257).
+    static let mm49 = CGSize(width: 205, height: 251)
+}
+
+private func workoutPreview(_ workout: WorkoutManager, _ size: CGSize) -> some View {
+    NavigationStack { WorkoutLiveView(previewWorkout: workout) }
+        .frame(width: size.width, height: size.height)
+        .clipped()
+}
+
+// The layout that has to hold: everything visible at once on the smallest
+// supported watch, still deliberate on the largest (#277). RESTING is the tall
+// case — it adds the rest chips under the band — and REST OVER is RESTING past
+// its target, so the same geometry covers it.
+#Preview("Climbing · 40mm") {
+    workoutPreview(.posed(climbing: true), PreviewScreen.mm40)
+}
+
+#Preview("Resting · 40mm") {
+    workoutPreview(.posed(climbing: false), PreviewScreen.mm40)
+}
+
+#Preview("Rest over · 40mm") {
+    // Past the default 3-minute target, so the band is red and the countdown
+    // has flipped — the widest label ("REST OVER") on the smallest screen.
+    workoutPreview(.posed(climbing: false, restStartedS: 240), PreviewScreen.mm40)
+}
+
+#Preview("Climbing · 49mm") {
+    workoutPreview(.posed(climbing: true), PreviewScreen.mm49)
+}
+
+#Preview("Resting · 49mm") {
+    workoutPreview(.posed(climbing: false), PreviewScreen.mm49)
+}
+#endif

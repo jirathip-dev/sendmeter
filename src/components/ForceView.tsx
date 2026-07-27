@@ -11,8 +11,12 @@ import {
   fetchHiddenTags,
   fetchRecordings,
   fetchRecordingSamples,
+  fetchTagCurves,
   insertRecording,
+  saveTagCurve,
 } from "../lib/repo";
+import { predictSessionRpe, RPE_DEPLETION } from "../lib/rpeDepletion";
+import { stepRpe } from "../lib/rpe";
 import {
   computeForceCurve,
   CURVE_PERIODS,
@@ -64,6 +68,7 @@ interface ForceViewProps {
     rpe: number;
     note: string;
     groupId: string;
+    rpeConfirmed?: boolean;
   }) => Promise<void>;
 }
 
@@ -170,6 +175,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     id: string;
     durationMin: number;
     rpe: number;
+    /// What #280 predicted from W' depletion (or its fallback). Kept so the
+    /// log knows whether the user actually moved the stepper: an untouched
+    /// prediction is banked `rpe_confirmed = false`.
+    predictedRpe: number;
+    /// False when no rep of the session had a fitted curve — the RPE shown is
+    /// the fallback default, not a prediction, and the sheet says so.
+    fromCurve: boolean;
   } | null>(null);
   const [loggingSession, setLoggingSession] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -224,18 +236,64 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     ? recordings.filter((r) => r.groupId === gaugeSession.groupId).length
     : 0;
 
-  function endSession() {
+  /// Predict this session's RPE from W' depletion (#280), the same model the
+  /// watch runs: every rep against ITS OWN tag's fitted curve, read back from
+  /// the registry the curve effect below keeps up to date. Any failure — a
+  /// dead network, a tag that's never been fitted — falls back rather than
+  /// blocking the log; the caller banks the result unconfirmed either way.
+  async function predictGroupRpe(groupId: string) {
+    const recs = recordings.filter((r) => r.groupId === groupId);
+    let curves: Awaited<ReturnType<typeof fetchTagCurves>> = [];
+    try {
+      curves = await fetchTagCurves();
+    } catch {
+      // Fall through to the fallback RPE — a prediction is a nicety, the
+      // session log is not.
+    }
+    const byTag = new Map(curves.map((c) => [c.name, c]));
+    return predictSessionRpe(
+      recs.map((r) => ({
+        peakKg: r.peakKg,
+        durationS: r.durationMs / 1000,
+        cf: byTag.get(r.tag)?.cf ?? null,
+        wPrime: byTag.get(r.tag)?.wPrime ?? null,
+      })),
+    );
+  }
+
+  async function endSession() {
     if (!gaugeSession) return;
+    const groupId = gaugeSession.groupId;
     const durationMin = Math.max(
       1,
       Math.round((Date.now() - gaugeSession.startedAt) / 60000),
     );
-    // A session only exists because a recording created it (lazy mint), so
-    // there's always ≥1 recording to log — always open the RPE prompt. The
-    // sheet re-fetches the group's recordings itself, so it doesn't depend on
-    // ForceView's (possibly not-yet-loaded) `recordings` state.
-    setEndingSession({ id: gaugeSession.groupId, durationMin, rpe: 5 });
     clearSession();
+    // A session only exists because a recording created it (lazy mint), so
+    // there's always ≥1 recording to log — always open the RPE prompt. It
+    // opens immediately at the fallback and the #280 prediction lands into it
+    // a round trip later: ending a session must never sit waiting on the
+    // network, least of all in the outage this queue exists for.
+    setEndingSession({
+      id: groupId,
+      durationMin,
+      rpe: RPE_DEPLETION.fallbackRpe,
+      predictedRpe: RPE_DEPLETION.fallbackRpe,
+      fromCurve: false,
+    });
+    const predicted = await predictGroupRpe(groupId);
+    // Only land it on the same, still-untouched prompt — a user who already
+    // dialed in their own RPE (or moved on) must not have it overwritten.
+    setEndingSession((s) =>
+      s && s.id === groupId && s.rpe === s.predictedRpe
+        ? {
+            ...s,
+            rpe: predicted.rpe,
+            predictedRpe: predicted.rpe,
+            fromCurve: predicted.fromCurve,
+          }
+        : s,
+    );
   }
 
   async function logEndedSession() {
@@ -262,6 +320,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       rpe: endingSession.rpe,
       note,
       groupId: endingSession.id,
+      // #114's column: an untouched prediction (or fallback) is a number
+      // nobody reviewed, so it stays distinguishable in History and the RPE
+      // chart. Moving the stepper is that review.
+      rpeConfirmed: endingSession.rpe !== endingSession.predictedRpe,
     });
     setLoggingSession(false);
     setEndingSession(null);
@@ -556,6 +618,23 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         );
         setCurveError(m ? null : "No usable samples in these recordings.");
         setCurveComputedFor(curveKey);
+        // #280: bank the fit on the tag registry so the WATCH can predict a
+        // session's RPE from W' depletion. It can't refit — that needs the raw
+        // sample streams it doesn't keep — but two numbers are enough.
+        // Deliberately only the ALL-SIDES fit: the registry row is per tag
+        // NAME, so persisting a left-only or right-only model would be read
+        // back as "this tag's curve" and quietly halve it.
+        // Fire-and-forget — a failed write just leaves the previous fit (or
+        // none, and the prediction falls back); nothing here may block or
+        // disturb the curve UI.
+        if (effectiveTag !== null && chartSide === null && m?.cf != null && m.wPrime != null) {
+          void saveTagCurve({
+            name: effectiveTag,
+            cf: m.cf,
+            wPrime: m.wPrime,
+            recordingCount: recs.length,
+          }).catch(() => {});
+        }
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -811,7 +890,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     if (status === "idle" && (prev === "connected" || prev === "measuring")) {
       // Defer so any interrupted-save from the same disconnect lands first,
       // and to avoid a synchronous setState in the effect body.
-      const t = setTimeout(() => endSession(), 150);
+      const t = setTimeout(() => void endSession(), 150);
       return () => clearTimeout(t);
     }
     // endSession/setGaugeMinimized read current state at call time; depending
@@ -967,7 +1046,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             </span>
           </span>
           <button
-            onClick={endSession}
+            onClick={() => void endSession()}
             style={{
               background: "none",
               border: "1px solid var(--ink-faint)",
@@ -1034,9 +1113,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             <button
               className="stepper-btn"
               onClick={() =>
-                setEndingSession((s) =>
-                  s ? { ...s, rpe: Math.max(1, s.rpe - 1) } : s,
-                )
+                setEndingSession((s) => (s ? { ...s, rpe: stepRpe(s.rpe, -1) } : s))
               }
             >
               −
@@ -1045,13 +1122,27 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             <button
               className="stepper-btn"
               onClick={() =>
-                setEndingSession((s) =>
-                  s ? { ...s, rpe: Math.min(10, s.rpe + 1) } : s,
-                )
+                setEndingSession((s) => (s ? { ...s, rpe: stepRpe(s.rpe, 1) } : s))
               }
             >
               +
             </button>
+          </div>
+          {/* Say where the number came from — a prediction the user hasn't
+              touched is banked unconfirmed (#114/#280), so it shouldn't look
+              like something they entered. */}
+          <div
+            style={{
+              fontSize: "var(--t-2xs)",
+              color: "var(--ink-faint)",
+              marginTop: 6,
+            }}
+          >
+            {endingSession.rpe !== endingSession.predictedRpe
+              ? "Your value"
+              : endingSession.fromCurve
+                ? "Predicted from W′ depletion — adjust if it's off"
+                : `No force curve for these exercises yet — defaulting to ${RPE_DEPLETION.fallbackRpe}`}
           </div>
           <div className="grid-2" style={{ marginTop: 12 }}>
             <button

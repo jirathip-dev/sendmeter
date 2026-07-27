@@ -276,6 +276,10 @@ export function useTrainingData(userId: string) {
     rpe: number;
     note: string;
     groupId: string;
+    /// False when the RPE is the #280 W'-depletion prediction (or its
+    /// fallback) that the user left as-is — an unreviewed number, #114's
+    /// column. True once they moved the stepper themselves.
+    rpeConfirmed?: boolean;
   }) {
     try {
       const saved = await repo.insertTindeqSession({

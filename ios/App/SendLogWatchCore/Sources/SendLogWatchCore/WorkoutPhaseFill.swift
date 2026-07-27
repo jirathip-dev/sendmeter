@@ -1,12 +1,13 @@
 import Foundation
 
 /// What the live workout view is doing right now, as far as colour is
-/// concerned (issue #243, 221b).
+/// concerned (issue #243, 221b; reworked in #277).
 ///
 /// The watch is read at arm's length mid-route, where a 11pt status label is
-/// not legible but a full-screen colour is. The phase is therefore the thing
-/// the whole background is tinted by, so it has to be derivable from the same
-/// inputs the view already has — no extra stored state, no timer of its own.
+/// not legible but a colour block is. The phase is therefore the thing the
+/// band behind the phase label and countdown is tinted by, so it has to be
+/// derivable from the same inputs the view already has — no extra stored
+/// state, no timer of its own.
 public enum WorkoutPhase: String, Sendable, Equatable, CaseIterable {
     /// Running, but neither climbing nor resting yet (defensive — the manager
     /// opens a rest the moment the workout starts). No tint.
@@ -57,19 +58,41 @@ public struct PhaseRGB: Sendable, Equatable, Hashable {
     public func scaled(_ factor: Double) -> PhaseRGB {
         PhaseRGB(red * factor, green * factor, blue * factor)
     }
+
+    /// This colour composited over `background` at `opacity`. The one place
+    /// the "`.secondary` is roughly white at 60%" assumption is written down,
+    /// so the on-black readouts can be measured the same way the view draws them.
+    public func over(_ background: PhaseRGB, opacity: Double) -> PhaseRGB {
+        let a = min(max(opacity, 0), 1)
+        return PhaseRGB(
+            background.red + (red - background.red) * a,
+            background.green + (green - background.green) * a,
+            background.blue + (blue - background.blue) * a
+        )
+    }
 }
 
 /// The colours the live view paints for one phase.
+///
+/// Since #277 the phase colour is a *band* behind the phase label and the big
+/// countdown, not the whole display (TimerPlus-style colour block on black).
+/// That splits what used to be one pairing into two: label-on-band, and the
+/// secondary readouts sitting on the black screen either side of it.
 public struct PhaseFill: Sendable, Equatable {
-    /// The full-screen tint.
-    public let background: PhaseRGB
-    /// The phase eyebrow ("CLIMBING") and the big countdown sitting on it.
-    /// Deliberately not the phase's own hue: green text on a green fill is
-    /// the obvious way this feature fails.
+    /// The screen behind everything. Black for every phase — the colour is
+    /// carried by the band, and the readouts around it are measured on this.
+    public let screen: PhaseRGB
+    /// The rounded block behind the phase eyebrow ("CLIMBING") and the big
+    /// countdown.
+    public let band: PhaseRGB
+    /// The eyebrow and countdown sitting ON the band. Deliberately not the
+    /// phase's own hue: green text on a green band is the obvious way this
+    /// feature fails.
     public let label: PhaseRGB
 
-    public init(background: PhaseRGB, label: PhaseRGB) {
-        self.background = background
+    public init(screen: PhaseRGB, band: PhaseRGB, label: PhaseRGB) {
+        self.screen = screen
+        self.band = band
         self.label = label
     }
 }
@@ -78,11 +101,12 @@ public struct PhaseFill: Sendable, Equatable {
 /// (`src/components/PhoneWorkoutFullscreen.tsx`): climbing reads go, resting
 /// reads hold, rest-over reads act now. The values are not the phone's:
 /// the phone mixes ~12% of a bright accent into a light canvas, while the
-/// watch paints onto a black OLED and has to stay dark enough that white text
-/// keeps AAA contrast and the panel does not glow at arm's length.
+/// watch paints a band onto a black OLED and has to stay dark enough that
+/// white text keeps AAA contrast on it.
 public enum WorkoutPhasePalette {
-    /// Every fill is picked to clear this against `label` — AAA (7:1) for
-    /// body text, with margin left for the OLED's own gamma.
+    /// Every band is picked to clear this against `label` — AAA (7:1) for
+    /// body text, with margin left for the OLED's own gamma. The secondary
+    /// readouts on `screen` clear it too (see `secondaryOpacity`).
     public static let minimumContrast: Double = 7
 
     /// Cross-fade duration for a phase change. Long enough to read as a
@@ -90,16 +114,19 @@ public enum WorkoutPhasePalette {
     /// lands as an alert.
     public static let transitionSeconds: Double = 0.45
 
-    /// Opacity of the static black wash over the bottom of the screen. The
-    /// secondary readouts (kcal, altitude) and the action button live down
-    /// there; darkening under them buys contrast without touching the hue at
-    /// the top, where the phase label and countdown are.
-    public static let bottomShade: Double = 0.45
+    /// What watchOS's `.secondary` foreground style amounts to over the black
+    /// screen: white at ~60%. The elapsed time, kcal, altitude and the
+    /// BOULDERS eyebrow are drawn with it, and since #277 they sit on black
+    /// rather than on the phase colour — so this is the number their contrast
+    /// claim rests on.
+    public static let secondaryOpacity: Double = 0.6
 
-    /// How far the fill is pulled down in the always-on dimmed state. watchOS
-    /// dims aggressively on its own; a saturated full-screen fill left at full
-    /// value is both a burn-in and a battery liability, and reads muddy once
-    /// the display's own reduction is stacked on top.
+    /// How far the band is pulled down in the always-on dimmed state. watchOS
+    /// dims aggressively on its own; a saturated block left at full value is
+    /// both a burn-in and a battery liability, and reads muddy once the
+    /// display's own reduction is stacked on top. A band is already a far
+    /// smaller lit area than the full-screen fill it replaced (#277), but the
+    /// scaling stays: always-on is measured in hours, not glances.
     public static let luminanceReducedScale: Double = 0.45
 
     /// Resolves the phase from exactly what `WorkoutLiveView` already holds.
@@ -121,20 +148,23 @@ public enum WorkoutPhasePalette {
         let base: PhaseRGB
         switch phase {
         case .idle: base = .black
-        // Deep forest — 10:1 under white. "Green" at watch scale needs the
-        // green *channel* dominant, not a bright green: #2ECC71 as a fill
-        // would leave the countdown at ~2:1.
-        case .climbing: base = PhaseRGB(0.04, 0.30, 0.16)
-        // Deep navy-blue, the calmest and darkest of the three (12:1) — it is
-        // the phase you spend the most time staring at.
-        case .resting: base = PhaseRGB(0.06, 0.20, 0.42)
-        // Deep red (12:1). Sits far from both others in hue *and* in channel
+        // Deep forest — 8.1:1 under white. "Green" at watch scale needs the
+        // green *channel* dominant, not a bright green: #2ECC71 as a band
+        // would leave the countdown at ~2:1. Brighter than the pre-#277
+        // full-screen fill: a band this size has to hold its own against the
+        // black around it, and only the label sits on it.
+        case .climbing: base = PhaseRGB(0.05, 0.36, 0.19)
+        // Deep navy-blue, the calmest of the three (8.6:1) — it is the phase
+        // you spend the most time staring at.
+        case .resting: base = PhaseRGB(0.08, 0.28, 0.62)
+        // Deep red (8.2:1). Sits far from both others in hue *and* in channel
         // dominance, so the flip still reads under a red/green colour
         // deficiency and under the always-on dim.
-        case .restOver: base = PhaseRGB(0.45, 0.06, 0.07)
+        case .restOver: base = PhaseRGB(0.62, 0.08, 0.09)
         }
         return PhaseFill(
-            background: luminanceReduced ? base.scaled(luminanceReducedScale) : base,
+            screen: .black,
+            band: luminanceReduced ? base.scaled(luminanceReducedScale) : base,
             label: .white
         )
     }
