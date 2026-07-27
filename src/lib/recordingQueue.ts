@@ -125,6 +125,73 @@ export function enqueueRecording(
   return next;
 }
 
+export interface PersistResult {
+  /// Whether the recording now has a durable home. `false` means the samples
+  /// exist ONLY in the caller's memory.
+  persisted: boolean;
+  /// How many PREVIOUSLY-queued recordings were dropped to make room — by
+  /// enqueueRecording's own byte budget, and then one at a time by the retry
+  /// loop below. Each one is itself a lost rep, so callers report it.
+  evicted: number;
+}
+
+// #264 — WHAT HAPPENS WHEN THE PERSIST WRITE ITSELF FAILS.
+//
+// saveQueue returns false when localStorage.setItem throws: the origin quota
+// is exhausted (MAX_QUEUE_BYTES bounds what THIS queue adds, but not what the
+// rest of the `sendmeter:` keys already occupy, and WebKit's per-origin limit
+// is smaller than some builds admit) or storage is disabled outright. Before
+// #264 both call sites treated that as a dead end — the salvage-on-unmount
+// path console.warn'd into a console no deployed device surfaces, and
+// ForceView toasted a failure with no way to act on it.
+//
+// The policy, in order:
+//
+//   1. THE NEW RECORDING WINS. It is the rep the user just pulled and the only
+//      one they are still thinking about; a queued entry is by definition one
+//      that has already failed to sync at least once. So a refused write is
+//      retried after dropping the OLDEST queued entry, repeatedly, down to the
+//      new entry alone. This is the same oldest-first degradation
+//      enqueueRecording already applies at the byte budget, just driven by the
+//      store's actual answer instead of an estimate.
+//   2. IF THE LONE ENTRY STILL WON'T WRITE, THE LOSS IS REAL AND MUST BE SAID
+//      OUT LOUD. There is no third store to fall back to, so the contract is
+//      to report rather than to pretend: `persisted: false` is returned, and
+//      `reportPersistFailure` in `./lostRecordings` emits a Sentry event plus
+//      a durable one-shot user notice. Callers must NOT show copy implying the
+//      recording will sync later.
+//   3. IN-MEMORY SAMPLES ARE STILL WORTH SOMETHING. `persisted: false` does
+//      not mean "gone yet" — it means "gone when this scope ends". A caller
+//      that is still mounted (ForceView) holds the payload and offers Retry;
+//      a caller that is unmounting (useTindeq's salvage cleanup) cannot, and
+//      only reports.
+//
+// Deliberately NOT done: no compression, no IndexedDB fallback, no partial
+// (down-sampled) save. Each trades away the exactness of the curve or adds a
+// second async store to the one path that must stay synchronous.
+
+/// Read the queue, append `input`, and write it back — making room by
+/// dropping the oldest entries if the store refuses the write. See the policy
+/// block above for why the new recording is the one that survives.
+export function persistRecording(
+  input: NewTindeqRecording & { id: string },
+  userId: string | null,
+  storage: QueueStorage | null = defaultStorage(),
+  now: () => string = () => new Date().toISOString(),
+): PersistResult {
+  const before = loadQueue(storage);
+  let next = enqueueRecording(before, input, userId, now);
+  // What enqueueRecording's byte budget already dropped (it added exactly one).
+  let evicted = before.length + 1 - next.length;
+  // Bounded: `next` shrinks by one every iteration and stops at length 1.
+  for (;;) {
+    if (saveQueue(next, storage)) return { persisted: true, evicted };
+    if (next.length <= 1) return { persisted: false, evicted };
+    next = next.slice(1);
+    evicted += 1;
+  }
+}
+
 export interface DrainResult {
   succeeded: PendingRecording[];
   /// Still-pending entries, in their original relative order.

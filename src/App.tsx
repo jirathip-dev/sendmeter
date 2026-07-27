@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
+import { App as CapacitorApp } from "@capacitor/app";
 import { PHASES } from "./constants";
 import { today } from "./lib/dates";
 import {
@@ -35,6 +37,7 @@ import { useRealtimeBump } from "./hooks/useRealtimeVersion";
 import type { HealthSyncSource } from "./lib/healthSync";
 import { insertRecording, restoreSession } from "./lib/repo";
 import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
+import { takeLostRecordingsNotice } from "./lib/lostRecordings";
 
 export default function App() {
   const { session, loading, recovery, clearRecovery, signOut } = useAuth();
@@ -143,6 +146,34 @@ function AuthedApp({
       cancelled = true;
     };
   }, [userId, toast]);
+
+  // #264: the other side of the queue — recordings that could not even be
+  // queued. The path that loses one (useTindeq's salvage-on-unmount cleanup)
+  // has no UI it can reach, so it parks a durable one-shot notice instead;
+  // this is where the user finally hears about it. Mount covers sign-in and a
+  // cold launch, appStateChange covers a loss that happened while the app was
+  // backgrounded. `take` clears the record, so it shows exactly once.
+  useEffect(() => {
+    function surface() {
+      const notice = takeLostRecordingsNotice();
+      if (!notice) return;
+      toast(
+        `${notice.count} recording${notice.count === 1 ? "" : "s"} couldn't be saved — device storage was full`,
+        "error",
+      );
+    }
+    // Deferred, not called inline: a toast is a setState, and this effect must
+    // not write state synchronously in its body (react-compiler lint).
+    const t = setTimeout(surface, 0);
+    if (!Capacitor.isNativePlatform()) return () => clearTimeout(t);
+    const sub = CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+      if (isActive) surface();
+    });
+    return () => {
+      clearTimeout(t);
+      void sub.then((h) => h.remove());
+    };
+  }, [toast]);
 
   // SL-31 sync toast: only for a foreground resync the user is actively
   // looking at. The cold-launch background sync fires on every app open

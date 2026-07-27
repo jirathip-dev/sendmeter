@@ -4,7 +4,8 @@ import {
   DynamometerCancelledError,
 } from "../lib/dynamometer";
 import type { DynamometerConnection, ForceSample } from "../lib/dynamometer";
-import { enqueueRecording, loadQueue, saveQueue } from "../lib/recordingQueue";
+import { reportPersistFailure } from "../lib/lostRecordings";
+import { persistRecording } from "../lib/recordingQueue";
 import type { TindeqSample, TindeqSide } from "../types";
 
 export type TindeqStatus =
@@ -325,46 +326,43 @@ export function useTindeq() {
       }
       const summary = summarize(samplesRef.current);
       if (!summary) return;
-      const persisted = saveQueue(
-        enqueueRecording(
-          loadQueue(),
-          {
-            id: crypto.randomUUID(),
-            durationMs: summary.durationMs,
-            peakKg: summary.peakKg,
-            avgKg: summary.avgKg,
-            // Free-hold-shaped recovery — flagged so it reads as a salvaged
-            // blob rather than a normal miss, and NEVER carries a
-            // protocolRunId even mid-guided-protocol: it's a raw buffer
-            // slice, not a clean per-rep hold, and tagging it into a run
-            // would skew SL-102's per-rep box plots/run grouping.
-            note: "Recovered after sign-out",
-            tag: ctx.tag,
-            side: ctx.side,
-            groupId: ctx.groupId,
-            protocolRunId: null,
-            setNo: null,
-            // …and no zone either (#259), for the same reason: a raw buffer
-            // slice isn't a hold performed under a protocol, so there's no
-            // performed quality to record. It falls back to inference.
-            zone: null,
-            samples: summary.samples,
-          },
-          // null only via the no-context fallback above — a REGISTERED
-          // context always carries the real signed-in user id, so a pull
-          // captured under one account can never drain into another
-          // (drainQueue attempts null-user entries for ANY signed-in user).
-          userId,
-        ),
+      const result = persistRecording(
+        {
+          id: crypto.randomUUID(),
+          durationMs: summary.durationMs,
+          peakKg: summary.peakKg,
+          avgKg: summary.avgKg,
+          // Free-hold-shaped recovery — flagged so it reads as a salvaged
+          // blob rather than a normal miss, and NEVER carries a
+          // protocolRunId even mid-guided-protocol: it's a raw buffer
+          // slice, not a clean per-rep hold, and tagging it into a run
+          // would skew SL-102's per-rep box plots/run grouping.
+          note: "Recovered after sign-out",
+          tag: ctx.tag,
+          side: ctx.side,
+          groupId: ctx.groupId,
+          protocolRunId: null,
+          setNo: null,
+          // …and no zone either (#259), for the same reason: a raw buffer
+          // slice isn't a hold performed under a protocol, so there's no
+          // performed quality to record. It falls back to inference.
+          zone: null,
+          samples: summary.samples,
+        },
+        // null only via the no-context fallback above — a REGISTERED
+        // context always carries the real signed-in user id, so a pull
+        // captured under one account can never drain into another
+        // (drainQueue attempts null-user entries for ANY signed-in user).
+        userId,
       );
-      if (!persisted) {
-        // Otherwise this failure is invisible — no toast/UI is reachable
-        // from an unmount cleanup, and the buffer is gone the moment this
-        // function returns.
-        console.warn(
-          "[tindeq] salvage-on-unmount: recording captured but localStorage write failed — data lost",
-        );
-      }
+      // #264: this is the ONE path that can lose a recording with nothing
+      // the user can do about it — no toast/UI is reachable from an unmount
+      // cleanup, and the buffer is gone the moment this function returns.
+      // reportPersistFailure is therefore the whole remedy: a Sentry event so
+      // we can see it happened, plus a durable one-shot notice that App.tsx
+      // surfaces on the next mount/foreground so the user learns of the loss
+      // rather than discovering a missing rep in History weeks later.
+      reportPersistFailure("salvage-on-unmount", result, summary.samples.length);
     };
   }, [cleanupDevice]);
 
