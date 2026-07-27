@@ -107,9 +107,14 @@ platform :ios do
     # "Team Store" profile referenced an older cert → "profile doesn't include
     # signing certificate"). Archive AND export then use manual signing with
     # these, avoiding Xcode cloud-managed signing, which the API key isn't
-    # permitted to drive. sigh also installs each profile into
-    # ~/Library/MobileDevice/Provisioning Profiles, which is where xcodebuild
-    # looks them up by name at archive time.
+    # permitted to drive. sigh also *installs* each profile locally, which is
+    # what lets the archive resolve them by name (step 4) — so if an archive
+    # ever fails with "profile not found", that install is the thing to check.
+    # The directory is Xcode-version-dependent
+    # (fastlane_core/provisioning_profile.rb → profiles_path): Xcode 16+ uses
+    # ~/Library/Developer/Xcode/UserData/Provisioning Profiles, older Xcodes
+    # ~/Library/MobileDevice/Provisioning Profiles. Both this machine and the
+    # macOS-26 CI runner are on the former; don't assume the legacy path exists.
     profiles = {}
     signable.each_value do |bundle_id|
       get_provisioning_profile(
