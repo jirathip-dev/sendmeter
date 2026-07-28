@@ -38,48 +38,93 @@ const ACTIVITY_MODELS_PLUGIN = join(
   "SendLogLiveActivity", "ActivityModels.swift",
 );
 
+/// Collapses a `struct`/`enum` header that wraps across lines (the
+/// conformance list overflowing e.g. `struct Foo:\n  Bar, Baz {`) onto one
+/// logical line, so `DECL_RE` below — which only recognizes a header ending
+/// in `{` on the same physical line — still sees it. Only the header itself
+/// (from the `struct`/`enum` keyword up to its first `{`) is touched;
+/// everything else in the file, including any body content after that `{`,
+/// is untouched. Safe to run on an already-single-line header too: it just
+/// collapses internal runs of whitespace, which single-line headers don't
+/// have.
+function joinWrappedDeclarations(text: string): string {
+  return text.replace(
+    /\b(?:struct|enum)\s+\S+\s*:[^{]*\{/g,
+    (declaration) => declaration.replace(/\s+/g, " "),
+  );
+}
+
 /// Strips `/* … */` blocks and `//`-to-end-of-line comments, then drops
-/// `public ` tokens — the plugin copy is `public` throughout (it's consumed
-/// across a module boundary) and that doesn't affect the Codable shape.
+/// every Swift access modifier (`public`, `private`, `internal`,
+/// `fileprivate`, `open`) — the plugin copy is `public` throughout (it's
+/// consumed across a module boundary), and per #288's acceptance criteria
+/// access-level differences are allowed to differ between the two copies,
+/// so none of these may survive into the signature. (Stripping only
+/// `public` left a `private`/`internal`/`fileprivate` property in just one
+/// copy silently dropped from that copy's signature instead — `PROPERTY_RE`
+/// requires the line to *start* with `var`/`let`, so a surviving modifier
+/// made it not match at all rather than matching-with-the-modifier.)
+/// Finally joins wrapped struct/enum headers (see `joinWrappedDeclarations`)
+/// so multi-line declarations aren't silently dropped either.
 function normalize(raw: string): string {
-  return raw
+  const withoutComments = raw
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .split("\n")
     .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n")
-    .replace(/\bpublic\s+/g, "");
+    .join("\n");
+  const withoutModifiers = withoutComments.replace(
+    /\b(?:public|private|internal|fileprivate|open)\s+/g,
+    "",
+  );
+  return joinWrappedDeclarations(withoutModifiers);
 }
 
-const STRUCT_RE = /^struct\s+(\S+)\s*:\s*(.+?)\s*\{$/;
+/// Matches both `struct Foo: Bar {` and `enum Foo: String, Codable {` — a
+/// nested enum (e.g. a `Phase` property's backing type) is exactly as
+/// relevant to the Codable wire shape as a struct: its raw type/conformance
+/// list changing (`String` vs `Int`) changes the encoded JSON even though
+/// every property line that merely *references* the enum by name looks
+/// identical in both copies.
+const DECL_RE = /^(struct|enum)\s+(\S+)\s*:\s*(.+?)\s*\{$/;
 const PROPERTY_RE = /^(var|let)\s+(\S+):\s*(.+)$/;
 
 /// Extracts, in file order, just the parts of a Codable shape that
-/// ActivityKit's decode actually cares about: struct names + their
-/// conformance lists, and each stored property's keyword/name/type.
-/// Deliberately does NOT collect `init` declarations or their bodies — the
-/// plugin copy's explicit memberwise inits are exactly the allowed
-/// difference this signature has to be blind to.
+/// ActivityKit's decode actually cares about: struct/enum names + their
+/// conformance (or raw-type) lists, and each *stored* property's
+/// keyword/name/type. Deliberately does NOT collect `init` declarations or
+/// their bodies — the plugin copy's explicit memberwise inits are exactly
+/// the allowed difference this signature has to be blind to.
 function shapeSignature(raw: string): string[] {
   const signature: string[] = [];
   for (const rawLine of normalize(raw).split("\n")) {
     const line = rawLine.trim();
     if (line === "") continue;
 
-    const structMatch = STRUCT_RE.exec(line);
-    if (structMatch) {
-      const [, name, conformances] = structMatch;
+    const declMatch = DECL_RE.exec(line);
+    if (declMatch) {
+      const [, kind, name, conformances] = declMatch;
       const normalizedConformances = conformances!
         .split(",")
         .map((c) => c.trim())
         .join(", ");
-      signature.push(`struct ${name}: ${normalizedConformances}`);
+      signature.push(`${kind} ${name}: ${normalizedConformances}`);
       continue;
     }
 
     const propertyMatch = PROPERTY_RE.exec(line);
     if (propertyMatch) {
       const [, keyword, name, type] = propertyMatch;
-      signature.push(`${keyword} ${name}: ${type!.trim()}`);
+      const trimmedType = type!.trim();
+      // A computed property's declaration line (or its opening line, for a
+      // multi-line body) has a `{` somewhere in what PROPERTY_RE captured as
+      // the "type" — `var isRecent: Bool { … }` or `var isRecent: Bool {`.
+      // Computed properties don't exist on the wire at all, so their
+      // implementation must never make this signature diverge; the rest of
+      // a multi-line computed body's lines are plain statements that don't
+      // match DECL_RE or PROPERTY_RE either, so they're already skipped
+      // without any extra state tracking.
+      if (trimmedType.includes("{")) continue;
+      signature.push(`${keyword} ${name}: ${trimmedType}`);
     }
   }
   return signature;
@@ -107,5 +152,113 @@ describe("ActivityModels.swift stays Codable-shape-identical across targets (#28
     expect(widgetShape.length).toBeGreaterThan(10);
 
     expect(pluginShape).toEqual(widgetShape);
+  });
+});
+
+describe("shapeSignature() hardening against regex blind spots (#288 revision)", () => {
+  it("still catches a conformance-list mismatch when the struct header wraps across lines", () => {
+    const singleLine = `
+      struct Foo: ActivityAttributes {
+        var startedAt: Date
+      }
+    `;
+    const wrappedSame = `
+      struct Foo:
+        ActivityAttributes
+      {
+        var startedAt: Date
+      }
+    `;
+    const wrappedDifferent = `
+      struct Foo:
+        ActivityAttributes, Identifiable
+      {
+        var startedAt: Date
+      }
+    `;
+
+    // Wrapping the header doesn't change the shape — same signature either way.
+    expect(shapeSignature(wrappedSame)).toEqual(shapeSignature(singleLine));
+    // A genuinely different conformance list must still be caught even though
+    // the header is wrapped across lines in both copies.
+    expect(shapeSignature(wrappedDifferent)).not.toEqual(shapeSignature(wrappedSame));
+  });
+
+  it("catches a nested enum's raw-type divergence even though the referencing property line is identical", () => {
+    const withStringRawType = `
+      enum Phase: String, Codable {
+        case climbing, resting
+      }
+      struct S: Codable {
+        var phase: Phase
+      }
+    `;
+    const withIntRawType = `
+      enum Phase: Int, Codable {
+        case climbing, resting
+      }
+      struct S: Codable {
+        var phase: Phase
+      }
+    `;
+
+    // Both `var phase: Phase` lines read identically — only the enum's own
+    // raw type differs, which is exactly the real Codable-encoding
+    // divergence ("climbing" vs 0 on the wire) this must not miss.
+    expect(shapeSignature(withStringRawType)).not.toEqual(shapeSignature(withIntRawType));
+  });
+
+  it("ignores a computed property's implementation — only stored properties affect the shape", () => {
+    const impl1 = `
+      struct S: Codable {
+        var count: Int
+        var isRecent: Bool {
+          count < 3
+        }
+      }
+    `;
+    const impl2 = `
+      struct S: Codable {
+        var count: Int
+        var isRecent: Bool {
+          count > 10 && count < 100
+        }
+      }
+    `;
+    const singleLineComputed = `
+      struct S: Codable {
+        var count: Int
+        var isRecent: Bool { count < 3 }
+      }
+    `;
+
+    // Differing computed-property bodies must not make the signature diverge...
+    expect(shapeSignature(impl1)).toEqual(shapeSignature(impl2));
+    // ...whether the computed property's body is single-line or multi-line.
+    expect(shapeSignature(singleLineComputed)).toEqual(shapeSignature(impl1));
+  });
+
+  it("treats private/internal/fileprivate the same as public — access-level differences stay allowed", () => {
+    const withoutModifier = `
+      struct S: Codable {
+        var secret: String
+        var visible: Int
+      }
+    `;
+    const withPrivate = `
+      struct S: Codable {
+        private var secret: String
+        var visible: Int
+      }
+    `;
+    const withInternal = `
+      struct S: Codable {
+        internal var secret: String
+        fileprivate var visible: Int
+      }
+    `;
+
+    expect(shapeSignature(withPrivate)).toEqual(shapeSignature(withoutModifier));
+    expect(shapeSignature(withInternal)).toEqual(shapeSignature(withoutModifier));
   });
 });
