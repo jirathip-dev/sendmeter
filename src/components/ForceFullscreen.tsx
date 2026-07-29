@@ -155,12 +155,22 @@ export default function ForceFullscreen({
 
   // Free-hold get-ready countdown (#312) — null while idle/measuring/guided.
   // `prepNow` is a ticked clock (never Date.now() in render, same pattern as
-  // the workout timers' `now` state); `prepStartedMs` only ever moves via the
-  // Start/Cancel taps below, never from inside an effect.
+  // the workout timers' `now` state); `prepStartedMs` moves via the
+  // Start/Cancel taps below, and is also reset to null by the fire effect
+  // once the countdown completes (see below).
   const [prepStartedMs, setPrepStartedMs] = useState<number | null>(null);
   const [prepNow, setPrepNow] = useState(() => Date.now());
   const prepRemaining = prepRemainingS(prepStartedMs, prepNow);
-  const counting = prepRemaining !== null && prepRemaining > 0;
+  // Deliberately NOT `prepRemaining !== null && prepRemaining > 0` (that was
+  // the pre-fix definition): on the exact tick `prepRemaining` clamps to 0,
+  // that render happens BEFORE the fire effect below has run — so gating on
+  // `prepRemaining > 0` flipped `counting` false a render early, reverting
+  // the UI to idle (tag/side picker + checkbox + normal START button) for
+  // one frame before flipping again to MEASURING (#312 tester finding).
+  // Keying off `prepStartedMs` alone instead means `counting` only goes
+  // false once the fire effect actually resets `prepStartedMs` (the same
+  // effect pass that calls onStart), closing the gap.
+  const counting = prepStartedMs !== null;
 
   useEffect(() => {
     if (prepStartedMs === null) return;
@@ -169,17 +179,10 @@ export default function ForceFullscreen({
   }, [prepStartedMs]);
 
   // Fire the hold-start cue + onStart exactly once when the countdown reaches
-  // 0 — same beep/vibrate cue as a timeline hold transition above. Guarded by
-  // a ref (not state) so this effect only ever calls the owner callback / Web
-  // Audio, never setState, mirroring RoutineFullscreen's onFinish effect.
-  const prepFiredRef = useRef(false);
+  // 0 — same beep/vibrate cue as a timeline hold transition above.
   useEffect(() => {
-    if (prepStartedMs === null) {
-      prepFiredRef.current = false;
-      return;
-    }
-    if (prepRemaining === null || prepRemaining > 0 || prepFiredRef.current) return;
-    prepFiredRef.current = true;
+    if (prepStartedMs === null) return;
+    if (prepRemaining === null || prepRemaining > 0) return;
     const ctx = audioRef.current;
     if (ctx) {
       try {
@@ -197,6 +200,25 @@ export default function ForceFullscreen({
     }
     navigator.vibrate?.(150);
     onStart();
+    // Reset immediately after firing. This used to be missing, and the
+    // component stays mounted across many consecutive free holds in one
+    // connected session (it only unmounts on disconnect/minimize) — without
+    // it, `prepStartedMs` stayed non-null forever after the first countdown,
+    // so once that hold finished and `measuring` went back to false, the UI
+    // fell through to the `counting` branch (stuck showing CANCEL, tag
+    // picker/checkbox still hidden) instead of the normal idle state, and a
+    // second free-hold countdown never gets a fresh `null` to start a new
+    // 5-second run from (#312 regression found in review). Cancel already
+    // does the same null-write above; this makes the natural-fire path reset
+    // state the same way. No separate "already fired" guard is needed to
+    // stop this same effect from re-firing before the reset lands: once
+    // `prepRemaining` clamps to 0 it stays exactly 0 (see forcePrepare.ts),
+    // so this effect's dependency array doesn't change again until a new
+    // countdown writes a new `prepStartedMs`. Deferred via a microtask —
+    // same "write state only inside an async callback" pattern as the curve
+    // auto-compute effect in ForceView.tsx — because
+    // react-hooks/set-state-in-effect flags a same-tick setState call here.
+    queueMicrotask(() => setPrepStartedMs(null));
     // onStart is an owner callback read at fire time (mirrors
     // RoutineFullscreen's onFinish effect).
     // eslint-disable-next-line react-hooks/exhaustive-deps
