@@ -76,10 +76,10 @@ struct LiveWorkoutView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 4) {
                         Image(systemName: "figure.climbing")
-                            .foregroundStyle(snap.climbing ? .phaseClimbing : .phaseResting)
+                            .foregroundStyle(snap.climbing ? Color.phaseClimbing : Color.phaseResting)
                         Text(snap.climbing ? "CLIMBING" : "RESTING")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(snap.climbing ? .phaseClimbing : .phaseResting)
+                            .foregroundStyle(snap.climbing ? Color.phaseClimbing : Color.phaseResting)
                         Spacer()
                         Text("\(snap.boulders)")
                             .font(.system(size: 14, weight: .heavy)).monospacedDigit()
