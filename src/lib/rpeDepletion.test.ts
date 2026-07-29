@@ -29,7 +29,8 @@ const rep = (
   durationS: number,
   cf: number | null,
   wPrime: number | null,
-): DepletionRep => ({ peakKg, durationS, cf, wPrime });
+  isEffort = true,
+): DepletionRep => ({ peakKg, durationS, cf, wPrime, isEffort });
 
 describe("repDepletion", () => {
   it("is exactly 1.0 for a rep taken to failure ON the curve", () => {
@@ -62,6 +63,19 @@ describe("repDepletion", () => {
 
   it("treats a negative duration as zero rather than negative depletion", () => {
     expect(repDepletion(rep(48, -5, 30, 180))).toBe(0);
+  });
+
+  // #338: a non-effort rep (Prehab) is submaximal BY CONSTRUCTION, so its
+  // depletion is a KNOWN zero — not an absence — regardless of whether the
+  // tag has a fitted curve. This is the regressed branch: before the fix,
+  // no cf/wPrime meant `null` (unmeasured) even for a rep whose protocol
+  // guarantees near-zero effort.
+  it("is a measured 0 for a non-effort rep with no curve at all (#338)", () => {
+    expect(repDepletion(rep(48, 10, null, null, false))).toBe(0);
+  });
+
+  it("is 0 for a non-effort rep even when a curve exists and peakKg sits above cf (#338)", () => {
+    expect(repDepletion(rep(48, 10, 30, 180, false))).toBe(0);
   });
 });
 
@@ -117,7 +131,10 @@ describe("predictSessionRpe", () => {
   });
 
   it("falls back — never throws, never blocks the save — with no curve", () => {
-    const p = predictSessionRpe([rep(48, 10, null, null), rep(60, 30, 0, 0)]);
+    const p = predictSessionRpe([
+      rep(48, 10, null, null, true),
+      rep(60, 30, 0, 0, true),
+    ]);
     expect(p.rpe).toBe(RPE_DEPLETION.fallbackRpe);
     expect(p.fromCurve).toBe(false);
     expect(p.load).toBeNull();
@@ -129,5 +146,37 @@ describe("predictSessionRpe", () => {
       fromCurve: false,
       load: null,
     });
+  });
+
+  // #338 — acceptance criterion 4 (non-Prehab behaviour unchanged): an
+  // ordinary (effort) hold on a tag with no CF fit still falls back to
+  // fallbackRpe. Explicit `isEffort: true` so this pins the branch by name,
+  // not by relying on the helper's default.
+  it("an ordinary effort hold with no CF fit still falls back (#338)", () => {
+    const p = predictSessionRpe([rep(48, 10, null, null, true)]);
+    expect(p).toEqual({
+      rpe: RPE_DEPLETION.fallbackRpe,
+      fromCurve: false,
+      load: null,
+    });
+  });
+
+  // #338 — core acceptance criterion: a Prehab session logs the SAME
+  // zero-depletion RPE whether or not its tag has a fitted CF curve. Before
+  // the fix, the unfitted case fell all the way through to fallbackRpe (5)
+  // instead of the RPE-1 the fitted case already (correctly) produced.
+  it("a Prehab-shaped session predicts the same RPE whether or not its tag has a CF fit (#338)", () => {
+    const prehabReps = (cf: number | null, wPrime: number | null) =>
+      [
+        rep(21, 30, cf, wPrime, false),
+        rep(20, 30, cf, wPrime, false),
+        rep(22, 30, cf, wPrime, false),
+        rep(21, 30, cf, wPrime, false),
+      ];
+    const fitted = predictSessionRpe(prehabReps(30, 180)); // tag HAS a CF fit
+    const unfitted = predictSessionRpe(prehabReps(null, null)); // tag has NO CF fit
+    const expected = { rpe: 1, fromCurve: true, load: 0 };
+    expect(fitted).toEqual(expected);
+    expect(unfitted).toEqual(expected);
   });
 });
