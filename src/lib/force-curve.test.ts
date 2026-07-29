@@ -178,8 +178,9 @@ describe("Prehab is excluded from curve candidacy (#325)", () => {
       side: "left" as const,
     }));
     // The real filter ForceView's `curveRecordings` calls before ever calling
-    // pickCurveRecordings — not a re-implementation, so deleting the call in
-    // ForceView can't leave this suite green.
+    // pickCurveRecordings. This case proves the FILTER excludes prehab; that
+    // ForceView actually calls it is a separate, structural assertion — see
+    // `curveCandidateInvariants.test.ts`.
     const curveCandidates = curveCandidateRecordings([trainingHold, ...prehabHolds], "FDP", "left");
     const picked = pickCurveRecordings(curveCandidates, now);
     expect(picked.some((r) => r.id.startsWith("p"))).toBe(false);
