@@ -14,6 +14,7 @@ vi.mock("../lib/supabase", () => ({
 }));
 
 import {
+  addTindeqSessionAction,
   applyAddSessionOptimistic,
   applyEditSessionOptimistic,
   applyRemoveSessionOptimistic,
@@ -297,6 +298,56 @@ describe("applyAddSessionOptimistic / reconcileAddSession / rollbackAddSession",
     const temp = makeSession({ id: "temp-1" });
     const result = rollbackAddSession([other, temp], "temp-1");
     expect(result).toEqual([other]);
+  });
+});
+
+describe("addTindeqSessionAction", () => {
+  it("returns true and calls onSuccess with the saved session when the insert resolves", async () => {
+    const saved = makeSession({ id: "t1", groupId: "g1" });
+    const onSuccess = vi.fn();
+    const onError = vi.fn();
+
+    const result = await addTindeqSessionAction({
+      action: async () => saved,
+      onSuccess,
+      onError,
+    });
+
+    expect(result).toBe(true);
+    expect(onSuccess).toHaveBeenCalledWith(saved);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("returns false and reports the error message when the insert rejects", async () => {
+    const onSuccess = vi.fn();
+    const onError = vi.fn();
+
+    const result = await addTindeqSessionAction({
+      action: async () => {
+        throw new Error("insert failed");
+      },
+      onSuccess,
+      onError,
+    });
+
+    expect(result).toBe(false);
+    expect(onError).toHaveBeenCalledWith("insert failed");
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a generic message for a non-Error rejection", async () => {
+    const onError = vi.fn();
+
+    const result = await addTindeqSessionAction({
+      action: async () => {
+        throw "not an error object";
+      },
+      onSuccess: vi.fn(),
+      onError,
+    });
+
+    expect(result).toBe(false);
+    expect(onError).toHaveBeenCalledWith("Failed to log session");
   });
 });
 

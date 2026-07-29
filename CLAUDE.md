@@ -458,9 +458,14 @@ are safe regardless.
 - **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
   **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
   prompt (in-app has an Undo; the watch hides tag/side/session controls *while
-  measuring* so the live gauge fits one screen). End-session logs the **actual
-  wall-clock duration** (read-only); only RPE is asked. Don't reintroduce the
-  discard/save prompt or an editable duration.
+  measuring* so the live gauge fits one screen). Ending the session (phone
+  Finish, watch, or a disconnect) **auto-logs to history with no confirm
+  step** (#295, mirrors the watch's `TindeqManager.logSessionNow()`) — RPE is
+  the #280 W'-depletion prediction (or its fallback), always banked
+  `rpe_confirmed = false` since nobody reviewed it, and duration is the
+  recordings' actual span. Reviewing/editing RPE (or duration) happens
+  post-hoc via History's `EditSessionSheet`. Don't reintroduce the end-of-
+  session RPE prompt or an editable duration at log time.
 - **The recording queue is TWO stores, and the split is load-bearing** (#269).
   **IndexedDB** (`src/lib/recordingDb.ts`) is the main queue — every path that
   can await (ForceView's failed-insert handler, the drain, the manual retry)

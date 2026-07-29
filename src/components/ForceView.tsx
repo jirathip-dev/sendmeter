@@ -15,8 +15,7 @@ import {
   insertRecording,
   saveTagCurve,
 } from "../lib/repo";
-import { predictSessionRpe, RPE_DEPLETION } from "../lib/rpeDepletion";
-import { stepRpe } from "../lib/rpe";
+import { predictSessionRpe } from "../lib/rpeDepletion";
 import {
   computeForceCurve,
   CURVE_PERIODS,
@@ -31,6 +30,7 @@ import {
   startTindeqLiveActivity,
   updateTindeqLivePeak,
 } from "../lib/liveActivity";
+import { endGaugeSession } from "../lib/gaugeSessionEnd";
 import { reportPersistFailure } from "../lib/lostRecordings";
 import { persistRecordingDurable } from "../lib/recordingQueue";
 import { usePendingUploads } from "../hooks/usePendingUploads";
@@ -69,7 +69,7 @@ interface ForceViewProps {
     note: string;
     groupId: string;
     rpeConfirmed?: boolean;
-  }) => Promise<void>;
+  }) => Promise<boolean>;
 }
 
 export default function ForceView({ userId, onLogSession }: ForceViewProps) {
@@ -171,19 +171,6 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [justSaved, setJustSaved] = useState<TindeqRecordingMeta | null>(null);
   const [pendingTag, setPendingTag] = useState("");
   const [pendingSide, setPendingSide] = useState<TindeqSide>("");
-  const [endingSession, setEndingSession] = useState<{
-    id: string;
-    durationMin: number;
-    rpe: number;
-    /// What #280 predicted from W' depletion (or its fallback). Kept so the
-    /// log knows whether the user actually moved the stepper: an untouched
-    /// prediction is banked `rpe_confirmed = false`.
-    predictedRpe: number;
-    /// False when no rep of the session had a fitted curve — the RPE shown is
-    /// the fallback default, not a prediction, and the sheet says so.
-    fromCurve: boolean;
-  } | null>(null);
-  const [loggingSession, setLoggingSession] = useState(false);
   const [saving, setSaving] = useState(false);
   // Guided-protocol clock controls. The protocol position is normally a pure
   // function of the physical measuring clock (tindeq.elapsedMs); these let the
@@ -197,6 +184,20 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [protoShiftS, setProtoShiftS] = useState(0);
   const [pausedAtS, setPausedAtS] = useState<number | null>(null);
   const [recordings, setRecordings] = useState<TindeqRecordingMeta[]>([]);
+  // #295: endSession runs from the disconnect effect's deferred timeout,
+  // whose closure captured `recordings` from the render before the final
+  // rep's save landed — read the current list instead of that stale one.
+  const recordingsRef = useRef<TindeqRecordingMeta[]>(recordings);
+  useEffect(() => {
+    recordingsRef.current = recordings;
+  }, [recordings]);
+  // #295: groupIds already ended, claimed synchronously (before any await) in
+  // endGaugeSession — the disconnect effect's deferred endSession() and a
+  // Finish tap can both pass the `if (!gaugeSession) return` guard above from
+  // stale-but-still-valid closures (clearSession's setState can't retroactively
+  // null another in-flight closure's captured value), so without this a
+  // double call inserted two sessions for the same groupId.
+  const endedGroupsRef = useRef<Set<string>>(new Set());
   const [listError, setListError] = useState<string | null>(null);
   const [zoneSel, setZoneSel] = useState<ZoneSelection | null>(null);
   const [preset, setPreset] = useState<TindeqPreset | null>(null);
@@ -241,17 +242,27 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   /// the registry the curve effect below keeps up to date. Any failure — a
   /// dead network, a tag that's never been fitted — falls back rather than
   /// blocking the log; the caller banks the result unconfirmed either way.
+  /// Bounded to 4s (#295): ending a session now logs immediately, so this
+  /// can no longer sit waiting on a stalled fetch the way the old RPE-prompt
+  /// flow could (that prompt was already open; nothing here is).
+  ///
+  /// The recordings snapshot is taken AFTER the curve fetch resolves, not
+  /// before — on an involuntary disconnect the final rep's save
+  /// (insertRecording → setRecordings) can still be in flight, and this
+  /// wait is the only grace period it gets. Snapshotting early can miss it,
+  /// so the prediction, note and duration below all read the same
+  /// as-late-as-possible list.
   async function predictGroupRpe(groupId: string) {
-    const recs = recordings.filter((r) => r.groupId === groupId);
-    let curves: Awaited<ReturnType<typeof fetchTagCurves>> = [];
-    try {
-      curves = await fetchTagCurves();
-    } catch {
-      // Fall through to the fallback RPE — a prediction is a nicety, the
-      // session log is not.
-    }
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const curves = await Promise.race([
+      fetchTagCurves().catch(() => [] as Awaited<ReturnType<typeof fetchTagCurves>>),
+      new Promise<Awaited<ReturnType<typeof fetchTagCurves>>>((resolve) => {
+        timeoutId = setTimeout(() => resolve([]), 4000);
+      }),
+    ]).finally(() => clearTimeout(timeoutId));
+    const recs = recordingsRef.current.filter((r) => r.groupId === groupId);
     const byTag = new Map(curves.map((c) => [c.name, c]));
-    return predictSessionRpe(
+    const predicted = predictSessionRpe(
       recs.map((r) => ({
         peakKg: r.peakKg,
         durationS: r.durationMs / 1000,
@@ -259,75 +270,33 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         wPrime: byTag.get(r.tag)?.wPrime ?? null,
       })),
     );
+    return { predicted, recs };
   }
 
+  // #295: mirrors the watch's TindeqManager.logSessionNow() — logs the
+  // instant the session ends, no confirm step. RPE is the #280 W'-depletion
+  // prediction (or its fallback), always banked unconfirmed since nobody
+  // reviewed it; History's EditSessionSheet is where that review now happens.
   async function endSession() {
     if (!gaugeSession) return;
     const groupId = gaugeSession.groupId;
-    const durationMin = Math.max(
+    const wallClockMin = Math.max(
       1,
       Math.round((Date.now() - gaugeSession.startedAt) / 60000),
     );
     clearSession();
-    // A session only exists because a recording created it (lazy mint), so
-    // there's always ≥1 recording to log — always open the RPE prompt. It
-    // opens immediately at the fallback and the #280 prediction lands into it
-    // a round trip later: ending a session must never sit waiting on the
-    // network, least of all in the outage this queue exists for.
-    setEndingSession({
-      id: groupId,
-      durationMin,
-      rpe: RPE_DEPLETION.fallbackRpe,
-      predictedRpe: RPE_DEPLETION.fallbackRpe,
-      fromCurve: false,
+    const ok = await endGaugeSession({
+      groupId,
+      wallClockMin,
+      claimed: endedGroupsRef.current,
+      predictGroupRpe,
+      onLogSession,
     });
-    const predicted = await predictGroupRpe(groupId);
-    // Only land it on the same, still-untouched prompt — a user who already
-    // dialed in their own RPE (or moved on) must not have it overwritten.
-    setEndingSession((s) =>
-      s && s.id === groupId && s.rpe === s.predictedRpe
-        ? {
-            ...s,
-            rpe: predicted.rpe,
-            predictedRpe: predicted.rpe,
-            fromCurve: predicted.fromCurve,
-          }
-        : s,
+    if (ok === null) return; // lost the race — another call already logged this group
+    toast(
+      ok ? "Gauge session logged to history" : "Couldn't log gauge session",
+      ok ? undefined : "error",
     );
-  }
-
-  async function logEndedSession() {
-    if (!endingSession) return;
-    setLoggingSession(true);
-    const recs = recordings.filter((r) => r.groupId === endingSession.id);
-    const tags = [...new Set(recs.map((r) => r.tag).filter(Boolean))];
-    const note = [
-      `${recs.length} recording${recs.length === 1 ? "" : "s"}`,
-      ...(tags.length ? [tags.join(", ")] : []),
-    ].join(" · ");
-    // Total time = the recordings' actual span (first rep start → last rep end),
-    // not the raw wall-clock, so idle time before/after reps doesn't inflate it.
-    // Falls back to the wall-clock estimate if the recordings aren't loaded yet.
-    const spanMs = recs.length
-      ? Math.max(...recs.map((r) => Date.parse(r.recordedAt) + r.durationMs)) -
-        Math.min(...recs.map((r) => Date.parse(r.recordedAt)))
-      : 0;
-    const durationMin = recs.length
-      ? Math.max(1, Math.round(spanMs / 60000))
-      : endingSession.durationMin;
-    await onLogSession({
-      durationMin,
-      rpe: endingSession.rpe,
-      note,
-      groupId: endingSession.id,
-      // #114's column: an untouched prediction (or fallback) is a number
-      // nobody reviewed, so it stays distinguishable in History and the RPE
-      // chart. Moving the stepper is that review.
-      rpeConfirmed: endingSession.rpe !== endingSession.predictedRpe,
-    });
-    setLoggingSession(false);
-    setEndingSession(null);
-    toast("Gauge session logged to history");
   }
 
   useEffect(() => {
@@ -1016,7 +985,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       )}
 
       {/* Gauge session bar — appears once the first recording auto-creates a
-          session (SL-58 #5, no manual Start). Finish logs it (RPE prompt). */}
+          session (SL-58 #5, no manual Start). Finish auto-logs it (#295) with
+          a predicted, unconfirmed RPE — edit it after the fact in History. */}
       {gaugeSession && (
         <div
           style={{
@@ -1079,86 +1049,6 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             {tindeq.secure
               ? "This browser doesn't support Web Bluetooth. Use Chrome or Edge on desktop or Android — iOS Safari can't connect to Bluetooth devices."
               : "Web Bluetooth requires a secure (HTTPS) connection."}
-          </div>
-        </div>
-      )}
-
-      {/* Log the just-ended gauge session into History / ACWR */}
-      {endingSession && (
-        <div className="card" style={{ marginBottom: 10 }}>
-          <div className="label-eyebrow" style={{ marginBottom: 10 }}>
-            Log session to history
-          </div>
-          {/* Duration is the actual session wall-clock time — only RPE is asked */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-              padding: "10px 2px",
-            }}
-          >
-            <span className="field-label" style={{ margin: 0 }}>
-              Duration
-            </span>
-            <span style={{ fontSize: "var(--t-md)", fontWeight: 700 }}>
-              {endingSession.durationMin} min{" "}
-              <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", fontWeight: 400 }}>
-                actual time
-              </span>
-            </span>
-          </div>
-          <span className="field-label">RPE (1–10)</span>
-          <div className="stepper">
-            <button
-              className="stepper-btn"
-              onClick={() =>
-                setEndingSession((s) => (s ? { ...s, rpe: stepRpe(s.rpe, -1) } : s))
-              }
-            >
-              −
-            </button>
-            <span className="stepper-val">{endingSession.rpe}</span>
-            <button
-              className="stepper-btn"
-              onClick={() =>
-                setEndingSession((s) => (s ? { ...s, rpe: stepRpe(s.rpe, 1) } : s))
-              }
-            >
-              +
-            </button>
-          </div>
-          {/* Say where the number came from — a prediction the user hasn't
-              touched is banked unconfirmed (#114/#280), so it shouldn't look
-              like something they entered. */}
-          <div
-            style={{
-              fontSize: "var(--t-2xs)",
-              color: "var(--ink-faint)",
-              marginTop: 6,
-            }}
-          >
-            {endingSession.rpe !== endingSession.predictedRpe
-              ? "Your value"
-              : endingSession.fromCurve
-                ? "Predicted from W′ depletion — adjust if it's off"
-                : `No force curve for these exercises yet — defaulting to ${RPE_DEPLETION.fallbackRpe}`}
-          </div>
-          <div className="grid-2" style={{ marginTop: 12 }}>
-            <button
-              className="btn-ghost"
-              disabled={loggingSession}
-              onClick={() => setEndingSession(null)}
-            >
-              Skip
-            </button>
-            <button
-              className="btn-primary"
-              disabled={loggingSession}
-              onClick={() => void logEndedSession()}
-            >
-              {loggingSession ? "Logging…" : "Log Session"}
-            </button>
           </div>
         </div>
       )}

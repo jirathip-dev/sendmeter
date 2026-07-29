@@ -105,6 +105,25 @@ export async function withOptimisticUpdate<T>(opts: {
   }
 }
 
+/// `addTindeqSession`'s core action: insert then report success/failure —
+/// pulled out so the boolean return contract the #295 auto-save failure
+/// toast branches on is independently testable, mirroring
+/// `withOptimisticUpdate`'s extraction above.
+export async function addTindeqSessionAction(opts: {
+  action: () => Promise<Session>;
+  onSuccess: (saved: Session) => void;
+  onError: (message: string) => void;
+}): Promise<boolean> {
+  try {
+    const saved = await opts.action();
+    opts.onSuccess(saved);
+    return true;
+  } catch (e) {
+    opts.onError(e instanceof Error ? e.message : "Failed to log session");
+    return false;
+  }
+}
+
 /// `addSession`'s optimistic-apply step: append the temp row and re-sort.
 export function applyAddSessionOptimistic(
   list: Session[],
@@ -280,16 +299,12 @@ export function useTrainingData(userId: string) {
     /// fallback) that the user left as-is — an unreviewed number, #114's
     /// column. True once they moved the stepper themselves.
     rpeConfirmed?: boolean;
-  }) {
-    try {
-      const saved = await repo.insertTindeqSession({
-        ...input,
-        phase: currentPhase,
-      });
-      setSessions((list) => sortSessions([...list, saved]));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to log session");
-    }
+  }): Promise<boolean> {
+    return addTindeqSessionAction({
+      action: () => repo.insertTindeqSession({ ...input, phase: currentPhase }),
+      onSuccess: (saved) => setSessions((list) => sortSessions([...list, saved])),
+      onError: (message) => setError(message),
+    });
   }
 
   async function editSession(id: string, patch: SessionPatch) {
