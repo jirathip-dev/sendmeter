@@ -44,6 +44,8 @@ import type {
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import PresetManager from "./PresetManager";
+import { clearPersistedPreset } from "../lib/forcePresetStorage";
+import { restoredSelection, selectZoneOutcome, withPresetSelected } from "../lib/forceSelection";
 import SideAsymmetryCard from "./SideAsymmetryCard";
 import TagManagerSheet from "./TagManagerSheet";
 import TagSideEditor from "./TagSideEditor";
@@ -201,6 +203,19 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [listError, setListError] = useState<string | null>(null);
   const [zoneSel, setZoneSel] = useState<ZoneSelection | null>(null);
   const [preset, setPreset] = useState<TindeqPreset | null>(null);
+  // #296: keep the zone and custom-preset selections mutually exclusive —
+  // see forceSelection.ts for the rule and why it's needed.
+  function selectZone(sel: ZoneSelection | null) {
+    const { selection, clearsPersistedPreset } = selectZoneOutcome({ zoneSel, preset }, sel);
+    setZoneSel(selection.zoneSel);
+    setPreset(selection.preset);
+    if (clearsPersistedPreset) clearPersistedPreset();
+  }
+  function selectPreset(p: TindeqPreset | null) {
+    const next = withPresetSelected({ zoneSel, preset }, p);
+    setPreset(next.preset);
+    if (next.zoneSel !== zoneSel) setZoneSel(next.zoneSel);
+  }
   // Global session-intensity dial (SL-97b) — one number for the whole
   // Protocol-presets section (zones AND custom presets), lazily seeded from
   // localStorage so a returning user keeps their last adjustment.
@@ -643,9 +658,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     maxF: model?.maxF ?? null,
   };
 
-  // One guided-timer path: a custom preset wins; else an armed zone runs its
-  // prescription. The chart band comes from the preset's target (kg, %-of-PR/CF,
-  // or the smart curve — set 1 here; the fullscreen ramps it per set), else the zone.
+  // One guided-timer path: `selectZone`/`selectPreset` (#296) keep the two
+  // selections mutually exclusive, so at most one of these is non-null — the
+  // `??` here is just picking whichever is armed, not a precedence rule. The
+  // chart band comes from the preset's target (kg, %-of-PR/CF, or the smart
+  // curve — set 1 here; the fullscreen ramps it per set), else the zone.
   const activeProtocol: TindeqPreset | null = preset ?? zoneSel?.protocol ?? null;
   const presetKgSet1 = preset ? presetTargetKg(preset, presetRefs, 1) : null;
   const bandTarget: GaugeTarget | null =
@@ -1327,7 +1344,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           tag={zoneTag}
           model={model}
           selected={zoneSel}
-          onSelect={setZoneSel}
+          onSelect={selectZone}
           intensityPct={intensityPct}
           onIntensityChange={changeIntensity}
         />
@@ -1339,10 +1356,24 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           // carries the selected side and would overclaim (#214).
           exercise={effectiveTag}
           model={model}
-          onPick={(q) => setZoneSel(buildZoneSelection(model, q, zoneTag, false, intensityPct))}
+          onPick={(q) => selectZone(buildZoneSelection(model, q, zoneTag, false, intensityPct))}
         />
       )}
-      <PresetManager selectedId={preset?.id ?? null} onSelect={setPreset} presetRefs={presetRefs} />
+      <PresetManager
+        selectedId={preset?.id ?? null}
+        onSelect={selectPreset}
+        onRestore={(p) => {
+          // #296: mount-time restore must never disarm a zone (or a preset)
+          // armed since — restoredSelection reads the CURRENT zoneSel/preset
+          // closed over by THIS render, so a zone armed while the presets
+          // fetch was in flight still wins (forceSelection.test.ts covers
+          // the race).
+          const next = restoredSelection({ zoneSel, preset }, p);
+          setZoneSel(next.zoneSel);
+          setPreset(next.preset);
+        }}
+        presetRefs={presetRefs}
+      />
 
       {showTagManager && (
         <TagManagerSheet
