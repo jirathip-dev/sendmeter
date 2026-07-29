@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   deletePreset,
   fetchPresets,
@@ -12,6 +12,7 @@ import { classifyZoneLoaded } from "../lib/zoneHistory";
 import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useToast } from "../hooks/useToast";
 import { restoreAt } from "../lib/restoreAt";
+import { FORCE_PRESET_SELECTED_KEY } from "../lib/forcePresetStorage";
 import ConfirmDialog from "./ConfirmDialog";
 import NumInput from "./NumInput";
 import type { TindeqPreset } from "../types";
@@ -19,6 +20,9 @@ import type { TindeqPreset } from "../types";
 interface Props {
   selectedId: string | null;
   onSelect: (preset: TindeqPreset | null) => void;
+  /// Mount-time re-arm only (#296) — separate from onSelect so the caller can
+  /// refuse to resurrect a preset past a zone armed in the meantime.
+  onRestore: (preset: TindeqPreset) => void;
   /// Force references for the active exercise, so each row can show the load
   /// its %/curve target resolves to right now.
   presetRefs: PresetRefs;
@@ -68,10 +72,11 @@ function QualityBadge({
   );
 }
 
-/// Selected-protocol persistence (SL-76): ForceView unmounts on tab switch and
-/// its preset state dies with it, so the armed protocol vanished every time
-/// you peeked at another tab. Remember the id and re-arm on mount.
-const SELECTED_KEY = "sendmeter:force-preset";
+// Selected-protocol persistence (SL-76): ForceView unmounts on tab switch and
+// its preset state dies with it, so the armed protocol vanished every time
+// you peeked at another tab. Remember the id and re-arm on mount. Key lives
+// in forcePresetStorage.ts so ForceView can clear it too (#296).
+const SELECTED_KEY = FORCE_PRESET_SELECTED_KEY;
 
 function NumField({
   label,
@@ -104,7 +109,7 @@ function NumField({
 
 /// Hang-protocol presets (hold / reps / sets / rests). Saved to Supabase;
 /// selecting one arms the guided timer in the fullscreen gauge.
-export default function PresetManager({ selectedId, onSelect, presetRefs }: Props) {
+export default function PresetManager({ selectedId, onSelect, onRestore, presetRefs }: Props) {
   const toast = useToast();
   const [presets, setPresets] = useState<TindeqPreset[]>([]);
   const [adding, setAdding] = useState(false);
@@ -147,6 +152,31 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
     setAdding(true);
   }
 
+  // #296 follow-up: this effect's fetch `.then()` runs once, whenever the
+  // fetch happens to resolve — a zone (or a preset) can be armed in the
+  // meantime, off the independent zone fetch. Reading `selectedId`/`onRestore`
+  // straight from the effect closure would freeze both at their MOUNT-render
+  // values (both null), so the guard below would wrongly pass and resurrect
+  // the persisted preset past whatever the user armed since. These refs are
+  // kept current every render so the guard and the restore call always see
+  // the latest values, not the mount-time ones.
+  //
+  // Sync via useLayoutEffect, not useEffect: passive effects flush in a
+  // scheduler task after commit, but the fetch's `.then()` is a microtask
+  // that can run before that task — so a discrete event (a zone/preset tap)
+  // could commit, and the fetch could resolve and read these refs, before a
+  // passive effect ever updated them. useLayoutEffect runs synchronously
+  // inside the commit, so the refs are current before any later-scheduled
+  // task (including this microtask) can observe them.
+  const selectedIdRef = useRef(selectedId);
+  useLayoutEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+  const onRestoreRef = useRef(onRestore);
+  useLayoutEffect(() => {
+    onRestoreRef.current = onRestore;
+  }, [onRestore]);
+
   useEffect(() => {
     let alive = true;
     fetchPresets()
@@ -155,9 +185,9 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
         setPresets(list);
         // Re-arm the previously selected protocol (survives tab switches).
         const savedId = localStorage.getItem(SELECTED_KEY);
-        if (savedId && selectedId === null) {
+        if (savedId && selectedIdRef.current === null) {
           const saved = list.find((p) => p.id === savedId);
-          if (saved) onSelect(saved);
+          if (saved) onRestoreRef.current(saved);
         }
       })
       .catch((e: unknown) =>
@@ -166,9 +196,8 @@ export default function PresetManager({ selectedId, onSelect, presetRefs }: Prop
     return () => {
       alive = false;
     };
-    // Restore uses mount-time selection only; re-running on selection change
-    // would re-arm a deliberately deselected preset.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // The fetch itself only ever needs to run once; selectedId/onRestore are
+    // read via the refs above, kept current independently.
   }, []);
 
   async function save() {
