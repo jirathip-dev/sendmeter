@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { useTindeq } from "../hooks/useTindeq";
 import {
@@ -13,6 +13,7 @@ import {
 } from "../lib/fullscreenLayout";
 import { presetTargetKg, timelineAt, timelineDurationS } from "../lib/protocol";
 import type { PresetRefs, ProtocolSegment } from "../lib/protocol";
+import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
 import type { TindeqPreset, TindeqSide } from "../types";
 import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
@@ -152,9 +153,82 @@ export default function ForceFullscreen({
     navigator.vibrate?.(phase === "hold" ? 150 : [80, 60, 80]);
   }, [measuring, timeline, pos, done]);
 
+  // Free-hold get-ready countdown (#312) — null while idle/measuring/guided.
+  // `prepNow` is a ticked clock (never Date.now() in render, same pattern as
+  // the workout timers' `now` state); `prepStartedMs` moves via the
+  // Start/Cancel taps below, and is also reset to null by the fire effect
+  // once the countdown completes (see below).
+  const [prepStartedMs, setPrepStartedMs] = useState<number | null>(null);
+  const [prepNow, setPrepNow] = useState(() => Date.now());
+  const prepRemaining = prepRemainingS(prepStartedMs, prepNow);
+  // Deliberately NOT `prepRemaining !== null && prepRemaining > 0` (that was
+  // the pre-fix definition): on the exact tick `prepRemaining` clamps to 0,
+  // that render happens BEFORE the fire effect below has run — so gating on
+  // `prepRemaining > 0` flipped `counting` false a render early, reverting
+  // the UI to idle (tag/side picker + checkbox + normal START button) for
+  // one frame before flipping again to MEASURING (#312 tester finding).
+  // Keying off `prepStartedMs` alone instead means `counting` only goes
+  // false once the fire effect actually resets `prepStartedMs` (the same
+  // effect pass that calls onStart), closing the gap.
+  const counting = prepStartedMs !== null;
+
+  useEffect(() => {
+    if (prepStartedMs === null) return;
+    const t = setInterval(() => setPrepNow(Date.now()), 200);
+    return () => clearInterval(t);
+  }, [prepStartedMs]);
+
+  // Fire the hold-start cue + onStart exactly once when the countdown reaches
+  // 0 — same beep/vibrate cue as a timeline hold transition above.
+  useEffect(() => {
+    if (prepStartedMs === null) return;
+    if (prepRemaining === null || prepRemaining > 0) return;
+    const ctx = audioRef.current;
+    if (ctx) {
+      try {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.frequency.value = 990;
+        g.gain.setValueAtTime(0.25, ctx.currentTime);
+        o.start();
+        o.stop(ctx.currentTime + 0.15);
+      } catch {
+        // ignore
+      }
+    }
+    navigator.vibrate?.(150);
+    onStart();
+    // Reset immediately after firing. This used to be missing, and the
+    // component stays mounted across many consecutive free holds in one
+    // connected session (it only unmounts on disconnect/minimize) — without
+    // it, `prepStartedMs` stayed non-null forever after the first countdown,
+    // so once that hold finished and `measuring` went back to false, the UI
+    // fell through to the `counting` branch (stuck showing CANCEL, tag
+    // picker/checkbox still hidden) instead of the normal idle state, and a
+    // second free-hold countdown never gets a fresh `null` to start a new
+    // 5-second run from (#312 regression found in review). Cancel already
+    // does the same null-write above; this makes the natural-fire path reset
+    // state the same way. No separate "already fired" guard is needed to
+    // stop this same effect from re-firing before the reset lands: once
+    // `prepRemaining` clamps to 0 it stays exactly 0 (see forcePrepare.ts),
+    // so this effect's dependency array doesn't change again until a new
+    // countdown writes a new `prepStartedMs`. Deferred via a microtask —
+    // same "write state only inside an async callback" pattern as the curve
+    // auto-compute effect in ForceView.tsx — because
+    // react-hooks/set-state-in-effect flags a same-tick setState call here.
+    queueMicrotask(() => setPrepStartedMs(null));
+    // onStart is an owner callback read at fire time (mirrors
+    // RoutineFullscreen's onFinish effect).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prepStartedMs, prepRemaining]);
+
   const bannerColor = done
     ? "var(--warning)"
-    : (meta?.color ?? (measuring ? "var(--success)" : "var(--primary)"));
+    : counting
+      ? PHASE_META.prepare.color
+      : (meta?.color ?? (measuring ? "var(--success)" : "var(--primary)"));
 
   // Side shown on a hold: the segment's own hand, else the global pick.
   const holdSide =
@@ -195,7 +269,7 @@ export default function ForceFullscreen({
       className="fullscreen-overlay"
       style={{
         // The whole screen takes the phase color, Timer-Plus style.
-        background: `color-mix(in srgb, ${bannerColor} ${pos || done ? 13 : 6}%, var(--canvas))`,
+        background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting ? 13 : 6}%, var(--canvas))`,
         transition: "background 0.3s",
         display: "flex",
         justifyContent: "center",
@@ -259,7 +333,7 @@ export default function ForceFullscreen({
           )}
           <button
             onClick={() => void tindeq.tare()}
-            disabled={measuring}
+            disabled={measuring || counting}
             className="glass-pill"
             style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
           >
@@ -279,7 +353,7 @@ export default function ForceFullscreen({
           style={{
             borderRadius: 18,
             padding: `${clampCss(BANNER_PAD_Y)} 16px`,
-            background: `color-mix(in srgb, ${bannerColor} ${pos || done ? 22 : 12}%, var(--surface-1))`,
+            background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting ? 22 : 12}%, var(--surface-1))`,
             border: `1px solid color-mix(in srgb, ${bannerColor} 50%, transparent)`,
             textAlign: "center",
             transition: "background 0.25s, border-color 0.25s",
@@ -345,6 +419,26 @@ export default function ForceFullscreen({
                   )}
               </div>
             </>
+          ) : counting ? (
+            <>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: PHASE_META.prepare.color }}>
+                {PHASE_META.prepare.label}
+              </div>
+              <div
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontWeight: 800,
+                  fontVariantNumeric: "tabular-nums",
+                  fontSize: heroFontCss(FORCE_TIMER_FONT),
+                  lineHeight: 1,
+                }}
+              >
+                {fmt(prepRemaining ?? 0)}
+              </div>
+              <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", marginTop: 4 }}>
+                get on the hold…
+              </div>
+            </>
           ) : measuring ? (
             <>
               <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
@@ -394,7 +488,7 @@ export default function ForceFullscreen({
             the gauge (brand-new tags are typed in the tab). Box chips, no
             dropdowns (SL-82); a freshly typed tag with no recordings yet is
             included so the armed tag shows (SL-81). */}
-        {!measuring && (
+        {!measuring && !counting && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
             {/* A user with many tags used to wrap this strip to four or five
                 rows and shove START off the bottom (#221). Cap it at roughly
@@ -515,20 +609,30 @@ export default function ForceFullscreen({
             onClick={() => {
               if (measuring) {
                 onStop();
+                return;
+              }
+              if (counting) {
+                // Cancel — nothing is measuring yet, so this must never
+                // call onStop (#312).
+                setPrepStartedMs(null);
+                return;
+              }
+              primeAudio();
+              if (startsWithCountdown(protocol, prepare)) {
+                setPrepStartedMs(Date.now());
               } else {
-                primeAudio();
                 onStart();
               }
             }}
-            disabled={measuring ? saving : !canStart}
+            disabled={measuring ? saving : counting ? false : !canStart}
             style={{
               width: clampCss(FORCE_ACTION_CIRCLE),
               height: clampCss(FORCE_ACTION_CIRCLE),
               flexShrink: 0,
               borderRadius: "50%",
-              border: `3px solid ${measuring ? "var(--danger)" : "var(--success)"}`,
-              background: `color-mix(in srgb, ${measuring ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
-              color: measuring ? "var(--danger)" : "var(--success)",
+              border: `3px solid ${measuring || counting ? "var(--danger)" : "var(--success)"}`,
+              background: `color-mix(in srgb, ${measuring || counting ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
+              color: measuring || counting ? "var(--danger)" : "var(--success)",
               cursor: "pointer",
               fontFamily: "Inter, sans-serif",
               fontWeight: 800,
@@ -538,13 +642,18 @@ export default function ForceFullscreen({
               alignItems: "center",
               justifyContent: "center",
               gap: 3,
-              opacity: (measuring ? saving : !canStart) ? 0.45 : 1,
+              opacity: (measuring ? saving : counting ? false : !canStart) ? 0.45 : 1,
             }}
           >
             {measuring ? (
               <>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
                 {saving ? "SAVING…" : "STOP"}
+              </>
+            ) : counting ? (
+              <>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+                CANCEL
               </>
             ) : (
               <>
@@ -553,7 +662,7 @@ export default function ForceFullscreen({
               </>
             )}
           </button>
-          {!measuring && (
+          {!measuring && !counting && (
             <label
               style={{
                 display: "flex",
@@ -572,7 +681,7 @@ export default function ForceFullscreen({
               5s get-ready countdown
             </label>
           )}
-          {!canStart && !measuring && (
+          {!canStart && !measuring && !counting && (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", textAlign: "center" }}>
               {allTags.length
                 ? "Pick an exercise above to start."
