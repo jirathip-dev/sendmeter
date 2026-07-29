@@ -1,8 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
+  applyHoldEdit,
   buildTimeline,
+  deriveHoldsField,
   firstHoldSide,
+  formatKgRange,
+  holdForSet,
+  holdsForSets,
+  holdsSummary,
   presetTargetKg,
+  presetTargetKgRange,
   protocolDurationS,
   setSide,
   timelineAt,
@@ -16,6 +23,7 @@ const repeaters: TindeqPreset = {
   id: "p1",
   name: "Repeaters",
   holdS: 7,
+  holdsS: null,
   reps: 6,
   sets: 3,
   restRepsS: 3,
@@ -33,6 +41,7 @@ const alt: TindeqPreset = {
   id: "p2",
   name: "Alt",
   holdS: 5,
+  holdsS: null,
   reps: 2,
   sets: 1,
   restRepsS: 30,
@@ -91,6 +100,56 @@ describe("presetTargetKg", () => {
     expect(presetTargetKg({ ...ramp, targetPct: null }, { ...refs, prKg: null }, 1)).toBe(20);
     expect(presetTargetKg({ ...ramp, targetPct: null, targetKg: null }, refs, 1)).toBeNull();
   });
+
+  it("smart curve target resolves against THAT SET's hold (#332), not the base holdS", () => {
+    // 5→15→30s holds; CF 20, W' 300 → F = 20 + 300/hold. A generous maxF
+    // (100) keeps the cap from masking the per-set difference this test is
+    // about.
+    const uncappedRefs = { prKg: 30, cf: 20, wPrime: 300, maxF: 100 };
+    const curve: TindeqPreset = {
+      ...repeaters,
+      holdS: 5,
+      holdsS: [5, 15, 30],
+      sets: 3,
+      targetCurve: true,
+    };
+    expect(presetTargetKg(curve, uncappedRefs, 1)).toBeCloseTo(20 + 300 / 5, 1);
+    expect(presetTargetKg(curve, uncappedRefs, 2)).toBeCloseTo(20 + 300 / 15, 1);
+    expect(presetTargetKg(curve, uncappedRefs, 3)).toBeCloseTo(20 + 300 / 30, 1);
+    // a null-list preset keeps resolving off the single holdS, unchanged
+    const uniform: TindeqPreset = { ...repeaters, holdS: 30, targetCurve: true };
+    expect(presetTargetKg(uniform, refs, 1)).toBe(presetTargetKg(uniform, refs, 3));
+  });
+});
+
+describe("presetTargetKgRange (#332 finding 2)", () => {
+  const refs = { prKg: 30, cf: 20, wPrime: 300, maxF: 100 };
+
+  it("collapses to a single value for a uniform preset", () => {
+    const uniform: TindeqPreset = { ...repeaters, holdS: 30, targetCurve: true };
+    expect(presetTargetKgRange(uniform, refs)).toEqual({ min: 30, max: 30 });
+    expect(formatKgRange(presetTargetKgRange(uniform, refs)!)).toBe("30.0 kg");
+  });
+
+  it("spans min/max across sets for a monotonic per-set hold list", () => {
+    // 5→15→30s holds → F = 20+300/5=80, 20+300/15=40, 20+300/30=30.
+    const curve: TindeqPreset = { ...repeaters, holdS: 5, holdsS: [5, 15, 30], sets: 3, targetCurve: true };
+    expect(presetTargetKgRange(curve, refs)).toEqual({ min: 30, max: 80 });
+    expect(formatKgRange(presetTargetKgRange(curve, refs)!)).toBe("30.0–80.0 kg");
+  });
+
+  it("finds the extreme in a middle set — not just first/last (a non-monotonic list)", () => {
+    // 15→5→30s holds → F = 20+300/15=40, 20+300/5=80, 20+300/30=30. The max
+    // (80) sits at set 2, not at either end — a first/last shortcut would
+    // have reported {min:30, max:40} and silently understated the range.
+    const curve: TindeqPreset = { ...repeaters, holdS: 15, holdsS: [15, 5, 30], sets: 3, targetCurve: true };
+    expect(presetTargetKgRange(curve, refs)).toEqual({ min: 30, max: 80 });
+  });
+
+  it("is null whenever presetTargetKg is (a needed reference isn't resolved yet)", () => {
+    const curve: TindeqPreset = { ...repeaters, targetCurve: true };
+    expect(presetTargetKgRange(curve, { ...refs, cf: null })).toBeNull();
+  });
 });
 
 describe("setSide", () => {
@@ -101,10 +160,168 @@ describe("setSide", () => {
   });
 });
 
+describe("holdForSet (#332)", () => {
+  it("falls back to holdS when holdsS is null", () => {
+    expect(holdForSet(repeaters, 1)).toBe(7);
+    expect(holdForSet(repeaters, 3)).toBe(7);
+  });
+
+  it("falls back to holdS when holdsS is shorter than sets", () => {
+    const short: TindeqPreset = { ...repeaters, holdsS: [5, 6] }; // sets: 3
+    expect(holdForSet(short, 1)).toBe(7);
+    expect(holdForSet(short, 2)).toBe(7);
+    expect(holdForSet(short, 3)).toBe(7);
+  });
+
+  it("resolves per-set values from an exact-length list", () => {
+    const varying: TindeqPreset = { ...repeaters, holdsS: [5, 7, 9] };
+    expect(holdForSet(varying, 1)).toBe(5);
+    expect(holdForSet(varying, 2)).toBe(7);
+    expect(holdForSet(varying, 3)).toBe(9);
+  });
+
+  it("clamps set below 1 to the first set and above sets to the last", () => {
+    const varying: TindeqPreset = { ...repeaters, holdsS: [5, 7, 9] };
+    expect(holdForSet(varying, 0)).toBe(5);
+    expect(holdForSet(varying, -3)).toBe(5);
+    expect(holdForSet(varying, 4)).toBe(9);
+    expect(holdForSet(varying, 99)).toBe(9);
+  });
+});
+
+describe("holdsForSets (#332)", () => {
+  it("returns holdS for every set when null", () => {
+    expect(holdsForSets(repeaters)).toEqual([7, 7, 7]);
+  });
+
+  it("returns the resolved per-set list when varying", () => {
+    const varying: TindeqPreset = { ...repeaters, holdsS: [5, 7, 9] };
+    expect(holdsForSets(varying)).toEqual([5, 7, 9]);
+  });
+});
+
+describe("deriveHoldsField (#332 preset-editor derivation)", () => {
+  it("saves null when the checkbox is off, regardless of typed holds", () => {
+    expect(deriveHoldsField(false, 7, [5, 9, 12], 3)).toEqual({
+      holdBase: 7,
+      holdsS: null,
+      resolved: [5, 9, 12],
+    });
+  });
+
+  it("saves null when the checkbox is on but every resolved slot is equal", () => {
+    // no slots typed yet — every slot falls back to holdS, so it's uniform.
+    expect(deriveHoldsField(true, 7, [], 3)).toEqual({
+      holdBase: 7,
+      holdsS: null,
+      resolved: [7, 7, 7],
+    });
+    // explicitly typed, but all the same value.
+    expect(deriveHoldsField(true, 7, [7, 7, 7], 3)).toEqual({
+      holdBase: 7,
+      holdsS: null,
+      resolved: [7, 7, 7],
+    });
+  });
+
+  it("saves the resolved list and stamps holdBase to set 1 when it varies", () => {
+    expect(deriveHoldsField(true, 7, [5, 7, 9], 3)).toEqual({
+      holdBase: 5,
+      holdsS: [5, 7, 9],
+      resolved: [5, 7, 9],
+    });
+  });
+
+  it("unset slots (shorter `holds`) fall back to holdS", () => {
+    expect(deriveHoldsField(true, 7, [5], 3)).toEqual({
+      holdBase: 5,
+      holdsS: [5, 7, 7],
+      resolved: [5, 7, 7],
+    });
+  });
+
+  it("extra slots (longer `holds`, e.g. after lowering sets) are ignored", () => {
+    expect(deriveHoldsField(true, 7, [5, 6, 9, 20], 2)).toEqual({
+      holdBase: 5,
+      holdsS: [5, 6],
+      resolved: [5, 6],
+    });
+  });
+});
+
+describe("applyHoldEdit (#332 round 2 finding 1)", () => {
+  it("overwrites one slot without touching the others", () => {
+    expect(applyHoldEdit([5, 7, 9], 1, 20)).toEqual([5, 20, 9]);
+  });
+
+  it("preserves a shrink-edit-grow round trip — editing after lowering `sets` must not drop the tail", () => {
+    // Sets=4, holds typed as [5,10,15,20]; lower Sets to 2 (the form still
+    // holds the full array — `sets` alone changed), then edit Set 1's field.
+    let holds: (number | null)[] = [5, 10, 15, 20];
+    holds = applyHoldEdit(holds, 0, 9);
+    // The 15 and 20 typed for sets 3/4 must survive, not get reseeded from
+    // holdS when `sets` is raised back to 4.
+    expect(holds).toEqual([9, 10, 15, 20]);
+    expect(deriveHoldsField(true, 7, holds, 4).resolved).toEqual([9, 10, 15, 20]);
+  });
+});
+
+describe("applyHoldEdit + deriveHoldsField (#332 round 3 finding 1)", () => {
+  it("an untouched slot keeps following the base holdS — editing one slot must not freeze the others", () => {
+    // Sets=3, nothing typed yet; edit Set 3 only.
+    let holds: (number | null)[] = [];
+    holds = applyHoldEdit(holds, 2, 30);
+    expect(deriveHoldsField(true, 7, holds, 3).resolved).toEqual([7, 7, 30]);
+
+    // Now the base changes — the two untouched slots must follow it, not
+    // stay frozen at the 7 that was live when Set 3 was edited.
+    expect(deriveHoldsField(true, 60, holds, 3)).toEqual({
+      holdBase: 60,
+      holdsS: [60, 60, 30],
+      resolved: [60, 60, 30],
+    });
+  });
+
+  it("editing every slot to match the base saves null (no spurious variation)", () => {
+    let holds: (number | null)[] = [];
+    holds = applyHoldEdit(holds, 0, 7);
+    holds = applyHoldEdit(holds, 1, 7);
+    holds = applyHoldEdit(holds, 2, 7);
+    expect(deriveHoldsField(true, 7, holds, 3)).toEqual({
+      holdBase: 7,
+      holdsS: null,
+      resolved: [7, 7, 7],
+    });
+  });
+});
+
+describe("holdsSummary formatting (#332 finding 2)", () => {
+  it("formats a uniform long hold in m/s, like the rest column beside it", () => {
+    const long: TindeqPreset = { ...repeaters, holdS: 240, holdsS: null };
+    expect(holdsSummary(long)).toBe("4m");
+  });
+
+  it("formats each element of a varying summary in m/s", () => {
+    const varying: TindeqPreset = { ...repeaters, holdsS: [5, 70, 240] };
+    expect(holdsSummary(varying)).toBe("5s→1m10s→4m");
+  });
+});
+
 describe("protocolDurationS", () => {
   it("sums holds, rep rests, and set rests", () => {
     // set work = 6*7 + 5*3 = 57; total = 3*57 + 2*180 = 531
     expect(protocolDurationS(repeaters)).toBe(531);
+  });
+
+  it("sums PER-SET holds when they vary (#332)", () => {
+    // NOT [5, 7, 9] — that averages to exactly repeaters.holdS (7), so the
+    // pre-#332 formula `sets * (reps*holdS + …)` coincidentally returns the
+    // same 531 total and this test would pass without the fix. [5, 7, 12]
+    // sums to something the old, holdS-only formula cannot produce.
+    const varying: TindeqPreset = { ...repeaters, holdsS: [5, 7, 12] };
+    // set work = 6*5+5*3=45, 6*7+5*3=57, 6*12+5*3=87; total = 45+57+87 + 2*180 = 549
+    expect(protocolDurationS(varying)).toBe(549);
+    expect(protocolDurationS(varying)).toBe(timelineDurationS(buildTimeline(varying)));
   });
 });
 
@@ -145,6 +362,67 @@ describe("buildTimeline — single side", () => {
     expect(timelineAt(withPrep, 2)!.seg.phase).toBe("prepare");
     expect(timelineAt(withPrep, 5)!.seg).toMatchObject({ phase: "hold", rep: 1 });
     expect(timelineDurationS(withPrep)).toBe(536);
+  });
+});
+
+describe("buildTimeline — byte-identical regression (#332's main risk)", () => {
+  it("a null holdsS produces the exact same timeline as before this field existed", () => {
+    expect(buildTimeline(repeaters)).toEqual(buildTimeline({ ...repeaters, holdsS: null }));
+    expect(buildTimeline(alt, { switchS: 3 })).toEqual(
+      buildTimeline({ ...alt, holdsS: null }, { switchS: 3 }),
+    );
+  });
+
+  it("an exact-length uniform holdsS produces the identical timeline to the null-list preset", () => {
+    const uniform: TindeqPreset = { ...repeaters, holdsS: [7, 7, 7] };
+    expect(buildTimeline(uniform)).toEqual(buildTimeline(repeaters));
+  });
+
+  it("a holdsS shorter than sets is ignored — identical to null", () => {
+    const short: TindeqPreset = { ...repeaters, holdsS: [5, 6] };
+    expect(buildTimeline(short)).toEqual(buildTimeline(repeaters));
+  });
+});
+
+describe("buildTimeline — varying per-set holds (#332)", () => {
+  it("emits each set's holds at that set's duration, with correct accumulation", () => {
+    // holdS:5 fallback, holdsS:[5,7,9], sets:3, reps:2, no rests-between-reps
+    // (restRepsS:0) to keep the arithmetic simple; restSetsS:0 too.
+    const varying: TindeqPreset = {
+      ...repeaters,
+      holdS: 5,
+      holdsS: [5, 7, 9],
+      sets: 3,
+      reps: 2,
+      restRepsS: 0,
+      restSetsS: 0,
+    };
+    const tl = buildTimeline(varying);
+    const holds = tl.filter((s) => s.phase === "hold");
+    expect(holds.map((h) => h.durS)).toEqual([5, 5, 7, 7, 9, 9]);
+    expect(holds.map((h) => h.startS)).toEqual([0, 5, 10, 17, 24, 33]);
+    expect(timelineDurationS(tl)).toBe(42);
+  });
+
+  it("keeps per-set sides and switch segments when alternating with varying holds", () => {
+    const varying: TindeqPreset = {
+      ...alt,
+      holdsS: [5, 9],
+      sets: 2,
+      restSetsS: 60,
+      alternateSides: true,
+    };
+    const tl = buildTimeline(varying, { switchS: 3 });
+    const holds = tl.filter((s) => s.phase === "hold");
+    expect(holds.map((h) => ({ side: h.side, durS: h.durS, set: h.set }))).toEqual([
+      { side: "left", durS: 5, set: 1 },
+      { side: "left", durS: 5, set: 1 },
+      { side: "right", durS: 9, set: 2 },
+      { side: "right", durS: 9, set: 2 },
+    ]);
+    const switches = tl.filter((s) => s.phase === "switch");
+    expect(switches).toHaveLength(1);
+    expect(switches[0]).toMatchObject({ side: "right", durS: 3 });
   });
 });
 
@@ -201,6 +479,7 @@ describe("endurance preset — 1 rep × 8 sets (#320)", () => {
     id: "endurance",
     name: "Endurance",
     holdS: ZONE_PROTOCOLS.endurance.holdS,
+    holdsS: null,
     reps: ZONE_PROTOCOLS.endurance.reps,
     sets: ZONE_PROTOCOLS.endurance.sets,
     restRepsS: ZONE_PROTOCOLS.endurance.restRepsS,

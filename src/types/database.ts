@@ -365,6 +365,7 @@ export type Database = {
           alternate_sides: boolean
           created_at: string
           hold_s: number
+          holds_s: number[] | null
           id: string
           name: string
           pct_basis: string
@@ -382,6 +383,7 @@ export type Database = {
           alternate_sides?: boolean
           created_at?: string
           hold_s: number
+          holds_s?: number[] | null
           id?: string
           name?: string
           pct_basis?: string
@@ -399,6 +401,7 @@ export type Database = {
           alternate_sides?: boolean
           created_at?: string
           hold_s?: number
+          holds_s?: number[] | null
           id?: string
           name?: string
           pct_basis?: string

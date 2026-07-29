@@ -5,7 +5,17 @@ import {
   insertPreset,
   updatePreset,
 } from "../lib/repo";
-import { buildTimeline, presetTargetKg, timelineDurationS } from "../lib/protocol";
+import {
+  applyHoldEdit,
+  buildTimeline,
+  deriveHoldsField,
+  formatKgRange,
+  holdsForSets,
+  holdsSummary,
+  presetTargetKg,
+  presetTargetKgRange,
+  timelineDurationS,
+} from "../lib/protocol";
 import type { PresetRefs } from "../lib/protocol";
 import { QUALITIES } from "../lib/force-curve";
 import { classifyZoneLoaded } from "../lib/zoneHistory";
@@ -46,17 +56,27 @@ function fmt(sec: number): string {
 /// underlying curve moves (a preset's own load is never touched by the
 /// session-intensity dial — only recommended zones respond to it); falls
 /// back to the SL-100 duration-only classifier for untargeted presets.
+///
+/// #332: a per-set hold list can classify each set differently (a warm-up
+/// ramp's early sets are a different quality than its later ones). Classify
+/// EVERY set and only show one quality outright when they all agree — a
+/// varying protocol instead shows set 1's badge with a `· set 1` suffix, so
+/// the badge never states an answer no set actually uses.
 function QualityBadge({
-  holdS,
-  kg,
+  preset,
+  hasTarget,
   refs,
 }: {
-  holdS: number;
-  kg: number | null;
-  refs: { maxF: number | null; cf: number | null };
+  preset: TindeqPreset;
+  hasTarget: boolean;
+  refs: PresetRefs;
 }) {
-  const q = classifyZoneLoaded(holdS, kg, refs);
+  const qualities = holdsForSets(preset).map((h, i) =>
+    classifyZoneLoaded(h, hasTarget ? presetTargetKg(preset, refs, i + 1) : null, refs),
+  );
+  const q = qualities[0];
   if (!q) return null;
+  const varies = qualities.some((x) => x !== q);
   const color = QUALITY_COLORS[q];
   const label = QUALITIES.find((x) => x.id === q)?.label ?? q;
   return (
@@ -74,6 +94,7 @@ function QualityBadge({
       }}
     >
       {label}
+      {varies && " · set 1"}
     </span>
   );
 }
@@ -125,6 +146,17 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [holdS, setHoldS] = useState(7);
+  // #332: per-set hold override. A slot is `null` until the user explicitly
+  // types into it — that's load-bearing (round 3 finding 1): a null slot
+  // keeps following `holdS` live via `deriveHoldsField`'s `holds[i] ?? holdS`,
+  // so editing one slot can never freeze the others at a stale snapshot of
+  // the base. The array can be shorter (unedited tail) or longer (after
+  // lowering `sets`) than `sets`; the displayed/saved per-set list is DERIVED
+  // from it each render (`derivedHolds` below), never stored past that, so
+  // changing `sets` reseeds unset slots from `holdS` for free instead of
+  // needing an effect.
+  const [varyHolds, setVaryHolds] = useState(false);
+  const [holds, setHolds] = useState<(number | null)[]>([]);
   const [reps, setReps] = useState(6);
   const [sets, setSets] = useState(3);
   const [restRepsS, setRestRepsS] = useState(3);
@@ -143,6 +175,8 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
     setEditingId(p.id);
     setName(p.name);
     setHoldS(p.holdS);
+    setVaryHolds(p.holdsS !== null);
+    setHolds(p.holdsS ?? []);
     setReps(p.reps);
     setSets(p.sets);
     setRestRepsS(p.restRepsS);
@@ -209,9 +243,18 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   async function save() {
     setSaving(true);
     setError(null);
+    // #332: the per-set list actually saved — same derivation the form
+    // fields render (see `holds` above), computed fresh here rather than
+    // trusted from render state that may be stale. `deriveHoldsField` saves
+    // null when every set is equal (unvaried, or the checkbox is off) so an
+    // unchanged preset keeps today's shape; when it does vary, `holdBase` is
+    // set 1's value so a pre-#332 reader (or a null-derivation caller) runs
+    // the same hold the guided timer actually starts on.
+    const { holdBase, holdsS } = deriveHoldsField(varyHolds, holdS, holds, sets);
     const fields: Omit<TindeqPreset, "id"> = {
-      name: name.trim() || `${holdS}s × ${reps} × ${sets}`,
-      holdS,
+      name: name.trim() || `${holdBase}s × ${reps} × ${sets}`,
+      holdS: holdBase,
+      holdsS,
       reps,
       sets,
       restRepsS,
@@ -294,6 +337,12 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         // by the session-intensity dial — that only scales recommended zones.
         const hasTarget = p.targetCurve || p.targetPct !== null || p.targetKg !== null;
         const resolvedKg = hasTarget ? presetTargetKg(p, presetRefs, 1) : null;
+        // #332: a `targetCurve` preset's load now moves with the set's hold —
+        // possibly non-monotonically for an arbitrary per-set hold list — so
+        // set 1's kg alone can understate (or misstate) the range every other
+        // set trains at. `presetTargetKgRange` walks every set rather than
+        // assuming the extremes sit at the ends.
+        const curveKgRange = p.targetCurve ? presetTargetKgRange(p, presetRefs) : null;
         return (
           <Fragment key={p.id}>
           <div
@@ -349,17 +398,17 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 >
                   {p.name}
                 </span>
-                <QualityBadge holdS={p.holdS} kg={resolvedKg} refs={presetRefs} />
+                <QualityBadge preset={p} hasTarget={hasTarget} refs={presetRefs} />
               </div>
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
-                hold {fmt(p.holdS)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
+                hold {holdsSummary(p)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
                 {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total{" "}
                 {fmt(timelineDurationS(buildTimeline(p, { switchS: 3 })))}
                 {p.targetCurve ? (
                   <span style={{ color: "var(--success)" }}>
                     {" "}
-                    · auto CF @ {fmt(p.holdS)}
-                    {resolvedKg !== null && ` · ${resolvedKg.toFixed(1)} kg`}
+                    · auto CF
+                    {curveKgRange && ` · ${formatKgRange(curveKgRange)}`}
                   </span>
                 ) : p.targetPct !== null ? (
                   <span style={{ color: "var(--success)" }}>
@@ -451,6 +500,50 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
             <NumField label="Reps" value={reps} onChange={setReps} min={1} max={50} />
             <NumField label="Sets" value={sets} onChange={setSets} min={1} max={20} />
           </div>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 10,
+              fontSize: "var(--t-sm)",
+              color: "var(--ink-muted)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={varyHolds}
+              onChange={(e) => setVaryHolds(e.target.checked)}
+            />
+            Vary hold per set
+          </label>
+          {varyHolds && (
+            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+              {/* Derived, not stored: seeded from `holds[i]` when the user has
+                  typed that slot, else from the base `holdS` — so raising
+                  `sets` reseeds the new slots from `holdS` for free, with no
+                  effect keyed on `sets`. Same `deriveHoldsField` the save path
+                  uses, just reading `.resolved`. */}
+              {deriveHoldsField(varyHolds, holdS, holds, sets).resolved.map((h, i) => (
+                <NumField
+                  key={i}
+                  label={`Set ${i + 1}`}
+                  value={h}
+                  onChange={(v) => {
+                    // Functional updater reading `prev`, not the render-closure
+                    // `holds` (CLAUDE.md's stale-closure rule) — `applyHoldEdit`
+                    // preserves any slots typed while `sets` was higher, and
+                    // leaves every OTHER slot untouched (still `null` if never
+                    // typed into) instead of materializing it.
+                    setHolds((prev) => applyHoldEdit(prev, i, v));
+                  }}
+                  min={1}
+                  max={600}
+                />
+              ))}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <NumField label="Rest / rep s" value={restRepsS} onChange={setRestRepsS} min={0} max={600} />
             <NumField label="Rest / set s" value={restSetsS} onChange={setRestSetsS} min={0} max={1200} />

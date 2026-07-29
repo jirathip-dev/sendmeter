@@ -31,12 +31,99 @@ export function setSide(set: number): "left" | "right" {
   return set % 2 === 1 ? "left" : "right";
 }
 
+/// The hold duration for a given SET (#332) — `set` clamps to `1..p.sets`.
+/// Falls back to the base `holdS` when `holdsS` is null OR shorter than
+/// `sets` (a preset saved before this field, or whose `sets` was since
+/// raised past the list's length, must keep behaving exactly as before).
+export function holdForSet(p: TindeqPreset, set: number): number {
+  const clamped = Math.max(1, Math.min(p.sets, set));
+  if (!p.holdsS || p.holdsS.length < p.sets) return p.holdS;
+  return p.holdsS[clamped - 1] ?? p.holdS;
+}
+
+/// Every set's resolved hold, in order — drives UI summaries (preset row,
+/// READY line) that want the whole per-set shape rather than one set's value.
+export function holdsForSets(p: TindeqPreset): number[] {
+  return Array.from({ length: p.sets }, (_, i) => holdForSet(p, i + 1));
+}
+
+/// Same `<60s ? "Ns" : "Mm[Ss]"` rule PresetManager's row uses for rest
+/// times — kept here (not imported) so `holdsSummary` formats a long hold
+/// (e.g. 240s) as `4m`, matching the rest column beside it, instead of a
+/// raw, un-abbreviated second count.
+function fmtHoldS(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem === 0 ? `${m}m` : `${m}m${rem}s`;
+}
+
+/// Human-readable hold summary for a preset row / READY line: `"7s"` (or
+/// `"4m"` for ≥60s) when every set holds the same duration (today's shape,
+/// unchanged), or `"5s→1m10s"` when it varies — capped at the first 4 sets
+/// (mirrors the %-of-PR ramp summary in PresetManager) so a long protocol's
+/// line doesn't run away.
+export function holdsSummary(p: TindeqPreset): string {
+  const holds = holdsForSets(p);
+  if (holds.every((h) => h === holds[0])) return fmtHoldS(holds[0]!);
+  const shown = holds.slice(0, 4);
+  const suffix = holds.length > 4 ? "→…" : "";
+  return `${shown.map(fmtHoldS).join("→")}${suffix}`;
+}
+
+/// Preset-editor derivation (#332) — given the raw form fields (base hold,
+/// per-set overrides typed so far, `sets`, and whether "vary hold per set" is
+/// checked), resolve what gets saved. `holds` slots are `null` for any set the
+/// user hasn't typed into — those keep following the live `holdS` (round 3
+/// finding 1: a slot must never be frozen at whatever `holdS` happened to be
+/// when a DIFFERENT slot was edited), and the array may be shorter (unedited
+/// tail) or longer (after lowering `sets`) than `sets`, both of which also
+/// fall back to `holdS`. `holdsS` is null whenever the checkbox is off OR
+/// every resolved slot is equal, so an unvaried preset keeps today's shape.
+/// `holdBase` is what a pre-#332 reader — and the auto-name fallback — should
+/// use: set 1's resolved value when varying, else the raw `holdS` field.
+export function deriveHoldsField(
+  varyHolds: boolean,
+  holdS: number,
+  holds: (number | null)[],
+  sets: number,
+): { holdBase: number; holdsS: number[] | null; resolved: number[] } {
+  const resolved = Array.from({ length: sets }, (_, i) => holds[i] ?? holdS);
+  const varying = varyHolds && resolved.some((h) => h !== resolved[0]);
+  return {
+    holdBase: varying ? resolved[0]! : holdS,
+    holdsS: varying ? resolved : null,
+    resolved,
+  };
+}
+
+/// Applies one per-set hold-field edit. Writes `value` at `index` and leaves
+/// every other slot exactly as it was — in particular, a slot the user has
+/// never typed into stays `null` rather than getting materialized to its
+/// currently-resolved value, so `deriveHoldsField`'s `holds[i] ?? holdS`
+/// keeps tracking a later change to the base `holdS` instead of freezing at
+/// whatever it was when a sibling slot got edited (#332 round 3 finding 1).
+/// This also preserves any slot typed while `sets` was higher (round 2
+/// finding 1) for free — untouched slots past the current `sets` are simply
+/// left alone, not truncated.
+export function applyHoldEdit(
+  prev: (number | null)[],
+  index: number,
+  value: number,
+): (number | null)[] {
+  const next = prev.slice();
+  while (next.length <= index) next.push(null);
+  next[index] = value;
+  return next;
+}
+
 /// Nominal (non-alternating) duration — the quick summary shown on preset
 /// rows. Alternating timelines can run longer; use timelineDurationS for
 /// the exact figure.
 export function protocolDurationS(p: TindeqPreset): number {
-  const setWork = p.reps * p.holdS + (p.reps - 1) * p.restRepsS;
-  return p.sets * setWork + (p.sets - 1) * p.restSetsS;
+  const holdWork = holdsForSets(p).reduce((sum, h) => sum + p.reps * h, 0);
+  const setWork = holdWork + p.sets * (p.reps - 1) * p.restRepsS;
+  return setWork + (p.sets - 1) * p.restSetsS;
 }
 
 /// The target load for a given set: %-of-PR mode ramps per set
@@ -61,10 +148,13 @@ export function presetTargetKg(
   set: number,
 ): number | null {
   // Smart target (SL-62): force sustainable for exactly this hold — CF + W'/t,
-  // capped at the best short-window force.
+  // capped at the best short-window force. #332: resolved at THIS set's hold
+  // (a per-set hold list moves the curve reference set-by-set, same as the
+  // %-of-PR ramp below moves the load).
   if (p.targetCurve) {
-    if (refs.cf == null || refs.wPrime == null || p.holdS <= 0) return null;
-    const f = refs.cf + refs.wPrime / p.holdS;
+    const h = holdForSet(p, set);
+    if (refs.cf == null || refs.wPrime == null || h <= 0) return null;
+    const f = refs.cf + refs.wPrime / h;
     const capped = refs.maxF != null ? Math.min(refs.maxF, f) : f;
     return Math.round(capped * 10) / 10;
   }
@@ -82,6 +172,35 @@ export function presetTargetKg(
   // badge classifier only compares it against maxF/CF thresholds, where sub-
   // 0.1kg precision is immaterial.
   return p.targetKg == null ? null : p.targetKg;
+}
+
+/// Full min/max range of a preset's resolved target across ALL its sets
+/// (#332) — a per-set hold list moves a `targetCurve` (or %-ramp) target
+/// non-monotonically in general, so picking just set 1 and the last set (as
+/// the badge/row work did before this) can miss a middle set that's actually
+/// the extreme. Null wherever `presetTargetKg` is (no target, or a needed
+/// reference isn't resolved yet) — that's uniform across sets since only the
+/// per-set hold/pct varies, not the refs the target resolves against.
+export function presetTargetKgRange(
+  p: TindeqPreset,
+  refs: PresetRefs,
+): { min: number; max: number } | null {
+  const kgs: number[] = [];
+  for (let set = 1; set <= p.sets; set++) {
+    const kg = presetTargetKg(p, refs, set);
+    if (kg == null) return null;
+    kgs.push(kg);
+  }
+  return { min: Math.min(...kgs), max: Math.max(...kgs) };
+}
+
+/// `"X.X kg"` when a range's ends coincide, else `"X.X–Y.Y kg"` — the
+/// shared format for `presetTargetKgRange` wherever it's shown (preset row,
+/// fullscreen band label).
+export function formatKgRange(range: { min: number; max: number }): string {
+  return range.min === range.max
+    ? `${range.min.toFixed(1)} kg`
+    : `${range.min.toFixed(1)}–${range.max.toFixed(1)} kg`;
 }
 
 export function buildTimeline(
@@ -107,13 +226,14 @@ export function buildTimeline(
   if (prepareS > 0) push("prepare", null, 1, 1, prepareS);
 
   for (let set = 1; set <= p.sets; set++) {
+    const hold = holdForSet(p, set);
     for (let rep = 1; rep <= p.reps; rep++) {
       const lastRep = rep === p.reps;
       const lastSet = set === p.sets;
       if (p.alternateSides) {
         // Per-SET alternation: every rep in this set is on one hand; the set
         // rest ends with a SWITCH countdown into the other hand.
-        push("hold", setSide(set), rep, set, p.holdS);
+        push("hold", setSide(set), rep, set, hold);
         if (!lastRep) push("rest", null, rep, set, p.restRepsS);
         else if (!lastSet) {
           const eff = Math.max(p.restSetsS, switchS);
@@ -121,7 +241,7 @@ export function buildTimeline(
           push("switch", setSide(set + 1), rep, set, switchS);
         }
       } else {
-        push("hold", null, rep, set, p.holdS);
+        push("hold", null, rep, set, hold);
         if (!lastRep) push("rest", null, rep, set, p.restRepsS);
         else if (!lastSet) push("setRest", null, rep, set, p.restSetsS);
       }

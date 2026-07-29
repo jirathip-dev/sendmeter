@@ -156,6 +156,13 @@ export interface TindeqPreset {
   id: string;
   name: string;
   holdS: number;
+  /// Per-set hold override (#332) — index 0 is set 1, etc. `holdS` is the
+  /// base/fallback: used verbatim when this is null OR shorter than `sets`
+  /// (so a preset saved before this field, or with `sets` since raised past
+  /// the list's length, keeps behaving exactly as before). Use
+  /// `holdForSet`/`holdsForSets` in `lib/protocol.ts` rather than indexing
+  /// this directly.
+  holdsS: number[] | null;
   reps: number;
   sets: number;
   restRepsS: number;
