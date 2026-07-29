@@ -97,13 +97,22 @@ public struct PhaseFill: Sendable, Equatable {
     }
 }
 
-/// Phase → colour, mirroring the phone fullscreen's `accent` *meanings*
-/// (`src/components/PhoneWorkoutFullscreen.tsx`): climbing reads go, resting
-/// reads hold, rest-over reads act now. The values are not the phone's:
-/// the phone mixes ~12% of a bright accent into a light canvas, while the
-/// watch paints a band onto a black OLED and has to stay dark enough that
-/// white text keeps AAA contrast on it.
+/// Phase → colour, mirroring the phone fullscreen's `accent` *hues*
+/// (`src/components/PhoneWorkoutFullscreen.tsx:103`, dark theme): climbing is
+/// `--success` electric blue, resting is `--primary` purple, rest-over is
+/// `--danger` orange (issue #277 follow-up). The band composites each hue
+/// toward black at a fixed opacity rather than reusing the phone's own
+/// values outright: the phone mixes ~12-18% of a bright accent into a light
+/// canvas, while the watch paints a band onto a black OLED and has to stay
+/// dark enough that white text keeps AAA contrast on it.
 public enum WorkoutPhasePalette {
+    /// `--success` (dark theme), climbing — also the view's Play tint.
+    public static let phoneSuccess = PhaseRGB(0x4F / 255, 0xB0 / 255, 0xFF / 255)
+    /// `--primary`, resting.
+    private static let phonePrimary = PhaseRGB(0x5B / 255, 0x5F / 255, 0xC7 / 255)
+    /// `--danger` (dark theme), rest-over — also the view's End/Stop tint.
+    public static let phoneDanger = PhaseRGB(0xF0 / 255, 0x86 / 255, 0x4C / 255)
+
     /// Every band is picked to clear this against `label` — AAA (7:1) for
     /// body text, with margin left for the OLED's own gamma. The secondary
     /// readouts on `screen` clear it too (see `secondaryOpacity`).
@@ -148,19 +157,20 @@ public enum WorkoutPhasePalette {
         let base: PhaseRGB
         switch phase {
         case .idle: base = .black
-        // Deep forest — 8.1:1 under white. "Green" at watch scale needs the
-        // green *channel* dominant, not a bright green: #2ECC71 as a band
-        // would leave the countdown at ~2:1. Brighter than the pre-#277
-        // full-screen fill: a band this size has to hold its own against the
-        // black around it, and only the label sits on it.
-        case .climbing: base = PhaseRGB(0.05, 0.36, 0.19)
-        // Deep navy-blue, the calmest of the three (8.6:1) — it is the phase
-        // you spend the most time staring at.
-        case .resting: base = PhaseRGB(0.08, 0.28, 0.62)
-        // Deep red (8.2:1). Sits far from both others in hue *and* in channel
-        // dominance, so the flip still reads under a red/green colour
-        // deficiency and under the always-on dim.
-        case .restOver: base = PhaseRGB(0.62, 0.08, 0.09)
+        // Phone's climbing blue, composited toward black at 48% — brought
+        // down just far enough to clear AAA under a white label without
+        // losing the hue to "deep navy". Accepted hue-adjacency trade
+        // (#277 follow-up): climbing and resting are now both blue-leaning,
+        // so the CVD-safe green/blue/red separation the earlier palette had
+        // is gone by design — the phone's colour *meanings* won out.
+        case .climbing: base = phoneSuccess.over(.black, opacity: 0.48)
+        // Phone's resting purple, composited at 65% — needs more of the hue
+        // left in than climbing to read as distinct from it at this size.
+        case .resting: base = phonePrimary.over(.black, opacity: 0.65)
+        // Phone's rest-over orange, composited at 48%. The only band with a
+        // red-dominant channel, so the flip still reads under a red/green
+        // colour deficiency and under the always-on dim.
+        case .restOver: base = phoneDanger.over(.black, opacity: 0.48)
         }
         return PhaseFill(
             screen: .black,

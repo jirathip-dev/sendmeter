@@ -141,10 +141,12 @@ struct WorkoutLiveView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
-                // Neutral, not red: it sits on the black screen next to a
-                // band that can itself be red, and the word carries the
-                // meaning — the band owns the colour.
-                .tint(.white)
+                // Phone's "act now" orange (#277 follow-up) — ending a
+                // workout is the same weight of action as the phone
+                // fullscreen's Stop pill, and it now sits on black rather
+                // than on a band that itself can be red, so the two colours
+                // never collide.
+                .tint(color(WorkoutPhasePalette.phoneDanger))
                 .disabled(ending)
             }
         }
@@ -264,7 +266,9 @@ struct WorkoutLiveView: View {
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.circle)
-            .tint(workout.manualClimbing ? .orange : .green)
+            // Same hues as the phase band (#277 follow-up): stop reads "act
+            // now" like rest-over, play reads "go" like climbing.
+            .tint(color(workout.manualClimbing ? WorkoutPhasePalette.phoneDanger : WorkoutPhasePalette.phoneSuccess))
             .fixedSize()
             .accessibilityLabel(workout.manualClimbing ? "Stop boulder" : "Start boulder")
 
