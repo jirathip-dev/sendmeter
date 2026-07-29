@@ -2,64 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import type { PluginListenerHandle } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
-import type { LiveWorkoutMessage } from "sendlog-auth-bridge";
 import { supabase } from "../lib/supabase";
 import { fetchLiveWorkout } from "../lib/repo";
 import type { LiveWorkout } from "../types";
+import {
+  appendHrPoint,
+  messageToLive,
+  preferFresher,
+  rowToLive,
+  visibleLiveWorkout,
+  type HrLog,
+  type LiveHrPoint,
+} from "../lib/liveWorkoutMirror";
 
-/// How long a heartbeat may go quiet before the workout is presumed dead
-/// (watch upserts every ~5s; 30s of silence = app killed / walked away).
-const STALE_MS = 30_000;
-
-/// WatchConnectivity beat → LiveWorkout (epoch seconds → ISO strings). The
-/// WC path has no workout_id; keep the previous row's id so correlation
-/// survives (beats always follow the initial Supabase row in practice).
-function messageToLive(
-  msg: LiveWorkoutMessage,
-  prev: LiveWorkout | null,
-): LiveWorkout {
-  const iso = (sec: number | undefined) =>
-    sec !== undefined ? new Date(sec * 1000).toISOString() : null;
-  return {
-    workoutId: prev?.workoutId ?? "wc-live",
-    status: msg.status,
-    startedAt: iso(msg.started_at) ?? prev?.startedAt ?? new Date().toISOString(),
-    hr: msg.hr ?? null,
-    attemptCount: msg.attempt_count ?? 0,
-    activeKcal: msg.active_kcal ?? null,
-    elevationGainM: msg.elevation_gain_m ?? null,
-    climbing: msg.climbing ?? false,
-    climbingSince: iso(msg.climbing_since),
-    restStartedAt: iso(msg.rest_started_at),
-    restTargetS: msg.rest_target_s ?? null,
-    updatedAt: iso(msg.updated_at) ?? new Date().toISOString(),
-  };
-}
-
-function rowToLive(row: Record<string, unknown>): LiveWorkout {
-  return {
-    workoutId: row.workout_id as string,
-    status: row.status as LiveWorkout["status"],
-    startedAt: row.started_at as string,
-    hr: row.hr as number | null,
-    attemptCount: row.attempt_count as number,
-    activeKcal: row.active_kcal as number | null,
-    elevationGainM: row.elevation_gain_m as number | null,
-    climbing: row.climbing as boolean,
-    climbingSince: (row.climbing_since as string | null) ?? null,
-    restStartedAt: (row.rest_started_at as string | null) ?? null,
-    restTargetS: (row.rest_target_s as number | null) ?? null,
-    updatedAt: row.updated_at as string,
-  };
-}
-
-/// One point of the client-accumulated live HR series (SL-90) — every
-/// heartbeat's HR reading, collected while the mirror is open so the
-/// fullscreen can chart the workout's HR in real time.
-export interface LiveHrPoint {
-  t: number; // ms epoch of the beat
-  hr: number;
-}
+export type { LiveHrPoint };
 
 /// The user's in-progress watch workout, mirrored live (SL-41): one initial
 /// fetch plus a dedicated realtime channel that reads row payloads directly.
@@ -77,10 +33,7 @@ export function useLiveWorkout(
   // HR series keyed by workout id so a new workout starts a fresh chart.
   // Appended only inside async callbacks (react-compiler: no sync setState
   // in effect bodies).
-  const [hrLog, setHrLog] = useState<{ id: string; pts: LiveHrPoint[] }>({
-    id: "",
-    pts: [],
-  });
+  const [hrLog, setHrLog] = useState<HrLog>({ id: "", pts: [] });
   // Re-evaluate staleness on a timer even with no new events.
   const [now, setNow] = useState(() => Date.now());
 
@@ -88,14 +41,7 @@ export function useLiveWorkout(
     let cancelled = false;
 
     function ingest(next: LiveWorkout) {
-      if (next.status !== "live" || next.hr === null) return;
-      const pt = { t: new Date(next.updatedAt).getTime(), hr: next.hr };
-      setHrLog((prev) => {
-        if (prev.id !== next.workoutId) return { id: next.workoutId, pts: [pt] };
-        const last = prev.pts[prev.pts.length - 1];
-        if (last && pt.t <= last.t) return prev; // duplicate/out-of-order beat
-        return { id: prev.id, pts: [...prev.pts, pt] };
-      });
+      setHrLog((prev) => appendHrPoint(prev, next));
     }
 
     fetchLiveWorkout()
@@ -136,10 +82,8 @@ export function useLiveWorkout(
     if (Capacitor.isNativePlatform()) {
       void SendLogAuthBridge.addListener("liveWorkout", (msg) => {
         const prev = rowRef.current;
-        const next = messageToLive(msg, prev);
-        if (prev && new Date(prev.updatedAt).getTime() > new Date(next.updatedAt).getTime()) {
-          return; // a fresher supabase row already landed
-        }
+        const next = preferFresher(prev, messageToLive(msg, prev));
+        if (next === prev) return; // a fresher supabase row already landed
         rowRef.current = next;
         setRow(next);
         ingest(next);
@@ -157,7 +101,5 @@ export function useLiveWorkout(
     };
   }, [userId]);
 
-  if (!row || row.status !== "live") return [null, []];
-  if (now - new Date(row.updatedAt).getTime() > STALE_MS) return [null, []];
-  return [row, hrLog.id === row.workoutId ? hrLog.pts : []];
+  return visibleLiveWorkout(row, hrLog, now);
 }
