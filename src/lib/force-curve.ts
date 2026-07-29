@@ -254,7 +254,10 @@ export const ZONE_PROTOCOLS: Record<
   power: { holdS: 5, restRepsS: 150, reps: 6, sets: 1, restSetsS: 0 },
   strength: { holdS: 10, restRepsS: 150, reps: 5, sets: 1, restSetsS: 0 },
   "power-endurance": { holdS: 7, restRepsS: 3, reps: 6, sets: 4, restSetsS: 120 },
-  endurance: { holdS: 30, restRepsS: 30, reps: 8, sets: 1, restSetsS: 0 },
+  // #320: 1 rep × 8 sets, not 8 reps × 1 set — buildTimeline alternates
+  // sides per SET, so the old shape (sets: 1) never triggered "Alternate
+  // left ⇄ right". Same 8×30s holds / 30s gaps / 450s total either way.
+  endurance: { holdS: 30, restRepsS: 0, reps: 1, sets: 8, restSetsS: 30 },
 };
 
 // ---------------------------------------------------------------------------
@@ -315,24 +318,26 @@ function adjustedHoldAboveCf(
   return roundHoldS(clamp(holdS, lo, hi));
 }
 
-/// Adjusted hold + reps for endurance: a pure heuristic of `pct`, holding
-/// total time-under-tension (reps × hold) roughly constant as intensity
-/// scales — hold grows with the square of `100/pct`, reps shrink to
-/// compensate. Deliberately NOT derived from the F(t) = CF + W′/t curve the
-/// above-CF zones use (adjustedHoldAboveCf): endurance targets sit at/below
-/// CF (zoneTarget's 80–100% of CF), where that hyperbola isn't valid — it
-/// models the finite W′ reservoir above CF, which doesn't exist down here.
+/// Adjusted hold + sets for endurance: a pure heuristic of `pct`, holding
+/// total time-under-tension (sets × hold) roughly constant as intensity
+/// scales — hold grows with the square of `100/pct`, sets shrink to
+/// compensate (reps stays 1 — see #320: the protocol shape is 1 rep × 8
+/// sets so alternation fires per hold). Deliberately NOT derived from the
+/// F(t) = CF + W′/t curve the above-CF zones use (adjustedHoldAboveCf):
+/// endurance targets sit at/below CF (zoneTarget's 80–100% of CF), where
+/// that hyperbola isn't valid — it models the finite W′ reservoir above CF,
+/// which doesn't exist down here.
 /// Exported for direct testing of the [20, 240]s clamp (unreachable through
 /// zoneTarget/zonePrescription alone since those clamp pct to [60, 110] first).
 export function adjustedEndurance(
   baseHoldS: number,
-  baseReps: number,
+  baseSets: number,
   pct: number,
-): { holdS: number; reps: number } {
+): { holdS: number; sets: number } {
   const rawHoldS = baseHoldS * (100 / pct) ** 2;
   const holdS = roundHoldS(clamp(rawHoldS, 20, 240));
-  const reps = clamp(Math.round((baseReps * baseHoldS) / holdS), 1, baseReps);
-  return { holdS, reps };
+  const sets = clamp(Math.round((baseSets * baseHoldS) / holdS), 1, baseSets);
+  return { holdS, sets };
 }
 
 export function zoneTarget(
@@ -399,7 +404,7 @@ export function zoneTarget(
       if (model.cf === null) return null;
       const baseKg = round1(model.cf * 0.9);
       const newKg = round1(baseKg * scale);
-      const { holdS } = adjustedEndurance(ZONE_PROTOCOLS.endurance.holdS, ZONE_PROTOCOLS.endurance.reps, pct);
+      const { holdS } = adjustedEndurance(ZONE_PROTOCOLS.endurance.holdS, ZONE_PROTOCOLS.endurance.sets, pct);
       return {
         quality,
         label: "Endurance",
@@ -435,8 +440,8 @@ export function zonePrescription(
   if (!target) return null;
   const zp = ZONE_PROTOCOLS[quality];
   if (quality === "endurance") {
-    const { holdS, reps } = adjustedEndurance(zp.holdS, zp.reps, clampIntensity(intensityPct));
-    return { target, holdS, reps, sets: zp.sets, restRepsS: zp.restRepsS, restSetsS: zp.restSetsS };
+    const { holdS, sets } = adjustedEndurance(zp.holdS, zp.sets, clampIntensity(intensityPct));
+    return { target, holdS, reps: zp.reps, sets, restRepsS: zp.restRepsS, restSetsS: zp.restSetsS };
   }
   return {
     target,

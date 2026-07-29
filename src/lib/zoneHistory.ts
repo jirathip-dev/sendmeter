@@ -94,8 +94,16 @@ export function classifyZoneLoaded(
 /// ZONE_PROTOCOLS — the unit `zoneTrainingSets` normalises against. Exported
 /// for #214's breakdown, which shows the division rather than asserting the
 /// quotient (see lib/zoneBreakdown.ts).
+///
+/// Endurance is a special case (#320): its protocol shape is 1 rep × 8 sets
+/// (so per-set alternation fires), but the training-balance unit is still
+/// the whole 8-hold protocol — holdS × reps alone would drop this to 30s and
+/// inflate endurance training-balance 8×. Other zones keep holdS × reps
+/// only (power-endurance's own 4 sets are deliberately NOT multiplied in —
+/// its unit is one 6-rep round, unchanged by this issue).
 export function zoneSetDurationS(zone: TrainingQuality): number {
   const zp = ZONE_PROTOCOLS[zone];
+  if (zone === "endurance") return zp.holdS * zp.reps * zp.sets;
   return zp.holdS * zp.reps;
 }
 

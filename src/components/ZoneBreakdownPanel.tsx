@@ -85,7 +85,7 @@ function ZoneRow({
   totalHoldS,
   setDurationS,
   sets,
-  reps,
+  holdCount,
   holdS,
   recordedCount,
   inferredCount,
@@ -96,7 +96,7 @@ function ZoneRow({
   totalHoldS: number;
   setDurationS: number;
   sets: number;
-  reps: number;
+  holdCount: number;
   holdS: number;
   recordedCount: number;
   inferredCount: number;
@@ -142,7 +142,7 @@ function ZoneRow({
         ) : (
           <>
             {fmt1(totalHoldS)}s of holds ÷ {setDurationS}s per set ({holdS}s ×{" "}
-            {reps} reps) = {fmt1(sets)}
+            {holdCount} holds) = {fmt1(sets)}
           </>
         )}
       </div>
@@ -211,7 +211,11 @@ export default function ZoneBreakdownPanel({ recs, showTag }: Props) {
             setDurationS={e.setDurationS}
             sets={e.sets}
             holdS={zp.holdS}
-            reps={zp.reps}
+            // #320: endurance's set length is holdS × reps × sets (8 holds,
+            // not zp.reps's 1) — divide back out of setDurationS so the
+            // identity shown (holdS × count = setDurationS) stays true for
+            // every zone instead of drifting for endurance alone.
+            holdCount={e.setDurationS / zp.holdS}
             recordedCount={e.recordedCount}
             inferredCount={e.inferredCount}
             showTag={showTag}
