@@ -6,12 +6,19 @@ import {
 } from "./force-curve";
 import { classifyZoneLoaded } from "./zoneHistory";
 import type { GaugeTarget } from "../components/ForceCurveCard";
-import type { TindeqPreset } from "../types";
+import type { TindeqPreset, TindeqSide } from "../types";
 
 /// A selected zone = a load band for the live chart + a full guided protocol
 /// (pull time / rest / reps / sets) for the fullscreen countdown. Shared by
 /// TargetZonesCard (the chips) and ZoneFocusCard (the SL-100 recommendation).
 export interface ZoneSelection {
+  /// The zoneTag (exercise, plus " · side" when single-handed) this selection
+  /// was built against (#298 round 6, finding 3) — NOT necessarily the
+  /// current one: `rederiveSelection` holds this selection as-is while the
+  /// curve for a NEW tag is still fitting, so `tag` is what lets a caller
+  /// detect that staleness (`armedForDifferentTag`) instead of assuming a
+  /// held selection always matches whatever tag is live now.
+  tag: string;
   target: GaugeTarget;
   protocol: TindeqPreset;
 }
@@ -42,6 +49,7 @@ export function buildZoneSelection(
   if (!p) return null;
   const t = p.target;
   return {
+    tag,
     target: {
       kg: t.targetKg,
       lowKg: t.lowKg,
@@ -111,6 +119,86 @@ export function applyIntensity(
   const q = selectedQuality(sel);
   if (!sel || !q || !model || !tag) return sel;
   return buildZoneSelection(model, q, tag, sel.protocol.alternateSides, intensityPct) ?? sel;
+}
+
+/// Re-derive whatever is currently armed for a NEW tag/side/intensity
+/// (#298). `buildZoneSelection` only runs when a zone chip (or the
+/// recommendation card) is tapped, so `zoneSel` otherwise keeps whatever
+/// tag/kg it was armed under — switching tag/side afterwards (the
+/// fullscreen's tag chips) left the armed protocol/band on the OLD tag's
+/// numbers. Callers re-derive from this on every render instead. Unlike
+/// `applyIntensity` (which keeps the current selection when a zone briefly
+/// can't be derived — a dial nudge shouldn't disarm), this returns **null**
+/// on failure: a tag switch that can't derive the zone must read as a free
+/// hold, never as the previous tag's numbers. A non-zone id (custom preset)
+/// and a null selection both pass through untouched.
+///
+/// A `null` model is held rather than treated as failure (mirrors
+/// `applyIntensity`) — `model` goes null both when the curve genuinely
+/// rejects this zone AND when there simply isn't one yet (still fitting, or
+/// a fetch failure), and the latter is reachable mid-run: a rep saved under a
+/// freshly-typed tag joins `allTags`, flips `effectiveTag`/`tagSideKey`, and
+/// the recompute effect (blocked by `curveFrozen`) never refreshes `model`
+/// for the new key. Disarming here would drop the guided UI and gauge band
+/// out from under a frozen, still-recording run.
+export function rederiveSelection(
+  sel: ZoneSelection | null,
+  model: ForceCurveModel | null,
+  tag: string | null,
+  intensityPct: number,
+): ZoneSelection | null {
+  const q = selectedQuality(sel);
+  if (!sel || !q) return sel;
+  if (!model) return sel;
+  if (!tag) return null;
+  return buildZoneSelection(model, q, tag, sel.protocol.alternateSides, intensityPct);
+}
+
+/// Whether the currently ARMED protocol (custom preset or zone) alternates
+/// sides (#298). Read straight off the selection's own `alternateSides` —
+/// set once, at pick time, and preserved as-is across a tag/side switch (see
+/// `rederiveSelection`) — never off a value derived FROM the side/tag
+/// picked, or a caller deriving the picked side FROM this would be circular.
+/// `preset` and `zoneSel` are mutually exclusive (see `selectZoneOutcome` /
+/// `withPresetSelected` in forceSelection.ts); neither armed is `false`, not
+/// an error — a free hold has no side of its own to protect.
+export function armedAlternates(
+  preset: TindeqPreset | null,
+  zoneSel: ZoneSelection | null,
+): boolean {
+  return preset ? preset.alternateSides : (zoneSel?.protocol.alternateSides ?? false);
+}
+
+/// The side a curve reference (chart filter / armed-zone target) should use
+/// (#298). An alternating protocol trains BOTH hands, so while one is armed
+/// this is always null (all sides) regardless of whatever side is otherwise
+/// picked — that side only ever applies to a single-hand protocol or a free
+/// hold, and letting it leak through here would silently target (and
+/// curve-fit) one hand's data for a two-handed run.
+export function chartSideFor(
+  alternates: boolean,
+  pendingSide: TindeqSide,
+): TindeqSide | null {
+  if (alternates) return null;
+  return pendingSide === "left" || pendingSide === "right" ? pendingSide : null;
+}
+
+/// Whether the armed zone was built under a DIFFERENT tag than the one now
+/// live (#298 round 6, finding 3) — e.g. ticking "Alternate left ⇄ right"
+/// flips `chartSideFor` to null, changing `zoneTag` out from under a
+/// selection baked for a single side. `rederiveSelection` deliberately HOLDS
+/// a selection as-is while its model is still fitting (see that function's
+/// own doc — a still-fitting curve isn't a rejection), so `armedZone` keeps
+/// existing but its numbers belong to the OLD tag until the new tag's curve
+/// lands. Combined with the caller's own "is that curve still fetching" check
+/// (ForceView's `curveComputing` — a tag that will NEVER get a curve must not
+/// block Start forever), this is what tells the caller to block Start rather
+/// than run a whole set against the wrong tag's prescription.
+export function armedForDifferentTag(
+  sel: ZoneSelection | null,
+  tag: string | null,
+): boolean {
+  return sel !== null && sel.tag !== tag;
 }
 
 /// The zone a PROTOCOL arms, parsed back from the `zone:${q}` id

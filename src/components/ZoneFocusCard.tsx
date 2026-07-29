@@ -20,6 +20,10 @@ interface Props {
   model: ForceCurveModel | null;
   /// Arm the recommended zone on the gauge + guided timer (SL-100).
   onPick: (q: TrainingQuality) => void;
+  /// #298 round 6 (finding A1): ForceView locks the gauge inputs for the
+  /// whole duration of a run — arming a different zone mid-run must not be
+  /// reachable any more than TargetZonesCard's own chips are.
+  locked: boolean;
 }
 
 const WINDOW_DAYS = 28;
@@ -32,7 +36,7 @@ const fmt1 = (n: number) => (Math.round(n * 10) / 10).toFixed(1);
 /// breaking near-ties. Tapping the recommendation arms its guided zone
 /// protocol; tapping the card opens the page that shows every number's
 /// arithmetic (#214).
-export default function ZoneFocusCard({ recordings, exercise, model, onPick }: Props) {
+export default function ZoneFocusCard({ recordings, exercise, model, onPick, locked }: Props) {
   // `new Date()` is impure in render — freeze it once for this mount.
   const [now] = useState(() => new Date());
   const [detailOpen, setDetailOpen] = useState(false);
@@ -166,6 +170,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick }: P
           e.stopPropagation(); // arming the zone is not "open the detail page"
           onPick(rec.zone);
         }}
+        disabled={locked}
         style={{
           marginTop: 12,
           width: "100%",
@@ -177,7 +182,8 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick }: P
           borderRadius: 10,
           border: `1px solid ${QUALITY_COLORS[rec.zone]}`,
           background: `color-mix(in srgb, ${QUALITY_COLORS[rec.zone]} 12%, transparent)`,
-          cursor: "pointer",
+          cursor: locked ? "default" : "pointer",
+          opacity: locked ? 0.6 : 1,
           fontFamily: "inherit",
         }}
       >

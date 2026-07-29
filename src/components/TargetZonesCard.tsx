@@ -23,6 +23,16 @@ interface Props {
   /// this card renders (#172). Scales recommended zones only.
   intensityPct: number;
   onIntensityChange: (pct: number) => void;
+  /// #298 round 5: ForceView locks the gauge inputs (tag/side/selection/
+  /// intensity/PR) for the whole duration of a run — any of the zone chips,
+  /// the alternate-sides checkbox, the slider, or Clear moving mid-run would
+  /// mean the set you finish isn't the set you started. Disables all of
+  /// them rather than leaving a control that looks live but is inert.
+  locked: boolean;
+  /// Unarm via ForceView's `clearProtocol` (#298) — drops the persisted
+  /// preset key too, not just this card's own `selected` prop, so a stale
+  /// key can't re-arm a preset on the next mount.
+  onClear: () => void;
 }
 
 function fmt(sec: number): string {
@@ -44,6 +54,8 @@ export default function TargetZonesCard({
   onSelect,
   intensityPct,
   onIntensityChange,
+  locked,
+  onClear,
 }: Props) {
   const [alternate, setAlternate] = useState(false);
   // Above the recommended load — the number, the slider fill and the note all
@@ -89,6 +101,7 @@ export default function TargetZonesCard({
                   label={q.label}
                   active={isActive}
                   color={QUALITY_COLORS[q.id]}
+                  disabled={locked}
                   onClick={() => {
                     if (isActive) {
                       onSelect(null);
@@ -118,6 +131,7 @@ export default function TargetZonesCard({
               max={ZONE_INTENSITY.max}
               step={ZONE_INTENSITY.step}
               value={intensityPct}
+              disabled={locked}
               onChange={(e) => {
                 const next = Number(e.target.value);
                 // A range input only emits when its *stepped* value changes,
@@ -131,6 +145,7 @@ export default function TargetZonesCard({
                 flex: 1,
                 minWidth: 0,
                 accentColor: heavy ? "var(--warning)" : "var(--primary)",
+                opacity: locked ? 0.5 : 1,
               }}
             />
             <span
@@ -145,6 +160,11 @@ export default function TargetZonesCard({
               {intensityPct}%
             </span>
           </div>
+          {locked && (
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
+              Locked while measuring — applies to your next run.
+            </div>
+          )}
           {active && zoneT && selected ? (
             <div style={{ marginTop: 10 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -202,6 +222,7 @@ export default function TargetZonesCard({
                 <input
                   type="checkbox"
                   checked={alternate}
+                  disabled={locked}
                   onChange={(e) => {
                     setAlternate(e.target.checked);
                     if (quality)
@@ -212,6 +233,22 @@ export default function TargetZonesCard({
                 />
                 Alternate left ⇄ right each set (otherwise uses the selected side)
               </label>
+              {/* #298: an explicit unarm, alongside re-tapping the active
+                  chip above — easier to spot than "tap the thing you already
+                  tapped again". Routes through ForceView's `clearProtocol`
+                  (round 4), same as the fullscreen's identical button — not
+                  `onSelect(null)`, which leaves the persisted preset key
+                  behind for `PresetManager` to resurrect on the next mount.
+                  #298 round 5 (finding 4): disabled while locked — tapping
+                  Clear mid-run must not silently apply once the run ends. */}
+              <button
+                onClick={onClear}
+                disabled={locked}
+                className="glass-pill"
+                style={{ marginTop: 10, padding: "6px 14px", fontSize: "var(--t-2xs)" }}
+              >
+                Clear — free hold
+              </button>
             </div>
           ) : (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>

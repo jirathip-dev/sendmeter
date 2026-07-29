@@ -25,6 +25,8 @@ import {
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import { buildTimeline, presetTargetKg, timelineAt } from "../lib/protocol";
 import type { ProtocolSegment } from "../lib/protocol";
+import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
+import type { GaugeInputs } from "../lib/gaugeInputLock";
 import {
   endTindeqLiveActivity,
   startTindeqLiveActivity,
@@ -52,9 +54,13 @@ import TagSideEditor from "./TagSideEditor";
 import TargetZonesCard from "./TargetZonesCard";
 import {
   applyIntensity,
+  armedAlternates,
+  armedForDifferentTag,
   buildZoneSelection,
+  chartSideFor,
   loadIntensity,
   performedQuality,
+  rederiveSelection,
   saveIntensity,
   type ZoneSelection,
 } from "../lib/zoneSelection";
@@ -216,10 +222,28 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     setPreset(next.preset);
     if (next.zoneSel !== zoneSel) setZoneSel(next.zoneSel);
   }
+  // #298: one explicit "unarm" affordance for both the tab and the
+  // fullscreen — drops whichever of zone/preset is active AND the persisted
+  // preset key, so a stale key can't re-arm the preset on the next mount
+  // (the #296 class; `PresetManager` owns that key at `clearPersistedPreset`).
+  function clearProtocol() {
+    setZoneSel(null);
+    setPreset(null);
+    clearPersistedPreset();
+  }
   // Global session-intensity dial (SL-97b) — one number for the whole
   // Protocol-presets section (zones AND custom presets), lazily seeded from
   // localStorage so a returning user keeps their last adjustment.
   const [intensityPct, setIntensityPct] = useState(() => loadIntensity());
+  // Read inside the curve-recompute effect's `.then` below (an async path) —
+  // the effect's deps are keyed on `curveKey`, so a dial move alone doesn't
+  // cancel/rerun it, and the closed-over `intensityPct` would otherwise
+  // evaluate the disarm check at the pct that was current when the fetch
+  // started, not when it resolves.
+  const intensityPctRef = useRef(intensityPct);
+  useEffect(() => {
+    intensityPctRef.current = intensityPct;
+  }, [intensityPct]);
   // Force-curve model for the selected tag/side — auto-computed (no button)
   // and shared by the curve card + the target-zones picker.
   const [curveModel, setCurveModel] = useState<ForceCurveModel | null>(null);
@@ -386,8 +410,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       peakKg: Math.max(...kgs),
       avgKg: Math.round((kgs.reduce((a, b) => a + b, 0) / kgs.length) * 100) / 100,
       note: "",
-      tag: pendingTag.trim(),
-      side: seg.side ?? pendingSide,
+      // #298 round 5 (finding 2): the LOCKED pendingTag/pendingSide, not the
+      // raw state — TagSideEditor is editable until this run's Start, so
+      // reading the raw values here would let a tag change mid-run file
+      // later reps under a different tag than the zone/target they were
+      // actually performed against.
+      tag: gaugeInputs.pendingTag,
+      side: seg.side ?? gaugeInputs.pendingSide,
       groupId: ensureSession(),
       protocolRunId: protocolRunIdRef.current,
       setNo: seg.set,
@@ -396,6 +425,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // set's target (per-set ramps can move it). Without this the load half
       // of that decision is thrown away and the hold gets re-classified from
       // duration alone on every later read.
+      // #298 round 5: `activeProtocol` and `presetRefs.prKg` are themselves
+      // derived from the LOCKED gauge inputs, so neither can have changed
+      // since this run started — nothing further to freeze here.
       zone: performedQuality(
         activeProtocol,
         activeProtocol ? presetTargetKg(activeProtocol, presetRefs, seg.set) : null,
@@ -443,7 +475,22 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   }
 
   async function runStop(note: string) {
-    if (timeline) {
+    // #298 round 5: `timeline` is itself derived from the LOCKED gauge
+    // inputs, which now stay locked for as long as `runActive` — measuring OR
+    // `tindeq.pendingInterruption` — not just `measuring` alone (finding 1).
+    // That matters here specifically: a mid-run BLE drop sets `measuring`
+    // false in the same render it claims the interruption, and THIS call is
+    // what the deferred stop effect runs to finish that drop. Without the
+    // wider `runActive` window, a tag/protocol change (or a "Clear — free
+    // hold" tap) landing in the gap between the drop and this call would
+    // re-derive a different (or absent) `timeline` right underneath it,
+    // taking the guided per-rep branch below when the run that's actually
+    // finishing was guided (or vice versa) — the double-count hazard
+    // CLAUDE.md warns about for guided protocols. `pendingInterruption` is
+    // cleared inside `tindeq.stop()` below, i.e. exactly when the run is
+    // really over, so there is nothing further to freeze here.
+    const runTimeline = timeline;
+    if (runTimeline) {
       const tMs = tindeq.elapsedMs;
       const physS = tMs / 1000;
       // Walk the timeline in PROTOCOL time (physical clock + Pause/Skip shift).
@@ -452,14 +499,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       setSaving(true);
       try {
         // Flush any completed-but-unflushed holds, then a ≥1s partial hold.
-        let idx = timeline.findIndex((s) => effS < s.startS + s.durS);
-        if (idx === -1) idx = timeline.length;
+        let idx = runTimeline.findIndex((s) => effS < s.startS + s.durS);
+        if (idx === -1) idx = runTimeline.length;
         for (let i = savedThroughRef.current; i < idx; i++) {
-          const seg = timeline[i]!;
+          const seg = runTimeline[i]!;
           if (seg.phase === "hold") await saveHoldSlice(seg, i);
         }
         savedThroughRef.current = idx;
-        const pos = timelineAt(timeline, effS);
+        const pos = timelineAt(runTimeline, effS);
         // idx is the current (in-progress) segment — same key the autosave
         // effect would use, so the guard dedupes the two paths.
         if (
@@ -482,11 +529,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // drop fired. That's the same pre-Start label the sign-out salvage path
     // writes from salvageContextRef; the two recovery paths were inconsistent.
     // Read BEFORE tindeq.stop(), which releases the claim and the snapshot.
+    // #298 round 6 (finding B1): the LOCKED gaugeInputs.pendingTag/.pendingSide,
+    // not the raw state — same reasoning as saveHoldSlice above. This branch
+    // is only reachable while TagSideEditor is disabled (runActive), so raw
+    // and locked agree today, but reading raw here was reachable "only by
+    // convention" — exactly the class of bug CLAUDE.md's #196 note warns about.
     const { tag, side } =
       note === ""
-        ? { tag: pendingTag.trim(), side: pendingSide }
+        ? { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide }
         : recoveredTagSide(
-            { tag: pendingTag.trim(), side: pendingSide },
+            { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide },
             tindeq.interruptionContext,
           );
     const summary = await tindeq.stop();
@@ -540,12 +592,72 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // label the next recording AND drive the target zones, trend and curve.
   // Charts fall back to the most-recorded tag while the input doesn't match
   // an existing one (mid-typing / brand-new tag).
+  const measuring = tindeq.status === "measuring";
+  // #298 round 5 (finding 1): a mid-measurement BLE drop batches
+  // `setStatus("idle")` with claiming the interruption in the SAME render
+  // (useTindeq's handleDeviceDropped), so `measuring` alone already reads
+  // false before the deferred stop that actually finishes the run has run.
+  // The gauge-input lock below holds for as long as `runActive` — releasing
+  // only once `tindeq.stop()` (inside that deferred stop) clears
+  // `pendingInterruption`, i.e. exactly when the run is really over.
+  const runActive = measuring || tindeq.pendingInterruption;
   const trimmedTag = pendingTag.trim();
-  const effectiveTag = allTags.includes(trimmedTag)
+  const liveEffectiveTag = allTags.includes(trimmedTag)
     ? trimmedTag
     : (allTags[0] ?? null);
-  const chartSide: TindeqSide | null =
-    pendingSide === "left" || pendingSide === "right" ? pendingSide : null;
+  // #298: an alternating protocol trains BOTH hands, so its curve reference
+  // must never lock to one — chartSide feeds zoneTag → armedZone's target
+  // below AND filters which recordings compute the curve (curveRecordings
+  // below), so a leftover single-side pick would silently target (and
+  // curve-fit) one hand's data for a two-handed run. `armedAlternates` reads
+  // straight off zoneSel/preset (see zoneSelection.ts) rather than off
+  // `activeProtocol` below, which is itself derived FROM chartSide/zoneTag
+  // and would make this circular.
+  const liveChartSide = chartSideFor(armedAlternates(preset, zoneSel), pendingSide);
+  // #298 round 5 (finding 3): the live PR — from the CURRENT tag/side, not
+  // the already-locked `effectiveTag`/`chartSide` below (this feeds the same
+  // struct those are locked through, so using the locked version here would
+  // be circular).
+  const liveCurveRecordingsForPr = recordings.filter(
+    (r) =>
+      liveEffectiveTag !== null &&
+      r.tag === liveEffectiveTag &&
+      (liveChartSide === null || r.side === liveChartSide),
+  );
+  const livePrKg = liveCurveRecordingsForPr.length
+    ? Math.max(...liveCurveRecordingsForPr.map((r) => r.peakKg))
+    : null;
+  const liveGaugeInputs: GaugeInputs = {
+    tag: liveEffectiveTag,
+    chartSide: liveChartSide,
+    zoneSel,
+    preset,
+    intensityPct,
+    // #298 round 5 (finding 2): the raw Exercise&Side fields, separate from
+    // `tag` above — see the field's own doc in gaugeInputLock.ts.
+    pendingTag: trimmedTag,
+    pendingSide,
+    prKg: livePrKg,
+  };
+  // #298 round 5: hold the gauge inputs (tag, side, raw pendingTag/
+  // pendingSide, the armed zone/preset selection, intensity, and PR)
+  // constant for the whole duration of a run — see gaugeInputLock.ts for why
+  // this replaced freezing the derived protocol/timeline instead. Computed
+  // every render (the React "storing information from previous renders"
+  // pattern, not an effect) so there is no one-render lag: the very render
+  // `runActive` turns true already reads the correct snapshot, because
+  // `lockedGaugeInputs` was kept synced to the live values on every render up
+  // to that point.
+  const [lockedGaugeInputs, setLockedGaugeInputs] = useState<GaugeInputs>(liveGaugeInputs);
+  const gaugeInputs = nextLockedGaugeInputs(runActive, liveGaugeInputs, lockedGaugeInputs);
+  if (gaugeInputs !== lockedGaugeInputs) setLockedGaugeInputs(gaugeInputs);
+  const effectiveTag = gaugeInputs.tag;
+  const chartSide = gaugeInputs.chartSide;
+
+  // The composed exercise label a zone selection arms/re-arms under (matches
+  // the `tag` prop TargetZonesCard/ZoneFocusCard render with). Null while no
+  // tag is selected yet.
+  const zoneTag = effectiveTag ? (chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag) : null;
 
   // Auto-compute the force curve for the active tag/side (default show — no
   // "Compute" button). All state writes happen in async callbacks; "which key
@@ -560,7 +672,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const tagSideKey = `${effectiveTag ?? ""}|${chartSide ?? "all"}`;
   const curveKey = `${tagSideKey}|${curveRecordings.length}`;
   const canComputeCurve = effectiveTag !== null && curveRecordings.length > 0;
-  const curveFrozen = tindeq.status === "measuring";
+  // Frozen for the whole run, not just while `measuring` (#298): the stop flow
+  // runs during the `pendingInterruption` gap, when `runStop` is still flushing
+  // per-rep saves. Keying this on `measuring` alone let the recompute refire in
+  // that gap — exactly the SL-80 short-hold flood that can null CF, and it can
+  // reach `saveTagCurve`, which the watch reads back for RPE prediction.
+  const curveFrozen = runActive;
   useEffect(() => {
     if (!canComputeCurve) return;
     // Freeze mid-run (SL-80): every per-rep save bumps the count and would
@@ -570,6 +687,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     let cancelled = false;
     // Best per duration bucket over a long window — NOT the latest N, which a
     // burst of short reps floods (SL-80).
+    //
+    // #298 round 5: `react-hooks/purity` flags this `Date.now()` call, but
+    // it's a false positive from this rule attributing the pure-updater
+    // requirement of the `setZoneSel` functional update below onto the WHOLE
+    // effect callback — effects (this one included) are allowed to be
+    // impure; only the updater passed to `setZoneSel` itself needs to be a
+    // pure function of its `prev` argument, and it is (`rederiveSelection` is
+    // pure). Confirmed by isolating this exact call: removing the
+    // `setZoneSel(prev => ...)` below makes the diagnostic disappear with
+    // nothing else changed.
+    // eslint-disable-next-line react-hooks/purity
     const now = Date.now();
     const recs = pickCurveRecordings(curveRecordings, now);
     // Per-period picks for the curve-shift overlays (strict windows — an
@@ -585,12 +713,40 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     const ids = [
       ...new Set([...recs, ...periodPicks.flatMap((p) => p.recs)].map((r) => r.id)),
     ];
-    Promise.all(ids.map((id) => fetchRecordingSamples(id)))
+    // Bounded (#298): `zoneCurvePending` disables Start until this settles, so
+    // a request that HANGS rather than rejecting would leave Start dead for the
+    // rest of the session under a message telling the user to wait a moment.
+    // Rejecting on a deadline routes into the `.catch` below, which records the
+    // failure and advances `curveComputedFor` — Start comes back, and the armed
+    // zone falls back to the already-documented "no fit for this tag" tradeoff
+    // instead of a dead button. Longer than `predictGroupRpe`'s 4s because this
+    // fetches every sample stream behind the curve, not two numbers.
+    let curveTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    Promise.race([
+      Promise.all(ids.map((id) => fetchRecordingSamples(id))),
+      new Promise<never>((_, reject) => {
+        curveTimeoutId = setTimeout(
+          () => reject(new Error("Timed out fetching recordings for this curve.")),
+          15_000,
+        );
+      }),
+    ])
+      .finally(() => clearTimeout(curveTimeoutId))
       .then((all) => {
         if (cancelled) return;
         const samplesById = new Map(ids.map((id, i) => [id, all[i]!]));
         const m = computeForceCurve(recs.map((r) => samplesById.get(r.id)!));
         setCurveModel(m);
+        // #298: this tag/side's fit just settled — if the zone currently
+        // armed can no longer be derived against it (e.g. the new tag has no
+        // CF), disarm for real rather than leaving a `zoneSel` that renders
+        // as a free hold now but would resurrect if the model changes again.
+        // Functional update (never the `zoneSel` closed over at effect-
+        // creation time) per the CLAUDE.md stale-closure rule — this `.then`
+        // can resolve after the user has since armed a different zone.
+        setZoneSel((prev) =>
+          rederiveSelection(prev, m, zoneTag, intensityPctRef.current) ? prev : null,
+        );
         setPeriodCurves(
           periodPicks.map((p) => ({
             label: p.label,
@@ -630,7 +786,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     return () => {
       cancelled = true;
     };
-    // curveKey encodes tag/side/count — the actual deps of this computation.
+    // curveKey encodes tag/side/count — the actual deps of the curve FETCH.
+    // intensityPct also feeds the disarm check above but is read through
+    // intensityPctRef, not this closure, precisely so it doesn't need to be
+    // (and doesn't need to trigger a re-fetch on every dial nudge).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [curveKey, canComputeCurve, curveFrozen]);
   // Serve the model as long as it belongs to this tag/side — even while a
@@ -646,9 +805,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
 
   // PR for the active exercise (+side) — the same best-peak the trend chart
   // marks as PR. Anchors presets whose target is a % of PR.
-  const prKg = curveRecordings.length
-    ? Math.max(...curveRecordings.map((r) => r.peakKg))
-    : null;
+  // #298 round 5 (finding 3): read from the LOCKED gauge inputs, not
+  // recomputed from `curveRecordings` here — that list grows on every
+  // per-rep save, so a `pctBasis: "pr"` preset would otherwise move its
+  // target mid-set the instant an early rep sets a new PR.
+  const prKg = gaugeInputs.prKg;
 
   // Force references a preset resolves its target against (PR / CF / W' / maxF).
   const presetRefs = {
@@ -658,34 +819,63 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     maxF: model?.maxF ?? null,
   };
 
+  // #298: `zoneSel` bakes its tag + kg at the moment a zone is picked, so it
+  // goes stale the instant tag/side changes afterwards (the fullscreen's tag
+  // chips, most visibly). Re-derive for the CURRENT tag/side/intensity on
+  // every render — derive, don't sync — rather than reading `zoneSel`
+  // directly below. While the curve is recomputing for a new tag `model` is
+  // momentarily null; `rederiveSelection` HOLDS the current selection rather
+  // than disarming on a null model (a still-fitting curve isn't a rejection —
+  // see its own doc comment), so this keeps the guided UI/gauge band up
+  // through the recompute and re-derives to the new tag once the model lands.
+  // #298 round 4: reads `gaugeInputs.zoneSel`/`.intensityPct`, not the raw
+  // `zoneSel`/`intensityPct` state — locked for the run's duration, so this
+  // stays put mid-run exactly like `effectiveTag`/`chartSide` above.
+  const armedZone = rederiveSelection(gaugeInputs.zoneSel, model, zoneTag, gaugeInputs.intensityPct);
+
+  // #298 round 6 (finding 3): block Start while the armed zone was built
+  // under a DIFFERENT tag than the one now live, and the curve for the new
+  // tag is still fetching. Ticking "Alternate left ⇄ right" is the reliable
+  // repro: it flips `chartSideFor` to null in the very next render, changing
+  // `zoneTag` out from under a selection baked for one side — `armedZone`
+  // above HOLDS that stale selection (a still-fitting curve isn't a
+  // rejection, see `rederiveSelection`'s own doc), so a Start landing in this
+  // window would freeze the curve fetch (`curveFrozen`) and run the WHOLE set
+  // against the wrong tag's numbers. Gated on `curveComputing`, not just
+  // "model is null" — a tag that will NEVER get a curve (0 recordings) must
+  // not block Start forever; see `armedForDifferentTag`'s own doc.
+  const zoneCurvePending = armedForDifferentTag(gaugeInputs.zoneSel, zoneTag) && curveComputing;
+
   // One guided-timer path: `selectZone`/`selectPreset` (#296) keep the two
   // selections mutually exclusive, so at most one of these is non-null — the
   // `??` here is just picking whichever is armed, not a precedence rule. The
   // chart band comes from the preset's target (kg, %-of-PR/CF, or the smart
   // curve — set 1 here; the fullscreen ramps it per set), else the zone.
-  const activeProtocol: TindeqPreset | null = preset ?? zoneSel?.protocol ?? null;
-  const presetKgSet1 = preset ? presetTargetKg(preset, presetRefs, 1) : null;
+  // `gaugeInputs.preset`, not raw `preset` (#298 round 4) — locked for the
+  // run's duration alongside the zone selection above.
+  const activeProtocol: TindeqPreset | null = gaugeInputs.preset ?? armedZone?.protocol ?? null;
+  const presetKgSet1 = gaugeInputs.preset ? presetTargetKg(gaugeInputs.preset, presetRefs, 1) : null;
   const bandTarget: GaugeTarget | null =
-    preset && presetKgSet1 != null
+    gaugeInputs.preset && presetKgSet1 != null
       ? {
           kg: presetKgSet1,
           lowKg: presetKgSet1 * 0.9,
           highKg: presetKgSet1 * 1.1,
-          workS: preset.holdS,
-          label: preset.name,
+          workS: gaugeInputs.preset.holdS,
+          label: gaugeInputs.preset.name,
         }
-      : (zoneSel?.target ?? null);
-
-  // The composed exercise label a zone selection arms/re-arms under (matches
-  // the `tag` prop TargetZonesCard/ZoneFocusCard render with). Null while no
-  // tag is selected yet.
-  const zoneTag = effectiveTag ? (chartSide ? `${effectiveTag} · ${chartSide}` : effectiveTag) : null;
+      : (armedZone?.target ?? null);
 
   // Move the global intensity dial (the slider on TargetZonesCard, #172):
   // persist + update state, and if a zone is currently armed, re-arm it at the
   // new pct so its baked target/timer numbers update immediately. Custom
   // presets are UNAFFECTED by this dial — their load is never rescaled, only
   // recommended zones respond to it (see `applyIntensity`).
+  // #298 round 5: TargetZonesCard disables the slider (and every other
+  // control that would touch this) for as long as `runActive`, so this is
+  // unreachable mid-run in practice — even so, it writes the raw
+  // `intensityPct` state, which `gaugeInputs` (and everything armed/timed
+  // off it) ignores until the run ends, per the input lock above.
   function changeIntensity(pct: number) {
     const next = Math.min(ZONE_INTENSITY.max, Math.max(ZONE_INTENSITY.min, pct));
     if (next === intensityPct) return;
@@ -705,7 +895,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
 
   // The expanded protocol timeline — built here (not in the fullscreen) so
   // the per-rep recorder below and the countdown display walk the SAME
-  // segments and can never disagree. Cheap to rebuild per render.
+  // segments and can never disagree. Cheap to rebuild per render. #298 round
+  // 4: `activeProtocol` is itself derived from the LOCKED gauge inputs above,
+  // so this is automatically stable for the whole run — one plan, nothing to
+  // keep in sync separately.
   const timeline = activeProtocol
     ? buildTimeline(activeProtocol, {
         switchS: 3,
@@ -720,11 +913,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // double-saving the ones this effect already wrote.
   const savedThroughRef = useRef(0);
   const wasMeasuringRef = useRef(false);
-  const measuring = tindeq.status === "measuring";
   // Protocol seconds = physical clock (frozen while paused) + Pause/Skip shift.
   const protoTS = (pausedAtS ?? tindeq.elapsedMs / 1000) + protoShiftS;
   const paused = pausedAtS !== null;
-  const protoPos = timeline && measuring ? timelineAt(timeline, protoTS) : null;
   useEffect(() => {
     if (measuring && !wasMeasuringRef.current) {
       savedThroughRef.current = 0;
@@ -747,9 +938,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
 
   // Pause / Skip during a guided run. Both first FINALIZE an in-progress hold
   // (save the rep-so-far, mark it done) so the recorder never has to slice a
-  // hold across a shift change; then they mutate the protocol clock.
+  // hold across a shift change; then they mutate the protocol clock. Each
+  // reads `timeline` (#298 round 4: derived from the LOCKED gauge inputs, so
+  // it's already stable for the run's duration — nothing further to freeze).
   function finalizeHoldIfOpen() {
-    if (!timeline || !protoPos || protoPos.seg.phase !== "hold") return;
+    if (!timeline) return;
+    const pos = timelineAt(timeline, protoTS);
+    if (!pos || pos.seg.phase !== "hold") return;
     let idx = timeline.findIndex((s) => protoTS < s.startS + s.durS);
     if (idx === -1) idx = timeline.length;
     const physNowMs = (pausedAtS ?? tindeq.elapsedMs / 1000) * 1000;
@@ -757,14 +952,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // (savedSegsRef), so the autosave effect's later pass over this index is a
     // harmless no-op — no need to advance savedThroughRef (which the compiler
     // won't allow us to write from here anyway).
-    void saveHoldSlice(protoPos.seg, idx, physNowMs);
+    void saveHoldSlice(pos.seg, idx, physNowMs);
   }
   function skipSegment() {
-    if (!measuring || !timeline || !protoPos) return;
+    if (!measuring || !timeline) return;
+    const pos = timelineAt(timeline, protoTS);
+    if (!pos) return;
     finalizeHoldIfOpen();
     // Jump protocol time to the end of the current segment (= next segment's
     // start); the physical clock is unchanged, so the next segment begins now.
-    setProtoShiftS((s) => s + protoPos.remaining);
+    setProtoShiftS((s) => s + pos.remaining);
   }
   function togglePause() {
     if (!measuring) return;
@@ -840,8 +1037,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // context is still the best guess available.
   useEffect(() => {
     tindeq.setSalvageContext(() => ({
-      tag: pendingTag.trim(),
-      side: pendingSide,
+      // #298 round 6 (finding B2): the LOCKED gaugeInputs.pendingTag/
+      // .pendingSide, not the raw state — this is the path a crash/disconnect
+      // recovery falls back to, so it matters MORE than the others: reading
+      // raw state here would file a mid-run salvage under whatever tag/side
+      // happened to be typed at the moment things went wrong, not the tag/
+      // side the run was actually armed under.
+      tag: gaugeInputs.pendingTag,
+      side: gaugeInputs.pendingSide,
       groupId: gaugeSession?.groupId ?? null,
       // The signed-in user, always known here — without this a salvaged
       // recording would fall to enqueueRecording's null-userId path, which
@@ -855,7 +1058,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // animation frame while measuring (its container is a fresh object each
     // TindeqProvider render, since current/peak/elapsedMs tick via rAF).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tindeq.setSalvageContext, pendingTag, pendingSide, gaugeSession, userId]);
+  }, [tindeq.setSalvageContext, gaugeInputs.pendingTag, gaugeInputs.pendingSide, gaugeSession, userId]);
 
   // Pop the gauge fullscreen the moment the Progressor connects (only on the
   // connecting→connected transition — a stop→connected change must not
@@ -1164,7 +1367,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           allTags={allTags}
           onTag={setPendingTag}
           onSide={setPendingSide}
+          locked={runActive}
         />
+        {runActive && (
+          <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
+            Locked while measuring — applies to your next run.
+          </div>
+        )}
         {!pendingTag.trim() &&
           (status === "connected" || status === "measuring") && (
             <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 8 }}>
@@ -1343,10 +1552,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         <TargetZonesCard
           tag={zoneTag}
           model={model}
-          selected={zoneSel}
+          selected={armedZone}
           onSelect={selectZone}
           intensityPct={intensityPct}
           onIntensityChange={changeIntensity}
+          locked={runActive}
+          onClear={clearProtocol}
         />
       )}
       {effectiveTag && zoneTag && (
@@ -1357,12 +1568,20 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           exercise={effectiveTag}
           model={model}
           onPick={(q) => selectZone(buildZoneSelection(model, q, zoneTag, false, intensityPct))}
+          locked={runActive}
         />
       )}
       <PresetManager
-        selectedId={preset?.id ?? null}
+        // #298 round 6 (finding A2): the LOCKED preset id, not raw `preset` —
+        // the highlight must never diverge from what's actually running.
+        selectedId={gaugeInputs.preset?.id ?? null}
         onSelect={selectPreset}
         onRestore={(p) => {
+          // #298 round 6 (finding A3): a presets fetch resolving mid-run must
+          // not change the armed selection out from under an in-progress
+          // run — skip the restore entirely while runActive, same as every
+          // other write to zoneSel/preset.
+          if (runActive) return;
           // #296: mount-time restore must never disarm a zone (or a preset)
           // armed since — restoredSelection reads the CURRENT zoneSel/preset
           // closed over by THIS render, so a zone armed while the presets
@@ -1373,6 +1592,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           setPreset(next.preset);
         }}
         presetRefs={presetRefs}
+        locked={runActive}
       />
 
       {showTagManager && (
@@ -1427,12 +1647,18 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           timeline={timeline}
           target={bandTarget}
           presetRefs={presetRefs}
-          globalSide={pendingSide}
-          tag={pendingTag}
+          globalSide={gaugeInputs.pendingSide}
+          tag={gaugeInputs.pendingTag}
           allTags={allTags}
           onTag={setPendingTag}
           onSide={setPendingSide}
-          canStart={!!pendingTag.trim()}
+          onClearProtocol={clearProtocol}
+          canStart={!!gaugeInputs.pendingTag && !zoneCurvePending}
+          startBlockedReason={
+            zoneCurvePending
+              ? "Updating this exercise's curve — try Start again in a moment, or tap Clear — free hold to start without a target."
+              : null
+          }
           saving={saving}
           prepare={prepare}
           onTogglePrepare={togglePrepare}
@@ -1453,7 +1679,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             // schedule to native up front — the countdown renders from
             // timestamps with no further JS involvement.
             if (timeline && activeProtocol) {
-              const tag = pendingTag.trim();
+              // #298 round 6 (finding B3): the LOCKED gaugeInputs.pendingTag —
+              // cosmetic (lock-screen label) but the same "read the run's own
+              // tag, not whatever's currently typed" rule as everywhere else.
+              const tag = gaugeInputs.pendingTag;
               void startTindeqLiveActivity(
                 tag ? `${activeProtocol.name} · ${tag}` : activeProtocol.name,
                 presetKgSet1 ?? bandTarget?.kg ?? null,

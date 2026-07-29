@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildTimeline,
+  firstHoldSide,
   presetTargetKg,
   protocolDurationS,
   setSide,
@@ -240,5 +241,32 @@ describe("endurance preset — 1 rep × 8 sets (#320)", () => {
     expect(switches).toHaveLength(7);
     expect(switches.every((s) => s.durS === 3)).toBe(true);
     expect(timelineDurationS(tl)).toBe(450);
+  });
+});
+
+describe("firstHoldSide (#298)", () => {
+  it("finds the first hold's side even when a prepare segment (side: null) comes first", () => {
+    // The default-on get-ready countdown (prepareS: 5) puts a `side: null`
+    // prepare segment at index 0 — `segs[0].side` would wrongly read null
+    // for an alternating protocol that's idle, dimming every side chip.
+    const tl = buildTimeline(alt, { prepareS: 5 });
+    expect(tl[0]!.phase).toBe("prepare");
+    expect(tl[0]!.side).toBeNull();
+    expect(firstHoldSide(tl)).toBe("left");
+  });
+
+  it("finds the first hold's side with no prepare segment", () => {
+    const tl = buildTimeline(alt, { prepareS: 0 });
+    expect(tl[0]!.phase).toBe("hold");
+    expect(firstHoldSide(tl)).toBe("left");
+  });
+
+  it("is null for a non-alternating protocol (holds carry no side of their own)", () => {
+    const tl = buildTimeline(repeaters, { prepareS: 5 });
+    expect(firstHoldSide(tl)).toBeNull();
+  });
+
+  it("is null for an empty timeline", () => {
+    expect(firstHoldSide([])).toBeNull();
   });
 });
