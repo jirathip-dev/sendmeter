@@ -181,3 +181,33 @@ select
   'Half crimp', side, group_id, zone
 from curves
 group by days_ago, group_id, side, peak, zone;
+
+-- ── Tindeq presets: one of each target shape the guided gauge supports ──────
+insert into public.tindeq_presets (
+  user_id, name, hold_s, reps, sets, rest_reps_s, rest_sets_s,
+  target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides, created_at
+) values
+  ('11111111-1111-1111-1111-111111111111', 'Max hangs 10s', 10, 3, 3, 60, 180,
+   32, null, 'pr', 0, false, false, now() - interval '3 minutes'),
+  ('11111111-1111-1111-1111-111111111111', 'Strength ramp 70-80%', 7, 2, 3, 45, 120,
+   null, 70, 'pr', 5, false, false, now() - interval '2 minutes'),
+  ('11111111-1111-1111-1111-111111111111', 'Repeaters L/R', 7, 6, 4, 3, 30,
+   20, null, 'pr', 0, false, true, now() - interval '1 minute');
+
+-- ── Routine presets: multi-step routines with reps + per-step rests ─────────
+-- Step keys are the client's RoutineStep shape — note camelCase "restS".
+insert into public.routine_presets (user_id, name, steps, created_at) values
+  ('11111111-1111-1111-1111-111111111111', 'Conditioning circuit',
+   '[
+     {"label": "Plank",              "detail": "Hard brace, straight line",  "s": 45, "reps": 3, "restS": 15},
+     {"label": "Push-ups",                                                   "s": 30, "reps": 3, "restS": 30},
+     {"label": "Hanging knee raises","detail": "Slow and controlled",        "s": 30, "reps": 2, "restS": 45}
+   ]'::jsonb,
+   now() - interval '2 minutes'),
+  ('11111111-1111-1111-1111-111111111111', 'Mobility flow',
+   '[
+     {"label": "Couch stretch",       "detail": "60s per side",             "s": 60, "reps": 2, "restS": 10},
+     {"label": "Thoracic rotations",                                        "s": 45},
+     {"label": "Shoulder dislocates", "detail": "Band, wide grip",          "s": 60}
+   ]'::jsonb,
+   now() - interval '1 minute');
