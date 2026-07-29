@@ -8,7 +8,8 @@ export type InfoTopic =
   | "forceCurve"
   | "gaugeTarget"
   | "phaseStepBack"
-  | "trainingBalance";
+  | "trainingBalance"
+  | "tindeqConsistency";
 
 const CONTENT: Record<
   InfoTopic,
@@ -144,6 +145,23 @@ const CONTENT: Record<
       {
         heading: "Why History looks different",
         text: "History lists every session for every exercise over all time, and badges each one with the zone that session alone was mostly in. Different scope, different window, different unit — the two are expected to disagree. Tap the card to see every number here traced back to the holds behind it.",
+      },
+    ],
+  },
+  tindeqConsistency: {
+    title: "How Tindeq consistency is tracked",
+    body: [
+      {
+        heading: "A day counts once",
+        text: "Each bar is how many DISTINCT DAYS you recorded at least one Tindeq hold in that rolling 7-day window (0–7) — not rep count or total time, so one huge session can't dwarf the rest of the week. Filtering to one exercise still counts a day once even if you did several holds of it.",
+      },
+      {
+        heading: "Rolling weekly windows",
+        text: "Same windowing as Weekly load above: 'Now' is the last 7 days including today, '1w' the 7 days before that, and so on back 8 weeks.",
+      },
+      {
+        heading: "Hidden tags are excluded",
+        text: "Exercises you've hidden from the Force tab's tag picker don't count here either — same list, same reasoning.",
       },
     ],
   },
