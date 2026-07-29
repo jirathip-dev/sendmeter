@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchRecordingSamples } from "../lib/repo";
 import { holdOrigin } from "../lib/zoneBreakdown";
-import { QUALITY_COLORS } from "../lib/zoneSelection";
+import { zoneColor } from "../lib/zoneSelection";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
@@ -276,7 +276,7 @@ export default function RecordingRow({
                 was recorded under (a fact) or the duration band it was
                 inferred from (a guess), and the row says which. */}
             {origin.zone && (
-              <span style={{ color: QUALITY_COLORS[origin.zone] }}>
+              <span style={{ color: zoneColor(origin.zone) }}>
                 {" "}
                 · {origin.label} ({origin.short})
               </span>

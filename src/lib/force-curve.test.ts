@@ -7,10 +7,13 @@ import {
   zoneTarget,
   zonePrescription,
   adjustedEndurance,
+  prehabTarget,
+  PREHAB_PROTOCOL,
   ZONE_PROTOCOLS,
   ZONE_INTENSITY,
   type ForceCurveModel,
 } from "./force-curve";
+import { curveCandidateRecordings } from "./zoneHistory";
 import type { TindeqSample } from "../types";
 
 /// A constant-force hold sampled at 10 Hz (t in ms).
@@ -144,6 +147,43 @@ describe("pickCurveRecordings (SL-80)", () => {
     expect(withFresh.map((r) => r.id)).toEqual([fresh.id]);
     const dormantOnly = pickCurveRecordings([old], now);
     expect(dormantOnly.map((r) => r.id)).toEqual([old.id]);
+  });
+});
+
+describe("Prehab is excluded from curve candidacy (#325)", () => {
+  const now = Date.parse("2026-07-20T00:00:00Z");
+  const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString();
+
+  it("a prehab-zoned recording never reaches pickCurveRecordings, even as the longest daily effort", () => {
+    const trainingHold = {
+      id: "t1",
+      durationMs: 20_000,
+      avgKg: 25,
+      recordedAt: daysAgo(10),
+      zone: "strength" as const,
+      tag: "FDP",
+      side: "left" as const,
+    };
+    // 30s at sub-CF load, daily — the longest single-duration effort in the
+    // pool, and exactly the shape that would otherwise win
+    // pickCurveRecordings' "keep the longest efforts regardless of load"
+    // guarantee (force-curve.ts's own comment on that behavior).
+    const prehabHolds = Array.from({ length: 5 }, (_, i) => ({
+      id: `p${i}`,
+      durationMs: 30_000,
+      avgKg: 12,
+      recordedAt: daysAgo(i),
+      zone: "prehab" as const,
+      tag: "FDP",
+      side: "left" as const,
+    }));
+    // The real filter ForceView's `curveRecordings` calls before ever calling
+    // pickCurveRecordings — not a re-implementation, so deleting the call in
+    // ForceView can't leave this suite green.
+    const curveCandidates = curveCandidateRecordings([trainingHold, ...prehabHolds], "FDP", "left");
+    const picked = pickCurveRecordings(curveCandidates, now);
+    expect(picked.some((r) => r.id.startsWith("p"))).toBe(false);
+    expect(picked.map((r) => r.id)).toContain("t1");
   });
 });
 
@@ -295,5 +335,47 @@ describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () =>
       const tightPe: ForceCurveModel = { points: [], maxF: 40, cf: 25, wPrime: 6 };
       expect(zoneTarget(tightPe, "power-endurance", 110)!.workS).toBe(5);
     });
+  });
+});
+
+describe("PREHAB_PROTOCOL (#325)", () => {
+  it("pins the approved numbers exactly — 30s × 4, 90s rest between reps, 1 set", () => {
+    expect(PREHAB_PROTOCOL).toEqual({
+      holdS: 30,
+      reps: 4,
+      sets: 1,
+      restRepsS: 90,
+      restSetsS: 0,
+    });
+  });
+});
+
+describe("prehabTarget (#325)", () => {
+  it("targets 0.70 × critical force when CF is fitted", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const t = prehabTarget(model)!;
+    expect(t.targetKg).toBeCloseTo(14, 5); // 20 × 0.70
+    expect(t.lowKg).toBeCloseTo(12.6, 5); // 14 × 0.9
+    expect(t.highKg).toBeCloseTo(15.4, 5); // 14 × 1.1
+    expect(t.workS).toBe(PREHAB_PROTOCOL.holdS);
+    expect(t.basis).not.toMatch(/\brehab\b/i);
+  });
+
+  it("falls back to 0.30 × maxF when CF isn't fitted yet", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
+    const t = prehabTarget(model)!;
+    expect(t.targetKg).toBeCloseTo(12, 5); // 40 × 0.30
+  });
+
+  it("is unavailable when neither CF nor a usable maxF is known", () => {
+    const model: ForceCurveModel = { points: [], maxF: 0, cf: null, wPrime: null };
+    expect(prehabTarget(model)).toBeNull();
+  });
+
+  it("never uses the word 'rehab' in the basis copy — no implied clinical citation", () => {
+    const withCf: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const withoutCf: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
+    expect(prehabTarget(withCf)!.basis).not.toMatch(/\brehab\b/i);
+    expect(prehabTarget(withoutCf)!.basis).not.toMatch(/\brehab\b/i);
   });
 });

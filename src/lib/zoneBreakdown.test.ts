@@ -170,6 +170,37 @@ describe("recorded vs inferred zones (#259)", () => {
   });
 });
 
+describe("Prehab holds (#325)", () => {
+  it("routes a prehab hold into `excluded`, not `unclassified` or any zone", () => {
+    const prehabHold = { ...hold("2026-07-20T10:00:00Z", 30, "prehab-1"), zone: "prehab" as const };
+    const { zones, unclassified, excluded } = zoneBreakdown([prehabHold]);
+    expect(excluded.map((h) => h.rec.id)).toEqual(["prehab-1"]);
+    expect(unclassified).toEqual([]);
+    // A 30s hold would otherwise land in endurance — proof it moved nothing.
+    expect(zones.endurance.holds).toEqual([]);
+    expect(zones.endurance.totalHoldS).toBe(0);
+  });
+
+  it("marks an excluded hold as recorded, with its duration intact", () => {
+    const prehabHold = { ...hold("2026-07-20T10:00:00Z", 30, "prehab-1"), zone: "prehab" as const };
+    const { excluded } = zoneBreakdown([prehabHold]);
+    expect(excluded[0]).toMatchObject({ durationS: 30, source: "recorded" });
+  });
+
+  it("still agrees with zoneSets bit-for-bit alongside a mix of trainable and Prehab holds", () => {
+    const recs = [
+      { ...hold("2026-07-01T10:00:00Z", 7.3, "a"), zone: "strength" as const },
+      { ...hold("2026-07-02T10:00:00Z", 30, "b"), zone: "prehab" as const },
+      hold("2026-07-03T10:00:00Z", 9.9, "c"),
+    ];
+    const { zones } = zoneBreakdown(recs);
+    const sets = zoneSets(recs);
+    for (const q of QUALITIES) {
+      expect(zones[q.id].sets).toBe(sets[q.id]);
+    }
+  });
+});
+
 describe("holdOrigin (#259)", () => {
   it("says a recorded hold was recorded, and names the zone", () => {
     expect(holdOrigin({ durationMs: 12_000, zone: "strength" })).toEqual({
@@ -201,6 +232,16 @@ describe("holdOrigin (#259)", () => {
       label: null,
       short: null,
       long: null,
+    });
+  });
+
+  it("names Prehab explicitly and says it doesn't count toward training balance (#325)", () => {
+    expect(holdOrigin({ durationMs: 30_000, zone: "prehab" })).toEqual({
+      zone: "prehab",
+      source: "recorded",
+      label: "Prehab",
+      short: "recorded",
+      long: "recorded as Prehab — not counted toward training balance",
     });
   });
 

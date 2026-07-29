@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  balanceScopeCounts,
   classifyZone,
   classifyZoneLoaded,
+  curveCandidateRecordings,
   CURVE_BIAS_RATIO,
   dominantZone,
+  effortPeakKg,
+  isEffortRecording,
   recommendZone,
   recordingZone,
   TIE_BAND_SETS,
@@ -79,6 +83,140 @@ describe("recordingZone (#259)", () => {
       zone: null,
       source: "inferred",
     });
+  });
+
+  it("recognizes a recorded 'prehab' zone (#325) — never inferred, always a fact", () => {
+    // 30s would infer as endurance; recorded as prehab, it IS prehab — the
+    // exact divergence writing the zone exists to guarantee.
+    expect(recordingZone({ durationMs: 30_000, zone: "prehab" })).toEqual({
+      zone: "prehab",
+      source: "recorded",
+    });
+  });
+});
+
+describe("isEffortRecording (#325)", () => {
+  it("is false for a recorded Prehab hold — never a maximal-intent effort", () => {
+    expect(isEffortRecording({ durationMs: 30_000, zone: "prehab" })).toBe(false);
+  });
+
+  it("is true for every trainable zone, recorded or inferred, at any duration", () => {
+    expect(isEffortRecording({ durationMs: 5_000, zone: "power" })).toBe(true);
+    expect(isEffortRecording({ durationMs: 12_000, zone: null })).toBe(true); // infers as strength
+    expect(isEffortRecording({ durationMs: 30_000, zone: null })).toBe(true); // infers as endurance
+  });
+
+  it("is true for a null-zone sub-1s blip — unclassified is not the same as excluded", () => {
+    expect(isEffortRecording({ durationMs: 400, zone: null })).toBe(true);
+  });
+});
+
+describe("effortPeakKg (#325)", () => {
+  const rec = (
+    peakKg: number,
+    tag: string,
+    side: "left" | "right",
+    zone: "prehab" | null = null,
+    durationMs = 5_000,
+  ) => ({ peakKg, tag, side, zone, durationMs });
+
+  it("is null with no tag selected", () => {
+    expect(effortPeakKg([rec(40, "FDP", "left")], null, "left")).toBeNull();
+  });
+
+  it("is null when there is no recording for the tag/side yet", () => {
+    expect(effortPeakKg([], "FDP", "left")).toBeNull();
+  });
+
+  it("ignores a Prehab hold that would otherwise become the PR by walkover", () => {
+    // No real effort has ever been recorded for this tag/side — only a
+    // submax Prehab hold at ~0.29×maxF. A naive Math.max would crown IT the
+    // PR, and every future `pctBasis: "pr"` preset would then target a
+    // fraction of a fraction of true capacity.
+    const recs = [rec(11.6, "FDP", "left", "prehab")];
+    expect(effortPeakKg(recs, "FDP", "left")).toBeNull();
+  });
+
+  it("takes the best EFFORT peak, ignoring a higher Prehab reading and other tags/sides", () => {
+    const recs = [
+      rec(40, "FDP", "left"),
+      rec(45, "FDP", "left"), // the real PR
+      rec(90, "FDP", "left", "prehab"), // impossible in practice, but even so: never wins
+      rec(99, "FDP", "right"), // wrong side
+      rec(99, "3F", "left"), // wrong tag
+    ];
+    expect(effortPeakKg(recs, "FDP", "left")).toBe(45);
+  });
+
+  it("with side null, pools both sides", () => {
+    const recs = [rec(40, "FDP", "left"), rec(48, "FDP", "right")];
+    expect(effortPeakKg(recs, "FDP", null)).toBe(48);
+  });
+});
+
+describe("curveCandidateRecordings (#325)", () => {
+  const rec = (
+    id: string,
+    durationMs: number,
+    tag: string,
+    side: "left" | "right",
+    zone: "prehab" | "strength" | null = null,
+  ) => ({ id, durationMs, tag, side, zone });
+
+  it("is empty with no tag selected", () => {
+    expect(curveCandidateRecordings([rec("r1", 20_000, "FDP", "left")], null, "left")).toEqual([]);
+  });
+
+  it("excludes a Prehab hold even as the longest single effort in the pool", () => {
+    // This is the guarantee ForceView's curve fit depends on: a 30s Prehab
+    // hold at 0.70×CF must never reach `pickCurveRecordings`, or CF ratchets
+    // down every session (see the doc on `isEffortRecording`).
+    const trainingHold = rec("t1", 20_000, "FDP", "left", "strength");
+    const prehabHold = rec("p1", 30_000, "FDP", "left", "prehab");
+    const picked = curveCandidateRecordings([trainingHold, prehabHold], "FDP", "left");
+    expect(picked.map((r) => r.id)).toEqual(["t1"]);
+  });
+
+  it("scopes to the given tag/side, and pools both sides when side is null", () => {
+    const recs = [
+      rec("left", 20_000, "FDP", "left", "strength"),
+      rec("right", 20_000, "FDP", "right", "strength"),
+      rec("otherTag", 20_000, "3F", "left", "strength"),
+    ];
+    expect(curveCandidateRecordings(recs, "FDP", "left").map((r) => r.id)).toEqual(["left"]);
+    expect(curveCandidateRecordings(recs, "FDP", null).map((r) => r.id)).toEqual(["left", "right"]);
+  });
+});
+
+describe("balanceScopeCounts (#325)", () => {
+  it("excludes Prehab holds from both the total and the recorded count", () => {
+    // 2 trainable holds (1 recorded, 1 inferred) + 2 Prehab holds — Prehab is
+    // ALWAYS recorded (never inferred), so a naive count over every hold
+    // would read "4 of 4 recorded"; the balance only ever credited the 2
+    // trainable holds, so the copy must match that, not the raw count.
+    const recs = [
+      { durationMs: 10_000, zone: "strength" as const },
+      { durationMs: 12_000, zone: null }, // inferred as strength
+      { durationMs: 30_000, zone: "prehab" as const },
+      { durationMs: 30_000, zone: "prehab" as const },
+    ];
+    expect(balanceScopeCounts(recs)).toEqual({ effortCount: 2, recordedCount: 1 });
+  });
+
+  it("reads as fully recorded when every effort hold carries its own zone", () => {
+    const recs = [
+      { durationMs: 10_000, zone: "strength" as const },
+      { durationMs: 30_000, zone: "prehab" as const },
+    ];
+    expect(balanceScopeCounts(recs)).toEqual({ effortCount: 1, recordedCount: 1 });
+  });
+
+  it("returns zero counts when only Prehab holds are in scope", () => {
+    const recs = [
+      { durationMs: 30_000, zone: "prehab" as const },
+      { durationMs: 30_000, zone: "prehab" as const },
+    ];
+    expect(balanceScopeCounts(recs)).toEqual({ effortCount: 0, recordedCount: 0 });
   });
 });
 
@@ -266,6 +404,19 @@ describe("zoneTrainingSets (SL-100, #182)", () => {
     const sets = zoneTrainingSets([rec("2026-05-01T10:00:00Z", 5000)], NOW, 28);
     expect(sets.power).toBe(0);
   });
+
+  it("excludes an in-window Prehab hold from every zone (#325)", () => {
+    const sets = zoneTrainingSets(
+      [{ ...rec("2026-07-20T10:00:00Z", 30_000), zone: "prehab" as const }],
+      NOW,
+    );
+    expect(sets).toEqual({
+      power: 0,
+      strength: 0,
+      "power-endurance": 0,
+      endurance: 0,
+    });
+  });
 });
 
 describe("zoneSets (#214)", () => {
@@ -290,6 +441,18 @@ describe("zoneSets (#214)", () => {
       endurance: 0,
     });
     expect(zoneSets([{ durationMs: 500 }])).toEqual({
+      power: 0,
+      strength: 0,
+      "power-endurance": 0,
+      endurance: 0,
+    });
+  });
+
+  it("excludes Prehab holds from every zone's total (#325) — recorded outside training balance BY DESIGN", () => {
+    // Un-tagged, this 30s hold would infer as endurance — proof that writing
+    // the zone is what keeps it out of training balance, not its duration.
+    const sets = zoneSets([{ durationMs: 30_000, zone: "prehab" as const }]);
+    expect(sets).toEqual({
       power: 0,
       strength: 0,
       "power-endurance": 0,

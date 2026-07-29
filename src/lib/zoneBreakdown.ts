@@ -1,4 +1,9 @@
-import { QUALITIES, ZONE_PROTOCOLS, type TrainingQuality } from "./force-curve";
+import {
+  QUALITIES,
+  ZONE_PROTOCOLS,
+  type RecordedZone,
+  type TrainingQuality,
+} from "./force-curve";
 import {
   classifyZone,
   recordingZone,
@@ -49,6 +54,11 @@ export interface ZoneBreakdown<T> {
   /// Holds `classifyZone` refuses to bucket (under 1s — stray blips). They
   /// count toward no zone; the UI says so rather than silently dropping them.
   unclassified: ZoneHold<T>[];
+  /// Prehab holds (#325) — recorded outside training balance BY DESIGN, not
+  /// an inference failure like `unclassified`. Kept separate so the UI can
+  /// say what they are (maintenance work, deliberately uncounted) instead of
+  /// lumping them in with stray blips.
+  excluded: ZoneHold<T>[];
 }
 
 const ZONE_ORDER: TrainingQuality[] = [
@@ -68,10 +78,17 @@ export function zoneBreakdown<T extends HoldLike>(recs: T[]): ZoneBreakdown<T> {
     endurance: [] as ZoneHold<T>[],
   } satisfies Record<TrainingQuality, ZoneHold<T>[]>;
   const unclassified: ZoneHold<T>[] = [];
+  const excluded: ZoneHold<T>[] = [];
 
   for (const rec of recs) {
     const durationS = rec.durationMs / 1000;
     const { zone, source } = recordingZone(rec);
+    // Prehab (#325) checked before the `!zone` branch — it's never null and
+    // never a stray blip, it's a recorded zone that simply isn't trainable.
+    if (zone === "prehab") {
+      excluded.push({ rec, durationS, source });
+      continue;
+    }
     if (!zone) {
       unclassified.push({ rec, durationS, source });
       continue;
@@ -99,7 +116,7 @@ export function zoneBreakdown<T extends HoldLike>(recs: T[]): ZoneBreakdown<T> {
     };
   }
 
-  return { zones: entries, unclassified };
+  return { zones: entries, unclassified, excluded };
 }
 
 /// The holds a trailing window keeps — mirrors `zoneTrainingSets`' filter
@@ -158,7 +175,7 @@ export function bandFor(
 }
 
 export interface HoldOrigin {
-  zone: TrainingQuality | null;
+  zone: RecordedZone | null;
   source: ZoneSource;
   /// The zone's display label ("Strength"), or null for an unclassified blip.
   label: string | null;
@@ -177,6 +194,18 @@ export interface HoldOrigin {
 export function holdOrigin(rec: ZonedHold): HoldOrigin {
   const durationS = rec.durationMs / 1000;
   const { zone, source } = recordingZone(rec);
+  // Prehab (#325) is always RECORDED (never inferred — `classifyZone` never
+  // returns it), so it gets its own short-circuit rather than flowing through
+  // the trainable-zone label lookup below, which doesn't know it.
+  if (zone === "prehab") {
+    return {
+      zone,
+      source,
+      label: "Prehab",
+      short: "recorded",
+      long: "recorded as Prehab — not counted toward training balance",
+    };
+  }
   const label = zone ? (QUALITIES.find((q) => q.id === zone)?.label ?? zone) : null;
   if (!zone) return { zone, source, label: null, short: null, long: null };
   if (source === "recorded") {

@@ -7,7 +7,7 @@ import type {
   TindeqSample,
   TindeqSide,
 } from "../../types";
-import type { TrainingQuality } from "../force-curve";
+import type { RecordedZone } from "../force-curve";
 import { localDayRange } from "../dates";
 import { unwrap, makeSoftDeleteOps } from "./shared";
 
@@ -44,9 +44,10 @@ function toRecording(r: RecordingRow): TindeqRecordingMeta {
     groupId: r.group_id,
     protocolRunId: r.protocol_run_id,
     setNo: r.set_no,
-    // Constrained to the four quality ids by a DB check (#259); null on every
-    // row saved before it, and on freehand/watch holds.
-    zone: r.zone as TrainingQuality | null,
+    // Constrained to the four quality ids plus "prehab" by a DB check
+    // (#259, widened #325); null on every row saved before it, and on
+    // freehand/watch holds.
+    zone: r.zone as RecordedZone | null,
   };
 }
 

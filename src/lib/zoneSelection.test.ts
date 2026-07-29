@@ -3,17 +3,20 @@ import {
   applyIntensity,
   armedAlternates,
   armedForDifferentTag,
+  buildPrehabSelection,
   buildZoneSelection,
   chartSideFor,
   loadIntensity,
   performedQuality,
+  protocolQuality,
   rederiveSelection,
   saveIntensity,
   selectedQuality,
+  zoneColor,
   QUALITY_COLORS,
   type ZoneSelection,
 } from "./zoneSelection";
-import { ZONE_INTENSITY, type ForceCurveModel } from "./force-curve";
+import { PREHAB_PROTOCOL, ZONE_INTENSITY, type ForceCurveModel } from "./force-curve";
 import { classifyZone, classifyZoneLoaded } from "./zoneHistory";
 import { presetTargetKg } from "./protocol";
 import type { TindeqPreset } from "../types";
@@ -84,6 +87,41 @@ describe("buildZoneSelection", () => {
   });
 });
 
+describe("buildPrehabSelection (#325)", () => {
+  it("returns null when there is no model", () => {
+    expect(buildPrehabSelection(null, "FDP L")).toBeNull();
+  });
+
+  it("returns null when the model can't derive a target (no CF, no usable maxF)", () => {
+    const dead: ForceCurveModel = { points: [], maxF: 0, cf: null, wPrime: null };
+    expect(buildPrehabSelection(dead, "FDP L")).toBeNull();
+  });
+
+  it("assembles the target + protocol at 0.70 × CF, single-sided", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const result = buildPrehabSelection(model, "FDP L")!;
+    expect(result.tag).toBe("FDP L");
+    expect(result.target.kg).toBeCloseTo(14, 5); // 20 × 0.70
+    expect(result.target.workS).toBe(PREHAB_PROTOCOL.holdS);
+    expect(result.protocol).toMatchObject({
+      id: "zone:prehab",
+      holdS: PREHAB_PROTOCOL.holdS,
+      reps: PREHAB_PROTOCOL.reps,
+      sets: PREHAB_PROTOCOL.sets,
+      restRepsS: PREHAB_PROTOCOL.restRepsS,
+      restSetsS: PREHAB_PROTOCOL.restSetsS,
+      targetKg: 14,
+      alternateSides: false,
+    });
+  });
+
+  it("falls back to 0.30 × maxF without a CF fit", () => {
+    const noCf: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
+    const result = buildPrehabSelection(noCf, "FDP L")!;
+    expect(result.target.kg).toBeCloseTo(12, 5); // 40 × 0.30
+  });
+});
+
 describe("applyIntensity", () => {
   const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
   const custom: ZoneSelection = {
@@ -138,6 +176,16 @@ describe("applyIntensity", () => {
     expect(applyIntensity(armed, noCf, "FDP L", 80)).toBe(armed);
     expect(applyIntensity(armed, null, "FDP L", 80)).toBe(armed);
     expect(applyIntensity(armed, model, null, 80)).toBe(armed);
+  });
+
+  it("leaves an armed Prehab selection completely untouched (#325 — the dial is recommended-zones-only)", () => {
+    // Prehab's sub-CF load and 30s dose are both load-bearing (Baar's
+    // window); the dial scaling either would break the guarantee. Prehab has
+    // no TrainingQuality of its own, so `selectedQuality` returns null for it
+    // and it takes the exact same "untouched" path a custom preset does.
+    const prehab = buildPrehabSelection(model, "FDP L")!;
+    expect(applyIntensity(prehab, model, "FDP L", 60)).toBe(prehab);
+    expect(applyIntensity(prehab, model, "FDP L", 110)).toBe(prehab);
   });
 });
 
@@ -204,6 +252,33 @@ describe("rederiveSelection (#298)", () => {
 
   it("leaves a custom-preset-shaped selection untouched", () => {
     expect(rederiveSelection(custom, model, "FDP R", 100)).toBe(custom);
+  });
+
+  describe("Prehab (#325)", () => {
+    it("rebuilds at the new tag, keeping the load at 0.70×CF for THAT tag", () => {
+      const armed = buildPrehabSelection(model, "FDP L")!;
+      const otherModel: ForceCurveModel = { points: [], maxF: 80, cf: 40, wPrime: 300 };
+      const rederived = rederiveSelection(armed, otherModel, "FDP R", 100)!;
+      expect(protocolQuality(rederived.protocol)).toBe("prehab");
+      expect(rederived.target.kg).toBeCloseTo(28, 5); // 40 × 0.70, the NEW tag's CF
+      expect(rederived.protocol.holdS).toBe(30); // dose never varies
+    });
+
+    it("holds the current selection when the model is null (still fitting, not a rejection)", () => {
+      const armed = buildPrehabSelection(model, "FDP L")!;
+      expect(rederiveSelection(armed, null, "FDP R", 100)).toBe(armed);
+    });
+
+    it("returns null (disarms) when there's no tag to derive against", () => {
+      const armed = buildPrehabSelection(model, "FDP L")!;
+      expect(rederiveSelection(armed, model, null, 100)).toBeNull();
+    });
+
+    it("returns null (disarms) when the new tag can't derive a Prehab target", () => {
+      const armed = buildPrehabSelection(model, "FDP L")!;
+      const dead: ForceCurveModel = { points: [], maxF: 0, cf: null, wPrime: null };
+      expect(rederiveSelection(armed, dead, "FDP R", 100)).toBeNull();
+    });
   });
 });
 
@@ -338,6 +413,26 @@ describe("selectedQuality", () => {
   it("returns null for a null selection", () => {
     expect(selectedQuality(null)).toBeNull();
   });
+
+  it("returns null for an armed Prehab selection (#325) — it has no TrainingQuality", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const prehab = buildPrehabSelection(model, "FDP")!;
+    expect(protocolQuality(prehab.protocol)).toBe("prehab"); // it IS a recorded zone…
+    expect(selectedQuality(prehab)).toBeNull(); // …but not a trainable one
+  });
+});
+
+describe("zoneColor (#325)", () => {
+  it("matches QUALITY_COLORS for the four trainable qualities", () => {
+    for (const q of Object.keys(QUALITY_COLORS) as (keyof typeof QUALITY_COLORS)[]) {
+      expect(zoneColor(q)).toBe(QUALITY_COLORS[q]);
+    }
+  });
+
+  it("gives Prehab a muted color that isn't in QUALITY_COLORS", () => {
+    expect(zoneColor("prehab")).toBe("var(--ink-muted)");
+    expect(Object.values(QUALITY_COLORS)).not.toContain(zoneColor("prehab"));
+  });
 });
 
 describe("performedQuality (#259)", () => {
@@ -415,6 +510,16 @@ describe("performedQuality (#259)", () => {
 
   it("records nothing at all for a freehand hold (no protocol armed)", () => {
     expect(performedQuality(null, 34, refs)).toBeNull();
+  });
+
+  it("records 'prehab' for a hold performed under an armed Prehab protocol (#325), never falling through to classifyZoneLoaded", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const prehab = buildPrehabSelection(model, "FDP")!;
+    expect(performedQuality(prehab.protocol, prehab.protocol.targetKg, refs)).toBe("prehab");
+    // A 30s hold with no recorded zone infers as Endurance — proof that
+    // skipping the stamp here would silently credit training balance with
+    // exactly the thing #325 exists to keep out of it.
+    expect(classifyZone(prehab.protocol.holdS)).toBe("endurance");
   });
 });
 

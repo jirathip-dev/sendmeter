@@ -1,7 +1,10 @@
 import {
+  PREHAB_PROTOCOL,
+  prehabTarget,
   ZONE_INTENSITY,
   zonePrescription,
   type ForceCurveModel,
+  type RecordedZone,
   type TrainingQuality,
 } from "./force-curve";
 import { classifyZoneLoaded } from "./zoneHistory";
@@ -73,6 +76,66 @@ export function buildZoneSelection(
       alternateSides: alt,
     },
   };
+}
+
+/// Build the gauge band + guided protocol for Prehab (#325) — mirrors
+/// `buildZoneSelection` but isn't one: Prehab has no `TrainingQuality`, so it
+/// can't go through `zonePrescription`. Single-sided by design (`sets: 1` —
+/// #320's alternation fires per SET, and one set never triggers it, so there
+/// is no "alternate sides" option here to thread through). Null when the
+/// model can't derive a Prehab target (see `prehabTarget`).
+export function buildPrehabSelection(
+  model: ForceCurveModel | null,
+  tag: string,
+): ZoneSelection | null {
+  if (!model) return null;
+  const t = prehabTarget(model);
+  if (!t) return null;
+  return {
+    tag,
+    target: {
+      kg: t.targetKg,
+      lowKg: t.lowKg,
+      highKg: t.highKg,
+      workS: t.workS,
+      label: `${t.label} · ${tag}`,
+    },
+    protocol: {
+      id: "zone:prehab",
+      name: `${t.label} · ${tag}`,
+      holdS: PREHAB_PROTOCOL.holdS,
+      reps: PREHAB_PROTOCOL.reps,
+      sets: PREHAB_PROTOCOL.sets,
+      restRepsS: PREHAB_PROTOCOL.restRepsS,
+      restSetsS: PREHAB_PROTOCOL.restSetsS,
+      targetKg: t.targetKg,
+      targetPct: null,
+      pctBasis: "pr",
+      pctStep: 0,
+      targetCurve: false,
+      alternateSides: false,
+    },
+  };
+}
+
+/// Every zone a saved hold can carry, recommended-protocol side (#325) — the
+/// membership check `protocolQuality` parses a `zone:${q}` id against.
+/// Separate from `QUALITY_COLORS`' keys, which deliberately stay at the four
+/// TRAINABLE qualities (a color per hue on the chip spectrum); "prehab" has
+/// no chip of its own on that card, so it isn't a color-table key.
+const RECORDED_ZONES: RecordedZone[] = [
+  "power",
+  "strength",
+  "power-endurance",
+  "endurance",
+  "prehab",
+];
+
+/// The color a hold's recorded zone should show as, across the four trainable
+/// hues plus a muted one for Prehab (which isn't a training quality and has
+/// no entry in `QUALITY_COLORS`).
+export function zoneColor(z: RecordedZone): string {
+  return z === "prehab" ? "var(--ink-muted)" : QUALITY_COLORS[z];
 }
 
 const INTENSITY_KEY = "sendmeter:zone-intensity";
@@ -147,6 +210,17 @@ export function rederiveSelection(
   tag: string | null,
   intensityPct: number,
 ): ZoneSelection | null {
+  // Prehab (#325) checked FIRST, via the full `protocolQuality` (not
+  // `selectedQuality`, which filters it out): it has no `TrainingQuality` of
+  // its own, so it would otherwise fall through to the "custom preset"
+  // branch below and get held at the OLD tag's kg forever — Prehab's load is
+  // tag-derived (0.70×CF of THIS tag), unlike a custom preset's fixed number,
+  // so a tag switch must rebuild it just like a recommended zone would.
+  if (sel && protocolQuality(sel.protocol) === "prehab") {
+    if (!model) return sel;
+    if (!tag) return null;
+    return buildPrehabSelection(model, tag);
+  }
   const q = selectedQuality(sel);
   if (!sel || !q) return sel;
   if (!model) return sel;
@@ -202,20 +276,29 @@ export function armedForDifferentTag(
 }
 
 /// The zone a PROTOCOL arms, parsed back from the `zone:${q}` id
-/// `buildZoneSelection` mints. Null for a custom preset, which has no
-/// declared quality — only a load and a hold time.
-export function protocolQuality(p: TindeqPreset): TrainingQuality | null {
+/// `buildZoneSelection`/`buildPrehabSelection` mint. Null for a custom
+/// preset, which has no declared quality — only a load and a hold time.
+/// Returns `RecordedZone` (#325), not `TrainingQuality` — Prehab arms itself
+/// via `zone:prehab` exactly like a trainable zone does, so this has to admit
+/// it; use `selectedQuality` below for the four-quality-only view (the chip
+/// highlight, the intensity dial's gate).
+export function protocolQuality(p: TindeqPreset): RecordedZone | null {
   const m = /^zone:(.+)$/.exec(p.id);
-  const q = m?.[1] as TrainingQuality | undefined;
-  return q && q in QUALITY_COLORS ? q : null;
+  const q = m?.[1] as RecordedZone | undefined;
+  return q && RECORDED_ZONES.includes(q) ? q : null;
 }
 
-/// The zone a selection arms — so the chips highlight from `selected` alone.
-/// Null for custom presets.
+/// The TRAINABLE zone a selection arms — so the recommended-zone chips
+/// highlight from `selected` alone. Null for a custom preset AND for Prehab
+/// (#325): Prehab has no chip on that card, and filtering it out here is what
+/// keeps `applyIntensity`'s dial-gate (which reads this) from ever touching a
+/// Prehab selection — the same mechanism that already protects custom
+/// presets from the dial.
 export function selectedQuality(
   sel: ZoneSelection | null,
 ): TrainingQuality | null {
-  return sel ? protocolQuality(sel.protocol) : null;
+  const q = sel ? protocolQuality(sel.protocol) : null;
+  return q && q !== "prehab" ? q : null;
 }
 
 /// The quality a hold saved from this protocol was PERFORMED under (#259) —
@@ -233,11 +316,18 @@ export function selectedQuality(
 /// `targetKg` is the preset's target for the SET being saved (per-set ramps
 /// mean set 3 can classify differently from set 1). Null with no protocol —
 /// a freehand hold records no zone rather than a guess.
+///
+/// Returns `RecordedZone | null` (#325): an armed Prehab protocol states its
+/// quality outright — `zone:prehab` — exactly like an armed training zone
+/// does, and that must reach the saved recording as `zone: 'prehab'` rather
+/// than falling through to `classifyZoneLoaded` (which would classify a 30s
+/// sub-CF hold as Endurance, silently crediting training balance with the
+/// thing this issue exists to keep out of it).
 export function performedQuality(
   p: TindeqPreset | null,
   targetKg: number | null,
   refs: { maxF: number | null; cf: number | null },
-): TrainingQuality | null {
+): RecordedZone | null {
   if (!p) return null;
   return protocolQuality(p) ?? classifyZoneLoaded(p.holdS, targetKg, refs);
 }
