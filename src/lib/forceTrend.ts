@@ -1,4 +1,6 @@
 import { boxStats, type BoxStats } from "./boxplot";
+import { isEffortRecording, type ZonedHold } from "./zoneHistory";
+import type { TindeqSide } from "../types";
 
 /// Minimal shape the Force tab's trend data needs to satisfy — deliberately
 /// not `TrendPoint` from `ForceTrendChart.tsx` (that also carries an `id`,
@@ -7,6 +9,28 @@ import { boxStats, type BoxStats } from "./boxplot";
 export interface TrendSample {
   recordedAt: string; // ISO timestamp
   val: number; // peakKg or %BW, per the chart's current mode
+}
+
+/// The recordings `ForceTrendChart` plots: scoped to the selected tag/side,
+/// and — Prehab (#325) — excluded from effort. A Prehab hold is a submax,
+/// sub-CF hold BY DESIGN, so its peak would otherwise fabricate a fake "PR
+/// dropped" day the moment it becomes the day's best rep — exactly what the
+/// daily-bests aggregation the chart builds on top of this already protects
+/// against for a submax endurance day. Exported (pure, no hooks) so that
+/// guarantee is pinned without rendering `ForceTrendChart` itself, which
+/// reads `localStorage` at the top of its body and isn't renderable outside
+/// a browser-like test environment.
+export function trendChartRecordings<T extends ZonedHold & { tag: string; side: TindeqSide }>(
+  recordings: T[],
+  selectedTag: string | null,
+  selectedSide: TindeqSide | null,
+): T[] {
+  return recordings.filter(
+    (r) =>
+      (selectedTag === null || r.tag === selectedTag) &&
+      (selectedSide === null || r.side === selectedSide) &&
+      isEffortRecording(r),
+  );
 }
 
 /// Per-point nearest-neighbor pixel gaps for an x-position array that's

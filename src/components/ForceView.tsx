@@ -24,6 +24,7 @@ import {
 } from "../lib/force-curve";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import { buildTimeline, presetTargetKg, timelineAt } from "../lib/protocol";
+import { curveCandidateRecordings, effortPeakKg } from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
 import type { GaugeInputs } from "../lib/gaugeInputLock";
@@ -46,6 +47,7 @@ import type {
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import PresetManager from "./PresetManager";
+import PrehabCard from "./PrehabCard";
 import { clearPersistedPreset } from "../lib/forcePresetStorage";
 import { restoredSelection, selectZoneOutcome, withPresetSelected } from "../lib/forceSelection";
 import SideAsymmetryCard from "./SideAsymmetryCard";
@@ -618,15 +620,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // the already-locked `effectiveTag`/`chartSide` below (this feeds the same
   // struct those are locked through, so using the locked version here would
   // be circular).
-  const liveCurveRecordingsForPr = recordings.filter(
-    (r) =>
-      liveEffectiveTag !== null &&
-      r.tag === liveEffectiveTag &&
-      (liveChartSide === null || r.side === liveChartSide),
-  );
-  const livePrKg = liveCurveRecordingsForPr.length
-    ? Math.max(...liveCurveRecordingsForPr.map((r) => r.peakKg))
-    : null;
+  // #325: effort recordings only — see `effortPeakKg`'s own doc for why a
+  // Prehab hold must never win this Math.max, even by walkover.
+  const livePrKg = effortPeakKg(recordings, liveEffectiveTag, liveChartSide);
   const liveGaugeInputs: GaugeInputs = {
     tag: liveEffectiveTag,
     chartSide: liveChartSide,
@@ -663,12 +659,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // "Compute" button). All state writes happen in async callbacks; "which key
   // the model belongs to" is tracked so computing/model are derived, not
   // synced.
-  const curveRecordings = recordings.filter(
-    (r) =>
-      effectiveTag !== null &&
-      r.tag === effectiveTag &&
-      (chartSide === null || r.side === chartSide),
-  );
+  // Prehab (#325) is excluded from curve candidacy: it's 30s at 0.70×CF,
+  // daily, so its holds would otherwise supply flat ≥10s fit points that
+  // ratchet CF down every session (`curveCandidateRecordings` — see its doc
+  // in zoneHistory.ts for why a recording that isn't a maximal-intent effort
+  // can't feed anything that reads a recording as evidence of capacity).
+  const curveRecordings = curveCandidateRecordings(recordings, effectiveTag, chartSide);
   const tagSideKey = `${effectiveTag ?? ""}|${chartSide ?? "all"}`;
   const curveKey = `${tagSideKey}|${curveRecordings.length}`;
   const canComputeCurve = effectiveTag !== null && curveRecordings.length > 0;
@@ -1556,6 +1552,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           onSelect={selectZone}
           intensityPct={intensityPct}
           onIntensityChange={changeIntensity}
+          locked={runActive}
+          onClear={clearProtocol}
+        />
+      )}
+      {zoneTag && (
+        <PrehabCard
+          tag={zoneTag}
+          model={model}
+          selected={armedZone}
+          onSelect={selectZone}
           locked={runActive}
           onClear={clearProtocol}
         />

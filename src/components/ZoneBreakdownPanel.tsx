@@ -195,7 +195,7 @@ function ZoneRow({
 /// both by the Training-balance detail page and by a Tindeq session in
 /// History, so "why this zone" reads the same in both places.
 export default function ZoneBreakdownPanel({ recs, showTag }: Props) {
-  const { zones, unclassified } = zoneBreakdown(recs);
+  const { zones, unclassified, excluded } = zoneBreakdown(recs);
 
   return (
     <div>
@@ -227,6 +227,15 @@ export default function ZoneBreakdownPanel({ recs, showTag }: Props) {
         <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 2 }}>
           {unclassified.length} hold{unclassified.length === 1 ? "" : "s"} under
           1s counted toward nothing (stray blips)
+        </div>
+      )}
+
+      {/* #325: Prehab holds are recorded outside training balance BY DESIGN
+          — said outright rather than lumped in with the blip line above. */}
+      {excluded.length > 0 && (
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 2 }}>
+          {excluded.length} Prehab hold{excluded.length === 1 ? "" : "s"} recorded
+          outside training balance
         </div>
       )}
 

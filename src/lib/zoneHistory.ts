@@ -2,8 +2,10 @@ import {
   predictForce,
   ZONE_PROTOCOLS,
   type ForceCurveModel,
+  type RecordedZone,
   type TrainingQuality,
 } from "./force-curve";
+import type { TindeqSide } from "../types";
 
 /// SL-100: which training QUALITY a saved hold belongs to, INFERRED from its
 /// duration — the fallback for a recording that doesn't carry the zone it was
@@ -33,7 +35,7 @@ export function classifyZone(durationS: number): TrainingQuality | null {
 export type ZoneSource = "recorded" | "inferred";
 
 export interface ZoneAttribution {
-  zone: TrainingQuality | null;
+  zone: RecordedZone | null;
   source: ZoneSource;
 }
 
@@ -42,7 +44,7 @@ export interface ZoneAttribution {
 /// still typecheck — an absent field reads the same as an explicit null.
 export interface ZonedHold {
   durationMs: number;
-  zone?: TrainingQuality | null;
+  zone?: RecordedZone | null;
 }
 
 /// THE read path for "which zone is this hold" (#259). Prefers the zone the
@@ -62,6 +64,70 @@ export interface ZonedHold {
 export function recordingZone(rec: ZonedHold): ZoneAttribution {
   if (rec.zone != null) return { zone: rec.zone, source: "recorded" };
   return { zone: classifyZone(rec.durationMs / 1000), source: "inferred" };
+}
+
+/// Whether a hold is a maximal-intent effort — i.e. safe to read as evidence
+/// of capacity (curve fit, PR/trend charts, training-balance summaries). A
+/// Prehab hold (#325) is submaximal BY CONSTRUCTION (30s at 0.70×CF, daily),
+/// so it fails this everywhere a recording is otherwise assumed to represent
+/// how hard the user pulled: fed into the curve fit it supplies flat ≥10s
+/// points that ratchet CF down every session; fed into a peak-force trend it
+/// fabricates a "PR dropped" day; counted in a training-balance summary it
+/// inflates "N holds" past what the balance itself credits. One predicate for
+/// all three, so a future consumer of `recordings` has something to grep for
+/// instead of re-deriving `zone !== "prehab"` (and forgetting it).
+export function isEffortRecording(rec: ZonedHold): boolean {
+  return recordingZone(rec).zone !== "prehab";
+}
+
+/// The PR a `pctBasis: "pr"` preset targets (#325): the best EFFORT peak for
+/// a tag/side, never a Prehab hold — a Prehab hold at 0.70×CF never wins a
+/// `Math.max` against a real effort, but for a tag/side with no real effort
+/// yet it WOULD become the PR, silently prescribing every future %-of-PR
+/// preset off a submax hold. Null tag means "nothing selected"; null side
+/// means "either side" (mirrors `trendChartRecordings`' filter).
+export function effortPeakKg<
+  T extends ZonedHold & { tag: string; side: TindeqSide; peakKg: number },
+>(recs: T[], tag: string | null, side: TindeqSide | null): number | null {
+  if (tag === null) return null;
+  const matches = recs.filter(
+    (r) => r.tag === tag && (side === null || r.side === side) && isEffortRecording(r),
+  );
+  return matches.length ? Math.max(...matches.map((r) => r.peakKg)) : null;
+}
+
+/// The recordings `ForceView` feeds its critical-force fit: scoped to the
+/// active tag/side, and — Prehab (#325) — excluded from effort for the exact
+/// reason `isEffortRecording` documents (flat ≥10s sub-CF points would
+/// otherwise ratchet CF down every session, corrupting every %-of-CF
+/// prescription plus the CF the watch reads back for its RPE prediction).
+/// Null tag means "nothing armed yet" and returns no candidates, matching
+/// `ForceView`'s prior inline filter. Exported (pure, no hooks) so this
+/// guarantee is pinned directly rather than by a test that re-implements the
+/// filter it's meant to catch the removal of.
+export function curveCandidateRecordings<
+  T extends ZonedHold & { tag: string; side: TindeqSide },
+>(recs: T[], tag: string | null, side: TindeqSide | null): T[] {
+  if (tag === null) return [];
+  return recs.filter((r) => r.tag === tag && (side === null || r.side === side) && isEffortRecording(r));
+}
+
+/// The two counts `TrainingBalanceDetail`'s "what this counts" copy states:
+/// how many holds fed the numbers below, and how many of those store their
+/// own zone vs. have it inferred. Both computed over EFFORT recordings only
+/// (#325) — a Prehab hold is always "recorded" (`recordingZone` never infers
+/// it) but never feeds the balance (`zoneSets` drops it), so counting it in
+/// either figure would make both sentences literally false. Pure and
+/// exported so the page's copy is pinned without having to render a
+/// component that portals into `document.body`.
+export function balanceScopeCounts(
+  windowRecs: ZonedHold[],
+): { effortCount: number; recordedCount: number } {
+  const effortRecs = windowRecs.filter(isEffortRecording);
+  return {
+    effortCount: effortRecs.length,
+    recordedCount: effortRecs.filter((r) => recordingZone(r).source === "recorded").length,
+  };
 }
 
 /// Load-aware classifier (SL-97b): once a preset's target resolves to an
@@ -132,7 +198,11 @@ export function zoneSets(
   for (const r of recs) {
     const durationS = r.durationMs / 1000;
     const { zone } = recordingZone(r);
-    if (!zone) continue;
+    // Prehab (#325) is recorded outside training balance BY DESIGN — it's
+    // maintenance work below CF, not a quality to credit toward any of the
+    // four training buckets. `!zone` alone (the pre-#325 guard) would let it
+    // fall through silently the moment `zone` widened to admit it.
+    if (!zone || zone === "prehab") continue;
     secondsByZone[zone] += durationS;
   }
   return {

@@ -2,7 +2,12 @@ import { useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
-import { dailyBoxStats, hitWidthsPx, type DailyBoxStats } from "../lib/forceTrend";
+import {
+  dailyBoxStats,
+  hitWidthsPx,
+  trendChartRecordings,
+  type DailyBoxStats,
+} from "../lib/forceTrend";
 import { fetchWeightHistory } from "../lib/repo";
 import BoxChip from "./BoxChip";
 import SvgChartTooltip from "./SvgChartTooltip";
@@ -326,11 +331,7 @@ export default function ForceTrendChart({
   );
   const weights = useCancellableFetch(fetchWeightHistory, [], 0);
 
-  const filtered = recordings.filter(
-    (r) =>
-      (selectedTag === null || r.tag === selectedTag) &&
-      (selectedSide === null || r.side === selectedSide),
-  );
+  const filtered = trendChartRecordings(recordings, selectedTag, selectedSide);
   if (recordings.length < 2) return null;
 
   // No weigh-ins yet → the %BW mode has nothing to divide by.

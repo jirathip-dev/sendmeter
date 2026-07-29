@@ -226,6 +226,16 @@ export type TrainingQuality =
   | "power-endurance"
   | "endurance";
 
+/// Every zone a RECORDING can carry (#325), vs. `TrainingQuality`'s four
+/// TRAINABLE qualities that key `ZONE_PROTOCOLS`/`zoneSetDurationS`/
+/// `classifyZone`/the balance code. "prehab" is deliberately NOT a fifth
+/// `TrainingQuality`: it has no "set duration" to divide training-balance by
+/// and no classification a duration/load pair could infer it as (it's always
+/// recorded, never inferred) — widening `TrainingQuality` itself would force
+/// a meaningless entry through every one of those. Read layers that only ever
+/// need "what zone did this hold get saved under" use this union instead.
+export type RecordedZone = TrainingQuality | "prehab";
+
 export interface ZoneTarget {
   quality: TrainingQuality;
   label: string;
@@ -450,5 +460,73 @@ export function zonePrescription(
     sets: zp.sets,
     restRepsS: zp.restRepsS,
     restSetsS: zp.restSetsS,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Prehab (#325, split from #297 as Part B1): a low-load, long-hold,
+// daily-repeatable finger-tendon maintenance session — recorded under its own
+// "prehab" zone (see RecordedZone above) so it counts toward NOTHING in
+// training balance rather than being inferred back into training credit.
+//
+// Numbers approved on #297: 30s × 4 reps, 90s rest between reps, one set, at
+// 0.70 × critical force (0.30 × maxF when CF isn't fitted yet). Baar's tendon
+// work puts the refractory ceiling at ~10 min of loading and demonstrates
+// four 30s holds over an ~8 min window; 30s is the duration sweet spot (past
+// it, 2 min adds only ~15% more stiffness adaptation), and long-duration
+// isometrics produce greater stiffness adaptation than short ones at equal
+// volume. Load stays below CF deliberately — inside this window the loading
+// signal is largely load-independent, so there's no reason to buy adaptation
+// with fatigue when daily (or twice-daily, ≥6h apart) repeatability is the
+// point. The two load figures agree by construction: CF ≈ 41% MVC, and
+// 0.70 × 0.41 ≈ 0.29 ≈ 0.30 × maxF.
+//
+// Nobody has published prehab numbers for a finger dynamometer — `basis`
+// below says so; this is derived from the user's own curve and shaped by
+// tendon-loading research, not a citation.
+export const PREHAB_PROTOCOL = {
+  holdS: 30,
+  reps: 4,
+  sets: 1,
+  restRepsS: 90,
+  restSetsS: 0,
+} as const;
+
+export interface PrehabTarget {
+  targetKg: number;
+  lowKg: number;
+  highKg: number;
+  workS: number;
+  label: string;
+  basis: string;
+}
+
+/// The Prehab load band for this exercise: 0.70 × CF, falling back to
+/// 0.30 × maxF when there's no CF fit yet. Null when neither is usable (no
+/// model, or a model with maxF <= 0) — Prehab has nothing to anchor to.
+export function prehabTarget(model: ForceCurveModel): PrehabTarget | null {
+  const round1 = (v: number) => Math.round(v * 10) / 10;
+  let baseKg: number;
+  let basis: string;
+  if (model.cf !== null) {
+    baseKg = model.cf * 0.7;
+    basis = `70% of your critical force (${round1(model.cf)} kg)`;
+  } else if (model.maxF > 0) {
+    baseKg = model.maxF * 0.3;
+    basis = `30% of your best short-window force (${round1(model.maxF)} kg) — critical force isn't fitted yet`;
+  } else {
+    return null;
+  }
+  return {
+    targetKg: round1(baseKg),
+    lowKg: round1(baseKg * 0.9),
+    highKg: round1(baseKg * 1.1),
+    workS: PREHAB_PROTOCOL.holdS,
+    label: "Prehab",
+    basis:
+      `${basis}, deliberately below critical force. Derived from your own ` +
+      "force curve and shaped by tendon-loading research (Baar) — not a " +
+      "clinical prescription; nobody has published prehab numbers for a " +
+      "finger dynamometer.",
   };
 }
