@@ -289,6 +289,25 @@ are safe regardless.
 
 ## Non-obvious things that will bite you
 
+- **This repo's most-repeated defect: a decision made from state captured in a
+  closure that outlives the render it came from.** It has been shipped and caught
+  in review three times — #295 (`endSession`'s `if (!gaugeSession) return` guard,
+  plus a recordings snapshot taken before a 4s `await`) and #296 (`onRestore` /
+  `zoneSel` / `preset` read inside a `[]`-deps effect's `.then`). Both reintroduced
+  the exact bug they were written to fix, as a race.
+
+  `setState` cannot invalidate another in-flight closure's copy of a value, so a
+  guard reading captured state is not a guard. The async paths that expose this
+  are everywhere in `ForceView` / `PresetManager`: fetch `.then` callbacks,
+  `setTimeout` defers (the 150ms disconnect defer), and multi-second `Promise.race`
+  awaits.
+
+  **Rule:** inside any async path, a guard or a snapshot must read a **ref**, not
+  a captured value, and any dedupe guard must be set **before the first `await`**.
+  Prefer extracting the logic into a pure `src/lib` module and testing concurrent
+  invocation directly — `gaugeSessionEnd.ts` ("two concurrent calls for the same
+  groupId log exactly once") is the pattern to copy.
+
 - **iOS min is 16.0**, not 15. The Supabase Swift SDK floors at 16; Capacitor
   derives `CapApp-SPM`'s platform from the *first* `IPHONEOS_DEPLOYMENT_TARGET` in
   the pbxproj (the **project-level** one), so it must be 16 for `cap sync` to
