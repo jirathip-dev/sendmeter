@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
+
+// `signOut.ts` imports `./supabase`, whose module-level `createClient(...)`
+// constructs a RealtimeClient that throws under Node <22 (no native
+// `WebSocket`) — same situation and same fix as useTrainingData.test.ts.
+// Every test below injects its own `signOut`/`insert` doubles via
+// `SignOutDeps`; the real client is never exercised.
+vi.mock("./supabase", () => ({
+  supabase: { auth: { signOut: vi.fn() } },
+}));
+
 import {
   DRAIN_TIMEOUT_MS,
   discardQueueOnUserSignOut,
