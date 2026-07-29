@@ -96,9 +96,11 @@ describe("withZoneSelected / withPresetSelected (#296)", () => {
 // original bug — a mount-time restore racing a zone armed while the presets
 // fetch was still in flight, and a persisted-preset key surviving that same
 // race. Both are exercised as pure decisions here since PresetManager's
-// effect-timing side of the fix (refs holding the latest selectedId/onRestore
-// instead of the mount-render closures) can't itself be exercised without a
-// live DOM (this repo has no jsdom/testing-library, per useTindeq.test.ts).
+// effect-timing side of the fix (refs holding the latest selectedId/onRestore,
+// synced via useLayoutEffect rather than useEffect so the sync is committed
+// before the fetch's `.then()` microtask can ever observe a stale ref) can't
+// itself be exercised without a live DOM (this repo has no jsdom/testing-library,
+// per useTindeq.test.ts).
 describe("selectZoneOutcome (#296 follow-up)", () => {
   it("arming a zone clears the persisted-preset flag even when preset state was already null", () => {
     const outcome = selectZoneOutcome({ zoneSel: null, preset: null }, zoneSel);

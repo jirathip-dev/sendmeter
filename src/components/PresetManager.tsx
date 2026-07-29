@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   deletePreset,
   fetchPresets,
@@ -160,12 +160,20 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   // the persisted preset past whatever the user armed since. These refs are
   // kept current every render so the guard and the restore call always see
   // the latest values, not the mount-time ones.
+  //
+  // Sync via useLayoutEffect, not useEffect: passive effects flush in a
+  // scheduler task after commit, but the fetch's `.then()` is a microtask
+  // that can run before that task — so a discrete event (a zone/preset tap)
+  // could commit, and the fetch could resolve and read these refs, before a
+  // passive effect ever updated them. useLayoutEffect runs synchronously
+  // inside the commit, so the refs are current before any later-scheduled
+  // task (including this microtask) can observe them.
   const selectedIdRef = useRef(selectedId);
-  useEffect(() => {
+  useLayoutEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
   const onRestoreRef = useRef(onRestore);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onRestoreRef.current = onRestore;
   }, [onRestore]);
 
