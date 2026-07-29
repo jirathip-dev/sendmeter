@@ -24,7 +24,7 @@ import {
 } from "../lib/force-curve";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import { buildTimeline, presetTargetKg, timelineAt } from "../lib/protocol";
-import { curveCandidateRecordings, effortPeakKg } from "../lib/zoneHistory";
+import { curveCandidateRecordings, effortPeakKg, isEffortRecording } from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
 import type { GaugeInputs } from "../lib/gaugeInputLock";
@@ -309,6 +309,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         durationS: r.durationMs / 1000,
         cf: byTag.get(r.tag)?.cf ?? null,
         wPrime: byTag.get(r.tag)?.wPrime ?? null,
+        isEffort: isEffortRecording(r),
       })),
     );
     return { predicted, recs };
