@@ -8,6 +8,7 @@ import {
   timelineDurationS,
 } from "./protocol";
 import type { TindeqPreset } from "../types";
+import { ZONE_PROTOCOLS } from "./force-curve";
 
 // Classic repeaters: 7s hang / 3s rest × 6 reps, 3 sets, 180s between sets.
 const repeaters: TindeqPreset = {
@@ -188,5 +189,56 @@ describe("buildTimeline — alternating sides (per SET, SL-78)", () => {
     expect(holds.map((h) => h.side)).toEqual([
       "left", "left", "right", "right", "left", "left",
     ]);
+  });
+});
+
+describe("endurance preset — 1 rep × 8 sets (#320)", () => {
+  // ZONE_PROTOCOLS.endurance flipped from 8 reps × 1 set to 1 rep × 8 sets so
+  // per-SET alternation actually fires; buildTimeline alternates per set, so
+  // sets: 1 meant "Alternate left ⇄ right" was a no-op before this change.
+  const endurance: TindeqPreset = {
+    id: "endurance",
+    name: "Endurance",
+    holdS: ZONE_PROTOCOLS.endurance.holdS,
+    reps: ZONE_PROTOCOLS.endurance.reps,
+    sets: ZONE_PROTOCOLS.endurance.sets,
+    restRepsS: ZONE_PROTOCOLS.endurance.restRepsS,
+    restSetsS: ZONE_PROTOCOLS.endurance.restSetsS,
+    targetKg: null,
+    targetPct: null,
+    pctBasis: "pr",
+    pctStep: 0,
+    targetCurve: false,
+    alternateSides: false,
+  };
+
+  it("non-alternating: 8×30s holds separated by 7×30s gaps, 450s total — byte-for-byte the old 8×1 shape's effect", () => {
+    const tl = buildTimeline(endurance);
+    const holds = tl.filter((s) => s.phase === "hold");
+    const gaps = tl.filter((s) => s.phase === "setRest" || s.phase === "rest");
+    expect(holds).toHaveLength(8);
+    expect(holds.every((h) => h.durS === 30)).toBe(true);
+    expect(gaps).toHaveLength(7);
+    expect(gaps.every((g) => g.durS === 30)).toBe(true);
+    // gaps are now labeled setRest (between sets), not rest (between reps) —
+    // a legitimate label change, not a timing change.
+    expect(gaps.every((g) => g.phase === "setRest")).toBe(true);
+    expect(timelineDurationS(tl)).toBe(450);
+  });
+
+  it("alternating: sides flip every hold, gaps split into 27s rest + 3s switch, still 450s total", () => {
+    const tl = buildTimeline({ ...endurance, alternateSides: true }, { switchS: 3 });
+    const holds = tl.filter((s) => s.phase === "hold");
+    expect(holds.map((h) => h.side)).toEqual([
+      "left", "right", "left", "right", "left", "right", "left", "right",
+    ]);
+    expect(holds.every((h) => h.durS === 30)).toBe(true);
+    const setRests = tl.filter((s) => s.phase === "setRest");
+    const switches = tl.filter((s) => s.phase === "switch");
+    expect(setRests).toHaveLength(7);
+    expect(setRests.every((r) => r.durS === 27)).toBe(true);
+    expect(switches).toHaveLength(7);
+    expect(switches.every((s) => s.durS === 3)).toBe(true);
+    expect(timelineDurationS(tl)).toBe(450);
   });
 });

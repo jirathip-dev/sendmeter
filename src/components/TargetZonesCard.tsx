@@ -162,10 +162,14 @@ export default function TargetZonesCard({
                   ({zoneT.lowKg.toFixed(1)}–{zoneT.highKg.toFixed(1)})
                 </span>
               </div>
-              {/* The prescription the guided timer will run */}
+              {/* The prescription the guided timer will run. A single-rep
+                  protocol (endurance, #320: 1 rep × 8 sets) skips the
+                  "rest × N reps" clause — nothing to say about a rep count
+                  of one. */}
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 4 }}>
-                Timer: hold {fmt(selected.protocol.holdS)} · rest{" "}
-                {fmt(selected.protocol.restRepsS)} × {selected.protocol.reps} reps
+                Timer: hold {fmt(selected.protocol.holdS)}
+                {selected.protocol.reps > 1 &&
+                  ` · rest ${fmt(selected.protocol.restRepsS)} × ${selected.protocol.reps} reps`}
                 {selected.protocol.sets > 1 &&
                   ` · ${selected.protocol.sets} sets (${fmt(selected.protocol.restSetsS)} between)`}{" "}
                 · total {fmt(timelineDurationS(buildTimeline(selected.protocol, { switchS: 3 })))}

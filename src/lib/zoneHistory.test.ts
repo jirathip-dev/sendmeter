@@ -7,10 +7,27 @@ import {
   recommendZone,
   recordingZone,
   TIE_BAND_SETS,
+  zoneSetDurationS,
   zoneSets,
   zoneTrainingSets,
 } from "./zoneHistory";
 import type { ForceCurveModel, TrainingQuality } from "./force-curve";
+
+describe("zoneSetDurationS (#320)", () => {
+  it("endurance still reads 240s despite the 1×8 shape flip", () => {
+    // Was holdS(30) × reps(8) = 240 pre-#320; reps flipped to 1 and sets to
+    // 8, so the plain holdS × reps would silently drop to 30 and inflate
+    // endurance training-balance 8× — this is the regression the issue
+    // calls out as the one that would pass unnoticed.
+    expect(zoneSetDurationS("endurance")).toBe(240);
+  });
+
+  it("other zones are unchanged by the endurance-only special case", () => {
+    expect(zoneSetDurationS("power")).toBe(30);
+    expect(zoneSetDurationS("strength")).toBe(50);
+    expect(zoneSetDurationS("power-endurance")).toBe(42);
+  });
+});
 
 describe("classifyZone (SL-100)", () => {
   it("buckets by hold duration around the zone anchors", () => {

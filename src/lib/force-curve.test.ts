@@ -216,21 +216,31 @@ describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () =>
     expect(zoneTarget(noCf, "power", 70)).not.toBeNull();
   });
 
-  it("endurance keeps total time-under-tension ~constant and reps shrinks to compensate", () => {
+  it("endurance keeps total time-under-tension ~constant and sets shrinks to compensate (#320: reps stays 1)", () => {
     const t60 = zonePrescription(model, "endurance", 60)!;
     expect(t60.holdS).toBe(85); // 30 × (100/60)² ≈ 83.3 → round to nearest 5
-    expect(t60.reps).toBe(3); // round(8 × 30 / 85) = 3
+    expect(t60.reps).toBe(1);
+    expect(t60.sets).toBe(3); // round(8 × 30 / 85) = 3
     // base time-under-tension was 30 × 8 = 240s; rounding keeps it in the ballpark
-    expect(t60.holdS * t60.reps).toBeGreaterThan(200);
-    expect(t60.holdS * t60.reps).toBeLessThan(280);
-    expect(t60.reps).toBeLessThanOrEqual(ZONE_PROTOCOLS.endurance.reps);
+    expect(t60.holdS * t60.sets).toBeGreaterThan(200);
+    expect(t60.holdS * t60.sets).toBeLessThan(280);
+    expect(t60.sets).toBeLessThanOrEqual(ZONE_PROTOCOLS.endurance.sets);
+  });
+
+  it("zonePrescription(endurance, 100) returns the flipped 1×8 shape (#320)", () => {
+    const t100 = zonePrescription(model, "endurance", 100)!;
+    expect(t100.holdS).toBe(30);
+    expect(t100.reps).toBe(1);
+    expect(t100.sets).toBe(8);
+    expect(t100.restRepsS).toBe(0);
+    expect(t100.restSetsS).toBe(30);
   });
 
   it("adjustedEndurance clamps hold to [20, 240]s", () => {
     expect(adjustedEndurance(30, 8, 110).holdS).toBeGreaterThanOrEqual(20);
     // an extreme drop (well beyond the UI's 60% floor) hits the 240s cap
     expect(adjustedEndurance(30, 8, 5).holdS).toBe(240);
-    expect(adjustedEndurance(30, 8, 5).reps).toBe(1);
+    expect(adjustedEndurance(30, 8, 5).sets).toBe(1);
   });
 
   it("clamps input pct to [60, 110]", () => {
