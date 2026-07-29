@@ -9,6 +9,7 @@ export default function BoxChip({
   small,
   color,
   style,
+  disabled,
 }: {
   label: string;
   active: boolean;
@@ -19,11 +20,16 @@ export default function BoxChip({
   /// Defaults to the info violet.
   color?: string;
   style?: CSSProperties;
+  /// Locks the chip as a live indicator instead of a control (#298) — e.g.
+  /// an alternating protocol's side chip mirrors the timeline's own hand, so
+  /// tapping it must not fight what the guided run is already doing.
+  disabled?: boolean;
 }) {
   const hue = color ?? "var(--info)";
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       style={{
         padding: small ? "6px 10px" : "8px 12px",
         borderRadius: 8,
@@ -33,7 +39,8 @@ export default function BoxChip({
         fontFamily: "Inter, sans-serif",
         fontSize: small ? "var(--t-xs)" : "var(--t-sm)",
         fontWeight: 600,
-        cursor: "pointer",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.75 : 1,
         WebkitTapHighlightColor: "transparent",
         ...style,
       }}

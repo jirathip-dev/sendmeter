@@ -26,6 +26,12 @@ interface Props {
   /// Force references for the active exercise, so each row can show the load
   /// its %/curve target resolves to right now.
   presetRefs: PresetRefs;
+  /// #298 round 6 (finding A2): ForceView locks the gauge inputs for the
+  /// whole duration of a run — selecting a different preset, editing one, or
+  /// creating/deleting one out from under an in-progress run would mean the
+  /// set you finish isn't the set you started. Disables all of them rather
+  /// than leaving a control that looks live but is inert.
+  locked: boolean;
 }
 
 function fmt(sec: number): string {
@@ -109,7 +115,7 @@ function NumField({
 
 /// Hang-protocol presets (hold / reps / sets / rests). Saved to Supabase;
 /// selecting one arms the guided timer in the fullscreen gauge.
-export default function PresetManager({ selectedId, onSelect, onRestore, presetRefs }: Props) {
+export default function PresetManager({ selectedId, onSelect, onRestore, presetRefs, locked }: Props) {
   const toast = useToast();
   const [presets, setPresets] = useState<TindeqPreset[]>([]);
   const [adding, setAdding] = useState(false);
@@ -292,8 +298,14 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
           <Fragment key={p.id}>
           <div
             // #171: arming/disarming a preset is a selection, not a button.
-            data-haptic="light"
+            // Muted while locked (#298): this row is a div, so it cannot carry
+            // the native `disabled` that `hapticForCandidate` keys off — without
+            // this, a tap refused by the `locked` guard below would buzz exactly
+            // like an accepted arm. A refused tap must not feel like an
+            // accepted one.
+            data-haptic={locked ? "off" : "light"}
             onClick={() => {
+              if (locked) return;
               if (selected) localStorage.removeItem(SELECTED_KEY);
               else localStorage.setItem(SELECTED_KEY, p.id);
               onSelect(selected ? null : p);
@@ -307,7 +319,8 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               background: "var(--canvas)",
               border: `1px solid ${selected ? "var(--success)" : "var(--card-border)"}`,
               borderRadius: 10,
-              cursor: "pointer",
+              cursor: locked ? "default" : "pointer",
+              opacity: locked ? 0.75 : 1,
               boxShadow: "var(--shadow-card)",
             }}
           >
@@ -371,6 +384,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               className="del-btn"
               aria-label="Edit preset"
               style={{ fontSize: "var(--t-base)" }}
+              disabled={locked}
               onClick={(e) => {
                 e.stopPropagation();
                 openEdit(p);
@@ -381,6 +395,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
             <button
               className="del-btn"
               style={{ marginLeft: 0 }}
+              disabled={locked}
               onClick={(e) => {
                 e.stopPropagation();
                 setConfirmDelete(p);
@@ -398,9 +413,14 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
           under its own row (see the map above). */}
       {adding && !editingId && renderForm()}
       {!adding && (
-        <button className="btn-ghost" onClick={() => setAdding(true)}>
+        <button className="btn-ghost" disabled={locked} onClick={() => setAdding(true)}>
           + New preset
         </button>
+      )}
+      {locked && (
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
+          Locked while measuring — applies to your next run.
+        </div>
       )}
 
       {/* Delete-preset confirm (issue #143) */}

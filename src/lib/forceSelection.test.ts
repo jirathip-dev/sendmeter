@@ -28,11 +28,13 @@ const preset: TindeqPreset = {
 const otherPreset: TindeqPreset = { ...preset, id: "p2", name: "Custom 2" };
 
 const zoneSel: ZoneSelection = {
+  tag: "FDP",
   target: { kg: 30, lowKg: 27, highKg: 33, workS: 7, label: "Strength" },
   protocol: { ...preset, id: "zone:strength" },
 };
 
 const otherZoneSel: ZoneSelection = {
+  tag: "FDP",
   target: { kg: 40, lowKg: 36, highKg: 44, workS: 10, label: "Power" },
   protocol: { ...preset, id: "zone:power" },
 };

@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   applyIntensity,
+  armedAlternates,
+  armedForDifferentTag,
   buildZoneSelection,
+  chartSideFor,
   loadIntensity,
   performedQuality,
+  rederiveSelection,
   saveIntensity,
   selectedQuality,
   QUALITY_COLORS,
@@ -47,6 +51,7 @@ describe("buildZoneSelection", () => {
     const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
     const result = buildZoneSelection(model, "strength", "FDP L", true);
     expect(result).toEqual<ZoneSelection>({
+      tag: "FDP L",
       target: {
         kg: 34,
         lowKg: 32,
@@ -82,6 +87,7 @@ describe("buildZoneSelection", () => {
 describe("applyIntensity", () => {
   const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
   const custom: ZoneSelection = {
+    tag: "FDP L",
     target: { kg: 30, lowKg: 28, highKg: 32, workS: 10, label: "Custom" },
     protocol: {
       id: "custom-1",
@@ -132,6 +138,72 @@ describe("applyIntensity", () => {
     expect(applyIntensity(armed, noCf, "FDP L", 80)).toBe(armed);
     expect(applyIntensity(armed, null, "FDP L", 80)).toBe(armed);
     expect(applyIntensity(armed, model, null, 80)).toBe(armed);
+  });
+});
+
+describe("rederiveSelection (#298)", () => {
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+  const custom: ZoneSelection = {
+    tag: "FDP L",
+    target: { kg: 30, lowKg: 28, highKg: 32, workS: 10, label: "Custom" },
+    protocol: {
+      id: "custom-1",
+      name: "Custom",
+      holdS: 10,
+      reps: 5,
+      sets: 1,
+      restRepsS: 150,
+      restSetsS: 0,
+      targetKg: 30,
+      targetPct: null,
+      pctBasis: "pr",
+      pctStep: 0,
+      targetCurve: false,
+      alternateSides: true,
+    },
+  };
+
+  it("rebuilds the target kg + label for a new tag at the current intensity", () => {
+    const armed = buildZoneSelection(model, "strength", "FDP L", false, 100)!;
+    const rederived = rederiveSelection(armed, model, "FDP R", 100)!;
+    expect(rederived.target.label).toBe("Strength · FDP R");
+    expect(rederived.protocol.name).toBe("Strength · FDP R");
+    expect(rederived.target.kg).toBe(armed.target.kg); // same model, same math
+  });
+
+  it("preserves quality and alternateSides across the switch", () => {
+    const armed = buildZoneSelection(model, "power", "FDP L", true, 100)!;
+    const rederived = rederiveSelection(armed, model, "FDP R", 100)!;
+    expect(selectedQuality(rederived)).toBe("power");
+    expect(rederived.protocol.alternateSides).toBe(true);
+  });
+
+  it("holds the current selection when the model is null (not fitted yet, not a rejection)", () => {
+    // A null model means "no curve to derive against right now" (still
+    // fitting, or a fetch failure) — not "this zone is rejected". Disarming
+    // here would drop the guided UI/gauge band mid-run whenever the curve
+    // recompute is frozen (SL-80) and a tag switch flips `tagSideKey`.
+    const armed = buildZoneSelection(model, "strength", "FDP L", false, 100)!;
+    expect(rederiveSelection(armed, null, "FDP R", 100)).toBe(armed);
+  });
+
+  it("returns null (disarms) when the new tag's zone can't be derived (no CF)", () => {
+    const armed = buildZoneSelection(model, "endurance", "FDP L", false, 100)!;
+    const noCf: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
+    expect(rederiveSelection(armed, noCf, "FDP R", 100)).toBeNull();
+  });
+
+  it("returns null (disarms) when there's no tag to derive against", () => {
+    const armed = buildZoneSelection(model, "strength", "FDP L", false, 100)!;
+    expect(rederiveSelection(armed, model, null, 100)).toBeNull();
+  });
+
+  it("passes a null selection through", () => {
+    expect(rederiveSelection(null, model, "FDP R", 100)).toBeNull();
+  });
+
+  it("leaves a custom-preset-shaped selection untouched", () => {
+    expect(rederiveSelection(custom, model, "FDP R", 100)).toBe(custom);
   });
 });
 
@@ -195,6 +267,7 @@ describe("loadIntensity / saveIntensity", () => {
 describe("selectedQuality", () => {
   it("parses the quality out of a zone:* id", () => {
     const sel: ZoneSelection = {
+      tag: "FDP",
       target: { kg: 30, lowKg: 28, highKg: 32, workS: 10, label: "Strength" },
       protocol: {
         id: "zone:strength",
@@ -218,6 +291,7 @@ describe("selectedQuality", () => {
 
   it("returns null for a custom-preset id (no zone: prefix)", () => {
     const sel: ZoneSelection = {
+      tag: "FDP",
       target: { kg: 30, lowKg: 28, highKg: 32, workS: 10, label: "Custom" },
       protocol: {
         id: "custom-1",
@@ -240,6 +314,7 @@ describe("selectedQuality", () => {
 
   it("returns null for an unknown quality (matches zone: prefix but not a real quality key)", () => {
     const sel: ZoneSelection = {
+      tag: "FDP",
       target: { kg: 30, lowKg: 28, highKg: 32, workS: 10, label: "Bogus" },
       protocol: {
         id: "zone:bogus",
@@ -340,5 +415,98 @@ describe("performedQuality (#259)", () => {
 
   it("records nothing at all for a freehand hold (no protocol armed)", () => {
     expect(performedQuality(null, 34, refs)).toBeNull();
+  });
+});
+
+describe("armedAlternates / chartSideFor (#298)", () => {
+  function altPreset(alternateSides: boolean): TindeqPreset {
+    return {
+      id: "preset-1",
+      name: "Custom",
+      holdS: 10,
+      reps: 5,
+      sets: 1,
+      restRepsS: 150,
+      restSetsS: 0,
+      targetKg: 30,
+      targetPct: null,
+      pctBasis: "pr",
+      pctStep: 0,
+      targetCurve: false,
+      alternateSides,
+    };
+  }
+  function altZoneSel(alternateSides: boolean): ZoneSelection {
+    return {
+      tag: "FDP",
+      target: { kg: 30, lowKg: 28, highKg: 32, workS: 10, label: "Strength" },
+      protocol: { ...altPreset(alternateSides), id: "zone:strength", name: "Strength" },
+    };
+  }
+
+  describe("armedAlternates", () => {
+    it("reads a custom preset's own flag", () => {
+      expect(armedAlternates(altPreset(true), null)).toBe(true);
+      expect(armedAlternates(altPreset(false), null)).toBe(false);
+    });
+
+    it("reads an armed zone's own flag when no preset is armed", () => {
+      expect(armedAlternates(null, altZoneSel(true))).toBe(true);
+      expect(armedAlternates(null, altZoneSel(false))).toBe(false);
+    });
+
+    it("prefers the preset when (in principle) both are set — mutual exclusivity is enforced elsewhere", () => {
+      expect(armedAlternates(altPreset(true), altZoneSel(false))).toBe(true);
+    });
+
+    it("is false with nothing armed (a free hold)", () => {
+      expect(armedAlternates(null, null)).toBe(false);
+    });
+  });
+
+  describe("chartSideFor", () => {
+    it("is null (all sides) whenever the armed protocol alternates, regardless of the picked side", () => {
+      expect(chartSideFor(true, "left")).toBeNull();
+      expect(chartSideFor(true, "right")).toBeNull();
+      expect(chartSideFor(true, "both")).toBeNull();
+      expect(chartSideFor(true, "")).toBeNull();
+    });
+
+    it("passes a concrete left/right pick through when nothing alternates", () => {
+      expect(chartSideFor(false, "left")).toBe("left");
+      expect(chartSideFor(false, "right")).toBe("right");
+    });
+
+    it("treats '' and 'both' as all-sides even when nothing alternates", () => {
+      expect(chartSideFor(false, "")).toBeNull();
+      expect(chartSideFor(false, "both")).toBeNull();
+    });
+  });
+});
+
+describe("armedForDifferentTag (#298 round 6, finding 3)", () => {
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+
+  it("is false when nothing is armed", () => {
+    expect(armedForDifferentTag(null, "FDP")).toBe(false);
+  });
+
+  it("is false when the armed zone matches the current tag", () => {
+    const armed = buildZoneSelection(model, "strength", "FDP", false)!;
+    expect(armedForDifferentTag(armed, "FDP")).toBe(false);
+  });
+
+  it("is true when ticking alternate flips the tag out from under a single-side selection", () => {
+    // The #298 round 6 repro: armed under "FDP · left", then the checkbox
+    // flips alternateSides on — chartSideFor goes all-sides, so the LIVE
+    // zoneTag becomes plain "FDP" while the just-armed selection still says
+    // "FDP · left".
+    const armed = buildZoneSelection(model, "strength", "FDP · left", true)!;
+    expect(armedForDifferentTag(armed, "FDP")).toBe(true);
+  });
+
+  it("is true for an ordinary tag switch with a zone still armed", () => {
+    const armed = buildZoneSelection(model, "strength", "FDP", false)!;
+    expect(armedForDifferentTag(armed, "hip rotation")).toBe(true);
   });
 });

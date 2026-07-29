@@ -11,7 +11,7 @@ import {
   clampCss,
   heroFontCss,
 } from "../lib/fullscreenLayout";
-import { presetTargetKg, timelineAt, timelineDurationS } from "../lib/protocol";
+import { firstHoldSide, presetTargetKg, timelineAt, timelineDurationS } from "../lib/protocol";
 import type { PresetRefs, ProtocolSegment } from "../lib/protocol";
 import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
 import type { TindeqPreset, TindeqSide } from "../types";
@@ -40,7 +40,15 @@ interface Props {
   allTags: string[];
   onTag: (t: string) => void;
   onSide: (s: TindeqSide) => void;
+  /// Unarm the active zone/preset (#298) — falls back to a free hold.
+  onClearProtocol: () => void;
   canStart: boolean;
+  /// Why Start is currently disabled, beyond the ordinary "no tag picked yet"
+  /// (#298 round 6, finding 3) — e.g. an armed zone's curve is still fitting
+  /// for a tag it wasn't built under. Null = no specific reason (the ordinary
+  /// no-tag messages below still apply). Never a silent no-op: `canStart`
+  /// false must always say why.
+  startBlockedReason: string | null;
   saving: boolean;
   /// Get-ready countdown before the first hold (persisted preference).
   prepare: boolean;
@@ -85,7 +93,9 @@ export default function ForceFullscreen({
   allTags,
   onTag,
   onSide,
+  onClearProtocol,
   canStart,
+  startBlockedReason,
   saving,
   prepare,
   onTogglePrepare,
@@ -245,6 +255,21 @@ export default function ForceFullscreen({
           (s) => s.phase === "hold" && s.startS >= pos.seg.startS + pos.seg.durS,
         )?.side ?? null)
       : null;
+
+  // #298: which hand an alternating protocol's side row highlights — the
+  // current hold/switch segment's hand while measuring, the next hold's hand
+  // during a rest, and the FIRST hold's hand before Start / after done
+  // (nothing is "current" yet). Always the timeline's own pick, never a
+  // stored preference.
+  const autoSide =
+    pos?.seg.side ?? nextHoldSide ?? (timeline ? firstHoldSide(timeline) : null);
+
+  // Tags only make sense to change before Start. The side row stays up
+  // through an alternating run too (#298) — it's a live indicator there,
+  // not a control — but a non-alternating run has nothing new to show once
+  // measuring starts, so it keeps the original idle-only visibility.
+  const showTagPicker = !measuring && !counting;
+  const showSideRow = !counting && (!measuring || !!protocol?.alternateSides);
 
   // Per-set target band: a %-of-PR preset ramps up each set; the chart band
   // follows the CURRENT set live (set 1 while idle, last set once done).
@@ -480,6 +505,18 @@ export default function ForceFullscreen({
                   "Free hold — pick a zone or preset in the tab for a guided timer."
                 )}
               </div>
+              {/* #298: explicit unarm, in addition to re-tapping the same
+                  chip in the tab — the fastest way out of a protocol from
+                  right where it's shown. */}
+              {protocol && (
+                <button
+                  onClick={onClearProtocol}
+                  className="glass-pill"
+                  style={{ marginTop: 10, padding: "7px 16px", fontSize: "var(--t-2xs)" }}
+                >
+                  Clear — free hold
+                </button>
+              )}
             </>
           )}
         </div>
@@ -487,58 +524,75 @@ export default function ForceFullscreen({
         {/* Quick exercise + side pickers — arm a free hold without leaving
             the gauge (brand-new tags are typed in the tab). Box chips, no
             dropdowns (SL-82); a freshly typed tag with no recordings yet is
-            included so the armed tag shows (SL-81). */}
-        {!measuring && !counting && (
+            included so the armed tag shows (SL-81). Tags only make sense to
+            change before Start; the side row (below) stays up through an
+            alternating run too, as a live indicator. */}
+        {(showTagPicker || showSideRow) && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-            {/* A user with many tags used to wrap this strip to four or five
-                rows and shove START off the bottom (#221). Cap it at roughly
-                two rows and let the strip scroll instead of the overlay. */}
-            <div
-              style={{
-                display: "flex",
-                gap: 6,
-                flexWrap: "wrap",
-                maxHeight: clampCss(TAG_STRIP_MAX),
-                overflowY: "auto",
-              }}
-            >
-              {(allTags.includes(tag.trim()) || !tag.trim()
-                ? allTags
-                : [tag.trim(), ...allTags]
-              ).map((t) => (
-                <BoxChip
-                  key={t}
-                  small
-                  label={t}
-                  active={t === tag.trim()}
-                  onClick={() => onTag(t)}
-                />
-              ))}
-              {allTags.length === 0 && !tag.trim() && (
-                <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", alignSelf: "center" }}>
-                  no tags yet — add one in the tab
-                </span>
-              )}
-            </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {(
-                [
-                  ["", "—"],
-                  ["left", "Left"],
-                  ["right", "Right"],
-                  ["both", "Both"],
-                ] as const
-              ).map(([v, label]) => (
-                <BoxChip
-                  key={v}
-                  small
-                  label={label}
-                  active={globalSide === v}
-                  onClick={() => onSide(v as TindeqSide)}
-                  style={{ flex: 1 }}
-                />
-              ))}
-            </div>
+            {showTagPicker && (
+              // A user with many tags used to wrap this strip to four or five
+              // rows and shove START off the bottom (#221). Cap it at roughly
+              // two rows and let the strip scroll instead of the overlay.
+              <div
+                style={{
+                  display: "flex",
+                  gap: 6,
+                  flexWrap: "wrap",
+                  maxHeight: clampCss(TAG_STRIP_MAX),
+                  overflowY: "auto",
+                }}
+              >
+                {(allTags.includes(tag.trim()) || !tag.trim()
+                  ? allTags
+                  : [tag.trim(), ...allTags]
+                ).map((t) => (
+                  <BoxChip
+                    key={t}
+                    small
+                    label={t}
+                    active={t === tag.trim()}
+                    onClick={() => onTag(t)}
+                  />
+                ))}
+                {allTags.length === 0 && !tag.trim() && (
+                  <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", alignSelf: "center" }}>
+                    no tags yet — add one in the tab
+                  </span>
+                )}
+              </div>
+            )}
+            {showSideRow && (
+              <div style={{ display: "flex", gap: 6 }}>
+                {(
+                  [
+                    ["", "—"],
+                    ["left", "Left"],
+                    ["right", "Right"],
+                    ["both", "Both"],
+                  ] as const
+                ).map(([v, label]) => (
+                  <BoxChip
+                    key={v}
+                    small
+                    label={label}
+                    // #298: this pick is a CURVE REFERENCE (it feeds
+                    // ForceView's chartSide → zoneTag → the armed target,
+                    // and filters which recordings fit the curve) as much
+                    // as a display label. An alternating protocol trains
+                    // BOTH hands, so ForceView derives that reference
+                    // side-less for it already — this row can't offer a
+                    // single-hand pick without contradicting that, so while
+                    // one is armed it's auto-driven off the timeline's own
+                    // hand and locked, rather than removed (removing it
+                    // left an alternating run with no visible side at all).
+                    active={protocol?.alternateSides ? v === autoSide : globalSide === v}
+                    onClick={protocol?.alternateSides ? () => {} : () => onSide(v as TindeqSide)}
+                    disabled={!!protocol?.alternateSides}
+                    style={{ flex: 1 }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -683,9 +737,11 @@ export default function ForceFullscreen({
           )}
           {!canStart && !measuring && !counting && (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", textAlign: "center" }}>
-              {allTags.length
-                ? "Pick an exercise above to start."
-                : "Type your first exercise tag in the tab (minimize ⌄)."}
+              {startBlockedReason
+                ? startBlockedReason
+                : allTags.length
+                  ? "Pick an exercise above to start."
+                  : "Type your first exercise tag in the tab (minimize ⌄)."}
             </div>
           )}
         </div>

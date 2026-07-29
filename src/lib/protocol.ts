@@ -147,3 +147,14 @@ export function timelineAt(
   }
   return null;
 }
+
+/// The hand the FIRST hold segment uses (#298) — for a UI that wants to show
+/// which side an alternating protocol starts on before any segment is
+/// "current" (idle, or after Stop). `segs[0]` is NOT this: with the get-ready
+/// countdown on by default, segment 0 is `prepare`, whose `side` is always
+/// null.
+export function firstHoldSide(
+  segs: ProtocolSegment[],
+): ProtocolSegment["side"] {
+  return segs.find((s) => s.phase === "hold")?.side ?? null;
+}
