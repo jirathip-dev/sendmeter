@@ -35,6 +35,18 @@ function isoAt2330Local(daysBack: number): string {
   return d.toISOString();
 }
 
+// ISO instant for a given local day, at noon local time — same round-trip
+// safety as isoAt2330Local, for fixtures that don't care about the
+// late-night edge case. Unlike `${daysAgo(n)}T12:00:00Z` (a fixed UTC
+// instant), this stays on the intended local day at any UTC offset,
+// including UTC+12:01 and beyond (Chatham, Tonga, Kiritimati).
+function isoAtNoonLocal(daysBack: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysBack);
+  d.setHours(12, 0, 0, 0);
+  return d.toISOString();
+}
+
 describe("computeTindeqWeeks", () => {
   it("empty input yields 8 zero weeks and no tags", () => {
     const { weeks, tags } = computeTindeqWeeks([], []);
@@ -79,7 +91,7 @@ describe("computeTindeqWeeks", () => {
 
   it("daysAgo(6) lands in Now, daysAgo(7) lands in 1w", () => {
     const { weeks } = computeTindeqWeeks(
-      [rec(`${daysAgo(6)}T12:00:00Z`, "FDP"), rec(`${daysAgo(7)}T12:00:00Z`, "FDP")],
+      [rec(isoAtNoonLocal(6), "FDP"), rec(isoAtNoonLocal(7), "FDP")],
       [],
     );
     expect(weeks.find((w) => w.label === "Now")!.days).toBe(1);

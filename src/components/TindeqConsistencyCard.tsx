@@ -15,16 +15,20 @@ import type { TindeqRecordingMeta } from "../types";
 /// tag filter narrows the SAME bars to one exercise instead of stacking.
 export default function TindeqConsistencyCard() {
   const realtimeVersion = useRealtimeVersion();
-  const recordings = useCancellableFetch<TindeqRecordingMeta[]>(
+  const recordings = useCancellableFetch<TindeqRecordingMeta[] | null>(
     fetchRecordings,
-    [],
+    null,
     realtimeVersion,
   );
   const hiddenTags = useCancellableFetch<string[]>(fetchHiddenTags, [], realtimeVersion);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
 
-  const { weeks, tags } = computeTindeqWeeks(recordings, hiddenTags);
+  // `recordings === null` means "not fetched yet" — must not render as
+  // "empty" (CLAUDE.md convention). Computing off `[]` in that case keeps
+  // the tag chips and chart hidden below without a separate loading branch.
+  const loaded = recordings !== null;
+  const { weeks, tags } = computeTindeqWeeks(recordings ?? [], hiddenTags);
   // A selection can go stale (hidden, or aged out of the 8-week window on a
   // realtime refetch) without an explicit `setSelectedTag(null)` — derive the
   // active tag instead of syncing state in an effect, so a stale selection
@@ -81,13 +85,13 @@ export default function TindeqConsistencyCard() {
         </div>
       )}
 
-      {!hasAny && (
+      {loaded && !hasAny && (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)" }}>
           No Tindeq recordings in the last 8 weeks
         </div>
       )}
 
-      {hasAny && (
+      {loaded && hasAny && (
         <div
           className="chart-scrub"
           style={{ display: "flex", gap: 6, alignItems: "flex-end", height: 88 }}
