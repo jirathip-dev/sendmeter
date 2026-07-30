@@ -26,6 +26,7 @@ import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
 import type { TindeqPreset, TindeqSide } from "../types";
 import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
+import PresetPlanChart from "./PresetPlanChart";
 import type { GaugeTarget } from "./ForceCurveCard";
 
 interface Props {
@@ -518,6 +519,7 @@ export default function ForceFullscreen({
                   "Free hold — pick a zone or preset in the tab for a guided timer."
                 )}
               </div>
+              {protocol && timeline && <PresetPlanChart preset={protocol} refs={presetRefs} />}
               {/* #298: explicit unarm, in addition to re-tapping the same
                   chip in the tab — the fastest way out of a protocol from
                   right where it's shown. */}

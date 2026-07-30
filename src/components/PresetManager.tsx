@@ -24,8 +24,10 @@ import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useToast } from "../hooks/useToast";
 import { restoreAt } from "../lib/restoreAt";
 import { FORCE_PRESET_SELECTED_KEY } from "../lib/forcePresetStorage";
+import type { PlanPreset } from "../lib/presetPlan";
 import ConfirmDialog from "./ConfirmDialog";
 import NumInput from "./NumInput";
+import PresetPlanChart from "./PresetPlanChart";
 import type { TindeqPreset } from "../types";
 
 interface Props {
@@ -241,19 +243,19 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
     // read via the refs above, kept current independently.
   }, []);
 
-  async function save() {
-    setSaving(true);
-    setError(null);
-    // #332: the per-set list actually saved — same derivation the form
-    // fields render (see `holds` above), computed fresh here rather than
-    // trusted from render state that may be stale. `deriveHoldsField` saves
-    // null when every set is equal (unvaried, or the checkbox is off) so an
-    // unchanged preset keeps today's shape; when it does vary, `holdBase` is
-    // set 1's value so a pre-#332 reader (or a null-derivation caller) runs
-    // the same hold the guided timer actually starts on.
+  // #332: the per-set list actually saved — same derivation the form fields
+  // render (see `holds` above), computed fresh here rather than trusted from
+  // render state that may be stale. `deriveHoldsField` saves null when every
+  // set is equal (unvaried, or the checkbox is off) so an unchanged preset
+  // keeps today's shape; when it does vary, `holdBase` is set 1's value so a
+  // pre-#332 reader (or a null-derivation caller) runs the same hold the
+  // guided timer actually starts on.
+  //
+  // #316 (part 2 of #332/#331): shared between `save()` and the live plan
+  // chart so the preview can never disagree with what actually saves.
+  function draftPlanPreset(): PlanPreset {
     const { holdBase, holdsS } = deriveHoldsField(varyHolds, holdS, holds, sets);
-    const fields: Omit<TindeqPreset, "id"> = {
-      name: name.trim() || `${holdBase}s × ${reps} × ${sets}`,
+    return {
       holdS: holdBase,
       holdsS,
       reps,
@@ -266,6 +268,16 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
       pctStep: targetMode === "pct" && targetPct > 0 ? pctStep : 0,
       targetCurve: targetMode === "curve",
       alternateSides,
+    };
+  }
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    const draft = draftPlanPreset();
+    const fields: Omit<TindeqPreset, "id"> = {
+      name: name.trim() || `${draft.holdS}s × ${reps} × ${sets}`,
+      ...draft,
     };
     try {
       if (editingId) {
@@ -550,6 +562,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               ))}
             </div>
           )}
+          <PresetPlanChart preset={draftPlanPreset()} refs={presetRefs} />
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <NumField label="Rest / rep s" value={restRepsS} onChange={setRestRepsS} min={0} max={600} />
             <NumField label="Rest / set s" value={restSetsS} onChange={setRestSetsS} min={0} max={1200} />
