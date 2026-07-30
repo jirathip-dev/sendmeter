@@ -1,4 +1,5 @@
 import type { TindeqPreset } from "../types";
+import type { PlanPreset } from "./presetPlan";
 
 /// Guided-protocol timeline (pure — testable). A preset expands into a flat
 /// list of timed segments; the UI and the per-rep recorder both walk it, so
@@ -35,7 +36,7 @@ export function setSide(set: number): "left" | "right" {
 /// Falls back to the base `holdS` when `holdsS` is null OR shorter than
 /// `sets` (a preset saved before this field, or whose `sets` was since
 /// raised past the list's length, must keep behaving exactly as before).
-export function holdForSet(p: TindeqPreset, set: number): number {
+export function holdForSet(p: PlanPreset, set: number): number {
   const clamped = Math.max(1, Math.min(p.sets, set));
   if (!p.holdsS || p.holdsS.length < p.sets) return p.holdS;
   return p.holdsS[clamped - 1] ?? p.holdS;
@@ -43,15 +44,14 @@ export function holdForSet(p: TindeqPreset, set: number): number {
 
 /// Every set's resolved hold, in order — drives UI summaries (preset row,
 /// READY line) that want the whole per-set shape rather than one set's value.
-export function holdsForSets(p: TindeqPreset): number[] {
+export function holdsForSets(p: PlanPreset): number[] {
   return Array.from({ length: p.sets }, (_, i) => holdForSet(p, i + 1));
 }
 
 /// Same `<60s ? "Ns" : "Mm[Ss]"` rule PresetManager's row uses for rest
-/// times — kept here (not imported) so `holdsSummary` formats a long hold
-/// (e.g. 240s) as `4m`, matching the rest column beside it, instead of a
-/// raw, un-abbreviated second count.
-function fmtHoldS(s: number): string {
+/// times — exported so `PresetPlanChart` formats a per-set hold label
+/// exactly like `holdsSummary` does (e.g. `4m` for 240s, not a raw count).
+export function fmtHoldS(s: number): string {
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
   const rem = s % 60;
@@ -163,7 +163,7 @@ export interface PresetRefs {
 /// force references. Priority: smart curve → % of PR/CF → fixed kg. Returns
 /// null when the needed reference isn't available yet (band just doesn't show).
 export function presetTargetKg(
-  p: TindeqPreset,
+  p: PlanPreset,
   refs: PresetRefs,
   set: number,
 ): number | null {
@@ -202,7 +202,7 @@ export function presetTargetKg(
 /// reference isn't resolved yet) — that's uniform across sets since only the
 /// per-set hold/pct varies, not the refs the target resolves against.
 export function presetTargetKgRange(
-  p: TindeqPreset,
+  p: PlanPreset,
   refs: PresetRefs,
 ): { min: number; max: number } | null {
   const kgs: number[] = [];
