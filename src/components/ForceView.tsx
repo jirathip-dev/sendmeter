@@ -23,7 +23,7 @@ import {
   ZONE_INTENSITY,
 } from "../lib/force-curve";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
-import { buildTimeline, presetTargetKg, timelineAt } from "../lib/protocol";
+import { buildTimeline, holdForSet, presetTargetKg, timelineAt } from "../lib/protocol";
 import { curveCandidateRecordings, effortPeakKg, isEffortRecording } from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
@@ -435,6 +435,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         activeProtocol,
         activeProtocol ? presetTargetKg(activeProtocol, presetRefs, seg.set) : null,
         presetRefs,
+        seg.set,
       ),
       samples: slice,
     };
@@ -858,7 +859,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           kg: presetKgSet1,
           lowKg: presetKgSet1 * 0.9,
           highKg: presetKgSet1 * 1.1,
-          workS: gaugeInputs.preset.holdS,
+          workS: holdForSet(gaugeInputs.preset, 1),
           label: gaugeInputs.preset.name,
         }
       : (armedZone?.target ?? null);

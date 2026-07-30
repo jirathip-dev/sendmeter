@@ -8,6 +8,7 @@ import {
   type TrainingQuality,
 } from "./force-curve";
 import { classifyZoneLoaded } from "./zoneHistory";
+import { holdForSet } from "./protocol";
 import type { GaugeTarget } from "../components/ForceCurveCard";
 import type { TindeqPreset, TindeqSide } from "../types";
 
@@ -64,6 +65,7 @@ export function buildZoneSelection(
       id: `zone:${q}`,
       name: `${t.label} · ${tag}`,
       holdS: p.holdS,
+      holdsS: null,
       reps: p.reps,
       sets: p.sets,
       restRepsS: p.restRepsS,
@@ -104,6 +106,7 @@ export function buildPrehabSelection(
       id: "zone:prehab",
       name: `${t.label} · ${tag}`,
       holdS: PREHAB_PROTOCOL.holdS,
+      holdsS: null,
       reps: PREHAB_PROTOCOL.reps,
       sets: PREHAB_PROTOCOL.sets,
       restRepsS: PREHAB_PROTOCOL.restRepsS,
@@ -315,7 +318,9 @@ export function selectedQuality(
 ///
 /// `targetKg` is the preset's target for the SET being saved (per-set ramps
 /// mean set 3 can classify differently from set 1). Null with no protocol —
-/// a freehand hold records no zone rather than a guess.
+/// a freehand hold records no zone rather than a guess. `set` (#332) is that
+/// same set, so a per-set hold list classifies against the hold actually
+/// performed rather than always the base `holdS`.
 ///
 /// Returns `RecordedZone | null` (#325): an armed Prehab protocol states its
 /// quality outright — `zone:prehab` — exactly like an armed training zone
@@ -327,7 +332,8 @@ export function performedQuality(
   p: TindeqPreset | null,
   targetKg: number | null,
   refs: { maxF: number | null; cf: number | null },
+  set: number,
 ): RecordedZone | null {
   if (!p) return null;
-  return protocolQuality(p) ?? classifyZoneLoaded(p.holdS, targetKg, refs);
+  return protocolQuality(p) ?? classifyZoneLoaded(holdForSet(p, set), targetKg, refs);
 }

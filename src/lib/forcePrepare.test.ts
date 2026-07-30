@@ -23,6 +23,7 @@ function preset(over: Partial<TindeqPreset> = {}): TindeqPreset {
     id: "p1",
     name: "Max hangs",
     holdS: 10,
+    holdsS: null,
     reps: 3,
     sets: 3,
     restRepsS: 60,

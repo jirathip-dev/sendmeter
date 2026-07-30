@@ -66,6 +66,7 @@ describe("buildZoneSelection", () => {
         id: "zone:strength",
         name: "Strength · FDP L",
         holdS: 10,
+        holdsS: null,
         reps: 5,
         sets: 1,
         restRepsS: 150,
@@ -84,6 +85,13 @@ describe("buildZoneSelection", () => {
     const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
     const result = buildZoneSelection(model, "strength", "FDP L", false);
     expect(result!.protocol.alternateSides).toBe(false);
+  });
+
+  it("#332 no-regression: leaves holdsS null for every recommended quality", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    for (const q of ["power", "strength", "power-endurance", "endurance"] as const) {
+      expect(buildZoneSelection(model, q, "FDP L", true)!.protocol.holdsS).toBeNull();
+    }
   });
 });
 
@@ -120,6 +128,11 @@ describe("buildPrehabSelection (#325)", () => {
     const result = buildPrehabSelection(noCf, "FDP L")!;
     expect(result.target.kg).toBeCloseTo(12, 5); // 40 × 0.30
   });
+
+  it("#332 no-regression: leaves holdsS null", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    expect(buildPrehabSelection(model, "FDP L")!.protocol.holdsS).toBeNull();
+  });
 });
 
 describe("applyIntensity", () => {
@@ -131,6 +144,7 @@ describe("applyIntensity", () => {
       id: "custom-1",
       name: "Custom",
       holdS: 10,
+      holdsS: null,
       reps: 5,
       sets: 1,
       restRepsS: 150,
@@ -198,6 +212,7 @@ describe("rederiveSelection (#298)", () => {
       id: "custom-1",
       name: "Custom",
       holdS: 10,
+      holdsS: null,
       reps: 5,
       sets: 1,
       restRepsS: 150,
@@ -348,6 +363,7 @@ describe("selectedQuality", () => {
         id: "zone:strength",
         name: "Strength",
         holdS: 10,
+        holdsS: null,
         reps: 5,
         sets: 1,
         restRepsS: 150,
@@ -372,6 +388,7 @@ describe("selectedQuality", () => {
         id: "custom-1",
         name: "Custom",
         holdS: 10,
+        holdsS: null,
         reps: 5,
         sets: 1,
         restRepsS: 150,
@@ -395,6 +412,7 @@ describe("selectedQuality", () => {
         id: "zone:bogus",
         name: "Bogus",
         holdS: 10,
+        holdsS: null,
         reps: 5,
         sets: 1,
         restRepsS: 150,
@@ -443,6 +461,7 @@ describe("performedQuality (#259)", () => {
       id: "preset-uuid",
       name: "My hangs",
       holdS: 7,
+      holdsS: null,
       reps: 5,
       sets: 3,
       restRepsS: 150,
@@ -463,20 +482,20 @@ describe("performedQuality (#259)", () => {
     const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 500 };
     const sel = buildZoneSelection(model, "strength", "FDP", false)!;
     expect(sel).not.toBeNull();
-    expect(performedQuality(sel.protocol, sel.protocol.targetKg, refs)).toBe(
+    expect(performedQuality(sel.protocol, sel.protocol.targetKg, refs, 1)).toBe(
       "strength",
     );
     // …and it is the zone the user armed, not a re-derivation: even fed
     // deliberately contradictory references it still answers strength.
     expect(
-      performedQuality(sel.protocol, 1, { maxF: 1000, cf: 900 }),
+      performedQuality(sel.protocol, 1, { maxF: 1000, cf: 900 }, 1),
     ).toBe("strength");
   });
 
   it("records a custom preset's LOAD-AWARE badge, which duration alone would get wrong", () => {
     // 7s at 34kg of a 40kg max = 85% → Strength on the preset's badge…
     const p = customPreset({ holdS: 7, targetKg: 34 });
-    expect(performedQuality(p, 34, refs)).toBe("strength");
+    expect(performedQuality(p, 34, refs, 1)).toBe("strength");
     // …while a duration-only re-derivation of the saved 7s hold says Power
     // Endurance. That divergence is the bug #259 exists to close.
     expect(classifyZone(7)).toBe("power-endurance");
@@ -485,7 +504,7 @@ describe("performedQuality (#259)", () => {
   it("matches classifyZoneLoaded exactly — the same call PresetManager's badge makes", () => {
     const p = customPreset({ holdS: 10 });
     for (const kg of [null, 15, 24, 34, 38]) {
-      expect(performedQuality(p, kg, refs)).toBe(
+      expect(performedQuality(p, kg, refs, 1)).toBe(
         classifyZoneLoaded(p.holdS, kg, refs),
       );
     }
@@ -495,27 +514,43 @@ describe("performedQuality (#259)", () => {
     // %-of-PR with a per-set step: set 1 at 70% of 40kg is power-endurance,
     // set 3 at 90% is strength. The saved rep gets its own set's answer.
     const p = customPreset({ holdS: 10, targetKg: null, targetPct: 70, pctStep: 10 });
-    expect(performedQuality(p, presetTargetKg(p, { ...refs, prKg: 40, wPrime: null }, 1), refs)).toBe(
-      "power-endurance",
-    );
-    expect(performedQuality(p, presetTargetKg(p, { ...refs, prKg: 40, wPrime: null }, 3), refs)).toBe(
-      "strength",
-    );
+    expect(
+      performedQuality(p, presetTargetKg(p, { ...refs, prKg: 40, wPrime: null }, 1), refs, 1),
+    ).toBe("power-endurance");
+    expect(
+      performedQuality(p, presetTargetKg(p, { ...refs, prKg: 40, wPrime: null }, 3), refs, 3),
+    ).toBe("strength");
+  });
+
+  it("classifies a varying hold list at that set's OWN hold (#332), not the base holdS", () => {
+    // Same 34kg load (≥0.8·maxF of 40) at set 1's 5s hold classifies as
+    // Strength; at set 3's 25s hold — past the 20s Strength/Power-Endurance
+    // cutoff — the identical load classifies as Endurance instead.
+    const p = customPreset({
+      holdS: 5,
+      holdsS: [5, 12, 25],
+      targetKg: 34,
+      targetPct: null,
+    });
+    expect(performedQuality(p, 34, refs, 1)).toBe("strength");
+    expect(performedQuality(p, 34, refs, 3)).toBe("endurance");
+    expect(performedQuality(p, 34, refs, 1)).toBe(classifyZoneLoaded(5, 34, refs));
+    expect(performedQuality(p, 34, refs, 3)).toBe(classifyZoneLoaded(25, 34, refs));
   });
 
   it("falls back to duration for an untargeted preset with no resolvable load", () => {
     const p = customPreset({ holdS: 12, targetKg: null });
-    expect(performedQuality(p, null, refs)).toBe(classifyZone(12));
+    expect(performedQuality(p, null, refs, 1)).toBe(classifyZone(12));
   });
 
   it("records nothing at all for a freehand hold (no protocol armed)", () => {
-    expect(performedQuality(null, 34, refs)).toBeNull();
+    expect(performedQuality(null, 34, refs, 1)).toBeNull();
   });
 
   it("records 'prehab' for a hold performed under an armed Prehab protocol (#325), never falling through to classifyZoneLoaded", () => {
     const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
     const prehab = buildPrehabSelection(model, "FDP")!;
-    expect(performedQuality(prehab.protocol, prehab.protocol.targetKg, refs)).toBe("prehab");
+    expect(performedQuality(prehab.protocol, prehab.protocol.targetKg, refs, 1)).toBe("prehab");
     // A 30s hold with no recorded zone infers as Endurance — proof that
     // skipping the stamp here would silently credit training balance with
     // exactly the thing #325 exists to keep out of it.
@@ -529,6 +564,7 @@ describe("armedAlternates / chartSideFor (#298)", () => {
       id: "preset-1",
       name: "Custom",
       holdS: 10,
+      holdsS: null,
       reps: 5,
       sets: 1,
       restRepsS: 150,

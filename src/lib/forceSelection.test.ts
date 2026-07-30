@@ -13,6 +13,7 @@ const preset: TindeqPreset = {
   id: "p1",
   name: "Custom",
   holdS: 7,
+  holdsS: null,
   reps: 6,
   sets: 3,
   restRepsS: 3,

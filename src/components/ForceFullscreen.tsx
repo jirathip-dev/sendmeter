@@ -11,7 +11,16 @@ import {
   clampCss,
   heroFontCss,
 } from "../lib/fullscreenLayout";
-import { firstHoldSide, presetTargetKg, timelineAt, timelineDurationS } from "../lib/protocol";
+import {
+  firstHoldSide,
+  holdForSet,
+  holdsSummary,
+  presetTargetKg,
+  presetTargetKgRange,
+  protocolBandLabel,
+  timelineAt,
+  timelineDurationS,
+} from "../lib/protocol";
 import type { PresetRefs, ProtocolSegment } from "../lib/protocol";
 import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
 import type { TindeqPreset, TindeqSide } from "../types";
@@ -275,17 +284,21 @@ export default function ForceFullscreen({
   // follows the CURRENT set live (set 1 while idle, last set once done).
   const currentSet = pos?.seg.set ?? (done ? (protocol?.sets ?? 1) : 1);
   const protocolKg = protocol ? presetTargetKg(protocol, presetRefs, currentSet) : null;
+  // #332: with a per-set hold list, a `targetCurve` preset resolves a
+  // different kg per set (possibly non-monotonically), so a "set N: X kg"
+  // snapshot understates the range every other set trains at — label with
+  // the full min–max range instead. The drawn kg/lowKg/highKg band above
+  // still tracks the CURRENT set (what to aim for right now); only the text
+  // label changes to describe the whole protocol.
+  const protocolKgRange = protocol?.targetCurve ? presetTargetKgRange(protocol, presetRefs) : null;
   const band: GaugeTarget | null =
     protocol && protocolKg != null
       ? {
           kg: protocolKg,
           lowKg: protocolKg * 0.9,
           highKg: protocolKg * 1.1,
-          workS: protocol.holdS,
-          label:
-            protocol.targetPct != null && protocol.sets > 1
-              ? `${protocol.name} · set ${currentSet}: ${protocolKg.toFixed(1)} kg`
-              : protocol.name,
+          workS: holdForSet(protocol, currentSet),
+          label: protocolBandLabel(protocol, protocolKg, currentSet, protocolKgRange),
         }
       : target;
 
@@ -491,7 +504,7 @@ export default function ForceFullscreen({
                 {protocol && timeline ? (
                   <>
                     <span style={{ color: "var(--ink)", fontWeight: 600 }}>{protocol.name}</span>{" "}
-                    · {protocol.holdS}s × {protocol.reps} × {protocol.sets}
+                    · {holdsSummary(protocol)} × {protocol.reps} × {protocol.sets}
                     {protocol.alternateSides && " · L⇄R"} · ~
                     {Math.round(timelineDurationS(timeline) / 60)}min
                     <br />
