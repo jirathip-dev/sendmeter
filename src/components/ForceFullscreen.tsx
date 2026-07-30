@@ -13,11 +13,11 @@ import {
 } from "../lib/fullscreenLayout";
 import {
   firstHoldSide,
-  formatKgRange,
   holdForSet,
   holdsSummary,
   presetTargetKg,
   presetTargetKgRange,
+  protocolBandLabel,
   timelineAt,
   timelineDurationS,
 } from "../lib/protocol";
@@ -298,14 +298,7 @@ export default function ForceFullscreen({
           lowKg: protocolKg * 0.9,
           highKg: protocolKg * 1.1,
           workS: holdForSet(protocol, currentSet),
-          label:
-            protocol.targetCurve && protocolKgRange
-              ? protocol.sets > 1
-                ? `${protocol.name} · set ${currentSet}: ${protocolKg.toFixed(1)} kg (${formatKgRange(protocolKgRange)})`
-                : protocol.name
-              : protocol.targetPct != null && protocol.sets > 1
-                ? `${protocol.name} · set ${currentSet}: ${protocolKg.toFixed(1)} kg`
-                : protocol.name,
+          label: protocolBandLabel(protocol, protocolKg, currentSet, protocolKgRange),
         }
       : target;
 

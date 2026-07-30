@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   applyHoldEdit,
   buildTimeline,
+  commitHoldEdit,
+  curveHoldCopy,
   deriveHoldsField,
   firstHoldSide,
   formatKgRange,
@@ -10,6 +12,7 @@ import {
   holdsSummary,
   presetTargetKg,
   presetTargetKgRange,
+  protocolBandLabel,
   protocolDurationS,
   setSide,
   timelineAt,
@@ -149,6 +152,49 @@ describe("presetTargetKgRange (#332 finding 2)", () => {
   it("is null whenever presetTargetKg is (a needed reference isn't resolved yet)", () => {
     const curve: TindeqPreset = { ...repeaters, targetCurve: true };
     expect(presetTargetKgRange(curve, { ...refs, cf: null })).toBeNull();
+  });
+});
+
+describe("curveHoldCopy (#332 round 6 finding c)", () => {
+  it("states the exact single-hold formula when holds don't vary", () => {
+    const copy = curveHoldCopy(false, 30);
+    expect(copy.label).toBe("Hold time — 30s");
+    expect(copy.description).toContain("CF + W′/30s");
+  });
+
+  it("relabels as the base for overrideless sets, and drops the false single-hold formula, when varying", () => {
+    const copy = curveHoldCopy(true, 30);
+    expect(copy.label).toBe("Base hold time (sets without an override) — 30s");
+    // Must not claim every set reads off exactly this one hold.
+    expect(copy.description).not.toContain("CF + W′/30s");
+    expect(copy.description).toContain("30s base");
+  });
+});
+
+describe("protocolBandLabel (#332 round 6 finding a)", () => {
+  it("renders the bare name for a uniform targetCurve preset — no duplicated kg", () => {
+    // holdsS null (today's default) → min === max, so the parenthetical must
+    // not appear even though sets > 1 and targetCurve is set.
+    const uniform: TindeqPreset = { ...repeaters, holdS: 30, targetCurve: true };
+    expect(protocolBandLabel(uniform, 30, 2, { min: 30, max: 30 })).toBe("Repeaters");
+  });
+
+  it("adds the set + range parenthetical only when holds actually vary", () => {
+    const curve: TindeqPreset = { ...repeaters, holdS: 5, holdsS: [5, 15, 30], sets: 3, targetCurve: true };
+    expect(protocolBandLabel(curve, 80, 1, { min: 30, max: 80 })).toBe(
+      "Repeaters · set 1: 80.0 kg (30.0–80.0 kg)",
+    );
+  });
+
+  it("renders the bare name for a targetCurve preset with a null range (ref not resolved)", () => {
+    const curve: TindeqPreset = { ...repeaters, targetCurve: true };
+    expect(protocolBandLabel(curve, 30, 1, null)).toBe("Repeaters");
+  });
+
+  it("keeps the existing %-of-PR ramp label unaffected (non-curve path)", () => {
+    const ramp: TindeqPreset = { ...repeaters, sets: 4, targetKg: 20, targetPct: 50, pctStep: 10 };
+    expect(protocolBandLabel(ramp, 18, 2, null)).toBe("Repeaters · set 2: 18.0 kg");
+    expect(protocolBandLabel({ ...ramp, sets: 1 }, 15, 1, null)).toBe("Repeaters");
   });
 });
 
@@ -292,6 +338,29 @@ describe("applyHoldEdit + deriveHoldsField (#332 round 3 finding 1)", () => {
       holdsS: null,
       resolved: [7, 7, 7],
     });
+  });
+});
+
+describe("commitHoldEdit (#332 round 6 finding b)", () => {
+  it("committing the displayed value leaves the slot null — a focus+blur with no edit must not materialize it", () => {
+    // NumInput.commit fires unconditionally on blur, even when the user only
+    // tabbed/tapped through the field. Slot 1 is unset (null), following the
+    // base holdS=7; committing that same displayed value (7) must be a no-op.
+    const holds: (number | null)[] = [null, null, null];
+    expect(commitHoldEdit(holds, 1, 7, 7)).toBe(holds); // same array, no write
+  });
+
+  it("a genuine edit to a different value still writes through", () => {
+    const holds: (number | null)[] = [null, null, null];
+    expect(commitHoldEdit(holds, 1, 20, 7)).toEqual([null, 20, null]);
+  });
+
+  it("re-committing an already-set slot's own value writes through (not gated by the unset check)", () => {
+    // Slot 1 was previously typed to 20; committing 20 again (a legitimate
+    // re-blur of an edited field) must still go through applyHoldEdit rather
+    // than being silently skipped — the guard only applies to still-null slots.
+    const holds: (number | null)[] = [null, 20, null];
+    expect(commitHoldEdit(holds, 1, 20, 20)).toEqual([null, 20, null]);
   });
 });
 

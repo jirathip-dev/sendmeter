@@ -6,8 +6,9 @@ import {
   updatePreset,
 } from "../lib/repo";
 import {
-  applyHoldEdit,
   buildTimeline,
+  commitHoldEdit,
+  curveHoldCopy,
   deriveHoldsField,
   formatKgRange,
   holdsForSets,
@@ -486,6 +487,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   );
 
   function renderForm() {
+    const curveCopy = curveHoldCopy(varyHolds, holdS);
     return (
         <div className="card">
           <span className="field-label" style={{ marginTop: 0 }}>Name (optional)</span>
@@ -532,11 +534,15 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                   value={h}
                   onChange={(v) => {
                     // Functional updater reading `prev`, not the render-closure
-                    // `holds` (CLAUDE.md's stale-closure rule) — `applyHoldEdit`
-                    // preserves any slots typed while `sets` was higher, and
-                    // leaves every OTHER slot untouched (still `null` if never
-                    // typed into) instead of materializing it.
-                    setHolds((prev) => applyHoldEdit(prev, i, v));
+                    // `holds` (CLAUDE.md's stale-closure rule) — `commitHoldEdit`
+                    // preserves any slots typed while `sets` was higher, leaves
+                    // every OTHER slot untouched (still `null` if never typed
+                    // into), and additionally no-ops when `prev[i]` is still
+                    // unset and `v` matches what's already displayed — NumInput
+                    // fires this on every blur, even a focus+blur with no edit
+                    // (#332 round 6 finding b), which would otherwise freeze the
+                    // slot at whatever `holdS` resolved to right then.
+                    setHolds((prev) => commitHoldEdit(prev, i, v, h));
                   }}
                   min={1}
                   max={600}
@@ -633,7 +639,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
 
           {targetMode === "curve" && (
             <>
-              <span className="field-label">Hold time — {holdS}s</span>
+              <span className="field-label">{curveCopy.label}</span>
               <input
                 type="range"
                 min={3}
@@ -643,9 +649,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 style={{ width: "100%", accentColor: "var(--primary)" }}
               />
               <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
-                Smart target: the load auto-adjusts to the force you can sustain
-                for a {holdS}s hold, read off this exercise's force curve
-                (CF + W′/{holdS}s). Longer holds → lighter, more endurance-y load.
+                {curveCopy.description}
               </div>
             </>
           )}

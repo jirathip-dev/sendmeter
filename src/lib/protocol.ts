@@ -117,6 +117,26 @@ export function applyHoldEdit(
   return next;
 }
 
+/// Guards a per-set hold-field commit against `NumInput`'s fire-every-blur
+/// behavior (#332 round 6 finding b): `NumInput.commit` calls `onCommit`
+/// unconditionally on blur, even when the field was only focused and blurred
+/// without being typed into — tabbing/tapping through the row alone would
+/// otherwise run every slot through `applyHoldEdit` and materialize it,
+/// exactly the freeze `applyHoldEdit`'s "null until typed" invariant exists
+/// to prevent. Skip the write when the slot is still unset AND the committed
+/// value equals what was already displayed (`deriveHoldsField`'s resolved
+/// value for that slot) — nothing actually changed, so the slot stays null
+/// and keeps following the base `holdS`.
+export function commitHoldEdit(
+  prev: (number | null)[],
+  index: number,
+  value: number,
+  displayedValue: number,
+): (number | null)[] {
+  if (prev[index] == null && value === displayedValue) return prev;
+  return applyHoldEdit(prev, index, value);
+}
+
 /// Nominal (non-alternating) duration — the quick summary shown on preset
 /// rows. Alternating timelines can run longer; use timelineDurationS for
 /// the exact figure.
@@ -201,6 +221,63 @@ export function formatKgRange(range: { min: number; max: number }): string {
   return range.min === range.max
     ? `${range.min.toFixed(1)} kg`
     : `${range.min.toFixed(1)}–${range.max.toFixed(1)} kg`;
+}
+
+/// Preset-editor "Auto (curve)" slider label + explanation (#332 round 6
+/// finding c). With `varyHolds` off, the slider sets the ONE hold every set's
+/// smart target resolves against, and the old sentence ("read off this
+/// exercise's force curve at CF + W′/{holdS}s") is exactly true. With
+/// `varyHolds` on, `presetTargetKg` resolves each set's target at THAT set's
+/// `holdForSet` — a set with its own "Set N" override reads its target off
+/// that hold, not this slider's — so the old sentence's stated formula is
+/// false for any overridden set. Relabel the slider "base hold time (sets
+/// without an override)" and say so, rather than hiding it: sets left at
+/// their default still resolve off this value.
+export function curveHoldCopy(
+  varyHolds: boolean,
+  holdS: number,
+): { label: string; description: string } {
+  if (varyHolds) {
+    return {
+      label: `Base hold time (sets without an override) — ${holdS}s`,
+      description:
+        `Smart target: each set's load auto-adjusts to the force sustainable ` +
+        `for THAT set's hold, read off this exercise's force curve (CF + ` +
+        `W′/hold). A set left without its own "Set N" override above uses ` +
+        `this ${holdS}s base. Longer holds → lighter, more endurance-y load.`,
+    };
+  }
+  return {
+    label: `Hold time — ${holdS}s`,
+    description:
+      `Smart target: the load auto-adjusts to the force you can sustain ` +
+      `for a ${holdS}s hold, read off this exercise's force curve ` +
+      `(CF + W′/${holdS}s). Longer holds → lighter, more endurance-y load.`,
+  };
+}
+
+/// Fullscreen live-gauge band label (#332 round 6 finding a). A `targetCurve`
+/// preset only earns the "· set N: X kg (range)" parenthetical when the
+/// per-set holds actually make the target vary across sets — a uniform
+/// preset (today's default: `holdsS` null) renders the bare protocol name,
+/// exactly as it did before this feature (curve presets have `targetPct ===
+/// null`, so they always fell through to the bare name pre-#332). Mirrors the
+/// %-of-PR branch's existing "no variation → bare name" shape instead of
+/// introducing a new always-on annotation.
+export function protocolBandLabel(
+  p: TindeqPreset,
+  protocolKg: number,
+  currentSet: number,
+  kgRange: { min: number; max: number } | null,
+): string {
+  if (p.targetCurve) {
+    return kgRange && kgRange.min !== kgRange.max
+      ? `${p.name} · set ${currentSet}: ${protocolKg.toFixed(1)} kg (${formatKgRange(kgRange)})`
+      : p.name;
+  }
+  return p.targetPct != null && p.sets > 1
+    ? `${p.name} · set ${currentSet}: ${protocolKg.toFixed(1)} kg`
+    : p.name;
 }
 
 export function buildTimeline(
