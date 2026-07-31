@@ -1,6 +1,8 @@
 import {
   PREHAB_PROTOCOL,
+  WARMUP_PROTOCOL,
   prehabTarget,
+  warmupTarget,
   ZONE_INTENSITY,
   zonePrescription,
   type ForceCurveModel,
@@ -121,24 +123,65 @@ export function buildPrehabSelection(
   };
 }
 
+/// Build the progressive Warm-up primer (#297 Part B2). Like Prehab, this is
+/// a recorded maintenance zone rather than a `TrainingQuality`; unlike
+/// Prehab, both hold duration and %-of-PR target ramp per set.
+export function buildWarmupSelection(
+  model: ForceCurveModel | null,
+  tag: string,
+  prKg = model?.maxF ?? 0,
+): ZoneSelection | null {
+  if (!model) return null;
+  const t = warmupTarget(model, prKg);
+  if (!t) return null;
+  return {
+    tag,
+    target: {
+      kg: t.targetKg,
+      lowKg: t.lowKg,
+      highKg: t.highKg,
+      workS: t.workS,
+      label: `${t.label} · ${tag}`,
+    },
+    protocol: {
+      id: "zone:warmup",
+      name: `${t.label} · ${tag}`,
+      holdS: WARMUP_PROTOCOL.holdS,
+      holdsS: [...WARMUP_PROTOCOL.holdsS],
+      reps: WARMUP_PROTOCOL.reps,
+      sets: WARMUP_PROTOCOL.sets,
+      restRepsS: WARMUP_PROTOCOL.restRepsS,
+      restSetsS: WARMUP_PROTOCOL.restSetsS,
+      targetKg: null,
+      targetPct: WARMUP_PROTOCOL.targetPct,
+      pctBasis: WARMUP_PROTOCOL.pctBasis,
+      pctStep: WARMUP_PROTOCOL.pctStep,
+      targetCurve: false,
+      alternateSides: false,
+    },
+  };
+}
+
 /// Every zone a saved hold can carry, recommended-protocol side (#325) — the
 /// membership check `protocolQuality` parses a `zone:${q}` id against.
 /// Separate from `QUALITY_COLORS`' keys, which deliberately stay at the four
-/// TRAINABLE qualities (a color per hue on the chip spectrum); "prehab" has
-/// no chip of its own on that card, so it isn't a color-table key.
+/// TRAINABLE qualities (a color per hue on the chip spectrum); maintenance
+/// protocols stay outside that table.
 const RECORDED_ZONES: RecordedZone[] = [
   "power",
   "strength",
   "power-endurance",
   "endurance",
+  "warmup",
   "prehab",
 ];
 
 /// The color a hold's recorded zone should show as, across the four trainable
-/// hues plus a muted one for Prehab (which isn't a training quality and has
-/// no entry in `QUALITY_COLORS`).
+/// hues plus distinct maintenance colors.
 export function zoneColor(z: RecordedZone): string {
-  return z === "prehab" ? "var(--ink-muted)" : QUALITY_COLORS[z];
+  if (z === "warmup") return "var(--primary)";
+  if (z === "prehab") return "var(--ink-muted)";
+  return QUALITY_COLORS[z];
 }
 
 const INTENSITY_KEY = "sendmeter:zone-intensity";
@@ -212,17 +255,19 @@ export function rederiveSelection(
   model: ForceCurveModel | null,
   tag: string | null,
   intensityPct: number,
+  prKg?: number | null,
 ): ZoneSelection | null {
-  // Prehab (#325) checked FIRST, via the full `protocolQuality` (not
-  // `selectedQuality`, which filters it out): it has no `TrainingQuality` of
-  // its own, so it would otherwise fall through to the "custom preset"
-  // branch below and get held at the OLD tag's kg forever — Prehab's load is
-  // tag-derived (0.70×CF of THIS tag), unlike a custom preset's fixed number,
-  // so a tag switch must rebuild it just like a recommended zone would.
-  if (sel && protocolQuality(sel.protocol) === "prehab") {
+  // Maintenance protocols checked FIRST, via the full `protocolQuality`
+  // (not `selectedQuality`, which filters them out). Their targets are
+  // tag-derived, unlike a custom preset's fixed number, so a tag switch must
+  // rebuild them just like a recommended training zone would.
+  const recordedZone = sel ? protocolQuality(sel.protocol) : null;
+  if (sel && (recordedZone === "prehab" || recordedZone === "warmup")) {
     if (!model) return sel;
     if (!tag) return null;
-    return buildPrehabSelection(model, tag);
+    return recordedZone === "prehab"
+      ? buildPrehabSelection(model, tag)
+      : buildWarmupSelection(model, tag, prKg ?? model.maxF);
   }
   const q = selectedQuality(sel);
   if (!sel || !q) return sel;
@@ -279,7 +324,7 @@ export function armedForDifferentTag(
 }
 
 /// The zone a PROTOCOL arms, parsed back from the `zone:${q}` id
-/// `buildZoneSelection`/`buildPrehabSelection` mint. Null for a custom
+/// the recommended-protocol builders mint. Null for a custom
 /// preset, which has no declared quality — only a load and a hold time.
 /// Returns `RecordedZone` (#325), not `TrainingQuality` — Prehab arms itself
 /// via `zone:prehab` exactly like a trainable zone does, so this has to admit
@@ -292,16 +337,14 @@ export function protocolQuality(p: TindeqPreset): RecordedZone | null {
 }
 
 /// The TRAINABLE zone a selection arms — so the recommended-zone chips
-/// highlight from `selected` alone. Null for a custom preset AND for Prehab
-/// (#325): Prehab has no chip on that card, and filtering it out here is what
-/// keeps `applyIntensity`'s dial-gate (which reads this) from ever touching a
-/// Prehab selection — the same mechanism that already protects custom
-/// presets from the dial.
+/// highlight from `selected` alone. Null for a custom preset and both
+/// maintenance protocols; filtering them here also keeps the intensity dial
+/// from modifying their fixed prescriptions.
 export function selectedQuality(
   sel: ZoneSelection | null,
 ): TrainingQuality | null {
   const q = sel ? protocolQuality(sel.protocol) : null;
-  return q && q !== "prehab" ? q : null;
+  return q && q !== "prehab" && q !== "warmup" ? q : null;
 }
 
 /// The quality a hold saved from this protocol was PERFORMED under (#259) —
@@ -322,12 +365,9 @@ export function selectedQuality(
 /// same set, so a per-set hold list classifies against the hold actually
 /// performed rather than always the base `holdS`.
 ///
-/// Returns `RecordedZone | null` (#325): an armed Prehab protocol states its
-/// quality outright — `zone:prehab` — exactly like an armed training zone
-/// does, and that must reach the saved recording as `zone: 'prehab'` rather
-/// than falling through to `classifyZoneLoaded` (which would classify a 30s
-/// sub-CF hold as Endurance, silently crediting training balance with the
-/// thing this issue exists to keep out of it).
+/// Returns `RecordedZone | null`: an armed maintenance protocol states its
+/// zone outright, preventing its holds from falling through to a trainable
+/// duration/load classification.
 export function performedQuality(
   p: TindeqPreset | null,
   targetKg: number | null,
