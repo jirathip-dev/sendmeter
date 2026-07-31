@@ -17,6 +17,7 @@ const PAD = { top: 14, right: 6, bottom: 16, left: 6 };
 interface Props {
   preset: PlanPreset;
   refs: PresetRefs;
+  resolvedTargets?: readonly (number | null)[];
 }
 
 /// Part 2 of #332/#331: a compact per-set bar chart of the plan a preset (or
@@ -28,8 +29,8 @@ interface Props {
 /// text summary, so the chart would just be noise. Shared between the
 /// editor form and the fullscreen READY block so both read off the same
 /// `buildPresetPlan`.
-export default function PresetPlanChart({ preset, refs }: Props) {
-  const rows = buildPresetPlan(preset, refs);
+export default function PresetPlanChart({ preset, refs, resolvedTargets }: Props) {
+  const rows = buildPresetPlan(preset, refs, resolvedTargets);
   const metric = planMetric(rows);
   const maxVal =
     metric === "hold"

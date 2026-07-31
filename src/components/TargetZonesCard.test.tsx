@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ForceCurveModel } from "../lib/force-curve";
-import { buildPrehabSelection } from "../lib/zoneSelection";
+import { buildPrehabSelection, buildZoneSelection } from "../lib/zoneSelection";
+import { resolveAlternatingRecommendation, type AlternatingPrescription } from "../lib/alternatingProtocol";
 import TargetZonesCard from "./TargetZonesCard";
 
 const model: ForceCurveModel = {
@@ -11,7 +12,11 @@ const model: ForceCurveModel = {
   wPrime: 300,
 };
 
-function render(selected = null as ReturnType<typeof buildPrehabSelection>) {
+function render(
+  selected = null as ReturnType<typeof buildPrehabSelection>,
+  alternatingReady = true,
+  alternatingPrescription: AlternatingPrescription | null = null,
+) {
   return renderToStaticMarkup(
     <TargetZonesCard
       tag="FDP L"
@@ -21,6 +26,8 @@ function render(selected = null as ReturnType<typeof buildPrehabSelection>) {
       intensityPct={100}
       onIntensityChange={() => undefined}
       locked={false}
+      alternatingReady={alternatingReady}
+      alternatingPrescription={alternatingPrescription}
       onClear={() => undefined}
     />,
   );
@@ -43,5 +50,29 @@ describe("TargetZonesCard (#344)", () => {
       "Fixed dose · below critical force · excluded from training balance",
     );
     expect(html).not.toContain('aria-label="Session intensity"');
+  });
+
+  it("explains why an alternating recommendation is unavailable (#331)", () => {
+    const html = render(buildZoneSelection(model, "strength", "FDP", false), false);
+    expect(html).toContain("Alternating needs a fit for both hands.");
+    expect(html).toMatch(/type="checkbox"[^>]*disabled/);
+  });
+
+  it("shows both recommended targets and per-hand holds (#331)", () => {
+    const right = { ...model, maxF: 30, cf: 12, wPrime: 180 };
+    const prescription = resolveAlternatingRecommendation(
+      { left: { model, prKg: 40 }, right: { model: right, prKg: 30 } },
+      "strength",
+      "FDP",
+      80,
+      2,
+    )!;
+    const html = render(
+      buildZoneSelection(model, "strength", "FDP", true, 80),
+      true,
+      prescription,
+    );
+    expect(html).toContain(`L ${prescription.left.targets[0]!.kg.toFixed(1)} kg · R`);
+    expect(html).toContain(`L hold ${prescription.left.targets[0]!.workS}s · R hold`);
   });
 });

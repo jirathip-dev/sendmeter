@@ -16,30 +16,36 @@ export interface PlanRow {
 }
 
 /// One row per set `1..p.sets` — hold from `holdForSet`, target from
-/// `presetTargetKg` (both already resolve per-set), side from `setSide` only
+/// `presetTargetKg` (both already resolve per-set), or from the optional
+/// already-resolved per-hand/set targets (#331); side from `setSide` only
 /// when the preset alternates (otherwise the user's selected side applies,
 /// which this plan doesn't know).
-export function buildPresetPlan(p: PlanPreset, refs: PresetRefs): PlanRow[] {
+export function buildPresetPlan(
+  p: PlanPreset,
+  refs: PresetRefs,
+  resolvedTargets?: readonly (number | null)[],
+): PlanRow[] {
   return Array.from({ length: p.sets }, (_, i) => {
     const set = i + 1;
     return {
       set,
       holdS: holdForSet(p, set),
       side: p.alternateSides ? setSide(set) : null,
-      targetKg: presetTargetKg(p, refs, set),
+      targetKg: resolvedTargets ? (resolvedTargets[i] ?? null) : presetTargetKg(p, refs, set),
     };
   });
 }
 
 /// Whether the plan is worth charting — a single set, or a set list whose
-/// holds and resolved (non-null) targets are all identical, looks no
+/// holds, resolved (non-null) targets, and sides are all identical, looks no
 /// different from the existing text summary.
 export function planVaries(rows: PlanRow[], sets: number): boolean {
   if (sets <= 1) return false;
   const holdsVary = rows.some((r) => r.holdS !== rows[0]!.holdS);
   const targets = rows.map((r) => r.targetKg).filter((t): t is number => t != null);
   const targetsVary = targets.some((t) => t !== targets[0]);
-  return holdsVary || targetsVary;
+  const sidesVary = rows.some((r) => r.side !== rows[0]!.side);
+  return holdsVary || targetsVary || sidesVary;
 }
 
 /// Whether the preset declares a target load at all (curve, %-of-PR/CF, or a

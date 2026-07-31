@@ -13,6 +13,7 @@ import {
 
 import BoxChip from "./BoxChip";
 import InfoDot from "./InfoDot";
+import type { AlternatingPrescription } from "../lib/alternatingProtocol";
 
 interface Props {
   tag: string;
@@ -30,6 +31,9 @@ interface Props {
   /// mean the set you finish isn't the set you started. Disables all of
   /// them rather than leaving a control that looks live but is inert.
   locked: boolean;
+  /// Alternation is honest only after both independent hand fits settle.
+  alternatingReady: boolean;
+  alternatingPrescription: AlternatingPrescription | null;
   /// Unarm via ForceView's `clearProtocol` (#298) — drops the persisted
   /// preset key too, not just this card's own `selected` prop, so a stale
   /// key can't re-arm a preset on the next mount.
@@ -54,6 +58,8 @@ export default function TargetZonesCard({
   intensityPct,
   onIntensityChange,
   locked,
+  alternatingReady,
+  alternatingPrescription,
   onClear,
 }: Props) {
   const [alternate, setAlternate] = useState(false);
@@ -248,23 +254,35 @@ export default function TargetZonesCard({
                     color: quality ? QUALITY_COLORS[quality] : "var(--success)",
                   }}
                 >
-                  {zoneT.targetKg.toFixed(1)} kg
+                  {alternatingPrescription ? (
+                    <>
+                      L {alternatingPrescription.left.targets[0]!.kg.toFixed(1)} kg · R{" "}
+                      {alternatingPrescription.right.targets[0]!.kg.toFixed(1)} kg
+                    </>
+                  ) : (
+                    `${zoneT.targetKg.toFixed(1)} kg`
+                  )}
                 </span>
-                <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
-                  ({zoneT.lowKg.toFixed(1)}–{zoneT.highKg.toFixed(1)})
-                </span>
+                {!alternatingPrescription && (
+                  <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
+                    ({zoneT.lowKg.toFixed(1)}–{zoneT.highKg.toFixed(1)})
+                  </span>
+                )}
               </div>
               {/* The prescription the guided timer will run. A single-rep
                   protocol (endurance, #320: 1 rep × 8 sets) skips the
                   "rest × N reps" clause — nothing to say about a rep count
                   of one. */}
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 4 }}>
-                Timer: hold {fmt(selected.protocol.holdS)}
+                Timer:{" "}
+                {alternatingPrescription
+                  ? `L hold ${fmt(alternatingPrescription.left.targets[0]!.workS)} · R hold ${fmt(alternatingPrescription.right.targets[0]!.workS)}`
+                  : `hold ${fmt(selected.protocol.holdS)}`}
                 {selected.protocol.reps > 1 &&
                   ` · rest ${fmt(selected.protocol.restRepsS)} × ${selected.protocol.reps} reps`}
                 {selected.protocol.sets > 1 &&
                   ` · ${selected.protocol.sets} sets (${fmt(selected.protocol.restSetsS)} between)`}{" "}
-                · total {fmt(timelineDurationS(buildTimeline(selected.protocol, { switchS: 3 })))}
+                · total {fmt(timelineDurationS(buildTimeline(alternatingPrescription?.protocol ?? selected.protocol, { switchS: 3 })))}
               </div>
               {/* The contextual note for whatever the slider above is set to. */}
               {quality && intensityPct !== 100 && (
@@ -294,7 +312,7 @@ export default function TargetZonesCard({
                 <input
                   type="checkbox"
                   checked={alternate}
-                  disabled={locked}
+                  disabled={locked || !alternatingReady}
                   onChange={(e) => {
                     setAlternate(e.target.checked);
                     if (quality)
@@ -305,6 +323,11 @@ export default function TargetZonesCard({
                 />
                 Alternate left ⇄ right each set (otherwise uses the selected side)
               </label>
+              {!alternatingReady && (
+                <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
+                  Alternating needs a fit for both hands.
+                </div>
+              )}
               {/* #298: an explicit unarm, alongside re-tapping the active
                   chip above — easier to spot than "tap the thing you already
                   tapped again". Routes through ForceView's `clearProtocol`

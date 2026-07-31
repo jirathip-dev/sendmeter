@@ -62,6 +62,25 @@ describe("buildPresetPlan / planVaries", () => {
     };
     const rows = buildPresetPlan(p, noRefs);
     expect(rows.map((r) => r.side)).toEqual(["left", "right", "left", "right"]);
+    expect(planVaries(rows, p.sets)).toBe(true);
+  });
+
+  it("uses already-resolved per-hand/set targets for an alternating ramp", () => {
+    const p: PlanPreset = {
+      ...base,
+      sets: 4,
+      alternateSides: true,
+      targetPct: 50,
+      pctStep: 10,
+    };
+    const rows = buildPresetPlan(p, noRefs, [21, 19.8, 29.4, 26.4]);
+    expect(rows.map(({ set, side, targetKg }) => ({ set, side, targetKg }))).toEqual([
+      { set: 1, side: "left", targetKg: 21 },
+      { set: 2, side: "right", targetKg: 19.8 },
+      { set: 3, side: "left", targetKg: 29.4 },
+      { set: 4, side: "right", targetKg: 26.4 },
+    ]);
+    expect(planVaries(rows, p.sets)).toBe(true);
   });
 
   it("non-alternating: side is null for every row", () => {

@@ -18,6 +18,7 @@ import {
   presetTargetKg,
   presetTargetKgRange,
   protocolBandLabel,
+  setSide,
   timelineAt,
   timelineDurationS,
 } from "../lib/protocol";
@@ -28,6 +29,11 @@ import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
 import PresetPlanChart from "./PresetPlanChart";
 import type { GaugeTarget } from "./ForceCurveCard";
+import {
+  prescriptionForSegment,
+  targetHoldSegment,
+  type AlternatingPrescription,
+} from "../lib/alternatingProtocol";
 
 interface Props {
   tindeq: ReturnType<typeof useTindeq>;
@@ -42,6 +48,7 @@ interface Props {
   /// Force references (PR / CF / W' / maxF) the preset resolves its target
   /// against — re-derived per CURRENT set for a %-ramp band.
   presetRefs: PresetRefs;
+  alternatingPrescription: AlternatingPrescription | null;
   /// Tab-global side — shown during holds when the protocol doesn't alternate.
   globalSide: TindeqSide;
   /// Tab-global tag + existing tags, so a free hold can be armed right here
@@ -98,6 +105,7 @@ export default function ForceFullscreen({
   timeline,
   target,
   presetRefs,
+  alternatingPrescription,
   globalSide,
   tag,
   allTags,
@@ -284,6 +292,7 @@ export default function ForceFullscreen({
   // Per-set target band: a %-of-PR preset ramps up each set; the chart band
   // follows the CURRENT set live (set 1 while idle, last set once done).
   const currentSet = pos?.seg.set ?? (done ? (protocol?.sets ?? 1) : 1);
+  const targetSegment = targetHoldSegment(timeline, pos?.seg ?? null, done);
   const protocolKg = protocol ? presetTargetKg(protocol, presetRefs, currentSet) : null;
   // #332: with a per-set hold list, a `targetCurve` preset resolves a
   // different kg per set (possibly non-monotonically), so a "set N: X kg"
@@ -292,8 +301,30 @@ export default function ForceFullscreen({
   // still tracks the CURRENT set (what to aim for right now); only the text
   // label changes to describe the whole protocol.
   const protocolKgRange = protocol?.targetCurve ? presetTargetKgRange(protocol, presetRefs) : null;
+  const handTarget = prescriptionForSegment(
+    alternatingPrescription,
+    targetSegment?.side,
+    targetSegment?.set ?? currentSet,
+  )?.target ?? null;
+  const readyLeft = prescriptionForSegment(
+    alternatingPrescription,
+    "left",
+    timeline?.find((s) => s.phase === "hold" && s.side === "left")?.set ?? 1,
+  )?.target ?? null;
+  const readyRight = prescriptionForSegment(
+    alternatingPrescription,
+    "right",
+    timeline?.find((s) => s.phase === "hold" && s.side === "right")?.set ?? 1,
+  )?.target ?? null;
+  const resolvedPlanTargets =
+    protocol?.alternateSides
+      ? Array.from({ length: protocol.sets }, (_, i) => {
+          const set = i + 1;
+          return prescriptionForSegment(alternatingPrescription, setSide(set), set)?.target?.kg ?? null;
+        })
+      : undefined;
   const band: GaugeTarget | null =
-    protocol && protocolKg != null
+    handTarget ?? (protocol && protocolKg != null
       ? {
           kg: protocolKg,
           lowKg: protocolKg * 0.9,
@@ -301,7 +332,7 @@ export default function ForceFullscreen({
           workS: holdForSet(protocol, currentSet),
           label: protocolBandLabel(protocol, protocolKg, currentSet, protocolKgRange),
         }
-      : target;
+      : target);
 
   return createPortal(
     <div
@@ -509,6 +540,12 @@ export default function ForceFullscreen({
                     {protocol.alternateSides && " · L⇄R"} · ~
                     {Math.round(timelineDurationS(timeline) / 60)}min
                     <br />
+                    {readyLeft && readyRight && (
+                      <>
+                        L {readyLeft.kg.toFixed(1)} kg · R {readyRight.kg.toFixed(1)} kg
+                        <br />
+                      </>
+                      )}
                     each rep saves as its own recording
                   </>
                 ) : band ? (
@@ -519,7 +556,13 @@ export default function ForceFullscreen({
                   "Free hold — pick a zone or preset in the tab for a guided timer."
                 )}
               </div>
-              {protocol && timeline && <PresetPlanChart preset={protocol} refs={presetRefs} />}
+              {protocol && timeline && (
+                <PresetPlanChart
+                  preset={protocol}
+                  refs={presetRefs}
+                  resolvedTargets={resolvedPlanTargets}
+                />
+              )}
               {/* #298: explicit unarm, in addition to re-tapping the same
                   chip in the tab — the fastest way out of a protocol from
                   right where it's shown. */}
