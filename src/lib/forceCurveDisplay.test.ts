@@ -53,9 +53,20 @@ describe("sampleDisplayCurve", () => {
     }
   });
 
-  it("suppresses a display fit for fewer than three observations", () => {
-    const sparse = { ...model, displayFit: undefined };
-    expect(sampleDisplayCurve(sparse, 1, 120, 20)).toEqual([]);
+  it("falls back to the measured envelope when no Hill fit is available", () => {
+    const sparse = { ...model, cf: null, wPrime: null, displayFit: undefined };
+    const points = sampleDisplayCurve(sparse, 1, 120, 20);
+    expect(points).toHaveLength(21);
+    expect(points[0]!.kg).toBe(40);
+    expect(points.at(-1)!.kg).toBe(21);
+    for (let i = 1; i < points.length; i++) {
+      expect(points[i]!.kg).toBeLessThanOrEqual(points[i - 1]!.kg);
+    }
+  });
+
+  it("draws no line from a single unsupported observation", () => {
+    const onePoint = { ...model, points: [{ windowS: 1, kg: 40 }], displayFit: undefined };
+    expect(sampleDisplayCurve(onePoint, 1, 1, 20)).toEqual([]);
   });
 
   it("defensively removes increasing noise without overshooting", () => {

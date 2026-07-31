@@ -10,7 +10,11 @@ export interface DisplayCurvePoint { durationS: number; kg: number }
 export interface DisplayBandPoint { durationS: number; lowKg: number; highKg: number }
 export interface QualityRegion { quality: TrainingQuality; t0: number; t1: number; kg0: number; kg1: number }
 
-/** Smooth parametric display regression; CF/W′ is untouched. */
+/**
+ * Smooth display sampling; CF/W′ is untouched. When a constrained Hill fit
+ * is unavailable, fall back to a log-time interpolation of the measured
+ * envelope instead of fabricating a model or drawing the old max-force cap.
+ */
 export function sampleDisplayCurve(
   model: ForceCurveModel,
   tMin: number,
@@ -18,8 +22,40 @@ export function sampleDisplayCurve(
   steps = 64,
 ): DisplayCurvePoint[] {
   if (!(tMin > 0) || !(tMax >= tMin) || steps < 1) return [];
-  if (!model.displayFit) return [];
-  return sampleDisplayRegression(model.displayFit, tMin, tMax, steps);
+  if (model.displayFit) {
+    return sampleDisplayRegression(model.displayFit, tMin, tMax, steps);
+  }
+
+  const anchors = [...model.points]
+    .filter((point) => point.windowS > 0 && point.kg > 0)
+    .sort((a, b) => a.windowS - b.windowS)
+    .map((point, index, points) => ({
+      durationS: point.windowS,
+      kg: Math.min(model.maxF, point.kg, index === 0 ? Infinity : points[index - 1]!.kg),
+    }));
+  for (let i = 1; i < anchors.length; i++) {
+    anchors[i]!.kg = Math.min(anchors[i - 1]!.kg, anchors[i]!.kg);
+  }
+  if (anchors.length < 2) return [];
+
+  const interpolate = (durationS: number): number => {
+    if (durationS <= anchors[0]!.durationS) return anchors[0]!.kg;
+    if (durationS >= anchors.at(-1)!.durationS) return anchors.at(-1)!.kg;
+    const upper = anchors.findIndex((point) => point.durationS >= durationS);
+    const a = anchors[upper - 1]!;
+    const b = anchors[upper]!;
+    const fraction =
+      (Math.log(durationS) - Math.log(a.durationS)) /
+      (Math.log(b.durationS) - Math.log(a.durationS));
+    return a.kg + (b.kg - a.kg) * fraction;
+  };
+
+  return Array.from({ length: steps + 1 }, (_, i) => {
+    const durationS = Math.exp(
+      Math.log(tMin) + ((Math.log(tMax) - Math.log(tMin)) * i) / steps,
+    );
+    return { durationS, kg: interpolate(durationS) };
+  });
 }
 
 /** Bootstrap percentiles are already evaluated on a dense log-time grid. */

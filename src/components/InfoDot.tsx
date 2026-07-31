@@ -98,11 +98,11 @@ const CONTENT: Record<
     body: [
       {
         heading: "Anchored to YOUR curve",
-        text: "Each zone comes from the selected exercise and side: POWER and STRENGTH use percentages of your measured maximum, POW END reads the purple capability curve at 60 seconds, and ENDURANCE uses critical force (CF), the curve's sustainable ceiling.",
+        text: "Each zone is a percentage band of your own force–duration fit for the selected exercise (and side): POWER and STRENGTH anchor to your max force; POW END and ENDURANCE anchor to your critical force (CF) — the sustainable ceiling from the fit.",
       },
       {
-        heading: "Why max, curve and CF",
-        text: "Short maximal efforts (<10s) are limited by maximal recruitment, so POWER and STRENGTH start from max force. POW END uses the curve's 60-second capability estimate. ENDURANCE stays near CF: just below it extends capacity, while work above it spends the finite reserve.",
+        heading: "Why %max vs %CF",
+        text: "Short maximal efforts (<10s) are limited by maximal recruitment, so power/strength work is prescribed off max. Longer efforts are limited by the forearm's aerobic ceiling, so endurance work is prescribed off CF — just below CF extends capacity, just above it trains your anaerobic reserve.",
       },
       {
         heading: "Using a target",
@@ -182,7 +182,7 @@ const CONTENT: Record<
       },
       {
         heading: "The capability curve",
-        text: "Sendmeter fits one constrained Hill (log-logistic) curve. It declines smoothly from your measured maximum toward critical force and supplies duration-specific training prescriptions.",
+        text: "For the chart only, Sendmeter fits a constrained Hill (log-logistic) display line. It declines smoothly from your measured maximum toward critical force without changing the persisted CF/W′ model, recommended targets, Auto presets, RPE, or training calculations.",
       },
       {
         heading: "The shaded 95% uncertainty band",
@@ -190,7 +190,7 @@ const CONTENT: Record<
       },
       {
         heading: "Critical force (CF) & W′",
-        text: "CF is the Hill curve's long-duration asymptote and the endurance boundary. W′ remains the finite reserve used for fatigue, RPE and dose-equivalence calculations; it is not drawn as a second capability curve.",
+        text: "The underlying model remains the hyperbolic critical-force fit F(t) = CF + W′/t. CF is the theoretical sustainable ceiling; W′ is the finite reserve above CF used by fatigue, RPE, dose-equivalence, and duration-specific targets. The smooth purple line is a separate display layer anchored to the same CF.",
       },
       {
         heading: "Duration coverage matters",
@@ -198,7 +198,7 @@ const CONTENT: Record<
       },
       {
         heading: "Training zones",
-        text: "POWER and STRENGTH use your measured maximum, POW END uses the purple curve's 60-second prediction, and ENDURANCE uses CF. Custom Auto (curve) presets read the same purple curve at their chosen hold duration.",
+        text: "The shaded regions visualize the app's existing load-and-duration classifier. POWER / STRENGTH / POW END / ENDURANCE targets remain anchored to max force and the underlying CF/W′ model; the purple display line does not change prescriptions.",
       },
     ],
   },

@@ -420,7 +420,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 {p.targetCurve ? (
                   <span style={{ color: "var(--success)" }}>
                     {" "}
-                    · auto curve
+                    · auto CF
                     {curveKgRange && ` · ${formatKgRange(curveKgRange)}`}
                   </span>
                 ) : p.targetPct !== null ? (

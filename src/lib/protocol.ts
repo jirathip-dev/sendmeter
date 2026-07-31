@@ -1,6 +1,5 @@
 import type { TindeqPreset } from "../types";
 import type { PlanPreset } from "./presetPlan";
-import { predictDisplayFit, type DisplayFit } from "./forceCurveRegression";
 
 /// Guided-protocol timeline (pure — testable). A preset expands into a flat
 /// list of timed segments; the UI and the per-rep recorder both walk it, so
@@ -151,7 +150,6 @@ export interface PresetRefs {
   cf: number | null; // critical force
   wPrime: number | null; // impulse above CF (kg·s)
   maxF: number | null; // best short-window force
-  displayFit?: DisplayFit | null; // Hill capability curve for duration targets
 }
 
 /// Resolve a preset's target load (kg) for a given set, against the exercise's
@@ -162,19 +160,14 @@ export function presetTargetKg(
   refs: PresetRefs,
   set: number,
 ): number | null {
-  // Smart target (SL-62): Hill capability prediction for exactly this hold.
-  // Legacy models without a Hill fit fall back to CF + W'/t. #332: resolved at THIS set's hold
+  // Smart target (SL-62): force sustainable for exactly this hold — CF + W'/t,
+  // capped at the best short-window force. #332: resolved at THIS set's hold
   // (a per-set hold list moves the curve reference set-by-set, same as the
   // %-of-PR ramp below moves the load).
   if (p.targetCurve) {
     const h = holdForSet(p, set);
-    if (h <= 0) return null;
-    const f = refs.displayFit
-      ? predictDisplayFit(refs.displayFit, h)
-      : refs.cf != null && refs.wPrime != null
-        ? refs.cf + refs.wPrime / h
-        : null;
-    if (f == null) return null;
+    if (refs.cf == null || refs.wPrime == null || h <= 0) return null;
+    const f = refs.cf + refs.wPrime / h;
     const capped = refs.maxF != null ? Math.min(refs.maxF, f) : f;
     return Math.round(capped * 10) / 10;
   }
@@ -225,7 +218,8 @@ export function formatKgRange(range: { min: number; max: number }): string {
 
 /// Preset-editor "Auto (curve)" slider label + explanation (#332 round 6
 /// finding c). With `varyHolds` off, the slider sets the ONE hold every set's
-/// smart target resolves against. With
+/// smart target resolves against, and the old sentence ("read off this
+/// exercise's force curve at CF + W′/{holdS}s") is exactly true. With
 /// `varyHolds` on, `presetTargetKg` resolves each set's target at THAT set's
 /// `holdForSet` — a set with its own "Set N" override reads its target off
 /// that hold, not this slider's — so the old sentence's stated formula is
@@ -241,8 +235,8 @@ export function curveHoldCopy(
       label: `Base hold time (sets without an override) — ${holdS}s`,
       description:
         `Smart target: each set's load auto-adjusts to the force sustainable ` +
-        `for THAT set's hold, read off this exercise's Hill capability curve. ` +
-        `A set left without its own "Set N" override above uses ` +
+        `for THAT set's hold, read off this exercise's force curve (CF + ` +
+        `W′/hold). A set left without its own "Set N" override above uses ` +
         `this ${holdS}s base. Longer holds → lighter, more endurance-y load.`,
     };
   }
@@ -250,8 +244,8 @@ export function curveHoldCopy(
     label: `Hold time — ${holdS}s`,
     description:
       `Smart target: the load auto-adjusts to the force you can sustain ` +
-      `for a ${holdS}s hold, read off this exercise's Hill capability curve. ` +
-      `Longer holds → lighter, more endurance-y load.`,
+      `for a ${holdS}s hold, read off this exercise's force curve ` +
+      `(CF + W′/${holdS}s). Longer holds → lighter, more endurance-y load.`,
   };
 }
 

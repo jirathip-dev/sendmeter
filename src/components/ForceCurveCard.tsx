@@ -55,7 +55,11 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
   const pts = model.points;
   const tMin = Math.log10(pts[0]!.windowS);
   const tMax = Math.log10(Math.max(pts[pts.length - 1]!.windowS, 10));
-  const yMax = Math.max(model.maxF, ...overlays.map((o) => o.model.maxF)) * 1.1;
+  const yMax = Math.max(
+    model.maxF,
+    ...overlays.map((o) => o.model.maxF),
+    ...(model.confidenceBand ?? []).map((point) => point.highKg),
+  ) * 1.1;
   // x is log-scaled (window size spans 1-120s) so it stays a custom
   // function; useSvgScale only covers linear scales.
   const px = (w: number) =>
@@ -277,7 +281,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
             {computing
               ? "Computing your force–duration curve…"
               : error ??
-                "The force–duration curve builds from this tag's recordings. A constrained Hill curve drives the chart and duration-specific training prescriptions."}
+                "The force–duration curve builds from this tag's recordings. A constrained Hill line smooths the chart while the underlying CF/W′ model continues to drive training calculations."}
           </div>
         </div>
       ) : (
@@ -298,7 +302,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
           </div>
 
           {/* Curve shift over time: toggle a trailing window to overlay its
-              measured display curve (dashed, hue-coded) against the current one. */}
+              display-only fit (dashed, hue-coded) against the current one. */}
           {periods.some((p) => p.model) && (
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
               {periods.map((p) => {
@@ -391,8 +395,14 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
                 {model.cf !== null ? `${model.cf.toFixed(1)} kg` : "—"}
               </span>
             </span>
-            <span title="Purple Hill/log-logistic prediction used for duration-specific training prescriptions">
-              Hill capability curve
+            <span>
+              W′{" "}
+              <span style={{ color: "var(--ink-muted)" }}>
+                {model.wPrime !== null ? `${model.wPrime.toFixed(0)} kg·s` : "—"}
+              </span>
+            </span>
+            <span title="Purple Hill/log-logistic line used only to smooth the chart">
+              Hill display
             </span>
             <span title="Pointwise 95% interval from a deterministic recording-level bootstrap">
               95% band{" "}
@@ -403,7 +413,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
           </div>
 
           {/* Training zones live in the Gauge Target card up top — this card
-              is the capability analysis view. */}
+              is the analysis view only. */}
         </div>
       )}
     </div>

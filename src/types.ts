@@ -178,7 +178,7 @@ export interface TindeqPreset {
   /// Per-set ramp: set N targets (targetPct + (N-1)·pctStep)% of the basis.
   pctStep: number;
   /// Smart target (SL-62): derive the load from the exercise's force-duration
-  /// Hill capability curve at holdS — the force sustainable for exactly that hold.
+  /// curve at holdS — the force sustainable for exactly that hold (CF + W'/t).
   /// Overrides targetKg/targetPct when true.
   targetCurve: boolean;
   /// Alternate left/right each SET (switch hands during the set rest).

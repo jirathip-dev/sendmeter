@@ -96,13 +96,6 @@ describe("presetTargetKg", () => {
     expect(presetTargetKg(curve, { ...refs, cf: null }, 1)).toBeNull();
   });
 
-  it("smart curve target uses the Hill capability curve when available", () => {
-    const curve: TindeqPreset = { ...repeaters, holdS: 30, targetCurve: true };
-    const displayFit = { family: "hill" as const, cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
-    // 20 + 20*(1+0.1)/(1+3) = 25.5, not legacy CF+W'/30 = 30.
-    expect(presetTargetKg(curve, { ...refs, displayFit }, 1)).toBe(25.5);
-  });
-
   it("%PR mode needs a PR; falls back to absolute kg when pct unset", () => {
     expect(presetTargetKg(ramp, { ...refs, prKg: null }, 1)).toBeNull();
     expect(presetTargetKg({ ...ramp, targetPct: null }, { ...refs, prKg: null }, 1)).toBe(20);
@@ -164,7 +157,7 @@ describe("curveHoldCopy (#332 round 6 finding c)", () => {
   it("states the exact single-hold formula when holds don't vary", () => {
     const copy = curveHoldCopy(false, 30);
     expect(copy.label).toBe("Hold time — 30s");
-    expect(copy.description).toContain("Hill capability curve");
+    expect(copy.description).toContain("CF + W′/30s");
   });
 
   it("relabels as the base for overrideless sets, and drops the false single-hold formula, when varying", () => {

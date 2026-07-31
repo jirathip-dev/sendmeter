@@ -18,7 +18,7 @@ import {
 } from "./force-curve";
 import { curveCandidateRecordings } from "./zoneHistory";
 import type { TindeqSample } from "../types";
-import { predictDisplayFit, type DisplayFit } from "./forceCurveRegression";
+import type { DisplayFit } from "./forceCurveRegression";
 
 /// A constant-force hold sampled at 10 Hz (t in ms).
 function hold(seconds: number, kg: number): TindeqSample[] {
@@ -88,11 +88,10 @@ describe("predictForce", () => {
     expect(predictForce(m, 1)).toBe(40); // 20 + 300 → clamped to maxF
   });
 
-  it("uses the Hill capability curve when the fitted model provides it", () => {
+  it("keeps the CF/W′ calculation when a display-only Hill fit is present", () => {
     const displayFit: DisplayFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
     const m: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, displayFit };
-    expect(predictForce(m, 60)).toBeCloseTo(predictDisplayFit(displayFit, 60), 8);
-    expect(predictForce(m, 60)).not.toBeCloseTo(25, 1);
+    expect(predictForce(m, 60)).toBe(25);
   });
 });
 
@@ -109,13 +108,12 @@ describe("zoneTarget", () => {
     expect(zoneTarget(model, "power-endurance")!.targetKg).toBe(25); // cf + W'/60
   });
 
-  it("derives the power-endurance target from the Hill curve when available", () => {
+  it("does not let the display-only Hill fit change a training target", () => {
     const displayFit: DisplayFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
     const fitted: ForceCurveModel = { ...model, displayFit };
     const target = zoneTarget(fitted, "power-endurance")!;
-    expect(target.targetKg).toBeCloseTo(predictDisplayFit(displayFit, 60), 1);
-    expect(target.targetKg).not.toBe(25);
-    expect(target.basis).toContain("Hill capability curve at 60s");
+    expect(target.targetKg).toBe(25);
+    expect(target.basis).toContain("CF 20 + W′/60");
   });
 
   it("returns null for CF-based zones when CF is unknown", () => {
@@ -210,12 +208,11 @@ describe("Prehab is excluded from curve candidacy (#325)", () => {
 
 describe("computeForceCurve — multi-point fit (SL-80b)", () => {
   it("regresses over the top efforts per window, not just the envelope", () => {
-    // Two flat 60s holds: a 20kg best and a clearly submaximal 10kg repeat.
-    // The repeat influences the result, but is deliberately downweighted.
+    // Two flat 60s holds: a 20kg best and a 10kg repeat. Envelope-only fit
+    // (depth 1) sees only 20kg → CF 20; depth 2 averages both → CF 15.
     const recs = [hold(60, 20), hold(60, 10)];
     const deep = computeForceCurve(recs, { fitDepth: 2 })!;
-    expect(deep.cf).toBeGreaterThan(15);
-    expect(deep.cf).toBeLessThan(20);
+    expect(deep.cf).toBeCloseTo(15, 1);
     const envelope = computeForceCurve(recs, { fitDepth: 1 })!;
     expect(envelope.cf).toBeCloseTo(20, 1);
     // the chart's envelope points are unchanged by the fit depth
@@ -230,17 +227,11 @@ describe("computeForceCurve — multi-point fit (SL-80b)", () => {
   });
 });
 
-describe("computeForceCurve — uncertainty and effort weighting", () => {
-  const now = Date.parse("2026-07-31T00:00:00Z");
-  const effort = (seconds: number, kg: number, ageDays: number) => ({
-    samples: hold(seconds, kg),
-    recordedAt: new Date(now - ageDays * 86_400_000).toISOString(),
-  });
-
+describe("computeForceCurve — display uncertainty and coverage", () => {
   it("produces a reproducible recording-level bootstrap band", () => {
-    const efforts = [effort(15, 32, 2), effort(30, 28, 4), effort(60, 24, 6), effort(120, 21, 8)];
-    const a = computeForceCurve(efforts, { nowMs: now, bootstrapSamples: 120 })!;
-    const b = computeForceCurve(efforts, { nowMs: now, bootstrapSamples: 120 })!;
+    const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
+    const a = computeForceCurve(efforts, { bootstrapSamples: 120 })!;
+    const b = computeForceCurve(efforts, { bootstrapSamples: 120 })!;
     expect(a.confidenceBand).toEqual(b.confidenceBand);
     expect(a.confidenceBand!.length).toBeGreaterThanOrEqual(3);
     expect(a.confidenceBand!.every((p) => p.lowKg <= p.highKg)).toBe(true);
@@ -248,48 +239,24 @@ describe("computeForceCurve — uncertainty and effort weighting", () => {
     expect(a.confidenceBand!.at(-1)!.windowS).toBe(a.points.at(-1)!.windowS);
   });
 
-  it("shows a finite full-range model interval when long evidence is sparse", () => {
-    const mostlyShort = Array.from({ length: 7 }, (_, i) => effort(15, 32 - i * 0.1, i));
-    const oneLong = effort(120, 20, 1);
-    const m = computeForceCurve([...mostlyShort, oneLong], { nowMs: now, bootstrapSamples: 500 })!;
-    const endpoint = m.confidenceBand?.find((p) => p.windowS === 120);
-    expect(endpoint).toBeDefined();
-    // The interval remains available at the endpoint because every valid
-    // bootstrap replicate refits the display regression over the full domain.
-    // Coverage separately warns that the long-duration tail is weakly known.
-    expect(endpoint!.lowKg).toBeGreaterThan(15);
-    expect(endpoint!.highKg).toBeLessThan(25);
-    expect(m.coverage?.quality).toBe("fair");
+  it("never draws the model interval beyond measured duration support", () => {
+    const m = computeForceCurve(
+      [hold(15, 32), hold(30, 28), hold(60, 24)],
+      { bootstrapSamples: 200 },
+    )!;
+    expect(m.confidenceBand!.at(0)!.windowS).toBeGreaterThanOrEqual(m.points[0]!.windowS);
+    expect(m.confidenceBand!.at(-1)!.windowS).toBeLessThanOrEqual(m.points.at(-1)!.windowS);
   });
 
   it("preprocesses mean-max values once instead of repeating signal work per bootstrap", () => {
-    const efforts = [effort(15, 32, 2), effort(30, 28, 4), effort(60, 24, 6), effort(120, 21, 8)];
+    const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
     const diagnostics = { meanMaxEvaluations: 0 };
-    computeForceCurve(efforts, { nowMs: now, bootstrapSamples: 500, diagnostics });
+    computeForceCurve(efforts, { bootstrapSamples: 500, diagnostics });
     expect(diagnostics.meanMaxEvaluations).toBe(efforts.length * CURVE_WINDOWS_S.length);
   });
 
-  it("downweights stale and clearly submaximal repeats", () => {
-    const current = [effort(30, 24, 1), effort(60, 21, 1), effort(120, 19, 1)];
-    const staleHigh = [effort(30, 30, 240), effort(60, 27, 240), effort(120, 25, 240)];
-    const weighted = computeForceCurve([...current, ...staleHigh], { nowMs: now, bootstrapSamples: 0 })!;
-    const staleOnly = computeForceCurve(staleHigh, { nowMs: now, bootstrapSamples: 0 })!;
-    expect(weighted.cf!).toBeLessThan(staleOnly.cf!);
-    expect(weighted.cf!).toBeGreaterThan(19);
-  });
-
-  it("gives fresher conflicting evidence more influence when values are age-swapped", () => {
-    const highFresh = [effort(30, 30, 1), effort(60, 27, 1), effort(120, 25, 1)];
-    const lowOld = [effort(30, 24, 240), effort(60, 21, 240), effort(120, 19, 240)];
-    const lowFresh = [effort(30, 24, 1), effort(60, 21, 1), effort(120, 19, 1)];
-    const highOld = [effort(30, 30, 240), effort(60, 27, 240), effort(120, 25, 240)];
-    const freshHighFit = computeForceCurve([...highFresh, ...lowOld], { nowMs: now, bootstrapSamples: 0 })!;
-    const freshLowFit = computeForceCurve([...lowFresh, ...highOld], { nowMs: now, bootstrapSamples: 0 })!;
-    expect(freshHighFit.cf!).toBeGreaterThan(freshLowFit.cf!);
-  });
-
   it("flags one long recording as weak coverage despite its many rolling windows", () => {
-    const m = computeForceCurve([effort(120, 22, 1)], { nowMs: now })!;
+    const m = computeForceCurve([hold(120, 22)])!;
     expect(m.coverage?.quality).toBe("weak");
     expect(m.coverage?.independentDurations).toBe(1);
     expect(m.coverage?.message).toContain("distinctly different duration");
