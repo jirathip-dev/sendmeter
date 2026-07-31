@@ -13,33 +13,66 @@ export interface PlanRow {
   holdS: number;
   side: "both" | null;
   targetKg: number | null;
+  leftHoldS: number | null;
+  rightHoldS: number | null;
+  leftTargetKg: number | null;
+  rightTargetKg: number | null;
+}
+
+export interface ResolvedAlternatingPlanSet {
+  left: { holdS: number; targetKg: number | null };
+  right: { holdS: number; targetKg: number | null };
 }
 
 /// One row per set `1..p.sets` — hold from `holdForSet`, target from
-/// `presetTargetKg` (both already resolve per-set). Alternating presets apply
-/// every row to both hands; otherwise the user's selected side applies, which
-/// this plan doesn't know.
-export function buildPresetPlan(p: PlanPreset, refs: PresetRefs): PlanRow[] {
+/// `presetTargetKg` (both already resolve per-set). An optional alternating
+/// resolution carries each hand's own load and hold; otherwise alternating
+/// presets apply the authored row to both hands.
+export function buildPresetPlan(
+  p: PlanPreset,
+  refs: PresetRefs,
+  resolvedAlternating?: readonly ResolvedAlternatingPlanSet[],
+): PlanRow[] {
   return Array.from({ length: p.sets }, (_, i) => {
     const set = i + 1;
+    const resolved = resolvedAlternating?.[i];
+    const targetKg = presetTargetKg(p, refs, set);
+    const holdS = holdForSet(p, set);
     return {
       set,
-      holdS: holdForSet(p, set),
+      holdS,
       side: p.alternateSides ? "both" : null,
-      targetKg: presetTargetKg(p, refs, set),
+      targetKg,
+      leftHoldS: resolved?.left.holdS ?? (p.alternateSides ? holdS : null),
+      rightHoldS: resolved?.right.holdS ?? (p.alternateSides ? holdS : null),
+      leftTargetKg: resolved?.left.targetKg ?? (p.alternateSides ? targetKg : null),
+      rightTargetKg: resolved?.right.targetKg ?? (p.alternateSides ? targetKg : null),
     };
   });
 }
 
 /// Whether the plan is worth charting — a single set, or a set list whose
-/// holds and resolved (non-null) targets are all identical, looks no
+/// holds, resolved (non-null) targets, and sides are all identical, looks no
 /// different from the existing text summary.
 export function planVaries(rows: PlanRow[], sets: number): boolean {
   if (sets <= 1) return false;
-  const holdsVary = rows.some((r) => r.holdS !== rows[0]!.holdS);
-  const targets = rows.map((r) => r.targetKg).filter((t): t is number => t != null);
-  const targetsVary = targets.some((t) => t !== targets[0]);
-  return holdsVary || targetsVary;
+  const first = rows[0]!;
+  const holdsVary = rows.some(
+    (r) =>
+      r.holdS !== first.holdS ||
+      r.leftHoldS !== first.leftHoldS ||
+      r.rightHoldS !== first.rightHoldS ||
+      r.leftHoldS !== r.rightHoldS,
+  );
+  const targetsVary = rows.some(
+    (r) =>
+      r.targetKg !== first.targetKg ||
+      r.leftTargetKg !== first.leftTargetKg ||
+      r.rightTargetKg !== first.rightTargetKg ||
+      r.leftTargetKg !== r.rightTargetKg,
+  );
+  const sidesVary = rows.some((r) => r.side !== rows[0]!.side);
+  return holdsVary || targetsVary || sidesVary;
 }
 
 /// Whether the preset declares a target load at all (curve, %-of-PR/CF, or a
@@ -61,7 +94,14 @@ export type PlanMetric = "hold" | "target";
 /// caption underneath; switch the bars to plot `targetKg` instead so the
 /// primary visual channel matches whatever `planVaries` actually found.
 export function planMetric(rows: PlanRow[]): PlanMetric {
-  const holdsVary = rows.some((r) => r.holdS !== rows[0]!.holdS);
+  const first = rows[0]!;
+  const holdsVary = rows.some(
+    (r) =>
+      r.holdS !== first.holdS ||
+      r.leftHoldS !== first.leftHoldS ||
+      r.rightHoldS !== first.rightHoldS ||
+      r.leftHoldS !== r.rightHoldS,
+  );
   return holdsVary ? "hold" : "target";
 }
 

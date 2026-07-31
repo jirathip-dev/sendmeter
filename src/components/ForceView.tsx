@@ -67,8 +67,19 @@ import {
   performedQuality,
   rederiveSelection,
   saveIntensity,
+  selectedQuality,
   type ZoneSelection,
 } from "../lib/zoneSelection";
+import {
+  alternatingCurveInputKey,
+  alternatingHoldDurations,
+  needsHandReferences,
+  nextLockedAlternatingPrescription,
+  prescriptionForSegment,
+  resolveAlternatingPreset,
+  resolveAlternatingRecommendation,
+  type AlternatingPrescription,
+} from "../lib/alternatingProtocol";
 import ZoneFocusCard from "./ZoneFocusCard";
 import ForceFullscreen from "./ForceFullscreen";
 import ForceTrendChart from "./ForceTrendChart";
@@ -434,12 +445,22 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // #298 round 5: `activeProtocol` and `presetRefs.prKg` are themselves
       // derived from the LOCKED gauge inputs, so neither can have changed
       // since this run started — nothing further to freeze here.
-      zone: performedQuality(
-        activeProtocol,
-        activeProtocol ? presetTargetKg(activeProtocol, presetRefs, seg.set) : null,
-        presetRefs,
-        seg.set,
-      ),
+      zone: (() => {
+        // This async path reads the current frozen pair through a ref before
+        // its first await; an older render's closure is never provenance.
+        const resolved = prescriptionForSegment(
+          alternatingPrescriptionRef.current,
+          seg.side,
+          seg.set,
+        );
+        return performedQuality(
+          activeProtocol,
+          resolved?.target?.kg ??
+            (activeProtocol ? presetTargetKg(activeProtocol, presetRefs, seg.set) : null),
+          resolved?.hand.refs ?? presetRefs,
+          seg.set,
+        );
+      })(),
       samples: slice,
     };
     try {
@@ -804,6 +825,75 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const model = canComputeCurve && modelForTagSide ? curveModel : null;
   const curveComputing = canComputeCurve && !modelForTagSide;
 
+  // #331: alternating recommended zones resolve two independent fits in
+  // parallel. The all-sides curve above remains the chart/reference outside
+  // a run; it is never borrowed for a missing hand.
+  const alternatingArmed = armedAlternates(gaugeInputs.preset, gaugeInputs.zoneSel);
+  const leftCurveRecordings = curveCandidateRecordings(recordings, effectiveTag, "left");
+  const rightCurveRecordings = curveCandidateRecordings(recordings, effectiveTag, "right");
+  const alternatingCurveKey = alternatingCurveInputKey(
+    effectiveTag,
+    leftCurveRecordings,
+    rightCurveRecordings,
+  );
+  const [alternatingModels, setAlternatingModels] = useState<{
+    left: ForceCurveModel | null;
+    right: ForceCurveModel | null;
+  }>({ left: null, right: null });
+  const [alternatingComputedFor, setAlternatingComputedFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (!effectiveTag || curveFrozen) return;
+    let cancelled = false;
+    // `alternatingComputedFor !== alternatingCurveKey` marks this exact
+    // request pending before its first await; the previous tag's pair cannot
+    // pass the key check while this one resolves.
+    const fit = async (rows: TindeqRecordingMeta[]) => {
+      if (rows.length === 0) return null;
+      const picked = pickCurveRecordings(rows, Date.now());
+      const samples = await Promise.all(picked.map((r) => fetchRecordingSamples(r.id)));
+      return computeForceCurve(samples);
+    };
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    Promise.race([
+      Promise.all([fit(leftCurveRecordings), fit(rightCurveRecordings)]),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error("Timed out fetching both hand curves.")),
+          15_000,
+        );
+      }),
+    ])
+      .finally(() => clearTimeout(timeoutId))
+      .then(([left, right]) => {
+        if (cancelled) return;
+        setAlternatingModels({ left, right });
+        setAlternatingComputedFor(alternatingCurveKey);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAlternatingModels({ left: null, right: null });
+        setAlternatingComputedFor(alternatingCurveKey);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // The key includes each candidate's identity and fit-relevant metadata;
+    // the arrays themselves are fresh each render and would refetch forever
+    // if listed directly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alternatingCurveKey, curveFrozen, effectiveTag]);
+  const alternatingModelsSettled = alternatingComputedFor === alternatingCurveKey;
+  const alternatingInputs = {
+    left: {
+      model: alternatingModelsSettled ? alternatingModels.left : null,
+      prKg: effortPeakKg(recordings, effectiveTag, "left"),
+    },
+    right: {
+      model: alternatingModelsSettled ? alternatingModels.right : null,
+      prKg: effortPeakKg(recordings, effectiveTag, "right"),
+    },
+  };
+
   // PR for the active exercise (+side) — the same best-peak the trend chart
   // marks as PR. Anchors presets whose target is a % of PR.
   // #298 round 5 (finding 3): read from the LOCKED gauge inputs, not
@@ -839,6 +929,42 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     gaugeInputs.intensityPct,
     prKg,
   );
+  const alternatingQuality = selectedQuality(gaugeInputs.zoneSel);
+  const liveAlternatingPrescription = gaugeInputs.preset?.alternateSides
+    ? resolveAlternatingPreset(gaugeInputs.preset, alternatingInputs)
+    : alternatingArmed && alternatingQuality && effectiveTag && alternatingModelsSettled
+      ? resolveAlternatingRecommendation(
+          alternatingInputs,
+          alternatingQuality,
+          effectiveTag,
+          gaugeInputs.intensityPct,
+          gaugeInputs.zoneSel?.protocol.sets ?? 1,
+        )
+      : null;
+  const alternatingTargetNeedsBoth =
+    alternatingArmed &&
+    (alternatingQuality !== null ||
+      (gaugeInputs.preset !== null && needsHandReferences(gaugeInputs.preset)));
+  const alternatingReferencesPending =
+    alternatingTargetNeedsBoth && effectiveTag !== null && !alternatingModelsSettled;
+  // Keep the exact two-hand snapshot used at Start for the entire run. This
+  // mirrors the gauge-input lock above: while idle, the stored value follows
+  // the live derivation; while active, rendering stays on the stored value.
+  const [lockedAlternatingPrescription, setLockedAlternatingPrescription] =
+    useState<AlternatingPrescription | null>(liveAlternatingPrescription);
+  const alternatingPrescription = nextLockedAlternatingPrescription(
+    runActive,
+    liveAlternatingPrescription,
+    lockedAlternatingPrescription,
+  );
+  if (alternatingPrescription !== lockedAlternatingPrescription) {
+    setLockedAlternatingPrescription(alternatingPrescription);
+  }
+  // Async rep saves read this ref. `onStart` snapshots it synchronously before
+  // starting the device, so there is no effect-lag window.
+  const alternatingPrescriptionRef = useRef<AlternatingPrescription | null>(
+    alternatingPrescription,
+  );
 
   // #298 round 6 (finding 3): block Start while the armed zone was built
   // under a DIFFERENT tag than the one now live, and the curve for the new
@@ -860,7 +986,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // curve — set 1 here; the fullscreen ramps it per set), else the zone.
   // `gaugeInputs.preset`, not raw `preset` (#298 round 4) — locked for the
   // run's duration alongside the zone selection above.
-  const activeProtocol: TindeqPreset | null = gaugeInputs.preset ?? armedZone?.protocol ?? null;
+  const activeProtocol: TindeqPreset | null =
+    gaugeInputs.preset ?? alternatingPrescription?.protocol ?? armedZone?.protocol ?? null;
   const presetKgSet1 = gaugeInputs.preset ? presetTargetKg(gaugeInputs.preset, presetRefs, 1) : null;
   const bandTarget: GaugeTarget | null =
     gaugeInputs.preset && presetKgSet1 != null
@@ -907,9 +1034,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // so this is automatically stable for the whole run — one plan, nothing to
   // keep in sync separately.
   const timeline = activeProtocol
-    ? buildTimeline(activeProtocol, {
+      ? buildTimeline(activeProtocol, {
         switchS: 3,
         prepareS: prepare ? 5 : 0,
+        alternatingHolds: alternatingHoldDurations(alternatingPrescription),
       })
     : null;
 
@@ -1565,6 +1693,21 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           intensityPct={intensityPct}
           onIntensityChange={changeIntensity}
           locked={runActive}
+          alternatingReady={
+            alternatingModelsSettled &&
+            selectedQuality(armedZone) !== null &&
+            effectiveTag !== null &&
+            resolveAlternatingRecommendation(
+              alternatingInputs,
+              selectedQuality(armedZone)!,
+              effectiveTag,
+              intensityPct,
+              armedZone?.protocol.sets ?? 1,
+            ) !== null
+          }
+          alternatingPrescription={
+            alternatingQuality ? alternatingPrescription : null
+          }
           onClear={clearProtocol}
         />
       )}
@@ -1655,17 +1798,29 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           timeline={timeline}
           target={bandTarget}
           presetRefs={presetRefs}
+          alternatingPrescription={alternatingPrescription}
           globalSide={gaugeInputs.pendingSide}
           tag={gaugeInputs.pendingTag}
           allTags={allTags}
           onTag={setPendingTag}
           onSide={setPendingSide}
           onClearProtocol={clearProtocol}
-          canStart={!!gaugeInputs.pendingTag && !zoneCurvePending}
+          canStart={
+            !!gaugeInputs.pendingTag &&
+            !zoneCurvePending &&
+            !alternatingReferencesPending &&
+            (!alternatingTargetNeedsBoth || alternatingPrescription !== null)
+          }
           startBlockedReason={
             zoneCurvePending
               ? "Updating this exercise's curve — try Start again in a moment, or tap Clear — free hold to start without a target."
-              : null
+              : alternatingReferencesPending
+                ? "Updating both hands' force references — try Start again in a moment."
+              : alternatingTargetNeedsBoth && alternatingPrescription === null
+                ? alternatingQuality
+                  ? "Alternating needs a fit for both hands before Start."
+                  : "Alternating target needs force references for both hands before Start."
+                : null
           }
           saving={saving}
           prepare={prepare}
@@ -1676,6 +1831,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           onPause={togglePause}
           onSkip={skipSegment}
           onStart={() => {
+            // Snapshot provenance before the first async operation. Later rep
+            // saves must never read a prescription from another render.
+            // eslint-disable-next-line react-hooks/immutability -- intentional run-start ref snapshot consumed by async autosave
+            alternatingPrescriptionRef.current = alternatingPrescription;
             setJustSaved(null);
             setProtoShiftS(0);
             setPausedAtS(null);
@@ -1693,7 +1852,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               const tag = gaugeInputs.pendingTag;
               void startTindeqLiveActivity(
                 tag ? `${activeProtocol.name} · ${tag}` : activeProtocol.name,
-                presetKgSet1 ?? bandTarget?.kg ?? null,
+                // One static kg cannot describe an alternating per-hand run;
+                // omit it until the native API accepts segment targets.
+                alternatingArmed ? null : (presetKgSet1 ?? bandTarget?.kg ?? null),
                 Date.now(),
                 timeline,
               );

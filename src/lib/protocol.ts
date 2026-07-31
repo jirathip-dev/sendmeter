@@ -25,6 +25,12 @@ export interface TimelinePosition {
   remaining: number;
 }
 
+/** Per-hand hold durations for an alternating protocol, indexed by set. */
+export interface AlternatingHoldDurations {
+  left: readonly number[];
+  right: readonly number[];
+}
+
 /// The hold duration for a given SET (#332) — `set` clamps to `1..p.sets`.
 /// Falls back to the base `holdS` when `holdsS` is null OR shorter than
 /// `sets` (a preset saved before this field, or whose `sets` was since
@@ -275,7 +281,11 @@ export function protocolBandLabel(
 
 export function buildTimeline(
   p: TindeqPreset,
-  opts: { switchS?: number; prepareS?: number } = {},
+  opts: {
+    switchS?: number;
+    prepareS?: number;
+    alternatingHolds?: AlternatingHoldDurations;
+  } = {},
 ): ProtocolSegment[] {
   const switchS = opts.switchS ?? 3;
   const prepareS = opts.prepareS ?? 0;
@@ -295,19 +305,32 @@ export function buildTimeline(
 
   if (prepareS > 0) push("prepare", null, 1, 1, prepareS);
 
+  const alternatingHold = (side: "left" | "right", set: number): number => {
+    const resolved = opts.alternatingHolds?.[side][set - 1];
+    return resolved != null && resolved > 0 ? resolved : holdForSet(p, set);
+  };
+
   for (let set = 1; set <= p.sets; set++) {
     const hold = holdForSet(p, set);
     for (let rep = 1; rep <= p.reps; rep++) {
       const lastRep = rep === p.reps;
       const lastSet = set === p.sets;
       if (p.alternateSides) {
-        push("hold", "left", rep, set, hold);
+        const leftHold = alternatingHold("left", set);
+        const rightHold = alternatingHold("right", set);
+        push("hold", "left", rep, set, leftHold);
         push("switch", "right", rep, set, switchS);
-        push("hold", "right", rep, set, hold);
+        push("hold", "right", rep, set, rightHold);
 
         if (!lastRep || !lastSet) {
           const configuredRest = lastRep ? p.restSetsS : p.restRepsS;
-          const remainingGap = Math.max(configuredRest - hold, switchS);
+          const nextSet = lastRep ? set + 1 : set;
+          const nextLeftHold = alternatingHold("left", nextSet);
+          // The opposite-hand hold consumes same-hand recovery. When the two
+          // holds differ, subtract the shorter adjacent hold so neither hand
+          // receives less than the configured recovery interval.
+          const recoveryCredit = Math.min(rightHold, nextLeftHold);
+          const remainingGap = Math.max(configuredRest - recoveryCredit, switchS);
           push(lastRep ? "setRest" : "rest", null, rep, set, remainingGap - switchS);
           push("switch", "left", rep, set, switchS);
         }

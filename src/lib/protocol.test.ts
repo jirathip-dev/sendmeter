@@ -548,6 +548,28 @@ describe("buildTimeline — alternating every logical rep (#348)", () => {
     expect(tl.find((s) => s.phase === "setRest")?.durS).toBe(12);
   });
 
+  it("uses independent hand holds without shortening either hand's recovery", () => {
+    const p = { ...alt, reps: 2, sets: 1, holdS: 7, restRepsS: 30 };
+    const tl = buildTimeline(p, {
+      switchS: 3,
+      alternatingHolds: { left: [12], right: [5] },
+    });
+    const hs = tl.filter((s) => s.phase === "hold");
+    expect(hs.map((s) => [s.side, s.durS])).toEqual([
+      ["left", 12],
+      ["right", 5],
+      ["left", 12],
+      ["right", 5],
+    ]);
+    expect(tl.find((s) => s.phase === "rest")?.durS).toBe(22);
+    const firstLeft = hs[0]!;
+    const nextLeft = hs[2]!;
+    const firstRight = hs[1]!;
+    const nextRight = hs[3]!;
+    expect(nextLeft.startS - (firstLeft.startS + firstLeft.durS)).toBeGreaterThanOrEqual(30);
+    expect(nextRight.startS - (firstRight.startS + firstRight.durS)).toBeGreaterThanOrEqual(30);
+  });
+
   it("preserves preparation before the first left hold", () => {
     const tl = buildTimeline(alt, { switchS: 3, prepareS: 5 });
     expect(tl.slice(0, 2)).toMatchObject([

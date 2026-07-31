@@ -181,7 +181,7 @@ export interface TindeqPreset {
   /// curve at holdS — the force sustainable for exactly that hold (CF + W'/t).
   /// Overrides targetKg/targetPct when true.
   targetCurve: boolean;
-  /// Alternate left/right each SET (switch hands during the set rest).
+  /// Run both hands in every logical rep (left hold, switch, right hold).
   alternateSides: boolean;
 }
 

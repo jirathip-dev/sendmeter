@@ -62,6 +62,32 @@ describe("buildPresetPlan / planVaries", () => {
     };
     const rows = buildPresetPlan(p, noRefs);
     expect(rows.map((r) => r.side)).toEqual(["both", "both", "both", "both"]);
+    expect(planVaries(rows, p.sets)).toBe(true);
+  });
+
+  it("uses already-resolved targets and holds for both hands in each set", () => {
+    const p: PlanPreset = {
+      ...base,
+      sets: 2,
+      alternateSides: true,
+      targetPct: 50,
+      pctStep: 10,
+    };
+    const rows = buildPresetPlan(p, noRefs, [
+      { left: { holdS: 7, targetKg: 21 }, right: { holdS: 9, targetKg: 16.5 } },
+      { left: { holdS: 8, targetKg: 25.2 }, right: { holdS: 10, targetKg: 19.8 } },
+    ]);
+    expect(rows.map(({ side, leftHoldS, rightHoldS, leftTargetKg, rightTargetKg }) => ({
+      side,
+      leftHoldS,
+      rightHoldS,
+      leftTargetKg,
+      rightTargetKg,
+    }))).toEqual([
+      { side: "both", leftHoldS: 7, rightHoldS: 9, leftTargetKg: 21, rightTargetKg: 16.5 },
+      { side: "both", leftHoldS: 8, rightHoldS: 10, leftTargetKg: 25.2, rightTargetKg: 19.8 },
+    ]);
+    expect(planVaries(rows, p.sets)).toBe(true);
   });
 
   it("non-alternating: side is null for every row", () => {
