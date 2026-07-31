@@ -47,7 +47,6 @@ import type {
 import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import PresetManager from "./PresetManager";
-import PrehabCard from "./PrehabCard";
 import { clearPersistedPreset } from "../lib/forcePresetStorage";
 import { restoredSelection, selectZoneOutcome, withPresetSelected } from "../lib/forceSelection";
 import SideAsymmetryCard from "./SideAsymmetryCard";
@@ -1554,16 +1553,6 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           onSelect={selectZone}
           intensityPct={intensityPct}
           onIntensityChange={changeIntensity}
-          locked={runActive}
-          onClear={clearProtocol}
-        />
-      )}
-      {zoneTag && (
-        <PrehabCard
-          tag={zoneTag}
-          model={model}
-          selected={armedZone}
-          onSelect={selectZone}
           locked={runActive}
           onClear={clearProtocol}
         />

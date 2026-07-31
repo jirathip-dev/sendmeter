@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { QUALITIES, ZONE_INTENSITY, zoneTarget } from "../lib/force-curve";
+import { QUALITIES, ZONE_INTENSITY, prehabTarget, zoneTarget } from "../lib/force-curve";
 import type { ForceCurveModel } from "../lib/force-curve";
 import { selectionHaptic } from "../lib/haptics";
 import { buildTimeline, timelineDurationS } from "../lib/protocol";
 import {
   QUALITY_COLORS,
+  buildPrehabSelection,
   buildZoneSelection,
   selectedQuality,
   type ZoneSelection,
@@ -42,11 +43,9 @@ function fmt(sec: number): string {
   return s === 0 ? `${m}m` : `${m}m${s}s`;
 }
 
-/// Training-zone target picker (POWER / STRENGTH / POW END / ENDURANCE),
-/// anchored to the selected exercise's force-curve fit. Picking a zone arms
-/// the band on the live gauge AND its guided timer (hold/rest/reps from the
-/// zone's prescription). Alternate ticks L⇄R per rep; otherwise the global
-/// side applies.
+/// Curve-derived protocol picker. The four trainable qualities and the fixed
+/// Prehab maintenance dose share one card, but remain separate semantic groups:
+/// Prehab is deliberately not a fifth TrainingQuality.
 export default function TargetZonesCard({
   tag,
   model,
@@ -67,7 +66,9 @@ export default function TargetZonesCard({
   // SL-100 recommendation card arming the same `zoneSel` lights the right chip.
   const quality = selectedQuality(selected);
   const active = quality !== null;
+  const prehabActive = selected?.protocol.id === "zone:prehab";
   const zoneT = model && quality ? zoneTarget(model, quality, intensityPct) : null;
+  const prehabT = model ? prehabTarget(model) : null;
 
   return (
     <div className="card" style={{ marginTop: 10 }}>
@@ -90,8 +91,9 @@ export default function TargetZonesCard({
         </div>
       ) : (
         <>
-          {/* Same box-chip size as the tag/side pickers — one chip language
-              across the tab; each zone keeps its hue. */}
+          <div className="label-eyebrow" style={{ marginBottom: 6 }}>
+            Training
+          </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {QUALITIES.map((q) => {
               const isActive = active && quality === q.id;
@@ -119,53 +121,123 @@ export default function TargetZonesCard({
               it moves (SL-97b had it as a −/+ stepper in the "Protocol
               presets" header). Still ONE global value owned by ForceView —
               recommended zones only, custom presets are never rescaled. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
-            <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>Intensity</span>
-            <input
-              type="range"
-              aria-label="Session intensity"
-              // #171: this control ticks PER STEP below; mute it for the
-              // delegated tap listener so a drag isn't also a tap.
-              data-haptic="off"
-              min={ZONE_INTENSITY.min}
-              max={ZONE_INTENSITY.max}
-              step={ZONE_INTENSITY.step}
-              value={intensityPct}
-              disabled={locked}
-              onChange={(e) => {
-                const next = Number(e.target.value);
-                // A range input only emits when its *stepped* value changes,
-                // and this guard swallows a repeat of the same value — so the
-                // tick is one per 5% step, not one per drag pixel.
-                if (next === intensityPct) return;
-                selectionHaptic();
-                onIntensityChange(next);
-              }}
-              style={{
-                flex: 1,
-                minWidth: 0,
-                accentColor: heavy ? "var(--warning)" : "var(--primary)",
-                opacity: locked ? 0.5 : 1,
+          {!prehabActive && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+              <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
+                Intensity
+              </span>
+              <input
+                type="range"
+                aria-label="Session intensity"
+                data-haptic="off"
+                min={ZONE_INTENSITY.min}
+                max={ZONE_INTENSITY.max}
+                step={ZONE_INTENSITY.step}
+                value={intensityPct}
+                disabled={locked}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  if (next === intensityPct) return;
+                  selectionHaptic();
+                  onIntensityChange(next);
+                }}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  accentColor: heavy ? "var(--warning)" : "var(--primary)",
+                  opacity: locked ? 0.5 : 1,
+                }}
+              />
+              <span
+                style={{
+                  fontSize: "var(--t-xs)",
+                  fontWeight: 700,
+                  color: heavy ? "var(--warning)" : "var(--ink)",
+                  width: 34,
+                  textAlign: "right",
+                }}
+              >
+                {intensityPct}%
+              </span>
+            </div>
+          )}
+          <div
+            style={{
+              borderTop: "1px solid var(--border)",
+              marginTop: 14,
+              paddingTop: 12,
+            }}
+          >
+            <div className="label-eyebrow" style={{ marginBottom: 6 }}>
+              Maintenance
+            </div>
+            <BoxChip
+              label="Prehab"
+              active={prehabActive}
+              color="var(--ink-muted)"
+              disabled={locked || !prehabT}
+              onClick={() => {
+                if (prehabActive) {
+                  onClear();
+                  return;
+                }
+                onSelect(buildPrehabSelection(model, tag));
               }}
             />
-            <span
-              style={{
-                fontSize: "var(--t-xs)",
-                fontWeight: 700,
-                color: heavy ? "var(--warning)" : "var(--ink)",
-                width: 34,
-                textAlign: "right",
-              }}
-            >
-              {intensityPct}%
-            </span>
+            {!prehabT && (
+              <div
+                style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6 }}
+              >
+                Prehab needs a usable force-curve target.
+              </div>
+            )}
           </div>
           {locked && (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
               Locked while measuring — applies to your next run.
             </div>
           )}
-          {active && zoneT && selected ? (
+          {prehabActive && prehabT && selected ? (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <span
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: 22,
+                    fontWeight: 800,
+                    color: "var(--ink-muted)",
+                  }}
+                >
+                  {prehabT.targetKg.toFixed(1)} kg
+                </span>
+                <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
+                  ({prehabT.lowKg.toFixed(1)}–{prehabT.highKg.toFixed(1)})
+                </span>
+              </div>
+              <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 4 }}>
+                {fmt(selected.protocol.holdS)} × {selected.protocol.reps} ·{" "}
+                {fmt(selected.protocol.restRepsS)} rest · about{" "}
+                {fmt(timelineDurationS(buildTimeline(selected.protocol, { switchS: 3 })))}
+              </div>
+              <div
+                style={{
+                  fontSize: "var(--t-2xs)",
+                  color: "var(--ink-faint)",
+                  marginTop: 8,
+                }}
+              >
+                Fixed dose · below critical force · excluded from training balance
+              </div>
+              <button
+                onClick={onClear}
+                disabled={locked}
+                className="glass-pill"
+                style={{ marginTop: 10, padding: "6px 14px", fontSize: "var(--t-2xs)" }}
+              >
+                Clear — free hold
+              </button>
+            </div>
+          ) : active && zoneT && selected ? (
             <div style={{ marginTop: 10 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                 <span
@@ -250,12 +322,11 @@ export default function TargetZonesCard({
                 Clear — free hold
               </button>
             </div>
-          ) : (
+          ) : !prehabActive ? (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
-              Pick a zone — it arms the band on the live gauge and a guided
-              hold/rest timer from its prescription.
+              Pick a protocol — it arms the live-gauge band and guided timer.
             </div>
-          )}
+          ) : null}
         </>
       )}
     </div>
