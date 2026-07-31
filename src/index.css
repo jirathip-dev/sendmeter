@@ -609,14 +609,18 @@ textarea.field { resize: none; }
 }
 
 /* Branded auth splash (#294). The cave fills the viewport and remains still;
-   only the separated kangaroo performs one crouch/reach/land "dyno" before a
-   long rest. The animation stays compositor-friendly (transform only). */
+   only the separated kangaroo moves: crouch, dyno, drop back-first onto the
+   pad, recover. The animation stays compositor-friendly (transform only). */
 @keyframes splash-dyno {
-  0%, 34%, 100% { transform: translate3d(0, 0, 0) rotate(0) scale(1); }
-  6% { transform: translate3d(-3px, 5px, 0) rotate(-1deg) scale(1.035, 0.965); }
-  16% { transform: translate3d(17px, -28px, 0) rotate(2.5deg) scale(0.98, 1.02); }
-  22% { transform: translate3d(22px, -34px, 0) rotate(3.5deg) scale(1); }
-  29% { transform: translate3d(1px, 3px, 0) rotate(-0.5deg) scale(1.02, 0.98); }
+  0%, 4%, 86%, 100% { transform: translate3d(0, 0, 0) rotate(0) scale(1); }
+  5% { transform: translate3d(-1%, 2%, 0) rotate(-1deg) scale(1.035, 0.965); }
+  11% { transform: translate3d(5%, -8%, 0) rotate(4deg) scale(0.98, 1.02); }
+  15% { transform: translate3d(6%, -10%, 0) rotate(6deg) scale(1); }
+  18% { transform: translate3d(4%, 3%, 0) rotate(44deg) scale(1); }
+  20% { transform: translate3d(0, 24%, 0) rotate(88deg) scale(1.04, 0.96); }
+  22% { transform: translate3d(0, 20%, 0) rotate(94deg) scale(0.99, 1.01); }
+  23.5%, 64% { transform: translate3d(0, 23%, 0) rotate(90deg) scale(1); }
+  76% { transform: translate3d(-3%, 14%, 0) rotate(45deg) scale(1); }
 }
 .splash-screen {
   max-width: none; margin: 0; border: 0;
@@ -648,19 +652,10 @@ textarea.field { resize: none; }
 .splash-kangaroo {
   display: block; width: 100%; height: 100%;
   object-fit: contain;
+  transform-origin: 50% 52%;
   filter: drop-shadow(0 16px 18px var(--overlay));
-  animation: splash-dyno 3.4s cubic-bezier(0.35, 0, 0.2, 1) infinite;
+  animation: splash-dyno 4.2s cubic-bezier(0.35, 0, 0.2, 1) infinite;
   will-change: transform;
-}
-.splash-wordmark {
-  margin-top: -24px; color: white; font-size: var(--t-xl);
-  font-weight: 800; letter-spacing: 0.1em;
-  text-shadow: 0 2px 14px var(--overlay);
-}
-.splash-tagline {
-  margin-top: 5px; color: color-mix(in srgb, white 72%, transparent); font-size: var(--t-eyebrow);
-  font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
-  text-shadow: 0 2px 12px var(--overlay);
 }
 @media (min-width: 720px) {
   .splash-cave-background { object-position: center 64%; }

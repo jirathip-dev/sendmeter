@@ -19,8 +19,6 @@ export default function SplashScreen() {
             alt=""
           />
         </div>
-        <div className="splash-wordmark">SENDMETER</div>
-        <div className="splash-tagline">Climbing training</div>
       </div>
     </div>
   );
