@@ -4,12 +4,13 @@ import SplashScreen from "./SplashScreen";
 import TrainingDataSkeleton from "./TrainingDataSkeleton";
 
 describe("loading surfaces", () => {
-  it("uses the bundled app icon for the branded splash", () => {
+  it("layers the animated kangaroo over a static cave splash", () => {
     const html = renderToStaticMarkup(<SplashScreen />);
 
     expect(html).toContain('role="status"');
     expect(html).toContain('aria-label="Starting Sendmeter"');
-    expect(html).toContain('src="/icon-512.png"');
+    expect(html).toContain('src="/splash-cave-background.webp"');
+    expect(html).toContain('src="/splash-kangaroo.webp"');
     expect(html).toContain("SENDMETER");
     expect(html).not.toContain("spinner");
   });

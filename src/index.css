@@ -608,53 +608,62 @@ textarea.field { resize: none; }
   gap: 14px; color: var(--ink-faint); font-size: var(--t-sm);
 }
 
-/* Branded auth splash (#294). The app icon stays intact; the whole mark makes
-   one small crouch/reach/land "dyno", then rests before looping. Both this and
-   the shadow animate with compositor-friendly transform/opacity only. */
+/* Branded auth splash (#294). The cave fills the viewport and remains still;
+   only the separated kangaroo performs one crouch/reach/land "dyno" before a
+   long rest. The animation stays compositor-friendly (transform only). */
 @keyframes splash-dyno {
-  0%, 40%, 100% { transform: translateY(0) rotate(0) scale(1); }
-  6% { transform: translateY(3px) rotate(0) scale(1.025, 0.975); }
-  15% { transform: translateY(-13px) rotate(-1.5deg) scale(0.985, 1.015); }
-  21% { transform: translateY(-16px) rotate(1deg) scale(1); }
-  31% { transform: translateY(2px) rotate(0) scale(1.015, 0.985); }
-  37% { transform: translateY(0) rotate(0) scale(1); }
+  0%, 34%, 100% { transform: translate3d(0, 0, 0) rotate(0) scale(1); }
+  6% { transform: translate3d(-3px, 5px, 0) rotate(-1deg) scale(1.035, 0.965); }
+  16% { transform: translate3d(17px, -28px, 0) rotate(2.5deg) scale(0.98, 1.02); }
+  22% { transform: translate3d(22px, -34px, 0) rotate(3.5deg) scale(1); }
+  29% { transform: translate3d(1px, 3px, 0) rotate(-0.5deg) scale(1.02, 0.98); }
 }
-@keyframes splash-shadow-dyno {
-  0%, 40%, 100% { opacity: 0.24; transform: translateX(-50%) scaleX(1); }
-  6%, 31% { opacity: 0.3; transform: translateX(-50%) scaleX(1.08); }
-  19% { opacity: 0.1; transform: translateX(-50%) scaleX(0.72); }
-  37% { opacity: 0.24; transform: translateX(-50%) scaleX(1); }
+.splash-screen {
+  max-width: none; margin: 0; border: 0;
+  align-items: center; justify-content: center;
+  isolation: isolate; background: var(--bg);
 }
-.splash-screen { align-items: center; justify-content: center; }
+.splash-cave-background {
+  position: absolute; z-index: -2; inset: 0;
+  display: block; width: 100%; height: 100%;
+  object-fit: cover; object-position: center 57%;
+}
+.splash-screen::after {
+  content: ""; position: absolute; z-index: -1; inset: 0;
+  pointer-events: none;
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--overlay) 35%, transparent),
+    transparent 44%,
+    color-mix(in srgb, var(--overlay) 72%, transparent));
+}
 .splash-content {
+  position: relative; z-index: 1;
   display: flex; flex-direction: column; align-items: center;
-  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
 }
-.splash-stage { position: relative; width: 132px; height: 144px; }
-.splash-logo {
-  position: relative; z-index: 1; display: block;
-  width: 124px; height: 124px; margin: 0 auto;
-  border-radius: 27%; border: 1px solid var(--card-border);
-  box-shadow: var(--shadow-card);
-  animation: splash-dyno 2.6s ease-in-out infinite;
+.splash-stage {
+  position: relative;
+  width: clamp(290px, 80vw, 410px); aspect-ratio: 1;
+}
+.splash-kangaroo {
+  display: block; width: 100%; height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 16px 18px var(--overlay));
+  animation: splash-dyno 3.4s cubic-bezier(0.35, 0, 0.2, 1) infinite;
   will-change: transform;
 }
-.splash-logo-shadow {
-  position: absolute; left: 50%; bottom: 4px;
-  width: 58px; height: 8px; border-radius: 50%;
-  background: var(--ink-faint);
-  opacity: 0.24;
-  transform: translateX(-50%);
-  animation: splash-shadow-dyno 2.6s ease-in-out infinite;
-  will-change: transform, opacity;
-}
 .splash-wordmark {
-  margin-top: 14px; color: var(--ink); font-size: var(--t-xl);
-  font-weight: 800; letter-spacing: 0.08em;
+  margin-top: -24px; color: white; font-size: var(--t-xl);
+  font-weight: 800; letter-spacing: 0.1em;
+  text-shadow: 0 2px 14px var(--overlay);
 }
 .splash-tagline {
-  margin-top: 5px; color: var(--ink-faint); font-size: var(--t-eyebrow);
+  margin-top: 5px; color: color-mix(in srgb, white 72%, transparent); font-size: var(--t-eyebrow);
   font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+  text-shadow: 0 2px 12px var(--overlay);
+}
+@media (min-width: 720px) {
+  .splash-cave-background { object-position: center 64%; }
 }
 
 /* Dashboard-shaped data placeholders (#294). Shimmer is a translated overlay
