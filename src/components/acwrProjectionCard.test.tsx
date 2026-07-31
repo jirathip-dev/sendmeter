@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import AcwrProjectionCard from "./AcwrProjectionCard";
+import AcwrProjectionCard, { Chart } from "./AcwrProjectionCard";
 import { PHASES } from "../constants";
 import { daysAgo, today } from "../lib/dates";
+import { projectAcwr, REST_DAY_ACWR_DECAY } from "../lib/acwrProjection";
 import type { HealthMetric, Session } from "../types";
 
 /// The projection maths is pinned in `lib/acwrProjection.test.ts`; this covers
@@ -53,6 +54,25 @@ function render(sessions: Session[], readiness: HealthMetric | null) {
   );
 }
 
+function axisLabel(html: string, name: string): Record<string, string> {
+  const tag = html.match(new RegExp(`<text[^>]*data-axis-label="${name}"[^>]*>`))?.[0];
+  expect(tag).toBeDefined();
+  return Object.fromEntries(
+    Array.from(tag!.matchAll(/([\w-]+)="([^"]*)"/g), ([, key, value]) => [key, value]),
+  );
+}
+
+function renderChart(startingAcwr: number) {
+  const projection = projectAcwr(
+    { acute: startingAcwr * 100, chronic: 100 },
+    { low: 0.9, high: 1.1 },
+  )!;
+  return {
+    html: renderToStaticMarkup(<Chart p={projection} todayColor="green" />),
+    projection,
+  };
+}
+
 describe("AcwrProjectionCard", () => {
   it("states the zero-training assumption up front", () => {
     expect(render(history, null)).toContain("If you train nothing");
@@ -70,6 +90,27 @@ describe("AcwrProjectionCard", () => {
 
   it("draws no NaN coordinates", () => {
     expect(render(history, metric(today(), 71, "push"))).not.toContain("NaN");
+  });
+
+  it("puts a day-1 crossing on a separate axis row from both endpoints", () => {
+    const { html, projection } = renderChart(1);
+    expect(projection.fallsBelow?.dayOffset).toBe(1);
+
+    const now = axisLabel(html, "now");
+    const crossing = axisLabel(html, "crossing");
+    const horizon = axisLabel(html, "horizon");
+    expect(now.y).toBe(horizon.y);
+    expect(crossing.y).not.toBe(now.y);
+  });
+
+  it("keeps a day-7 crossing label inside the right edge", () => {
+    const daySevenStart = (0.9 / REST_DAY_ACWR_DECAY ** 6) * 1.01;
+    const { html, projection } = renderChart(daySevenStart);
+    expect(projection.fallsBelow?.dayOffset).toBe(7);
+
+    const crossing = axisLabel(html, "crossing");
+    const horizon = axisLabel(html, "horizon");
+    expect(Number(crossing.x)).toBeLessThan(Number(horizon.x));
   });
 
   it("labels readiness as measured today — never as part of the projection", () => {
