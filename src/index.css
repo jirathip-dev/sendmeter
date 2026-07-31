@@ -608,6 +608,132 @@ textarea.field { resize: none; }
   gap: 14px; color: var(--ink-faint); font-size: var(--t-sm);
 }
 
+/* Branded auth splash (#294). The app icon stays intact; the whole mark makes
+   one small crouch/reach/land "dyno", then rests before looping. Both this and
+   the shadow animate with compositor-friendly transform/opacity only. */
+@keyframes splash-dyno {
+  0%, 40%, 100% { transform: translateY(0) rotate(0) scale(1); }
+  6% { transform: translateY(3px) rotate(0) scale(1.025, 0.975); }
+  15% { transform: translateY(-13px) rotate(-1.5deg) scale(0.985, 1.015); }
+  21% { transform: translateY(-16px) rotate(1deg) scale(1); }
+  31% { transform: translateY(2px) rotate(0) scale(1.015, 0.985); }
+  37% { transform: translateY(0) rotate(0) scale(1); }
+}
+@keyframes splash-shadow-dyno {
+  0%, 40%, 100% { opacity: 0.24; transform: translateX(-50%) scaleX(1); }
+  6%, 31% { opacity: 0.3; transform: translateX(-50%) scaleX(1.08); }
+  19% { opacity: 0.1; transform: translateX(-50%) scaleX(0.72); }
+  37% { opacity: 0.24; transform: translateX(-50%) scaleX(1); }
+}
+.splash-screen { align-items: center; justify-content: center; }
+.splash-content {
+  display: flex; flex-direction: column; align-items: center;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+.splash-stage { position: relative; width: 132px; height: 144px; }
+.splash-logo {
+  position: relative; z-index: 1; display: block;
+  width: 124px; height: 124px; margin: 0 auto;
+  border-radius: 27%; border: 1px solid var(--card-border);
+  box-shadow: var(--shadow-card);
+  animation: splash-dyno 2.6s ease-in-out infinite;
+  will-change: transform;
+}
+.splash-logo-shadow {
+  position: absolute; left: 50%; bottom: 4px;
+  width: 58px; height: 8px; border-radius: 50%;
+  background: var(--ink-faint);
+  opacity: 0.24;
+  transform: translateX(-50%);
+  animation: splash-shadow-dyno 2.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.splash-wordmark {
+  margin-top: 14px; color: var(--ink); font-size: var(--t-xl);
+  font-weight: 800; letter-spacing: 0.08em;
+}
+.splash-tagline {
+  margin-top: 5px; color: var(--ink-faint); font-size: var(--t-eyebrow);
+  font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+}
+
+/* Dashboard-shaped data placeholders (#294). Shimmer is a translated overlay
+   rather than an animated background, so every animation remains transform /
+   opacity-only. Heights track the common loaded cards to avoid a large jump. */
+@keyframes skeleton-sweep {
+  from { transform: translateX(-180%); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  to { transform: translateX(360%); opacity: 0; }
+}
+.training-skeleton { width: 100%; }
+.skeleton-context-row {
+  display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 10px; margin-bottom: 10px;
+}
+.skeleton-card { position: relative; overflow: hidden; }
+.skeleton-card::after {
+  content: ""; position: absolute; z-index: 2; inset: 0 auto 0 -50%;
+  width: 42%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink-faint) 14%, transparent), transparent);
+  animation: skeleton-sweep 1.65s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.skeleton-block { background: var(--surface-2); opacity: 0.78; }
+.skeleton-line { height: 10px; border-radius: 999px; }
+.skeleton-line + .skeleton-line { margin-top: 9px; }
+.skeleton-line-short { width: 30%; }
+.skeleton-line-medium { width: 52%; }
+.skeleton-line-wide { width: 78%; }
+.skeleton-phase-card {
+  min-height: 94px; margin: 0; padding: 14px;
+  display: flex; flex-direction: column; align-items: flex-start;
+}
+.skeleton-phase-card .skeleton-pill {
+  width: 62px; height: 24px; border-radius: 8px; margin-top: auto;
+}
+.skeleton-conditions-card { min-height: 94px; }
+.skeleton-conditions-card .skeleton-score-small {
+  width: 34px; height: 24px; margin-top: 12px;
+}
+.skeleton-score { width: 66px; height: 48px; margin-top: 14px; border-radius: 10px; }
+.skeleton-score-small { border-radius: 7px; }
+.skeleton-score-medium { width: 78px; height: 38px; }
+.skeleton-readiness-card { min-height: 172px; }
+.skeleton-chart-line {
+  position: relative; height: 46px; margin-top: 16px;
+  border-bottom: 2px solid var(--surface-2);
+}
+.skeleton-chart-line::before,
+.skeleton-chart-line::after {
+  content: ""; position: absolute; left: 0; right: 0;
+  border-top: 1px dashed var(--surface-2);
+}
+.skeleton-chart-line::before { top: 12px; }
+.skeleton-chart-line::after { top: 30px; }
+.skeleton-acwr-card { min-height: 192px; }
+.skeleton-track { width: 100%; height: 7px; border-radius: 4px; margin-top: 22px; }
+.skeleton-stat-row {
+  display: flex; gap: 24px; margin-top: 28px; padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+.skeleton-stat-row .skeleton-line { flex: 1; max-width: 120px; }
+.skeleton-weekly-card { min-height: 146px; }
+.skeleton-bars {
+  height: 90px; display: flex; align-items: flex-end; gap: 8px;
+  padding-top: 18px;
+}
+.skeleton-bar { flex: 1; border-radius: 4px 4px 2px 2px; }
+.skeleton-bar-short { height: 28%; }
+.skeleton-bar-medium { height: 55%; }
+.skeleton-bar-tall { height: 82%; }
+.skeleton-daily-card { min-height: 118px; }
+.skeleton-heatmap {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
+  margin-top: 18px;
+}
+.skeleton-heatmap-cell { aspect-ratio: 1.8; border-radius: 3px; }
+
 /* Error banner with retry */
 .error-banner {
   display: flex; align-items: center; gap: 10px;
