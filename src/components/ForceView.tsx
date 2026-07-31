@@ -750,7 +750,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             label: p.label,
             days: p.days,
             model: p.recs.length
-              ? computeForceCurve(p.recs.map((r) => samplesById.get(r.id)!))
+              ? computeForceCurve(
+                  p.recs.map((r) => samplesById.get(r.id)!),
+                  { bootstrapSamples: 0 },
+                )
               : null,
           })),
         );

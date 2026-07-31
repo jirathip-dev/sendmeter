@@ -13,10 +13,12 @@ import {
   WARMUP_PROTOCOL,
   ZONE_PROTOCOLS,
   ZONE_INTENSITY,
+  CURVE_WINDOWS_S,
   type ForceCurveModel,
 } from "./force-curve";
 import { curveCandidateRecordings } from "./zoneHistory";
 import type { TindeqSample } from "../types";
+import type { DisplayFit } from "./forceCurveRegression";
 
 /// A constant-force hold sampled at 10 Hz (t in ms).
 function hold(seconds: number, kg: number): TindeqSample[] {
@@ -85,6 +87,12 @@ describe("predictForce", () => {
     expect(predictForce(m, 60)).toBeCloseTo(25, 5); // 20 + 300/60
     expect(predictForce(m, 1)).toBe(40); // 20 + 300 → clamped to maxF
   });
+
+  it("keeps the CF/W′ calculation when a display-only Hill fit is present", () => {
+    const displayFit: DisplayFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
+    const m: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, displayFit };
+    expect(predictForce(m, 60)).toBe(25);
+  });
 });
 
 describe("zoneTarget", () => {
@@ -98,6 +106,14 @@ describe("zoneTarget", () => {
   it("derives endurance/power-endurance targets from CF", () => {
     expect(zoneTarget(model, "endurance")!.targetKg).toBe(18); // cf × 0.9
     expect(zoneTarget(model, "power-endurance")!.targetKg).toBe(25); // cf + W'/60
+  });
+
+  it("does not let the display-only Hill fit change a training target", () => {
+    const displayFit: DisplayFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
+    const fitted: ForceCurveModel = { ...model, displayFit };
+    const target = zoneTarget(fitted, "power-endurance")!;
+    expect(target.targetKg).toBe(25);
+    expect(target.basis).toContain("CF 20 + W′/60");
   });
 
   it("returns null for CF-based zones when CF is unknown", () => {
@@ -208,6 +224,43 @@ describe("computeForceCurve — multi-point fit (SL-80b)", () => {
     // with many recordings → no CF.
     const m = computeForceCurve([hold(12, 20), hold(12, 18), hold(12, 16)])!;
     expect(m.cf).toBeNull();
+  });
+});
+
+describe("computeForceCurve — display uncertainty and coverage", () => {
+  it("produces a reproducible recording-level bootstrap band", () => {
+    const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
+    const a = computeForceCurve(efforts, { bootstrapSamples: 120 })!;
+    const b = computeForceCurve(efforts, { bootstrapSamples: 120 })!;
+    expect(a.confidenceBand).toEqual(b.confidenceBand);
+    expect(a.confidenceBand!.length).toBeGreaterThanOrEqual(3);
+    expect(a.confidenceBand!.every((p) => p.lowKg <= p.highKg)).toBe(true);
+    expect(a.confidenceBand!.at(0)!.windowS).toBe(a.points[0]!.windowS);
+    expect(a.confidenceBand!.at(-1)!.windowS).toBe(a.points.at(-1)!.windowS);
+  });
+
+  it("never draws the model interval beyond measured duration support", () => {
+    const m = computeForceCurve(
+      [hold(15, 32), hold(30, 28), hold(60, 24)],
+      { bootstrapSamples: 200 },
+    )!;
+    expect(m.confidenceBand!.at(0)!.windowS).toBeGreaterThanOrEqual(m.points[0]!.windowS);
+    expect(m.confidenceBand!.at(-1)!.windowS).toBeLessThanOrEqual(m.points.at(-1)!.windowS);
+  });
+
+  it("preprocesses mean-max values once instead of repeating signal work per bootstrap", () => {
+    const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
+    const diagnostics = { meanMaxEvaluations: 0 };
+    computeForceCurve(efforts, { bootstrapSamples: 500, diagnostics });
+    expect(diagnostics.meanMaxEvaluations).toBe(efforts.length * CURVE_WINDOWS_S.length);
+  });
+
+  it("flags one long recording as weak coverage despite its many rolling windows", () => {
+    const m = computeForceCurve([hold(120, 22)])!;
+    expect(m.coverage?.quality).toBe("weak");
+    expect(m.coverage?.independentDurations).toBe(1);
+    expect(m.coverage?.message).toContain("distinctly different duration");
+    expect(m.coverage?.message).not.toContain("longest evidence");
   });
 });
 

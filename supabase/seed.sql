@@ -139,7 +139,7 @@ select
   0.28 + n * 0.02, 5 + n * 0.6
 from generate_series(1, 5) as n;
 
--- ── Tindeq recordings: two half-crimp gauge sessions a week apart ───────────
+-- ── Tindeq recordings: short sessions + a force-duration ladder ───────
 -- samples are [[t_ms, kg], ...] (t in MILLISECONDS — charts divide by 1000).
 -- 7s holds at 10Hz: ~1.2s ramp to peak, then a plateau with slight decay.
 
@@ -181,6 +181,44 @@ select
   'Half crimp', side, group_id, zone
 from curves
 group by days_ago, group_id, side, peak, zone;
+
+-- Older 15–120s all-out holds keep the default Force tab's CF/W′ fit and
+-- long-duration chart populated. They sit outside the trailing four-week
+-- training-balance window, so the recent 7s classification examples above
+-- remain the only recordings affecting that card. The durations span the
+-- curve fit instead of fabricating long-window evidence from one hold.
+with spec(days_ago, group_id, duration_s, peak, decay_per_ms) as (
+  values
+    (35, 'aaaaaaaa-0000-0000-0000-000000000003'::uuid,  15, 33.0, 0.00025),
+    (45, 'aaaaaaaa-0000-0000-0000-000000000004'::uuid,  30, 28.0, 0.00015),
+    (55, 'aaaaaaaa-0000-0000-0000-000000000005'::uuid,  60, 24.0, 0.00008),
+    (65, 'aaaaaaaa-0000-0000-0000-000000000006'::uuid, 120, 21.0, 0.000035)
+),
+curves as (
+  select
+    s.*,
+    t,
+    round((
+      s.peak * least(t / 1200.0, 1.0)
+      - greatest(t - 1200, 0) * s.decay_per_ms
+      + 0.25 * sin(t / 240.0)
+    )::numeric, 2) as kg
+  from spec s
+  cross join lateral generate_series(0, s.duration_s * 1000, 100) as t
+)
+insert into public.tindeq_recordings (
+  user_id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count,
+  samples, tag, side, group_id, zone
+)
+select
+  '11111111-1111-1111-1111-111111111111',
+  (current_date - days_ago)::timestamptz + interval '17 hours',
+  duration_s * 1000,
+  max(kg), round(avg(kg)::numeric, 2), count(*),
+  jsonb_agg(jsonb_build_array(t, kg) order by t),
+  'Half crimp', 'left', group_id, null
+from curves
+group by days_ago, group_id, duration_s, peak, decay_per_ms;
 
 -- ── Tindeq presets: one of each target shape the guided gauge supports ──────
 insert into public.tindeq_presets (
