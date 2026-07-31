@@ -1,4 +1,5 @@
 import type { TindeqSample } from "../types";
+import { fitDisplayRegression, predictDisplayFit, type DisplayFit } from "./forceCurveRegression";
 
 /**
  * Force–duration modeling for isometric finger strength (the isometric
@@ -15,6 +16,8 @@ import type { TindeqSample } from "../types";
  */
 
 export const CURVE_WINDOWS_S = [1, 3, 5, 7, 10, 15, 20, 30, 45, 60, 90, 120];
+const DISPLAY_BAND_WINDOWS_S = Array.from({ length: 65 }, (_, i) =>
+  i === 0 ? 1 : i === 64 ? 120 : Math.exp(Math.log(120) * i / 64));
 const RESAMPLE_HZ = 10;
 const FIT_MIN_WINDOW_S = 10;
 const FIT_MIN_POINTS = 3;
@@ -33,6 +36,22 @@ export interface ForceCurveModel {
   maxF: number; // best short-window force (kg)
   cf: number | null; // critical force (kg); null = not enough long holds
   wPrime: number | null; // impulse above CF (kg·s)
+  confidenceBand?: ForceCurveConfidencePoint[];
+  coverage?: ForceCurveCoverage;
+  displayFit?: DisplayFit;
+}
+
+export interface ForceCurveConfidencePoint extends ForceCurvePoint {
+  lowKg: number;
+  highKg: number;
+}
+
+export interface ForceCurveCoverage {
+  quality: "weak" | "fair" | "strong";
+  longestS: number;
+  distinctFitWindows: number;
+  independentDurations: number;
+  message: string;
 }
 
 /// Step-resample irregular samples to a fixed grid, then prefix sums make
@@ -128,24 +147,73 @@ export function pickCurveRecordings<T extends CurveCandidate>(
   return [...picked.values()];
 }
 
-export function computeForceCurve(
+function percentile(sorted: number[], p: number): number {
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * sorted.length)))]!;
+}
+
+interface PreparedEffort {
+  values: (number | null)[];
+  durationMs: number;
+}
+
+export interface ForceCurveDiagnostics {
+  meanMaxEvaluations: number;
+}
+
+function coverageFor(
+  points: ForceCurvePoint[],
+  distinctFitWindows: number,
+  efforts: PreparedEffort[],
+): ForceCurveCoverage {
+  const longestS = points.at(-1)?.windowS ?? 0;
+  const independentDurations = new Set(efforts
+    .map((e) => e.durationMs)
+    .filter((ms) => ms >= FIT_MIN_WINDOW_S * 1000)
+    .map((ms) => durationBucket(ms))).size;
+  if (longestS < 30 || distinctFitWindows < 3 || independentDurations < 2) return {
+    quality: "weak", longestS, distinctFitWindows, independentDurations,
+    message: longestS < 30
+      ? `Weak duration coverage: longest evidence is ${longestS}s. Add an all-out 30–60s hold.`
+      : `Weak duration coverage: evidence comes from only ${independentDurations} duration range${independentDurations === 1 ? "" : "s"}. Add an all-out hold at a distinctly different duration.`,
+  };
+  if (longestS < 60 || distinctFitWindows < 5 || independentDurations < 3) return {
+    quality: "fair", longestS, distinctFitWindows, independentDurations,
+    message: `Fair duration coverage: a 60s+ all-out hold would narrow the estimate.`,
+  };
+  return { quality: "strong", longestS, distinctFitWindows, independentDurations, message: "Strong duration coverage." };
+}
+
+function prepareEfforts(
   recordings: TindeqSample[][],
-  opts: { fitDepth?: number } = {},
+  diagnostics?: ForceCurveDiagnostics,
+): PreparedEffort[] {
+  return recordings.map((samples) => {
+    const values = CURVE_WINDOWS_S.map((windowS) => {
+      if (diagnostics) diagnostics.meanMaxEvaluations++;
+      return meanMaxForce(samples, windowS);
+    });
+    return { values, durationMs: samples.at(-1)?.t ?? 0 };
+  });
+}
+
+function computeCurveCore(
+  efforts: PreparedEffort[],
+  opts: { fitDepth: number },
 ): ForceCurveModel | null {
   // How many efforts per window feed the regression. 1 = the old
   // envelope-only fit; the default 3 regresses over the top few efforts of
   // each duration, so the fit reflects repeated performance instead of a
   // single lucky pull (SL-80b).
-  const fitDepth = opts.fitDepth ?? 3;
   const points: ForceCurvePoint[] = [];
   const scatter: ForceCurvePoint[] = [];
   const xs: number[] = [];
   const ys: number[] = [];
   const fitWindows = new Set<number>();
-  for (const w of CURVE_WINDOWS_S) {
+  for (let windowIndex = 0; windowIndex < CURVE_WINDOWS_S.length; windowIndex++) {
+    const w = CURVE_WINDOWS_S[windowIndex]!;
     const vals: number[] = [];
-    for (const samples of recordings) {
-      const v = meanMaxForce(samples, w);
+    for (const effort of efforts) {
+      const v = effort.values[windowIndex]!;
       if (v !== null && v > 0) vals.push(v);
     }
     if (vals.length === 0) continue;
@@ -156,7 +224,7 @@ export function computeForceCurve(
     points.push({ windowS: w, kg: Math.round(vals[0]! * 100) / 100 });
     // …but the CF regression sees the top-K efforts of every long window.
     if (w >= FIT_MIN_WINDOW_S) {
-      for (const v of vals.slice(0, fitDepth)) {
+      for (const v of vals.slice(0, opts.fitDepth)) {
         xs.push(1 / w);
         ys.push(v);
       }
@@ -182,16 +250,68 @@ export function computeForceCurve(
       sxy += (xs[i]! - mx) * (ys[i]! - my);
     }
     if (sxx > 1e-12) {
-      const slope = sxy / sxx; // W'
-      const intercept = my - slope * mx; // CF
+      const slope = sxy / sxx;
+      const intercept = my - slope * mx;
       if (intercept > 0 && slope >= 0) {
         cf = Math.round(intercept * 100) / 100;
         wPrime = Math.round(slope * 100) / 100;
       }
     }
   }
+  const displayFit = fitDisplayRegression(points, cf);
+  return {
+    points,
+    scatter,
+    maxF,
+    cf,
+    wPrime,
+    displayFit: displayFit ?? undefined,
+    coverage: coverageFor(points, fitWindows.size, efforts),
+  };
+}
 
-  return { points, scatter, maxF, cf, wPrime };
+export function computeForceCurve(
+  recordings: TindeqSample[][],
+  opts: {
+    fitDepth?: number;
+    bootstrapSamples?: number;
+    diagnostics?: ForceCurveDiagnostics;
+  } = {},
+): ForceCurveModel | null {
+  const fitDepth = opts.fitDepth ?? 3;
+  const prepared = prepareEfforts(recordings, opts.diagnostics);
+  const model = computeCurveCore(prepared, { fitDepth });
+  const iterations = opts.bootstrapSamples ?? 200;
+  if (!model?.displayFit || recordings.length < 3 || iterations <= 0) return model;
+
+  // Recording-level bootstrap: resample whole efforts, never the correlated
+  // rolling windows within an effort. A fixed LCG seed makes UI/tests stable.
+  let state = 0x352c0de;
+  const random = () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+  const firstWindow = model.points[0]!.windowS;
+  const lastWindow = model.points.at(-1)!.windowS;
+  const bandWindows = DISPLAY_BAND_WINDOWS_S.filter(
+    (windowS) => windowS >= firstWindow && windowS <= lastWindow,
+  );
+  const predictions = new Map(bandWindows.map((w) => [w, [] as number[]]));
+  for (let b = 0; b < iterations; b++) {
+    const sample = Array.from({ length: prepared.length }, () => prepared[Math.floor(random() * prepared.length)]!);
+    const fitted = computeCurveCore(sample, { fitDepth });
+    if (!fitted?.displayFit) continue;
+    for (const w of bandWindows) {
+      predictions.get(w)!.push(predictDisplayFit(fitted.displayFit, w));
+    }
+  }
+  const confidenceBand = bandWindows.flatMap((windowS) => {
+    const values = predictions.get(windowS)!.sort((a, b) => a - b);
+    return values.length < Math.max(20, iterations * 0.2) ? [] : [{
+      windowS,
+      kg: predictDisplayFit(model.displayFit!, windowS),
+      lowKg: percentile(values, 0.025),
+      highKg: percentile(values, 0.975),
+    }];
+  });
+  return { ...model, confidenceBand: confidenceBand.length ? confidenceBand : undefined };
 }
 
 /// Trailing windows for the curve-shift overlays (SL-80c): how has the
@@ -226,15 +346,19 @@ export type TrainingQuality =
   | "power-endurance"
   | "endurance";
 
-/// Every zone a RECORDING can carry (#325), vs. `TrainingQuality`'s four
+/// Every zone a RECORDING can carry (#297/#325), vs. `TrainingQuality`'s four
 /// TRAINABLE qualities that key `ZONE_PROTOCOLS`/`zoneSetDurationS`/
-/// `classifyZone`/the balance code. "prehab" is deliberately NOT a fifth
-/// `TrainingQuality`: it has no "set duration" to divide training-balance by
-/// and no classification a duration/load pair could infer it as (it's always
-/// recorded, never inferred) — widening `TrainingQuality` itself would force
-/// a meaningless entry through every one of those. Read layers that only ever
-/// need "what zone did this hold get saved under" use this union instead.
-export type RecordedZone = TrainingQuality | "prehab";
+/// `classifyZone`/the balance code. Maintenance protocols are deliberately
+/// NOT training qualities: they have no set-duration divisor and are always
+/// recorded explicitly rather than inferred from duration/load.
+export type MaintenanceZone = "warmup" | "prehab";
+export type RecordedZone = TrainingQuality | MaintenanceZone;
+
+export function isMaintenanceZone(
+  zone: RecordedZone | null,
+): zone is MaintenanceZone {
+  return zone === "warmup" || zone === "prehab";
+}
 
 export interface ZoneTarget {
   quality: TrainingQuality;
@@ -264,9 +388,7 @@ export const ZONE_PROTOCOLS: Record<
   power: { holdS: 5, restRepsS: 150, reps: 6, sets: 1, restSetsS: 0 },
   strength: { holdS: 10, restRepsS: 150, reps: 5, sets: 1, restSetsS: 0 },
   "power-endurance": { holdS: 7, restRepsS: 3, reps: 6, sets: 4, restSetsS: 120 },
-  // #320: 1 rep × 8 sets, not 8 reps × 1 set — buildTimeline alternates
-  // sides per SET, so the old shape (sets: 1) never triggered "Alternate
-  // left ⇄ right". Same 8×30s holds / 30s gaps / 450s total either way.
+  // #320: modeled as 1 rep × 8 sets so each 30s recovery is a set boundary.
   endurance: { holdS: 30, restRepsS: 0, reps: 1, sets: 8, restSetsS: 30 },
 };
 
@@ -460,6 +582,65 @@ export function zonePrescription(
     sets: zp.sets,
     restRepsS: zp.restRepsS,
     restSetsS: zp.restSetsS,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Warm-up (#297 Part B2): a short finger-specific primer to use AFTER general
+// movement and easy climbing, not as a replacement for either. The dose ramps
+// both duration and load without accumulating training volume: two reps per
+// set at 5s/7s/10s and 40%/55%/70% of the exercise PR, with enough rest to
+// keep the last pulls crisp. The evidence supports progressive,
+// climbing-specific warm-up but does not establish one dynamometer protocol,
+// so the user-facing basis says this is a conservative product prescription.
+// It is recorded under its own maintenance zone and excluded from training
+// balance/curve/PR calculations.
+export const WARMUP_PROTOCOL = {
+  holdS: 5,
+  holdsS: [5, 7, 10],
+  reps: 2,
+  sets: 3,
+  restRepsS: 15,
+  restSetsS: 60,
+  targetPct: 40,
+  pctStep: 15,
+  pctBasis: "pr",
+} as const;
+
+export interface WarmupTarget {
+  targetKg: number;
+  finalTargetKg: number;
+  lowKg: number;
+  highKg: number;
+  workS: number;
+  label: string;
+  basis: string;
+}
+
+/// Initial live-gauge band plus the final ramp target. The guided protocol
+/// resolves every set from `% of PR`; this model-based preview uses the same
+/// best short-window reference that unlocks the recommended card.
+export function warmupTarget(
+  model: ForceCurveModel,
+  prKg = model.maxF,
+): WarmupTarget | null {
+  if (prKg <= 0) return null;
+  const round1 = (v: number) => Math.round(v * 10) / 10;
+  const firstPct = WARMUP_PROTOCOL.targetPct;
+  const finalPct = firstPct + (WARMUP_PROTOCOL.sets - 1) * WARMUP_PROTOCOL.pctStep;
+  const targetKg = round1(prKg * firstPct / 100);
+  const finalTargetKg = round1(prKg * finalPct / 100);
+  return {
+    targetKg,
+    finalTargetKg,
+    lowKg: round1(targetKg * 0.9),
+    highKg: round1(targetKg * 1.1),
+    workS: WARMUP_PROTOCOL.holdS,
+    label: "Warm-up",
+    basis:
+      `${firstPct}% → ${finalPct}% of your best short-window force ` +
+      `(${round1(prKg)} kg), with 5s → 7s → 10s holds. A conservative ` +
+      "finger-specific primer after general movement and easy climbing — not a complete warm-up or clinical prescription.",
   };
 }
 

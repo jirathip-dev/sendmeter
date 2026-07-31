@@ -135,7 +135,7 @@ describe("hitWidthsPx (issue #145 revision: hit target must be per-day, not data
   });
 });
 
-describe("trendChartRecordings excludes Prehab (#325)", () => {
+describe("trendChartRecordings excludes maintenance protocols (#297/#325)", () => {
   function rec(
     recordedAt: string,
     peakKg: number,
@@ -168,6 +168,7 @@ describe("trendChartRecordings excludes Prehab (#325)", () => {
       rec("2026-07-01T10:00:00Z", 40, { zone: "strength" }),
       rec("2026-07-10T10:00:00Z", 42, { zone: "strength" }),
       rec("2026-07-20T10:00:00Z", 15, { zone: "prehab" }),
+      rec("2026-07-21T10:00:00Z", 28, { zone: "warmup" }),
     ];
     const filtered = trendChartRecordings(recordings, null, null);
     expect(filtered.map((r) => r.id)).toEqual([recordings[0]!.id, recordings[1]!.id]);

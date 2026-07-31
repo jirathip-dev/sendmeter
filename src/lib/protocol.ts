@@ -5,10 +5,9 @@ import type { PlanPreset } from "./presetPlan";
 /// list of timed segments; the UI and the per-rep recorder both walk it, so
 /// countdowns and saved recordings can never disagree.
 ///
-/// Alternating mode (SL-78): hands alternate per SET — set 1 runs every rep
-/// LEFT, set 2 RIGHT, and so on. The set rest ends with a short SWITCH
-/// countdown into the other hand (the rest is auto-extended to at least the
-/// switch window). Within a set, rep rests are plain rests on the same hand.
+/// Alternating mode: every logical rep runs LEFT then RIGHT with the same rep
+/// and set numbers. The opposite hand's hold consumes part of the configured
+/// same-hand recovery; every hand change still gets at least `switchS`.
 
 export interface ProtocolSegment {
   phase: "prepare" | "hold" | "switch" | "rest" | "setRest";
@@ -26,10 +25,10 @@ export interface TimelinePosition {
   remaining: number;
 }
 
-/// Which hand a SET uses when the preset alternates: odd sets left, even
-/// sets right.
-export function setSide(set: number): "left" | "right" {
-  return set % 2 === 1 ? "left" : "right";
+/** Per-hand hold durations for an alternating protocol, indexed by set. */
+export interface AlternatingHoldDurations {
+  left: readonly number[];
+  right: readonly number[];
 }
 
 /// The hold duration for a given SET (#332) — `set` clamps to `1..p.sets`.
@@ -282,7 +281,11 @@ export function protocolBandLabel(
 
 export function buildTimeline(
   p: TindeqPreset,
-  opts: { switchS?: number; prepareS?: number } = {},
+  opts: {
+    switchS?: number;
+    prepareS?: number;
+    alternatingHolds?: AlternatingHoldDurations;
+  } = {},
 ): ProtocolSegment[] {
   const switchS = opts.switchS ?? 3;
   const prepareS = opts.prepareS ?? 0;
@@ -302,20 +305,34 @@ export function buildTimeline(
 
   if (prepareS > 0) push("prepare", null, 1, 1, prepareS);
 
+  const alternatingHold = (side: "left" | "right", set: number): number => {
+    const resolved = opts.alternatingHolds?.[side][set - 1];
+    return resolved != null && resolved > 0 ? resolved : holdForSet(p, set);
+  };
+
   for (let set = 1; set <= p.sets; set++) {
     const hold = holdForSet(p, set);
     for (let rep = 1; rep <= p.reps; rep++) {
       const lastRep = rep === p.reps;
       const lastSet = set === p.sets;
       if (p.alternateSides) {
-        // Per-SET alternation: every rep in this set is on one hand; the set
-        // rest ends with a SWITCH countdown into the other hand.
-        push("hold", setSide(set), rep, set, hold);
-        if (!lastRep) push("rest", null, rep, set, p.restRepsS);
-        else if (!lastSet) {
-          const eff = Math.max(p.restSetsS, switchS);
-          push("setRest", null, rep, set, eff - switchS);
-          push("switch", setSide(set + 1), rep, set, switchS);
+        const leftHold = alternatingHold("left", set);
+        const rightHold = alternatingHold("right", set);
+        push("hold", "left", rep, set, leftHold);
+        push("switch", "right", rep, set, switchS);
+        push("hold", "right", rep, set, rightHold);
+
+        if (!lastRep || !lastSet) {
+          const configuredRest = lastRep ? p.restSetsS : p.restRepsS;
+          const nextSet = lastRep ? set + 1 : set;
+          const nextLeftHold = alternatingHold("left", nextSet);
+          // The opposite-hand hold consumes same-hand recovery. When the two
+          // holds differ, subtract the shorter adjacent hold so neither hand
+          // receives less than the configured recovery interval.
+          const recoveryCredit = Math.min(rightHold, nextLeftHold);
+          const remainingGap = Math.max(configuredRest - recoveryCredit, switchS);
+          push(lastRep ? "setRest" : "rest", null, rep, set, remainingGap - switchS);
+          push("switch", "left", rep, set, switchS);
         }
       } else {
         push("hold", null, rep, set, hold);

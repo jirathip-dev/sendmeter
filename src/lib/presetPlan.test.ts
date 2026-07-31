@@ -53,7 +53,7 @@ describe("buildPresetPlan / planVaries", () => {
     expect(planVaries(rows, p.sets)).toBe(false);
   });
 
-  it("alternating sides: L/R/L/R per setSide", () => {
+  it("alternating sides: every set applies to both hands", () => {
     const p: PlanPreset = {
       ...base,
       sets: 4,
@@ -61,24 +61,31 @@ describe("buildPresetPlan / planVaries", () => {
       alternateSides: true,
     };
     const rows = buildPresetPlan(p, noRefs);
-    expect(rows.map((r) => r.side)).toEqual(["left", "right", "left", "right"]);
+    expect(rows.map((r) => r.side)).toEqual(["both", "both", "both", "both"]);
     expect(planVaries(rows, p.sets)).toBe(true);
   });
 
-  it("uses already-resolved per-hand/set targets for an alternating ramp", () => {
+  it("uses already-resolved targets and holds for both hands in each set", () => {
     const p: PlanPreset = {
       ...base,
-      sets: 4,
+      sets: 2,
       alternateSides: true,
       targetPct: 50,
       pctStep: 10,
     };
-    const rows = buildPresetPlan(p, noRefs, [21, 19.8, 29.4, 26.4]);
-    expect(rows.map(({ set, side, targetKg }) => ({ set, side, targetKg }))).toEqual([
-      { set: 1, side: "left", targetKg: 21 },
-      { set: 2, side: "right", targetKg: 19.8 },
-      { set: 3, side: "left", targetKg: 29.4 },
-      { set: 4, side: "right", targetKg: 26.4 },
+    const rows = buildPresetPlan(p, noRefs, [
+      { left: { holdS: 7, targetKg: 21 }, right: { holdS: 9, targetKg: 16.5 } },
+      { left: { holdS: 8, targetKg: 25.2 }, right: { holdS: 10, targetKg: 19.8 } },
+    ]);
+    expect(rows.map(({ side, leftHoldS, rightHoldS, leftTargetKg, rightTargetKg }) => ({
+      side,
+      leftHoldS,
+      rightHoldS,
+      leftTargetKg,
+      rightTargetKg,
+    }))).toEqual([
+      { side: "both", leftHoldS: 7, rightHoldS: 9, leftTargetKg: 21, rightTargetKg: 16.5 },
+      { side: "both", leftHoldS: 8, rightHoldS: 10, leftTargetKg: 25.2, rightTargetKg: 19.8 },
     ]);
     expect(planVaries(rows, p.sets)).toBe(true);
   });

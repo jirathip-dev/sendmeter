@@ -24,7 +24,11 @@ import {
 } from "../lib/force-curve";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import { buildTimeline, holdForSet, presetTargetKg, timelineAt } from "../lib/protocol";
-import { curveCandidateRecordings, effortPeakKg, isEffortRecording } from "../lib/zoneHistory";
+import {
+  curveCandidateRecordings,
+  effortPeakKg,
+  isDepletionEffortRecording,
+} from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
 import type { GaugeInputs } from "../lib/gaugeInputLock";
@@ -67,8 +71,10 @@ import {
   type ZoneSelection,
 } from "../lib/zoneSelection";
 import {
-  nextLockedAlternatingPrescription,
+  alternatingCurveInputKey,
+  alternatingHoldDurations,
   needsHandReferences,
+  nextLockedAlternatingPrescription,
   prescriptionForSegment,
   resolveAlternatingPreset,
   resolveAlternatingRecommendation,
@@ -317,7 +323,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         durationS: r.durationMs / 1000,
         cf: byTag.get(r.tag)?.cf ?? null,
         wPrime: byTag.get(r.tag)?.wPrime ?? null,
-        isEffort: isEffortRecording(r),
+        isEffort: isDepletionEffortRecording(r),
       })),
     );
     return { predicted, recs };
@@ -640,8 +646,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // the already-locked `effectiveTag`/`chartSide` below (this feeds the same
   // struct those are locked through, so using the locked version here would
   // be circular).
-  // #325: effort recordings only — see `effortPeakKg`'s own doc for why a
-  // Prehab hold must never win this Math.max, even by walkover.
+  // Capacity recordings only — maintenance holds must never win this PR,
+  // even by walkover.
   const livePrKg = effortPeakKg(recordings, liveEffectiveTag, liveChartSide);
   const liveGaugeInputs: GaugeInputs = {
     tag: liveEffectiveTag,
@@ -679,11 +685,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // "Compute" button). All state writes happen in async callbacks; "which key
   // the model belongs to" is tracked so computing/model are derived, not
   // synced.
-  // Prehab (#325) is excluded from curve candidacy: it's 30s at 0.70×CF,
-  // daily, so its holds would otherwise supply flat ≥10s fit points that
-  // ratchet CF down every session (`curveCandidateRecordings` — see its doc
-  // in zoneHistory.ts for why a recording that isn't a maximal-intent effort
-  // can't feed anything that reads a recording as evidence of capacity).
+  // Maintenance protocols are excluded from curve candidacy: neither is a
+  // maximal-intent observation, so neither can feed a capacity model.
   const curveRecordings = curveCandidateRecordings(recordings, effectiveTag, chartSide);
   const tagSideKey = `${effectiveTag ?? ""}|${chartSide ?? "all"}`;
   const curveKey = `${tagSideKey}|${curveRecordings.length}`;
@@ -768,7 +771,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             label: p.label,
             days: p.days,
             model: p.recs.length
-              ? computeForceCurve(p.recs.map((r) => samplesById.get(r.id)!))
+              ? computeForceCurve(
+                  p.recs.map((r) => samplesById.get(r.id)!),
+                  { bootstrapSamples: 0 },
+                )
               : null,
           })),
         );
@@ -825,7 +831,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const alternatingArmed = armedAlternates(gaugeInputs.preset, gaugeInputs.zoneSel);
   const leftCurveRecordings = curveCandidateRecordings(recordings, effectiveTag, "left");
   const rightCurveRecordings = curveCandidateRecordings(recordings, effectiveTag, "right");
-  const alternatingCurveKey = `${effectiveTag ?? ""}|${leftCurveRecordings.length}|${rightCurveRecordings.length}`;
+  const alternatingCurveKey = alternatingCurveInputKey(
+    effectiveTag,
+    leftCurveRecordings,
+    rightCurveRecordings,
+  );
   const [alternatingModels, setAlternatingModels] = useState<{
     left: ForceCurveModel | null;
     right: ForceCurveModel | null;
@@ -867,8 +877,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     return () => {
       cancelled = true;
     };
-    // The key includes both candidate-list lengths; the arrays themselves are
-    // fresh each render and would refetch forever if listed directly.
+    // The key includes each candidate's identity and fit-relevant metadata;
+    // the arrays themselves are fresh each render and would refetch forever
+    // if listed directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alternatingCurveKey, curveFrozen, effectiveTag]);
   const alternatingModelsSettled = alternatingComputedFor === alternatingCurveKey;
@@ -911,7 +922,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // #298 round 4: reads `gaugeInputs.zoneSel`/`.intensityPct`, not the raw
   // `zoneSel`/`intensityPct` state — locked for the run's duration, so this
   // stays put mid-run exactly like `effectiveTag`/`chartSide` above.
-  const armedZone = rederiveSelection(gaugeInputs.zoneSel, model, zoneTag, gaugeInputs.intensityPct);
+  const armedZone = rederiveSelection(
+    gaugeInputs.zoneSel,
+    model,
+    zoneTag,
+    gaugeInputs.intensityPct,
+    prKg,
+  );
   const alternatingQuality = selectedQuality(gaugeInputs.zoneSel);
   const liveAlternatingPrescription = gaugeInputs.preset?.alternateSides
     ? resolveAlternatingPreset(gaugeInputs.preset, alternatingInputs)
@@ -929,7 +946,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     (alternatingQuality !== null ||
       (gaugeInputs.preset !== null && needsHandReferences(gaugeInputs.preset)));
   const alternatingReferencesPending =
-    alternatingArmed && effectiveTag !== null && !alternatingModelsSettled;
+    alternatingTargetNeedsBoth && effectiveTag !== null && !alternatingModelsSettled;
+  // Keep the exact two-hand snapshot used at Start for the entire run. This
+  // mirrors the gauge-input lock above: while idle, the stored value follows
+  // the live derivation; while active, rendering stays on the stored value.
   const [lockedAlternatingPrescription, setLockedAlternatingPrescription] =
     useState<AlternatingPrescription | null>(liveAlternatingPrescription);
   const alternatingPrescription = nextLockedAlternatingPrescription(
@@ -940,10 +960,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   if (alternatingPrescription !== lockedAlternatingPrescription) {
     setLockedAlternatingPrescription(alternatingPrescription);
   }
-  const alternatingPrescriptionRef = useRef(alternatingPrescription);
-  useEffect(() => {
-    alternatingPrescriptionRef.current = alternatingPrescription;
-  }, [alternatingPrescription]);
+  // Async rep saves read this ref. `onStart` snapshots it synchronously before
+  // starting the device, so there is no effect-lag window.
+  const alternatingPrescriptionRef = useRef<AlternatingPrescription | null>(
+    alternatingPrescription,
+  );
 
   // #298 round 6 (finding 3): block Start while the armed zone was built
   // under a DIFFERENT tag than the one now live, and the curve for the new
@@ -1013,9 +1034,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // so this is automatically stable for the whole run — one plan, nothing to
   // keep in sync separately.
   const timeline = activeProtocol
-    ? buildTimeline(activeProtocol, {
+      ? buildTimeline(activeProtocol, {
         switchS: 3,
         prepareS: prepare ? 5 : 0,
+        alternatingHolds: alternatingHoldDurations(alternatingPrescription),
       })
     : null;
 
@@ -1665,6 +1687,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         <TargetZonesCard
           tag={zoneTag}
           model={model}
+          prKg={prKg}
           selected={armedZone}
           onSelect={selectZone}
           intensityPct={intensityPct}
@@ -1808,6 +1831,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           onPause={togglePause}
           onSkip={skipSegment}
           onStart={() => {
+            // Snapshot provenance before the first async operation. Later rep
+            // saves must never read a prescription from another render.
+            // eslint-disable-next-line react-hooks/immutability -- intentional run-start ref snapshot consumed by async autosave
+            alternatingPrescriptionRef.current = alternatingPrescription;
             setJustSaved(null);
             setProtoShiftS(0);
             setPausedAtS(null);

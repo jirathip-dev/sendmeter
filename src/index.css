@@ -608,6 +608,136 @@ textarea.field { resize: none; }
   gap: 14px; color: var(--ink-faint); font-size: var(--t-sm);
 }
 
+/* Branded auth splash (#294). The cave fills the viewport and remains still;
+   only the separated kangaroo moves: crouch, dyno, drop back-first onto the
+   pad, recover. The animation stays compositor-friendly (transform only). */
+@keyframes splash-dyno {
+  0%, 4%, 86%, 100% { transform: translate3d(0, 0, 0) rotate(0) scale(1); }
+  5% { transform: translate3d(-1%, 2%, 0) rotate(-1deg) scale(1.035, 0.965); }
+  11% { transform: translate3d(5%, -8%, 0) rotate(4deg) scale(0.98, 1.02); }
+  15% { transform: translate3d(6%, -10%, 0) rotate(6deg) scale(1); }
+  18% { transform: translate3d(4%, 3%, 0) rotate(44deg) scale(1); }
+  20% { transform: translate3d(0, 24%, 0) rotate(88deg) scale(1.04, 0.96); }
+  22% { transform: translate3d(0, 20%, 0) rotate(94deg) scale(0.99, 1.01); }
+  23.5%, 64% { transform: translate3d(0, 23%, 0) rotate(90deg) scale(1); }
+  76% { transform: translate3d(-3%, 14%, 0) rotate(45deg) scale(1); }
+}
+.splash-screen {
+  max-width: none; margin: 0; border: 0;
+  align-items: center; justify-content: center;
+  isolation: isolate; background: var(--bg);
+}
+.splash-cave-background {
+  position: absolute; z-index: -2; inset: 0;
+  display: block; width: 100%; height: 100%;
+  object-fit: cover; object-position: center 57%;
+}
+.splash-screen::after {
+  content: ""; position: absolute; z-index: -1; inset: 0;
+  pointer-events: none;
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--overlay) 35%, transparent),
+    transparent 44%,
+    color-mix(in srgb, var(--overlay) 72%, transparent));
+}
+.splash-content {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+}
+.splash-stage {
+  position: relative;
+  width: clamp(290px, 80vw, 410px); aspect-ratio: 1;
+}
+.splash-kangaroo {
+  display: block; width: 100%; height: 100%;
+  object-fit: contain;
+  transform-origin: 50% 52%;
+  filter: drop-shadow(0 16px 18px var(--overlay));
+  animation: splash-dyno 4.2s cubic-bezier(0.35, 0, 0.2, 1) infinite;
+  will-change: transform;
+}
+@media (min-width: 720px) {
+  .splash-cave-background { object-position: center 64%; }
+}
+
+/* Dashboard-shaped data placeholders (#294). Shimmer is a translated overlay
+   rather than an animated background, so every animation remains transform /
+   opacity-only. Heights track the common loaded cards to avoid a large jump. */
+@keyframes skeleton-sweep {
+  from { transform: translateX(-180%); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  to { transform: translateX(360%); opacity: 0; }
+}
+.training-skeleton { width: 100%; }
+.skeleton-context-row {
+  display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 10px; margin-bottom: 10px;
+}
+.skeleton-card { position: relative; overflow: hidden; }
+.skeleton-card::after {
+  content: ""; position: absolute; z-index: 2; inset: 0 auto 0 -50%;
+  width: 42%; pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink-faint) 14%, transparent), transparent);
+  animation: skeleton-sweep 1.65s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.skeleton-block { background: var(--surface-2); opacity: 0.78; }
+.skeleton-line { height: 10px; border-radius: 999px; }
+.skeleton-line + .skeleton-line { margin-top: 9px; }
+.skeleton-line-short { width: 30%; }
+.skeleton-line-medium { width: 52%; }
+.skeleton-line-wide { width: 78%; }
+.skeleton-phase-card {
+  min-height: 94px; margin: 0; padding: 14px;
+  display: flex; flex-direction: column; align-items: flex-start;
+}
+.skeleton-phase-card .skeleton-pill {
+  width: 62px; height: 24px; border-radius: 8px; margin-top: auto;
+}
+.skeleton-conditions-card { min-height: 94px; }
+.skeleton-conditions-card .skeleton-score-small {
+  width: 34px; height: 24px; margin-top: 12px;
+}
+.skeleton-score { width: 66px; height: 48px; margin-top: 14px; border-radius: 10px; }
+.skeleton-score-small { border-radius: 7px; }
+.skeleton-score-medium { width: 78px; height: 38px; }
+.skeleton-readiness-card { min-height: 172px; }
+.skeleton-chart-line {
+  position: relative; height: 46px; margin-top: 16px;
+  border-bottom: 2px solid var(--surface-2);
+}
+.skeleton-chart-line::before,
+.skeleton-chart-line::after {
+  content: ""; position: absolute; left: 0; right: 0;
+  border-top: 1px dashed var(--surface-2);
+}
+.skeleton-chart-line::before { top: 12px; }
+.skeleton-chart-line::after { top: 30px; }
+.skeleton-acwr-card { min-height: 192px; }
+.skeleton-track { width: 100%; height: 7px; border-radius: 4px; margin-top: 22px; }
+.skeleton-stat-row {
+  display: flex; gap: 24px; margin-top: 28px; padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+.skeleton-stat-row .skeleton-line { flex: 1; max-width: 120px; }
+.skeleton-weekly-card { min-height: 146px; }
+.skeleton-bars {
+  height: 90px; display: flex; align-items: flex-end; gap: 8px;
+  padding-top: 18px;
+}
+.skeleton-bar { flex: 1; border-radius: 4px 4px 2px 2px; }
+.skeleton-bar-short { height: 28%; }
+.skeleton-bar-medium { height: 55%; }
+.skeleton-bar-tall { height: 82%; }
+.skeleton-daily-card { min-height: 118px; }
+.skeleton-heatmap {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
+  margin-top: 18px;
+}
+.skeleton-heatmap-cell { aspect-ratio: 1.8; border-radius: 3px; }
+
 /* Error banner with retry */
 .error-banner {
   display: flex; align-items: center; gap: 10px;

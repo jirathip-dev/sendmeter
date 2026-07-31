@@ -1,6 +1,11 @@
-import type { TindeqPreset, TindeqSide } from "../types";
+import type { TindeqPreset, TindeqRecordingMeta, TindeqSide } from "../types";
 import { zonePrescription, type ForceCurveModel, type TrainingQuality } from "./force-curve";
-import { holdForSet, presetTargetKg, type PresetRefs } from "./protocol";
+import {
+  holdForSet,
+  presetTargetKg,
+  type AlternatingHoldDurations,
+  type PresetRefs,
+} from "./protocol";
 import type { ProtocolSegment } from "./protocol";
 
 export interface ResolvedForceTarget {
@@ -56,7 +61,7 @@ export function resolveAlternatingRecommendation(
     id: `zone:${quality}`,
     name: `${left.target.label} · ${tag}`,
     holdS: left.holdS,
-    holdsS: Array.from({ length: sets }, (_, i) => (i % 2 === 0 ? left.holdS : right.holdS)),
+    holdsS: null,
     reps: left.reps,
     sets,
     restRepsS: left.restRepsS,
@@ -82,6 +87,21 @@ export function resolveAlternatingRecommendation(
     protocol,
     left: hand("L", left, inputs.left),
     right: hand("R", right, inputs.right),
+  };
+}
+
+/** Exact hold schedule consumed by the alternating timeline. */
+export function alternatingHoldDurations(
+  prescription: AlternatingPrescription | null,
+): AlternatingHoldDurations | undefined {
+  if (!prescription) return undefined;
+  return {
+    left: prescription.left.targets.map(
+      (resolved, i) => resolved?.workS ?? holdForSet(prescription.protocol, i + 1),
+    ),
+    right: prescription.right.targets.map(
+      (resolved, i) => resolved?.workS ?? holdForSet(prescription.protocol, i + 1),
+    ),
   };
 }
 
@@ -143,10 +163,68 @@ export function needsHandReferences(preset: TindeqPreset): boolean {
   return preset.alternateSides && (preset.targetCurve || preset.targetPct != null);
 }
 
+function prescriptionKey(prescription: AlternatingPrescription | null): string | null {
+  if (!prescription) return null;
+  const hand = (value: HandPrescription) => [
+    value.refs.prKg,
+    value.refs.cf,
+    value.refs.wPrime,
+    value.refs.maxF,
+    value.targets.map((resolved) =>
+      resolved
+        ? [resolved.kg, resolved.lowKg, resolved.highKg, resolved.workS, resolved.label]
+        : null,
+    ),
+  ];
+  const p = prescription.protocol;
+  return JSON.stringify([
+    p.id,
+    p.name,
+    p.holdS,
+    p.holdsS,
+    p.reps,
+    p.sets,
+    p.restRepsS,
+    p.restSetsS,
+    p.targetKg,
+    p.targetPct,
+    p.pctBasis,
+    p.pctStep,
+    p.targetCurve,
+    p.alternateSides,
+    hand(prescription.left),
+    hand(prescription.right),
+  ]);
+}
+
+/** Hold the exact prescription while active without idle render loops. */
 export function nextLockedAlternatingPrescription(
   runActive: boolean,
   live: AlternatingPrescription | null,
   locked: AlternatingPrescription | null,
 ): AlternatingPrescription | null {
-  return runActive ? locked : live;
+  if (runActive) return locked;
+  return prescriptionKey(live) === prescriptionKey(locked) ? locked : live;
+}
+
+type CurveKeyRecording = Pick<
+  TindeqRecordingMeta,
+  "id" | "recordedAt" | "durationMs" | "peakKg"
+>;
+
+/**
+ * Stable identity for the two curve inputs. Counts alone miss same-count row
+ * replacements and can leave a stale hand model marked as settled.
+ */
+export function alternatingCurveInputKey(
+  tag: string | null,
+  left: readonly CurveKeyRecording[],
+  right: readonly CurveKeyRecording[],
+): string {
+  const rows = (values: readonly CurveKeyRecording[]) =>
+    values
+      .map((row) => `${row.id}:${row.recordedAt}:${row.durationMs}:${row.peakKg}`)
+      .sort()
+      .join(",");
+  return `${tag ?? ""}|${rows(left)}|${rows(right)}`;
 }

@@ -18,7 +18,6 @@ import {
   presetTargetKg,
   presetTargetKgRange,
   protocolBandLabel,
-  setSide,
   timelineAt,
   timelineDurationS,
 } from "../lib/protocol";
@@ -266,7 +265,8 @@ export default function ForceFullscreen({
       : null;
 
   // Upcoming hand during a rest (alternating protocols): the next hold
-  // segment's side — same hand within a set, the other one across a set rest.
+  // segment's side. Every logical rep runs left then right, and the only idle
+  // rest segments sit before the switch back to left.
   const nextHoldSide =
     pos && timeline
       ? (timeline.find(
@@ -316,11 +316,22 @@ export default function ForceFullscreen({
     "right",
     timeline?.find((s) => s.phase === "hold" && s.side === "right")?.set ?? 1,
   )?.target ?? null;
-  const resolvedPlanTargets =
-    protocol?.alternateSides
+  const resolvedAlternating =
+    protocol?.alternateSides && alternatingPrescription
       ? Array.from({ length: protocol.sets }, (_, i) => {
           const set = i + 1;
-          return prescriptionForSegment(alternatingPrescription, setSide(set), set)?.target?.kg ?? null;
+          const left = prescriptionForSegment(alternatingPrescription, "left", set)?.target;
+          const right = prescriptionForSegment(alternatingPrescription, "right", set)?.target;
+          return {
+            left: {
+              holdS: left?.workS ?? holdForSet(protocol, set),
+              targetKg: left?.kg ?? null,
+            },
+            right: {
+              holdS: right?.workS ?? holdForSet(protocol, set),
+              targetKg: right?.kg ?? null,
+            },
+          };
         })
       : undefined;
   const band: GaugeTarget | null =
@@ -536,7 +547,9 @@ export default function ForceFullscreen({
                 {protocol && timeline ? (
                   <>
                     <span style={{ color: "var(--ink)", fontWeight: 600 }}>{protocol.name}</span>{" "}
-                    · {holdsSummary(protocol)} × {protocol.reps} × {protocol.sets}
+                    · {readyLeft && readyRight
+                      ? `L ${fmt(readyLeft.workS)} / R ${fmt(readyRight.workS)}`
+                      : holdsSummary(protocol)} × {protocol.reps} × {protocol.sets}
                     {protocol.alternateSides && " · L⇄R"} · ~
                     {Math.round(timelineDurationS(timeline) / 60)}min
                     <br />
@@ -560,7 +573,7 @@ export default function ForceFullscreen({
                 <PresetPlanChart
                   preset={protocol}
                   refs={presetRefs}
-                  resolvedTargets={resolvedPlanTargets}
+                  resolvedAlternating={resolvedAlternating}
                 />
               )}
               {/* #298: explicit unarm, in addition to re-tapping the same

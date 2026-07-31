@@ -48,7 +48,7 @@ function toRecording(r: RecordingRow): TindeqRecordingMeta {
     groupId: r.group_id,
     protocolRunId: r.protocol_run_id,
     setNo: r.set_no,
-    // Constrained to the four quality ids plus "prehab" by a DB check
+    // Constrained to the four quality ids plus maintenance zones by a DB check
     // (#259, widened #325); null on every row saved before it, and on
     // freehand/watch holds.
     zone: r.zone as RecordedZone | null,

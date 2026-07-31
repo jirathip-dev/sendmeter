@@ -1,11 +1,18 @@
 import { useState } from "react";
-import { QUALITIES, ZONE_INTENSITY, prehabTarget, zoneTarget } from "../lib/force-curve";
+import {
+  QUALITIES,
+  ZONE_INTENSITY,
+  prehabTarget,
+  warmupTarget,
+  zoneTarget,
+} from "../lib/force-curve";
 import type { ForceCurveModel } from "../lib/force-curve";
 import { selectionHaptic } from "../lib/haptics";
-import { buildTimeline, timelineDurationS } from "../lib/protocol";
+import { buildTimeline, holdsSummary, timelineDurationS } from "../lib/protocol";
 import {
   QUALITY_COLORS,
   buildPrehabSelection,
+  buildWarmupSelection,
   buildZoneSelection,
   selectedQuality,
   type ZoneSelection,
@@ -13,11 +20,17 @@ import {
 
 import BoxChip from "./BoxChip";
 import InfoDot from "./InfoDot";
-import type { AlternatingPrescription } from "../lib/alternatingProtocol";
+import {
+  alternatingHoldDurations,
+  type AlternatingPrescription,
+} from "../lib/alternatingProtocol";
 
 interface Props {
   tag: string;
   model: ForceCurveModel | null;
+  /// Best effort peak for %-of-PR maintenance ramps. Kept separate from the
+  /// force curve's best window average so the preview matches the timer.
+  prKg: number | null;
   selected: ZoneSelection | null;
   onSelect: (sel: ZoneSelection | null) => void;
   /// The global session-intensity dial (SL-97b) — one value owned by
@@ -47,12 +60,13 @@ function fmt(sec: number): string {
   return s === 0 ? `${m}m` : `${m}m${s}s`;
 }
 
-/// Curve-derived protocol picker. The four trainable qualities and the fixed
-/// Prehab maintenance dose share one card, but remain separate semantic groups:
-/// Prehab is deliberately not a fifth TrainingQuality.
+/// Curve-derived protocol picker. The four trainable qualities and the
+/// Warm-up/Prehab maintenance prescriptions share one card, but remain
+/// separate semantic groups.
 export default function TargetZonesCard({
   tag,
   model,
+  prKg,
   selected,
   onSelect,
   intensityPct,
@@ -72,8 +86,11 @@ export default function TargetZonesCard({
   // SL-100 recommendation card arming the same `zoneSel` lights the right chip.
   const quality = selectedQuality(selected);
   const active = quality !== null;
+  const warmupActive = selected?.protocol.id === "zone:warmup";
   const prehabActive = selected?.protocol.id === "zone:prehab";
+  const maintenanceActive = warmupActive || prehabActive;
   const zoneT = model && quality ? zoneTarget(model, quality, intensityPct) : null;
+  const warmupT = model && prKg ? warmupTarget(model, prKg) : null;
   const prehabT = model ? prehabTarget(model) : null;
 
   return (
@@ -127,7 +144,7 @@ export default function TargetZonesCard({
               it moves (SL-97b had it as a −/+ stepper in the "Protocol
               presets" header). Still ONE global value owned by ForceView —
               recommended zones only, custom presets are never rescaled. */}
-          {!prehabActive && (
+          {!maintenanceActive && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
               <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
                 Intensity
@@ -177,24 +194,39 @@ export default function TargetZonesCard({
             <div className="label-eyebrow" style={{ marginBottom: 6 }}>
               Maintenance
             </div>
-            <BoxChip
-              label="Prehab"
-              active={prehabActive}
-              color="var(--ink-muted)"
-              disabled={locked || !prehabT}
-              onClick={() => {
-                if (prehabActive) {
-                  onClear();
-                  return;
-                }
-                onSelect(buildPrehabSelection(model, tag));
-              }}
-            />
-            {!prehabT && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <BoxChip
+                label="Warm-up"
+                active={warmupActive}
+                color="var(--primary)"
+                disabled={locked || !warmupT}
+                onClick={() => {
+                  if (warmupActive) {
+                    onClear();
+                    return;
+                  }
+                  onSelect(buildWarmupSelection(model, tag, prKg ?? 0));
+                }}
+              />
+              <BoxChip
+                label="Prehab"
+                active={prehabActive}
+                color="var(--ink-muted)"
+                disabled={locked || !prehabT}
+                onClick={() => {
+                  if (prehabActive) {
+                    onClear();
+                    return;
+                  }
+                  onSelect(buildPrehabSelection(model, tag));
+                }}
+              />
+            </div>
+            {(!warmupT || !prehabT) && (
               <div
                 style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6 }}
               >
-                Prehab needs a usable force-curve target.
+                Maintenance protocols need a usable force-curve target.
               </div>
             )}
           </div>
@@ -203,7 +235,44 @@ export default function TargetZonesCard({
               Locked while measuring — applies to your next run.
             </div>
           )}
-          {prehabActive && prehabT && selected ? (
+          {warmupActive && warmupT && selected ? (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <span
+                  style={{
+                    fontFamily: "Inter, sans-serif",
+                    fontSize: 22,
+                    fontWeight: 800,
+                    color: "var(--primary)",
+                  }}
+                >
+                  {warmupT.targetKg.toFixed(1)} → {warmupT.finalTargetKg.toFixed(1)} kg
+                </span>
+              </div>
+              <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 4 }}>
+                {holdsSummary(selected.protocol)} holds × {selected.protocol.reps} reps · {" "}
+                {selected.protocol.sets} sets · 40% → 55% → 70% PR · about {" "}
+                {fmt(timelineDurationS(buildTimeline(selected.protocol, { switchS: 3 })))}
+              </div>
+              <div
+                style={{
+                  fontSize: "var(--t-2xs)",
+                  color: "var(--ink-faint)",
+                  marginTop: 8,
+                }}
+              >
+                Progressive primer · do general movement and easy climbing first · excluded from training balance
+              </div>
+              <button
+                onClick={onClear}
+                disabled={locked}
+                className="glass-pill"
+                style={{ marginTop: 10, padding: "6px 14px", fontSize: "var(--t-2xs)" }}
+              >
+                Clear — free hold
+              </button>
+            </div>
+          ) : prehabActive && prehabT && selected ? (
             <div style={{ marginTop: 10 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
                 <span
@@ -282,7 +351,13 @@ export default function TargetZonesCard({
                   ` · rest ${fmt(selected.protocol.restRepsS)} × ${selected.protocol.reps} reps`}
                 {selected.protocol.sets > 1 &&
                   ` · ${selected.protocol.sets} sets (${fmt(selected.protocol.restSetsS)} between)`}{" "}
-                · total {fmt(timelineDurationS(buildTimeline(alternatingPrescription?.protocol ?? selected.protocol, { switchS: 3 })))}
+                · total {fmt(timelineDurationS(buildTimeline(
+                  alternatingPrescription?.protocol ?? selected.protocol,
+                  {
+                    switchS: 3,
+                    alternatingHolds: alternatingHoldDurations(alternatingPrescription),
+                  },
+                )))}
               </div>
               {/* The contextual note for whatever the slider above is set to. */}
               {quality && intensityPct !== 100 && (
@@ -321,7 +396,7 @@ export default function TargetZonesCard({
                       );
                   }}
                 />
-                Alternate left ⇄ right each set (otherwise uses the selected side)
+                Alternate left ⇄ right each rep (otherwise uses the selected side)
               </label>
               {!alternatingReady && (
                 <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
@@ -345,7 +420,7 @@ export default function TargetZonesCard({
                 Clear — free hold
               </button>
             </div>
-          ) : !prehabActive ? (
+          ) : !maintenanceActive ? (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
               Pick a protocol — it arms the live-gauge band and guided timer.
             </div>

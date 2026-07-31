@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { TindeqPreset } from "../types";
 import type { ForceCurveModel } from "./force-curve";
 import {
+  alternatingCurveInputKey,
+  alternatingHoldDurations,
   nextLockedAlternatingPrescription,
   prescriptionForSegment,
   resolveAlternatingPreset,
@@ -43,11 +45,18 @@ describe("alternating force prescriptions (#331)", () => {
     );
     expect(light.left.targets[0]!.kg).toBeCloseTo(full.left.targets[0]!.kg * 0.8, 1);
     expect(light.right.targets[0]!.kg).toBeCloseTo(full.right.targets[0]!.kg * 0.8, 1);
-    expect(full.protocol.holdsS).toEqual([
-      full.left.targets[0]!.workS,
-      full.right.targets[0]!.workS,
-      full.left.targets[0]!.workS,
-      full.right.targets[0]!.workS,
+    const durations = alternatingHoldDurations(full)!;
+    expect(durations.left).toEqual(Array(4).fill(full.left.targets[0]!.workS));
+    expect(durations.right).toEqual(Array(4).fill(full.right.targets[0]!.workS));
+    const holds = buildTimeline(full.protocol, {
+      switchS: 3,
+      alternatingHolds: durations,
+    }).filter((segment) => segment.phase === "hold");
+    expect(holds.slice(0, 4).map(({ side, durS }) => ({ side, durS }))).toEqual([
+      { side: "left", durS: full.left.targets[0]!.workS },
+      { side: "right", durS: full.right.targets[0]!.workS },
+      { side: "left", durS: full.left.targets[0]!.workS },
+      { side: "right", durS: full.right.targets[0]!.workS },
     ]);
   });
 
@@ -81,11 +90,25 @@ describe("alternating force prescriptions (#331)", () => {
     expect(resolveAlternatingPreset(preset({}), missingRight)!.right.targets[1]).toBeNull();
   });
 
-  it("freezes the exact side-and-set lookup snapshot while active", () => {
-    const frozen = resolveAlternatingPreset(preset({ targetPct: 50 }), inputs)!;
+  it("changes the curve key when a same-count candidate is replaced", () => {
+    const row = {
+      id: "left-a",
+      recordedAt: "2026-07-31T00:00:00Z",
+      durationMs: 7000,
+      peakKg: 30,
+    };
+    const before = alternatingCurveInputKey("FDP", [row], []);
+    const after = alternatingCurveInputKey("FDP", [{ ...row, id: "left-b" }], []);
+    expect(after).not.toBe(before);
+  });
+
+  it("freezes while active and reuses an equal idle snapshot", () => {
+    const locked = resolveAlternatingPreset(preset({ targetPct: 50 }), inputs)!;
+    const equivalent = resolveAlternatingPreset(preset({ targetPct: 50 }), inputs)!;
     const changed = resolveAlternatingPreset(preset({ targetPct: 80 }), inputs)!;
-    expect(nextLockedAlternatingPrescription(true, changed, frozen)).toBe(frozen);
-    expect(nextLockedAlternatingPrescription(false, changed, frozen)).toBe(changed);
+    expect(nextLockedAlternatingPrescription(false, equivalent, locked)).toBe(locked);
+    expect(nextLockedAlternatingPrescription(false, changed, locked)).toBe(changed);
+    expect(nextLockedAlternatingPrescription(true, changed, locked)).toBe(locked);
   });
 
   it("uses the next actual hold's side and set during set-rest/switch", () => {
@@ -93,11 +116,12 @@ describe("alternating force prescriptions (#331)", () => {
     const timeline = buildTimeline(p, { switchS: 3 });
     const setRest = timeline.find((s) => s.phase === "setRest" && s.set === 1)!;
     const nextFromRest = targetHoldSegment(timeline, setRest, false)!;
-    expect({ side: nextFromRest.side, set: nextFromRest.set }).toEqual({ side: "right", set: 2 });
+    expect({ side: nextFromRest.side, set: nextFromRest.set }).toEqual({ side: "left", set: 2 });
     const switchSeg = timeline.find((s) => s.phase === "switch")!;
     const nextFromSwitch = targetHoldSegment(timeline, switchSeg, false)!;
-    expect({ side: nextFromSwitch.side, set: nextFromSwitch.set }).toEqual({ side: "right", set: 2 });
+    expect({ side: nextFromSwitch.side, set: nextFromSwitch.set }).toEqual({ side: "right", set: 1 });
     const resolved = resolveAlternatingPreset(p, inputs)!;
-    expect(prescriptionForSegment(resolved, nextFromRest.side, nextFromRest.set)?.target?.kg).toBe(19.8);
+    expect(prescriptionForSegment(resolved, nextFromRest.side, nextFromRest.set)?.target?.kg).toBe(25.2);
+    expect(prescriptionForSegment(resolved, nextFromSwitch.side, nextFromSwitch.set)?.target?.kg).toBe(16.5);
   });
 });

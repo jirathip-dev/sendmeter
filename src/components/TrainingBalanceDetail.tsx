@@ -79,9 +79,9 @@ export default function TrainingBalanceDetail({
   // copy of the cutoff rule.
   const windowRecs = holdsInWindow(recordings, now, windowDays);
   // The two sentences below describe what fed the numbers on THIS page —
-  // Prehab holds don't (zoneSets drops them, #325), so counting them here
+  // Maintenance holds don't (zoneSets drops them), so counting them here
   // would make both sentences literally false. `windowRecs` (unfiltered)
-  // still goes to ZoneBreakdownPanel below, which states the Prehab count on
+  // still goes to ZoneBreakdownPanel below, which states the maintenance count on
   // its own "excluded" line instead of silently folding it into these totals.
   const { effortCount, recordedCount: recorded } = balanceScopeCounts(windowRecs);
   const d = rec.detail;

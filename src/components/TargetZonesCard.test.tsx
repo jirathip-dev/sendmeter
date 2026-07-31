@@ -1,8 +1,16 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ForceCurveModel } from "../lib/force-curve";
-import { buildPrehabSelection, buildZoneSelection } from "../lib/zoneSelection";
-import { resolveAlternatingRecommendation, type AlternatingPrescription } from "../lib/alternatingProtocol";
+import {
+  buildPrehabSelection,
+  buildWarmupSelection,
+  buildZoneSelection,
+  type ZoneSelection,
+} from "../lib/zoneSelection";
+import {
+  resolveAlternatingRecommendation,
+  type AlternatingPrescription,
+} from "../lib/alternatingProtocol";
 import TargetZonesCard from "./TargetZonesCard";
 
 const model: ForceCurveModel = {
@@ -13,7 +21,7 @@ const model: ForceCurveModel = {
 };
 
 function render(
-  selected = null as ReturnType<typeof buildPrehabSelection>,
+  selected: ZoneSelection | null = null,
   alternatingReady = true,
   alternatingPrescription: AlternatingPrescription | null = null,
 ) {
@@ -21,6 +29,7 @@ function render(
     <TargetZonesCard
       tag="FDP L"
       model={model}
+      prKg={40}
       selected={selected}
       onSelect={() => undefined}
       intensityPct={100}
@@ -39,6 +48,7 @@ describe("TargetZonesCard (#344)", () => {
     expect(html).toContain("Training");
     expect(html).toContain("Maintenance");
     expect(html).toContain("Power");
+    expect(html).toContain("Warm-up");
     expect(html).toContain("Prehab");
     expect(html).toContain('aria-label="Session intensity"');
   });
@@ -74,5 +84,14 @@ describe("TargetZonesCard (#344)", () => {
     );
     expect(html).toContain(`L ${prescription.left.targets[0]!.kg.toFixed(1)} kg · R`);
     expect(html).toContain(`L hold ${prescription.left.targets[0]!.workS}s · R hold`);
+  });
+
+  it("puts Warm-up beside Prehab and shows the progressive primer without an intensity control", () => {
+    const html = render(buildWarmupSelection(model, "FDP L"));
+    expect(html.indexOf("Warm-up")).toBeLessThan(html.indexOf("Prehab"));
+    expect(html).toContain("5s→7s→10s holds × 2 reps");
+    expect(html).toContain("40% → 55% → 70% PR");
+    expect(html).toContain("do general movement and easy climbing first");
+    expect(html).not.toContain('aria-label="Session intensity"');
   });
 });

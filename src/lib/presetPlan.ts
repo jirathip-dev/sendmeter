@@ -1,4 +1,4 @@
-import { holdForSet, presetTargetKg, setSide } from "./protocol";
+import { holdForSet, presetTargetKg } from "./protocol";
 import type { PresetRefs } from "./protocol";
 import type { TindeqPreset } from "../types";
 
@@ -11,27 +11,42 @@ export type PlanPreset = Omit<TindeqPreset, "id" | "name">;
 export interface PlanRow {
   set: number;
   holdS: number;
-  side: "left" | "right" | null;
+  side: "both" | null;
   targetKg: number | null;
+  leftHoldS: number | null;
+  rightHoldS: number | null;
+  leftTargetKg: number | null;
+  rightTargetKg: number | null;
+}
+
+export interface ResolvedAlternatingPlanSet {
+  left: { holdS: number; targetKg: number | null };
+  right: { holdS: number; targetKg: number | null };
 }
 
 /// One row per set `1..p.sets` — hold from `holdForSet`, target from
-/// `presetTargetKg` (both already resolve per-set), or from the optional
-/// already-resolved per-hand/set targets (#331); side from `setSide` only
-/// when the preset alternates (otherwise the user's selected side applies,
-/// which this plan doesn't know).
+/// `presetTargetKg` (both already resolve per-set). An optional alternating
+/// resolution carries each hand's own load and hold; otherwise alternating
+/// presets apply the authored row to both hands.
 export function buildPresetPlan(
   p: PlanPreset,
   refs: PresetRefs,
-  resolvedTargets?: readonly (number | null)[],
+  resolvedAlternating?: readonly ResolvedAlternatingPlanSet[],
 ): PlanRow[] {
   return Array.from({ length: p.sets }, (_, i) => {
     const set = i + 1;
+    const resolved = resolvedAlternating?.[i];
+    const targetKg = presetTargetKg(p, refs, set);
+    const holdS = holdForSet(p, set);
     return {
       set,
-      holdS: holdForSet(p, set),
-      side: p.alternateSides ? setSide(set) : null,
-      targetKg: resolvedTargets ? (resolvedTargets[i] ?? null) : presetTargetKg(p, refs, set),
+      holdS,
+      side: p.alternateSides ? "both" : null,
+      targetKg,
+      leftHoldS: resolved?.left.holdS ?? (p.alternateSides ? holdS : null),
+      rightHoldS: resolved?.right.holdS ?? (p.alternateSides ? holdS : null),
+      leftTargetKg: resolved?.left.targetKg ?? (p.alternateSides ? targetKg : null),
+      rightTargetKg: resolved?.right.targetKg ?? (p.alternateSides ? targetKg : null),
     };
   });
 }
@@ -41,9 +56,21 @@ export function buildPresetPlan(
 /// different from the existing text summary.
 export function planVaries(rows: PlanRow[], sets: number): boolean {
   if (sets <= 1) return false;
-  const holdsVary = rows.some((r) => r.holdS !== rows[0]!.holdS);
-  const targets = rows.map((r) => r.targetKg).filter((t): t is number => t != null);
-  const targetsVary = targets.some((t) => t !== targets[0]);
+  const first = rows[0]!;
+  const holdsVary = rows.some(
+    (r) =>
+      r.holdS !== first.holdS ||
+      r.leftHoldS !== first.leftHoldS ||
+      r.rightHoldS !== first.rightHoldS ||
+      r.leftHoldS !== r.rightHoldS,
+  );
+  const targetsVary = rows.some(
+    (r) =>
+      r.targetKg !== first.targetKg ||
+      r.leftTargetKg !== first.leftTargetKg ||
+      r.rightTargetKg !== first.rightTargetKg ||
+      r.leftTargetKg !== r.rightTargetKg,
+  );
   const sidesVary = rows.some((r) => r.side !== rows[0]!.side);
   return holdsVary || targetsVary || sidesVary;
 }
@@ -67,7 +94,14 @@ export type PlanMetric = "hold" | "target";
 /// caption underneath; switch the bars to plot `targetKg` instead so the
 /// primary visual channel matches whatever `planVaries` actually found.
 export function planMetric(rows: PlanRow[]): PlanMetric {
-  const holdsVary = rows.some((r) => r.holdS !== rows[0]!.holdS);
+  const first = rows[0]!;
+  const holdsVary = rows.some(
+    (r) =>
+      r.holdS !== first.holdS ||
+      r.leftHoldS !== first.leftHoldS ||
+      r.rightHoldS !== first.rightHoldS ||
+      r.leftHoldS !== r.rightHoldS,
+  );
   return holdsVary ? "hold" : "target";
 }
 

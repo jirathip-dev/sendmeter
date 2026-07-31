@@ -1,4 +1,5 @@
 import {
+  isMaintenanceZone,
   predictForce,
   ZONE_PROTOCOLS,
   type ForceCurveModel,
@@ -66,26 +67,25 @@ export function recordingZone(rec: ZonedHold): ZoneAttribution {
   return { zone: classifyZone(rec.durationMs / 1000), source: "inferred" };
 }
 
-/// Whether a hold is a maximal-intent effort — i.e. safe to read as evidence
-/// of capacity (curve fit, PR/trend charts, training-balance summaries). A
-/// Prehab hold (#325) is submaximal BY CONSTRUCTION (30s at 0.70×CF, daily),
-/// so it fails this everywhere a recording is otherwise assumed to represent
-/// how hard the user pulled: fed into the curve fit it supplies flat ≥10s
-/// points that ratchet CF down every session; fed into a peak-force trend it
-/// fabricates a "PR dropped" day; counted in a training-balance summary it
-/// inflates "N holds" past what the balance itself credits. One predicate for
-/// all three, so a future consumer of `recordings` has something to grep for
-/// instead of re-deriving `zone !== "prehab"` (and forgetting it).
+/// Whether a hold is safe to read as evidence of capacity (curve fit,
+/// PR/trend charts, asymmetry and training balance). Warm-up and Prehab are
+/// deliberately submaximal maintenance work, so neither can stand in for a
+/// maximal-intent observation.
 export function isEffortRecording(rec: ZonedHold): boolean {
+  return !isMaintenanceZone(recordingZone(rec).zone);
+}
+
+/// Whether W′-depletion should be computed for session RPE. Prehab is known
+/// to sit below CF and contributes zero by construction. Warm-up is excluded
+/// from capacity evidence but its final ramp can exceed CF, so its actual
+/// depletion remains measurable and must not be zeroed with Prehab.
+export function isDepletionEffortRecording(rec: ZonedHold): boolean {
   return recordingZone(rec).zone !== "prehab";
 }
 
-/// The PR a `pctBasis: "pr"` preset targets (#325): the best EFFORT peak for
-/// a tag/side, never a Prehab hold — a Prehab hold at 0.70×CF never wins a
-/// `Math.max` against a real effort, but for a tag/side with no real effort
-/// yet it WOULD become the PR, silently prescribing every future %-of-PR
-/// preset off a submax hold. Null tag means "nothing selected"; null side
-/// means "either side" (mirrors `trendChartRecordings`' filter).
+/// The PR a `pctBasis: "pr"` preset targets: the best capacity peak for a
+/// tag/side, never a Warm-up or Prehab hold. A maintenance hold cannot win
+/// by walkover when there is no maximal-intent effort yet.
 export function effortPeakKg<
   T extends ZonedHold & { tag: string; side: TindeqSide; peakKg: number },
 >(recs: T[], tag: string | null, side: TindeqSide | null): number | null {
@@ -97,10 +97,8 @@ export function effortPeakKg<
 }
 
 /// The recordings `ForceView` feeds its critical-force fit: scoped to the
-/// active tag/side, and — Prehab (#325) — excluded from effort for the exact
-/// reason `isEffortRecording` documents (flat ≥10s sub-CF points would
-/// otherwise ratchet CF down every session, corrupting every %-of-CF
-/// prescription plus the CF the watch reads back for its RPE prediction).
+/// active tag/side, with maintenance protocols excluded for the exact reason
+/// `isEffortRecording` documents.
 /// Null tag means "nothing armed yet" and returns no candidates, matching
 /// `ForceView`'s prior inline filter. Exported (pure, no hooks) so this
 /// guarantee is pinned directly rather than by a test that re-implements the
@@ -115,9 +113,8 @@ export function curveCandidateRecordings<
 /// The two counts `TrainingBalanceDetail`'s "what this counts" copy states:
 /// how many holds fed the numbers below, and how many of those store their
 /// own zone vs. have it inferred. Both computed over EFFORT recordings only
-/// (#325) — a Prehab hold is always "recorded" (`recordingZone` never infers
-/// it) but never feeds the balance (`zoneSets` drops it), so counting it in
-/// either figure would make both sentences literally false. Pure and
+/// Maintenance holds are always recorded but never feed the balance, so
+/// counting them in either figure would make both sentences literally false. Pure and
 /// exported so the page's copy is pinned without having to render a
 /// component that portals into `document.body`.
 export function balanceScopeCounts(
@@ -161,9 +158,9 @@ export function classifyZoneLoaded(
 /// for #214's breakdown, which shows the division rather than asserting the
 /// quotient (see lib/zoneBreakdown.ts).
 ///
-/// Endurance is a special case (#320): its protocol shape is 1 rep × 8 sets
-/// (so per-set alternation fires), but the training-balance unit is still
-/// the whole 8-hold protocol — holdS × reps alone would drop this to 30s and
+/// Endurance is a special case (#320): its protocol shape is 1 rep × 8 sets,
+/// but the training-balance unit is still the whole 8-hold protocol —
+/// holdS × reps alone would drop this to 30s and
 /// inflate endurance training-balance 8×. Other zones keep holdS × reps
 /// only (power-endurance's own 4 sets are deliberately NOT multiplied in —
 /// its unit is one 6-rep round, unchanged by this issue).
@@ -198,11 +195,8 @@ export function zoneSets(
   for (const r of recs) {
     const durationS = r.durationMs / 1000;
     const { zone } = recordingZone(r);
-    // Prehab (#325) is recorded outside training balance BY DESIGN — it's
-    // maintenance work below CF, not a quality to credit toward any of the
-    // four training buckets. `!zone` alone (the pre-#325 guard) would let it
-    // fall through silently the moment `zone` widened to admit it.
-    if (!zone || zone === "prehab") continue;
+    // Maintenance protocols are recorded outside training balance by design.
+    if (!zone || isMaintenanceZone(zone)) continue;
     secondsByZone[zone] += durationS;
   }
   return {

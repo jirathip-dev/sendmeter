@@ -141,9 +141,10 @@ export interface TindeqRecordingMeta {
   setNo: number | null;
   /// The zone this hold was actually PERFORMED under (#259), stamped from the
   /// armed zone/preset at save time — the LOAD-AWARE classification, which a
-  /// duration-only re-derivation can't recover. `RecordedZone` (#325) admits
-  /// "prehab" alongside the four training qualities — a Prehab hold MUST
-  /// carry it, since a 30s null-zone hold would otherwise infer as Endurance.
+  /// duration-only re-derivation can't recover. `RecordedZone` admits the
+  /// Warm-up and Prehab maintenance zones alongside the four training
+  /// qualities; those holds MUST carry their zone or duration inference would
+  /// incorrectly credit them to training balance.
   /// Null when there is nothing to record (freehand hold, watch recording) or
   /// the row predates the column; readers then infer it from `durationMs`
   /// (see lib/zoneHistory.ts `recordingZone`). Deliberately not backfilled.
@@ -180,7 +181,7 @@ export interface TindeqPreset {
   /// curve at holdS — the force sustainable for exactly that hold (CF + W'/t).
   /// Overrides targetKg/targetPct when true.
   targetCurve: boolean;
-  /// Alternate left/right each SET (switch hands during the set rest).
+  /// Run both hands in every logical rep (left hold, switch, right hold).
   alternateSides: boolean;
 }
 
