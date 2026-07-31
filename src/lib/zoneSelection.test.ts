@@ -4,6 +4,7 @@ import {
   armedAlternates,
   armedForDifferentTag,
   buildPrehabSelection,
+  buildWarmupSelection,
   buildZoneSelection,
   chartSideFor,
   loadIntensity,
@@ -16,7 +17,12 @@ import {
   QUALITY_COLORS,
   type ZoneSelection,
 } from "./zoneSelection";
-import { PREHAB_PROTOCOL, ZONE_INTENSITY, type ForceCurveModel } from "./force-curve";
+import {
+  PREHAB_PROTOCOL,
+  WARMUP_PROTOCOL,
+  ZONE_INTENSITY,
+  type ForceCurveModel,
+} from "./force-curve";
 import { classifyZone, classifyZoneLoaded } from "./zoneHistory";
 import { presetTargetKg } from "./protocol";
 import type { TindeqPreset } from "../types";
@@ -135,6 +141,45 @@ describe("buildPrehabSelection (#325)", () => {
   });
 });
 
+describe("buildWarmupSelection (#297)", () => {
+  it("returns null without a usable force reference", () => {
+    expect(buildWarmupSelection(null, "FDP L")).toBeNull();
+    expect(
+      buildWarmupSelection(
+        { points: [], maxF: 0, cf: null, wPrime: null },
+        "FDP L",
+      ),
+    ).toBeNull();
+  });
+
+  it("assembles progressive holds and a 40% → 70% PR load ramp", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const result = buildWarmupSelection(model, "FDP L")!;
+    expect(result.target.kg).toBe(16);
+    expect(result.protocol).toMatchObject({
+      id: "zone:warmup",
+      holdS: 5,
+      holdsS: [5, 7, 10],
+      reps: 2,
+      sets: 3,
+      restRepsS: 15,
+      restSetsS: 60,
+      targetKg: null,
+      targetPct: 40,
+      pctBasis: "pr",
+      pctStep: 15,
+      alternateSides: false,
+    });
+    const refs = { prKg: 40, cf: 20, wPrime: 300, maxF: 40 };
+    expect([1, 2, 3].map((set) => presetTargetKg(result.protocol, refs, set))).toEqual([
+      16,
+      22,
+      28,
+    ]);
+    expect(result.protocol.holdsS).toEqual(WARMUP_PROTOCOL.holdsS);
+  });
+});
+
 describe("applyIntensity", () => {
   const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
   const custom: ZoneSelection = {
@@ -200,6 +245,12 @@ describe("applyIntensity", () => {
     const prehab = buildPrehabSelection(model, "FDP L")!;
     expect(applyIntensity(prehab, model, "FDP L", 60)).toBe(prehab);
     expect(applyIntensity(prehab, model, "FDP L", 110)).toBe(prehab);
+  });
+
+  it("leaves an armed Warm-up selection untouched — its progression is fixed", () => {
+    const warmup = buildWarmupSelection(model, "FDP L")!;
+    expect(applyIntensity(warmup, model, "FDP L", 60)).toBe(warmup);
+    expect(applyIntensity(warmup, model, "FDP L", 110)).toBe(warmup);
   });
 });
 
@@ -293,6 +344,19 @@ describe("rederiveSelection (#298)", () => {
       const armed = buildPrehabSelection(model, "FDP L")!;
       const dead: ForceCurveModel = { points: [], maxF: 0, cf: null, wPrime: null };
       expect(rederiveSelection(armed, dead, "FDP R", 100)).toBeNull();
+    });
+  });
+
+  describe("Warm-up (#297)", () => {
+    it("rebuilds the PR preview for the new tag while preserving the fixed ramp", () => {
+      const armed = buildWarmupSelection(model, "FDP L")!;
+      const otherModel: ForceCurveModel = { points: [], maxF: 80, cf: 40, wPrime: 300 };
+      const rederived = rederiveSelection(armed, otherModel, "FDP R", 100)!;
+      expect(protocolQuality(rederived.protocol)).toBe("warmup");
+      expect(rederived.target.kg).toBe(32);
+      expect(rederived.protocol.holdsS).toEqual([5, 7, 10]);
+      expect(rederived.protocol.targetPct).toBe(40);
+      expect(rederived.protocol.pctStep).toBe(15);
     });
   });
 });
@@ -438,6 +502,13 @@ describe("selectedQuality", () => {
     expect(protocolQuality(prehab.protocol)).toBe("prehab"); // it IS a recorded zone…
     expect(selectedQuality(prehab)).toBeNull(); // …but not a trainable one
   });
+
+  it("returns null for an armed Warm-up selection — it has no TrainingQuality", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const warmup = buildWarmupSelection(model, "FDP")!;
+    expect(protocolQuality(warmup.protocol)).toBe("warmup");
+    expect(selectedQuality(warmup)).toBeNull();
+  });
 });
 
 describe("zoneColor (#325)", () => {
@@ -450,6 +521,11 @@ describe("zoneColor (#325)", () => {
   it("gives Prehab a muted color that isn't in QUALITY_COLORS", () => {
     expect(zoneColor("prehab")).toBe("var(--ink-muted)");
     expect(Object.values(QUALITY_COLORS)).not.toContain(zoneColor("prehab"));
+  });
+
+  it("gives Warm-up a distinct maintenance color", () => {
+    expect(zoneColor("warmup")).toBe("var(--primary)");
+    expect(Object.values(QUALITY_COLORS)).not.toContain(zoneColor("warmup"));
   });
 });
 
@@ -555,6 +631,22 @@ describe("performedQuality (#259)", () => {
     // skipping the stamp here would silently credit training balance with
     // exactly the thing #325 exists to keep out of it.
     expect(classifyZone(prehab.protocol.holdS)).toBe("endurance");
+  });
+
+  it("records 'warmup' for every set despite its changing duration and load", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const warmup = buildWarmupSelection(model, "FDP")!;
+    const targetRefs = { ...refs, prKg: 40, wPrime: 300 };
+    for (const set of [1, 2, 3]) {
+      expect(
+        performedQuality(
+          warmup.protocol,
+          presetTargetKg(warmup.protocol, targetRefs, set),
+          refs,
+          set,
+        ),
+      ).toBe("warmup");
+    }
   });
 });
 

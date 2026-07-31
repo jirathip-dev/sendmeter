@@ -61,6 +61,18 @@ describe("SideAsymmetryCard (#325)", () => {
     expect(html).toBe("");
   });
 
+  it("does not fabricate an asymmetry from a lone Warm-up hold on one side", () => {
+    const html = renderToStaticMarkup(
+      <SideAsymmetryCard
+        recordings={[
+          rec(40, "left"),
+          rec(28, "right", { zone: "warmup", durationMs: 10_000 }),
+        ]}
+      />,
+    );
+    expect(html).toBe("");
+  });
+
   it("still flags a real asymmetry between two effort recordings", () => {
     const html = renderToStaticMarkup(
       <SideAsymmetryCard recordings={[rec(50, "left"), rec(40, "right")]} />,

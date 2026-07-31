@@ -24,7 +24,11 @@ import {
 } from "../lib/force-curve";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import { buildTimeline, holdForSet, presetTargetKg, timelineAt } from "../lib/protocol";
-import { curveCandidateRecordings, effortPeakKg, isEffortRecording } from "../lib/zoneHistory";
+import {
+  curveCandidateRecordings,
+  effortPeakKg,
+  isDepletionEffortRecording,
+} from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
 import type { GaugeInputs } from "../lib/gaugeInputLock";
@@ -308,7 +312,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         durationS: r.durationMs / 1000,
         cf: byTag.get(r.tag)?.cf ?? null,
         wPrime: byTag.get(r.tag)?.wPrime ?? null,
-        isEffort: isEffortRecording(r),
+        isEffort: isDepletionEffortRecording(r),
       })),
     );
     return { predicted, recs };
@@ -621,8 +625,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // the already-locked `effectiveTag`/`chartSide` below (this feeds the same
   // struct those are locked through, so using the locked version here would
   // be circular).
-  // #325: effort recordings only — see `effortPeakKg`'s own doc for why a
-  // Prehab hold must never win this Math.max, even by walkover.
+  // Capacity recordings only — maintenance holds must never win this PR,
+  // even by walkover.
   const livePrKg = effortPeakKg(recordings, liveEffectiveTag, liveChartSide);
   const liveGaugeInputs: GaugeInputs = {
     tag: liveEffectiveTag,
@@ -660,11 +664,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // "Compute" button). All state writes happen in async callbacks; "which key
   // the model belongs to" is tracked so computing/model are derived, not
   // synced.
-  // Prehab (#325) is excluded from curve candidacy: it's 30s at 0.70×CF,
-  // daily, so its holds would otherwise supply flat ≥10s fit points that
-  // ratchet CF down every session (`curveCandidateRecordings` — see its doc
-  // in zoneHistory.ts for why a recording that isn't a maximal-intent effort
-  // can't feed anything that reads a recording as evidence of capacity).
+  // Maintenance protocols are excluded from curve candidacy: neither is a
+  // maximal-intent observation, so neither can feed a capacity model.
   const curveRecordings = curveCandidateRecordings(recordings, effectiveTag, chartSide);
   const tagSideKey = `${effectiveTag ?? ""}|${chartSide ?? "all"}`;
   const curveKey = `${tagSideKey}|${curveRecordings.length}`;
@@ -828,7 +829,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // #298 round 4: reads `gaugeInputs.zoneSel`/`.intensityPct`, not the raw
   // `zoneSel`/`intensityPct` state — locked for the run's duration, so this
   // stays put mid-run exactly like `effectiveTag`/`chartSide` above.
-  const armedZone = rederiveSelection(gaugeInputs.zoneSel, model, zoneTag, gaugeInputs.intensityPct);
+  const armedZone = rederiveSelection(
+    gaugeInputs.zoneSel,
+    model,
+    zoneTag,
+    gaugeInputs.intensityPct,
+    prKg,
+  );
 
   // #298 round 6 (finding 3): block Start while the armed zone was built
   // under a DIFFERENT tag than the one now live, and the curve for the new
@@ -1549,6 +1556,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         <TargetZonesCard
           tag={zoneTag}
           model={model}
+          prKg={prKg}
           selected={armedZone}
           onSelect={selectZone}
           intensityPct={intensityPct}

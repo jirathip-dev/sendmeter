@@ -196,6 +196,13 @@ function ZoneRow({
 /// History, so "why this zone" reads the same in both places.
 export default function ZoneBreakdownPanel({ recs, showTag }: Props) {
   const { zones, unclassified, excluded } = zoneBreakdown(recs);
+  const excludedSummary = ["Warm-up", "Prehab"]
+    .map((label) => {
+      const count = excluded.filter((h) => holdOrigin(h.rec).label === label).length;
+      return count > 0 ? `${count} ${label} hold${count === 1 ? "" : "s"}` : null;
+    })
+    .filter((part): part is string => part !== null)
+    .join(" · ");
 
   return (
     <div>
@@ -230,12 +237,11 @@ export default function ZoneBreakdownPanel({ recs, showTag }: Props) {
         </div>
       )}
 
-      {/* #325: Prehab holds are recorded outside training balance BY DESIGN
-          — said outright rather than lumped in with the blip line above. */}
+      {/* Maintenance holds are recorded outside training balance BY DESIGN —
+          said outright rather than lumped in with the blip line above. */}
       {excluded.length > 0 && (
         <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 2 }}>
-          {excluded.length} Prehab hold{excluded.length === 1 ? "" : "s"} recorded
-          outside training balance
+          {excludedSummary} recorded outside training balance
         </div>
       )}
 

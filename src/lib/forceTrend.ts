@@ -12,9 +12,9 @@ export interface TrendSample {
 }
 
 /// The recordings `ForceTrendChart` plots: scoped to the selected tag/side,
-/// and — Prehab (#325) — excluded from effort. A Prehab hold is a submax,
-/// sub-CF hold BY DESIGN, so its peak would otherwise fabricate a fake "PR
-/// dropped" day the moment it becomes the day's best rep — exactly what the
+/// with Warm-up and Prehab maintenance holds excluded from capacity evidence.
+/// Their submax peaks would otherwise fabricate a fake "PR dropped" day the
+/// moment one becomes the day's best rep — exactly what the
 /// daily-bests aggregation the chart builds on top of this already protects
 /// against for a submax endurance day. Exported (pure, no hooks) so that
 /// guarantee is pinned without rendering `ForceTrendChart` itself, which

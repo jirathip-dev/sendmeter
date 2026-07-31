@@ -5,11 +5,8 @@ import type { TindeqRecordingMeta } from "../types";
 /// real injury-risk signal (SL-19). Uses recording metadata (peakKg + side),
 /// so no sample fetch is needed. Renders only when both sides have data.
 ///
-/// Effort recordings only (#325): a Prehab hold is submax by construction
-/// (30s at 0.70×CF), so on a side with no real max-effort recording yet it
-/// would become that side's "best" — fabricating an asymmetry reading (and
-/// possibly the warning flag) from a hold that was never meant to represent
-/// capacity.
+/// Capacity recordings only: Warm-up and Prehab are submax by construction,
+/// so neither may become a side's "best" and fabricate an asymmetry reading.
 export default function SideAsymmetryCard({
   recordings,
 }: {
