@@ -1,4 +1,4 @@
-import { holdForSet, presetTargetKg, setSide } from "./protocol";
+import { holdForSet, presetTargetKg } from "./protocol";
 import type { PresetRefs } from "./protocol";
 import type { TindeqPreset } from "../types";
 
@@ -11,21 +11,21 @@ export type PlanPreset = Omit<TindeqPreset, "id" | "name">;
 export interface PlanRow {
   set: number;
   holdS: number;
-  side: "left" | "right" | null;
+  side: "both" | null;
   targetKg: number | null;
 }
 
 /// One row per set `1..p.sets` — hold from `holdForSet`, target from
-/// `presetTargetKg` (both already resolve per-set), side from `setSide` only
-/// when the preset alternates (otherwise the user's selected side applies,
-/// which this plan doesn't know).
+/// `presetTargetKg` (both already resolve per-set). Alternating presets apply
+/// every row to both hands; otherwise the user's selected side applies, which
+/// this plan doesn't know.
 export function buildPresetPlan(p: PlanPreset, refs: PresetRefs): PlanRow[] {
   return Array.from({ length: p.sets }, (_, i) => {
     const set = i + 1;
     return {
       set,
       holdS: holdForSet(p, set),
-      side: p.alternateSides ? setSide(set) : null,
+      side: p.alternateSides ? "both" : null,
       targetKg: presetTargetKg(p, refs, set),
     };
   });

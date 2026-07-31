@@ -264,9 +264,7 @@ export const ZONE_PROTOCOLS: Record<
   power: { holdS: 5, restRepsS: 150, reps: 6, sets: 1, restSetsS: 0 },
   strength: { holdS: 10, restRepsS: 150, reps: 5, sets: 1, restSetsS: 0 },
   "power-endurance": { holdS: 7, restRepsS: 3, reps: 6, sets: 4, restSetsS: 120 },
-  // #320: 1 rep × 8 sets, not 8 reps × 1 set — buildTimeline alternates
-  // sides per SET, so the old shape (sets: 1) never triggered "Alternate
-  // left ⇄ right". Same 8×30s holds / 30s gaps / 450s total either way.
+  // #320: modeled as 1 rep × 8 sets so each 30s recovery is a set boundary.
   endurance: { holdS: 30, restRepsS: 0, reps: 1, sets: 8, restSetsS: 30 },
 };
 

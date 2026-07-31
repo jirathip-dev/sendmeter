@@ -82,10 +82,9 @@ export function buildZoneSelection(
 
 /// Build the gauge band + guided protocol for Prehab (#325) — mirrors
 /// `buildZoneSelection` but isn't one: Prehab has no `TrainingQuality`, so it
-/// can't go through `zonePrescription`. Single-sided by design (`sets: 1` —
-/// #320's alternation fires per SET, and one set never triggers it, so there
-/// is no "alternate sides" option here to thread through). Null when the
-/// model can't derive a Prehab target (see `prehabTarget`).
+/// can't go through `zonePrescription`. Single-sided by design, so there is
+/// no "alternate sides" option here to thread through. Null when the model
+/// can't derive a Prehab target (see `prehabTarget`).
 export function buildPrehabSelection(
   model: ForceCurveModel | null,
   tag: string,
