@@ -732,7 +732,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       .then((all) => {
         if (cancelled) return;
         const samplesById = new Map(ids.map((id, i) => [id, all[i]!]));
-        const m = computeForceCurve(recs.map((r) => samplesById.get(r.id)!));
+        const m = computeForceCurve(recs.map((r) => ({
+          samples: samplesById.get(r.id)!, recordedAt: r.recordedAt,
+        })));
         setCurveModel(m);
         // #298: this tag/side's fit just settled — if the zone currently
         // armed can no longer be derived against it (e.g. the new tag has no
@@ -749,7 +751,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             label: p.label,
             days: p.days,
             model: p.recs.length
-              ? computeForceCurve(p.recs.map((r) => samplesById.get(r.id)!))
+              ? computeForceCurve(p.recs.map((r) => ({
+                  samples: samplesById.get(r.id)!, recordedAt: r.recordedAt,
+                })), { bootstrapSamples: 0 })
               : null,
           })),
         );
@@ -814,6 +818,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     cf: model?.cf ?? null,
     wPrime: model?.wPrime ?? null,
     maxF: model?.maxF ?? null,
+    displayFit: model?.displayFit ?? null,
   };
 
   // #298: `zoneSel` bakes its tag + kg at the moment a zone is picked, so it

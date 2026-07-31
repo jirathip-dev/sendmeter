@@ -1,0 +1,112 @@
+import { describe, expect, it } from "vitest";
+import type { ForceCurveModel } from "./force-curve";
+import { sampleDisplayBand, sampleDisplayCurve, qualityRegions } from "./forceCurveDisplay";
+import { classifyZoneLoaded } from "./zoneHistory";
+import { fitDisplayRegression } from "./forceCurveRegression";
+
+const model: ForceCurveModel = {
+  maxF: 40,
+  cf: 20,
+  wPrime: 120,
+  points: [
+    { windowS: 1, kg: 40 },
+    { windowS: 3, kg: 37 },
+    { windowS: 5, kg: 34 },
+    { windowS: 7, kg: 32 },
+    { windowS: 10, kg: 30 },
+    { windowS: 20, kg: 27 },
+    { windowS: 60, kg: 22 },
+    { windowS: 120, kg: 21 },
+  ],
+};
+model.displayFit = fitDisplayRegression(model.points, model.cf)!;
+
+describe("sampleDisplayCurve", () => {
+  it("selects the deterministic Hill regression for the curved seed-like envelope", () => {
+    const seedLike = model.points.map((p) => ({ ...p }));
+    const a = fitDisplayRegression(seedLike, 18.7)!;
+    const b = fitDisplayRegression(seedLike, 18.7)!;
+    expect(a).toEqual(b);
+    expect(a.family).toBe("hill");
+  });
+
+  it("is a regression rather than chasing every measured anchor", () => {
+    const points = sampleDisplayCurve(model, 1, 120, 400);
+    expect(points[0]!.durationS).toBe(1);
+    expect(points.at(-1)!.durationS).toBeCloseTo(120, 10);
+    expect(model.points.some((anchor) => {
+      const nearest = points.reduce((a, b) => Math.abs(b.durationS - anchor.windowS) < Math.abs(a.durationS - anchor.windowS) ? b : a);
+      return Math.abs(nearest.kg - anchor.kg) > 0.1;
+    })).toBe(true);
+  });
+
+  it("is globally monotone and smooth in log-time", () => {
+    const points = sampleDisplayCurve(model, 1, 120, 4_000);
+    for (let i = 1; i < points.length; i++) {
+      expect(points[i]!.kg).toBeLessThanOrEqual(points[i - 1]!.kg + 1e-9);
+      expect(points[i]!.kg).toBeLessThanOrEqual(model.maxF);
+    }
+    const slopes = points.slice(1).map((p, i) =>
+      (p.kg - points[i]!.kg) / (Math.log(p.durationS) - Math.log(points[i]!.durationS)));
+    for (let i = 1; i < slopes.length; i++) {
+      expect(Math.abs(slopes[i]! - slopes[i - 1]!)).toBeLessThan(0.12);
+    }
+  });
+
+  it("suppresses a display fit for fewer than three observations", () => {
+    const sparse = { ...model, displayFit: undefined };
+    expect(sampleDisplayCurve(sparse, 1, 120, 20)).toEqual([]);
+  });
+
+  it("defensively removes increasing noise without overshooting", () => {
+    const noisyPoints = [{ windowS: 1, kg: 38 }, { windowS: 3, kg: 40 }, { windowS: 10, kg: 30 }];
+    const noisy = { ...model, points: noisyPoints, displayFit: fitDisplayRegression(noisyPoints, 20)! };
+    const points = sampleDisplayCurve(noisy, 1, 120, 100);
+    expect(Math.max(...points.map((p) => p.kg))).toBeLessThanOrEqual(noisy.maxF);
+    for (let i = 1; i < points.length; i++) expect(points[i]!.kg).toBeLessThanOrEqual(points[i - 1]!.kg);
+  });
+
+  it("evaluates smoothly across any requested sub-axis", () => {
+    const points = sampleDisplayCurve(model, 1, 13, 100);
+    expect(points[0]!.durationS).toBe(1);
+    expect(points.at(-1)!.durationS).toBeCloseTo(13, 10);
+  });
+});
+
+describe("sampleDisplayBand", () => {
+  it("smoothly spans both supported endpoints without crossing", () => {
+    const points = model.points.map((p) => ({
+      ...p,
+      lowKg: p.kg - 2,
+      highKg: p.kg + 1,
+    }));
+    const band = sampleDisplayBand(points, 200);
+    expect(band[0]!.durationS).toBe(1);
+    expect(band.at(-1)!.durationS).toBe(120);
+    expect(band.length).toBe(points.length);
+    expect(band.every((p) => p.lowKg <= p.highKg)).toBe(true);
+  });
+});
+
+describe("qualityRegions", () => {
+  it("derives every cell from classifyZoneLoaded", () => {
+    const regions = qualityRegions(model, 1, 120, 44);
+    expect(new Set(regions.map((r) => r.quality))).toEqual(
+      new Set(["power", "strength", "power-endurance", "endurance"]),
+    );
+    for (const r of regions) {
+      expect(r.quality).toBe(
+        classifyZoneLoaded((r.t0 + r.t1) / 2, (r.kg0 + r.kg1) / 2, {
+          maxF: model.maxF,
+          cf: model.cf,
+        }),
+      );
+    }
+  });
+
+  it("honours exact duration and load boundaries", () => {
+    const regions = qualityRegions(model, 1, 120, 44);
+    expect(regions.some((r) => r.quality === "power" && r.t1 === 6 && r.kg0 === 36)).toBe(true);
+    expect(regions.filter((r) => r.t0 >= 20).every((r) => r.quality === "endurance")).toBe(true);
+  });
+});

@@ -1,4 +1,5 @@
 import type { TindeqSample } from "../types";
+import { fitDisplayRegression, predictDisplayFit, type DisplayFit } from "./forceCurveRegression";
 
 /**
  * Force–duration modeling for isometric finger strength (the isometric
@@ -15,6 +16,8 @@ import type { TindeqSample } from "../types";
  */
 
 export const CURVE_WINDOWS_S = [1, 3, 5, 7, 10, 15, 20, 30, 45, 60, 90, 120];
+const DISPLAY_BAND_WINDOWS_S = Array.from({ length: 65 }, (_, i) =>
+  i === 0 ? 1 : i === 64 ? 120 : Math.exp(Math.log(120) * i / 64));
 const RESAMPLE_HZ = 10;
 const FIT_MIN_WINDOW_S = 10;
 const FIT_MIN_POINTS = 3;
@@ -33,6 +36,27 @@ export interface ForceCurveModel {
   maxF: number; // best short-window force (kg)
   cf: number | null; // critical force (kg); null = not enough long holds
   wPrime: number | null; // impulse above CF (kg·s)
+  confidenceBand?: ForceCurveConfidencePoint[];
+  coverage?: ForceCurveCoverage;
+  displayFit?: DisplayFit;
+}
+
+export interface ForceCurveConfidencePoint extends ForceCurvePoint {
+  lowKg: number;
+  highKg: number;
+}
+
+export interface ForceCurveCoverage {
+  quality: "weak" | "fair" | "strong";
+  longestS: number;
+  distinctFitWindows: number;
+  independentDurations: number;
+  message: string;
+}
+
+export interface ForceCurveEffort {
+  samples: TindeqSample[];
+  recordedAt?: string;
 }
 
 /// Step-resample irregular samples to a fixed grid, then prefix sums make
@@ -128,37 +152,123 @@ export function pickCurveRecordings<T extends CurveCandidate>(
   return [...picked.values()];
 }
 
-export function computeForceCurve(
-  recordings: TindeqSample[][],
-  opts: { fitDepth?: number } = {},
+type FitRow = { x: number; y: number; weight: number };
+
+function weightedLine(rows: FitRow[]): { cf: number; wPrime: number } | null {
+  const sw = rows.reduce((sum, r) => sum + r.weight, 0);
+  if (sw <= 0) return null;
+  const mx = rows.reduce((sum, r) => sum + r.weight * r.x, 0) / sw;
+  const my = rows.reduce((sum, r) => sum + r.weight * r.y, 0) / sw;
+  let sxx = 0, sxy = 0;
+  for (const r of rows) {
+    sxx += r.weight * (r.x - mx) ** 2;
+    sxy += r.weight * (r.x - mx) * (r.y - my);
+  }
+  if (sxx <= 1e-12) return null;
+  const wPrime = sxy / sxx;
+  const cf = my - wPrime * mx;
+  return cf > 0 && wPrime >= 0 ? { cf, wPrime } : null;
+}
+
+function percentile(sorted: number[], p: number): number {
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * sorted.length)))]!;
+}
+
+interface PreparedEffort {
+  values: (number | null)[];
+  freshness: number;
+  durationMs: number;
+}
+
+export interface ForceCurveDiagnostics {
+  meanMaxEvaluations: number;
+}
+
+function coverageFor(points: ForceCurvePoint[], distinctFitWindows: number, efforts: PreparedEffort[]): ForceCurveCoverage {
+  const longestS = points.at(-1)?.windowS ?? 0;
+  const independentDurations = new Set(efforts
+    .map((e) => e.durationMs)
+    .filter((ms) => ms >= FIT_MIN_WINDOW_S * 1000)
+    .map((ms) => durationBucket(ms))).size;
+  if (longestS < 30 || distinctFitWindows < 3 || independentDurations < 2) return {
+    quality: "weak", longestS, distinctFitWindows, independentDurations,
+    message: longestS < 30
+      ? `Weak duration coverage: longest evidence is ${longestS}s. Add an all-out 30–60s hold.`
+      : `Weak duration coverage: evidence comes from only ${independentDurations} duration range${independentDurations === 1 ? "" : "s"}. Add an all-out hold at a distinctly different duration.`,
+  };
+  if (longestS < 60 || distinctFitWindows < 5 || independentDurations < 3) return {
+    quality: "fair", longestS, distinctFitWindows, independentDurations,
+    message: `Fair duration coverage: a 60s+ all-out hold would narrow the estimate.`,
+  };
+  return { quality: "strong", longestS, distinctFitWindows, independentDurations, message: "Strong duration coverage." };
+}
+
+function normalizedEfforts(recordings: (TindeqSample[] | ForceCurveEffort)[]): ForceCurveEffort[] {
+  return recordings.map((r) => Array.isArray(r) ? { samples: r } : r);
+}
+
+function prepareEfforts(
+  efforts: ForceCurveEffort[],
+  nowMs: number,
+  diagnostics?: ForceCurveDiagnostics,
+): PreparedEffort[] {
+  return efforts.map((effort) => {
+    const ageDays = effort.recordedAt == null
+      ? 0
+      : Math.max(0, (nowMs - Date.parse(effort.recordedAt)) / 86_400_000);
+    const freshness = Number.isFinite(ageDays) ? 2 ** (-ageDays / 120) : 1;
+    const values = CURVE_WINDOWS_S.map((windowS) => {
+      if (diagnostics) diagnostics.meanMaxEvaluations++;
+      return meanMaxForce(effort.samples, windowS);
+    });
+    return { values, freshness, durationMs: effort.samples.at(-1)?.t ?? 0 };
+  });
+}
+
+function computeCurveCore(
+  efforts: PreparedEffort[],
+  opts: { fitDepth: number },
 ): ForceCurveModel | null {
   // How many efforts per window feed the regression. 1 = the old
   // envelope-only fit; the default 3 regresses over the top few efforts of
   // each duration, so the fit reflects repeated performance instead of a
   // single lucky pull (SL-80b).
-  const fitDepth = opts.fitDepth ?? 3;
   const points: ForceCurvePoint[] = [];
   const scatter: ForceCurvePoint[] = [];
-  const xs: number[] = [];
-  const ys: number[] = [];
+  const rows: FitRow[] = [];
   const fitWindows = new Set<number>();
-  for (const w of CURVE_WINDOWS_S) {
-    const vals: number[] = [];
-    for (const samples of recordings) {
-      const v = meanMaxForce(samples, w);
-      if (v !== null && v > 0) vals.push(v);
+  for (let windowIndex = 0; windowIndex < CURVE_WINDOWS_S.length; windowIndex++) {
+    const w = CURVE_WINDOWS_S[windowIndex]!;
+    const vals: { value: number; freshness: number }[] = [];
+    for (const effort of efforts) {
+      const v = effort.values[windowIndex]!;
+      if (v !== null && v > 0) {
+        // A 120-day half-life preserves old long-duration evidence but stops
+        // it carrying the same authority as a current maximal test.
+        vals.push({ value: v, freshness: effort.freshness });
+      }
     }
     if (vals.length === 0) continue;
-    vals.sort((a, b) => b - a);
+    vals.sort((a, b) => b.value - a.value);
     // Every effort lands in the scatter…
-    for (const v of vals) scatter.push({ windowS: w, kg: Math.round(v * 100) / 100 });
+    for (const v of vals) scatter.push({ windowS: w, kg: Math.round(v.value * 100) / 100 });
     // …the envelope keeps the best per window…
-    points.push({ windowS: w, kg: Math.round(vals[0]! * 100) / 100 });
+    const best = vals[0]!.value;
+    points.push({ windowS: w, kg: Math.round(best * 100) / 100 });
     // …but the CF regression sees the top-K efforts of every long window.
     if (w >= FIT_MIN_WINDOW_S) {
-      for (const v of vals.slice(0, fitDepth)) {
-        xs.push(1 / w);
-        ys.push(v);
+      const selected = vals.slice(0, opts.fitDepth);
+      const raw = selected.map((v) => {
+        // Clearly submaximal attempts retain a small voice rather than being
+        // silently discarded. Fourth power strongly discounts <80% efforts.
+        const maximality = Math.max(0.08, (v.value / best) ** 4);
+        return { v, weight: v.freshness * maximality };
+      });
+      const windowWeight = raw.reduce((sum, r) => sum + r.weight, 0);
+      for (const r of raw) {
+        // Normalize each duration window to total weight 1. A flood of short
+        // reps therefore cannot overpower scarce long-duration evidence.
+        rows.push({ x: 1 / w, y: r.v.value, weight: r.weight / windowWeight });
       }
       fitWindows.add(w);
     }
@@ -172,26 +282,60 @@ export function computeForceCurve(
   let cf: number | null = null;
   let wPrime: number | null = null;
   if (fitWindows.size >= FIT_MIN_POINTS) {
-    const n = xs.length;
-    const mx = xs.reduce((a, b) => a + b, 0) / n;
-    const my = ys.reduce((a, b) => a + b, 0) / n;
-    let sxx = 0;
-    let sxy = 0;
-    for (let i = 0; i < n; i++) {
-      sxx += (xs[i]! - mx) ** 2;
-      sxy += (xs[i]! - mx) * (ys[i]! - my);
-    }
-    if (sxx > 1e-12) {
-      const slope = sxy / sxx; // W'
-      const intercept = my - slope * mx; // CF
-      if (intercept > 0 && slope >= 0) {
-        cf = Math.round(intercept * 100) / 100;
-        wPrime = Math.round(slope * 100) / 100;
-      }
+    const fit = weightedLine(rows);
+    if (fit) {
+      cf = Math.round(fit.cf * 100) / 100;
+      wPrime = Math.round(fit.wPrime * 100) / 100;
     }
   }
+  const displayFit = fitDisplayRegression(points, cf);
+  return { points, scatter, maxF, cf, wPrime, displayFit: displayFit ?? undefined, coverage: coverageFor(points, fitWindows.size, efforts) };
+}
 
-  return { points, scatter, maxF, cf, wPrime };
+export function computeForceCurve(
+  recordings: (TindeqSample[] | ForceCurveEffort)[],
+  opts: {
+    fitDepth?: number;
+    nowMs?: number;
+    bootstrapSamples?: number;
+    diagnostics?: ForceCurveDiagnostics;
+  } = {},
+): ForceCurveModel | null {
+  const efforts = normalizedEfforts(recordings);
+  const fitDepth = opts.fitDepth ?? 3;
+  const nowMs = opts.nowMs ?? Date.now();
+  const prepared = prepareEfforts(efforts, nowMs, opts.diagnostics);
+  const model = computeCurveCore(prepared, { fitDepth });
+  if (!model || model.cf == null || efforts.length < 3) return model;
+
+  // Recording-level bootstrap: resample whole efforts, never the correlated
+  // rolling windows within an effort. A fixed LCG seed makes UI/tests stable.
+  let state = 0x352c0de;
+  const random = () => ((state = (Math.imul(state, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+  const predictions = new Map(DISPLAY_BAND_WINDOWS_S.map((w) => [w, [] as number[]]));
+  const iterations = opts.bootstrapSamples ?? 200;
+  for (let b = 0; b < iterations; b++) {
+    const sample = Array.from({ length: prepared.length }, () => prepared[Math.floor(random() * prepared.length)]!);
+    const fitted = computeCurveCore(sample, { fitDepth });
+    if (fitted?.cf == null || fitted.wPrime == null) continue;
+    for (const w of DISPLAY_BAND_WINDOWS_S) {
+      // Refit the display regression for each whole-recording resample, then
+      // evaluate it over the chart's full domain. The tail is model-based
+      // extrapolation when a replicate lacks long evidence; the coverage flag
+      // tells the UI when that part of the interval deserves less confidence.
+      if (fitted.displayFit) predictions.get(w)!.push(predictDisplayFit(fitted.displayFit, w));
+    }
+  }
+  const confidenceBand = DISPLAY_BAND_WINDOWS_S.flatMap((windowS) => {
+    const values = predictions.get(windowS)!.sort((a, b) => a - b);
+    return values.length < Math.max(20, iterations * 0.2) ? [] : [{
+      windowS,
+      kg: model.displayFit ? predictDisplayFit(model.displayFit, windowS) : model.points.find((p) => p.windowS === windowS)!.kg,
+      lowKg: percentile(values, 0.025),
+      highKg: percentile(values, 0.975),
+    }];
+  });
+  return { ...model, confidenceBand: confidenceBand.length ? confidenceBand : undefined };
 }
 
 /// Trailing windows for the curve-shift overlays (SL-80c): how has the
@@ -212,6 +356,7 @@ export interface PeriodCurve {
 }
 
 export function predictForce(model: ForceCurveModel, tS: number): number {
+  if (model.displayFit) return predictDisplayFit(model.displayFit, tS);
   if (model.cf === null || model.wPrime === null) return model.maxF;
   return Math.min(model.maxF, model.cf + model.wPrime / tS);
 }
@@ -390,7 +535,7 @@ export function zoneTarget(
     }
     case "power-endurance": {
       if (model.cf === null || model.wPrime === null) return null;
-      const f60 = model.cf + model.wPrime / 60;
+      const f60 = predictForce(model, 60);
       const baseKg = round1(f60);
       const newKg = round1(baseKg * scale);
       return {
@@ -407,7 +552,9 @@ export function zoneTarget(
           ZONE_PROTOCOLS["power-endurance"].holdS,
         ),
         protocol: "repeaters 7s on / 3s off × 6 · 2 min rest · 3–5 sets",
-        basis: `force sustainable ~60s: CF ${round1(model.cf)} + W′/60${suffix}`,
+        basis: model.displayFit
+          ? `Hill capability curve at 60s (${round1(f60)} kg)${suffix}`
+          : `legacy force estimate at 60s: CF ${round1(model.cf)} + W′/60${suffix}`,
       };
     }
     case "endurance": {

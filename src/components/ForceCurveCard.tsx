@@ -1,6 +1,11 @@
 import { useState } from "react";
-import { predictForce } from "../lib/force-curve";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
+import {
+  qualityRegions,
+  sampleDisplayBand,
+  sampleDisplayCurve,
+} from "../lib/forceCurveDisplay";
+import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import InfoDot from "./InfoDot";
@@ -59,27 +64,45 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
       (W - PAD.left - PAD.right);
   const { y: py } = useSvgScale(W, H, PAD, 0, 1, 0, yMax);
 
-  // A model's fitted hyperbola sampled along the FULL axis (1s → end). At
-  // short durations CF + W′/t exceeds the best short-window force, so
-  // predictForce clamps to maxF — the flat left segment is that cap (short
-  // efforts are peak/RFD-dominated and excluded from the fit).
-  const hyperbola = (m: ForceCurveModel): string => {
-    const steps = 40;
-    const parts: string[] = [];
-    for (let i = 0; i <= steps; i++) {
-      const logT = tMin + ((tMax - tMin) * i) / steps;
-      const t = Math.pow(10, logT);
-      parts.push(`${px(t).toFixed(1)},${py(predictForce(m, t)).toFixed(1)}`);
-    }
-    return parts.join(" ");
+  const displayCurve = (m: ForceCurveModel): string => {
+    const start = Math.max(10 ** tMin, m.points[0]?.windowS ?? Infinity);
+    const end = Math.min(10 ** tMax, m.points.at(-1)?.windowS ?? -Infinity);
+    if (end < start) return "";
+    return sampleDisplayCurve(m, start, end, 64)
+      .map((p) => `${px(p.durationS).toFixed(1)},${py(p.kg).toFixed(1)}`)
+      .join(" ");
   };
-  const fitted = model.cf !== null ? hyperbola(model) : "";
+  const displayed = model.points.length >= 2 ? displayCurve(model) : "";
+  const band = sampleDisplayBand(
+    (model.confidenceBand ?? []).filter((p) =>
+      Math.log10(p.windowS) >= tMin - 0.01 && Math.log10(p.windowS) <= tMax + 0.01),
+    64,
+  );
+  const bandPolygon = band.length >= 2
+    ? [
+        ...band.map((p) => `${px(p.durationS).toFixed(1)},${py(p.highKg).toFixed(1)}`),
+        ...[...band].reverse().map((p) => `${px(p.durationS).toFixed(1)},${py(p.lowKg).toFixed(1)}`),
+      ].join(" ")
+    : "";
 
   const yTicks = [0, yMax / 2, yMax];
   const xTicks = [1, 10, 60, 120].filter((t) => Math.log10(t) <= tMax + 0.01);
 
   return (
     <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+      <g aria-label="Training quality regions">
+        {qualityRegions(model, 10 ** tMin, 10 ** tMax, yMax).map((r, i) => (
+          <rect
+            key={`${r.quality}-${i}`}
+            x={px(r.t0)}
+            y={py(r.kg1)}
+            width={Math.max(0, px(r.t1) - px(r.t0))}
+            height={Math.max(0, py(r.kg0) - py(r.kg1))}
+            fill={QUALITY_COLORS[r.quality]}
+            opacity={0.08}
+          />
+        ))}
+      </g>
       {/* axis gridlines */}
       {yTicks.map((v, i) => (
         <g key={`y-${i}`}>
@@ -146,11 +169,19 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           opacity={0.3}
         />
       ))}
+      {bandPolygon && (
+        <polygon
+          aria-label="95% bootstrap confidence band"
+          points={bandPolygon}
+          fill="#7B83EB"
+          opacity={0.14}
+        />
+      )}
       {/* Curve-shift overlays: each active trailing window's fit (SL-80c) */}
       {overlays.map((o) => (
         <polyline
           key={o.label}
-          points={hyperbola(o.model)}
+          points={displayCurve(o.model)}
           fill="none"
           stroke={o.color}
           strokeWidth={1.2}
@@ -159,9 +190,10 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           vectorEffect="non-scaling-stroke"
         />
       ))}
-      {fitted && (
+      {displayed && (
         <polyline
-          points={fitted}
+          aria-label={`${model.displayFit?.family ?? "Display"} regression`}
+          points={displayed}
           fill="none"
           stroke="#5B5FC7"
           strokeWidth={1.5}
@@ -245,15 +277,28 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
             {computing
               ? "Computing your force–duration curve…"
               : error ??
-                "The force–duration curve builds from this tag's recordings and fits the critical-force model F(t) = CF + W′/t."}
+                "The force–duration curve builds from this tag's recordings. A constrained Hill curve drives the chart and duration-specific training prescriptions."}
           </div>
         </div>
       ) : (
         <div>
           <CurvePlot model={model} overlays={overlays} />
+          <div aria-label="Training quality legend" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 5, fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
+            {([
+              ["power", "Power · ≤6s · ≥90% max"],
+              ["strength", "Strength · ≤20s · ≥80% max (except Power)"],
+              ["power-endurance", `Pow End · ≤20s · <80% max${model.cf == null ? "" : " · >CF"}`],
+              ["endurance", model.cf == null ? "Endurance · >20s" : "Endurance · ≤CF or >20s"],
+            ] as const).map(([quality, label]) => (
+              <span key={quality} style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: 2, background: QUALITY_COLORS[quality] }} />
+                {label}
+              </span>
+            ))}
+          </div>
 
           {/* Curve shift over time: toggle a trailing window to overlay its
-              fitted curve (dashed, hue-coded) against the current one. */}
+              measured display curve (dashed, hue-coded) against the current one. */}
           {periods.some((p) => p.model) && (
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
               {periods.map((p) => {
@@ -290,8 +335,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
             </div>
           )}
           {(() => {
-            const longest = model.points[model.points.length - 1]!.windowS;
-            if (longest < 30) {
+            if (model.coverage?.quality === "weak") {
               return (
                 <div
                   style={{
@@ -304,13 +348,12 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
                     marginTop: 8,
                   }}
                 >
-                  Longest effort so far: {longest}s. CF and W′ are
-                  extrapolated — do one all-out 30–60s hold with this tag to
-                  make them (and the Pow End / Endurance targets) trustworthy.
+                  {model.coverage.message} CF and W′ are extrapolated; the
+                  confidence band may be unavailable until more durations exist.
                 </div>
               );
             }
-            if (longest < 60) {
+            if (model.coverage?.quality === "fair") {
               return (
                 <div
                   style={{
@@ -319,7 +362,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
                     marginTop: 8,
                   }}
                 >
-                  Tip: an all-out 60s+ hold would sharpen the CF fit further.
+                  {model.coverage.message}
                 </div>
               );
             }
@@ -328,6 +371,8 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
           <div
             style={{
               display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
               justifyContent: "space-between",
               fontSize: "var(--t-2xs)",
               color: "var(--ink-muted)",
@@ -346,16 +391,19 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
                 {model.cf !== null ? `${model.cf.toFixed(1)} kg` : "—"}
               </span>
             </span>
-            <span>
-              W′{" "}
+            <span title="Purple Hill/log-logistic prediction used for duration-specific training prescriptions">
+              Hill capability curve
+            </span>
+            <span title="Pointwise 95% interval from a deterministic recording-level bootstrap">
+              95% band{" "}
               <span style={{ color: "var(--ink-muted)" }}>
-                {model.wPrime !== null ? `${model.wPrime.toFixed(0)} kg·s` : "—"}
+                {(model.confidenceBand?.length ?? 0) >= 2 ? "shown" : "—"}
               </span>
             </span>
           </div>
 
           {/* Training zones live in the Gauge Target card up top — this card
-              is the analysis view (curve + CF/W′) only. */}
+              is the capability analysis view. */}
         </div>
       )}
     </div>

@@ -98,11 +98,11 @@ const CONTENT: Record<
     body: [
       {
         heading: "Anchored to YOUR curve",
-        text: "Each zone is a percentage band of your own force–duration fit for the selected exercise (and side): POWER and STRENGTH anchor to your max force; POW END and ENDURANCE anchor to your critical force (CF) — the sustainable ceiling from the fit.",
+        text: "Each zone comes from the selected exercise and side: POWER and STRENGTH use percentages of your measured maximum, POW END reads the purple capability curve at 60 seconds, and ENDURANCE uses critical force (CF), the curve's sustainable ceiling.",
       },
       {
-        heading: "Why %max vs %CF",
-        text: "Short maximal efforts (<10s) are limited by maximal recruitment, so power/strength work is prescribed off max. Longer efforts are limited by the forearm's aerobic ceiling, so endurance work is prescribed off CF — just below CF extends capacity, just above it trains your anaerobic reserve.",
+        heading: "Why max, curve and CF",
+        text: "Short maximal efforts (<10s) are limited by maximal recruitment, so POWER and STRENGTH start from max force. POW END uses the curve's 60-second capability estimate. ENDURANCE stays near CF: just below it extends capacity, while work above it spends the finite reserve.",
       },
       {
         heading: "Using a target",
@@ -173,16 +173,28 @@ const CONTENT: Record<
     title: "How the Force Curve works",
     body: [
       {
-        heading: "Force–duration curve",
-        text: "From your recordings, the best average force you can hold for every window length (1s…120s) is extracted. Huge force for seconds, much less for minutes — the decay between them is highly individual and trainable.",
+        heading: "Dots are measured; the line is estimated",
+        text: "For each recording, Sendmeter finds the best average force held over windows from 1–120 seconds. Small dots show the spread of those efforts and large dots show the best measured value at each duration. The line is a smooth regression, so it intentionally does not pass through every dot.",
+      },
+      {
+        heading: "The capability curve",
+        text: "Sendmeter fits one constrained Hill (log-logistic) curve. It declines smoothly from your measured maximum toward critical force and supplies duration-specific training prescriptions.",
+      },
+      {
+        heading: "The shaded 95% uncertainty band",
+        text: "Sendmeter repeatedly resamples whole recordings, refits the curve and takes the pointwise middle 95% of those predictions. A wider band means your recordings support more possible curves. The band is a model estimate, not a guarantee; where duration coverage is weak, its long-duration tail is extrapolated and should be treated cautiously.",
       },
       {
         heading: "Critical force (CF) & W′",
-        text: "The curve is fitted with the hyperbolic critical-power model adapted to fingers: F(t) = CF + W′/t. CF is the force you can theoretically sustain 'indefinitely' (the forearm's aerobic ceiling); W′ is the fixed anaerobic reserve above CF you can spend before failing. The fit needs at least one long (30–60s+) all-out hold to be trustworthy.",
+        text: "CF is the Hill curve's long-duration asymptote and the endurance boundary. W′ remains the finite reserve used for fatigue, RPE and dose-equivalence calculations; it is not drawn as a second capability curve.",
+      },
+      {
+        heading: "Duration coverage matters",
+        text: "Several genuinely all-out recordings at distinctly different durations are more informative than many repeats of one hold length. The coverage warning reflects both the longest evidence and how many independent duration ranges you recorded. Include at least one 30–60s+ maximal hold to make CF, W′ and the curve tail more trustworthy.",
       },
       {
         heading: "Training zones",
-        text: "The POWER / STRENGTH / POW END / ENDURANCE targets are percentage bands anchored to your max force and CF. They translate the fit into 'hang at X kg for Y seconds' prescriptions.",
+        text: "POWER and STRENGTH use your measured maximum, POW END uses the purple curve's 60-second prediction, and ENDURANCE uses CF. Custom Auto (curve) presets read the same purple curve at their chosen hold duration.",
       },
     ],
   },
