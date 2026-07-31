@@ -108,6 +108,10 @@ const CONTENT: Record<
         heading: "Using a target",
         text: "Picking a zone draws its band on the live gauge and arms its guided timer — keep the trace inside the band for the prescribed work time. Zones sharpen as your curve gets more data (especially one all-out 30–60s hold). The Intensity slider on this card (60–110%) applies to the RECOMMENDED ZONES only: it scales the target load and adapts hold time to keep the training dose equivalent — dial it down for a lighter session, or above 100% for a heavier one (shorter holds, extra strain on your pulleys — only when fully warmed up). Custom presets are never modified by this dial; a preset's quality badge still reflects whatever load it actually resolves to (fixed kg, or a %-of-PR/CF/curve target).",
       },
+      {
+        heading: "Prehab is maintenance",
+        text: "Prehab is a fixed 30s × 4 dose below critical force, so the Intensity slider does not apply and its recordings are excluded from training balance. Its load is derived from your force curve and shaped by tendon-loading research, but no published work establishes a finger-dynamometer prehab prescription. Treat it as a maintenance guide, not clinical advice.",
+      },
     ],
   },
   phaseStepBack: {
