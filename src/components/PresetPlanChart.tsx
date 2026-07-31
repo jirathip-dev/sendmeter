@@ -23,7 +23,7 @@ interface Props {
 /// the editor's live draft) resolves to — bar height ∝ that set's hold (or,
 /// when holds are flat and only the target ramps, ∝ that set's target kg —
 /// see `planMetric`), with the resolved target kg and (when alternating)
-/// hand underneath each bar. Renders nothing when the plan doesn't actually
+/// "L+R" underneath each bar when alternating. Renders nothing when the plan doesn't actually
 /// vary (`planVaries`) — a flat preset already reads fine as the existing
 /// text summary, so the chart would just be noise. Shared between the
 /// editor form and the fullscreen READY block so both read off the same
@@ -62,11 +62,11 @@ export default function PresetPlanChart({ preset, refs }: Props) {
             metric === "hold"
               ? [
                   r.targetKg != null ? `${r.targetKg.toFixed(1)}kg` : null,
-                  r.side ? (r.side === "left" ? "L" : "R") : null,
+                  r.side ? "L+R" : null,
                 ]
                   .filter(Boolean)
                   .join(" · ")
-              : (r.side ? (r.side === "left" ? "L" : "R") : "");
+              : (r.side ? "L+R" : "");
           return (
             <g key={r.set}>
               <rect

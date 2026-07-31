@@ -161,9 +161,9 @@ export function classifyZoneLoaded(
 /// for #214's breakdown, which shows the division rather than asserting the
 /// quotient (see lib/zoneBreakdown.ts).
 ///
-/// Endurance is a special case (#320): its protocol shape is 1 rep × 8 sets
-/// (so per-set alternation fires), but the training-balance unit is still
-/// the whole 8-hold protocol — holdS × reps alone would drop this to 30s and
+/// Endurance is a special case (#320): its protocol shape is 1 rep × 8 sets,
+/// but the training-balance unit is still the whole 8-hold protocol —
+/// holdS × reps alone would drop this to 30s and
 /// inflate endurance training-balance 8×. Other zones keep holdS × reps
 /// only (power-endurance's own 4 sets are deliberately NOT multiplied in —
 /// its unit is one 6-rep round, unchanged by this issue).
