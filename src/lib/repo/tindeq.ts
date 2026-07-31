@@ -9,6 +9,10 @@ import type {
 } from "../../types";
 import type { RecordedZone } from "../force-curve";
 import { localDayRange } from "../dates";
+import {
+  legacyPresetRow,
+  retryWithoutPresetHoldsColumn,
+} from "../presetSchemaCompat";
 import { unwrap, makeSoftDeleteOps } from "./shared";
 
 const RECORDING_COLS =
@@ -193,12 +197,13 @@ export async function insertRecording(
 
 const PRESET_COLS =
   "id, name, hold_s, holds_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides";
+const LEGACY_PRESET_COLS =
+  "id, name, hold_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides";
 
-type PresetRow = {
+type LegacyPresetRow = {
   id: string;
   name: string;
   hold_s: number;
-  holds_s: number[] | null;
   reps: number;
   sets: number;
   rest_reps_s: number;
@@ -211,12 +216,18 @@ type PresetRow = {
   alternate_sides: boolean;
 };
 
+type PresetRow = LegacyPresetRow & {
+  // Absent only when the server predates `preset_holds_per_set`; normalize
+  // those rows to the same null used by ordinary presets on the new schema.
+  holds_s?: number[] | null;
+};
+
 function toPreset(r: PresetRow): TindeqPreset {
   return {
     id: r.id,
     name: r.name,
     holdS: r.hold_s,
-    holdsS: r.holds_s,
+    holdsS: r.holds_s ?? null,
     reps: r.reps,
     sets: r.sets,
     restRepsS: r.rest_reps_s,
@@ -249,11 +260,19 @@ function presetToRow(p: Omit<TindeqPreset, "id">) {
 }
 
 export async function fetchPresets(): Promise<TindeqPreset[]> {
-  const data = unwrap(
-    await supabase
-      .from("tindeq_presets")
-      .select(PRESET_COLS)
-      .order("created_at", { ascending: false }),
+  const data = unwrap<PresetRow[]>(
+    await retryWithoutPresetHoldsColumn<PresetRow[]>(
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .select(PRESET_COLS)
+          .order("created_at", { ascending: false }),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .select(LEGACY_PRESET_COLS)
+          .order("created_at", { ascending: false }),
+    ),
   );
   return data.map(toPreset);
 }
@@ -262,11 +281,20 @@ export async function insertPreset(
   p: Omit<TindeqPreset, "id">,
 ): Promise<TindeqPreset> {
   const data = unwrap<PresetRow>(
-    await supabase
-      .from("tindeq_presets")
-      .insert(presetToRow(p))
-      .select(PRESET_COLS)
-      .single(),
+    await retryWithoutPresetHoldsColumn<PresetRow>(
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .insert(presetToRow(p))
+          .select(PRESET_COLS)
+          .single(),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .insert(legacyPresetRow(presetToRow(p)))
+          .select(LEGACY_PRESET_COLS)
+          .single(),
+    ),
   );
   return toPreset(data);
 }
@@ -276,12 +304,22 @@ export async function updatePreset(
   p: Omit<TindeqPreset, "id">,
 ): Promise<TindeqPreset> {
   const data = unwrap<PresetRow>(
-    await supabase
-      .from("tindeq_presets")
-      .update(presetToRow(p))
-      .eq("id", id)
-      .select(PRESET_COLS)
-      .single(),
+    await retryWithoutPresetHoldsColumn<PresetRow>(
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .update(presetToRow(p))
+          .eq("id", id)
+          .select(PRESET_COLS)
+          .single(),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .update(legacyPresetRow(presetToRow(p)))
+          .eq("id", id)
+          .select(LEGACY_PRESET_COLS)
+          .single(),
+    ),
   );
   return toPreset(data);
 }
