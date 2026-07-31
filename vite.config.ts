@@ -17,6 +17,7 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       manifest: false,
+      includeAssets: ["icon-512.png", "splash-cave-background.webp", "splash-kangaroo.webp"],
     }),
   ],
   test: {

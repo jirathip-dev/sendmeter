@@ -39,27 +39,31 @@ import { insertRecording, restoreSession } from "./lib/repo";
 import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
 import { takeLostRecordingsNotice } from "./lib/lostRecordings";
 import type { SignOut } from "./lib/signOut";
+import SplashScreen from "./components/SplashScreen";
+import TrainingDataSkeleton from "./components/TrainingDataSkeleton";
+
+// Fast local/session restores can resolve before the first animation beat is
+// visible. Keep the branded handoff long enough to complete one dyno, without
+// stretching genuinely slow auth beyond its natural loading time.
+const MINIMUM_SPLASH_MS = 1000;
 
 export default function App() {
   const { session, loading, recovery, clearRecovery, signOut } = useAuth();
+  const [minimumSplashElapsed, setMinimumSplashElapsed] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setMinimumSplashElapsed(true),
+      MINIMUM_SPLASH_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // A password-reset email link takes priority — prompt for the new password
   // before anything else, even though a (temporary) session now exists.
   if (recovery) return <RecoveryScreen onDone={clearRecovery} />;
 
-  if (loading) {
-    return (
-      <div
-        className="app-shell"
-        style={{ alignItems: "center", justifyContent: "center" }}
-      >
-        <div className="loading-center">
-          <div className="topbar-title" style={{ fontSize: 22 }}>SENDMETER</div>
-          <div className="spinner" />
-        </div>
-      </div>
-    );
-  }
+  if (loading || !minimumSplashElapsed) return <SplashScreen />;
 
   if (!session) return <LoginScreen />;
 
@@ -314,7 +318,11 @@ function AuthedApp({
       </button>
 
       {/* Content */}
-      <div className="content-area with-chrome" ref={contentRef}>
+      <div
+        className="content-area with-chrome"
+        ref={contentRef}
+        aria-busy={loading}
+      >
         {/* Error banner (scrolls with content; the chrome overlays above it) */}
         {error && (
           <div className="error-banner">
@@ -336,10 +344,7 @@ function AuthedApp({
           />
         )}
         {loading ? (
-          <div className="loading-center" style={{ padding: "72px 0" }}>
-            <div className="spinner" />
-            <span>Loading your training…</span>
-          </div>
+          <TrainingDataSkeleton />
         ) : (
           <>
             <PasskeyPrompt />

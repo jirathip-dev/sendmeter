@@ -7,6 +7,7 @@ import {
   CURVE_BIAS_RATIO,
   dominantZone,
   effortPeakKg,
+  isDepletionEffortRecording,
   isEffortRecording,
   recommendZone,
   recordingZone,
@@ -93,11 +94,29 @@ describe("recordingZone (#259)", () => {
       source: "recorded",
     });
   });
+
+  it("recognizes a recorded 'warmup' zone — never duration-infers its sets", () => {
+    expect(recordingZone({ durationMs: 5_000, zone: "warmup" })).toEqual({
+      zone: "warmup",
+      source: "recorded",
+    });
+    expect(recordingZone({ durationMs: 10_000, zone: "warmup" })).toEqual({
+      zone: "warmup",
+      source: "recorded",
+    });
+  });
 });
 
 describe("isEffortRecording (#325)", () => {
   it("is false for a recorded Prehab hold — never a maximal-intent effort", () => {
     expect(isEffortRecording({ durationMs: 30_000, zone: "prehab" })).toBe(false);
+  });
+
+  it("is false for Warm-up capacity evidence, but keeps its real RPE depletion", () => {
+    const warmup = { durationMs: 10_000, zone: "warmup" as const };
+    expect(isEffortRecording(warmup)).toBe(false);
+    expect(isDepletionEffortRecording(warmup)).toBe(true);
+    expect(isDepletionEffortRecording({ durationMs: 30_000, zone: "prehab" })).toBe(false);
   });
 
   it("is true for every trainable zone, recorded or inferred, at any duration", () => {
@@ -135,6 +154,17 @@ describe("effortPeakKg (#325)", () => {
     // fraction of a fraction of true capacity.
     const recs = [rec(11.6, "FDP", "left", "prehab")];
     expect(effortPeakKg(recs, "FDP", "left")).toBeNull();
+  });
+
+  it("ignores a Warm-up hold that would otherwise become the PR by walkover", () => {
+    const warmupOnly = [{
+      peakKg: 28,
+      tag: "FDP",
+      side: "left" as const,
+      zone: "warmup" as const,
+      durationMs: 10_000,
+    }];
+    expect(effortPeakKg(warmupOnly, "FDP", "left")).toBeNull();
   });
 
   it("takes the best EFFORT peak, ignoring a higher Prehab reading and other tags/sides", () => {
@@ -217,6 +247,15 @@ describe("balanceScopeCounts (#325)", () => {
       { durationMs: 30_000, zone: "prehab" as const },
     ];
     expect(balanceScopeCounts(recs)).toEqual({ effortCount: 0, recordedCount: 0 });
+  });
+
+  it("excludes Warm-up holds from both scope counts", () => {
+    expect(
+      balanceScopeCounts([
+        { durationMs: 5_000, zone: "warmup" },
+        { durationMs: 10_000, zone: "warmup" },
+      ]),
+    ).toEqual({ effortCount: 0, recordedCount: 0 });
   });
 });
 

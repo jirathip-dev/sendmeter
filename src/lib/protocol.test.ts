@@ -14,12 +14,10 @@ import {
   presetTargetKgRange,
   protocolBandLabel,
   protocolDurationS,
-  setSide,
   timelineAt,
   timelineDurationS,
 } from "./protocol";
 import type { TindeqPreset } from "../types";
-import { ZONE_PROTOCOLS } from "./force-curve";
 
 // Classic repeaters: 7s hang / 3s rest × 6 reps, 3 sets, 180s between sets.
 const repeaters: TindeqPreset = {
@@ -202,14 +200,6 @@ describe("protocolBandLabel (#332 round 6 finding a)", () => {
     const ramp: TindeqPreset = { ...repeaters, sets: 4, targetKg: 20, targetPct: 50, pctStep: 10 };
     expect(protocolBandLabel(ramp, 18, 2, null)).toBe("Repeaters · set 2: 18.0 kg");
     expect(protocolBandLabel({ ...ramp, sets: 1 }, 15, 1, null)).toBe("Repeaters");
-  });
-});
-
-describe("setSide", () => {
-  it("alternates left/right per set", () => {
-    expect(setSide(1)).toBe("left");
-    expect(setSide(2)).toBe("right");
-    expect(setSide(3)).toBe("left");
   });
 });
 
@@ -480,7 +470,7 @@ describe("buildTimeline — varying per-set holds (#332)", () => {
     expect(timelineDurationS(tl)).toBe(42);
   });
 
-  it("keeps per-set sides and switch segments when alternating with varying holds", () => {
+  it("applies each set's duration to both hands when alternating", () => {
     const varying: TindeqPreset = {
       ...alt,
       holdsS: [5, 9],
@@ -492,110 +482,97 @@ describe("buildTimeline — varying per-set holds (#332)", () => {
     const holds = tl.filter((s) => s.phase === "hold");
     expect(holds.map((h) => ({ side: h.side, durS: h.durS, set: h.set }))).toEqual([
       { side: "left", durS: 5, set: 1 },
+      { side: "right", durS: 5, set: 1 },
       { side: "left", durS: 5, set: 1 },
+      { side: "right", durS: 5, set: 1 },
+      { side: "left", durS: 9, set: 2 },
       { side: "right", durS: 9, set: 2 },
+      { side: "left", durS: 9, set: 2 },
       { side: "right", durS: 9, set: 2 },
-    ]);
-    const switches = tl.filter((s) => s.phase === "switch");
-    expect(switches).toHaveLength(1);
-    expect(switches[0]).toMatchObject({ side: "right", durS: 3 });
-  });
-});
-
-describe("buildTimeline — alternating sides (per SET, SL-78)", () => {
-  const tl = buildTimeline(alt, { switchS: 3 });
-
-  it("runs every rep of a set on the same hand", () => {
-    expect(timelineAt(tl, 0)!.seg).toMatchObject({ phase: "hold", side: "left", rep: 1, set: 1 });
-    const rest = timelineAt(tl, 5)!;
-    expect(rest.seg.phase).toBe("rest");
-    expect(rest.remaining).toBe(30);
-    expect(timelineAt(tl, 35)!.seg).toMatchObject({ phase: "hold", side: "left", rep: 2 });
-    expect(timelineDurationS(tl)).toBe(40);
-    expect(timelineAt(tl, 40)).toBeNull();
-  });
-
-  it("switches hands at the end of the set rest", () => {
-    const twoSets = buildTimeline({ ...alt, sets: 2, restSetsS: 60 }, { switchS: 3 });
-    // set 1 ends at 40; setRest 40–97 (60 − 3 switch), switch → RIGHT 97–100
-    const pos = timelineAt(twoSets, 40)!;
-    expect(pos.seg.phase).toBe("setRest");
-    expect(pos.remaining).toBe(57);
-    expect(timelineAt(twoSets, 98)!.seg).toMatchObject({ phase: "switch", side: "right" });
-    expect(timelineAt(twoSets, 100)!.seg).toMatchObject({
-      phase: "hold",
-      side: "right",
-      rep: 1,
-      set: 2,
-    });
-    expect(timelineDurationS(twoSets)).toBe(140);
-  });
-
-  it("auto-extends a set rest too short for the switch window", () => {
-    const tight = buildTimeline({ ...alt, sets: 2, restSetsS: 1 }, { switchS: 3 });
-    // effective rest = max(1, 3) = 3 → all switch, no idle setRest
-    expect(timelineAt(tight, 41)!.seg).toMatchObject({ phase: "switch", side: "right" });
-    expect(timelineAt(tight, 43)!.seg).toMatchObject({ phase: "hold", side: "right", set: 2 });
-  });
-
-  it("odd sets are left, even sets right", () => {
-    const three = buildTimeline({ ...alt, sets: 3, restSetsS: 10 }, { switchS: 3 });
-    const holds = three.filter((s) => s.phase === "hold");
-    expect(holds.map((h) => h.side)).toEqual([
-      "left", "left", "right", "right", "left", "left",
     ]);
   });
 });
 
-describe("endurance preset — 1 rep × 8 sets (#320)", () => {
-  // ZONE_PROTOCOLS.endurance flipped from 8 reps × 1 set to 1 rep × 8 sets so
-  // per-SET alternation actually fires; buildTimeline alternates per set, so
-  // sets: 1 meant "Alternate left ⇄ right" was a no-op before this change.
-  const endurance: TindeqPreset = {
-    id: "endurance",
-    name: "Endurance",
-    holdS: ZONE_PROTOCOLS.endurance.holdS,
-    holdsS: null,
-    reps: ZONE_PROTOCOLS.endurance.reps,
-    sets: ZONE_PROTOCOLS.endurance.sets,
-    restRepsS: ZONE_PROTOCOLS.endurance.restRepsS,
-    restSetsS: ZONE_PROTOCOLS.endurance.restSetsS,
-    targetKg: null,
-    targetPct: null,
-    pctBasis: "pr",
-    pctStep: 0,
-    targetCurve: false,
-    alternateSides: false,
-  };
+describe("buildTimeline — alternating every logical rep (#348)", () => {
+  const holds = (p: TindeqPreset) => buildTimeline(p, { switchS: 3 }).filter((s) => s.phase === "hold");
 
-  it("non-alternating: 8×30s holds separated by 7×30s gaps, 450s total — byte-for-byte the old 8×1 shape's effect", () => {
-    const tl = buildTimeline(endurance);
-    const holds = tl.filter((s) => s.phase === "hold");
-    const gaps = tl.filter((s) => s.phase === "setRest" || s.phase === "rest");
-    expect(holds).toHaveLength(8);
-    expect(holds.every((h) => h.durS === 30)).toBe(true);
-    expect(gaps).toHaveLength(7);
-    expect(gaps.every((g) => g.durS === 30)).toBe(true);
-    // gaps are now labeled setRest (between sets), not rest (between reps) —
-    // a legitimate label change, not a timing change.
-    expect(gaps.every((g) => g.phase === "setRest")).toBe(true);
-    expect(timelineDurationS(tl)).toBe(450);
+  it("2 reps × 1 set produces L1,R1,L2,R2 and ends on the final right hold", () => {
+    const tl = buildTimeline(alt, { switchS: 3 });
+    expect(tl.filter((s) => s.phase === "hold").map((s) => [s.side, s.rep, s.set])).toEqual([
+      ["left", 1, 1], ["right", 1, 1], ["left", 2, 1], ["right", 2, 1],
+    ]);
+    expect(tl.at(-1)).toMatchObject({ phase: "hold", side: "right", rep: 2, set: 1 });
   });
 
-  it("alternating: sides flip every hold, gaps split into 27s rest + 3s switch, still 450s total", () => {
-    const tl = buildTimeline({ ...endurance, alternateSides: true }, { switchS: 3 });
-    const holds = tl.filter((s) => s.phase === "hold");
-    expect(holds.map((h) => h.side)).toEqual([
-      "left", "right", "left", "right", "left", "right", "left", "right",
+  it("gives both hands every rep in every one of 3 sets", () => {
+    const hs = holds({ ...alt, reps: 2, sets: 3, restSetsS: 10 });
+    expect(hs).toHaveLength(12);
+    for (const set of [1, 2, 3]) {
+      expect(hs.filter((h) => h.set === set).map((h) => [h.side, h.rep])).toEqual([
+        ["left", 1], ["right", 1], ["left", 2], ["right", 2],
+      ]);
+    }
+  });
+
+  it("7s hold / 10s rest leaves only the 3s switch after the right hold", () => {
+    const tl = buildTimeline({ ...alt, holdS: 7, restRepsS: 10 }, { switchS: 3 });
+    expect(tl.map((s) => [s.phase, s.side, s.durS])).toEqual([
+      ["hold", "left", 7], ["switch", "right", 3], ["hold", "right", 7],
+      ["switch", "left", 3], ["hold", "left", 7], ["switch", "right", 3],
+      ["hold", "right", 7],
     ]);
-    expect(holds.every((h) => h.durS === 30)).toBe(true);
-    const setRests = tl.filter((s) => s.phase === "setRest");
-    const switches = tl.filter((s) => s.phase === "switch");
-    expect(setRests).toHaveLength(7);
-    expect(setRests.every((r) => r.durS === 27)).toBe(true);
-    expect(switches).toHaveLength(7);
-    expect(switches.every((s) => s.durS === 3)).toBe(true);
-    expect(timelineDurationS(tl)).toBe(450);
+  });
+
+  it("uses only switch time when hold is longer than rest", () => {
+    const tl = buildTimeline({ ...alt, holdS: 12, restRepsS: 5 }, { switchS: 3 });
+    expect(tl.some((s) => s.phase === "rest")).toBe(false);
+    expect(tl.filter((s) => s.phase === "switch")).toHaveLength(3);
+  });
+
+  it("puts a long residual rest before the switch back to left", () => {
+    const tl = buildTimeline({ ...alt, holdS: 5, restRepsS: 30 }, { switchS: 3 });
+    expect(tl.slice(3, 5)).toMatchObject([
+      { phase: "rest", durS: 22 },
+      { phase: "switch", side: "left", durS: 3 },
+    ]);
+  });
+
+  it("uses setRest arithmetic at a set boundary", () => {
+    const tl = buildTimeline({ ...alt, reps: 1, sets: 2, holdS: 7, restSetsS: 20 }, { switchS: 3 });
+    expect(tl.slice(3, 5)).toMatchObject([
+      { phase: "setRest", durS: 10, rep: 1, set: 1 },
+      { phase: "switch", side: "left", durS: 3 },
+    ]);
+    expect(holds({ ...alt, reps: 1, sets: 2, holdS: 7, restSetsS: 20 }).map((h) => [h.side, h.set])).toEqual([
+      ["left", 1], ["right", 1], ["left", 2], ["right", 2],
+    ]);
+  });
+
+  it("uses the current set's varying hold in boundary recovery arithmetic", () => {
+    const p = { ...alt, reps: 1, sets: 2, holdS: 5, holdsS: [5, 12], restSetsS: 20 };
+    const tl = buildTimeline(p, { switchS: 3 });
+    expect(tl.filter((s) => s.phase === "hold").map((s) => s.durS)).toEqual([5, 5, 12, 12]);
+    expect(tl.find((s) => s.phase === "setRest")?.durS).toBe(12);
+  });
+
+  it("preserves preparation before the first left hold", () => {
+    const tl = buildTimeline(alt, { switchS: 3, prepareS: 5 });
+    expect(tl.slice(0, 2)).toMatchObject([
+      { phase: "prepare", side: null, durS: 5 },
+      { phase: "hold", side: "left", rep: 1, set: 1 },
+    ]);
+  });
+
+  it("keeps the exact non-alternating timeline unchanged", () => {
+    expect(buildTimeline({ ...repeaters, sets: 2, reps: 2 })).toEqual([
+      { phase: "hold", side: null, rep: 1, set: 1, startS: 0, durS: 7 },
+      { phase: "rest", side: null, rep: 1, set: 1, startS: 7, durS: 3 },
+      { phase: "hold", side: null, rep: 2, set: 1, startS: 10, durS: 7 },
+      { phase: "setRest", side: null, rep: 2, set: 1, startS: 17, durS: 180 },
+      { phase: "hold", side: null, rep: 1, set: 2, startS: 197, durS: 7 },
+      { phase: "rest", side: null, rep: 1, set: 2, startS: 204, durS: 3 },
+      { phase: "hold", side: null, rep: 2, set: 2, startS: 207, durS: 7 },
+    ]);
   });
 });
 

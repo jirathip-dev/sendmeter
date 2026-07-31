@@ -1,4 +1,5 @@
 import {
+  isMaintenanceZone,
   QUALITIES,
   ZONE_PROTOCOLS,
   type RecordedZone,
@@ -54,10 +55,8 @@ export interface ZoneBreakdown<T> {
   /// Holds `classifyZone` refuses to bucket (under 1s — stray blips). They
   /// count toward no zone; the UI says so rather than silently dropping them.
   unclassified: ZoneHold<T>[];
-  /// Prehab holds (#325) — recorded outside training balance BY DESIGN, not
-  /// an inference failure like `unclassified`. Kept separate so the UI can
-  /// say what they are (maintenance work, deliberately uncounted) instead of
-  /// lumping them in with stray blips.
+  /// Warm-up and Prehab holds — recorded outside training balance BY DESIGN,
+  /// not an inference failure like `unclassified`.
   excluded: ZoneHold<T>[];
 }
 
@@ -83,9 +82,8 @@ export function zoneBreakdown<T extends HoldLike>(recs: T[]): ZoneBreakdown<T> {
   for (const rec of recs) {
     const durationS = rec.durationMs / 1000;
     const { zone, source } = recordingZone(rec);
-    // Prehab (#325) checked before the `!zone` branch — it's never null and
-    // never a stray blip, it's a recorded zone that simply isn't trainable.
-    if (zone === "prehab") {
+    // Maintenance zones are recorded facts, but deliberately not trainable.
+    if (isMaintenanceZone(zone)) {
       excluded.push({ rec, durationS, source });
       continue;
     }
@@ -194,16 +192,16 @@ export interface HoldOrigin {
 export function holdOrigin(rec: ZonedHold): HoldOrigin {
   const durationS = rec.durationMs / 1000;
   const { zone, source } = recordingZone(rec);
-  // Prehab (#325) is always RECORDED (never inferred — `classifyZone` never
-  // returns it), so it gets its own short-circuit rather than flowing through
-  // the trainable-zone label lookup below, which doesn't know it.
-  if (zone === "prehab") {
+  // Maintenance zones are always RECORDED (never inferred), so they get their
+  // own short-circuit rather than flowing through the trainable label lookup.
+  if (isMaintenanceZone(zone)) {
+    const label = zone === "warmup" ? "Warm-up" : "Prehab";
     return {
       zone,
       source,
-      label: "Prehab",
+      label,
       short: "recorded",
-      long: "recorded as Prehab — not counted toward training balance",
+      long: `recorded as ${label} — not counted toward training balance`,
     };
   }
   const label = zone ? (QUALITIES.find((q) => q.id === zone)?.label ?? zone) : null;

@@ -53,7 +53,7 @@ describe("buildPresetPlan / planVaries", () => {
     expect(planVaries(rows, p.sets)).toBe(false);
   });
 
-  it("alternating sides: L/R/L/R per setSide", () => {
+  it("alternating sides: every set applies to both hands", () => {
     const p: PlanPreset = {
       ...base,
       sets: 4,
@@ -61,7 +61,7 @@ describe("buildPresetPlan / planVaries", () => {
       alternateSides: true,
     };
     const rows = buildPresetPlan(p, noRefs);
-    expect(rows.map((r) => r.side)).toEqual(["left", "right", "left", "right"]);
+    expect(rows.map((r) => r.side)).toEqual(["both", "both", "both", "both"]);
   });
 
   it("non-alternating: side is null for every row", () => {

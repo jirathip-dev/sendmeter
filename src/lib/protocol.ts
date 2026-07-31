@@ -6,10 +6,9 @@ import { predictDisplayFit, type DisplayFit } from "./forceCurveRegression";
 /// list of timed segments; the UI and the per-rep recorder both walk it, so
 /// countdowns and saved recordings can never disagree.
 ///
-/// Alternating mode (SL-78): hands alternate per SET — set 1 runs every rep
-/// LEFT, set 2 RIGHT, and so on. The set rest ends with a short SWITCH
-/// countdown into the other hand (the rest is auto-extended to at least the
-/// switch window). Within a set, rep rests are plain rests on the same hand.
+/// Alternating mode: every logical rep runs LEFT then RIGHT with the same rep
+/// and set numbers. The opposite hand's hold consumes part of the configured
+/// same-hand recovery; every hand change still gets at least `switchS`.
 
 export interface ProtocolSegment {
   phase: "prepare" | "hold" | "switch" | "rest" | "setRest";
@@ -25,12 +24,6 @@ export interface ProtocolSegment {
 export interface TimelinePosition {
   seg: ProtocolSegment;
   remaining: number;
-}
-
-/// Which hand a SET uses when the preset alternates: odd sets left, even
-/// sets right.
-export function setSide(set: number): "left" | "right" {
-  return set % 2 === 1 ? "left" : "right";
 }
 
 /// The hold duration for a given SET (#332) — `set` clamps to `1..p.sets`.
@@ -314,14 +307,15 @@ export function buildTimeline(
       const lastRep = rep === p.reps;
       const lastSet = set === p.sets;
       if (p.alternateSides) {
-        // Per-SET alternation: every rep in this set is on one hand; the set
-        // rest ends with a SWITCH countdown into the other hand.
-        push("hold", setSide(set), rep, set, hold);
-        if (!lastRep) push("rest", null, rep, set, p.restRepsS);
-        else if (!lastSet) {
-          const eff = Math.max(p.restSetsS, switchS);
-          push("setRest", null, rep, set, eff - switchS);
-          push("switch", setSide(set + 1), rep, set, switchS);
+        push("hold", "left", rep, set, hold);
+        push("switch", "right", rep, set, switchS);
+        push("hold", "right", rep, set, hold);
+
+        if (!lastRep || !lastSet) {
+          const configuredRest = lastRep ? p.restSetsS : p.restRepsS;
+          const remainingGap = Math.max(configuredRest - hold, switchS);
+          push(lastRep ? "setRest" : "rest", null, rep, set, remainingGap - switchS);
+          push("switch", "left", rep, set, switchS);
         }
       } else {
         push("hold", null, rep, set, hold);

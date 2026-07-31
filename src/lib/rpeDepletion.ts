@@ -69,9 +69,9 @@ export interface DepletionRep {
   /// `isEffort` is false (see below).
   cf: number | null;
   wPrime: number | null;
-  /// Whether this rep is a maximal-intent effort (see `isEffortRecording`,
-  /// zoneHistory.ts, #325). False for a protocol that is submaximal BY
-  /// CONSTRUCTION (currently only Prehab, #338) — such a rep's depletion is
+  /// Whether this rep spends measurable W′ (see
+  /// `isDepletionEffortRecording`, zoneHistory.ts). False for a protocol
+  /// known below CF BY CONSTRUCTION (currently only Prehab, #338) — its depletion is
   /// defined as zero regardless of whether cf/wPrime are populated, because
   /// we don't need to measure a hold we already know sits below CF. Only an
   /// effort rep's depletion depends on having a fitted curve at all. A

@@ -258,7 +258,8 @@ export default function ForceFullscreen({
       : null;
 
   // Upcoming hand during a rest (alternating protocols): the next hold
-  // segment's side — same hand within a set, the other one across a set rest.
+  // segment's side. Every logical rep runs left then right, and the only idle
+  // rest segments sit before the switch back to left.
   const nextHoldSide =
     pos && timeline
       ? (timeline.find(

@@ -371,15 +371,19 @@ export type TrainingQuality =
   | "power-endurance"
   | "endurance";
 
-/// Every zone a RECORDING can carry (#325), vs. `TrainingQuality`'s four
+/// Every zone a RECORDING can carry (#297/#325), vs. `TrainingQuality`'s four
 /// TRAINABLE qualities that key `ZONE_PROTOCOLS`/`zoneSetDurationS`/
-/// `classifyZone`/the balance code. "prehab" is deliberately NOT a fifth
-/// `TrainingQuality`: it has no "set duration" to divide training-balance by
-/// and no classification a duration/load pair could infer it as (it's always
-/// recorded, never inferred) — widening `TrainingQuality` itself would force
-/// a meaningless entry through every one of those. Read layers that only ever
-/// need "what zone did this hold get saved under" use this union instead.
-export type RecordedZone = TrainingQuality | "prehab";
+/// `classifyZone`/the balance code. Maintenance protocols are deliberately
+/// NOT training qualities: they have no set-duration divisor and are always
+/// recorded explicitly rather than inferred from duration/load.
+export type MaintenanceZone = "warmup" | "prehab";
+export type RecordedZone = TrainingQuality | MaintenanceZone;
+
+export function isMaintenanceZone(
+  zone: RecordedZone | null,
+): zone is MaintenanceZone {
+  return zone === "warmup" || zone === "prehab";
+}
 
 export interface ZoneTarget {
   quality: TrainingQuality;
@@ -409,9 +413,7 @@ export const ZONE_PROTOCOLS: Record<
   power: { holdS: 5, restRepsS: 150, reps: 6, sets: 1, restSetsS: 0 },
   strength: { holdS: 10, restRepsS: 150, reps: 5, sets: 1, restSetsS: 0 },
   "power-endurance": { holdS: 7, restRepsS: 3, reps: 6, sets: 4, restSetsS: 120 },
-  // #320: 1 rep × 8 sets, not 8 reps × 1 set — buildTimeline alternates
-  // sides per SET, so the old shape (sets: 1) never triggered "Alternate
-  // left ⇄ right". Same 8×30s holds / 30s gaps / 450s total either way.
+  // #320: modeled as 1 rep × 8 sets so each 30s recovery is a set boundary.
   endurance: { holdS: 30, restRepsS: 0, reps: 1, sets: 8, restSetsS: 30 },
 };
 
@@ -607,6 +609,65 @@ export function zonePrescription(
     sets: zp.sets,
     restRepsS: zp.restRepsS,
     restSetsS: zp.restSetsS,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Warm-up (#297 Part B2): a short finger-specific primer to use AFTER general
+// movement and easy climbing, not as a replacement for either. The dose ramps
+// both duration and load without accumulating training volume: two reps per
+// set at 5s/7s/10s and 40%/55%/70% of the exercise PR, with enough rest to
+// keep the last pulls crisp. The evidence supports progressive,
+// climbing-specific warm-up but does not establish one dynamometer protocol,
+// so the user-facing basis says this is a conservative product prescription.
+// It is recorded under its own maintenance zone and excluded from training
+// balance/curve/PR calculations.
+export const WARMUP_PROTOCOL = {
+  holdS: 5,
+  holdsS: [5, 7, 10],
+  reps: 2,
+  sets: 3,
+  restRepsS: 15,
+  restSetsS: 60,
+  targetPct: 40,
+  pctStep: 15,
+  pctBasis: "pr",
+} as const;
+
+export interface WarmupTarget {
+  targetKg: number;
+  finalTargetKg: number;
+  lowKg: number;
+  highKg: number;
+  workS: number;
+  label: string;
+  basis: string;
+}
+
+/// Initial live-gauge band plus the final ramp target. The guided protocol
+/// resolves every set from `% of PR`; this model-based preview uses the same
+/// best short-window reference that unlocks the recommended card.
+export function warmupTarget(
+  model: ForceCurveModel,
+  prKg = model.maxF,
+): WarmupTarget | null {
+  if (prKg <= 0) return null;
+  const round1 = (v: number) => Math.round(v * 10) / 10;
+  const firstPct = WARMUP_PROTOCOL.targetPct;
+  const finalPct = firstPct + (WARMUP_PROTOCOL.sets - 1) * WARMUP_PROTOCOL.pctStep;
+  const targetKg = round1(prKg * firstPct / 100);
+  const finalTargetKg = round1(prKg * finalPct / 100);
+  return {
+    targetKg,
+    finalTargetKg,
+    lowKg: round1(targetKg * 0.9),
+    highKg: round1(targetKg * 1.1),
+    workS: WARMUP_PROTOCOL.holdS,
+    label: "Warm-up",
+    basis:
+      `${firstPct}% → ${finalPct}% of your best short-window force ` +
+      `(${round1(prKg)} kg), with 5s → 7s → 10s holds. A conservative ` +
+      "finger-specific primer after general movement and easy climbing — not a complete warm-up or clinical prescription.",
   };
 }
 
