@@ -12,8 +12,11 @@ import type { HealthMetric, Phase, Session } from "../types";
 import InfoDot from "./InfoDot";
 
 const W = 300;
-const H = 96;
-const PAD = { top: 10, right: 10, bottom: 16, left: 30 };
+// The extra height belongs entirely to the two-row axis: H - PAD.bottom
+// remains 80, so the plot itself keeps its original dimensions.
+const H = 108;
+const PAD = { top: 10, right: 10, bottom: 28, left: 30 };
+const CROSSING_LABEL_HALF_WIDTH = 12;
 
 interface Props {
   phase: Phase;
@@ -43,7 +46,7 @@ function headline(p: AcwrProjection, phaseName: string): string {
     : `Stays inside your ${band} all week, even with no training.`;
 }
 
-function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string }) {
+export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string }) {
   const values = p.days.map((d) => d.acwr);
   const lo = Math.min(...values, p.band?.low ?? Infinity);
   const hi = Math.max(...values, p.band?.high ?? -Infinity);
@@ -54,6 +57,9 @@ function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string }) {
 
   const point = (d: ProjectedDay) => `${px(d.dayOffset)},${py(d.acwr)}`;
   const crossing = p.fallsBelow;
+  const crossingLabelX = crossing
+    ? Math.min(px(crossing.dayOffset), W - PAD.right - CROSSING_LABEL_HALF_WIDTH)
+    : 0;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }} aria-hidden="true">
@@ -119,21 +125,36 @@ function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string }) {
       {/* Today is the only real number on the chart — solid, colored by its
           risk status, and the only labelled value. */}
       <circle cx={px(0)} cy={py(p.days[0]!.acwr)} r={4} fill={todayColor} />
-      <text x={px(0)} y={H - 4} textAnchor="start" fontSize={9} fill="var(--ink-faint)">
+      <text
+        x={px(0)}
+        y={H - 4}
+        textAnchor="start"
+        fontSize={9}
+        fill="var(--ink-faint)"
+        data-axis-label="now"
+      >
         Now {p.days[0]!.acwr.toFixed(2)}
       </text>
       {crossing && (
         <text
-          x={px(crossing.dayOffset)}
-          y={H - 4}
+          x={crossingLabelX}
+          y={H - 16}
           textAnchor="middle"
           fontSize={9}
           fill="var(--ink-faint)"
+          data-axis-label="crossing"
         >
           {parseLocalDate(crossing.date).toLocaleDateString(undefined, { weekday: "short" })}
         </text>
       )}
-      <text x={W - PAD.right} y={H - 4} textAnchor="end" fontSize={9} fill="var(--ink-faint)">
+      <text
+        x={W - PAD.right}
+        y={H - 4}
+        textAnchor="end"
+        fontSize={9}
+        fill="var(--ink-faint)"
+        data-axis-label="horizon"
+      >
         +{PROJECTION_DAYS}d
       </text>
     </svg>
