@@ -110,7 +110,14 @@ describe("no session-consuming native client may hold or spend a refresh token (
 describe("the phone relays an access token only (#265)", () => {
   it("the WatchConnectivity bridge never forwards a refresh token", () => {
     const [bridge] = sources(AUTH_BRIDGE);
-    expect(bridge!.code).not.toMatch(/refreshToken/);
+    // #368 temporarily supplies one fixed invalid literal to the native WC
+    // dictionary for the pre-#270 decoder's presence guard. It must never be
+    // accepted from JS or sourced from a real Supabase session.
+    expect(bridge!.code).not.toMatch(/getString\(\s*"refreshToken"/);
+    expect(bridge!.code.match(/"refreshToken"\s*:/g)).toHaveLength(1);
+    expect(bridge!.code).toMatch(
+      /"refreshToken"\s*:\s*SessionRelay\.legacyRefreshTokenSentinel/,
+    );
   });
 
   it("stamps every relayed payload with something that always changes (#266)", () => {
@@ -143,5 +150,29 @@ describe("useAuth detaches every listener it attaches (#266)", () => {
     // to remove and every remount left another listener on a stale closure.
     expect(src).toMatch(/=\s*onWatchSessionRequest\(/);
     expect(src).toMatch(/watchRequest\.then\(\(handle\) => handle\?\.remove\(\)\)/);
+  });
+});
+
+describe("watch diagnostics events stay transition-driven (#368)", () => {
+  const [bridge] = sources(AUTH_BRIDGE);
+
+  it("does not refresh AccountSheet for every live force beat", () => {
+    expect(bridge!.code).toMatch(/let buildChanged =/);
+    expect(bridge!.code).toMatch(/let pendingChanged =/);
+    expect(bridge!.code).toMatch(
+      /if buildChanged \|\| pendingChanged \|\| kind == "requestSession" \|\| kind == "queueStatus"/,
+    );
+  });
+
+  it("records build and queue transitions through change-returning stores", () => {
+    expect(bridge!.code).toMatch(/static func record\(_ identity: BuildIdentity\) -> Bool/);
+    expect(bridge!.code).toMatch(/static func record\(_ count: Int\) -> Bool/);
+  });
+
+  it("re-reads watch info after listener registration resolves", () => {
+    const sheet = readFileSync(join(REPO, "src", "components", "AccountSheet.tsx"), "utf8");
+    expect(sheet).toMatch(/onWatchInfoChanged\(refresh\)\.then\(\(handle\) => \{/);
+    expect(sheet).toMatch(/if \(!alive\)[\s\S]*handle\?\.remove\(\)[\s\S]*return null/);
+    expect(sheet).toMatch(/return null;[\s\S]*refresh\(\);[\s\S]*return handle/);
   });
 });

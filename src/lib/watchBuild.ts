@@ -1,6 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
 import type { WatchBuildInfo, WatchBuildStatus, WatchSyncStatus } from "sendlog-auth-bridge";
+import type { PluginListenerHandle } from "@capacitor/core";
 
 export type { WatchBuildInfo, WatchBuildStatus, WatchSyncStatus };
 
@@ -24,6 +25,13 @@ export async function loadWatchBuildInfo(): Promise<WatchBuildInfo | null> {
   } catch {
     return null;
   }
+}
+
+export function onWatchInfoChanged(
+  handler: () => void,
+): Promise<PluginListenerHandle | null> {
+  if (!Capacitor.isNativePlatform()) return Promise.resolve(null);
+  return SendLogAuthBridge.addListener("watchInfoChanged", handler);
 }
 
 export type WatchBuildTone = "muted" | "warning";

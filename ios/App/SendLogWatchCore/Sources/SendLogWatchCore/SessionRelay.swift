@@ -18,6 +18,15 @@ import Foundation
 /// The claims are read, never verified: they scope local behaviour only, and
 /// the server re-validates the signature on every request regardless.
 public enum SessionRelay {
+    /// Temporary compatibility value for watches older than #270, whose
+    /// decoder rejects a signed-in relay unless a `refreshToken` key exists.
+    /// The phone bridge may put this literal into the native WC dictionary;
+    /// it is not accepted from JS and is never stored by current watches.
+    /// Because it was never issued by Supabase, presenting it to `/token` can
+    /// only fail as an invalid credential; it cannot rotate or revoke any
+    /// real session family. Remove after the legacy TestFlight window closes.
+    public static let legacyRefreshTokenSentinel = "sendmeter-legacy-no-refresh-token"
+
     /// Don't adopt a token that is about to die mid-request. Also the margin
     /// that decides when the watch asks the phone for a fresh one.
     public static let freshnessMarginS: TimeInterval = 60

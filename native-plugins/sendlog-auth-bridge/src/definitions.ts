@@ -154,4 +154,11 @@ export interface SendLogAuthBridgePlugin {
     eventName: "sessionRequested",
     listener: () => void,
   ): Promise<PluginListenerHandle>;
+
+  /// Build, queue depth, pairing, or install state changed. Consumers should
+  /// re-read getWatchInfo(); the event deliberately carries no partial state.
+  addListener(
+    eventName: "watchInfoChanged",
+    listener: () => void,
+  ): Promise<PluginListenerHandle>;
 }

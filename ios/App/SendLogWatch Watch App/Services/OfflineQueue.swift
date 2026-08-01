@@ -9,7 +9,7 @@ import Supabase
 actor OfflineQueue {
     static let shared = OfflineQueue()
 
-    private var draining = false
+    private var drainState = CoalescingDrain()
 
     private var pendingDir: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -74,13 +74,18 @@ actor OfflineQueue {
             try? data.write(to: url, options: .atomic)
         }
         _ = pendingCount() // refresh the reported depth (#21)
+        Task { @MainActor in WatchBuild.reportQueueStatus() }
     }
 
     func drain() async {
-        guard !draining else { return }
-        draining = true
-        defer { draining = false }
+        guard drainState.request() == .start else { return }
+        // request() marks the actor as running before this first suspension.
+        repeat {
+            await drainPass()
+        } while drainState.completePass() == .rerun
+    }
 
+    private func drainPass() async {
         let files = ((try? FileManager.default.contentsOfDirectory(
             at: pendingDir, includingPropertiesForKeys: [.creationDateKey]
         )) ?? [])
@@ -122,5 +127,6 @@ actor OfflineQueue {
             }
         }
         _ = pendingCount() // refresh the reported depth (#21)
+        await MainActor.run { WatchBuild.reportQueueStatus() }
     }
 }
