@@ -34,21 +34,35 @@ final class SendmeterScreenshots: XCTestCase {
         }
         XCTAssertTrue(curveInfo.isHittable, "The populated force curve should be visible")
 
-        let upperHalf = app.windows.firstMatch.frame.height * 0.45
-        for _ in 0..<4 where curveInfo.frame.midY > upperHalf {
+        // The iPad's two-column desktop layout reaches its natural scroll
+        // boundary with the curve just below center; phones can frame it
+        // higher. Both limits keep the complete chart in the capture.
+        let deviceName = ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? ""
+        let curveFrameLimit = app.windows.firstMatch.frame.height * (deviceName.hasPrefix("iPad") ? 0.60 : 0.45)
+        for _ in 0..<4 where curveInfo.frame.midY > curveFrameLimit {
             webView.swipeUp(velocity: .fast)
         }
         XCTAssertLessThanOrEqual(
             curveInfo.frame.midY,
-            upperHalf,
-            "The force curve should be framed in the upper half of the screenshot"
+            curveFrameLimit,
+            "The force curve should be framed prominently in the screenshot"
         )
         snapshot("04-force-curve")
     }
 
     private func signInToLocalFixture() {
         let email = app.textFields["Email"]
-        XCTAssertTrue(email.waitForExistence(timeout: 15))
+        // Snapshot retries do not always reinstall the app. If the first run
+        // signed in before a later assertion failed, reuse that valid session.
+        // A freshly erased 13-inch iPad can also take longer to finish its
+        // first WebView launch, so allow a generous cold-start window.
+        if !email.waitForExistence(timeout: 30) {
+            XCTAssertTrue(
+                app.staticTexts["Readiness"].waitForExistence(timeout: 20),
+                "Expected either the local-fixture sign-in form or an existing signed-in session"
+            )
+            return
+        }
         email.tap()
         email.typeText("dev@sendmeter.test")
 
