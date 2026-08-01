@@ -117,7 +117,8 @@ describe("runFetchAttempts", () => {
         UserSettings,
         PhasePeriod[],
       ]);
-    const deps = baseDeps({ fetchAll });
+    const onExhausted = vi.fn();
+    const deps = baseDeps({ fetchAll, onExhausted });
     await runFetchAttempts(deps);
     expect(fetchAll).toHaveBeenCalledTimes(3);
     expect(deps.onSuccess).toHaveBeenCalledTimes(1);
@@ -128,16 +129,20 @@ describe("runFetchAttempts", () => {
       phasePeriods: PERIODS,
     });
     expect(deps.onError).not.toHaveBeenCalled();
+    expect(onExhausted).not.toHaveBeenCalled();
   });
 
   it("fails all three attempts and surfaces the final error", async () => {
     const fetchAll = vi.fn().mockRejectedValue(new Error("boom"));
-    const deps = baseDeps({ fetchAll });
+    const onExhausted = vi.fn();
+    const deps = baseDeps({ fetchAll, onExhausted });
     await runFetchAttempts(deps);
     expect(fetchAll).toHaveBeenCalledTimes(3);
     expect(deps.onSuccess).not.toHaveBeenCalled();
     expect(deps.onError).toHaveBeenCalledTimes(1);
     expect(deps.onError).toHaveBeenCalledWith("boom");
+    expect(onExhausted).toHaveBeenCalledOnce();
+    expect(onExhausted).toHaveBeenCalledWith(expect.any(Error), 3);
     expect(deps.refreshSession).toHaveBeenCalledTimes(2);
     expect(deps.delay).toHaveBeenCalledTimes(2);
     // Backoff is 400 * (attempt + 1) — verify the actual millisecond values,
@@ -240,6 +245,7 @@ describe("withOptimisticUpdate", () => {
     const rollback = vi.fn();
     const onSuccess = vi.fn();
     const onError = vi.fn();
+    const onFailure = vi.fn();
 
     const result = await withOptimisticUpdate({
       apply: vi.fn(),
@@ -250,11 +256,13 @@ describe("withOptimisticUpdate", () => {
       rollback,
       onError,
       fallbackMessage: "fallback",
+      onFailure,
     });
 
     expect(rollback).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledWith("specific failure");
     expect(onSuccess).not.toHaveBeenCalled();
+    expect(onFailure).toHaveBeenCalledWith(expect.any(Error));
     expect(result).toBeUndefined();
   });
 
@@ -321,6 +329,7 @@ describe("addTindeqSessionAction", () => {
   it("returns false and reports the error message when the insert rejects", async () => {
     const onSuccess = vi.fn();
     const onError = vi.fn();
+    const onFailure = vi.fn();
 
     const result = await addTindeqSessionAction({
       action: async () => {
@@ -328,11 +337,13 @@ describe("addTindeqSessionAction", () => {
       },
       onSuccess,
       onError,
+      onFailure,
     });
 
     expect(result).toBe(false);
     expect(onError).toHaveBeenCalledWith("insert failed");
     expect(onSuccess).not.toHaveBeenCalled();
+    expect(onFailure).toHaveBeenCalledWith(expect.any(Error));
   });
 
   it("falls back to a generic message for a non-Error rejection", async () => {

@@ -90,8 +90,9 @@ Declare these under **Data Types Collected**, all with:
 The Diagnostics row covers error monitoring keyed to the auth uuid, which is why
 it answers "linked to identity: yes" like every other row here:
 
-**Error monitoring** (issue #227) covers uncaught JavaScript exceptions, React
-render errors and unhandled promise rejections, processed by **Sentry**
+**Error monitoring** (issues #227 and #382) covers uncaught JavaScript
+exceptions, React render errors, unhandled promise rejections, and a narrow set
+of handled session/workout failures after recovery is exhausted, processed by **Sentry**
 (`sentry.io`, Functional Software, Inc.) — the one **third-party processor**
 the app uses. `src/lib/monitoring.ts` is the only place it is configured.
 
@@ -116,6 +117,11 @@ What Sentry receives is built from an allow-list in `beforeSend` /
 - The SDK initializes **only** when a build-time `VITE_SENTRY_DSN` is present.
   Dev, test and any DSN-less build send nothing — the SDK is dead-code-
   eliminated from the bundle entirely.
+- Handled database failures send only closed operation/class/outcome tags and
+  numeric/boolean diagnostics. Raw Supabase errors, rows, notes, training or
+  health values, response bodies, `details`, and `hint` are never captured.
+  Recovered load/network/auth failures, expected BLE disconnects, cancellation,
+  and recordings retained in the offline queue are deliberately excluded.
 
 **Used for tracking stays "No"**: the data is never linked with third-party
 data for advertising or measurement, and there is no ad network or cross-app

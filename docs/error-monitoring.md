@@ -2,20 +2,63 @@
 
 ## What it is for
 
-Exactly one class of bug: the one we currently cannot see at all. A JS exception
-on a phone we don't hold, a React render crash that leaves a white screen, an
-unhandled rejection in a background sync. Before this, those were invisible
-unless the user described them.
+The web layer reports JS exceptions we otherwise cannot see: a crash on a phone
+we don't hold, a React render failure, or an unhandled rejection in background
+work. It also reports a deliberately small set of handled operational failures
+after their recovery path is exhausted (issue #382), described below.
 
-**What it does not catch:** anything that fails *silently*. The #202 overnight
-logout throws nothing — auth-js removes the session and emits `SIGNED_OUT`, no
-exception, no rejection. That is what the bounded on-device ring in
+**What it still does not catch:** silent auth-state transitions such as the #202
+overnight logout. Auth-js removes the session and emits `SIGNED_OUT`, with no
+exception or rejection. That is what the bounded on-device ring in
 `src/lib/authDiagnostics.ts` exists for, and this does not replace it. Don't
 expect Sentry to explain a "logged out again" report.
 
 Native crash reporting (Sentry Cocoa) is **out of scope** — this is the WebView
 JS layer only. A Swift crash in the watch app or a plugin still shows up only in
 App Store Connect → Crashes.
+
+## Handled operational failures
+
+`captureHandledOperationalFailure` is the sole entry point. Callers choose an
+operation from a closed TypeScript union; failure class and outcome are derived
+locally as closed values. The raw Supabase/client error is inspected only on the
+device and is never passed to Sentry. Events have a constant message and a
+stable fingerprint of `operation + failure class`, so one outage groups into
+one issue.
+
+Monitored after final recovery:
+
+- the initial sessions/settings/phase-period load, only after all three attempts
+  fail and at most once per app launch;
+- session insert/update/delete/restore/purge failures after UI rollback or the
+  final caught mutation failure;
+- phone-workout inserts and automatic routine/Tindeq session logs whose failure
+  leaves completed work absent from History;
+- a mutation scoped to one expected row that returns success with zero rows.
+  The repository requests the affected row with `maybeSingle()` and turns null
+  into `ZeroRowMutationError`, rather than silently accepting an RLS-filtered
+  update/delete.
+
+Deliberately excluded:
+
+- either of the first two training-data load failures when a later retry works;
+- network failures while the browser reports that the device is offline;
+- ordinary token expiry that recovers, invalid-credential responses from sign
+  in, and user-cancelled auth/device prompts;
+- expected BLE disconnects;
+- Tindeq recording insert failures when the recording is safely retained in the
+  offline queue (the existing data-loss signal remains responsible only when
+  durable local retention itself fails);
+- legitimate no-row lookups implemented with `maybeSingle()` (live workout,
+  optional workout detail, and similar reads). Only mutation helpers use the
+  zero-row invariant.
+
+Classification covers permission/RLS, auth, network, constraint, schema,
+zero-row invariant, and unknown failures. Sentry receives only the controlled
+classification, operation, outcome, and applicable numeric/boolean facts:
+retry-attempt count, automatic/manual flag, affected-row count, and a validated
+HTTP status. PostgreSQL/PostgREST codes are used locally for classification but are
+not sent.
 
 ## The scrub is the feature
 
@@ -28,6 +71,7 @@ not explicitly allowed is dropped before the transport sees it.
 | Every `HealthMetric` field name (camelCase + `health_metrics` column names) drops its whole subtree; any string naming one is redacted whole (which takes the value with it) | `HEALTH_TERMS`, `scrubDeep` |
 | URLs lose query string + fragment | `stripQuery` |
 | `extra` / `contexts` / `tags` keep allow-listed keys only | `ALLOWED_*` |
+| Handled-failure tags are closed operation/class/outcome values; details are runtime-checked numbers/booleans only | `captureHandledOperationalFailure` |
 | Breadcrumbs: only `navigation` / `fetch` / `xhr` / `ui.click`, with an allow-listed `data` shape. `console` is dropped — a console line can contain anything | `scrubBreadcrumb` |
 | No replay, no tracing, and every `dataCollection` switch off — no inferred user, cookies, headers, bodies, query params, or stack-frame locals (that one defaults to *on*, and a local could be a whole health record) | `initMonitoring` |
 | `BrowserSession` integration disabled — session envelopes bypass `beforeSend`, so dropping it means *every* outbound envelope has been scrubbed | `initMonitoring` |
@@ -38,6 +82,12 @@ context block, a breadcrumb, the request query string, the exception message)
 and asserts that none of the values or field names survive serialization. It
 first asserts the *unscrubbed* fixture contains them all, so the test cannot
 pass by being empty.
+
+The handled-failure tests separately pass representative Supabase `message`,
+`details`, `hint`, response body, session note, training values, health values,
+and email into the local classifier and assert none reach the capture call.
+They also pin the controlled event shape, grouping, launch deduplication,
+zero-row outcome, and the same DSN-less no-op gate.
 
 When adding a field to `HealthMetric`, add its name (both spellings) to
 `HEALTH_TERMS` and to the test's field list.

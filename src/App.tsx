@@ -41,6 +41,7 @@ import { takeLostRecordingsNotice } from "./lib/lostRecordings";
 import type { SignOut } from "./lib/signOut";
 import SplashScreen from "./components/SplashScreen";
 import TrainingDataSkeleton from "./components/TrainingDataSkeleton";
+import { captureHandledOperationalFailure } from "./lib/monitoring";
 
 // Fast local/session restores can resolve before the first animation beat is
 // visible. Keep the branded handoff long enough to complete one dyno, without
@@ -263,8 +264,10 @@ function AuthedApp({
   function submitSession() {
     void (async () => {
       const saved = await addSession(form);
-      toast("Session logged");
-      if (saved) setNudgeSession(saved);
+      if (saved) {
+        toast("Session logged");
+        setNudgeSession(saved);
+      }
     })();
     setShowModal(false);
     setForm({
@@ -295,8 +298,15 @@ function AuthedApp({
       label: "Undo",
       onClick: () => {
         void (async () => {
-          await restoreSession(id);
-          await reload();
+          try {
+            await restoreSession(id);
+            await reload();
+          } catch (error) {
+            captureHandledOperationalFailure("session.restore", error, {
+              automatic: false,
+            });
+            toast("Couldn't restore session", "error");
+          }
         })();
       },
     });

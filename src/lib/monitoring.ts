@@ -1,11 +1,12 @@
 import * as Sentry from "@sentry/react";
 import type { Breadcrumb, ErrorEvent, Event } from "@sentry/react";
+import { isZeroRowMutationError } from "./mutationInvariant";
 
-// Error monitoring (issue #227, the decision from #10) — the ONLY class of bug
-// this exists for is the one we currently cannot see at all: a JS exception on
-// a phone we don't hold, a render crash, an unhandled rejection in a background
-// sync. It does NOT catch silent failures: the #202 overnight logout, for
-// instance, throws nothing and would never have produced an event here.
+// Error monitoring (issues #227/#382, the decision from #10): JS exceptions on
+// phones we don't hold plus a narrow allow-list of handled operational failures
+// after recovery is exhausted. It does NOT catch every silent failure: the #202
+// overnight logout, for instance, throws nothing and has its own bounded local
+// diagnostics rather than a Sentry event.
 //
 // Everything below is subtractive. The scrub is the point of the feature, not a
 // detail of it: health data must never leave the device, so the event that
@@ -59,9 +60,27 @@ const HEALTH_RE = new RegExp(`\\b(?:${HEALTH_TERMS.join("|")})\\b`, "i");
  */
 const ALLOWED_CONTEXTS = ["app", "browser", "os", "device", "runtime", "react"];
 /** The only `extra` keys we ever set deliberately. Everything else is dropped. */
-const ALLOWED_EXTRA_KEYS = ["view", "route", "component"];
+const ALLOWED_EXTRA_KEYS = [
+  "view",
+  "route",
+  "component",
+  // Handled operational failures (#382): every value is runtime-checked to
+  // remain numeric/boolean by captureHandledOperationalFailure.
+  "retry_attempts",
+  "automatic",
+  "affected_rows",
+  "status",
+];
 /** The only tags we ever set deliberately. */
-const ALLOWED_TAGS = ["platform", "native", "build"];
+const ALLOWED_TAGS = [
+  "platform",
+  "native",
+  "build",
+  // Closed values owned by captureHandledOperationalFailure (#382).
+  "operation",
+  "failure_class",
+  "outcome",
+];
 /**
  * Breadcrumb categories that carry a URL/selector and nothing else. `console`
  * is deliberately absent — a console line can contain literally anything.
@@ -186,6 +205,7 @@ export function scrubEvent<T extends Event>(event: T): T {
   e.extra = pickAllowed(e.extra, ALLOWED_EXTRA_KEYS);
   e.contexts = pickAllowed(e.contexts, ALLOWED_CONTEXTS);
   e.tags = pickAllowed(e.tags, ALLOWED_TAGS);
+  scrubHandledFailureFields(e);
   e.breadcrumbs = e.breadcrumbs
     ?.map(scrubBreadcrumb)
     .filter((b): b is Breadcrumb => b !== null);
@@ -253,9 +273,9 @@ export function setMonitoringUser(userId: string | null): void {
 }
 
 /**
- * Report user data that was lost because a durable write refused (#264) — the
- * one failure class that produces no exception, no stack and no retry, so
- * nothing else here would ever see it.
+ * Report user data that was lost because a durable write refused (#264). This
+ * remains separate from handled operational failures: it means the fallback
+ * storage itself failed and data was actually discarded.
  *
  * `what` must be a CONSTANT the code chose (e.g. `"tindeq-recording:
  * salvage-on-unmount"`), never anything derived from user input, and `detail`
@@ -274,6 +294,266 @@ export function captureDataLoss(
     `data-loss: ${what}${parts.length ? ` (${parts.join(", ")})` : ""}`,
     "error",
   );
+}
+
+const HANDLED_OPERATIONS = {
+  "training-data.load": { dedupeForLaunch: true },
+  "session.insert": { dedupeForLaunch: false },
+  "session.update": { dedupeForLaunch: false },
+  "session.delete": { dedupeForLaunch: false },
+  "session.restore": { dedupeForLaunch: false },
+  "session.purge": { dedupeForLaunch: false },
+  "workout.insert": { dedupeForLaunch: false },
+} as const;
+
+export type HandledFailureOperation = keyof typeof HANDLED_OPERATIONS;
+export type HandledFailureClass =
+  | "permission"
+  | "auth"
+  | "network"
+  | "constraint"
+  | "schema"
+  | "invariant"
+  | "unknown";
+export type HandledFailureOutcome =
+  | "recovery-exhausted"
+  | "zero-row-invariant";
+
+const HANDLED_FAILURE_CLASSES = new Set<HandledFailureClass>([
+  "permission",
+  "auth",
+  "network",
+  "constraint",
+  "schema",
+  "invariant",
+  "unknown",
+]);
+const HANDLED_FAILURE_OUTCOMES = new Set<HandledFailureOutcome>([
+  "recovery-exhausted",
+  "zero-row-invariant",
+]);
+
+/** Belt-and-braces validation behind the entry point's closed TypeScript API. */
+function scrubHandledFailureFields(event: Event): void {
+  const tags = event.tags;
+  if (tags) {
+    if (
+      tags.operation !== undefined &&
+      (typeof tags.operation !== "string" ||
+        !Object.hasOwn(HANDLED_OPERATIONS, tags.operation))
+    ) {
+      delete tags.operation;
+    }
+    if (
+      tags.failure_class !== undefined &&
+      (typeof tags.failure_class !== "string" ||
+        !HANDLED_FAILURE_CLASSES.has(tags.failure_class as HandledFailureClass))
+    ) {
+      delete tags.failure_class;
+    }
+    if (
+      tags.outcome !== undefined &&
+      (typeof tags.outcome !== "string" ||
+        !HANDLED_FAILURE_OUTCOMES.has(tags.outcome as HandledFailureOutcome))
+    ) {
+      delete tags.outcome;
+    }
+    if (Object.keys(tags).length === 0) event.tags = undefined;
+  }
+
+  const extra = event.extra;
+  if (!extra) return;
+  if (
+    extra.retry_attempts !== undefined &&
+    (typeof extra.retry_attempts !== "number" ||
+      !Number.isInteger(extra.retry_attempts) ||
+      extra.retry_attempts <= 0)
+  ) {
+    delete extra.retry_attempts;
+  }
+  if (extra.automatic !== undefined && typeof extra.automatic !== "boolean") {
+    delete extra.automatic;
+  }
+  if (extra.affected_rows !== undefined && extra.affected_rows !== 0) {
+    delete extra.affected_rows;
+  }
+  if (
+    extra.status !== undefined &&
+    (typeof extra.status !== "number" ||
+      !Number.isInteger(extra.status) ||
+      extra.status < 400 ||
+      extra.status > 599)
+  ) {
+    delete extra.status;
+  }
+  if (Object.keys(extra).length === 0) event.extra = undefined;
+}
+
+export interface HandledFailureDetail {
+  retryAttempts?: number;
+  automatic?: boolean;
+  /** True only when the failed recording is durably queued for retry. */
+  retainedOffline?: boolean;
+}
+
+type ErrorFacts = {
+  code?: string;
+  message?: string;
+  name?: string;
+  status?: number;
+};
+
+function errorFacts(error: unknown): ErrorFacts {
+  if ((typeof error !== "object" && typeof error !== "function") || error === null) {
+    return {};
+  }
+  const value = error as Record<string, unknown>;
+  const statusValue = value.status ?? value.statusCode;
+  return {
+    ...(typeof value.code === "string" ? { code: value.code } : {}),
+    ...(typeof value.message === "string" ? { message: value.message } : {}),
+    ...(typeof value.name === "string" ? { name: value.name } : {}),
+    ...(typeof statusValue === "number" &&
+    Number.isInteger(statusValue) &&
+    statusValue >= 400 &&
+    statusValue <= 599
+      ? { status: statusValue }
+      : {}),
+  };
+}
+
+/**
+ * Classify locally from the database/client failure. The raw object and all
+ * of its strings are discarded; only this closed result can cross the Sentry
+ * boundary.
+ */
+export function classifyHandledFailure(error: unknown): HandledFailureClass {
+  if (isZeroRowMutationError(error)) return "invariant";
+  const { code = "", message = "", name = "", status } = errorFacts(error);
+  const upperCode = code.toUpperCase();
+
+  if (
+    upperCode === "42501" ||
+    status === 403 ||
+    /\b(row[- ]level security|rls|permission denied|policy)\b/i.test(message)
+  ) {
+    return "permission";
+  }
+  if (
+    status === 401 ||
+    /^(PGRST30[123]|BAD_JWT|INVALID_JWT|JWT_EXPIRED|SESSION_NOT_FOUND)$/.test(
+      upperCode,
+    ) ||
+    /\b(jwt|access token|authentication|not authenticated)\b/i.test(message)
+  ) {
+    return "auth";
+  }
+  if (
+    name === "AbortError" ||
+    /^(ECONNRESET|ECONNREFUSED|ENETUNREACH|ETIMEDOUT|NETWORK_ERROR)$/.test(
+      upperCode,
+    ) ||
+    /\b(failed to fetch|network request failed|networkerror|timed out|offline)\b/i.test(
+      message,
+    )
+  ) {
+    return "network";
+  }
+  if (/^23[A-Z0-9]{3}$/.test(upperCode)) return "constraint";
+  if (
+    /^(42P01|42703|PGRST20[024])$/.test(upperCode) ||
+    /\b(schema cache|column .* does not exist|relation .* does not exist)\b/i.test(
+      message,
+    )
+  ) {
+    return "schema";
+  }
+  return "unknown";
+}
+
+const handledFailureDedupe = new Set<HandledFailureOperation>();
+
+function isExpectedHandledFailure(
+  error: unknown,
+  failureClass: HandledFailureClass,
+  detail: HandledFailureDetail,
+): boolean {
+  if (detail.retainedOffline === true) return true;
+  const { code = "", message = "", name = "" } = errorFacts(error);
+  const upperCode = code.toUpperCase();
+  if (
+    name === "AbortError" ||
+    /^(ABORT_ERR|CANCELED|ERR_CANCELED|USER_CANCELLED)$/.test(upperCode) ||
+    /\b(user (?:cancelled|canceled)|(?:cancelled|canceled) by user)\b/i.test(
+      message,
+    )
+  ) {
+    return true;
+  }
+  if (upperCode === "INVALID_CREDENTIALS") return true;
+  if (
+    /^(BLE_DISCONNECTED|DEVICE_DISCONNECTED|NOT_CONNECTED)$/.test(upperCode) ||
+    name === "BleDisconnectedError"
+  ) {
+    return true;
+  }
+  return (
+    failureClass === "network" &&
+    typeof navigator !== "undefined" &&
+    navigator.onLine === false
+  );
+}
+
+/**
+ * The sole entry point for selected handled operational failures (#382).
+ *
+ * Call only after retry, rollback, or another recovery path has finished and
+ * the operation is still failed. `operation`, `failure_class`, and `outcome`
+ * are closed values selected here/by code. No raw error, database response,
+ * arbitrary string, or user/training/health value is handed to Sentry.
+ */
+export function captureHandledOperationalFailure(
+  operation: HandledFailureOperation,
+  error: unknown,
+  detail: HandledFailureDetail = {},
+  capture: typeof Sentry.captureMessage = Sentry.captureMessage,
+): string | null {
+  if (!started || !Object.hasOwn(HANDLED_OPERATIONS, operation)) return null;
+  const config = HANDLED_OPERATIONS[operation];
+  if (config.dedupeForLaunch && handledFailureDedupe.has(operation)) return null;
+
+  const failureClass = classifyHandledFailure(error);
+  if (isExpectedHandledFailure(error, failureClass, detail)) return null;
+  const zeroRows = isZeroRowMutationError(error);
+  const outcome: HandledFailureOutcome = zeroRows
+    ? "zero-row-invariant"
+    : "recovery-exhausted";
+  const { status } = errorFacts(error);
+  const extra: Record<string, number | boolean> = {};
+  if (
+    typeof detail.retryAttempts === "number" &&
+    Number.isInteger(detail.retryAttempts) &&
+    detail.retryAttempts > 0
+  ) {
+    extra.retry_attempts = detail.retryAttempts;
+  }
+  if (typeof detail.automatic === "boolean") extra.automatic = detail.automatic;
+  if (zeroRows) extra.affected_rows = 0;
+  if (status !== undefined) extra.status = status;
+
+  // Set before capture so a transport/client exception cannot turn a single
+  // load outage into repeated events during the same launch.
+  if (config.dedupeForLaunch) handledFailureDedupe.add(operation);
+  return capture("handled operational failure", {
+    level: "error",
+    tags: {
+      operation,
+      failure_class: failureClass,
+      outcome,
+    },
+    fingerprint: ["handled-operational-failure", operation, failureClass],
+    ...(Object.keys(extra).length ? { extra } : {}),
+  });
 }
 
 /** Report an uncaught render error from the ErrorBoundary. */
