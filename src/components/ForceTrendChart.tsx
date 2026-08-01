@@ -344,8 +344,8 @@ export default function ForceTrendChart({
       id: r.id,
       recordedAt: r.recordedAt,
       val: ratioMode
-        ? (r.peakKg / weightOn(weights, r.recordedAt.slice(0, 10))) * 100
-        : r.peakKg,
+        ? (r.peakKg! / weightOn(weights, r.recordedAt.slice(0, 10))) * 100
+        : r.peakKg!,
     }));
   const days = dailyBoxStats(sorted);
 

@@ -407,55 +407,73 @@ export type Database = {
       }
       tindeq_recordings: {
         Row: {
-          avg_kg: number
+          actual_duration_ms: number | null
+          avg_kg: number | null
           deleted_at: string | null
           duration_ms: number
           group_id: string | null
           id: string
+          external_load_kg: number | null
           note: string
-          peak_kg: number
+          outcome: string | null
+          peak_kg: number | null
           protocol_run_id: string | null
           recorded_at: string
+          planned_duration_ms: number | null
+          rep_no: number | null
           sample_count: number
           samples: Json
           set_no: number | null
           side: string
+          source: string
           tag: string
           user_id: string
           zone: string | null
         }
         Insert: {
-          avg_kg: number
+          actual_duration_ms?: number | null
+          avg_kg?: number | null
           deleted_at?: string | null
           duration_ms: number
           group_id?: string | null
           id?: string
+          external_load_kg?: number | null
           note?: string
-          peak_kg: number
+          outcome?: string | null
+          peak_kg?: number | null
           protocol_run_id?: string | null
           recorded_at?: string
+          planned_duration_ms?: number | null
+          rep_no?: number | null
           sample_count: number
           samples: Json
           set_no?: number | null
           side?: string
+          source?: string
           tag?: string
           user_id?: string
           zone?: string | null
         }
         Update: {
-          avg_kg?: number
+          actual_duration_ms?: number | null
+          avg_kg?: number | null
           deleted_at?: string | null
           duration_ms?: number
           group_id?: string | null
           id?: string
+          external_load_kg?: number | null
           note?: string
-          peak_kg?: number
+          outcome?: string | null
+          peak_kg?: number | null
           protocol_run_id?: string | null
           recorded_at?: string
+          planned_duration_ms?: number | null
+          rep_no?: number | null
           sample_count?: number
           samples?: Json
           set_no?: number | null
           side?: string
+          source?: string
           tag?: string
           user_id?: string
           zone?: string | null

@@ -128,8 +128,8 @@ export interface TindeqRecordingMeta {
   id: string;
   recordedAt: string; // ISO timestamp
   durationMs: number;
-  peakKg: number;
-  avgKg: number;
+  peakKg: number | null;
+  avgKg: number | null;
   sampleCount: number;
   note: string;
   tag: string; // exercise, e.g. "FDP" — trends group by this
@@ -149,6 +149,12 @@ export interface TindeqRecordingMeta {
   /// the row predates the column; readers then infer it from `durationMs`
   /// (see lib/zoneHistory.ts `recordingZone`). Deliberately not backfilled.
   zone: RecordedZone | null;
+  source: "dynamometer" | "manual";
+  externalLoadKg?: number | null;
+  outcome?: "too_easy" | "good" | "failed" | null;
+  plannedDurationMs?: number | null;
+  actualDurationMs?: number | null;
+  repNo?: number | null;
 }
 
 /// A saved hang protocol (hold / reps / sets / rests) — drives the guided
@@ -221,8 +227,8 @@ export interface NewTindeqRecording {
   /// row. Omitted for normal (non-retried) saves — the DB default applies.
   id?: string;
   durationMs: number;
-  peakKg: number;
-  avgKg: number;
+  peakKg: number | null;
+  avgKg: number | null;
   note: string;
   tag: string;
   side: TindeqSide;
@@ -240,6 +246,12 @@ export interface NewTindeqRecording {
   /// and insert as null.
   zone: RecordedZone | null;
   samples: TindeqSample[];
+  source?: "dynamometer" | "manual";
+  externalLoadKg?: number | null;
+  outcome?: "too_easy" | "good" | "failed" | null;
+  plannedDurationMs?: number | null;
+  actualDurationMs?: number | null;
+  repNo?: number | null;
 }
 
 export interface WorkoutAttempt {
