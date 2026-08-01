@@ -14,7 +14,7 @@ import InfoDot from "./InfoDot";
 import ReadinessCard from "./ReadinessCard";
 import RecoverySheet from "./RecoverySheet";
 import SendConditionsCard from "./SendConditionsCard";
-import TindeqConsistencyCard from "./TindeqConsistencyCard";
+import ForceConsistencyCard from "./ForceConsistencyCard";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
@@ -509,7 +509,7 @@ export default function Dashboard({
 
         {/* Weekly Tindeq-training consistency (#311) — self-fetching, no
             props needed from here. */}
-        <TindeqConsistencyCard />
+        <ForceConsistencyCard />
       </div>
 
       {showRecovery && <RecoverySheet onClose={() => setShowRecovery(false)} />}
