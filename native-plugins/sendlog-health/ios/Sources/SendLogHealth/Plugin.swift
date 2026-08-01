@@ -20,6 +20,14 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
     ]
 
     private let manager = HealthSyncManager.shared
+    /// App Store screenshot UI tests launch with fastlane's standard argument.
+    /// HealthKit's authorization controller is a separate full-screen process,
+    /// so it cannot be dismissed reliably from the app's UI-test tree. Fixture
+    /// readiness already comes from local Supabase; keep screenshot runs out of
+    /// HealthKit entirely without changing any normal app launch.
+    private var isScreenshotRun: Bool {
+        UserDefaults.standard.bool(forKey: "FASTLANE_SNAPSHOT")
+    }
 
     override public func load() {
         // No rotating credential may survive on this device — including one
@@ -28,6 +36,7 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func requestAuthorization(_ call: CAPPluginCall) {
+        guard !isScreenshotRun else { call.resolve(); return }
         Task {
             do { try await manager.requestAuthorization(); call.resolve() }
             catch { call.reject(error.localizedDescription) }
@@ -59,6 +68,7 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
     // (respects ReadinessWritePolicy's after-noon lock) rather than the unsafe
     // `.manual` (always overwrites) — see HealthSyncManager.syncNow.
     @objc func syncNow(_ call: CAPPluginCall) {
+        guard !isScreenshotRun else { call.resolve(); return }
         let trigger: SyncTrigger = call.getString("trigger") == "manual" ? .manual : .automatic
         Task {
             do { try await manager.syncNow(trigger: trigger); call.resolve() }
@@ -67,6 +77,7 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func clearAndResync(_ call: CAPPluginCall) {
+        guard !isScreenshotRun else { call.resolve(); return }
         Task {
             do { try await manager.clearAndResync(); call.resolve() }
             catch { call.reject(error.localizedDescription) }
@@ -74,6 +85,7 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func startBackgroundSync(_ call: CAPPluginCall) {
+        guard !isScreenshotRun else { call.resolve(); return }
         manager.startBackgroundSync()
         call.resolve()
     }

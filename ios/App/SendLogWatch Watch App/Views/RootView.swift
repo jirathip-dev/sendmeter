@@ -12,38 +12,45 @@ struct RootView: View {
     @Environment(TindeqManager.self) private var tindeq
     @State private var path: [WatchDest] = []
 
+    @ViewBuilder
     var body: some View {
-        switch auth.state {
-        case .signedOut:
-            WaitingForPhoneView()
-        // Deliberately includes `tokenFresh: false` — an expired access token
-        // keeps the watch usable (recording is offline-first and queues), and
-        // HomeView shows the "waiting for iPhone" banner instead of throwing
-        // the user back to a sign-in screen (#265's offline window).
-        case .signedIn(_, _):
-            NavigationStack(path: $path) {
-                // HomeView is a paged TabView (#278). The destination map stays
-                // attached HERE, to the stack root, and not inside either page:
-                // a `.navigationDestination` declared inside a paged TabView is
-                // only registered while that page is realized, so a deep link
-                // that arrived while the other page was showing would push
-                // nothing. Both `sendmeter://force` and `sendmeter://workout`
-                // below drive this same path regardless of the visible page.
-                HomeView()
-                    .navigationDestination(for: WatchDest.self) { dest in
-                        switch dest {
-                        case .force: ForceGaugeView()
-                        case .workout: WorkoutLiveView()
-                        }
-                    }
+        if ScreenshotFixtures.enabled {
+            signedInContent
+        } else {
+            switch auth.state {
+            case .signedOut:
+                WaitingForPhoneView()
+            // Deliberately includes `tokenFresh: false` — an expired access token
+            // keeps the watch usable (recording is offline-first and queues), and
+            // HomeView shows the "waiting for iPhone" banner instead of throwing
+            // the user back to a sign-in screen (#265's offline window).
+            case .signedIn(_, _):
+                signedInContent
             }
-            // No finish-gauge-session prompt any more (#280): the session's
-            // RPE is predicted from W' depletion and logged the moment it
-            // ends — including on an unplanned Progressor drop, which is
-            // exactly when nobody is looking at the watch to answer a sheet.
-            // Quick-launch complications open the app to a screen.
-            .onOpenURL { open($0) }
         }
+    }
+
+    /// The real signed-in UI is also the screenshot fixture UI. Snapshot's
+    /// launch flag only bypasses the phone-relay gate; it never swaps in a
+    /// marketing-only mock screen, so the capture still exercises production
+    /// navigation and layout.
+    private var signedInContent: some View {
+        NavigationStack(path: $path) {
+            // HomeView is a paged TabView (#278). The destination map stays
+            // attached HERE, to the stack root, and not inside either page:
+            // a `.navigationDestination` declared inside a paged TabView is
+            // only registered while its page is realized.
+            HomeView()
+                .navigationDestination(for: WatchDest.self) { dest in
+                    switch dest {
+                    case .force: ForceGaugeView()
+                    case .workout: WorkoutLiveView()
+                    }
+                }
+        }
+        // No finish-gauge-session prompt any more (#280): the session's RPE is
+        // predicted from W' depletion and logged the moment it ends.
+        .onOpenURL { open($0) }
     }
 
     /// Routes a complication's deep link (`sendmeter://force|workout`) by

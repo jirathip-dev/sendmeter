@@ -20,7 +20,9 @@ import SwiftUI
 /// screen, free to disagree.
 struct StatusView: View {
     @Environment(\.scenePhase) private var scenePhase
-    @State private var snap = WidgetStore.load()
+    @State private var snap = ScreenshotFixtures.enabled
+        ? ScreenshotFixtures.status
+        : WidgetStore.load()
     @State private var refreshing = false
 
     var body: some View {
@@ -110,6 +112,9 @@ struct StatusView: View {
     // MARK: Refresh
 
     private func refresh() async {
+        // Fastlane launches the real view hierarchy with deterministic data.
+        // Do not replace that fixture with an unauthenticated network result.
+        guard !ScreenshotFixtures.enabled else { return }
         guard !refreshing else { return }
         refreshing = true
         defer { refreshing = false }
