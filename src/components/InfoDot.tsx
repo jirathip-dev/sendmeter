@@ -157,11 +157,11 @@ const CONTENT: Record<
     ],
   },
   tindeqConsistency: {
-    title: "How Tindeq consistency is tracked",
+    title: "How force consistency is tracked",
     body: [
       {
         heading: "A day counts once",
-        text: "Each bar is how many DISTINCT DAYS you recorded at least one Tindeq hold in that rolling 7-day window (0–7) — not rep count or total time, so one huge session can't dwarf the rest of the week. Filtering to one exercise still counts a day once even if you did several holds of it.",
+        text: "Each bar is how many DISTINCT DAYS you recorded at least one force hold in that rolling 7-day window (0–7) — not rep count or total time, so one huge session can't dwarf the rest of the week. Filtering to one exercise still counts a day once even if you did several holds of it.",
       },
       {
         heading: "Rolling weekly windows",

@@ -21,7 +21,8 @@ struct Sparkline: View {
                     path.addLine(to: CGPoint(x: x, y: y))
                 }
             }
-            context.stroke(path, with: .color(.green), lineWidth: 2)
+            // Purple is the app-wide live-force signal (`--primary` on web).
+            context.stroke(path, with: .color(SendmeterColor.primary), lineWidth: 2)
         }
     }
 }
