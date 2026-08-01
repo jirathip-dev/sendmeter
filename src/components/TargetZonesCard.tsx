@@ -24,6 +24,10 @@ import {
   alternatingHoldDurations,
   type AlternatingPrescription,
 } from "../lib/alternatingProtocol";
+import {
+  zoneUnarmedNoticeText,
+  type ZoneUnarmedNotice,
+} from "../lib/postFitZoneDecision";
 
 interface Props {
   tag: string;
@@ -51,6 +55,7 @@ interface Props {
   /// preset key too, not just this card's own `selected` prop, so a stale
   /// key can't re-arm a preset on the next mount.
   onClear: () => void;
+  unarmedNotice: ZoneUnarmedNotice | null;
 }
 
 function fmt(sec: number): string {
@@ -75,6 +80,7 @@ export default function TargetZonesCard({
   alternatingReady,
   alternatingPrescription,
   onClear,
+  unarmedNotice,
 }: Props) {
   const [alternate, setAlternate] = useState(false);
   // Above the recommended load — the number, the slider fill and the note all
@@ -107,6 +113,15 @@ export default function TargetZonesCard({
         <span>Recommended · {tag}</span>
         <InfoDot topic="gaugeTarget" />
       </div>
+      {unarmedNotice?.tag === tag && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{ fontSize: "var(--t-xs)", color: "var(--warning)", marginBottom: 8 }}
+        >
+          {zoneUnarmedNoticeText(unarmedNotice)}
+        </div>
+      )}
       {!model ? (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)" }}>
           Zones unlock once this exercise's force curve is computed (a few
