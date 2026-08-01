@@ -63,7 +63,7 @@ private struct ActionsView: View {
             // and only the phone can supply another. Recording still works —
             // everything is persist-first and drains later — so say that
             // rather than dumping the user on a sign-in screen mid-session.
-            if auth.needsToken {
+            if auth.needsToken && !ScreenshotFixtures.enabled {
                 Label(
                     "Waiting for iPhone — new saves upload once it's in range",
                     systemImage: "iphone.badge.exclamationmark"
