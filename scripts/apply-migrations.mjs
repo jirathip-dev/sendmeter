@@ -7,13 +7,16 @@
 // `supabase db push` (which diffs by version) would re-apply recorded history.
 // This script:
 //
-//   1. fetches the target's schema_migrations ledger,
-//   2. pending = local files whose *name* is not recorded,
-//   3. refuses to run unless pending is purely appends — every pending file
+//   1. refreshes a configured Git upstream and refuses to run from a checkout
+//      behind it (a detached/no-upstream CI checkout keeps the existing path),
+//   2. fetches the target's schema_migrations ledger,
+//   3. warns prominently about ledger names with no local migration file,
+//   4. pending = local files whose *name* is not recorded,
+//   5. refuses to run unless pending is purely appends — every pending file
 //      must be NEWER than the newest recorded one. An older unrecorded file is
 //      history applied without its ledger row: backfill the ledger row by hand,
 //      NEVER re-run the SQL,
-//   4. applies each pending file in order, records it with the FILE version
+//   6. applies each pending file in order, records it with the FILE version
 //      (plain insert — a conflict fails loudly, no `on conflict do nothing`),
 //      then re-verifies the ledger.
 //
@@ -32,6 +35,13 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import {
+  checkoutFreshness,
+  checkoutGuardExitCode,
+  formatLedgerOnlyWarning,
+  ledgerNamesWithoutLocalFiles,
+  localMigrationsRecordedMessage,
+} from "./migration-safety.mjs";
 
 const PROJECTS = {
   dev: "mjkndfhjnipomjjhgsxv",
@@ -46,12 +56,15 @@ if (!target || !(target in PROJECTS)) {
 }
 const ref = PROJECTS[target];
 
-const MIGRATIONS_DIR = join(
-  dirname(dirname(fileURLToPath(import.meta.url))),
-  "supabase",
-  "migrations",
-);
+const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const MIGRATIONS_DIR = join(REPO_ROOT, "supabase", "migrations");
 const FILENAME_RE = /^(\d{14})_([a-z0-9_]+)\.sql$/;
+
+const checkoutExit = checkoutGuardExitCode(
+  checkoutFreshness(REPO_ROOT),
+  `migration verification/apply for ${target}`,
+);
+if (checkoutExit) process.exit(checkoutExit);
 
 function accessToken() {
   if (process.env.SUPABASE_ACCESS_TOKEN) return process.env.SUPABASE_ACCESS_TOKEN.trim();
@@ -106,9 +119,13 @@ const local = readdirSync(MIGRATIONS_DIR)
 
 const recorded = await recordedNames(token);
 const pending = local.filter((m) => !recorded.has(m.name));
+const ledgerWarning = formatLedgerOnlyWarning([
+  { label: target, names: ledgerNamesWithoutLocalFiles(local, recorded) },
+]);
+if (ledgerWarning) console.log(`${ledgerWarning}\n`);
 
 if (pending.length === 0) {
-  console.log(`✓ ${target} is up to date — all ${local.length} migrations recorded`);
+  console.log(localMigrationsRecordedMessage(local.length, target));
   process.exit(0);
 }
 
@@ -148,4 +165,4 @@ if (stillMissing.length) {
   for (const m of stillMissing) console.error(`  ${m.file}`);
   process.exit(1);
 }
-console.log(`✓ ${target} ledger verified — all ${local.length} migrations recorded`);
+console.log(localMigrationsRecordedMessage(local.length, target));

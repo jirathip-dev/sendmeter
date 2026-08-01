@@ -260,7 +260,7 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: "var(--t-base)", color: "var(--ink)" }}>
-                      {r.peakKg.toFixed(1)} kg
+                      {r.source === "manual" ? `${r.externalLoadKg?.toFixed(1)} kg external` : `${r.peakKg?.toFixed(1)} kg`}
                       {r.tag && (
                         <span style={{ color: "var(--ink-muted)" }}>
                           {" "}

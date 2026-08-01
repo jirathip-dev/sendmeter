@@ -53,7 +53,9 @@ function TagGroup({
   onDeleteRec: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const best = Math.max(...recs.map((r) => r.peakKg));
+  const measured = recs.filter((r) => r.source !== "manual" && r.peakKg != null);
+  const manual = recs.filter((r) => r.source === "manual");
+  const best = measured.length ? Math.max(...measured.map((r) => r.peakKg!)) : null;
   return (
     <div style={{ marginBottom: 8 }}>
       <button
@@ -76,10 +78,7 @@ function TagGroup({
           {tag || "untagged"}
         </span>
         <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
-          {recs.length} rep{recs.length === 1 ? "" : "s"} · best{" "}
-          <span style={{ color: "var(--success)", fontWeight: 700 }}>
-            {best.toFixed(1)} kg
-          </span>
+          {recs.length} rep{recs.length === 1 ? "" : "s"}{manual.length ? ` · ${manual.length} manual` : ""}{best != null && <> · best <span style={{ color: "var(--success)", fontWeight: 700 }}>{best.toFixed(1)} kg</span></>}
         </span>
         <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
           {open ? "▾" : "▸"}
@@ -94,7 +93,7 @@ function TagGroup({
           re-downloading everything on every account-wide write, not this
           one-shot fetch, so it stays eager to keep the chart glanceable. */}
       <div onClick={(e) => e.stopPropagation()}>
-        <RepBoxPlotChart recs={recs} samplesById={samplesById} />
+        {measured.length > 0 && <RepBoxPlotChart recs={measured} samplesById={samplesById} />}
       </div>
       {open && (
         <div style={{ marginTop: 6 }}>
