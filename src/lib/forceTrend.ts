@@ -1,5 +1,5 @@
 import { boxStats, type BoxStats } from "./boxplot";
-import { isEffortRecording, type ZonedHold } from "./zoneHistory";
+import { isEffortRecording, isMeasuredRecording, type ZonedHold } from "./zoneHistory";
 import type { TindeqSide } from "../types";
 
 /// Minimal shape the Force tab's trend data needs to satisfy — deliberately
@@ -20,16 +20,16 @@ export interface TrendSample {
 /// guarantee is pinned without rendering `ForceTrendChart` itself, which
 /// reads `localStorage` at the top of its body and isn't renderable outside
 /// a browser-like test environment.
-export function trendChartRecordings<T extends ZonedHold & { tag: string; side: TindeqSide }>(
+export function trendChartRecordings<T extends ZonedHold & { tag: string; side: TindeqSide; peakKg?: number | null; avgKg?: number | null }>(
   recordings: T[],
   selectedTag: string | null,
   selectedSide: TindeqSide | null,
-): T[] {
+): (T & { peakKg: number; avgKg: number })[] {
   return recordings.filter(
-    (r) =>
+    (r): r is T & { peakKg: number; avgKg: number } =>
       (selectedTag === null || r.tag === selectedTag) &&
       (selectedSide === null || r.side === selectedSide) &&
-      isEffortRecording(r),
+      isEffortRecording(r) && isMeasuredRecording(r),
   );
 }
 

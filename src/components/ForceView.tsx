@@ -29,6 +29,7 @@ import {
   curveCandidateRecordings,
   effortPeakKg,
   isDepletionEffortRecording,
+  isMeasuredRecording,
 } from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
@@ -43,6 +44,7 @@ import { reportPersistFailure } from "../lib/lostRecordings";
 import { persistRecordingDurable } from "../lib/recordingQueue";
 import { usePendingUploads } from "../hooks/usePendingUploads";
 import { PENDING_BACKED_UP } from "../lib/pendingUploads";
+import { appendUniqueById, claimManualAttempt, claimManualSession, manualAttemptKey } from "../lib/manualForceSubmission";
 import type {
   NewTindeqRecording,
   TindeqPreset,
@@ -84,6 +86,7 @@ import {
 } from "../lib/alternatingProtocol";
 import ZoneFocusCard from "./ZoneFocusCard";
 import ForceFullscreen from "./ForceFullscreen";
+import ManualForceFullscreen from "./ManualForceFullscreen";
 import ForceTrendChart from "./ForceTrendChart";
 import LiveForceSparkline from "./LiveForceSparkline";
 
@@ -95,6 +98,7 @@ interface ForceViewProps {
     note: string;
     groupId: string;
     rpeConfirmed?: boolean;
+    typeLabel?: string;
   }) => Promise<boolean>;
 }
 
@@ -130,14 +134,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // Always banner (one row per lost rep) but keep the toast on the same
       // once-per-outage gate as the queued case, so a guided protocol whose
       // every rep fails doesn't stack a toast per rep.
-      setUnqueued((list) => [...list, rec]);
+      setUnqueued((list) => appendUniqueById(list, rec));
       if (isNewOutage) {
         toast("Storage full — this recording is not saved anywhere", "error");
       }
-      return;
+      return false;
     }
-    if (!isNewOutage) return;
-    toast("Couldn't save — recording queued, will sync automatically", "error");
+    if (isNewOutage) toast("Couldn't save — recording queued, will sync automatically", "error");
+    return true;
   }
 
   /// Retry everything in the banner: the server first (the outage may be
@@ -227,6 +231,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [listError, setListError] = useState<string | null>(null);
   const [zoneSel, setZoneSel] = useState<ZoneSelection | null>(null);
   const [preset, setPreset] = useState<TindeqPreset | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
+  const manualGroupRef = useRef<string | null>(null);
+  const manualStartedRef = useRef(0);
+  const manualRunIdRef = useRef<string | null>(null);
+  const manualAttemptIdsRef = useRef<Map<string, string>>(new Map());
+  const manualAttemptClaimsRef = useRef<Set<string>>(new Set());
+  const manualSessionClaimsRef = useRef<Set<string>>(new Set());
   // #296: keep the zone and custom-preset selections mutually exclusive —
   // see forceSelection.ts for the rule and why it's needed.
   function selectZone(sel: ZoneSelection | null) {
@@ -317,11 +328,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         timeoutId = setTimeout(() => resolve([]), 4000);
       }),
     ]).finally(() => clearTimeout(timeoutId));
-    const recs = recordingsRef.current.filter((r) => r.groupId === groupId);
+    const recs = recordingsRef.current.filter(
+      (r) => r.groupId === groupId && isMeasuredRecording(r),
+    );
     const byTag = new Map(curves.map((c) => [c.name, c]));
     const predicted = predictSessionRpe(
       recs.map((r) => ({
-        peakKg: r.peakKg,
+        peakKg: r.peakKg!,
         durationS: r.durationMs / 1000,
         cf: byTag.get(r.tag)?.cf ?? null,
         wPrime: byTag.get(r.tag)?.wPrime ?? null,
@@ -630,7 +643,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // The gauge-input lock below holds for as long as `runActive` — releasing
   // only once `tindeq.stop()` (inside that deferred stop) clears
   // `pendingInterruption`, i.e. exactly when the run is really over.
-  const runActive = measuring || tindeq.pendingInterruption;
+  const runActive = measuring || tindeq.pendingInterruption || manualOpen;
   const trimmedTag = pendingTag.trim();
   const liveEffectiveTag = allTags.includes(trimmedTag)
     ? trimmedTag
@@ -849,7 +862,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // `alternatingComputedFor !== alternatingCurveKey` marks this exact
     // request pending before its first await; the previous tag's pair cannot
     // pass the key check while this one resolves.
-    const fit = async (rows: TindeqRecordingMeta[]) => {
+    const fit = async (rows: (TindeqRecordingMeta & { peakKg: number; avgKg: number })[]) => {
       if (rows.length === 0) return null;
       const picked = pickCurveRecordings(rows, Date.now());
       const samples = await Promise.all(picked.map((r) => fetchRecordingSamples(r.id)));
@@ -1221,7 +1234,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const { status } = tindeq;
   // Keep the screen awake while the gauge is live so a short auto-lock doesn't
   // interrupt a hold/protocol mid-recording.
-  useWakeLock(status === "connected" || status === "measuring");
+  useWakeLock(status === "connected" || status === "measuring" || manualOpen);
   const prevStatusRef = useRef(status);
   useEffect(() => {
     const prev = prevStatusRef.current;
@@ -1443,6 +1456,25 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         </div>
       )}
 
+      <button
+        className="btn-primary"
+        style={{ marginTop: 10, background: "var(--surface-2)", color: "var(--primary)", border: "1px solid var(--primary)" }}
+        disabled={!activeProtocol || !pendingTag.trim() || runActive}
+        title={!activeProtocol ? "Choose a protocol preset first" : !pendingTag.trim() ? "Add an exercise first" : undefined}
+        onClick={() => {
+          if (!timeline || !activeProtocol || !pendingTag.trim()) return;
+          manualGroupRef.current = crypto.randomUUID();
+          manualRunIdRef.current = crypto.randomUUID();
+          manualAttemptIdsRef.current = new Map();
+          manualAttemptClaimsRef.current = new Set();
+          manualStartedRef.current = Date.now();
+          setManualOpen(true);
+        }}
+      >
+        Train without sensor
+      </button>
+      {!activeProtocol && <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 6 }}>Choose a Force protocol below to train without a sensor.</div>}
+
       {/* Connected: the gauge lives fullscreen; this is the resume bar */}
       {(status === "connected" || status === "measuring") && (
         <button
@@ -1549,7 +1581,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
                 {justSaved.side ? ` · ${justSaved.side}` : ""}
               </span>
               <span style={{ fontSize: "var(--t-sm)", color: "var(--ink)", fontFamily: "Inter, sans-serif", fontWeight: 800 }}>
-                {justSaved.peakKg.toFixed(1)} kg
+                {justSaved.peakKg?.toFixed(1)} kg
               </span>
               <button
                 onClick={() => void undoJustSaved()}
@@ -1877,6 +1909,87 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             }
           }}
           onMinimize={() => setGaugeMinimized(true)}
+        />
+      )}
+      {manualOpen && timeline && activeProtocol && (
+        <ManualForceFullscreen
+          name={`${activeProtocol.name} · ${gaugeInputs.pendingTag}`}
+          timeline={timeline}
+          targetKg={(set) => presetTargetKg(activeProtocol, presetRefs, set)}
+          onAttempt={async ({ seg, actualDurationMs, externalLoadKg, outcome }) => {
+            const groupId = manualGroupRef.current;
+            const runId = manualRunIdRef.current;
+            if (!groupId || !runId) return false;
+            const attemptIds = manualAttemptIdsRef.current;
+            const attemptClaims = manualAttemptClaimsRef.current;
+            const attemptKey = manualAttemptKey(seg.set, seg.rep, seg.side ?? gaugeInputs.pendingSide);
+            const id = claimManualAttempt(
+              attemptKey,
+              attemptIds,
+              attemptClaims,
+              () => crypto.randomUUID(),
+            );
+            if (!id) return false;
+            const rec: NewTindeqRecording & { id: string } = {
+              id,
+              source: "manual",
+              durationMs: actualDurationMs,
+              peakKg: null,
+              avgKg: null,
+              note: "Sensorless timed external-load attempt",
+              tag: gaugeInputs.pendingTag,
+              side: seg.side ?? gaugeInputs.pendingSide,
+              groupId,
+              protocolRunId: runId,
+              setNo: seg.set,
+              repNo: seg.rep,
+              zone: performedQuality(activeProtocol, externalLoadKg, presetRefs, seg.set),
+              externalLoadKg,
+              outcome,
+              plannedDurationMs: seg.durS * 1000,
+              actualDurationMs,
+              samples: [],
+            };
+            try {
+              const saved = await insertRecording(rec);
+              outageRef.current = false;
+              setRecordings((list) => [saved, ...list]);
+              return true;
+            } catch {
+              const durable = await queueFailedRecording(rec);
+              if (!durable) attemptClaims.delete(attemptKey);
+              return durable;
+            }
+          }}
+          onFinish={async (rpe, completedMs) => {
+            const groupId = manualGroupRef.current;
+            if (!groupId) return false;
+            const sessionClaims = manualSessionClaimsRef.current;
+            const startedMs = manualStartedRef.current;
+            const sessionTag = gaugeInputs.pendingTag;
+            if (!claimManualSession(groupId, sessionClaims)) return false;
+            const durationMin = Math.max(1, Math.round((completedMs - startedMs) / 60000));
+            const ok = await onLogSession({
+              durationMin,
+              rpe,
+              rpeConfirmed: true,
+              typeLabel: "Force",
+              groupId,
+              note: `Sensorless Force · ${sessionTag}`,
+            });
+            if (ok) {
+              if (manualGroupRef.current === groupId) {
+                manualGroupRef.current = null;
+                manualRunIdRef.current = null;
+                setManualOpen(false);
+                toast("Manual Force session logged to history");
+              }
+            } else {
+              sessionClaims.delete(groupId);
+            }
+            return ok;
+          }}
+          onCancel={() => setManualOpen(false)}
         />
       )}
     </div>

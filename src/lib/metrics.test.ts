@@ -61,6 +61,7 @@ function rec(recordedAt: string, peakKg: number): TindeqRecordingMeta {
     zone: null,
     protocolRunId: null,
     setNo: null,
+    source: "dynamometer",
   };
 }
 

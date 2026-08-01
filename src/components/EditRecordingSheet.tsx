@@ -75,7 +75,15 @@ export default function EditRecordingSheet({
         Edit recording
       </div>
       <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
-        {rec.peakKg.toFixed(1)} kg peak · {(rec.durationMs / 1000).toFixed(1)}s
+        {rec.source === "manual" ? (
+          <>
+            {rec.externalLoadKg?.toFixed(1)} kg external · {((rec.actualDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s actual
+            {rec.plannedDurationMs != null && ` / ${(rec.plannedDurationMs / 1000).toFixed(1)}s planned`}
+            {rec.outcome && ` · ${rec.outcome.replace("_", " ")}`}
+          </>
+        ) : (
+          <>{rec.peakKg?.toFixed(1)} kg peak · {(rec.durationMs / 1000).toFixed(1)}s</>
+        )}
       </div>
 
       <span className="field-label">Exercise tag</span>
