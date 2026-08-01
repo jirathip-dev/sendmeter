@@ -80,8 +80,9 @@ struct ForceGaugeView: View {
                             case .idle:
                                 Button("Connect Progressor") { tindeq.connect() }
                                     .buttonStyle(.borderedProminent)
+                                    .tint(SendmeterColor.primary)
                                 if let msg = tindeq.errorMsg {
-                                    Text(msg).font(.footnote).foregroundStyle(.red)
+                                    Text(msg).font(.footnote).foregroundStyle(SendmeterColor.danger)
                                 }
 
                             case .scanning, .connecting:
@@ -108,7 +109,7 @@ struct ForceGaugeView: View {
                                 // second line and blow the budget.
                                 Text(savedMsg)
                                     .font(.caption2)
-                                    .foregroundStyle(saving ? Color.secondary : Color.green)
+                                    .foregroundStyle(saving ? Color.secondary : SendmeterColor.success)
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.7)
                                     .truncationMode(.tail)
@@ -238,7 +239,7 @@ struct ForceGaugeView: View {
         // setupContent's for fitting the smallest watch without scrolling.
         if tindeq.sessionId != nil {
             HStack {
-                Circle().fill(.blue).frame(width: 5, height: 5)
+                Circle().fill(SendmeterColor.primary).frame(width: 5, height: 5)
                 Text("Session · \(tindeq.sessionCount)")
                     .font(.caption2)
                 Spacer()
@@ -279,14 +280,14 @@ struct ForceGaugeView: View {
         // smallest watch still can't fit everything at once.
         VStack(spacing: 3) {
             HStack {
-                Circle().fill(.blue).frame(width: 6, height: 6)
+                Circle().fill(SendmeterColor.success).frame(width: 6, height: 6)
                 Text("connected")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
                 if tindeq.lowBattery {
                     Image(systemName: "battery.25")
-                        .foregroundStyle(.yellow)
+                        .foregroundStyle(SendmeterColor.warning)
                 }
                 Button {
                     disconnectTapped()
@@ -296,7 +297,7 @@ struct ForceGaugeView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
-                .tint(.red)
+                .tint(SendmeterColor.danger)
             }
 
             // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
@@ -335,11 +336,12 @@ struct ForceGaugeView: View {
                 savedMsg = nil
                 tindeq.start()
             } label: {
-                Text("Start").frame(maxWidth: .infinity)
+                Text("Start")
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.mini)
-            .font(.caption2)
+            .tint(SendmeterColor.primary)
             .disabled(saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
             if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
                 Text("Pick an exercise to start.")
@@ -436,7 +438,7 @@ struct ForceGaugeView: View {
     @ViewBuilder
     private var measuringContent: some View {
         HStack {
-            Circle().fill(.green).frame(width: 8, height: 8)
+            Circle().fill(SendmeterColor.primary).frame(width: 8, height: 8)
             Text(tag)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -474,6 +476,7 @@ struct ForceGaugeView: View {
 
         Button(saving ? "Saving…" : "Stop & Save") { saveStop() }
             .buttonStyle(.borderedProminent)
+            .tint(SendmeterColor.primary)
             .disabled(saving)
     }
 
@@ -564,7 +567,7 @@ private struct OptionPickerList: View {
                         Spacer(minLength: 4)
                         if o.value == selection {
                             Image(systemName: "checkmark")
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(SendmeterColor.primary)
                         }
                     }
                 }
