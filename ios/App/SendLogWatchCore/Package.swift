@@ -17,7 +17,8 @@ let package = Package(
         .testTarget(
             name: "SendLogWatchCoreTests",
             dependencies: ["SendLogWatchCore"],
-            path: "Tests/SendLogWatchCoreTests"
+            path: "Tests/SendLogWatchCoreTests",
+            resources: [.copy("Fixtures/rpe-depletion-parity.json")]
         )
     ]
 )
