@@ -137,7 +137,7 @@ input[type="number"] {
    live in the content). Slides away with the rest of the chrome on scroll. */
 .account-fab {
   position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: 14px; z-index: 20;
-  width: 40px; height: 40px; border-radius: 50%;
+  width: 44px; height: 44px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   color: var(--ink-muted); cursor: pointer;
   background: color-mix(in srgb, var(--canvas) 55%, transparent);
@@ -245,7 +245,7 @@ input[type="number"] {
 }
 /* Round glass icon button (minimize chevron etc.) — account-fab recipe. */
 .glass-chip {
-  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   color: var(--ink-muted); cursor: pointer;
   background: color-mix(in srgb, var(--canvas) 55%, transparent);
@@ -260,7 +260,7 @@ input[type="number"] {
 /* Pill glass text button (End, Tare) — tint via --pill-tint. */
 .glass-pill {
   --pill-tint: var(--ink);
-  padding: 8px 16px; border-radius: 999px; flex-shrink: 0;
+  min-height: 44px; padding: 8px 16px; border-radius: 999px; flex-shrink: 0;
   font-family: inherit; font-size: var(--t-sm); font-weight: 600;
   letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--pill-tint); cursor: pointer;
@@ -276,7 +276,7 @@ input[type="number"] {
 .nav-item {
   position: relative; overflow: hidden;
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 2px; padding: 6px 4px;
+  gap: 2px; padding: 6px 4px; min-height: 44px;
   border-radius: 15px;
   background: none; border: none; cursor: pointer;
   color: var(--ink-faint); transition: color 0.18s, background 0.18s;
@@ -418,7 +418,7 @@ textarea.field { resize: none; }
 /* Session row */
 .session-row { display: flex; align-items: center; gap: 12px; padding: 13px 14px; background: var(--canvas); color: var(--ink); border: 1px solid var(--card-border); border-radius: 10px; box-shadow: var(--shadow-card); margin-bottom: 8px; }
 .session-phase-bar { width: 3px; height: 38px; border-radius: 2px; flex-shrink: 0; }
-.del-btn { background: none; border: none; color: var(--ink-faint); font-size: var(--t-xl); padding: 4px 8px; cursor: pointer; margin-left: auto; flex-shrink: 0; -webkit-tap-highlight-color: transparent; }
+.del-btn { background: none; border: none; color: var(--ink-faint); font-size: var(--t-xl); min-width: 44px; min-height: 44px; padding: 4px 8px; cursor: pointer; margin-left: auto; flex-shrink: 0; -webkit-tap-highlight-color: transparent; }
 .del-btn:active { color: var(--danger); }
 
 /* Tag */
@@ -442,7 +442,7 @@ textarea.field { resize: none; }
 .upload-status-detail { margin-top: 2px; color: var(--ink-muted); font-size: var(--t-xs); font-weight: 400; line-height: 1.45; }
 /* Bare text button in a section header row (History "Trash", Workout "RPE Model") */
 .header-btn {
-  background: none; border: none; cursor: pointer; padding: 4px;
+  background: none; border: none; cursor: pointer; min-width: 44px; min-height: 44px; padding: 4px;
   color: var(--ink-faint); font-size: var(--t-eyebrow); font-family: Inter, sans-serif;
   text-transform: uppercase; letter-spacing: 0.08em;
 }
@@ -486,7 +486,12 @@ textarea.field { resize: none; }
 
   /* Desktop keeps a flat in-flow nav — no overlay, no auto-hide (the JS
      scroll handler also skips desktop widths). */
-  .account-fab { top: 8px; right: 16px; width: 30px; height: 30px; }
+  .account-fab {
+    top: calc(8px + env(safe-area-inset-top));
+    right: 16px;
+    width: 30px;
+    height: 30px;
+  }
   .account-fab svg { width: 15px; height: 15px; }
   .app-shell.chrome-hidden .account-fab { transform: none; }
   .content-area.with-chrome { padding: 24px 32px 16px; }
@@ -497,7 +502,7 @@ textarea.field { resize: none; }
     width: auto; max-width: none; margin: 0;
     justify-content: flex-start;
     gap: 4px;
-    padding: 7px 20px;
+    padding: calc(7px + env(safe-area-inset-top)) 20px 7px;
     border-radius: 0;
     background: var(--bg);
     -webkit-backdrop-filter: none; backdrop-filter: none;
@@ -542,6 +547,19 @@ textarea.field { resize: none; }
   .modal-sheet.full { height: 86vh; }
   .modal-handle { display: none; }
   .modal-drag { padding: 0; margin: 0; } /* no grab strip on the centered desktop dialog */
+}
+
+/* iPad uses the desktop-width layout but still needs finger-sized chrome.
+   Keep the denser header for mouse/trackpad desktops. */
+@media (min-width: 720px) and (pointer: coarse) {
+  .account-fab {
+    top: env(safe-area-inset-top);
+    width: 44px;
+    height: 44px;
+  }
+  .account-fab svg { width: 19px; height: 19px; }
+  .bottom-nav { padding: env(safe-area-inset-top) 20px 0; }
+  .nav-item { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -78,6 +78,7 @@ def verify_screenshot_output
   expected = {
     "iPhone 17 Pro Max" => { count: 4, size: [1320, 2868] },
     "iPhone 13 Pro Max" => { count: 4, size: [1284, 2778] },
+    "iPad Pro 13-inch (M5)" => { count: 4, size: [2064, 2752] },
     "Apple Watch Ultra 3 (49mm)" => { count: 2, size: [422, 514] },
   }
 
@@ -100,21 +101,29 @@ def verify_screenshot_output
 end
 
 platform :ios do
-  desc "Reset local fixtures and capture App Store iPhone + watch screenshots"
+  desc "Reset local fixtures and capture App Store iPhone, iPad + watch screenshots"
   lane :screenshots do
     ensure_screenshot_simulator("iPhone 17 Pro Max", "iOS")
     ensure_screenshot_simulator("iPhone 13 Pro Max", "iOS")
+    ensure_screenshot_simulator("iPad Pro 13-inch (M5)", "iOS")
     ensure_screenshot_simulator("Apple Watch Ultra 3 (49mm)", "watchOS")
     prepare_local_screenshot_fixture
 
-    # Apple currently needs the highest-resolution 6.9-inch family. Keep the
-    # issue's requested 6.5-inch set as an additional Media Manager fallback.
-    # Run sequentially: this project must never have concurrent xcodebuilds.
+    # Apple currently needs the highest-resolution 6.9-inch iPhone and 13-inch
+    # iPad families. Keep the issue's requested 6.5-inch iPhone set as an
+    # additional Media Manager fallback. Run sequentially: this project must
+    # never have concurrent xcodebuilds.
     capture_screenshots(
       project: XCODEPROJ,
       scheme: "Sendmeter Screenshots",
       configuration: "Debug",
-      devices: ["iPhone 17 Pro Max", "iPhone 13 Pro Max"],
+      devices: [
+        # Run the required iPad family first so iPad-only layout failures fail
+        # fast instead of after both optional iPhone captures.
+        "iPad Pro 13-inch (M5)",
+        "iPhone 17 Pro Max",
+        "iPhone 13 Pro Max",
+      ],
       languages: ["en-US"],
       output_directory: SCREENSHOT_OUTPUT,
       derived_data_path: SCREENSHOT_DERIVED_DATA,
