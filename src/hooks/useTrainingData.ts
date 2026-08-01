@@ -331,6 +331,7 @@ export function useTrainingData(userId: string) {
     /// fallback) that the user left as-is — an unreviewed number, #114's
     /// column. True once they moved the stepper themselves.
     rpeConfirmed?: boolean;
+    typeLabel?: string;
   }): Promise<boolean> {
     return addTindeqSessionAction({
       action: () => repo.insertTindeqSession({ ...input, phase: currentPhase }),

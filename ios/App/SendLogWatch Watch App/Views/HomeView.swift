@@ -16,6 +16,8 @@ import SwiftUI
 /// registered while its page is realized, which is exactly how a deep link
 /// arriving on the wrong page silently does nothing.
 struct HomeView: View {
+    @State private var showGaugeSessionLoss = false
+
     var body: some View {
         TabView {
             StatusView()
@@ -23,6 +25,16 @@ struct HomeView: View {
         }
         .tabViewStyle(.page)
         .navigationTitle("Sendmeter")
+        .onAppear {
+            if GaugeSessionLossNotice.consume() {
+                showGaugeSessionLoss = true
+            }
+        }
+        .alert("Force session not saved", isPresented: $showGaugeSessionLoss) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Your force recordings may appear ungrouped in History. Create a session for them on your phone.")
+        }
     }
 }
 
@@ -51,7 +63,7 @@ private struct ActionsView: View {
             // and only the phone can supply another. Recording still works —
             // everything is persist-first and drains later — so say that
             // rather than dumping the user on a sign-in screen mid-session.
-            if auth.needsToken {
+            if auth.needsToken && !ScreenshotFixtures.enabled {
                 Label(
                     "Waiting for iPhone — new saves upload once it's in range",
                     systemImage: "iphone.badge.exclamationmark"

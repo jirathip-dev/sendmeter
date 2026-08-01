@@ -1,4 +1,4 @@
-# App Store submission checklist (Send Log iOS + Send Log Watch)
+# App Store submission checklist (Sendmeter iOS + Sendmeter Watch)
 
 Everything code-side is done in this repo. This file is the copy-paste guide
 for the App Store Connect forms.
@@ -161,8 +161,7 @@ Put that email/password in the review notes.
    **not** a separate App Store record.
 3. Deploy the web app so the privacy-policy URL is live; paste the URL.
 4. Fill App Privacy per the table above.
-5. Screenshots: iPhone 6.9" and 6.5" (simulator screenshots fine), watch
-   screenshots from the watch simulator (`xcrun simctl io ... screenshot`).
+5. ~~Capture iPhone + watch screenshots.~~ **Automated:** see the next section.
 6. Export compliance: uses only standard TLS → answer "standard encryption,
    exempt" (France declaration auto-handled).
 7. Age rating questionnaire: all "None" → 4+.
@@ -173,3 +172,39 @@ Put that email/password in the review notes.
    and FileTimestamp (`C617.1`) and nothing else. This can only be done from
    Xcode on a real archive — it is not reproducible in CI.
 9. Xcode → Archive → Distribute (per app) → TestFlight first, then Submit.
+
+## App Store screenshot automation
+
+Run screenshots only for a release or after a meaningful UI change; this is
+deliberately separate from `fastlane beta` and every normal build:
+
+```bash
+LANG=en_US.UTF-8 bundle exec fastlane screenshots
+```
+
+The lane starts the disposable local Supabase stack, resets it from
+`supabase/seed.sql`, builds/syncs a local-config Capacitor bundle, and runs two
+fastlane snapshot UI-test schemes sequentially. It produces:
+
+- four populated app screens on iPhone 17 Pro Max (6.9", 1320×2868);
+- the same four screens on iPhone 13 Pro Max (6.5", 1284×2778), retained for
+  the issue's explicit compatibility request even though App Store Connect can
+  scale the 6.9" set down;
+- two real watch-app screens on Apple Watch Ultra 3 (422×514), with deterministic
+  readiness/ACWR fixture values enabled only by snapshot's launch argument.
+
+Outputs land in `fastlane/screenshots/en-US/`. The lane fails if the expected
+count or pixel dimensions drift. The directory and HTML summary are gitignored:
+review the PNGs locally, then upload the approved selection in App Store Connect
+Media Manager. Do not commit generated screenshots; they are release artifacts,
+while the UI tests, seed, and lane are the maintainable source of truth.
+
+Prerequisites are Docker, the repository's pinned Node/Ruby dependencies, Xcode
+with current iOS/watchOS simulator runtimes, and the named simulator device
+types. No App Store Connect key, signing certificate, production/demo-account
+credential, paired simulators, or physical Tindeq is used. The local Supabase
+stack is left running for inspection; stop it with `npm run db:stop` if desired.
+
+Reference behavior: [Apple's screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/),
+[Apple's upload guidance](https://developer.apple.com/help/app-store-connect/manage-app-information/upload-app-previews-and-screenshots/),
+and [fastlane snapshot](https://docs.fastlane.tools/actions/capture_ios_screenshots/).

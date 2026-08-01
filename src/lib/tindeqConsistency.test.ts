@@ -22,6 +22,7 @@ function rec(
     zone: null,
     protocolRunId: null,
     setNo: null,
+    source: "dynamometer",
   };
 }
 

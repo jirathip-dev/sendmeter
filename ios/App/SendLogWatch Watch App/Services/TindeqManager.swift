@@ -113,7 +113,9 @@ final class TindeqManager: NSObject {
     /// mid-flight the instant the user lowered their wrist, so the session
     /// could arrive minutes to hours late, if at all). Persist-first +
     /// idempotent upsert (`PendingSessionQueue`/`Repo`) is unchanged: this
-    /// returns immediately without waiting on the network.
+    /// returns immediately when persistence succeeds. If persistence and the
+    /// direct-upload fallback both fail, the manager records a one-shot Home
+    /// notice because this path may run after the Force UI has disappeared.
     func logSessionNow() {
         guard let groupId = sessionId, sessionCount > 0 else {
             clearSession()
@@ -126,7 +128,14 @@ final class TindeqManager: NSObject {
             groupId: groupId
         )
         clearSession()
-        Task { await PendingSessionQueue.shared.enqueue(pending) }
+        Task {
+            let outcome = await PendingSessionQueue.shared.enqueue(pending)
+            guard outcome == .lost else { return }
+            await MainActor.run {
+                self.errorMsg = "Force session couldn't be saved"
+                GaugeSessionLossNotice.record()
+            }
+        }
     }
 
     // MARK: Controls

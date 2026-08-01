@@ -146,6 +146,7 @@ export default function LoginScreen() {
               <input
                 className="field"
                 type="email"
+                aria-label="Email"
                 inputMode="email"
                 autoComplete="email"
                 placeholder="you@example.com"
@@ -161,6 +162,7 @@ export default function LoginScreen() {
                   <input
                     className="field"
                     type="password"
+                    aria-label="Password"
                     autoComplete="current-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}

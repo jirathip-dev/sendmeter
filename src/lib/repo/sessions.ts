@@ -144,6 +144,9 @@ export async function insertTindeqSession(input: {
   /// Omitted keeps the column's `true` default, for paths where the number
   /// came from a human.
   rpeConfirmed?: boolean;
+  /// Sensor sessions keep the historical Tindeq label; sensorless Force
+  /// sessions opt into the product-facing Force label.
+  typeLabel?: string;
 }): Promise<Session> {
   const data = unwrapOneMutation(
     await supabase
@@ -151,7 +154,7 @@ export async function insertTindeqSession(input: {
       .insert({
         date: input.date ?? today(),
         type: "tindeq",
-        type_label: "Tindeq",
+        type_label: input.typeLabel ?? "Tindeq",
         duration_min: Math.max(1, Math.min(600, input.durationMin)),
         rpe: input.rpe,
         rpe_confirmed: input.rpeConfirmed ?? true,

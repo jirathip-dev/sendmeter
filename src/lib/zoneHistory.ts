@@ -46,6 +46,13 @@ export interface ZoneAttribution {
 export interface ZonedHold {
   durationMs: number;
   zone?: RecordedZone | null;
+  source?: "dynamometer" | "manual";
+}
+
+export function isMeasuredRecording<T extends { source?: "dynamometer" | "manual"; peakKg?: number | null; avgKg?: number | null }>(
+  rec: T,
+): rec is T & { peakKg: number; avgKg: number } {
+  return rec.source !== "manual" && rec.peakKg != null && rec.avgKg != null;
 }
 
 /// THE read path for "which zone is this hold" (#259). Prefers the zone the
@@ -80,18 +87,18 @@ export function isEffortRecording(rec: ZonedHold): boolean {
 /// from capacity evidence but its final ramp can exceed CF, so its actual
 /// depletion remains measurable and must not be zeroed with Prehab.
 export function isDepletionEffortRecording(rec: ZonedHold): boolean {
-  return recordingZone(rec).zone !== "prehab";
+  return rec.source !== "manual" && recordingZone(rec).zone !== "prehab";
 }
 
 /// The PR a `pctBasis: "pr"` preset targets: the best capacity peak for a
 /// tag/side, never a Warm-up or Prehab hold. A maintenance hold cannot win
 /// by walkover when there is no maximal-intent effort yet.
 export function effortPeakKg<
-  T extends ZonedHold & { tag: string; side: TindeqSide; peakKg: number },
+  T extends ZonedHold & { tag: string; side: TindeqSide; peakKg: number | null },
 >(recs: T[], tag: string | null, side: TindeqSide | null): number | null {
   if (tag === null) return null;
-  const matches = recs.filter(
-    (r) => r.tag === tag && (side === null || r.side === side) && isEffortRecording(r),
+  const matches = recs.filter((r): r is T & { peakKg: number; avgKg: number } =>
+    r.tag === tag && (side === null || r.side === side) && isEffortRecording(r) && isMeasuredRecording(r),
   );
   return matches.length ? Math.max(...matches.map((r) => r.peakKg)) : null;
 }
@@ -104,10 +111,12 @@ export function effortPeakKg<
 /// guarantee is pinned directly rather than by a test that re-implements the
 /// filter it's meant to catch the removal of.
 export function curveCandidateRecordings<
-  T extends ZonedHold & { tag: string; side: TindeqSide },
->(recs: T[], tag: string | null, side: TindeqSide | null): T[] {
+  T extends ZonedHold & { tag: string; side: TindeqSide; peakKg?: number | null; avgKg?: number | null },
+>(recs: T[], tag: string | null, side: TindeqSide | null): (T & { peakKg: number; avgKg: number })[] {
   if (tag === null) return [];
-  return recs.filter((r) => r.tag === tag && (side === null || r.side === side) && isEffortRecording(r));
+  return recs.filter((r): r is T & { peakKg: number; avgKg: number } =>
+    r.tag === tag && (side === null || r.side === side) && isEffortRecording(r) && isMeasuredRecording(r),
+  );
 }
 
 /// The two counts `TrainingBalanceDetail`'s "what this counts" copy states:

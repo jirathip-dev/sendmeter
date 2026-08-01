@@ -150,7 +150,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
   // warning color — first rep wins on a tie, so exactly one is ever flagged.
   let bestIdx = 0;
   chrono.forEach((r, i) => {
-    if (r.peakKg > chrono[bestIdx]!.peakKg) bestIdx = i;
+    if ((r.peakKg ?? -Infinity) > (chrono[bestIdx]!.peakKg ?? -Infinity)) bestIdx = i;
   });
 
   // Only show the L/R legend when the group actually mixes sides — a
@@ -403,7 +403,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                     ? [
                         `Rep ${hovered + 1}${sideLabel(hoveredRec.side) ? ` · ${sideLabel(hoveredRec.side)}` : ""}`,
                         `median ${hoveredState.stats.median.toFixed(1)} kg`,
-                        `peak ${hoveredRec.peakKg.toFixed(1)} kg`,
+                        `peak ${hoveredRec.peakKg?.toFixed(1)} kg`,
                       ]
                     : [
                         `Rep ${hovered + 1}${sideLabel(hoveredRec.side) ? ` · ${sideLabel(hoveredRec.side)}` : ""}`,

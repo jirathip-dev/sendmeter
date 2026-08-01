@@ -15,6 +15,10 @@ struct WorkoutLiveView: View {
     /// immediately), so this reliably distinguishes "still uploading" from
     /// "stuck until sign-in" without touching `drain()`/`shouldDrain`.
     @State private var stillQueued = false
+    /// Kept in memory after both persistence and direct upload fail (#287),
+    /// so Retry can replay the same idempotent bundle instead of pretending
+    /// the workout was saved.
+    @State private var failedBundle: WorkoutSaveBundle?
     @State private var restAlarmTask: Task<Void, Never>?
     /// True in the always-on dimmed state. watchOS dims hard on its own, and a
     /// saturated colour block left at full value on top of that is a burn-in
@@ -35,7 +39,9 @@ struct WorkoutLiveView: View {
 
     var body: some View {
         Group {
-            if justSaved {
+            if failedBundle != nil {
+                failedSaveContent
+            } else if justSaved {
                 savedContent
             } else if workout.isRunning {
                 liveContent
@@ -72,15 +78,56 @@ struct WorkoutLiveView: View {
                 phase: workout.cachedPhase,
                 tunables: .default
             )
-            await OfflineQueue.shared.enqueue(bundle)
             WidgetBridge.updateLiveWorkout(active: false) // clear the live widget
-            await WidgetBridge.refreshStatus()            // fresh ACWR after the save
-            stillQueued = await OfflineQueue.shared.pendingCount() > 0
+            await save(bundle)
+        }
+    }
+
+    private func retryFailedSave() {
+        guard let failedBundle, !ending else { return }
+        ending = true
+        Task { await save(failedBundle) }
+    }
+
+    private func save(_ bundle: WorkoutSaveBundle) async {
+        let outcome = await OfflineQueue.shared.enqueue(bundle)
+        guard outcome != .lost else {
+            failedBundle = bundle
             ending = false
-            justSaved = true
-            WKInterfaceDevice.current().play(.success)
-            try? await Task.sleep(for: .seconds(1.6))
-            justSaved = false
+            WKInterfaceDevice.current().play(.failure)
+            return
+        }
+
+        failedBundle = nil
+        await WidgetBridge.refreshStatus() // fresh ACWR after the save
+        if outcome == .queued {
+            stillQueued = await OfflineQueue.shared.pendingCount() > 0
+        } else {
+            stillQueued = false
+        }
+        ending = false
+        justSaved = true
+        WKInterfaceDevice.current().play(.success)
+        try? await Task.sleep(for: .seconds(1.6))
+        justSaved = false
+    }
+
+    @ViewBuilder
+    private var failedSaveContent: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 30))
+                .foregroundStyle(.red)
+            Text("Workout not saved").font(.headline)
+            Text("Keep this screen open and retry.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(ending ? "Retrying…" : "Retry Save") {
+                retryFailedSave()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(ending)
         }
     }
 

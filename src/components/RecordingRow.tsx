@@ -160,6 +160,7 @@ export default function RecordingRow({
   const [loadError, setLoadError] = useState(false);
 
   async function toggle() {
+    if (rec.source === "manual") return;
     const next = !expanded;
     setExpanded(next);
     if (next && !samples) {
@@ -235,9 +236,9 @@ export default function RecordingRow({
                   color: "var(--success)",
                 }}
               >
-                {rec.peakKg.toFixed(1)} kg
+                {rec.source === "manual" ? rec.externalLoadKg?.toFixed(1) : rec.peakKg?.toFixed(1)} kg
               </span>{" "}
-              peak
+              {rec.source === "manual" ? " external" : " peak"}
             </span>
             {rec.tag && (
               <span
@@ -265,8 +266,8 @@ export default function RecordingRow({
             )}
           </div>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
-            {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s · avg{" "}
-            {rec.avgKg.toFixed(1)} kg
+            {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s
+            {rec.source === "manual" ? ` · manual · ${rec.outcome?.replace("_", " ") ?? ""} · planned ${((rec.plannedDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s` : ` · avg ${rec.avgKg?.toFixed(1)} kg`}
             {rec.setNo !== null && (
               <span style={{ color: "var(--info)" }}> · set {rec.setNo}</span>
             )}
