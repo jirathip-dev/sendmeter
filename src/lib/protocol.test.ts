@@ -56,8 +56,8 @@ const alt: TindeqPreset = {
 };
 
 describe("presetTargetKg", () => {
-  // pr 30, cf 20, W' 300 (so F(7s) ≈ 20 + 300/7 ≈ 62.9, capped at maxF 40)
-  const refs = { prKg: 30, cf: 20, wPrime: 300, maxF: 40 };
+  const capabilityFit = { family: "hill" as const, cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
+  const refs = { prKg: 30, cf: 20, wPrime: 300, maxF: 40, capabilityFit };
   const ramp: TindeqPreset = {
     ...repeaters,
     sets: 4,
@@ -86,14 +86,12 @@ describe("presetTargetKg", () => {
     expect(presetTargetKg(cfPct, { ...refs, cf: null }, 1)).toBeNull();
   });
 
-  it("smart curve target = CF + W'/hold, capped at maxF", () => {
+  it("auto curve target evaluates the Hill capability fit", () => {
     const curve: TindeqPreset = { ...repeaters, holdS: 30, targetCurve: true };
-    // 20 + 300/30 = 30
-    expect(presetTargetKg(curve, refs, 1)).toBe(30);
-    // short hold would exceed maxF → capped at 40
-    expect(presetTargetKg({ ...curve, holdS: 7 }, refs, 1)).toBe(40);
-    // needs CF + W'
-    expect(presetTargetKg(curve, { ...refs, cf: null }, 1)).toBeNull();
+    expect(presetTargetKg(curve, refs, 1)).toBe(25.5);
+    expect(presetTargetKg({ ...curve, holdS: 7 }, refs, 1)).toBe(32.9);
+    expect(presetTargetKg(curve, { ...refs, capabilityFit: null }, 1)).toBeNull();
+    expect(presetTargetKg(curve, { ...refs, cf: null, wPrime: null }, 1)).toBe(25.5);
   });
 
   it("%PR mode needs a PR; falls back to absolute kg when pct unset", () => {
@@ -106,7 +104,7 @@ describe("presetTargetKg", () => {
     // 5→15→30s holds; CF 20, W' 300 → F = 20 + 300/hold. A generous maxF
     // (100) keeps the cap from masking the per-set difference this test is
     // about.
-    const uncappedRefs = { prKg: 30, cf: 20, wPrime: 300, maxF: 100 };
+    const uncappedRefs = { ...refs };
     const curve: TindeqPreset = {
       ...repeaters,
       holdS: 5,
@@ -114,9 +112,7 @@ describe("presetTargetKg", () => {
       sets: 3,
       targetCurve: true,
     };
-    expect(presetTargetKg(curve, uncappedRefs, 1)).toBeCloseTo(20 + 300 / 5, 1);
-    expect(presetTargetKg(curve, uncappedRefs, 2)).toBeCloseTo(20 + 300 / 15, 1);
-    expect(presetTargetKg(curve, uncappedRefs, 3)).toBeCloseTo(20 + 300 / 30, 1);
+    expect([1, 2, 3].map((set) => presetTargetKg(curve, uncappedRefs, set))).toEqual([34.7, 28.8, 25.5]);
     // a null-list preset keeps resolving off the single holdS, unchanged
     const uniform: TindeqPreset = { ...repeaters, holdS: 30, targetCurve: true };
     expect(presetTargetKg(uniform, refs, 1)).toBe(presetTargetKg(uniform, refs, 3));
@@ -124,19 +120,19 @@ describe("presetTargetKg", () => {
 });
 
 describe("presetTargetKgRange (#332 finding 2)", () => {
-  const refs = { prKg: 30, cf: 20, wPrime: 300, maxF: 100 };
+  const refs = { prKg: 30, cf: 20, wPrime: 300, maxF: 40, capabilityFit: { family: "hill" as const, cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 } };
 
   it("collapses to a single value for a uniform preset", () => {
     const uniform: TindeqPreset = { ...repeaters, holdS: 30, targetCurve: true };
-    expect(presetTargetKgRange(uniform, refs)).toEqual({ min: 30, max: 30 });
-    expect(formatKgRange(presetTargetKgRange(uniform, refs)!)).toBe("30.0 kg");
+    expect(presetTargetKgRange(uniform, refs)).toEqual({ min: 25.5, max: 25.5 });
+    expect(formatKgRange(presetTargetKgRange(uniform, refs)!)).toBe("25.5 kg");
   });
 
   it("spans min/max across sets for a monotonic per-set hold list", () => {
     // 5→15→30s holds → F = 20+300/5=80, 20+300/15=40, 20+300/30=30.
     const curve: TindeqPreset = { ...repeaters, holdS: 5, holdsS: [5, 15, 30], sets: 3, targetCurve: true };
-    expect(presetTargetKgRange(curve, refs)).toEqual({ min: 30, max: 80 });
-    expect(formatKgRange(presetTargetKgRange(curve, refs)!)).toBe("30.0–80.0 kg");
+    expect(presetTargetKgRange(curve, refs)).toEqual({ min: 25.5, max: 34.7 });
+    expect(formatKgRange(presetTargetKgRange(curve, refs)!)).toBe("25.5–34.7 kg");
   });
 
   it("finds the extreme in a middle set — not just first/last (a non-monotonic list)", () => {
@@ -144,12 +140,12 @@ describe("presetTargetKgRange (#332 finding 2)", () => {
     // (80) sits at set 2, not at either end — a first/last shortcut would
     // have reported {min:30, max:40} and silently understated the range.
     const curve: TindeqPreset = { ...repeaters, holdS: 15, holdsS: [15, 5, 30], sets: 3, targetCurve: true };
-    expect(presetTargetKgRange(curve, refs)).toEqual({ min: 30, max: 80 });
+    expect(presetTargetKgRange(curve, refs)).toEqual({ min: 25.5, max: 34.7 });
   });
 
   it("is null whenever presetTargetKg is (a needed reference isn't resolved yet)", () => {
     const curve: TindeqPreset = { ...repeaters, targetCurve: true };
-    expect(presetTargetKgRange(curve, { ...refs, cf: null })).toBeNull();
+    expect(presetTargetKgRange(curve, { ...refs, capabilityFit: null })).toBeNull();
   });
 });
 
@@ -157,7 +153,7 @@ describe("curveHoldCopy (#332 round 6 finding c)", () => {
   it("states the exact single-hold formula when holds don't vary", () => {
     const copy = curveHoldCopy(false, 30);
     expect(copy.label).toBe("Hold time — 30s");
-    expect(copy.description).toContain("CF + W′/30s");
+    expect(copy.description).toContain("Hill capability curve");
   });
 
   it("relabels as the base for overrideless sets, and drops the false single-hold formula, when varying", () => {

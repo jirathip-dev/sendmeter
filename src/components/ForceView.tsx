@@ -24,6 +24,7 @@ import {
 } from "../lib/force-curve";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import { buildTimeline, holdForSet, presetTargetKg, timelineAt } from "../lib/protocol";
+import { nextLockedCapabilityFit } from "../lib/capabilityFitLock";
 import {
   curveCandidateRecordings,
   effortPeakKg,
@@ -902,12 +903,23 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // target mid-set the instant an early rep sets a new PR.
   const prKg = gaugeInputs.prKg;
 
-  // Force references a preset resolves its target against (PR / CF / W' / maxF).
+  // Freeze the fit itself, independently of the fetch freeze. This makes the
+  // prescription invariant explicit even if a previously-started async refit
+  // resolves after Start; future runs see it only after the active run ends.
+  const liveCapabilityFit = model?.capabilityFit ?? null;
+  const [lockedCapabilityFit, setLockedCapabilityFit] = useState(liveCapabilityFit);
+  const capabilityFit = nextLockedCapabilityFit(runActive, liveCapabilityFit, lockedCapabilityFit);
+  if (capabilityFit !== lockedCapabilityFit) setLockedCapabilityFit(capabilityFit);
+
+  // Force references a preset resolves its target against. `model` cannot
+  // recompute while a run is active, so capabilityFit freezes atomically with
+  // PR/tag/side and only refreshes after Stop.
   const presetRefs = {
     prKg,
     cf: model?.cf ?? null,
     wPrime: model?.wPrime ?? null,
     maxF: model?.maxF ?? null,
+    capabilityFit,
   };
 
   // #298: `zoneSel` bakes its tag + kg at the moment a zone is picked, so it

@@ -177,8 +177,8 @@ export interface TindeqPreset {
   pctBasis: "pr" | "cf";
   /// Per-set ramp: set N targets (targetPct + (N-1)·pctStep)% of the basis.
   pctStep: number;
-  /// Smart target (SL-62): derive the load from the exercise's force-duration
-  /// curve at holdS — the force sustainable for exactly that hold (CF + W'/t).
+  /// Auto curve target (SL-62): derive the load from the exercise's force-duration
+  /// Hill capability curve at holdS — the force sustainable for that hold.
   /// Overrides targetKg/targetPct when true.
   targetCurve: boolean;
   /// Run both hands in every logical rep (left hold, switch, right hold).

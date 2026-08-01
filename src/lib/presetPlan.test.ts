@@ -102,12 +102,9 @@ describe("buildPresetPlan / planVaries", () => {
       holdsS: [1, 7, 20],
       targetCurve: true,
     };
-    const refs: PresetRefs = { prKg: null, cf: 10, wPrime: 20, maxF: 25 };
+    const refs: PresetRefs = { prKg: null, cf: 10, wPrime: 20, maxF: 25, capabilityFit: { family: "hill", cf: 10, maxF: 25, tau: 5, p: 1, sse: 1 } };
     const rows = buildPresetPlan(p, refs);
-    // CF + W'/hold: 1s -> 30, capped at maxF 25; 7s -> 10+20/7≈12.9; 20s -> 10+1=11
-    expect(rows[0]!.targetKg).toBe(25);
-    expect(rows[1]!.targetKg).toBeCloseTo(12.9, 1);
-    expect(rows[2]!.targetKg).toBe(11);
+    expect(rows.map((row) => row.targetKg)).toEqual([25, 17.5, 13.6]);
     expect(rows[1]!.targetKg!).toBeGreaterThan(rows[2]!.targetKg!);
     expect(planVaries(rows, p.sets)).toBe(true);
   });

@@ -1,4 +1,6 @@
 import type { TindeqPreset } from "../types";
+import { predictCapability } from "./force-curve";
+import type { CapabilityFit } from "./capabilityModel";
 import type { PlanPreset } from "./presetPlan";
 
 /// Guided-protocol timeline (pure — testable). A preset expands into a flat
@@ -156,6 +158,7 @@ export interface PresetRefs {
   cf: number | null; // critical force
   wPrime: number | null; // impulse above CF (kg·s)
   maxF: number | null; // best short-window force
+  capabilityFit?: CapabilityFit | null; // frozen Hill capability curve
 }
 
 /// Resolve a preset's target load (kg) for a given set, against the exercise's
@@ -166,16 +169,14 @@ export function presetTargetKg(
   refs: PresetRefs,
   set: number,
 ): number | null {
-  // Smart target (SL-62): force sustainable for exactly this hold — CF + W'/t,
-  // capped at the best short-window force. #332: resolved at THIS set's hold
+  // Auto curve: force sustainable for exactly this hold from the visible Hill
+  // capability curve. #332: resolved at THIS set's hold
   // (a per-set hold list moves the curve reference set-by-set, same as the
   // %-of-PR ramp below moves the load).
   if (p.targetCurve) {
     const h = holdForSet(p, set);
-    if (refs.cf == null || refs.wPrime == null || h <= 0) return null;
-    const f = refs.cf + refs.wPrime / h;
-    const capped = refs.maxF != null ? Math.min(refs.maxF, f) : f;
-    return Math.round(capped * 10) / 10;
+    const f = predictCapability({ capabilityFit: refs.capabilityFit ?? undefined }, h);
+    return f == null ? null : Math.round(f * 10) / 10;
   }
   if (p.targetPct != null) {
     const base = p.pctBasis === "cf" ? refs.cf : refs.prKg;
@@ -225,7 +226,7 @@ export function formatKgRange(range: { min: number; max: number }): string {
 /// Preset-editor "Auto (curve)" slider label + explanation (#332 round 6
 /// finding c). With `varyHolds` off, the slider sets the ONE hold every set's
 /// smart target resolves against, and the old sentence ("read off this
-/// exercise's force curve at CF + W′/{holdS}s") is exactly true. With
+/// exercise's Hill capability curve") is exactly true. With
 /// `varyHolds` on, `presetTargetKg` resolves each set's target at THAT set's
 /// `holdForSet` — a set with its own "Set N" override reads its target off
 /// that hold, not this slider's — so the old sentence's stated formula is
@@ -240,18 +241,18 @@ export function curveHoldCopy(
     return {
       label: `Base hold time (sets without an override) — ${holdS}s`,
       description:
-        `Smart target: each set's load auto-adjusts to the force sustainable ` +
-        `for THAT set's hold, read off this exercise's force curve (CF + ` +
-        `W′/hold). A set left without its own "Set N" override above uses ` +
+        `Auto curve: each set's load adjusts to the force sustainable ` +
+        `for THAT set's hold, read off this exercise's purple Hill capability ` +
+        `curve. A set left without its own "Set N" override above uses ` +
         `this ${holdS}s base. Longer holds → lighter, more endurance-y load.`,
     };
   }
   return {
     label: `Hold time — ${holdS}s`,
     description:
-      `Smart target: the load auto-adjusts to the force you can sustain ` +
-      `for a ${holdS}s hold, read off this exercise's force curve ` +
-      `(CF + W′/${holdS}s). Longer holds → lighter, more endurance-y load.`,
+      `Auto curve: the load adjusts to the force you can sustain ` +
+      `for a ${holdS}s hold, read off this exercise's purple Hill capability ` +
+      `curve. Longer holds → lighter, more endurance-y load.`,
   };
 }
 

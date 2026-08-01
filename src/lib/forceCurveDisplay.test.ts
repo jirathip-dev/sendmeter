@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { ForceCurveModel } from "./force-curve";
+import { zoneTarget, type ForceCurveModel } from "./force-curve";
 import { sampleDisplayBand, sampleDisplayCurve, qualityRegions } from "./forceCurveDisplay";
 import { classifyZoneLoaded } from "./zoneHistory";
-import { fitDisplayRegression } from "./forceCurveRegression";
+import { fitCapabilityRegression } from "./capabilityModel";
+import { presetTargetKg } from "./protocol";
+import type { TindeqPreset } from "../types";
 
 const model: ForceCurveModel = {
   maxF: 40,
@@ -19,13 +21,13 @@ const model: ForceCurveModel = {
     { windowS: 120, kg: 21 },
   ],
 };
-model.displayFit = fitDisplayRegression(model.points, model.cf)!;
+model.capabilityFit = fitCapabilityRegression(model.points, model.cf)!;
 
 describe("sampleDisplayCurve", () => {
   it("selects the deterministic Hill regression for the curved seed-like envelope", () => {
     const seedLike = model.points.map((p) => ({ ...p }));
-    const a = fitDisplayRegression(seedLike, 18.7)!;
-    const b = fitDisplayRegression(seedLike, 18.7)!;
+    const a = fitCapabilityRegression(seedLike, 18.7)!;
+    const b = fitCapabilityRegression(seedLike, 18.7)!;
     expect(a).toEqual(b);
     expect(a.family).toBe("hill");
   });
@@ -54,7 +56,7 @@ describe("sampleDisplayCurve", () => {
   });
 
   it("falls back to the measured envelope when no Hill fit is available", () => {
-    const sparse = { ...model, cf: null, wPrime: null, displayFit: undefined };
+    const sparse = { ...model, cf: null, wPrime: null, capabilityFit: undefined };
     const points = sampleDisplayCurve(sparse, 1, 120, 20);
     expect(points).toHaveLength(21);
     expect(points[0]!.kg).toBe(40);
@@ -65,13 +67,13 @@ describe("sampleDisplayCurve", () => {
   });
 
   it("draws no line from a single unsupported observation", () => {
-    const onePoint = { ...model, points: [{ windowS: 1, kg: 40 }], displayFit: undefined };
+    const onePoint = { ...model, points: [{ windowS: 1, kg: 40 }], capabilityFit: undefined };
     expect(sampleDisplayCurve(onePoint, 1, 1, 20)).toEqual([]);
   });
 
   it("defensively removes increasing noise without overshooting", () => {
     const noisyPoints = [{ windowS: 1, kg: 38 }, { windowS: 3, kg: 40 }, { windowS: 10, kg: 30 }];
-    const noisy = { ...model, points: noisyPoints, displayFit: fitDisplayRegression(noisyPoints, 20)! };
+    const noisy = { ...model, points: noisyPoints, capabilityFit: fitCapabilityRegression(noisyPoints, 20)! };
     const points = sampleDisplayCurve(noisy, 1, 120, 100);
     expect(Math.max(...points.map((p) => p.kg))).toBeLessThanOrEqual(noisy.maxF);
     for (let i = 1; i < points.length; i++) expect(points[i]!.kg).toBeLessThanOrEqual(points[i - 1]!.kg);
@@ -81,6 +83,21 @@ describe("sampleDisplayCurve", () => {
     const points = sampleDisplayCurve(model, 1, 13, 100);
     expect(points[0]!.durationS).toBe(1);
     expect(points.at(-1)!.durationS).toBeCloseTo(13, 10);
+  });
+
+  it("matches rounded Power Endurance and Auto targets at the exact chart duration", () => {
+    const at60 = sampleDisplayCurve(model, 60, 60, 1)[0]!.kg;
+    expect(zoneTarget(model, "power-endurance")!.targetKg).toBe(Math.round(at60 * 10) / 10);
+    const preset: TindeqPreset = {
+      id: "curve", name: "Curve", holdS: 5, holdsS: [5, 15, 60], reps: 1, sets: 3,
+      restRepsS: 0, restSetsS: 60, targetKg: null, targetPct: null, pctBasis: "pr",
+      pctStep: 0, targetCurve: true, alternateSides: false,
+    };
+    const refs = { prKg: null, cf: model.cf, wPrime: model.wPrime, maxF: model.maxF, capabilityFit: model.capabilityFit };
+    for (const [index, durationS] of preset.holdsS!.entries()) {
+      const chartKg = sampleDisplayCurve(model, durationS, durationS, 1)[0]!.kg;
+      expect(presetTargetKg(preset, refs, index + 1)).toBe(Math.round(chartKg * 10) / 10);
+    }
   });
 });
 

@@ -1,5 +1,9 @@
 import type { TindeqSample } from "../types";
-import { fitDisplayRegression, predictDisplayFit, type DisplayFit } from "./forceCurveRegression";
+import {
+  fitCapabilityRegression,
+  predictCapabilityFit,
+  type CapabilityFit,
+} from "./capabilityModel";
 
 /**
  * Force–duration modeling for isometric finger strength (the isometric
@@ -38,7 +42,7 @@ export interface ForceCurveModel {
   wPrime: number | null; // impulse above CF (kg·s)
   confidenceBand?: ForceCurveConfidencePoint[];
   coverage?: ForceCurveCoverage;
-  displayFit?: DisplayFit;
+  capabilityFit?: CapabilityFit;
 }
 
 export interface ForceCurveConfidencePoint extends ForceCurvePoint {
@@ -258,14 +262,14 @@ function computeCurveCore(
       }
     }
   }
-  const displayFit = fitDisplayRegression(points, cf);
+  const capabilityFit = fitCapabilityRegression(points, cf);
   return {
     points,
     scatter,
     maxF,
     cf,
     wPrime,
-    displayFit: displayFit ?? undefined,
+    capabilityFit: capabilityFit ?? undefined,
     coverage: coverageFor(points, fitWindows.size, efforts),
   };
 }
@@ -282,7 +286,7 @@ export function computeForceCurve(
   const prepared = prepareEfforts(recordings, opts.diagnostics);
   const model = computeCurveCore(prepared, { fitDepth });
   const iterations = opts.bootstrapSamples ?? 200;
-  if (!model?.displayFit || recordings.length < 3 || iterations <= 0) return model;
+  if (!model?.capabilityFit || recordings.length < 3 || iterations <= 0) return model;
 
   // Recording-level bootstrap: resample whole efforts, never the correlated
   // rolling windows within an effort. A fixed LCG seed makes UI/tests stable.
@@ -297,16 +301,16 @@ export function computeForceCurve(
   for (let b = 0; b < iterations; b++) {
     const sample = Array.from({ length: prepared.length }, () => prepared[Math.floor(random() * prepared.length)]!);
     const fitted = computeCurveCore(sample, { fitDepth });
-    if (!fitted?.displayFit) continue;
+    if (!fitted?.capabilityFit) continue;
     for (const w of bandWindows) {
-      predictions.get(w)!.push(predictDisplayFit(fitted.displayFit, w));
+      predictions.get(w)!.push(predictCapabilityFit(fitted.capabilityFit, w));
     }
   }
   const confidenceBand = bandWindows.flatMap((windowS) => {
     const values = predictions.get(windowS)!.sort((a, b) => a - b);
     return values.length < Math.max(20, iterations * 0.2) ? [] : [{
       windowS,
-      kg: predictDisplayFit(model.displayFit!, windowS),
+      kg: predictCapabilityFit(model.capabilityFit!, windowS),
       lowKg: percentile(values, 0.025),
       highKg: percentile(values, 0.975),
     }];
@@ -334,6 +338,24 @@ export interface PeriodCurve {
 export function predictForce(model: ForceCurveModel, tS: number): number {
   if (model.cf === null || model.wPrime === null) return model.maxF;
   return Math.min(model.maxF, model.cf + model.wPrime / tS);
+}
+
+/** The one duration-specific capability model. Never falls back to CF + W′/t. */
+export function predictCapability(
+  model: Pick<ForceCurveModel, "capabilityFit"> | null | undefined,
+  durationS: number,
+): number | null {
+  const fit = model?.capabilityFit;
+  if (
+    !fit || fit.family !== "hill" || !Number.isFinite(durationS) || durationS <= 0 ||
+    !Number.isFinite(fit.cf) || fit.cf <= 0 ||
+    !Number.isFinite(fit.maxF) || fit.maxF <= fit.cf ||
+    !Number.isFinite(fit.tau) || fit.tau <= 0 ||
+    !Number.isFinite(fit.p) || fit.p <= 0 ||
+    !Number.isFinite(fit.sse) || fit.sse < 0
+  ) return null;
+  const predicted = predictCapabilityFit(fit, durationS);
+  return Number.isFinite(predicted) && predicted > 0 ? predicted : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -511,8 +533,8 @@ export function zoneTarget(
       };
     }
     case "power-endurance": {
-      if (model.cf === null || model.wPrime === null) return null;
-      const f60 = model.cf + model.wPrime / 60;
+      const f60 = predictCapability(model, 60);
+      if (f60 === null) return null;
       const baseKg = round1(f60);
       const newKg = round1(baseKg * scale);
       return {
@@ -529,7 +551,7 @@ export function zoneTarget(
           ZONE_PROTOCOLS["power-endurance"].holdS,
         ),
         protocol: "repeaters 7s on / 3s off × 6 · 2 min rest · 3–5 sets",
-        basis: `force sustainable ~60s: CF ${round1(model.cf)} + W′/60${suffix}`,
+        basis: `Hill capability curve at 60 seconds${suffix}`,
       };
     }
     case "endurance": {

@@ -196,7 +196,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
       ))}
       {displayed && (
         <polyline
-          aria-label={`${model.displayFit?.family ?? "Display"} regression`}
+          aria-label={`${model.capabilityFit?.family ?? "Measured"} capability curve`}
           points={displayed}
           fill="none"
           stroke="#5B5FC7"
@@ -281,7 +281,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
             {computing
               ? "Computing your force–duration curve…"
               : error ??
-                "The force–duration curve builds from this tag's recordings. A constrained Hill line smooths the chart while the underlying CF/W′ model continues to drive training calculations."}
+                "The force–duration curve builds from this tag's recordings. The purple constrained Hill capability curve drives Power Endurance and Auto curve targets. CF remains the Endurance reference; W′ stays internal to fatigue, RPE, and dose accounting."}
           </div>
         </div>
       ) : (
@@ -302,7 +302,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
           </div>
 
           {/* Curve shift over time: toggle a trailing window to overlay its
-              display-only fit (dashed, hue-coded) against the current one. */}
+              historical capability fit (dashed, hue-coded) against the current one. */}
           {periods.some((p) => p.model) && (
             <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
               {periods.map((p) => {
@@ -352,8 +352,9 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
                     marginTop: 8,
                   }}
                 >
-                  {model.coverage.message} CF and W′ are extrapolated; the
-                  confidence band may be unavailable until more durations exist.
+                  {model.coverage.message} The Hill curve and its targets are provisional;
+                  CF and W′ are extrapolated, and the confidence band may be unavailable
+                  until more durations exist.
                 </div>
               );
             }
@@ -366,7 +367,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
                     marginTop: 8,
                   }}
                 >
-                  {model.coverage.message}
+                  {model.coverage.message} Hill curve targets remain provisional.
                 </div>
               );
             }
@@ -402,7 +403,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
               </span>
             </span>
             <span title="Purple Hill/log-logistic line used only to smooth the chart">
-              Hill display
+              Hill capability curve
             </span>
             <span title="Pointwise 95% interval from a deterministic recording-level bootstrap">
               95% band{" "}

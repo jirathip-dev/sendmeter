@@ -98,11 +98,11 @@ const CONTENT: Record<
     body: [
       {
         heading: "Anchored to YOUR curve",
-        text: "Each zone is a percentage band of your own force–duration fit for the selected exercise (and side): POWER and STRENGTH anchor to your max force; POW END and ENDURANCE anchor to your critical force (CF) — the sustainable ceiling from the fit.",
+        text: "Each zone uses your own data for the selected exercise (and side): POWER and STRENGTH anchor to measured max force, POW END reads the purple Hill capability curve at 60 seconds, and ENDURANCE anchors to critical force (CF).",
       },
       {
         heading: "Why %max vs %CF",
-        text: "Short maximal efforts (<10s) are limited by maximal recruitment, so power/strength work is prescribed off max. Longer efforts are limited by the forearm's aerobic ceiling, so endurance work is prescribed off CF — just below CF extends capacity, just above it trains your anaerobic reserve.",
+        text: "Short maximal efforts (<10s) are prescribed from max force. Endurance work stays just below CF. Power Endurance and Auto curve presets read the same purple Hill capability curve you see on the chart. W′ stays internal to RPE, fatigue, and dose-equivalent timing.",
       },
       {
         heading: "Using a target",
@@ -182,7 +182,7 @@ const CONTENT: Record<
       },
       {
         heading: "The capability curve",
-        text: "For the chart only, Sendmeter fits a constrained Hill (log-logistic) display line. It declines smoothly from your measured maximum toward critical force without changing the persisted CF/W′ model, recommended targets, Auto presets, RPE, or training calculations.",
+        text: "Sendmeter fits one constrained Hill (log-logistic) capability curve. It declines smoothly from your measured maximum toward critical force. The purple line is also the source for Power Endurance at 60 seconds and Auto curve targets at each set's hold duration.",
       },
       {
         heading: "The shaded 95% uncertainty band",
@@ -190,7 +190,7 @@ const CONTENT: Record<
       },
       {
         heading: "Critical force (CF) & W′",
-        text: "The underlying model remains the hyperbolic critical-force fit F(t) = CF + W′/t. CF is the theoretical sustainable ceiling; W′ is the finite reserve above CF used by fatigue, RPE, dose-equivalence, and duration-specific targets. The smooth purple line is a separate display layer anchored to the same CF.",
+        text: "CF remains the curve's sustainable asymptote and the Endurance reference. W′ remains a separate internal fatigue-reserve estimate used by RPE and dose-equivalent timing; it does not draw or prescribe a competing capability curve.",
       },
       {
         heading: "Duration coverage matters",
@@ -198,7 +198,7 @@ const CONTENT: Record<
       },
       {
         heading: "Training zones",
-        text: "The shaded regions visualize the app's existing load-and-duration classifier. POWER / STRENGTH / POW END / ENDURANCE targets remain anchored to max force and the underlying CF/W′ model; the purple display line does not change prescriptions.",
+        text: "The shaded regions visualize the existing load-and-duration classifier. Power and Strength use measured max force, Power Endurance reads the purple curve at 60 seconds, and Endurance uses CF. Weak coverage is provisional; without a valid Hill fit, curve-based targets are unavailable rather than guessed.",
       },
     ],
   },

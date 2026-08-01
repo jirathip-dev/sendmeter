@@ -12,8 +12,8 @@ import {
 } from "./alternatingProtocol";
 import { buildTimeline } from "./protocol";
 
-const left: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
-const right: ForceCurveModel = { points: [], maxF: 32, cf: 14, wPrime: 180 };
+const left: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit: { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 } };
+const right: ForceCurveModel = { points: [], maxF: 32, cf: 14, wPrime: 180, capabilityFit: { family: "hill", cf: 14, maxF: 32, tau: 8, p: 1, sse: 1 } };
 const inputs = {
   left: { model: left, prKg: 42 },
   right: { model: right, prKg: 33 },
@@ -78,8 +78,8 @@ describe("alternating force prescriptions (#331)", () => {
     expect(prescriptionForSegment(pct, "left", 1)?.target?.kg).toBe(16);
     expect(prescriptionForSegment(pct, "right", 2)?.target?.kg).toBe(11.2);
     const curve = resolveAlternatingPreset(preset({ targetCurve: true }), inputs)!;
-    expect(prescriptionForSegment(curve, "left", 1)?.target?.kg).toBe(40);
-    expect(prescriptionForSegment(curve, "right", 2)?.target?.kg).toBe(23);
+    expect(prescriptionForSegment(curve, "left", 1)?.target?.kg).toBe(31);
+    expect(prescriptionForSegment(curve, "right", 2)?.target?.kg).toBe(19.8);
   });
 
   it("requires missing refs only for reference-derived targets", () => {

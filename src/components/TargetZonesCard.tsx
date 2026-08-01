@@ -120,13 +120,14 @@ export default function TargetZonesCard({
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {QUALITIES.map((q) => {
               const isActive = active && quality === q.id;
+              const available = zoneTarget(model, q.id, intensityPct) !== null;
               return (
                 <BoxChip
                   key={q.id}
                   label={q.label}
                   active={isActive}
                   color={QUALITY_COLORS[q.id]}
-                  disabled={locked}
+                  disabled={locked || !available}
                   onClick={() => {
                     if (isActive) {
                       onSelect(null);
@@ -140,6 +141,11 @@ export default function TargetZonesCard({
               );
             })}
           </div>
+          {!model.capabilityFit && (
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6 }}>
+              Power Endurance unavailable — add all-out holds at varied durations to fit the Hill capability curve.
+            </div>
+          )}
           {/* #172: the session-intensity dial sits on the card whose numbers
               it moves (SL-97b had it as a −/+ stepper in the "Protocol
               presets" header). Still ONE global value owned by ForceView —

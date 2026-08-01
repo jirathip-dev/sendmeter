@@ -4,14 +4,14 @@ import type {
   TrainingQuality,
 } from "./force-curve";
 import { classifyZoneLoaded } from "./zoneHistory";
-import { sampleDisplayRegression } from "./forceCurveRegression";
+import { predictCapability } from "./force-curve";
 
 export interface DisplayCurvePoint { durationS: number; kg: number }
 export interface DisplayBandPoint { durationS: number; lowKg: number; highKg: number }
 export interface QualityRegion { quality: TrainingQuality; t0: number; t1: number; kg0: number; kg1: number }
 
 /**
- * Smooth display sampling; CF/W′ is untouched. When a constrained Hill fit
+ * Smooth SVG sampling. When a constrained Hill capability fit
  * is unavailable, fall back to a log-time interpolation of the measured
  * envelope instead of fabricating a model or drawing the old max-force cap.
  */
@@ -22,8 +22,13 @@ export function sampleDisplayCurve(
   steps = 64,
 ): DisplayCurvePoint[] {
   if (!(tMin > 0) || !(tMax >= tMin) || steps < 1) return [];
-  if (model.displayFit) {
-    return sampleDisplayRegression(model.displayFit, tMin, tMax, steps);
+  if (model.capabilityFit) {
+    return Array.from({ length: steps + 1 }, (_, i) => {
+      const durationS = Math.exp(
+        Math.log(tMin) + ((Math.log(tMax) - Math.log(tMin)) * i) / steps,
+      );
+      return { durationS, kg: predictCapability(model, durationS)! };
+    });
   }
 
   const anchors = [...model.points]

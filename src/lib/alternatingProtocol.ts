@@ -38,6 +38,7 @@ function refs(input: HandInputs): PresetRefs {
     cf: input.model?.cf ?? null,
     wPrime: input.model?.wPrime ?? null,
     maxF: input.model?.maxF ?? null,
+    capabilityFit: input.model?.capabilityFit ?? null,
   };
 }
 
