@@ -346,7 +346,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         // resolves to for the active exercise right now — used by the quality
         // badge below (SL-97 load-aware classification) even for fixed-kg
         // presets. Null when the preset has no target at all, or a %/curve
-        // target whose reference (PR/CF/W') isn't computed yet. NOT touched
+        // target whose reference (PR/CF/Hill fit) isn't computed yet. NOT touched
         // by the session-intensity dial — that only scales recommended zones.
         const hasTarget = p.targetCurve || p.targetPct !== null || p.targetKg !== null;
         const resolvedKg = hasTarget ? presetTargetKg(p, presetRefs, 1) : null;
@@ -420,8 +420,10 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 {p.targetCurve ? (
                   <span style={{ color: "var(--success)" }}>
                     {" "}
-                    · auto CF
-                    {curveKgRange && ` · ${formatKgRange(curveKgRange)}`}
+                    · auto curve
+                    {curveKgRange
+                      ? ` · ${formatKgRange(curveKgRange)}`
+                      : " · unavailable — add varied-duration holds"}
                   </span>
                 ) : p.targetPct !== null ? (
                   <span style={{ color: "var(--success)" }}>

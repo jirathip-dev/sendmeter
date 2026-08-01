@@ -4,6 +4,7 @@ import {
   pickCurveRecordings,
   computeForceCurve,
   predictForce,
+  predictCapability,
   zoneTarget,
   zonePrescription,
   adjustedEndurance,
@@ -18,7 +19,7 @@ import {
 } from "./force-curve";
 import { curveCandidateRecordings } from "./zoneHistory";
 import type { TindeqSample } from "../types";
-import type { DisplayFit } from "./forceCurveRegression";
+import type { CapabilityFit } from "./capabilityModel";
 
 /// A constant-force hold sampled at 10 Hz (t in ms).
 function hold(seconds: number, kg: number): TindeqSample[] {
@@ -88,32 +89,50 @@ describe("predictForce", () => {
     expect(predictForce(m, 1)).toBe(40); // 20 + 300 → clamped to maxF
   });
 
-  it("keeps the CF/W′ calculation when a display-only Hill fit is present", () => {
-    const displayFit: DisplayFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
-    const m: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, displayFit };
+  it("keeps the CF/W′ calculation for internal fatigue accounting", () => {
+    const capabilityFit: CapabilityFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
+    const m: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit };
     expect(predictForce(m, 60)).toBe(25);
   });
 });
 
+const capabilityFit: CapabilityFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
+
+describe("predictCapability", () => {
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit };
+  it("is anchored, positive, monotone, and approaches CF", () => {
+    expect(predictCapability(model, 1)).toBe(40);
+    const values = [1, 3, 10, 60, 1_000_000].map((t) => predictCapability(model, t)!);
+    expect(values.every((value) => value > 0)).toBe(true);
+    expect(values.slice(1).every((value, i) => value <= values[i]!)).toBe(true);
+    expect(values.at(-1)).toBeCloseTo(20, 3);
+  });
+  it("rejects missing, invalid, and non-positive inputs without fallback", () => {
+    expect(predictCapability({ ...model, capabilityFit: undefined }, 60)).toBeNull();
+    expect(predictCapability(model, 0)).toBeNull();
+    expect(predictCapability(model, -1)).toBeNull();
+    expect(predictCapability({ capabilityFit: { ...capabilityFit, tau: 0 } }, 60)).toBeNull();
+  });
+});
+
 describe("zoneTarget", () => {
-  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit };
 
   it("derives power/strength targets from maxF", () => {
     expect(zoneTarget(model, "power")!.targetKg).toBe(38); // 40 × 0.95
     expect(zoneTarget(model, "strength")!.targetKg).toBe(34); // 40 × 0.85
   });
 
-  it("derives endurance/power-endurance targets from CF", () => {
+  it("keeps Endurance on CF and resolves Power Endurance from Hill at 60s", () => {
     expect(zoneTarget(model, "endurance")!.targetKg).toBe(18); // cf × 0.9
-    expect(zoneTarget(model, "power-endurance")!.targetKg).toBe(25); // cf + W'/60
+    expect(zoneTarget(model, "power-endurance")!.targetKg).toBe(23.1);
   });
 
-  it("does not let the display-only Hill fit change a training target", () => {
-    const displayFit: DisplayFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
-    const fitted: ForceCurveModel = { ...model, displayFit };
+  it("changes duration targets when the capability fit changes", () => {
+    const fitted: ForceCurveModel = { ...model, capabilityFit: { ...capabilityFit, tau: 30 } };
     const target = zoneTarget(fitted, "power-endurance")!;
-    expect(target.targetKg).toBe(25);
-    expect(target.basis).toContain("CF 20 + W′/60");
+    expect(target.targetKg).not.toBe(zoneTarget(model, "power-endurance")!.targetKg);
+    expect(target.basis).toContain("Hill capability curve at 60 seconds");
   });
 
   it("returns null for CF-based zones when CF is unknown", () => {
@@ -265,7 +284,7 @@ describe("computeForceCurve — display uncertainty and coverage", () => {
 });
 
 describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () => {
-  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit };
   const noCf: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
 
   it("100% is an exact no-op — same numbers as the un-adjusted zoneTarget for every zone", () => {
@@ -388,7 +407,7 @@ describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () =>
 
     it("power-endurance: the 5s floor engages under the same tight-margin setup", () => {
       // cf 25, wPrime 6 → f60 = 25 + 6/60 = 25.1, just above cf.
-      const tightPe: ForceCurveModel = { points: [], maxF: 40, cf: 25, wPrime: 6 };
+      const tightPe: ForceCurveModel = { points: [], maxF: 40, cf: 25, wPrime: 6, capabilityFit: { family: "hill", cf: 25, maxF: 28.05, tau: 1, p: 1, sse: 1 } };
       expect(zoneTarget(tightPe, "power-endurance", 110)!.workS).toBe(5);
     });
   });

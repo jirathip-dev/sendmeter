@@ -77,7 +77,7 @@ export function planVaries(rows: PlanRow[], sets: number): boolean {
 
 /// Whether the preset declares a target load at all (curve, %-of-PR/CF, or a
 /// fixed kg) — distinct from "chosen but not yet resolvable" (curve mode
-/// before CF/W′ exist, or %-of-PR before a PR exists), which is the only case
+/// before a Hill capability fit exists, or %-of-PR before a PR exists), which is the only case
 /// that deserves a "not resolvable yet" caption. A preset left on Target
 /// load: None resolves every `targetKg` to null too, but has nothing pending.
 export function presetHasTarget(p: PlanPreset): boolean {

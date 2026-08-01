@@ -57,7 +57,7 @@ describe("buildZoneSelection", () => {
   });
 
   it("assembles the target + protocol for a representative model", () => {
-    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit: { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 } };
     const result = buildZoneSelection(model, "strength", "FDP L", true);
     expect(result).toEqual<ZoneSelection>({
       tag: "FDP L",
@@ -94,7 +94,7 @@ describe("buildZoneSelection", () => {
   });
 
   it("#332 no-regression: leaves holdsS null for every recommended quality", () => {
-    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit: { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 } };
     for (const q of ["power", "strength", "power-endurance", "endurance"] as const) {
       expect(buildZoneSelection(model, q, "FDP L", true)!.protocol.holdsS).toBeNull();
     }
