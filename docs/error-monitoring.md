@@ -101,18 +101,24 @@ above, and un-set means the TestFlight build reports `local`.
 The build/typecheck/lint/test gate proves the scrub and the wiring; it cannot
 prove an event reaches the dashboard. Do this once on a real build:
 
-1. Create the Sentry project, put its DSN in Vercel (Preview) and confirm a
-   preview deploy's bundle contains the SDK.
-2. Trigger an **uncaught render error** (temporarily throw in a component) —
-   confirm the app shows the ErrorBoundary fallback, "Try again" recovers, and
-   the issue appears in Sentry.
-3. Trigger an **unhandled rejection** (`Promise.reject(new Error("x"))` from the
-   console / a temporary button) — confirm it appears via the global handler.
-4. On each, open the event in Sentry and read it end to end: user is a bare
+1. Open Account → Account → Session and tap **Send Sentry test error**. The
+   action stays disabled afterward and shows the exact event id; a DSN-less
+   build instead says monitoring is not enabled and does not claim success.
+2. Leave the app foregrounded for ten seconds, then find that event id in
+   Sentry. Its error is `SendmeterMonitoringDiagnostic` / `sentry-e2e: manual
+   diagnostic`.
+3. Open the event and read it end to end: user is a bare
    uuid, no email, no query strings, no `extra`/`contexts` beyond the allow-list,
    and **no health numbers anywhere**.
-5. Check the event's `environment` — a preview deploy must read `preview`, not
+4. Check the event's `environment` — a preview deploy must read `preview`, not
    `production`. That is the one thing only a real Vercel build can prove; the
    local gate can only show the fallback and an override.
-6. Repeat 2–5 from a TestFlight build once the lane carries the DSN, since the
+5. Repeat 1–4 from a TestFlight build once the lane carries the DSN, since the
    native WebView is a different runtime from the browser. It should read `ios`.
+
+The diagnostic proves the app's DSN, initialization, privacy hook, transport,
+ingestion and dashboard path in one event. To test Sentry's default global
+handlers separately on the web, run
+`setTimeout(() => { throw new Error("sentry-e2e-web"); }, 0)` in browser devtools
+and confirm that event arrives too. The release WebView is deliberately not
+inspectable, so the explicit Account action is the TestFlight path.
