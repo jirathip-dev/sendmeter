@@ -1,0 +1,56 @@
+{
+  "_comment": "Shared parity vectors for src/lib/rpeDepletion.ts and SendLogWatchCore/RPEDepletion.swift. Both test suites must consume this file; do not copy these values into either test.",
+  "_retuning": "When l0 or the mapping is retuned from real sessions, update the constant in both implementations and regenerate/update this one fixture. Run the focused Vitest test and swift test to make both implementations re-verify every vector.",
+  "tolerances": {
+    "load": 1e-9,
+    "rpe": 0.1,
+    "mapping": 1e-9
+  },
+  "loadToRpe": [
+    { "load": 0, "expectedRpe": 1 },
+    { "load": 0.5, "expectedRpe": 2.6 },
+    { "load": 1, "expectedRpe": 4 },
+    { "load": 2, "expectedRpe": 6 },
+    { "load": 4, "expectedRpe": 8.2 },
+    { "load": 6, "expectedRpe": 9.2 },
+    { "load": 8, "expectedRpe": 9.6 }
+  ],
+  "sessions": [
+    {
+      "id": "one-battery-on-curve",
+      "reps": [
+        { "peakKg": 48, "durationS": 10, "cf": 30, "wPrime": 180 }
+      ],
+      "expectedLoad": 1,
+      "expectedRpe": 4,
+      "expectedFromCurve": true
+    },
+    {
+      "id": "mixed-tag-session",
+      "reps": [
+        { "peakKg": 48, "durationS": 10, "cf": 30, "wPrime": 180 },
+        { "peakKg": 30, "durationS": 5, "cf": 20, "wPrime": 100 }
+      ],
+      "expectedLoad": 1.5,
+      "expectedRpe": 5.1,
+      "expectedFromCurve": true
+    },
+    {
+      "id": "fallback-without-usable-curve",
+      "reps": [
+        { "peakKg": 48, "durationS": 10, "cf": null, "wPrime": null },
+        { "peakKg": 60, "durationS": 30, "cf": 0, "wPrime": 0 }
+      ],
+      "expectedLoad": null,
+      "expectedRpe": 5,
+      "expectedFromCurve": false
+    },
+    {
+      "id": "empty-session",
+      "reps": [],
+      "expectedLoad": null,
+      "expectedRpe": 5,
+      "expectedFromCurve": false
+    }
+  ]
+}

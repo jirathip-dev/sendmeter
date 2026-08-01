@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   predictSessionRpe,
@@ -8,21 +9,44 @@ import {
   type DepletionRep,
 } from "./rpeDepletion";
 
-// KEEP-IN-SYNC: the same vectors run in
-// `SendLogWatchCore/Tests/SendLogWatchCoreTests/RPEDepletionTests.swift`.
-// Both implementations must agree to 0.1 RPE on every case below — that's the
-// whole point of duplicating the math instead of porting the curve fit.
+interface ParityRep {
+  peakKg: number;
+  durationS: number;
+  cf: number | null;
+  wPrime: number | null;
+}
 
-/// The load→RPE table from issue #280.
-const MAPPING_VECTORS: [load: number, rpe: number][] = [
-  [0, 1],
-  [0.5, 2.6],
-  [1, 4],
-  [2, 6],
-  [4, 8.2],
-  [6, 9.2],
-  [8, 9.6],
-];
+interface ParityFixture {
+  tolerances: {
+    load: number;
+    rpe: number;
+    mapping: number;
+  };
+  loadToRpe: { load: number; expectedRpe: number }[];
+  sessions: {
+    id: string;
+    reps: ParityRep[];
+    expectedLoad: number | null;
+    expectedRpe: number;
+    expectedFromCurve: boolean;
+  }[];
+}
+
+// Resolve from this module rather than process.cwd(), so the focused test and
+// the full Vitest run consume the same committed file from any launch path.
+const PARITY_FIXTURE_URL = new URL(
+  "../../ios/App/SendLogWatchCore/Tests/SendLogWatchCoreTests/Fixtures/rpe-depletion-parity.json",
+  import.meta.url,
+);
+const parityFixture = JSON.parse(
+  readFileSync(PARITY_FIXTURE_URL, "utf8"),
+) as ParityFixture;
+
+const fixtureSession = (id: string) => {
+  const vector = parityFixture.sessions.find((candidate) => candidate.id === id);
+  if (!vector) throw new Error(`Missing RPE parity session: ${id}`);
+  return vector;
+};
 
 const rep = (
   peakKg: number,
@@ -34,13 +58,17 @@ const rep = (
 
 describe("repDepletion", () => {
   it("is exactly 1.0 for a rep taken to failure ON the curve", () => {
-    // P = CF + W'/T is the definition of the curve, so (P - CF)·T = W'.
-    // This identity is the vector that catches sign and unit errors in both
-    // implementations at once.
-    const cf = 30;
-    const wPrime = 180;
-    const t = 10;
-    expect(repDepletion(rep(cf + wPrime / t, t, cf, wPrime))).toBeCloseTo(1, 10);
+    const vector = fixtureSession("one-battery-on-curve");
+    const fixtureRep = vector.reps[0];
+    if (!fixtureRep || vector.expectedLoad === null) {
+      throw new Error("Invalid one-battery RPE parity vector");
+    }
+    expect(
+      Math.abs(
+        (repDepletion({ ...fixtureRep, isEffort: true }) ?? Number.NaN) -
+          vector.expectedLoad,
+      ),
+    ).toBeLessThanOrEqual(parityFixture.tolerances.load);
   });
 
   it("scales linearly in force above CF and in duration", () => {
@@ -104,8 +132,10 @@ describe("sessionDepletion", () => {
 
 describe("rpeForDepletion", () => {
   it("matches the published table, rounded to 0.1", () => {
-    for (const [load, expected] of MAPPING_VECTORS) {
-      expect(rpeForDepletion(load)).toBe(expected);
+    for (const { load, expectedRpe } of parityFixture.loadToRpe) {
+      expect(Math.abs(rpeForDepletion(load) - expectedRpe)).toBeLessThanOrEqual(
+        parityFixture.tolerances.mapping,
+      );
     }
   });
 
@@ -117,35 +147,29 @@ describe("rpeForDepletion", () => {
 });
 
 describe("predictSessionRpe", () => {
-  it("predicts 4.0 for a single on-curve rep to failure", () => {
-    const p = predictSessionRpe([rep(48, 10, 30, 180)]);
-    expect(p.load).toBeCloseTo(1, 10);
-    expect(p.rpe).toBe(4);
-    expect(p.fromCurve).toBe(true);
+  it.each(parityFixture.sessions)("matches shared vector: $id", (vector) => {
+    const p = predictSessionRpe(
+      vector.reps.map((value) => ({ ...value, isEffort: true })),
+    );
+    if (vector.expectedLoad === null) {
+      expect(p.load).toBeNull();
+    } else {
+      expect(
+        Math.abs((p.load ?? Number.NaN) - vector.expectedLoad),
+      ).toBeLessThanOrEqual(parityFixture.tolerances.load);
+    }
+    expect(Math.abs(p.rpe - vector.expectedRpe)).toBeLessThanOrEqual(
+      parityFixture.tolerances.rpe,
+    );
+    expect(p.fromCurve).toBe(vector.expectedFromCurve);
   });
 
-  it("predicts a mixed-tag session from both curves", () => {
-    const p = predictSessionRpe([rep(48, 10, 30, 180), rep(30, 5, 20, 100)]);
-    expect(p.rpe).toBe(5.1); // L = 1.5
-    expect(p.fromCurve).toBe(true);
-  });
-
-  it("falls back — never throws, never blocks the save — with no curve", () => {
-    const p = predictSessionRpe([
-      rep(48, 10, null, null, true),
-      rep(60, 30, 0, 0, true),
-    ]);
-    expect(p.rpe).toBe(RPE_DEPLETION.fallbackRpe);
-    expect(p.fromCurve).toBe(false);
-    expect(p.load).toBeNull();
-  });
-
-  it("falls back on an empty session rather than reporting RPE 1", () => {
-    expect(predictSessionRpe([])).toEqual({
-      rpe: RPE_DEPLETION.fallbackRpe,
-      fromCurve: false,
-      load: null,
-    });
+  it("keeps the fixture fallback synchronized with the model tunable", () => {
+    for (const vector of parityFixture.sessions.filter(
+      ({ expectedFromCurve }) => !expectedFromCurve,
+    )) {
+      expect(vector.expectedRpe).toBe(RPE_DEPLETION.fallbackRpe);
+    }
   });
 
   // #338 — acceptance criterion 4 (non-Prehab behaviour unchanged): an

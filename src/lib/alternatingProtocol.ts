@@ -1,5 +1,10 @@
 import type { TindeqPreset, TindeqRecordingMeta, TindeqSide } from "../types";
-import { zonePrescription, type ForceCurveModel, type TrainingQuality } from "./force-curve";
+import {
+  prehabTarget,
+  zonePrescription,
+  type ForceCurveModel,
+  type TrainingQuality,
+} from "./force-curve";
 import {
   holdForSet,
   presetTargetKg,
@@ -129,6 +134,31 @@ export function resolveAlternatingPreset(
   };
   const left = hand(inputs.left);
   const right = hand(inputs.right);
+  return left && right ? { protocol: preset, left, right } : null;
+}
+
+/** Resolve the built-in maintenance prescriptions from each hand's own data. */
+export function resolveAlternatingMaintenance(
+  preset: TindeqPreset,
+  inputs: { left: HandInputs; right: HandInputs },
+): AlternatingPrescription | null {
+  if (!preset.alternateSides || (preset.id !== "zone:warmup" && preset.id !== "zone:prehab")) {
+    return null;
+  }
+  if (preset.id === "zone:warmup") return resolveAlternatingPreset(preset, inputs);
+  const hand = (input: HandInputs, side: "L" | "R"): HandPrescription | null => {
+    if (!input.model) return null;
+    const resolved = prehabTarget(input.model);
+    if (!resolved) return null;
+    return {
+      refs: refs(input),
+      targets: Array.from({ length: preset.sets }, () =>
+        target(resolved.targetKg, preset.holdS, `${preset.name} ${side}`),
+      ),
+    };
+  };
+  const left = hand(inputs.left, "L");
+  const right = hand(inputs.right, "R");
   return left && right ? { protocol: preset, left, right } : null;
 }
 

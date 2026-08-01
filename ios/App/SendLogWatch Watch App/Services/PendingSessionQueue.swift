@@ -15,7 +15,7 @@ import Supabase
 actor PendingSessionQueue {
     static let shared = PendingSessionQueue()
 
-    private var draining = false
+    private var drainState = CoalescingDrain()
 
     private var pendingDir: URL {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -42,7 +42,7 @@ actor PendingSessionQueue {
             guard
                 let data = try? Data(contentsOf: file),
                 let session = try? decoder.decode(PendingTindeqSession.self, from: data)
-            else { return true } // unreadable: still counts until drain() cleans it up
+            else { return true } // unreadable: retained and reported until a later build can decode it
             return shouldDrain(itemUserId: session.enqueuedUserId, currentUserId: currentUserId)
                 || currentUserId == nil
         }.count
@@ -53,34 +53,57 @@ actor PendingSessionQueue {
     }
 
     /// Persist the session and return as soon as it's on disk — the upload
-    /// runs in the background (the queue retries until it lands). Use this
-    /// from "Log Session" so the sheet dismisses instantly instead of
-    /// blocking on the network call that used to freeze mid-flight.
-    func enqueue(_ session: PendingTindeqSession) {
-        persist(session)
-        Task { await drain() }
-    }
-
-    private func persist(_ session: PendingTindeqSession) {
+    /// runs in the background (the queue retries until it lands). If
+    /// persistence fails, keep the in-memory session alive long enough to
+    /// attempt the idempotent upload directly; only failure of both paths is
+    /// `.lost`.
+    func enqueue(_ session: PendingTindeqSession) async -> QueuePersistOutcome {
         var session = session
         // Stamp which account is signed in right now (issue #158) — the
         // relayed access token's `sub` claim, read synchronously from the
         // Keychain cache (#265). Checked back in drain().
         session.enqueuedUserId = WatchSessionStore.shared.userId
+
+        switch PendingQueuePolicy.actionAfterPersist(persist(session)) {
+        case .drainQueued:
+            Task { await drain() }
+            return .queued
+        case .uploadDirect:
+            do {
+                try await Repo.logTindeqSession(session)
+                return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: true)
+            } catch {
+                return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: false)
+            }
+        }
+    }
+
+    private func persist(_ session: PendingTindeqSession) -> Bool {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let url = pendingDir.appendingPathComponent("\(session.id.uuidString).json")
-        if let data = try? encoder.encode(session) {
-            try? data.write(to: url, options: .atomic)
+        let persisted: Bool
+        do {
+            let data = try encoder.encode(session)
+            try data.write(to: url, options: .atomic)
+            persisted = true
+        } catch {
+            persisted = false
         }
         _ = pendingCount() // refresh the reported depth (#21)
+        Task { @MainActor in WatchBuild.reportQueueStatus() }
+        return persisted
     }
 
     func drain() async {
-        guard !draining else { return }
-        draining = true
-        defer { draining = false }
+        guard drainState.request() == .start else { return }
+        // request() marks the actor as running before this first suspension.
+        repeat {
+            await drainPass()
+        } while drainState.completePass() == .rerun
+    }
 
+    private func drainPass() async {
         let files = ((try? FileManager.default.contentsOfDirectory(
             at: pendingDir, includingPropertiesForKeys: [.creationDateKey]
         )) ?? [])
@@ -98,8 +121,9 @@ actor PendingSessionQueue {
                 let data = try? Data(contentsOf: file),
                 let session = try? decoder.decode(PendingTindeqSession.self, from: data)
             else {
-                // unreadable file: remove so it can't wedge the queue forever
-                try? FileManager.default.removeItem(at: file)
+                // Never delete an unreadable or undecodable value (#287).
+                // It stays counted/published through PendingSyncCache and a
+                // later compatible build gets another chance to recover it.
                 continue
             }
             // Read fresh right before each file's check, not once before the
@@ -122,5 +146,6 @@ actor PendingSessionQueue {
             }
         }
         _ = pendingCount() // refresh the reported depth (#21)
+        await MainActor.run { WatchBuild.reportQueueStatus() }
     }
 }

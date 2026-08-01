@@ -14,54 +14,6 @@ export type Database = {
   }
   public: {
     Tables: {
-      auth_events: {
-        Row: {
-          app_build: string | null
-          auth_event: string | null
-          created_at: string
-          event_store: string | null
-          first_at: string
-          id: string
-          last_at: string
-          last_good_at: string | null
-          last_good_expires_at: string | null
-          occurrences: number
-          reason: string
-          source: string | null
-          user_id: string
-        }
-        Insert: {
-          app_build?: string | null
-          auth_event?: string | null
-          created_at?: string
-          event_store?: string | null
-          first_at: string
-          id?: string
-          last_at: string
-          last_good_at?: string | null
-          last_good_expires_at?: string | null
-          occurrences?: number
-          reason: string
-          source?: string | null
-          user_id?: string
-        }
-        Update: {
-          app_build?: string | null
-          auth_event?: string | null
-          created_at?: string
-          event_store?: string | null
-          first_at?: string
-          id?: string
-          last_at?: string
-          last_good_at?: string | null
-          last_good_expires_at?: string | null
-          occurrences?: number
-          reason?: string
-          source?: string | null
-          user_id?: string
-        }
-        Relationships: []
-      }
       climb_attempts: {
         Row: {
           avg_hr: number | null
@@ -455,55 +407,73 @@ export type Database = {
       }
       tindeq_recordings: {
         Row: {
-          avg_kg: number
+          actual_duration_ms: number | null
+          avg_kg: number | null
           deleted_at: string | null
           duration_ms: number
           group_id: string | null
           id: string
+          external_load_kg: number | null
           note: string
-          peak_kg: number
+          outcome: string | null
+          peak_kg: number | null
           protocol_run_id: string | null
           recorded_at: string
+          planned_duration_ms: number | null
+          rep_no: number | null
           sample_count: number
           samples: Json
           set_no: number | null
           side: string
+          source: string
           tag: string
           user_id: string
           zone: string | null
         }
         Insert: {
-          avg_kg: number
+          actual_duration_ms?: number | null
+          avg_kg?: number | null
           deleted_at?: string | null
           duration_ms: number
           group_id?: string | null
           id?: string
+          external_load_kg?: number | null
           note?: string
-          peak_kg: number
+          outcome?: string | null
+          peak_kg?: number | null
           protocol_run_id?: string | null
           recorded_at?: string
+          planned_duration_ms?: number | null
+          rep_no?: number | null
           sample_count: number
           samples: Json
           set_no?: number | null
           side?: string
+          source?: string
           tag?: string
           user_id?: string
           zone?: string | null
         }
         Update: {
-          avg_kg?: number
+          actual_duration_ms?: number | null
+          avg_kg?: number | null
           deleted_at?: string | null
           duration_ms?: number
           group_id?: string | null
           id?: string
+          external_load_kg?: number | null
           note?: string
-          peak_kg?: number
+          outcome?: string | null
+          peak_kg?: number | null
           protocol_run_id?: string | null
           recorded_at?: string
+          planned_duration_ms?: number | null
+          rep_no?: number | null
           sample_count?: number
           samples?: Json
           set_no?: number | null
           side?: string
+          source?: string
           tag?: string
           user_id?: string
           zone?: string | null

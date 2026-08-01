@@ -34,6 +34,7 @@ function rec(
     // unless a case opts into a recorded zone.
     zone: null,
     ...over,
+    source: over.source ?? "dynamometer",
   };
 }
 

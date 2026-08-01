@@ -538,11 +538,13 @@ are safe regardless.
   offline sessions) and still reports to monitoring — a non-zero `evicted` on
   the IndexedDB path is now a finding, not routine degradation.
 - **Queue depth is ambient, never an interrupt** (#269). `usePendingUploads` →
-  a muted line on the Force tab and a "This iPhone · N recordings pending sync"
-  row in the account sheet, next to the watch's own queue line (#21). A toast
+  a muted line on the Force tab and an actionable History banner when this
+  iPhone or the watch has uploads waiting (#21/#369). Empty queues keep History
+  quiet; pairing/install/build state lives in Account. A toast
   or alert per failed upload fires exactly when the user is mid-outage and can
   do nothing, and then repeats per rep — don't add one. Same honest-states rule
-  as `watchSyncLine`: "not read yet" must not render as "empty".
+  as `uploadWarningPresentation`: unknown must not render as empty, and a stale
+  watch count must read as the last report rather than a current queue depth.
 - **Recording samples store `t` in milliseconds.** `tindeq_recordings.samples`
   time is ms — charts must divide by 1000 to show seconds (a mislabeled axis once
   showed "25152.0s").
@@ -598,17 +600,16 @@ are safe regardless.
   workout state machine), `rest-target-s`, `gauge-prepare`, `passkey-prompt`,
   `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202).
 - **Auth diagnostics don't live in localStorage on native.** `auth-events`,
-  `auth-heartbeat`, `webview-canary` and `auth-events-flushed` go through
-  `authEventStore.ts`: Capacitor **Preferences** (NSUserDefaults) on native,
+  `auth-heartbeat` and `webview-canary` go through `authEventStore.ts`:
+  Capacitor **Preferences** (NSUserDefaults) on native,
   `localStorage` on web — because the WebView store is exactly what may be
   getting wiped, and evidence stored next to the session dies with it. The
   seam is synchronous by contract (write-behind cache + serialized async
   writes) so the auth path never awaits a disk write and a failed write can't
   throw into it. `webview-canary` is written to BOTH stores: present in
   Preferences but gone from `localStorage` = the WebView's data was purged.
-  The ring is pushed to `auth_events` on the next sign-in
-  (`authEventFlush.ts`, upsert on `(user_id, reason, first_at)` — idempotent,
-  never blocks sign-in).
+  The bounded 20-event ring stays on-device and is readable in the Account
+  troubleshooting section; it is never uploaded.
 - **Sentry only ever sees an allow-listed event** (#227, `src/lib/monitoring.ts`).
   It initializes *only* when a build-time `VITE_SENTRY_DSN` is present — no DSN
   (dev, tests, any un-configured build) and the SDK is dead-code-eliminated

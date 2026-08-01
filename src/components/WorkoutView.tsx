@@ -5,6 +5,7 @@ import { usePhoneWorkout } from "../hooks/usePhoneWorkout";
 import { useRealtimeBump } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
 import { insertPhoneWorkout, updateSession } from "../lib/repo";
+import { captureHandledOperationalFailure } from "../lib/monitoring";
 import {
   phoneWorkoutBlockedReason,
   routineBlockedReason,
@@ -95,6 +96,9 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
         onClick: () => setEditingSession(saved),
       });
     } catch (e) {
+      captureHandledOperationalFailure("workout.insert", e, {
+        automatic: true,
+      });
       setError(e instanceof Error ? e.message : "Failed to save workout");
     }
   }
@@ -124,6 +128,9 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
         bumpRealtime();
         toast("Workout updated");
       } catch (e) {
+        captureHandledOperationalFailure("session.update", e, {
+          automatic: false,
+        });
         setError(e instanceof Error ? e.message : "Failed to update workout");
       }
     })();

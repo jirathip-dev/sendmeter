@@ -29,6 +29,7 @@ import {
   curveCandidateRecordings,
   effortPeakKg,
   isDepletionEffortRecording,
+  isMeasuredRecording,
 } from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
@@ -43,6 +44,7 @@ import { reportPersistFailure } from "../lib/lostRecordings";
 import { persistRecordingDurable } from "../lib/recordingQueue";
 import { usePendingUploads } from "../hooks/usePendingUploads";
 import { PENDING_BACKED_UP } from "../lib/pendingUploads";
+import { appendUniqueById, claimManualAttempt, claimManualSession, manualAttemptKey } from "../lib/manualForceSubmission";
 import type {
   NewTindeqRecording,
   TindeqPreset,
@@ -72,17 +74,23 @@ import {
   type ZoneSelection,
 } from "../lib/zoneSelection";
 import {
+  postFitZoneDecision,
+  type PostFitZoneState,
+} from "../lib/postFitZoneDecision";
+import {
   alternatingCurveInputKey,
   alternatingHoldDurations,
   needsHandReferences,
   nextLockedAlternatingPrescription,
   prescriptionForSegment,
+  resolveAlternatingMaintenance,
   resolveAlternatingPreset,
   resolveAlternatingRecommendation,
   type AlternatingPrescription,
 } from "../lib/alternatingProtocol";
 import ZoneFocusCard from "./ZoneFocusCard";
 import ForceFullscreen from "./ForceFullscreen";
+import ManualForceFullscreen from "./ManualForceFullscreen";
 import ForceTrendChart from "./ForceTrendChart";
 import LiveForceSparkline from "./LiveForceSparkline";
 
@@ -94,6 +102,7 @@ interface ForceViewProps {
     note: string;
     groupId: string;
     rpeConfirmed?: boolean;
+    typeLabel?: string;
   }) => Promise<boolean>;
 }
 
@@ -129,14 +138,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // Always banner (one row per lost rep) but keep the toast on the same
       // once-per-outage gate as the queued case, so a guided protocol whose
       // every rep fails doesn't stack a toast per rep.
-      setUnqueued((list) => [...list, rec]);
+      setUnqueued((list) => appendUniqueById(list, rec));
       if (isNewOutage) {
         toast("Storage full — this recording is not saved anywhere", "error");
       }
-      return;
+      return false;
     }
-    if (!isNewOutage) return;
-    toast("Couldn't save — recording queued, will sync automatically", "error");
+    if (isNewOutage) toast("Couldn't save — recording queued, will sync automatically", "error");
+    return true;
   }
 
   /// Retry everything in the banner: the server first (the outage may be
@@ -224,27 +233,53 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // double call inserted two sessions for the same groupId.
   const endedGroupsRef = useRef<Set<string>>(new Set());
   const [listError, setListError] = useState<string | null>(null);
-  const [zoneSel, setZoneSel] = useState<ZoneSelection | null>(null);
+  const [zoneState, setZoneState] = useState<PostFitZoneState>({
+    selection: null,
+    notice: null,
+    revision: 0,
+  });
+  const zoneSel = zoneState.selection;
   const [preset, setPreset] = useState<TindeqPreset | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
+  const manualGroupRef = useRef<string | null>(null);
+  const manualStartedRef = useRef(0);
+  const manualRunIdRef = useRef<string | null>(null);
+  const manualAttemptIdsRef = useRef<Map<string, string>>(new Map());
+  const manualAttemptClaimsRef = useRef<Set<string>>(new Set());
+  const manualSessionClaimsRef = useRef<Set<string>>(new Set());
   // #296: keep the zone and custom-preset selections mutually exclusive —
   // see forceSelection.ts for the rule and why it's needed.
   function selectZone(sel: ZoneSelection | null) {
     const { selection, clearsPersistedPreset } = selectZoneOutcome({ zoneSel, preset }, sel);
-    setZoneSel(selection.zoneSel);
+    setZoneState((current) => ({
+      selection: selection.zoneSel,
+      notice: null,
+      revision: current.revision + 1,
+    }));
     setPreset(selection.preset);
     if (clearsPersistedPreset) clearPersistedPreset();
   }
   function selectPreset(p: TindeqPreset | null) {
     const next = withPresetSelected({ zoneSel, preset }, p);
     setPreset(next.preset);
-    if (next.zoneSel !== zoneSel) setZoneSel(next.zoneSel);
+    // Selecting a custom preset must also clear a post-fit zone notice when
+    // the zone was already null, so this write is intentionally unconditional.
+    setZoneState((current) => ({
+      selection: next.zoneSel,
+      notice: null,
+      revision: current.revision + 1,
+    }));
   }
   // #298: one explicit "unarm" affordance for both the tab and the
   // fullscreen — drops whichever of zone/preset is active AND the persisted
   // preset key, so a stale key can't re-arm the preset on the next mount
   // (the #296 class; `PresetManager` owns that key at `clearPersistedPreset`).
   function clearProtocol() {
-    setZoneSel(null);
+    setZoneState((current) => ({
+      selection: null,
+      notice: null,
+      revision: current.revision + 1,
+    }));
     setPreset(null);
     clearPersistedPreset();
   }
@@ -316,11 +351,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         timeoutId = setTimeout(() => resolve([]), 4000);
       }),
     ]).finally(() => clearTimeout(timeoutId));
-    const recs = recordingsRef.current.filter((r) => r.groupId === groupId);
+    const recs = recordingsRef.current.filter(
+      (r) => r.groupId === groupId && isMeasuredRecording(r),
+    );
     const byTag = new Map(curves.map((c) => [c.name, c]));
     const predicted = predictSessionRpe(
       recs.map((r) => ({
-        peakKg: r.peakKg,
+        peakKg: r.peakKg!,
         durationS: r.durationMs / 1000,
         cf: byTag.get(r.tag)?.cf ?? null,
         wPrime: byTag.get(r.tag)?.wPrime ?? null,
@@ -629,7 +666,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // The gauge-input lock below holds for as long as `runActive` — releasing
   // only once `tindeq.stop()` (inside that deferred stop) clears
   // `pendingInterruption`, i.e. exactly when the run is really over.
-  const runActive = measuring || tindeq.pendingInterruption;
+  const runActive = measuring || tindeq.pendingInterruption || manualOpen;
   const trimmedTag = pendingTag.trim();
   const liveEffectiveTag = allTags.includes(trimmedTag)
     ? trimmedTag
@@ -710,15 +747,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     //
     // #298 round 5: `react-hooks/purity` flags this `Date.now()` call, but
     // it's a false positive from this rule attributing the pure-updater
-    // requirement of the `setZoneSel` functional update below onto the WHOLE
+    // requirement of the functional state update below onto the WHOLE
     // effect callback — effects (this one included) are allowed to be
-    // impure; only the updater passed to `setZoneSel` itself needs to be a
-    // pure function of its `prev` argument, and it is (`rederiveSelection` is
-    // pure). Confirmed by isolating this exact call: removing the
-    // `setZoneSel(prev => ...)` below makes the diagnostic disappear with
-    // nothing else changed.
+    // impure; only the updater passed to `setZoneState` itself needs to be a
+    // pure function of its current argument, and it is
+    // (`postFitZoneDecision` is pure). Confirmed by isolating this exact call:
+    // removing the functional state update below makes the diagnostic
+    // disappear with nothing else changed.
     // eslint-disable-next-line react-hooks/purity
     const now = Date.now();
+    const fitZoneRevision = zoneState.revision;
     const recs = pickCurveRecordings(curveRecordings, now);
     // Per-period picks for the curve-shift overlays (strict windows — an
     // empty period is an honestly absent curve, not a fallback).
@@ -764,8 +802,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         // Functional update (never the `zoneSel` closed over at effect-
         // creation time) per the CLAUDE.md stale-closure rule — this `.then`
         // can resolve after the user has since armed a different zone.
-        setZoneSel((prev) =>
-          rederiveSelection(prev, m, zoneTag, intensityPctRef.current) ? prev : null,
+        setZoneState((current) =>
+          postFitZoneDecision(
+            current,
+            m,
+            zoneTag,
+            intensityPctRef.current,
+            fitZoneRevision,
+          ),
         );
         setPeriodCurves(
           periodPicks.map((p) => ({
@@ -848,7 +892,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // `alternatingComputedFor !== alternatingCurveKey` marks this exact
     // request pending before its first await; the previous tag's pair cannot
     // pass the key check while this one resolves.
-    const fit = async (rows: TindeqRecordingMeta[]) => {
+    const fit = async (rows: (TindeqRecordingMeta & { peakKg: number; avgKg: number })[]) => {
       if (rows.length === 0) return null;
       const picked = pickCurveRecordings(rows, Date.now());
       const samples = await Promise.all(picked.map((r) => fetchRecordingSamples(r.id)));
@@ -942,20 +986,25 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     prKg,
   );
   const alternatingQuality = selectedQuality(gaugeInputs.zoneSel);
+  const alternatingMaintenance =
+    gaugeInputs.zoneSel?.protocol.id === "zone:warmup" ||
+    gaugeInputs.zoneSel?.protocol.id === "zone:prehab";
   const liveAlternatingPrescription = gaugeInputs.preset?.alternateSides
     ? resolveAlternatingPreset(gaugeInputs.preset, alternatingInputs)
-    : alternatingArmed && alternatingQuality && effectiveTag && alternatingModelsSettled
-      ? resolveAlternatingRecommendation(
-          alternatingInputs,
-          alternatingQuality,
-          effectiveTag,
-          gaugeInputs.intensityPct,
-          gaugeInputs.zoneSel?.protocol.sets ?? 1,
-        )
-      : null;
+    : alternatingMaintenance && gaugeInputs.zoneSel && alternatingModelsSettled
+      ? resolveAlternatingMaintenance(gaugeInputs.zoneSel.protocol, alternatingInputs)
+      : alternatingArmed && alternatingQuality && effectiveTag && alternatingModelsSettled
+        ? resolveAlternatingRecommendation(
+            alternatingInputs,
+            alternatingQuality,
+            effectiveTag,
+            gaugeInputs.intensityPct,
+            gaugeInputs.zoneSel?.protocol.sets ?? 1,
+          )
+        : null;
   const alternatingTargetNeedsBoth =
     alternatingArmed &&
-    (alternatingQuality !== null ||
+    (alternatingQuality !== null || alternatingMaintenance ||
       (gaugeInputs.preset !== null && needsHandReferences(gaugeInputs.preset)));
   const alternatingReferencesPending =
     alternatingTargetNeedsBoth && effectiveTag !== null && !alternatingModelsSettled;
@@ -1027,7 +1076,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     if (next === intensityPct) return;
     setIntensityPct(next);
     saveIntensity(next);
-    setZoneSel(applyIntensity(zoneSel, model, zoneTag, next));
+    setZoneState((current) => ({
+      ...current,
+      selection: applyIntensity(current.selection, model, zoneTag, next),
+    }));
   }
 
   // Get-ready countdown preference (5s PREPARE before the first hold).
@@ -1215,7 +1267,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const { status } = tindeq;
   // Keep the screen awake while the gauge is live so a short auto-lock doesn't
   // interrupt a hold/protocol mid-recording.
-  useWakeLock(status === "connected" || status === "measuring");
+  useWakeLock(status === "connected" || status === "measuring" || manualOpen);
   const prevStatusRef = useRef(status);
   useEffect(() => {
     const prev = prevStatusRef.current;
@@ -1437,6 +1489,25 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         </div>
       )}
 
+      <button
+        className="btn-primary"
+        style={{ marginTop: 10, background: "var(--surface-2)", color: "var(--primary)", border: "1px solid var(--primary)" }}
+        disabled={!activeProtocol || !pendingTag.trim() || runActive}
+        title={!activeProtocol ? "Choose a protocol preset first" : !pendingTag.trim() ? "Add an exercise first" : undefined}
+        onClick={() => {
+          if (!timeline || !activeProtocol || !pendingTag.trim()) return;
+          manualGroupRef.current = crypto.randomUUID();
+          manualRunIdRef.current = crypto.randomUUID();
+          manualAttemptIdsRef.current = new Map();
+          manualAttemptClaimsRef.current = new Set();
+          manualStartedRef.current = Date.now();
+          setManualOpen(true);
+        }}
+      >
+        Train without sensor
+      </button>
+      {!activeProtocol && <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 6 }}>Choose a Force protocol below to train without a sensor.</div>}
+
       {/* Connected: the gauge lives fullscreen; this is the resume bar */}
       {(status === "connected" || status === "measuring") && (
         <button
@@ -1543,7 +1614,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
                 {justSaved.side ? ` · ${justSaved.side}` : ""}
               </span>
               <span style={{ fontSize: "var(--t-sm)", color: "var(--ink)", fontFamily: "Inter, sans-serif", fontWeight: 800 }}>
-                {justSaved.peakKg.toFixed(1)} kg
+                {justSaved.peakKg?.toFixed(1)} kg
               </span>
               <button
                 onClick={() => void undoJustSaved()}
@@ -1717,10 +1788,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               armedZone?.protocol.sets ?? 1,
             ) !== null
           }
-          alternatingPrescription={
-            alternatingQuality ? alternatingPrescription : null
-          }
+          alternatingPrescription={alternatingPrescription}
           onClear={clearProtocol}
+          unarmedNotice={zoneState.notice}
         />
       )}
       {effectiveTag && zoneTag && (
@@ -1751,7 +1821,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           // fetch was in flight still wins (forceSelection.test.ts covers
           // the race).
           const next = restoredSelection({ zoneSel, preset }, p);
-          setZoneSel(next.zoneSel);
+          setZoneState((current) => ({
+            selection: next.zoneSel,
+            notice: null,
+            revision: current.revision + 1,
+          }));
           setPreset(next.preset);
         }}
         presetRefs={presetRefs}
@@ -1831,7 +1905,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               : alternatingTargetNeedsBoth && alternatingPrescription === null
                 ? alternatingQuality
                   ? "Alternating needs a fit for both hands before Start."
-                  : "Alternating target needs force references for both hands before Start."
+                  : "This maintenance protocol needs force references for both hands before Start."
                 : null
           }
           saving={saving}
@@ -1873,6 +1947,87 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             }
           }}
           onMinimize={() => setGaugeMinimized(true)}
+        />
+      )}
+      {manualOpen && timeline && activeProtocol && (
+        <ManualForceFullscreen
+          name={`${activeProtocol.name} · ${gaugeInputs.pendingTag}`}
+          timeline={timeline}
+          targetKg={(set) => presetTargetKg(activeProtocol, presetRefs, set)}
+          onAttempt={async ({ seg, actualDurationMs, externalLoadKg, outcome }) => {
+            const groupId = manualGroupRef.current;
+            const runId = manualRunIdRef.current;
+            if (!groupId || !runId) return false;
+            const attemptIds = manualAttemptIdsRef.current;
+            const attemptClaims = manualAttemptClaimsRef.current;
+            const attemptKey = manualAttemptKey(seg.set, seg.rep, seg.side ?? gaugeInputs.pendingSide);
+            const id = claimManualAttempt(
+              attemptKey,
+              attemptIds,
+              attemptClaims,
+              () => crypto.randomUUID(),
+            );
+            if (!id) return false;
+            const rec: NewTindeqRecording & { id: string } = {
+              id,
+              source: "manual",
+              durationMs: actualDurationMs,
+              peakKg: null,
+              avgKg: null,
+              note: "Sensorless timed external-load attempt",
+              tag: gaugeInputs.pendingTag,
+              side: seg.side ?? gaugeInputs.pendingSide,
+              groupId,
+              protocolRunId: runId,
+              setNo: seg.set,
+              repNo: seg.rep,
+              zone: performedQuality(activeProtocol, externalLoadKg, presetRefs, seg.set),
+              externalLoadKg,
+              outcome,
+              plannedDurationMs: seg.durS * 1000,
+              actualDurationMs,
+              samples: [],
+            };
+            try {
+              const saved = await insertRecording(rec);
+              outageRef.current = false;
+              setRecordings((list) => [saved, ...list]);
+              return true;
+            } catch {
+              const durable = await queueFailedRecording(rec);
+              if (!durable) attemptClaims.delete(attemptKey);
+              return durable;
+            }
+          }}
+          onFinish={async (rpe, completedMs) => {
+            const groupId = manualGroupRef.current;
+            if (!groupId) return false;
+            const sessionClaims = manualSessionClaimsRef.current;
+            const startedMs = manualStartedRef.current;
+            const sessionTag = gaugeInputs.pendingTag;
+            if (!claimManualSession(groupId, sessionClaims)) return false;
+            const durationMin = Math.max(1, Math.round((completedMs - startedMs) / 60000));
+            const ok = await onLogSession({
+              durationMin,
+              rpe,
+              rpeConfirmed: true,
+              typeLabel: "Force",
+              groupId,
+              note: `Sensorless Force · ${sessionTag}`,
+            });
+            if (ok) {
+              if (manualGroupRef.current === groupId) {
+                manualGroupRef.current = null;
+                manualRunIdRef.current = null;
+                setManualOpen(false);
+                toast("Manual Force session logged to history");
+              }
+            } else {
+              sessionClaims.delete(groupId);
+            }
+            return ok;
+          }}
+          onCancel={() => setManualOpen(false)}
         />
       )}
     </div>

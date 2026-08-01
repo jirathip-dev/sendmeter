@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveWorkout } from "../hooks/useLiveWorkout";
+import { usePendingUploads } from "../hooks/usePendingUploads";
 import {
   useRealtimeBump,
   useRealtimeVersion,
 } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
+import { useWatchInfo } from "../hooks/useWatchInfo";
 import {
   deleteRecording,
   fetchRecordings,
@@ -15,6 +17,8 @@ import {
   updateRecordingGroup,
 } from "../lib/repo";
 import { dominantZone, zoneSets } from "../lib/zoneHistory";
+import { captureHandledOperationalFailure } from "../lib/monitoring";
+import { uploadWarningPresentation } from "../lib/watchBuild";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
 import EditRecordingSheet from "./EditRecordingSheet";
 import LiveSessionRow from "./LiveSessionRow";
@@ -60,6 +64,10 @@ export default function HistoryView({
   const [live] = useLiveWorkout(userId);
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
+  const uploadWarning = uploadWarningPresentation(
+    useWatchInfo(),
+    usePendingUploads(),
+  );
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   // Lazy render (SL-86): mount the timeline in pages.
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -67,6 +75,7 @@ export default function HistoryView({
   // Multi-select of loose recordings → one new session.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   // Edit tag/side/note of a single recording (SL-58).
   const [editingRec, setEditingRec] = useState<TindeqRecordingMeta | null>(null);
   // Local overrides so an edit shows immediately, before the realtime refetch.
@@ -174,6 +183,7 @@ export default function HistoryView({
       .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt));
     if (recs.length === 0) return;
     setCreating(true);
+    setCreateError(null);
     try {
       const groupId = crypto.randomUUID();
       for (const r of recs) {
@@ -184,17 +194,24 @@ export default function HistoryView({
       const spanMs =
         Date.parse(last.recordedAt) + last.durationMs - Date.parse(first.recordedAt);
       const tags = [...new Set(recs.map((r) => r.tag).filter(Boolean))];
-      await insertTindeqSession({
-        durationMin: Math.max(1, Math.round(spanMs / 60000)),
-        rpe: 5,
-        phase: currentPhase,
-        note: [
-          `${recs.length} recording${recs.length === 1 ? "" : "s"}`,
-          ...(tags.length ? [tags.join(", ")] : []),
-        ].join(" · "),
-        groupId,
-        date: first.recordedAt.slice(0, 10),
-      });
+      try {
+        await insertTindeqSession({
+          durationMin: Math.max(1, Math.round(spanMs / 60000)),
+          rpe: 5,
+          phase: currentPhase,
+          note: [
+            `${recs.length} recording${recs.length === 1 ? "" : "s"}`,
+            ...(tags.length ? [tags.join(", ")] : []),
+          ].join(" · "),
+          groupId,
+          date: first.recordedAt.slice(0, 10),
+        });
+      } catch (error) {
+        captureHandledOperationalFailure("session.insert", error, {
+          automatic: false,
+        });
+        throw error;
+      }
       setAssignedIds((prev) => {
         const next = new Set(prev);
         for (const r of recs) next.add(r.id);
@@ -203,6 +220,10 @@ export default function HistoryView({
       setSelectedIds(new Set());
       bumpRealtime(); // refresh sessions + recordings everywhere
       toast("Session created from recordings");
+    } catch (error) {
+      setCreateError(
+        error instanceof Error ? error.message : "Failed to create session",
+      );
     } finally {
       setCreating(false);
     }
@@ -244,6 +265,22 @@ export default function HistoryView({
         {ungrouped.length > 0 &&
           ` · ${ungrouped.length} loose recording${ungrouped.length === 1 ? "" : "s"}`}
       </div>
+      {uploadWarning && (
+        <div className="upload-status-banner" role="status">
+          <div className="upload-status-title">{uploadWarning.title}</div>
+          {uploadWarning.items.map((item) => (
+            <div className="upload-status-item" key={item.source}>
+              <div>{item.text}</div>
+              <div className="upload-status-detail">
+                {item.detail}
+                {item.reportedAt !== undefined
+                  ? ` Last report: ${new Date(item.reportedAt * 1000).toLocaleString()}.`
+                  : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {/* Pinned live-workout row (SL-98) — outside the paginated list so it's
           always visible; disappears on its own when the workout ends. */}
       {live && <LiveSessionRow live={live} />}
@@ -318,6 +355,17 @@ export default function HistoryView({
       {/* Floating glass action bar while loose recordings are ticked */}
       {selectedIds.size > 0 && (
         <div className="glass-bar" style={{ flexWrap: "wrap" }}>
+          {createError && (
+            <div
+              style={{
+                width: "100%",
+                fontSize: "var(--t-xs)",
+                color: "var(--danger)",
+              }}
+            >
+              {createError}
+            </div>
+          )}
           <button
             className="btn-primary"
             disabled={creating}

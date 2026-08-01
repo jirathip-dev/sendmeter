@@ -1,4 +1,4 @@
-# App Store submission checklist (Send Log iOS + Send Log Watch)
+# App Store submission checklist (Sendmeter iOS + Sendmeter Watch)
 
 Everything code-side is done in this repo. This file is the copy-paste guide
 for the App Store Connect forms.
@@ -85,19 +85,19 @@ Declare these under **Data Types Collected**, all with:
 | Health & fitness data (HR, HRV, sleep, workouts) | Health & Fitness → Health / Fitness |
 | Body weight | Health & Fitness → Health |
 | Training/session logs, force recordings | User Content → Other User Content |
-| Auth + error diagnostics (null-session cause, timestamps, app build; crash/error reports) | Diagnostics → Other Diagnostic Data |
+| Error diagnostics (crash/error reports) | Diagnostics → Other Diagnostic Data |
 
-The Diagnostics row covers two things, both keyed to `user_id`/auth uuid — which
-is why it answers "linked to identity: yes" like every other row here:
+The Diagnostics row covers error monitoring keyed to the auth uuid, which is why
+it answers "linked to identity: yes" like every other row here:
 
-1. **Auth diagnostics** — `supabase/migrations/20260726090000_auth_events.sql`
-   (the columns are exactly what is collected), written by
-   `src/lib/authEventFlush.ts`: a per-account record of why a sign-in session
-   went away. Stays on our own Supabase project; no third party involved.
-2. **Error monitoring** (issue #227) — uncaught JavaScript exceptions, React
-   render errors and unhandled promise rejections, processed by **Sentry**
-   (`sentry.io`, Functional Software, Inc.) — the one **third-party processor**
-   the app uses. `src/lib/monitoring.ts` is the only place it is configured.
+**Error monitoring** (issues #227 and #382) covers uncaught JavaScript
+exceptions, React render errors, unhandled promise rejections, and a narrow set
+of handled session/workout failures after recovery is exhausted, processed by **Sentry**
+(`sentry.io`, Functional Software, Inc.) — the one **third-party processor**
+the app uses. `src/lib/monitoring.ts` is the only place it is configured.
+
+The bounded auth-diagnostics ring remains on-device in Preferences and is not
+uploaded or included in the App Privacy collected-data answers.
 
 What Sentry receives is built from an allow-list in `beforeSend` /
 `beforeBreadcrumb`, not filtered after the fact:
@@ -117,6 +117,11 @@ What Sentry receives is built from an allow-list in `beforeSend` /
 - The SDK initializes **only** when a build-time `VITE_SENTRY_DSN` is present.
   Dev, test and any DSN-less build send nothing — the SDK is dead-code-
   eliminated from the bundle entirely.
+- Handled database failures send only closed operation/class/outcome tags and
+  numeric/boolean diagnostics. Raw Supabase errors, rows, notes, training or
+  health values, response bodies, `details`, and `hint` are never captured.
+  Recovered load/network/auth failures, expected BLE disconnects, cancellation,
+  and recordings retained in the offline queue are deliberately excluded.
 
 **Used for tracking stays "No"**: the data is never linked with third-party
 data for advertising or measurement, and there is no ad network or cross-app
@@ -156,8 +161,7 @@ Put that email/password in the review notes.
    **not** a separate App Store record.
 3. Deploy the web app so the privacy-policy URL is live; paste the URL.
 4. Fill App Privacy per the table above.
-5. Screenshots: iPhone 6.9" and 6.5" (simulator screenshots fine), watch
-   screenshots from the watch simulator (`xcrun simctl io ... screenshot`).
+5. ~~Capture iPhone + watch screenshots.~~ **Automated:** see the next section.
 6. Export compliance: uses only standard TLS → answer "standard encryption,
    exempt" (France declaration auto-handled).
 7. Age rating questionnaire: all "None" → 4+.
@@ -167,4 +171,49 @@ Put that email/password in the review notes.
    and the required-reason section must list UserDefaults (`CA92.1`, `1C8F.1`)
    and FileTimestamp (`C617.1`) and nothing else. This can only be done from
    Xcode on a real archive — it is not reproducible in CI.
-9. Xcode → Archive → Distribute (per app) → TestFlight first, then Submit.
+9. Promote `staging` to `main`, wait for the Production migration workflow,
+   then dispatch the TestFlight workflow from `main`. The archive uses the
+   production Supabase project, so the workflow deliberately rejects
+   `staging` and other refs. Select the uploaded build in App Store Connect,
+   test it in TestFlight, then submit it for review.
+
+For iPhone testing before promotion, use `npm run sync:local` with paired
+simulators. A physical-device build cannot reach the laptop's local Supabase
+stack and currently uses production; use a throwaway production account for
+device-only Bluetooth, HealthKit, and signing checks.
+
+## App Store screenshot automation
+
+Run screenshots only for a release or after a meaningful UI change; this is
+deliberately separate from `fastlane beta` and every normal build:
+
+```bash
+LANG=en_US.UTF-8 bundle exec fastlane screenshots
+```
+
+The lane starts the disposable local Supabase stack, resets it from
+`supabase/seed.sql`, builds/syncs a local-config Capacitor bundle, and runs two
+fastlane snapshot UI-test schemes sequentially. It produces:
+
+- four populated app screens on iPhone 17 Pro Max (6.9", 1320×2868);
+- the same four screens on iPhone 13 Pro Max (6.5", 1284×2778), retained for
+  the issue's explicit compatibility request even though App Store Connect can
+  scale the 6.9" set down;
+- two real watch-app screens on Apple Watch Ultra 3 (422×514), with deterministic
+  readiness/ACWR fixture values enabled only by snapshot's launch argument.
+
+Outputs land in `fastlane/screenshots/en-US/`. The lane fails if the expected
+count or pixel dimensions drift. The directory and HTML summary are gitignored:
+review the PNGs locally, then upload the approved selection in App Store Connect
+Media Manager. Do not commit generated screenshots; they are release artifacts,
+while the UI tests, seed, and lane are the maintainable source of truth.
+
+Prerequisites are Docker, the repository's pinned Node/Ruby dependencies, Xcode
+with current iOS/watchOS simulator runtimes, and the named simulator device
+types. No App Store Connect key, signing certificate, production/demo-account
+credential, paired simulators, or physical Tindeq is used. The local Supabase
+stack is left running for inspection; stop it with `npm run db:stop` if desired.
+
+Reference behavior: [Apple's screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/),
+[Apple's upload guidance](https://developer.apple.com/help/app-store-connect/manage-app-information/upload-app-previews-and-screenshots/),
+and [fastlane snapshot](https://docs.fastlane.tools/actions/capture_ios_screenshots/).

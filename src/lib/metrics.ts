@@ -263,8 +263,9 @@ export interface TindeqStats {
 export function computeTindeqStats(
   recordings: TindeqRecordingMeta[],
 ): TindeqStats | null {
-  if (recordings.length < 2) return null;
-  const sorted = [...recordings].sort((a, b) =>
+  const measured = recordings.filter((r): r is TindeqRecordingMeta & { peakKg: number; avgKg: number } => r.source !== "manual" && r.peakKg != null && r.avgKg != null);
+  if (measured.length < 2) return null;
+  const sorted = [...measured].sort((a, b) =>
     a.recordedAt.localeCompare(b.recordedAt),
   );
   const last = sorted[sorted.length - 1]!;

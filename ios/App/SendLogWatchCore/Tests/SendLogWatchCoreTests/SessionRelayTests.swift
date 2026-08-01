@@ -90,6 +90,21 @@ final class SessionRelayDecodeTests: XCTestCase {
         XCTAssertEqual(withToken, without)
     }
 
+    func testCompatibilityFixtureWorksForCurrentAndLegacyDecoders() {
+        let fixture = signedIn([
+            "refreshToken": SessionRelay.legacyRefreshTokenSentinel
+        ])
+        guard case .signedIn = SessionRelay.decode(fixture, now: 1_000) else {
+            return XCTFail("current watch must decode the compatibility payload")
+        }
+        // This exactly models the pre-#270 guard: the old watch only required
+        // a non-empty String before passing the payload to supabase-swift.
+        let legacyGuardAccepted = (fixture["accessToken"] as? String)?.isEmpty == false
+            && (fixture["refreshToken"] as? String)?.isEmpty == false
+        XCTAssertTrue(legacyGuardAccepted)
+        XCTAssertFalse(SessionRelay.legacyRefreshTokenSentinel.hasPrefix("eyJ"))
+    }
+
     func testTheStoredSessionCannotCarryARefreshTokenAtAll() {
         // Structural, not conventional: `RelayedSession` has no field for one,
         // so an encoded session cannot smuggle one to disk. If someone adds a

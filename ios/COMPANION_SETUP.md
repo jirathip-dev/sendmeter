@@ -33,6 +33,13 @@ ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatc
    only** — no `refreshToken` field exists on the contract — and stamps
    every payload with a fresh `relayId`, because WatchConnectivity does
    not deliver an application context identical to the one already set.
+   During the #368 staggered-TestFlight compatibility window, the native
+   WatchConnectivity dictionary also contains a fixed
+   `sendmeter-legacy-no-refresh-token` sentinel under the legacy key. It is
+   not accepted from TypeScript, is ignored and never persisted by current
+   watches, and was never issued by Supabase, so it cannot rotate or revoke a
+   real session family. It exists only to satisfy the pre-#270 watch decoder's
+   non-empty-field guard and should be removed once those builds age out.
 2. `src/lib/watchAuthRelay.ts` calls the plugin from
    `src/hooks/useAuth.ts`'s `onAuthStateChange`, on **every** event
    that carries a session (`SIGNED_IN`/`TOKEN_REFRESHED`/`USER_UPDATED`)
@@ -51,6 +58,11 @@ ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -only-testing:SendLogWatc
    the watch at all, so nothing here can refresh, rotate or spend a
    credential — and no `GET /user` round-trip is spent per relay, which
    is what the old `auth.setSession` cost.
+
+Queue recovery remains watch-owned: both persist-first queues coalesce drain
+requests and rerun after a fresh relay, and explicitly report their combined
+depth (including zero) to the phone. Durable iPhone mirroring of watch workouts
+is intentionally not part of #368 and remains a follow-up.
 4. Falls back to the stored token. There is **no manual sign-in** — an
    access-token-only watch has nothing to sign in with. A watch without a
    usable token shows `WaitingForPhoneView`, which explains what it is

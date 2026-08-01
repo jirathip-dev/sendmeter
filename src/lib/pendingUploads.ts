@@ -10,8 +10,8 @@
 // rep. A count that sits there and shrinks as the queue drains is the thing
 // worth having: it is visible BEFORE anything is lost, and it costs nothing to
 // ignore. Mirrors what the watch already reports for its own queue (#21,
-// `watchSyncLine` in `watchBuild.ts`) — same honest-states rule, same wording
-// shape, so the two lines read as one idea.
+// `uploadWarningPresentation` in `watchBuild.ts`) — same honest-states rule,
+// same wording shape, so the two devices read as one idea in History.
 
 /// At this depth the backlog stops being "a rep or two waiting for signal" and
 /// starts being "this isn't draining". Same threshold the watch uses for its

@@ -200,6 +200,8 @@ describe("Prehab is excluded from curve candidacy (#325)", () => {
       zone: "strength" as const,
       tag: "FDP",
       side: "left" as const,
+      source: "dynamometer" as const,
+      peakKg: 30,
     };
     // 30s at sub-CF load, daily — the longest single-duration effort in the
     // pool, and exactly the shape that would otherwise win
@@ -213,6 +215,8 @@ describe("Prehab is excluded from curve candidacy (#325)", () => {
       zone: "prehab" as const,
       tag: "FDP",
       side: "left" as const,
+      source: "dynamometer" as const,
+      peakKg: 15,
     }));
     // The real filter ForceView's `curveRecordings` calls before ever calling
     // pickCurveRecordings. This case proves the FILTER excludes prehab; that
@@ -433,7 +437,7 @@ describe("Warm-up protocol (#297)", () => {
       reps: 2,
       sets: 3,
       restRepsS: 15,
-      restSetsS: 60,
+      restSetsS: 30,
       targetPct: 40,
       pctStep: 15,
       pctBasis: "pr",

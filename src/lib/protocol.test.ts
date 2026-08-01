@@ -500,6 +500,25 @@ describe("buildTimeline — alternating every logical rep (#348)", () => {
     }
   });
 
+  it("expands the paired maintenance doses with their exact durations (#366)", () => {
+    const warmup: TindeqPreset = {
+      ...alt, id: "zone:warmup", holdS: 5, holdsS: [5, 7, 10],
+      reps: 2, sets: 3, restRepsS: 15, restSetsS: 30,
+    };
+    const prehab: TindeqPreset = {
+      ...alt, id: "zone:prehab", holdS: 30, holdsS: null,
+      reps: 4, sets: 1, restRepsS: 90, restSetsS: 0,
+    };
+    expect(timelineDurationS(buildTimeline(warmup, { switchS: 3 }))).toBe(177);
+    expect(timelineDurationS(buildTimeline(prehab, { switchS: 3 }))).toBe(432);
+    expect(holds(warmup).map((h) => h.side)).toEqual(
+      Array.from({ length: 6 }, () => ["left", "right"]).flat(),
+    );
+    expect(holds(prehab).map((h) => h.side)).toEqual(
+      Array.from({ length: 4 }, () => ["left", "right"]).flat(),
+    );
+  });
+
   it("7s hold / 10s rest leaves only the 3s switch after the right hold", () => {
     const tl = buildTimeline({ ...alt, holdS: 7, restRepsS: 10 }, { switchS: 3 });
     expect(tl.map((s) => [s.phase, s.side, s.durS])).toEqual([

@@ -28,6 +28,7 @@ function rec(
     setNo: null,
     zone: null,
     ...over,
+    source: over.source ?? "dynamometer",
   };
 }
 

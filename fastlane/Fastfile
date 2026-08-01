@@ -1,5 +1,8 @@
 require "base64"
+require "fastimage"
 require "fileutils"
+require "json"
+require "shellwords"
 require "xcodeproj"
 
 default_platform(:ios)
@@ -7,8 +10,148 @@ default_platform(:ios)
 APP_IDENTIFIER = "com.jirathip.sendlog".freeze
 XCODEPROJ = "ios/App/App.xcodeproj".freeze
 TEAM_ID = "9244PWFYD7".freeze
+SCREENSHOT_OUTPUT = File.expand_path("screenshots", __dir__).freeze
+SCREENSHOT_DERIVED_DATA = File.join(
+  Dir.home,
+  "Library/Developer/Xcode/DerivedData/SendmeterScreenshots"
+).freeze
+
+def ensure_screenshot_simulator(name, platform)
+  devices = JSON.parse(`xcrun simctl list devices available -j`).fetch("devices")
+  return if devices.values.flatten.any? { |device| device["name"] == name }
+
+  types = JSON.parse(`xcrun simctl list devicetypes -j`).fetch("devicetypes")
+  device_type = types.find { |type| type["name"] == name }
+  UI.user_error!("Xcode does not include the #{name} simulator type") unless device_type
+
+  runtimes = JSON.parse(`xcrun simctl list runtimes available -j`).fetch("runtimes")
+  runtime = runtimes
+    .select { |candidate| candidate["name"].start_with?(platform) }
+    .max_by { |candidate| candidate.fetch("version").split(".").map(&:to_i) }
+  UI.user_error!("Xcode has no available #{platform} simulator runtime") unless runtime
+
+  sh(
+    "xcrun simctl create #{Shellwords.escape(name)} " \
+    "#{Shellwords.escape(device_type.fetch('identifier'))} " \
+    "#{Shellwords.escape(runtime.fetch('identifier'))}"
+  )
+end
+
+def prepare_local_screenshot_fixture
+  root = File.expand_path("..", __dir__)
+  env_path = File.join(root, ".env.development.local")
+  previous_env = File.exist?(env_path) ? File.binread(env_path) : nil
+
+  # This is the disposable local stack only. Never use the hosted reviewer
+  # account for automated screenshots: its contents and credentials are both
+  # non-deterministic and production-sensitive.
+  sh("cd #{Shellwords.escape(root)} && npx supabase start")
+  status = sh(
+    "cd #{Shellwords.escape(root)} && npx supabase status -o env",
+    log: false
+  )
+  local = status.lines.filter_map do |line|
+    match = line.strip.match(/\A(API_URL|PUBLISHABLE_KEY)=(.*)\z/)
+    next unless match
+    [match[1], match[2].strip.delete_prefix('"').delete_suffix('"')]
+  end.to_h
+  missing = %w[API_URL PUBLISHABLE_KEY] - local.keys
+  UI.user_error!("Local Supabase status omitted #{missing.join(', ')}") unless missing.empty?
+
+  File.write(
+    env_path,
+    "# Generated temporarily by fastlane screenshots\n" \
+    "VITE_SUPABASE_URL=#{local.fetch('API_URL')}\n" \
+    "VITE_SUPABASE_ANON_KEY=#{local.fetch('PUBLISHABLE_KEY')}\n"
+  )
+
+  begin
+    sh("cd #{Shellwords.escape(root)} && npm run db:reset && npm run sync:local")
+  ensure
+    # Preserve the caller's local-dev selection. The compiled Capacitor bundle
+    # already contains the fixture URL, so snapshot does not need this file.
+    previous_env.nil? ? FileUtils.rm_f(env_path) : File.binwrite(env_path, previous_env)
+  end
+end
+
+def verify_screenshot_output
+  expected = {
+    "iPhone 17 Pro Max" => { count: 4, size: [1320, 2868] },
+    "iPhone 13 Pro Max" => { count: 4, size: [1284, 2778] },
+    "Apple Watch Ultra 3 (49mm)" => { count: 2, size: [422, 514] },
+  }
+
+  expected.each do |device, requirement|
+    files = Dir[File.join(SCREENSHOT_OUTPUT, "**", "#{device}-*.png")].sort
+    unless files.length == requirement.fetch(:count)
+      UI.user_error!(
+        "Expected #{requirement.fetch(:count)} #{device} screenshots, found #{files.length}"
+      )
+    end
+    files.each do |file|
+      actual = FastImage.size(file)
+      next if actual == requirement.fetch(:size)
+      UI.user_error!(
+        "#{File.basename(file)} is #{actual&.join('x')}; expected " \
+        "#{requirement.fetch(:size).join('x')}"
+      )
+    end
+  end
+end
 
 platform :ios do
+  desc "Reset local fixtures and capture App Store iPhone + watch screenshots"
+  lane :screenshots do
+    ensure_screenshot_simulator("iPhone 17 Pro Max", "iOS")
+    ensure_screenshot_simulator("iPhone 13 Pro Max", "iOS")
+    ensure_screenshot_simulator("Apple Watch Ultra 3 (49mm)", "watchOS")
+    prepare_local_screenshot_fixture
+
+    # Apple currently needs the highest-resolution 6.9-inch family. Keep the
+    # issue's requested 6.5-inch set as an additional Media Manager fallback.
+    # Run sequentially: this project must never have concurrent xcodebuilds.
+    capture_screenshots(
+      project: XCODEPROJ,
+      scheme: "Sendmeter Screenshots",
+      configuration: "Debug",
+      devices: ["iPhone 17 Pro Max", "iPhone 13 Pro Max"],
+      languages: ["en-US"],
+      output_directory: SCREENSHOT_OUTPUT,
+      derived_data_path: SCREENSHOT_DERIVED_DATA,
+      clear_previous_screenshots: true,
+      erase_simulator: true,
+      reinstall_app: true,
+      override_status_bar: true,
+      concurrent_simulators: false,
+      number_of_retries: 1,
+      stop_after_first_error: true,
+      skip_open_summary: true
+    )
+
+    # snapshot supports watchOS UI-test destinations, so the companion uses
+    # the same named/organized output as iPhone instead of a one-off simctl
+    # command. Ultra 3 is Apple's current highest-resolution accepted watch.
+    capture_screenshots(
+      project: XCODEPROJ,
+      scheme: "Sendmeter Watch Screenshots",
+      configuration: "Debug",
+      devices: ["Apple Watch Ultra 3 (49mm)"],
+      languages: ["en-US"],
+      output_directory: SCREENSHOT_OUTPUT,
+      derived_data_path: SCREENSHOT_DERIVED_DATA,
+      clear_previous_screenshots: false,
+      erase_simulator: true,
+      reinstall_app: true,
+      concurrent_simulators: false,
+      number_of_retries: 1,
+      stop_after_first_error: true,
+      skip_open_summary: true
+    )
+
+    verify_screenshot_output
+    UI.success("Verified App Store screenshots in #{SCREENSHOT_OUTPUT}")
+  end
+
   desc "Build the web app, sync Capacitor, and ship a build to TestFlight"
   lane :beta do
     # App Store Connect API key — no Apple ID password / 2FA, works headless.

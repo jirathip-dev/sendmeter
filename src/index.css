@@ -402,6 +402,15 @@ textarea.field { resize: none; }
 /* Passkey list row */
 .pk-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
 .pk-row:last-of-type { border-bottom: none; }
+.watch-status-card { padding: 14px; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; }
+.watch-status-heading { display: flex; align-items: center; gap: 9px; }
+.watch-status-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 10%, transparent); }
+.watch-status-detail { margin-top: 7px; color: var(--ink-muted); font-size: var(--t-sm); line-height: 1.5; }
+.watch-status-meta { margin-top: 6px; color: var(--ink-faint); font-size: var(--t-xs); line-height: 1.45; }
+.troubleshooting-details { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.troubleshooting-details summary { cursor: pointer; padding: 13px 14px; color: var(--ink-muted); font-size: var(--t-sm); font-weight: 600; -webkit-tap-highlight-color: transparent; }
+.troubleshooting-details[open] summary { border-bottom: 1px solid var(--hairline); }
+.troubleshooting-body { padding: 12px 14px; color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.6; }
 
 /* ACWR bar */
 .acwr-track { height: 10px; background: var(--surface-2); border-radius: 5px; overflow: visible; position: relative; margin: 12px 0 6px; }
@@ -422,6 +431,15 @@ textarea.field { resize: none; }
 /* Section heading */
 .section-head { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; color: var(--ink); margin-bottom: 6px; }
 .section-sub { font-size: var(--t-xs); color: var(--ink-muted); margin-bottom: 18px; }
+.upload-status-banner {
+  padding: 13px 14px; margin-bottom: 12px;
+  background: color-mix(in srgb, var(--warning) 10%, var(--canvas));
+  border: 1px solid color-mix(in srgb, var(--warning) 38%, transparent);
+  border-radius: 12px;
+}
+.upload-status-title { color: var(--warning); font-size: var(--t-sm); font-weight: 700; }
+.upload-status-item { margin-top: 8px; color: var(--ink); font-size: var(--t-sm); font-weight: 600; line-height: 1.4; }
+.upload-status-detail { margin-top: 2px; color: var(--ink-muted); font-size: var(--t-xs); font-weight: 400; line-height: 1.45; }
 /* Bare text button in a section header row (History "Trash", Workout "RPE Model") */
 .header-btn {
   background: none; border: none; cursor: pointer; padding: 4px;

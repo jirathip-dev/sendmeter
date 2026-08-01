@@ -24,6 +24,10 @@ import {
   alternatingHoldDurations,
   type AlternatingPrescription,
 } from "../lib/alternatingProtocol";
+import {
+  zoneUnarmedNoticeText,
+  type ZoneUnarmedNotice,
+} from "../lib/postFitZoneDecision";
 
 interface Props {
   tag: string;
@@ -51,6 +55,7 @@ interface Props {
   /// preset key too, not just this card's own `selected` prop, so a stale
   /// key can't re-arm a preset on the next mount.
   onClear: () => void;
+  unarmedNotice: ZoneUnarmedNotice | null;
 }
 
 function fmt(sec: number): string {
@@ -75,6 +80,7 @@ export default function TargetZonesCard({
   alternatingReady,
   alternatingPrescription,
   onClear,
+  unarmedNotice,
 }: Props) {
   const [alternate, setAlternate] = useState(false);
   // Above the recommended load — the number, the slider fill and the note all
@@ -107,6 +113,15 @@ export default function TargetZonesCard({
         <span>Recommended · {tag}</span>
         <InfoDot topic="gaugeTarget" />
       </div>
+      {unarmedNotice?.tag === tag && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{ fontSize: "var(--t-xs)", color: "var(--warning)", marginBottom: 8 }}
+        >
+          {zoneUnarmedNoticeText(unarmedNotice)}
+        </div>
+      )}
       {!model ? (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)" }}>
           Zones unlock once this exercise's force curve is computed (a few
@@ -252,13 +267,29 @@ export default function TargetZonesCard({
                     color: "var(--primary)",
                   }}
                 >
-                  {warmupT.targetKg.toFixed(1)} → {warmupT.finalTargetKg.toFixed(1)} kg
+                  {alternatingPrescription ? (
+                    <>
+                      L {alternatingPrescription.left.targets[0]!.kg.toFixed(1)} →{" "}
+                      {alternatingPrescription.left.targets.at(-1)!.kg.toFixed(1)} kg · R{" "}
+                      {alternatingPrescription.right.targets[0]!.kg.toFixed(1)} →{" "}
+                      {alternatingPrescription.right.targets.at(-1)!.kg.toFixed(1)} kg
+                    </>
+                  ) : (
+                    `${warmupT.targetKg.toFixed(1)} → ${warmupT.finalTargetKg.toFixed(1)} kg`
+                  )}
                 </span>
               </div>
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 4 }}>
-                {holdsSummary(selected.protocol)} holds × {selected.protocol.reps} reps · {" "}
+                {holdsSummary(selected.protocol)} holds × {selected.protocol.reps}/hand · {" "}
                 {selected.protocol.sets} sets · 40% → 55% → 70% PR · about {" "}
-                {fmt(timelineDurationS(buildTimeline(selected.protocol, { switchS: 3 })))}
+                {fmt(
+                  timelineDurationS(
+                    buildTimeline(selected.protocol, {
+                      switchS: 3,
+                      alternatingHolds: alternatingHoldDurations(alternatingPrescription),
+                    }),
+                  ),
+                )}
               </div>
               <div
                 style={{
@@ -267,8 +298,13 @@ export default function TargetZonesCard({
                   marginTop: 8,
                 }}
               >
-                Progressive primer · do general movement and easy climbing first · excluded from training balance
+                Progressive primer · alternates L/R automatically · do general movement and easy climbing first · excluded from training balance
               </div>
+              {!alternatingPrescription && (
+                <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
+                  Warm-up alternates automatically and needs a PR for both hands.
+                </div>
+              )}
               <button
                 onClick={onClear}
                 disabled={locked}
@@ -289,16 +325,32 @@ export default function TargetZonesCard({
                     color: "var(--ink-muted)",
                   }}
                 >
-                  {prehabT.targetKg.toFixed(1)} kg
+                  {alternatingPrescription ? (
+                    <>
+                      L {alternatingPrescription.left.targets[0]!.kg.toFixed(1)} kg · R{" "}
+                      {alternatingPrescription.right.targets[0]!.kg.toFixed(1)} kg
+                    </>
+                  ) : (
+                    `${prehabT.targetKg.toFixed(1)} kg`
+                  )}
                 </span>
-                <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
-                  ({prehabT.lowKg.toFixed(1)}–{prehabT.highKg.toFixed(1)})
-                </span>
+                {!alternatingPrescription && (
+                  <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
+                    ({prehabT.lowKg.toFixed(1)}–{prehabT.highKg.toFixed(1)})
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 4 }}>
-                {fmt(selected.protocol.holdS)} × {selected.protocol.reps} ·{" "}
+                {fmt(selected.protocol.holdS)} × {selected.protocol.reps}/hand ·{" "}
                 {fmt(selected.protocol.restRepsS)} rest · about{" "}
-                {fmt(timelineDurationS(buildTimeline(selected.protocol, { switchS: 3 })))}
+                {fmt(
+                  timelineDurationS(
+                    buildTimeline(selected.protocol, {
+                      switchS: 3,
+                      alternatingHolds: alternatingHoldDurations(alternatingPrescription),
+                    }),
+                  ),
+                )}
               </div>
               <div
                 style={{
@@ -307,8 +359,13 @@ export default function TargetZonesCard({
                   marginTop: 8,
                 }}
               >
-                Fixed dose · below critical force · excluded from training balance
+                Fixed dose · alternates L/R automatically · below critical force · excluded from training balance
               </div>
+              {!alternatingPrescription && (
+                <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
+                  Prehab alternates automatically and needs a usable force target for both hands.
+                </div>
+              )}
               <button
                 onClick={onClear}
                 disabled={locked}

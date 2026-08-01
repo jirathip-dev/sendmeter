@@ -110,11 +110,11 @@ const CONTENT: Record<
       },
       {
         heading: "Warm-up is a primer",
-        text: "Warm-up ramps 5s → 7s → 10s holds and 40% → 55% → 70% of your exercise PR over three short sets. It is deliberately low-volume, unaffected by the Intensity slider, and excluded from training balance. Use it after general movement and easy climbing: evidence supports progressive climbing-specific warm-up, but no published study establishes this exact finger-dynamometer dose or shows that it can replace climbing movement.",
+        text: "Warm-up alternates left and right automatically, ramping 5s → 7s → 10s holds and 40% → 55% → 70% of each hand's exercise PR over three short sets with 30s recovery between sets. It is deliberately low-volume, unaffected by the Intensity slider, and excluded from training balance. Use it after general movement and easy climbing: evidence supports progressive climbing-specific warm-up, but no published study establishes this exact finger-dynamometer dose or shows that it can replace climbing movement.",
       },
       {
         heading: "Prehab is maintenance",
-        text: "Prehab is a fixed 30s × 4 dose below critical force, so the Intensity slider does not apply and its recordings are excluded from training balance. Its load is derived from your force curve and shaped by tendon-loading research, but no published work establishes a finger-dynamometer prehab prescription. Treat it as a maintenance guide, not clinical advice.",
+        text: "Prehab alternates left and right automatically for four 30s holds per hand, preserving 90s recovery for each hand between holds. The dose stays below each hand's critical force, so the Intensity slider does not apply and its recordings are excluded from training balance. Its load is derived from your force curve and shaped by tendon-loading research, but no published work establishes a finger-dynamometer prehab prescription. Treat it as a maintenance guide, not clinical advice.",
       },
     ],
   },

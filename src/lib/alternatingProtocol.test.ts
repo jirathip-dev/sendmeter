@@ -7,6 +7,7 @@ import {
   nextLockedAlternatingPrescription,
   prescriptionForSegment,
   resolveAlternatingPreset,
+  resolveAlternatingMaintenance,
   resolveAlternatingRecommendation,
   targetHoldSegment,
 } from "./alternatingProtocol";
@@ -71,6 +72,30 @@ describe("alternating force prescriptions (#331)", () => {
     expect(prescriptionForSegment(p, "left", 1)?.target?.kg).toBe(21);
     expect(prescriptionForSegment(p, "right", 2)?.target?.kg).toBe(19.8);
     expect(prescriptionForSegment(p, "left", 3)?.hand.refs.prKg).toBe(42);
+  });
+
+  it("resolves Warm-up and Prehab independently for both hands", () => {
+    const warmup = resolveAlternatingMaintenance(preset({
+      id: "zone:warmup", name: "Warm-up", holdsS: [5, 7, 10], reps: 2,
+      sets: 3, restRepsS: 15, restSetsS: 30, targetPct: 40, pctStep: 15,
+    }), inputs)!;
+    expect(warmup.left.targets.map((t) => t!.kg)).toEqual([16.8, 23.1, 29.4]);
+    expect(warmup.right.targets.map((t) => t!.kg)).toEqual([13.2, 18.2, 23.1]);
+
+    const prehab = resolveAlternatingMaintenance(preset({
+      id: "zone:prehab", name: "Prehab", holdS: 30, holdsS: null,
+      reps: 4, sets: 1, restRepsS: 90, restSetsS: 0, targetKg: 14,
+    }), { ...inputs, right: { model: { ...right, cf: null }, prKg: 33 } })!;
+    expect(prehab.left.targets[0]!.kg).toBe(14);
+    expect(prehab.right.targets[0]!.kg).toBe(9.6);
+  });
+
+  it("does not borrow a reference when either maintenance hand is missing", () => {
+    const warmup = preset({ id: "zone:warmup", targetPct: 40, pctStep: 15 });
+    const prehab = preset({ id: "zone:prehab", targetKg: 14 });
+    const missing = { ...inputs, right: { model: null, prKg: null } };
+    expect(resolveAlternatingMaintenance(warmup, missing)).toBeNull();
+    expect(resolveAlternatingMaintenance(prehab, missing)).toBeNull();
   });
 
   it("resolves percent-CF and smart-curve targets from each hand's refs per set", () => {

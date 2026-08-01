@@ -83,15 +83,11 @@ const HEARTBEAT_KEY = "sendmeter:auth-heartbeat";
 /// observation that separates "iOS threw the WebView's data away" from "the
 /// session was revoked server-side".
 const CANARY_KEY = "sendmeter:webview-canary";
-/// Owned by `authEventFlush.ts`, listed here so the whole diagnostics working
-/// set comes off the durable store in one hydration pass at launch.
-export const FLUSH_MARKER_KEY = "sendmeter:auth-events-flushed";
 
 export const AUTH_DIAGNOSTIC_KEYS = [
   AUTH_EVENTS_KEY,
   HEARTBEAT_KEY,
   CANARY_KEY,
-  FLUSH_MARKER_KEY,
 ] as const;
 
 /// Ring cap — small, since each entry is a few bytes and a burst of the same
@@ -188,13 +184,6 @@ function defaultStorage(): DurableAuthStore {
   return ringStore;
 }
 
-/// The durable ring store, for the modules that persist alongside the ring
-/// (`authEventFlush.ts` keeps its "already sent" marker there, so a flush
-/// isn't re-sent on every launch).
-export function getAuthEventStore(): DurableAuthStore {
-  return defaultStorage();
-}
-
 function isAuthDiagnosticEvent(v: unknown): v is AuthDiagnosticEvent {
   if (!v || typeof v !== "object") return false;
   const e = v as Record<string, unknown>;
@@ -288,8 +277,8 @@ export function appendAuthEvent(
 
 /// Identity of an incident across rings: same cause, same start, same origin
 /// and build. `firstAt` never changes once an entry exists (collapses only
-/// move `lastAt`/`count`), which is what makes it usable as a key — the same
-/// key is also the `auth_events` upsert conflict target.
+/// move `lastAt`/`count`), making it a stable reconciliation key across
+/// launches.
 function incidentKey(e: AuthDiagnosticEvent): string {
   return [e.reason, e.firstAt, e.source ?? "", e.authEvent ?? "", e.build ?? ""].join(
     "|",
@@ -392,7 +381,7 @@ function currentMeta(
 /// build, no build tag — which is exactly the attribution this instrumentation
 /// exists to add. Worse, `build` is part of the incident identity
 /// (`sameIncident`/`incidentKey`), so one ongoing incident recorded either
-/// side of init would split into two ring entries and two `auth_events` rows.
+/// side of init would split into two ring entries.
 ///
 /// Deferring is safe precisely because nothing awaits this: the caller has
 /// already returned, and the event's timestamp is captured at CALL time, not
@@ -719,10 +708,10 @@ async function runInit(opts: {
 
   if (wiped) {
     // Recorded, not merely flagged: this is the finding the ring exists to
-    // deliver, and it has to survive to the next sign-in flush. Through
-    // `currentMeta` like every other record — the heartbeat is already
-    // hydrated in `store`, and the event whose whole job is bounding "when
-    // did the session die" is the last one that should lack it.
+    // deliver, and it has to survive a relaunch for on-device troubleshooting.
+    // Through `currentMeta` like every other record — the heartbeat is already
+    // hydrated in `store`, and the event whose whole job is bounding "when did
+    // the session die" is the last one that should lack it.
     recordAuthNullSession(
       "storage-wiped",
       store,

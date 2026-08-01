@@ -9,6 +9,7 @@ import {
   effortPeakKg,
   isDepletionEffortRecording,
   isEffortRecording,
+  isMeasuredRecording,
   recommendZone,
   recordingZone,
   TIE_BAND_SETS,
@@ -17,6 +18,15 @@ import {
   zoneTrainingSets,
 } from "./zoneHistory";
 import type { ForceCurveModel, TrainingQuality } from "./force-curve";
+
+describe("isMeasuredRecording (#367)", () => {
+  it("requires dynamometer provenance and both measured statistics", () => {
+    expect(isMeasuredRecording({ source: "dynamometer", peakKg: 30, avgKg: 25 })).toBe(true);
+    expect(isMeasuredRecording({ source: "manual", peakKg: 30, avgKg: 25 })).toBe(false);
+    expect(isMeasuredRecording({ source: "dynamometer", peakKg: null, avgKg: 25 })).toBe(false);
+    expect(isMeasuredRecording({ source: "dynamometer", peakKg: 30, avgKg: null })).toBe(false);
+  });
+});
 
 describe("zoneSetDurationS (#320)", () => {
   it("endurance still reads 240s despite the 1×8 shape flip", () => {
@@ -137,7 +147,7 @@ describe("effortPeakKg (#325)", () => {
     side: "left" | "right",
     zone: "prehab" | null = null,
     durationMs = 5_000,
-  ) => ({ peakKg, tag, side, zone, durationMs });
+  ) => ({ peakKg, avgKg: peakKg * 0.9, tag, side, zone, durationMs, source: "dynamometer" as const });
 
   it("is null with no tag selected", () => {
     expect(effortPeakKg([rec(40, "FDP", "left")], null, "left")).toBeNull();
@@ -163,6 +173,8 @@ describe("effortPeakKg (#325)", () => {
       side: "left" as const,
       zone: "warmup" as const,
       durationMs: 10_000,
+      avgKg: 25,
+      source: "dynamometer" as const,
     }];
     expect(effortPeakKg(warmupOnly, "FDP", "left")).toBeNull();
   });
@@ -191,7 +203,7 @@ describe("curveCandidateRecordings (#325)", () => {
     tag: string,
     side: "left" | "right",
     zone: "prehab" | "strength" | null = null,
-  ) => ({ id, durationMs, tag, side, zone });
+  ) => ({ id, durationMs, tag, side, zone, peakKg: 30, avgKg: 25, source: "dynamometer" as const });
 
   it("is empty with no tag selected", () => {
     expect(curveCandidateRecordings([rec("r1", 20_000, "FDP", "left")], null, "left")).toEqual([]);

@@ -42,6 +42,8 @@ fastlane/report.xml
 fastlane/README.md
 fastlane/test_output/
 fastlane/certs/
+fastlane/screenshots/
+fastlane/screenshots.html
 *.p12
 *.mobileprovision
 *.ipa

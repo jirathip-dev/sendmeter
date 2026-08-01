@@ -1,13 +1,20 @@
 import { useEffect } from "react";
+import { Capacitor } from "@capacitor/core";
+import { KeepAwake } from "@capacitor-community/keep-awake";
+import { KeepAwakeCoordinator } from "../lib/keepAwakeCoordinator";
+
+const nativeCoordinator = new KeepAwakeCoordinator((active) =>
+  active ? KeepAwake.keepAwake() : KeepAwake.allowSleep(),
+);
 
 /// Hold a screen wake lock while `active` — keeps the phone from sleeping
 /// mid-recording (users with a short auto-lock kept losing the live gauge).
-/// Uses the Web Wake Lock API (iOS 16.4+ / WKWebView); a no-op where it isn't
-/// supported. Re-acquires when the app returns to the foreground, since iOS
-/// auto-releases the lock whenever the page is hidden.
+/// Uses the native Capacitor plugin in the app and the Web Wake Lock API in a
+/// browser/PWA. Web locks are re-acquired when the page returns to the
+/// foreground because browsers release them whenever the page is hidden.
 export function useWakeLock(active: boolean): void {
   useEffect(() => {
-    if (!active || typeof navigator === "undefined") return;
+    if (!active || Capacitor.isNativePlatform() || typeof navigator === "undefined") return;
     const wl = navigator.wakeLock;
     if (!wl) return;
 
@@ -45,6 +52,16 @@ export function useWakeLock(active: boolean): void {
       document.removeEventListener("visibilitychange", onVis);
       void sentinel?.release().catch(() => {});
       sentinel = null;
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    void nativeCoordinator.setDesired(active);
+    return () => {
+      // This is process-global native state, so cleanup must explicitly restore
+      // the idle timer. The coordinator orders it after any in-flight enable.
+      void nativeCoordinator.setDesired(false);
     };
   }, [active]);
 }

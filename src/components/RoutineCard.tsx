@@ -10,6 +10,7 @@ import {
 import { today } from "../lib/dates";
 import { expandRoutine, routineDurationS } from "../lib/routine";
 import { restoreAt } from "../lib/restoreAt";
+import { captureHandledOperationalFailure } from "../lib/monitoring";
 import {
   clearRoutineRun,
   loadRoutineRun,
@@ -159,6 +160,9 @@ export default function RoutineCard({
           : undefined,
       );
     } catch (e) {
+      captureHandledOperationalFailure("session.insert", e, {
+        automatic: true,
+      });
       setError(e instanceof Error ? e.message : "Failed to log routine");
     }
   }

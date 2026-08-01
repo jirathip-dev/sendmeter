@@ -86,17 +86,46 @@ function normalize(raw: string): string {
 /// every property line that merely *references* the enum by name looks
 /// identical in both copies.
 const DECL_RE = /^(struct|enum)\s+(\S+)\s*:\s*(.+?)\s*\{$/;
-const PROPERTY_RE = /^(var|let)\s+(\S+):\s*(.+)$/;
+const ENUM_CASE_RE = /^case\s+(.+)$/;
+/// Swift attributes may prefix a stored property, with or without arguments.
+/// They don't affect its Codable field name/type and therefore aren't emitted
+/// into the signature, but they must not prevent the property from matching.
+const PROPERTY_RE =
+  /^(?:@[\w.]+(?:\([^)]*\))?\s+)*(var|let)\s+(\S+?)\s*:\s*(.+)$/;
+const TYPEALIAS_RE = /^typealias\b/;
+
+/// Typealiases make two textually identical property declarations resolve to
+/// different wire types without that difference appearing in the property
+/// signature. Resolving arbitrary Swift aliases is outside this structural
+/// guard's deliberately small parser, so reject aliases explicitly instead.
+function assertNoTypealiases(normalized: string): void {
+  const typealias = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => TYPEALIAS_RE.test(line));
+  if (typealias) {
+    throw new Error(
+      `ActivityModels.swift must not use typealias declarations: ${typealias}`,
+    );
+  }
+}
 
 /// Extracts, in file order, just the parts of a Codable shape that
 /// ActivityKit's decode actually cares about: struct/enum names + their
-/// conformance (or raw-type) lists, and each *stored* property's
-/// keyword/name/type. Deliberately does NOT collect `init` declarations or
-/// their bodies — the plugin copy's explicit memberwise inits are exactly
-/// the allowed difference this signature has to be blind to.
+/// conformance (or raw-type) lists, enum case names/raw values, and each
+/// *stored* property's keyword/name/type. Deliberately does NOT collect
+/// `init` declarations or their bodies — the plugin copy's explicit
+/// memberwise inits are exactly the allowed difference this signature has
+/// to be blind to.
 function shapeSignature(raw: string): string[] {
+  const normalized = normalize(raw);
+  assertNoTypealiases(normalized);
+
   const signature: string[] = [];
-  for (const rawLine of normalize(raw).split("\n")) {
+  let braceDepth = 0;
+  const enumBodyDepths: number[] = [];
+
+  for (const rawLine of normalized.split("\n")) {
     const line = rawLine.trim();
     if (line === "") continue;
 
@@ -108,24 +137,35 @@ function shapeSignature(raw: string): string[] {
         .map((c) => c.trim())
         .join(", ");
       signature.push(`${kind} ${name}: ${normalizedConformances}`);
-      continue;
+      if (kind === "enum") enumBodyDepths.push(braceDepth + 1);
+    } else if (enumBodyDepths.includes(braceDepth)) {
+      const caseMatch = ENUM_CASE_RE.exec(line);
+      if (caseMatch) signature.push(`case ${caseMatch[1]!.trim()}`);
+    } else {
+      const propertyMatch = PROPERTY_RE.exec(line);
+      if (propertyMatch) {
+        const [, keyword, name, type] = propertyMatch;
+        // A stored property's initializer is not part of its Codable wire
+        // shape. Strip it before checking for a computed-property body so a
+        // closure-valued default does not make a stored property disappear.
+        const wireType = type!.replace(/\s*=.*$/, "").trim();
+        // A computed property's declaration line (or its opening line, for a
+        // multi-line body) has a `{` somewhere in what PROPERTY_RE captured as
+        // the "type" — `var isRecent: Bool { … }` or `var isRecent: Bool {`.
+        // Computed properties don't exist on the wire at all, so their
+        // implementation must never make this signature diverge; the rest of
+        // a multi-line computed body's lines are plain statements that don't
+        // match DECL_RE or PROPERTY_RE either, so they're already skipped
+        // without any extra state tracking.
+        if (!wireType.includes("{")) {
+          signature.push(`${keyword} ${name}: ${wireType}`);
+        }
+      }
     }
 
-    const propertyMatch = PROPERTY_RE.exec(line);
-    if (propertyMatch) {
-      const [, keyword, name, type] = propertyMatch;
-      const trimmedType = type!.trim();
-      // A computed property's declaration line (or its opening line, for a
-      // multi-line body) has a `{` somewhere in what PROPERTY_RE captured as
-      // the "type" — `var isRecent: Bool { … }` or `var isRecent: Bool {`.
-      // Computed properties don't exist on the wire at all, so their
-      // implementation must never make this signature diverge; the rest of
-      // a multi-line computed body's lines are plain statements that don't
-      // match DECL_RE or PROPERTY_RE either, so they're already skipped
-      // without any extra state tracking.
-      if (trimmedType.includes("{")) continue;
-      signature.push(`${keyword} ${name}: ${trimmedType}`);
-    }
+    braceDepth += (line.match(/\{/g) ?? []).length;
+    braceDepth -= (line.match(/\}/g) ?? []).length;
+    while (enumBodyDepths.at(-1)! > braceDepth) enumBodyDepths.pop();
   }
   return signature;
 }
@@ -208,6 +248,77 @@ describe("shapeSignature() hardening against regex blind spots (#288 revision)",
     expect(shapeSignature(withStringRawType)).not.toEqual(shapeSignature(withIntRawType));
   });
 
+  it("catches enum case renames and raw-value changes", () => {
+    const baseline = `
+      enum Phase: String, Codable {
+        case climbing
+        case resting = "rest"
+      }
+    `;
+    const renamedCase = `
+      enum Phase: String, Codable {
+        case sending
+        case resting = "rest"
+      }
+    `;
+    const changedRawValue = `
+      enum Phase: String, Codable {
+        case climbing
+        case resting = "recovery"
+      }
+    `;
+
+    expect(shapeSignature(renamedCase)).not.toEqual(shapeSignature(baseline));
+    expect(shapeSignature(changedRawValue)).not.toEqual(shapeSignature(baseline));
+  });
+
+  it("excludes stored-property default values from the wire-shape type", () => {
+    const withoutDefaults = `
+      struct S: Codable {
+        var count: Int
+        let label: String
+      }
+    `;
+    const withDefaults = `
+      struct S: Codable {
+        var count: Int = 3
+        let label: String = "three"
+      }
+    `;
+    const withDifferentDefaults = `
+      struct S: Codable {
+        var count: Int = 99
+        let label: String = "ninety-nine"
+      }
+    `;
+
+    expect(shapeSignature(withDefaults)).toEqual(shapeSignature(withoutDefaults));
+    expect(shapeSignature(withDifferentDefaults)).toEqual(shapeSignature(withoutDefaults));
+  });
+
+  it("supports legal whitespace before a property colon without hiding type drift", () => {
+    const conventionalSpacing = `
+      struct S: Codable {
+        var count: Int
+      }
+    `;
+    const spacedColon = `
+      struct S: Codable {
+        var count : Int
+      }
+    `;
+    const spacedColonWithDifferentType = `
+      struct S: Codable {
+        var count : String
+      }
+    `;
+
+    expect(shapeSignature(spacedColon)).toEqual(shapeSignature(conventionalSpacing));
+    expect(shapeSignature(spacedColonWithDifferentType)).not.toEqual(
+      shapeSignature(conventionalSpacing),
+    );
+  });
+
   it("ignores a computed property's implementation — only stored properties affect the shape", () => {
     const impl1 = `
       struct S: Codable {
@@ -260,5 +371,43 @@ describe("shapeSignature() hardening against regex blind spots (#288 revision)",
 
     expect(shapeSignature(withPrivate)).toEqual(shapeSignature(withoutModifier));
     expect(shapeSignature(withInternal)).toEqual(shapeSignature(withoutModifier));
+  });
+
+  it("catches stored-property type drift behind leading Swift attributes", () => {
+    const withStringProperty = `
+      struct S: Codable {
+        @MainActor @available(iOS 17, *) var debugTag: String
+      }
+    `;
+    const withIntProperty = `
+      struct S: Codable {
+        @available(iOS 17, *) public var debugTag: Int
+      }
+    `;
+
+    expect(shapeSignature(withStringProperty)).toContain("var debugTag: String");
+    expect(shapeSignature(withIntProperty)).not.toEqual(
+      shapeSignature(withStringProperty),
+    );
+  });
+
+  it("rejects typealias indirection instead of silently comparing the alias name", () => {
+    const withStringAlias = `
+      typealias PhaseRaw = String
+      struct S: Codable {
+        var phase: PhaseRaw
+      }
+    `;
+    const withIntAlias = `
+      public typealias PhaseRaw = Int
+      struct S: Codable {
+        var phase: PhaseRaw
+      }
+    `;
+
+    expect(() => shapeSignature(withStringAlias)).toThrow(
+      /must not use typealias/,
+    );
+    expect(() => shapeSignature(withIntAlias)).toThrow(/must not use typealias/);
   });
 });

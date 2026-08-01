@@ -1,21 +1,61 @@
+import Foundation
 import XCTest
 import SendLogWatchCore
 
-/// KEEP-IN-SYNC: the same vectors run in `src/lib/rpeDepletion.test.ts`. Both
-/// implementations must agree to 0.1 RPE on every case below — that's the
-/// whole point of duplicating the depletion math instead of porting the
-/// 449-line curve fit to Swift (issue #280).
+private struct RPEParityFixture: Decodable {
+    struct Tolerances: Decodable {
+        let load: Double
+        let rpe: Double
+        let mapping: Double
+    }
+
+    struct MappingVector: Decodable {
+        let load: Double
+        let expectedRpe: Double
+    }
+
+    struct Rep: Decodable {
+        let peakKg: Double
+        let durationS: Double
+        let cf: Double?
+        let wPrime: Double?
+
+        var depletionRep: DepletionRep {
+            DepletionRep(peakKg: peakKg, durationS: durationS, cf: cf, wPrime: wPrime)
+        }
+    }
+
+    struct SessionVector: Decodable {
+        let id: String
+        let reps: [Rep]
+        let expectedLoad: Double?
+        let expectedRpe: Double
+        let expectedFromCurve: Bool
+    }
+
+    let tolerances: Tolerances
+    let loadToRpe: [MappingVector]
+    let sessions: [SessionVector]
+}
+
+/// The parity vectors live in one JSON fixture also consumed by
+/// `src/lib/rpeDepletion.test.ts`, so a retune cannot update one suite only.
 final class RPEDepletionTests: XCTestCase {
-    /// The load→RPE table from issue #280.
-    private let mappingVectors: [(load: Double, rpe: Double)] = [
-        (0, 1),
-        (0.5, 2.6),
-        (1, 4),
-        (2, 6),
-        (4, 8.2),
-        (6, 9.2),
-        (8, 9.6),
-    ]
+    private static let fixture: RPEParityFixture = {
+        #if SWIFT_PACKAGE
+        let resourceURL = Bundle.module.url(forResource: "rpe-depletion-parity", withExtension: "json")
+        #else
+        let resourceURL: URL? = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/rpe-depletion-parity.json")
+        #endif
+        guard let resourceURL else { fatalError("Missing rpe-depletion-parity.json test resource") }
+        do {
+            return try JSONDecoder().decode(RPEParityFixture.self, from: Data(contentsOf: resourceURL))
+        } catch {
+            fatalError("Invalid RPE parity fixture: \(error)")
+        }
+    }()
 
     private func rep(_ peakKg: Double, _ durationS: Double, _ cf: Double?, _ wPrime: Double?) -> DepletionRep {
         DepletionRep(peakKg: peakKg, durationS: durationS, cf: cf, wPrime: wPrime)
@@ -24,13 +64,17 @@ final class RPEDepletionTests: XCTestCase {
     // MARK: repDepletion
 
     func testOnCurveToFailureIsExactlyOneBattery() {
-        // P = CF + W'/T is the definition of the curve, so (P - CF)·T = W'.
-        // This identity is the vector that catches sign and unit errors in
-        // both implementations at once.
-        let cf = 30.0
-        let wPrime = 180.0
-        let t = 10.0
-        XCTAssertEqual(RPEDepletion.repDepletion(rep(cf + wPrime / t, t, cf, wPrime)) ?? -1, 1.0, accuracy: 1e-10)
+        guard let vector = Self.fixture.sessions.first(where: { $0.id == "one-battery-on-curve" }),
+              let fixtureRep = vector.reps.first,
+              let expectedLoad = vector.expectedLoad else {
+            XCTFail("Invalid one-battery RPE parity vector")
+            return
+        }
+        XCTAssertEqual(
+            RPEDepletion.repDepletion(fixtureRep.depletionRep) ?? -1,
+            expectedLoad,
+            accuracy: Self.fixture.tolerances.load
+        )
     }
 
     func testScalesLinearlyInForceAboveCFAndInDuration() {
@@ -81,8 +125,9 @@ final class RPEDepletionTests: XCTestCase {
     // MARK: rpeForDepletion
 
     func testMatchesThePublishedTable() {
-        for v in mappingVectors {
-            XCTAssertEqual(RPEDepletion.rpeForDepletion(v.load), v.rpe, accuracy: 1e-9,
+        for v in Self.fixture.loadToRpe {
+            XCTAssertEqual(RPEDepletion.rpeForDepletion(v.load), v.expectedRpe,
+                           accuracy: Self.fixture.tolerances.mapping,
                            "L = \(v.load)")
         }
     }
@@ -95,31 +140,25 @@ final class RPEDepletionTests: XCTestCase {
 
     // MARK: predictSessionRPE
 
-    func testSingleOnCurveRepPredictsFour() {
-        let p = RPEDepletion.predictSessionRPE([rep(48, 10, 30, 180)])
-        XCTAssertEqual(p.load ?? -1, 1.0, accuracy: 1e-10)
-        XCTAssertEqual(p.rpe, 4.0)
-        XCTAssertTrue(p.fromCurve)
+    func testPredictionsMatchSharedSessionVectors() {
+        for vector in Self.fixture.sessions {
+            let prediction = RPEDepletion.predictSessionRPE(vector.reps.map(\.depletionRep))
+            if let expectedLoad = vector.expectedLoad {
+                XCTAssertEqual(prediction.load ?? -.infinity, expectedLoad,
+                               accuracy: Self.fixture.tolerances.load, vector.id)
+            } else {
+                XCTAssertNil(prediction.load, vector.id)
+            }
+            XCTAssertEqual(prediction.rpe, vector.expectedRpe,
+                           accuracy: Self.fixture.tolerances.rpe, vector.id)
+            XCTAssertEqual(prediction.fromCurve, vector.expectedFromCurve, vector.id)
+        }
     }
 
-    func testMixedTagSessionUsesBothCurves() {
-        let p = RPEDepletion.predictSessionRPE([rep(48, 10, 30, 180), rep(30, 5, 20, 100)])
-        XCTAssertEqual(p.rpe, 5.1)  // L = 1.5
-        XCTAssertTrue(p.fromCurve)
-    }
-
-    func testFallsBackWithoutAnyCurve() {
-        let p = RPEDepletion.predictSessionRPE([rep(48, 10, nil, nil), rep(60, 30, 0, 0)])
-        XCTAssertEqual(p.rpe, RPEDepletionTunables.fallbackRPE)
-        XCTAssertFalse(p.fromCurve)
-        XCTAssertNil(p.load)
-    }
-
-    func testFallsBackOnAnEmptySessionRatherThanReportingRPEOne() {
-        let p = RPEDepletion.predictSessionRPE([])
-        XCTAssertEqual(p.rpe, RPEDepletionTunables.fallbackRPE)
-        XCTAssertFalse(p.fromCurve)
-        XCTAssertNil(p.load)
+    func testFixtureFallbackMatchesTheModelTunable() {
+        for vector in Self.fixture.sessions where !vector.expectedFromCurve {
+            XCTAssertEqual(vector.expectedRpe, RPEDepletionTunables.fallbackRPE, vector.id)
+        }
     }
 
     // MARK: SessionDepletionAccumulator (watch-side running sum)

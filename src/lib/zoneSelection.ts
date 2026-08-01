@@ -84,9 +84,9 @@ export function buildZoneSelection(
 
 /// Build the gauge band + guided protocol for Prehab (#325) — mirrors
 /// `buildZoneSelection` but isn't one: Prehab has no `TrainingQuality`, so it
-/// can't go through `zonePrescription`. Single-sided by design, so there is
-/// no "alternate sides" option here to thread through. Null when the model
-/// can't derive a Prehab target (see `prehabTarget`).
+/// can't go through `zonePrescription`. It always alternates hands; the
+/// independent targets are resolved at run time from each hand's model.
+/// Null when the model can't derive a Prehab target (see `prehabTarget`).
 export function buildPrehabSelection(
   model: ForceCurveModel | null,
   tag: string,
@@ -117,7 +117,7 @@ export function buildPrehabSelection(
       pctBasis: "pr",
       pctStep: 0,
       targetCurve: false,
-      alternateSides: false,
+      alternateSides: true,
     },
   };
 }
@@ -156,7 +156,7 @@ export function buildWarmupSelection(
       pctBasis: WARMUP_PROTOCOL.pctBasis,
       pctStep: WARMUP_PROTOCOL.pctStep,
       targetCurve: false,
-      alternateSides: false,
+      alternateSides: true,
     },
   };
 }

@@ -165,6 +165,14 @@ final class AuthManager: NSObject {
             syncing = false
             state = SessionRelay.state(for: session, now: now)
             Self.log.info("relay accepted (relayId \(session.relayId ?? "none"))")
+            // A stale-token pass may still be suspended in either queue. A
+            // coalesced request guarantees a fresh-token follow-up pass.
+            Task {
+                async let workouts: Void = OfflineQueue.shared.drain()
+                async let sessions: Void = PendingSessionQueue.shared.drain()
+                _ = await (workouts, sessions)
+                await WatchBuild.refreshAndReportQueueStatus()
+            }
         case .signedOut:
             lastRelayAt = Date()
             lastRejection = nil

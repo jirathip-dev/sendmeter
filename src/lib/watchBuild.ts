@@ -1,8 +1,36 @@
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
 import type { WatchBuildInfo, WatchBuildStatus, WatchSyncStatus } from "sendlog-auth-bridge";
+import type { PluginListenerHandle } from "@capacitor/core";
 
 export type { WatchBuildInfo, WatchBuildStatus, WatchSyncStatus };
+
+export type WatchStatusTone = "positive" | "muted" | "warning";
+
+export interface WatchStatusPresentation {
+  title: string;
+  detail: string;
+  tone: WatchStatusTone;
+  /// Build identities are secondary detail, never the status sentence.
+  watchDisplay?: string;
+  phoneDisplay?: string;
+  /// Epoch seconds. Only present when the displayed watch build is trusted.
+  reportedAt?: number;
+}
+
+export interface UploadWarningItem {
+  source: "watch" | "phone";
+  text: string;
+  detail: string;
+  /// Epoch seconds of the watch queue report. A historical count is only as
+  /// useful as its age, so the view renders this beside stale wording.
+  reportedAt?: number;
+}
+
+export interface UploadWarningPresentation {
+  title: string;
+  items: UploadWarningItem[];
+}
 
 /// Issue #228: the watch app updates from TestFlight independently of the
 /// phone, so the two can sit builds apart — and a pre-#208 watch still rotates
@@ -26,112 +54,142 @@ export async function loadWatchBuildInfo(): Promise<WatchBuildInfo | null> {
   }
 }
 
-export type WatchBuildTone = "muted" | "warning";
-
-export interface WatchBuildLine {
-  /// The whole line minus the report timestamp, e.g. "Watch 1.3.0 (51) ·
-  /// behind this iPhone".
-  text: string;
-  /// "warning" is the actionable state — the builds differ (#228).
-  tone: WatchBuildTone;
-  /// Epoch seconds of the last report, only when a build is being shown. A
-  /// months-old report describes an install that may have moved on since.
-  reportedAt?: number;
+export function onWatchInfoChanged(
+  handler: () => void,
+): Promise<PluginListenerHandle | null> {
+  if (!Capacitor.isNativePlatform()) return Promise.resolve(null);
+  return SendLogAuthBridge.addListener("watchInfoChanged", handler);
 }
 
-/// How each status reads. Kept out of the view so the honest-states rule is
-/// testable: "not reported" and "not paired" must never render as agreement,
-/// and a difference must never render as muted.
-const STATUS_DETAIL: Record<WatchBuildStatus, string> = {
-  "not-paired": "not paired",
-  "app-not-installed": "Sendmeter not installed",
-  "not-reported": "build not reported yet",
-  match: "same build as this iPhone",
-  "watch-behind": "behind this iPhone",
-  "watch-ahead": "ahead of this iPhone",
-  differs: "differs from this iPhone",
-  unknown: "build unknown",
-};
+const CONNECTED_TITLE = "Connected & installed";
 
-const WARNING_STATUSES: ReadonlySet<WatchBuildStatus> = new Set<WatchBuildStatus>([
-  "watch-behind",
-  "watch-ahead",
-  "differs",
-]);
-
-export function watchBuildLine(info: WatchBuildInfo | null): WatchBuildLine | null {
+/// Issue #369: user-facing pairing/install/build presentation for Account.
+/// This deliberately selects a small allow-list from the native response;
+/// no auth state or watch payload can accidentally become display content.
+export function watchStatusPresentation(
+  info: WatchBuildInfo | null,
+): WatchStatusPresentation | null {
   if (!info) return null;
-  const detail = STATUS_DETAIL[info.status] ?? STATUS_DETAIL.unknown;
-  // The build is only shown when the status says we actually have one to
-  // trust: a stale report from a watch that's since been unpaired is history,
-  // not the state of the device on the wrist.
-  const showsBuild =
-    info.watchDisplay !== undefined &&
-    info.status !== "not-paired" &&
-    info.status !== "app-not-installed" &&
-    info.status !== "not-reported";
-  const text = showsBuild ? `Watch ${info.watchDisplay} · ${detail}` : `Watch · ${detail}`;
+
+  switch (info.status) {
+    case "not-paired":
+      return {
+        title: "No watch paired",
+        detail: "Pair an Apple Watch with this iPhone to use Sendmeter on your wrist.",
+        tone: "muted",
+      };
+    case "app-not-installed":
+      return {
+        title: "App not installed",
+        detail: "Install Sendmeter on the paired watch from the Watch app on this iPhone.",
+        tone: "warning",
+      };
+    case "not-reported":
+      return {
+        title: CONNECTED_TITLE,
+        detail: "The watch app has not reported its build yet.",
+        tone: "muted",
+      };
+    case "match":
+      return connectedWatchStatus(info, "Build matches this iPhone.", "positive");
+    case "watch-behind":
+      return connectedWatchStatus(
+        info,
+        "The watch build is behind this iPhone. Update it from the Watch app.",
+        "warning",
+      );
+    case "watch-ahead":
+      return connectedWatchStatus(
+        info,
+        "The watch build is ahead of this iPhone.",
+        "warning",
+      );
+    case "differs":
+      return connectedWatchStatus(
+        info,
+        "The watch build differs from this iPhone.",
+        "warning",
+      );
+    case "unknown":
+    default:
+      return {
+        title: "Checking watch status",
+        detail: "Pairing and installation status are not available yet.",
+        tone: "muted",
+      };
+  }
+}
+
+function connectedWatchStatus(
+  info: WatchBuildInfo,
+  detail: string,
+  tone: WatchStatusTone,
+): WatchStatusPresentation {
   return {
-    text,
-    tone: WARNING_STATUSES.has(info.status) ? "warning" : "muted",
-    ...(showsBuild && info.reportedAt !== undefined ? { reportedAt: info.reportedAt } : {}),
+    title: CONNECTED_TITLE,
+    detail,
+    tone,
+    ...(info.watchDisplay ? { watchDisplay: info.watchDisplay } : {}),
+    ...(info.phoneDisplay ? { phoneDisplay: info.phoneDisplay } : {}),
+    ...(info.reportedAt !== undefined ? { reportedAt: info.reportedAt } : {}),
   };
 }
 
-export interface WatchSyncLine {
-  /// The whole line minus the report timestamp, e.g. "Watch queue · 3 items
-  /// pending sync".
-  text: string;
-  /// "warning" is the actionable state — items that look stuck (#21).
-  tone: WatchBuildTone;
-  /// Epoch seconds of the report the count came from, whenever a count is
-  /// being shown. A count is only ever as current as its report.
-  reportedAt?: number;
-}
+/// Issue #369: the History tab is quiet when uploads are healthy or unknown,
+/// and visible only when the user can act on a pending or stale queue.
+export function uploadWarningPresentation(
+  watchInfo: WatchBuildInfo | null,
+  phonePending: number | null,
+): UploadWarningPresentation | null {
+  const items: UploadWarningItem[] = [];
+  const syncStatus = watchInfo?.syncStatus;
+  const watchCanReport =
+    syncStatus === "empty" || syncStatus === "pending" || syncStatus === "backed-up";
 
-/// Issue #21: the watch saves workouts and gauge sessions to a persist-first
-/// disk queue and drains them on launch/foreground — so a watch that can't
-/// reach Supabase (a gym basement, a stale token) holds real training data
-/// that never appears on the phone, and nothing on the phone says so. The
-/// watch stamps its queue depth onto the messages it already sends, the plugin
-/// records it, and this renders the state.
-///
-/// The honest-states rule matters more here than for the build: an empty queue
-/// and a watch that has never reported one look identical if both render as
-/// silence, so they say different things. A count also ages — the watch only
-/// reports when it talks to the phone, so a three-day-old "4 pending"
-/// describes a queue that may since have drained, and says so rather than
-/// claiming four items are stuck right now.
-///
-/// Returns null when there is no queue to describe (web, a paired-watch-less
-/// device, a pre-#21 native shell) or when the pairing itself is the story —
-/// the build line already says "not paired" / "Sendmeter not installed", and
-/// repeating it as a queue state would be noise.
-export function watchSyncLine(info: WatchBuildInfo | null): WatchSyncLine | null {
-  if (!info) return null;
-  const status = info.syncStatus;
-  if (status === undefined) return null;
-  if (status === "not-paired" || status === "app-not-installed" || status === "unknown") {
-    return null;
+  if (watchInfo && watchCanReport && watchInfo.pendingSyncStale === true) {
+    const count = watchInfo.pendingSyncCount;
+    items.push({
+      source: "watch",
+      text:
+        count !== undefined && count > 0
+          ? `Apple Watch last reported ${count} item${count === 1 ? "" : "s"} waiting to upload.`
+          : "Apple Watch has not reported upload status recently.",
+      detail:
+        count !== undefined && count > 0
+          ? "Open Sendmeter on the watch to refresh this report and retry."
+          : "Its last report showed no items waiting. Open Sendmeter on the watch to refresh it.",
+      ...(watchInfo.pendingSyncReportedAt !== undefined
+        ? { reportedAt: watchInfo.pendingSyncReportedAt }
+        : {}),
+    });
+  } else if (watchInfo && (syncStatus === "pending" || syncStatus === "backed-up")) {
+    const count = watchInfo.pendingSyncCount;
+    items.push({
+      source: "watch",
+      text:
+        count !== undefined
+          ? `Apple Watch · ${count} item${count === 1 ? "" : "s"} waiting to upload.`
+          : "Apple Watch has items waiting to upload.",
+      detail: "Open Sendmeter on the watch to retry.",
+      ...(watchInfo.pendingSyncReportedAt !== undefined
+        ? { reportedAt: watchInfo.pendingSyncReportedAt }
+        : {}),
+    });
   }
-  if (status === "not-reported") {
-    return { text: "Watch queue · sync state not reported yet", tone: "muted" };
+
+  if (phonePending !== null && phonePending > 0) {
+    items.push({
+      source: "phone",
+      text: `This iPhone · ${phonePending} Force recording${phonePending === 1 ? "" : "s"} waiting to upload.`,
+      detail: "Keep Sendmeter open with an internet connection to retry.",
+    });
   }
-  const reported =
-    info.pendingSyncReportedAt !== undefined ? { reportedAt: info.pendingSyncReportedAt } : {};
-  if (status === "empty") {
-    return { text: "Watch queue · empty, everything synced", tone: "muted", ...reported };
-  }
-  const count = info.pendingSyncCount ?? 0;
-  const items = `${count} item${count === 1 ? "" : "s"} pending sync`;
-  const stale = info.pendingSyncStale === true;
+
+  if (items.length === 0) return null;
   return {
-    // A stale count must not be read as live: it's what the queue held the
-    // last time the watch spoke to this phone, not what it holds now.
-    text: `Watch queue · ${items}${stale ? " at last report" : ""}`,
-    // Backed up is the "it isn't draining" case; a stale count with items in
-    // it is the "and the watch stopped talking" case. Both are actionable.
-    tone: status === "backed-up" || stale ? "warning" : "muted",
-    ...reported,
+    title: items.some((item) => /waiting to upload/.test(item.text))
+      ? "Uploads waiting"
+      : "Check Apple Watch uploads",
+    items,
   };
 }
