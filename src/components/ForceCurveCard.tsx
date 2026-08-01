@@ -352,9 +352,10 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
                     marginTop: 8,
                   }}
                 >
-                  {model.coverage.message} The Hill curve and its targets are provisional;
-                  CF and W′ are extrapolated, and the confidence band may be unavailable
-                  until more durations exist.
+                  {model.coverage.message}{" "}
+                  {model.capabilityFit
+                    ? "The Hill curve and its targets are provisional; CF and W′ are extrapolated, and the confidence band may be unavailable until more durations exist."
+                    : "A Hill capability fit is not available yet, so curve-based targets are unavailable; the chart shows only the measured envelope."}
                 </div>
               );
             }
@@ -367,7 +368,10 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
                     marginTop: 8,
                   }}
                 >
-                  {model.coverage.message} Hill curve targets remain provisional.
+                  {model.coverage.message}{" "}
+                  {model.capabilityFit
+                    ? "Hill curve targets remain provisional."
+                    : "Curve-based targets remain unavailable until a Hill capability fit can be resolved."}
                 </div>
               );
             }
@@ -402,8 +406,14 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
                 {model.wPrime !== null ? `${model.wPrime.toFixed(0)} kg·s` : "—"}
               </span>
             </span>
-            <span title="Purple Hill/log-logistic line used only to smooth the chart">
-              Hill capability curve
+            <span
+              title={
+                model.capabilityFit
+                  ? "Purple Hill/log-logistic capability curve used by Power Endurance and Auto curve targets"
+                  : "Purple interpolation of the measured envelope; it does not resolve curve-based targets"
+              }
+            >
+              {model.capabilityFit ? "Hill capability curve" : "Measured envelope"}
             </span>
             <span title="Pointwise 95% interval from a deterministic recording-level bootstrap">
               95% band{" "}

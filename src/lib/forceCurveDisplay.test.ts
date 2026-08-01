@@ -66,6 +66,17 @@ describe("sampleDisplayCurve", () => {
     }
   });
 
+  it("falls back to the measured envelope when a stored fit is invalid", () => {
+    const invalid = {
+      ...model,
+      capabilityFit: { ...model.capabilityFit!, tau: 0 },
+    };
+    const points = sampleDisplayCurve(invalid, 1, 120, 20);
+    expect(points).toHaveLength(21);
+    expect(points[0]!.kg).toBe(40);
+    expect(points.at(-1)!.kg).toBe(21);
+  });
+
   it("draws no line from a single unsupported observation", () => {
     const onePoint = { ...model, points: [{ windowS: 1, kg: 40 }], capabilityFit: undefined };
     expect(sampleDisplayCurve(onePoint, 1, 1, 20)).toEqual([]);

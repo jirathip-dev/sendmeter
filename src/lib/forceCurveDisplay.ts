@@ -23,12 +23,14 @@ export function sampleDisplayCurve(
 ): DisplayCurvePoint[] {
   if (!(tMin > 0) || !(tMax >= tMin) || steps < 1) return [];
   if (model.capabilityFit) {
-    return Array.from({ length: steps + 1 }, (_, i) => {
+    const fitted = Array.from({ length: steps + 1 }, (_, i) => {
       const durationS = Math.exp(
         Math.log(tMin) + ((Math.log(tMax) - Math.log(tMin)) * i) / steps,
       );
-      return { durationS, kg: predictCapability(model, durationS)! };
+      const kg = predictCapability(model, durationS);
+      return kg === null ? null : { durationS, kg };
     });
+    if (fitted.every((point) => point !== null)) return fitted;
   }
 
   const anchors = [...model.points]

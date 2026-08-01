@@ -477,10 +477,10 @@ function adjustedHoldAboveCf(
 /// scales — hold grows with the square of `100/pct`, sets shrink to
 /// compensate (reps stays 1 — see #320: the protocol shape is 1 rep × 8
 /// sets so alternation fires per hold). Deliberately NOT derived from the
-/// F(t) = CF + W′/t curve the above-CF zones use (adjustedHoldAboveCf):
+/// above-CF W′-cost timing used by `adjustedHoldAboveCf`:
 /// endurance targets sit at/below CF (zoneTarget's 80–100% of CF), where
-/// that hyperbola isn't valid — it models the finite W′ reservoir above CF,
-/// which doesn't exist down here.
+/// that reserve accounting isn't valid — the finite W′ reservoir exists only
+/// above CF.
 /// Exported for direct testing of the [20, 240]s clamp (unreachable through
 /// zoneTarget/zonePrescription alone since those clamp pct to [60, 110] first).
 export function adjustedEndurance(

@@ -100,10 +100,8 @@ describe("presetTargetKg", () => {
     expect(presetTargetKg({ ...ramp, targetPct: null, targetKg: null }, refs, 1)).toBeNull();
   });
 
-  it("smart curve target resolves against THAT SET's hold (#332), not the base holdS", () => {
-    // 5→15→30s holds; CF 20, W' 300 → F = 20 + 300/hold. A generous maxF
-    // (100) keeps the cap from masking the per-set difference this test is
-    // about.
+  it("auto curve target resolves against THAT SET's hold (#332), not the base holdS", () => {
+    // 5→15→30s holds resolve independently against the same Hill fit.
     const uncappedRefs = { ...refs };
     const curve: TindeqPreset = {
       ...repeaters,
@@ -129,16 +127,15 @@ describe("presetTargetKgRange (#332 finding 2)", () => {
   });
 
   it("spans min/max across sets for a monotonic per-set hold list", () => {
-    // 5→15→30s holds → F = 20+300/5=80, 20+300/15=40, 20+300/30=30.
+    // 5→15→30s holds descend along the Hill capability curve.
     const curve: TindeqPreset = { ...repeaters, holdS: 5, holdsS: [5, 15, 30], sets: 3, targetCurve: true };
     expect(presetTargetKgRange(curve, refs)).toEqual({ min: 25.5, max: 34.7 });
     expect(formatKgRange(presetTargetKgRange(curve, refs)!)).toBe("25.5–34.7 kg");
   });
 
   it("finds the extreme in a middle set — not just first/last (a non-monotonic list)", () => {
-    // 15→5→30s holds → F = 20+300/15=40, 20+300/5=80, 20+300/30=30. The max
-    // (80) sits at set 2, not at either end — a first/last shortcut would
-    // have reported {min:30, max:40} and silently understated the range.
+    // 15→5→30s puts the shortest (and therefore strongest) target in set 2;
+    // a first/last shortcut would silently understate the range.
     const curve: TindeqPreset = { ...repeaters, holdS: 15, holdsS: [15, 5, 30], sets: 3, targetCurve: true };
     expect(presetTargetKgRange(curve, refs)).toEqual({ min: 25.5, max: 34.7 });
   });
