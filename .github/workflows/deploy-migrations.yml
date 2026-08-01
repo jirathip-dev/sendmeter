@@ -25,6 +25,7 @@ on:
       - "supabase/migrations/**"
       - ".github/workflows/deploy-migrations.yml"
       - "scripts/apply-migrations.mjs"
+      - "scripts/migration-safety.mjs"
   workflow_dispatch:
 
 # Queue, never cancel: a cancelled run mid-apply would leave the ledger

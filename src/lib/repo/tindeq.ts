@@ -16,14 +16,14 @@ import {
 import { unwrap, makeSoftDeleteOps } from "./shared";
 
 const RECORDING_COLS =
-  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone";
+  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no";
 
 type RecordingRow = {
   id: string;
   recorded_at: string;
   duration_ms: number;
-  peak_kg: number;
-  avg_kg: number;
+  peak_kg: number | null;
+  avg_kg: number | null;
   sample_count: number;
   note: string;
   tag: string;
@@ -32,6 +32,12 @@ type RecordingRow = {
   protocol_run_id: string | null;
   set_no: number | null;
   zone: string | null;
+  source: string;
+  external_load_kg: number | null;
+  outcome: string | null;
+  planned_duration_ms: number | null;
+  actual_duration_ms: number | null;
+  rep_no: number | null;
 };
 
 function toRecording(r: RecordingRow): TindeqRecordingMeta {
@@ -52,6 +58,12 @@ function toRecording(r: RecordingRow): TindeqRecordingMeta {
     // (#259, widened #325); null on every row saved before it, and on
     // freehand/watch holds.
     zone: r.zone as RecordedZone | null,
+    source: r.source as TindeqRecordingMeta["source"],
+    externalLoadKg: r.external_load_kg,
+    outcome: r.outcome as TindeqRecordingMeta["outcome"],
+    plannedDurationMs: r.planned_duration_ms,
+    actualDurationMs: r.actual_duration_ms,
+    repNo: r.rep_no,
   };
 }
 
@@ -185,6 +197,12 @@ export async function insertRecording(
         // (localStorage survives the update) carry no `zone` at all, and an
         // explicit null is what "we don't know" means for this column.
         zone: rec.zone ?? null,
+        source: rec.source ?? "dynamometer",
+        external_load_kg: rec.externalLoadKg ?? null,
+        outcome: rec.outcome ?? null,
+        planned_duration_ms: rec.plannedDurationMs ?? null,
+        actual_duration_ms: rec.actualDurationMs ?? null,
+        rep_no: rec.repNo ?? null,
         samples: rec.samples.map((s) => [s.t, s.kg]),
       })
       .select(RECORDING_COLS)

@@ -156,8 +156,20 @@ describe("trendChartRecordings excludes maintenance protocols (#297/#325)", () =
       setNo: null,
       zone: null,
       ...over,
+      source: over.source ?? "dynamometer",
     };
   }
+
+  it("excludes sensorless manual attempts from measured peak trends", () => {
+    const measured = rec("2026-07-01T10:00:00Z", 30);
+    const manual = rec("2026-07-02T10:00:00Z", 0, {
+      source: "manual",
+      peakKg: null,
+      avgKg: null,
+      externalLoadKg: 40,
+    });
+    expect(trendChartRecordings([measured, manual], "FDP", "left")).toEqual([measured]);
+  });
 
   it("drops a Prehab hold even when it's the most recent recording", () => {
     // The invariant `ForceTrendChart`'s own "Last day"/"vs 30d avg" figures

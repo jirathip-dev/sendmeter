@@ -3,7 +3,7 @@
  *
  * KEEP-IN-SYNC: mirrored by `RPEDepletion.swift` in `SendLogWatchCore` —
  * identical constants, identical math, identical rounding, and the SAME test
- * vectors on both sides (`rpeDepletion.test.ts` ↔ `RPEDepletionTests.swift`).
+ * vectors on both sides (the shared `rpe-depletion-parity.json` fixture).
  * The watch predicts the RPE of a gauge session it logs itself, the phone
  * predicts the same number for the same session, and the two must not drift.
  * Only the depletion + mapping is duplicated — the curve FIT itself
@@ -42,7 +42,8 @@ export const RPE_DEPLETION = {
   /// Saturation scale of the load→RPE mapping, in batteries of W'. A
   /// starting value, deliberately tunable: RPE is bounded and the second
   /// battery hurts less than the first, so L0 sets how fast that saturates.
-  /// L = 1 → 4.0, L = 2 → 6.0, L = 4 → 8.2, L = 8 → 9.6.
+  /// Retuning this requires updating the matching Swift constant and the one
+  /// shared parity fixture; both test suites then re-verify the mapping.
   l0: 2.5,
   /// Banked when NOT ONE EFFORT rep of the session could be measured against
   /// a fitted curve — i.e. effort whose depletion is genuinely UNKNOWN, not

@@ -14,7 +14,7 @@ export default function SideAsymmetryCard({
 }) {
   const effortRecordings = recordings.filter(isEffortRecording);
   const bestPeak = (side: string): number | null => {
-    const peaks = effortRecordings.filter((r) => r.side === side).map((r) => r.peakKg);
+    const peaks = effortRecordings.filter((r) => r.side === side && r.peakKg != null).map((r) => r.peakKg!);
     return peaks.length ? Math.max(...peaks) : null;
   };
   const left = bestPeak("left");

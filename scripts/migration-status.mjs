@@ -20,24 +20,36 @@
 // ever diverge; you should not need them.
 //
 // Usage: node scripts/migration-status.mjs
-// Exits 1 if any local migration is unrecorded on either project.
+// Exits 1 if the checkout is behind its configured upstream, freshness cannot
+// be verified for a configured upstream, or any local migration is unrecorded
+// on either project. Detached/no-upstream checkouts keep the existing path.
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import {
+  checkoutFreshness,
+  checkoutGuardExitCode,
+  formatLedgerOnlyWarning,
+  ledgerNamesWithoutLocalFiles,
+  localMigrationsRecordedMessage,
+} from "./migration-safety.mjs";
 
 const PROJECTS = {
   dev: "mjkndfhjnipomjjhgsxv",
   prod: "zznsqmcewtzlnfoiefkk",
 };
 
-const MIGRATIONS_DIR = join(
-  dirname(dirname(fileURLToPath(import.meta.url))),
-  "supabase",
-  "migrations",
-);
+const REPO_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const MIGRATIONS_DIR = join(REPO_ROOT, "supabase", "migrations");
 const FILENAME_RE = /^(\d{14})_([a-z0-9_]+)\.sql$/;
+
+const checkoutExit = checkoutGuardExitCode(
+  checkoutFreshness(REPO_ROOT),
+  "migration status verification",
+);
+if (checkoutExit) process.exit(checkoutExit);
 
 function fromFile(path) {
   return existsSync(path) ? readFileSync(path, "utf8").trim() : null;
@@ -112,6 +124,12 @@ const local = readdirSync(MIGRATIONS_DIR)
   })
   .filter(Boolean);
 
+const ledgerWarning = formatLedgerOnlyWarning([
+  { label: "dev", names: ledgerNamesWithoutLocalFiles(local, dev.keys()) },
+  { label: "prod", names: ledgerNamesWithoutLocalFiles(local, prod.keys()) },
+]);
+if (ledgerWarning) console.log(`${ledgerWarning}\n`);
+
 const nameW = Math.max(...local.map((m) => m.name.length), 4);
 console.log(`${"name".padEnd(nameW)}  ${"local".padEnd(14)}  dev             prod`);
 console.log("-".repeat(nameW + 50));
@@ -125,18 +143,6 @@ for (const m of local) {
   console.log(`${m.name.padEnd(nameW)}  ${m.version}  ${cell(d)}${cell(p)}`);
 }
 
-const localNames = new Set(local.map((m) => m.name));
-for (const [label, l] of [
-  ["dev", dev],
-  ["prod", prod],
-]) {
-  const foreign = [...l.keys()].filter((n) => !localNames.has(n));
-  if (foreign.length) {
-    console.log(`\n${label}-only ledger entries with no local file: ${foreign.length}`);
-    for (const n of foreign) console.log(`  ${n}`);
-  }
-}
-
 if (missing) {
   console.error(
     `\n✗ ${missing} local migration(s) unrecorded on dev or prod — pending apply, or\n` +
@@ -145,4 +151,4 @@ if (missing) {
   process.exit(1);
 }
 
-console.log("\n✓ every local migration is recorded on both projects.");
+console.log(`\n${localMigrationsRecordedMessage(local.length, "both projects")}`);
