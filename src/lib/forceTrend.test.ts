@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { dailyBoxStats, hitWidthsPx, neighborGapsPx, type TrendSample } from "./forceTrend";
+import {
+  dailyBoxStats,
+  hitWidthsPx,
+  neighborGapsPx,
+  trendChartRecordings,
+  type TrendSample,
+} from "./forceTrend";
+import type { TindeqRecordingMeta } from "../types";
 
 describe("dailyBoxStats (issue #145)", () => {
   it("degenerates cleanly for a 1-rep day: whiskers = median = the value, no outliers", () => {
@@ -125,5 +132,55 @@ describe("hitWidthsPx (issue #145 revision: hit target must be per-day, not data
 
   it("caps at max(boxW, 12) so a wide-open gap doesn't blow up the hit target", () => {
     expect(hitWidthsPx([0, 1000], 8, 4)).toEqual([12, 12]);
+  });
+});
+
+describe("trendChartRecordings excludes maintenance protocols (#297/#325)", () => {
+  function rec(
+    recordedAt: string,
+    peakKg: number,
+    over: Partial<TindeqRecordingMeta> = {},
+  ): TindeqRecordingMeta {
+    return {
+      id: `r-${recordedAt}`,
+      recordedAt,
+      durationMs: 10_000,
+      peakKg,
+      avgKg: peakKg * 0.9,
+      sampleCount: 100,
+      note: "",
+      tag: "FDP",
+      side: "left",
+      groupId: null,
+      protocolRunId: null,
+      setNo: null,
+      zone: null,
+      ...over,
+    };
+  }
+
+  it("drops a Prehab hold even when it's the most recent recording", () => {
+    // The invariant `ForceTrendChart`'s own "Last day"/"vs 30d avg" figures
+    // rely on: "a submax endurance day no longer drags 'Last' around" — a
+    // daily sub-CF Prehab hold is the same failure mode, so it must never
+    // become `lastDay` and fabricate a fake capacity drop.
+    const recordings = [
+      rec("2026-07-01T10:00:00Z", 40, { zone: "strength" }),
+      rec("2026-07-10T10:00:00Z", 42, { zone: "strength" }),
+      rec("2026-07-20T10:00:00Z", 15, { zone: "prehab" }),
+      rec("2026-07-21T10:00:00Z", 28, { zone: "warmup" }),
+    ];
+    const filtered = trendChartRecordings(recordings, null, null);
+    expect(filtered.map((r) => r.id)).toEqual([recordings[0]!.id, recordings[1]!.id]);
+  });
+
+  it("still respects the tag/side scoping alongside the effort filter", () => {
+    const recordings = [
+      rec("2026-07-01T10:00:00Z", 40, { tag: "FDP", side: "left" }),
+      rec("2026-07-02T10:00:00Z", 40, { tag: "FDP", side: "right" }),
+      rec("2026-07-03T10:00:00Z", 40, { tag: "Other", side: "left" }),
+    ];
+    const filtered = trendChartRecordings(recordings, "FDP", "left");
+    expect(filtered.map((r) => r.id)).toEqual([recordings[0]!.id]);
   });
 });

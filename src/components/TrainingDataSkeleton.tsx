@@ -1,0 +1,63 @@
+const WEEKLY_BARS = ["short", "medium", "tall", "medium", "short", "tall"];
+const HEATMAP_CELLS = Array.from({ length: 35 }, (_, index) => index);
+
+function Block({ className = "" }: { className?: string }) {
+  return <div className={`skeleton-block${className ? ` ${className}` : ""}`} />;
+}
+
+export default function TrainingDataSkeleton() {
+  return (
+    <div className="training-skeleton" role="status" aria-label="Loading your training">
+      <div aria-hidden="true">
+        <div className="skeleton-context-row">
+          <div className="phase-banner skeleton-card skeleton-phase-card">
+            <Block className="skeleton-line skeleton-line-wide" />
+            <Block className="skeleton-line skeleton-line-medium" />
+            <Block className="skeleton-pill" />
+          </div>
+          <div className="card skeleton-card skeleton-conditions-card">
+            <Block className="skeleton-line skeleton-line-short" />
+            <Block className="skeleton-score skeleton-score-small" />
+            <Block className="skeleton-line skeleton-line-medium" />
+          </div>
+        </div>
+
+        <div className="card skeleton-card skeleton-readiness-card">
+          <Block className="skeleton-line skeleton-line-medium" />
+          <Block className="skeleton-score" />
+          <Block className="skeleton-line skeleton-line-short" />
+          <div className="skeleton-chart-line" />
+        </div>
+
+        <div className="card skeleton-card skeleton-acwr-card">
+          <Block className="skeleton-line skeleton-line-short" />
+          <Block className="skeleton-score skeleton-score-medium" />
+          <Block className="skeleton-line skeleton-line-short" />
+          <Block className="skeleton-track" />
+          <div className="skeleton-stat-row">
+            <Block className="skeleton-line skeleton-line-medium" />
+            <Block className="skeleton-line skeleton-line-medium" />
+          </div>
+        </div>
+
+        <div className="card skeleton-card skeleton-weekly-card">
+          <Block className="skeleton-line skeleton-line-medium" />
+          <div className="skeleton-bars">
+            {WEEKLY_BARS.map((height, index) => (
+              <Block key={index} className={`skeleton-bar skeleton-bar-${height}`} />
+            ))}
+          </div>
+        </div>
+
+        <div className="card skeleton-card skeleton-daily-card">
+          <Block className="skeleton-line skeleton-line-medium" />
+          <div className="skeleton-heatmap">
+            {HEATMAP_CELLS.map((cell) => (
+              <Block key={cell} className="skeleton-heatmap-cell" />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

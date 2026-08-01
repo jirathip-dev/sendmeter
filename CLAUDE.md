@@ -34,7 +34,9 @@ alongside each module (`*.test.ts` in `src/lib` and `src/hooks`). The **Swift** 
   simulator. The same files are still compiled into the Xcode test target, so
   `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App"
   -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."`
-  also runs them until #199 moves that job to Linux.
+  also runs them locally; in CI the `package-tests` job in `ios-ci.yml` runs
+  the same suite on Linux (`swift:6.3` container, #199) and the macOS `swift`
+  job is build-only as a result — the Xcode target stays for local runs.
 
 Always run `npm run typecheck && npm run lint && npm test && npm run build` after web changes.
 
@@ -287,6 +289,25 @@ are safe regardless.
 
 ## Non-obvious things that will bite you
 
+- **This repo's most-repeated defect: a decision made from state captured in a
+  closure that outlives the render it came from.** It has been shipped and caught
+  in review three times — #295 (`endSession`'s `if (!gaugeSession) return` guard,
+  plus a recordings snapshot taken before a 4s `await`) and #296 (`onRestore` /
+  `zoneSel` / `preset` read inside a `[]`-deps effect's `.then`). Both reintroduced
+  the exact bug they were written to fix, as a race.
+
+  `setState` cannot invalidate another in-flight closure's copy of a value, so a
+  guard reading captured state is not a guard. The async paths that expose this
+  are everywhere in `ForceView` / `PresetManager`: fetch `.then` callbacks,
+  `setTimeout` defers (the 150ms disconnect defer), and multi-second `Promise.race`
+  awaits.
+
+  **Rule:** inside any async path, a guard or a snapshot must read a **ref**, not
+  a captured value, and any dedupe guard must be set **before the first `await`**.
+  Prefer extracting the logic into a pure `src/lib` module and testing concurrent
+  invocation directly — `gaugeSessionEnd.ts` ("two concurrent calls for the same
+  groupId log exactly once") is the pattern to copy.
+
 - **iOS min is 16.0**, not 15. The Supabase Swift SDK floors at 16; Capacitor
   derives `CapApp-SPM`'s platform from the *first* `IPHONEOS_DEPLOYMENT_TARGET` in
   the pbxproj (the **project-level** one), so it must be 16 for `cap sync` to
@@ -359,25 +380,34 @@ are safe regardless.
     queue whose depth should show up on the phone has to publish there too**,
     and nil (never counted) must keep reading as "not reported", never as an
     empty queue.
-- **Migrations aren't auto-applied — and must go to BOTH remote projects.** Files
-  in `supabase/migrations/` are just SQL on disk. Apply each new migration to the
-  **prod** project (`zznsqmcewtzlnfoiefkk`) **and** to the **dev/preview** project
-  (`mjkndfhjnipomjjhgsxv`, issue #121 — hosted on a second Supabase account), via
-  `POST /v1/projects/{ref}/database/query`, recording the name + version in
-  `supabase_migrations.schema_migrations`. **One Management API token reaches both**
-  (`~/.supabase/access-token`): the main account is only a *Developer* on the dev
-  project, but Developer is sufficient for the Management API — verified 2026-07-25.
-  Check parity any time with `npm run migration:status`. (The older
-  `~/.supabase/dev-account-token` is no longer needed; the token that was there had
-  expired, which presents as `401 JWT could not be decoded` — a dead token, not a
-  rights problem.) Skipping prod drifts the
-  schema from the code (the `health_metrics` delete policy + date-sanity constraints
-  sat unapplied for a while: with no DELETE policy, a delete silently matches zero
-  rows, so "Clear health data" looked broken while succeeding); skipping dev breaks
-  Vercel preview deployments the same way. The dev project is free-tier and
-  auto-pauses after ~7 idle days — unpause it (second account's dashboard or its
-  token) before verifying a release.
-- **CI secrets live on GitHub *environments*, not the repo (planned, #130).** The
+- **Migrations auto-apply on merge, to BOTH remote projects (#130).** `.github/workflows/deploy-migrations.yml`
+  runs on any push touching `supabase/migrations/**`: `staging` → the **dev/preview**
+  project (`mjkndfhjnipomjjhgsxv`, issue #121 — hosted on a second Supabase account),
+  `main` → the **prod** project (`zznsqmcewtzlnfoiefkk`). It calls
+  `scripts/apply-migrations.mjs --target dev|prod`, which applies pending migrations
+  **by name** (append-only — see below) via the Management API and records the name
+  + version in `supabase_migrations.schema_migrations`. There is no required-reviewer
+  gate on this plan, so **the merge itself is the human gate**: merging to `main`
+  applies DDL to production (`deploy-migrations.yml`'s own warning comment says the
+  same). Check parity any time with `npm run migration:status`.
+  - **Manual path (fallback / verification only)**, for backfills or incident
+    response when you can't wait for a merge: `POST /v1/projects/{ref}/database/query`
+    (or `npm run migration:apply -- --target dev|prod` locally), same by-name
+    semantics as the workflow. **One Management API token reaches both projects**
+    (`~/.supabase/access-token`): the main account is only a *Developer* on the dev
+    project, but Developer is sufficient for the Management API — verified
+    2026-07-25. (The older `~/.supabase/dev-account-token` is no longer needed; the
+    token that was there had expired, which presents as `401 JWT could not be
+    decoded` — a dead token, not a rights problem.)
+  - Drift still happens if the automated flow is bypassed or a project falls behind:
+    the `health_metrics` delete policy + date-sanity constraints once sat unapplied
+    for a while (with no DELETE policy, a delete silently matches zero rows, so
+    "Clear health data" looked broken while succeeding). Run `npm run
+    migration:status` after any manual intervention to confirm dev and prod agree.
+    The dev project is free-tier and auto-pauses after ~7 idle days — unpause it
+    (second account's dashboard or its token) before it needs to receive a push or
+    before verifying a release.
+- **CI secrets live on GitHub *environments*, not the repo (#130).** The
   two Supabase projects are on two different accounts, but **one main-account token
   reaches both** (Developer role suffices for the Management API), so the same
   `SUPABASE_ACCESS_TOKEN` value can go in both environments:
@@ -403,11 +433,12 @@ are safe regardless.
   and would re-apply recorded history. Use the Management API
   (`POST /v1/projects/{ref}/database/query`) — access token only, no DB password,
   no `supabase link`, so `supabase/config.toml`'s hardcoded prod ref can't misfire.
-  `synergy-costing` already solved this; its `scripts/apply-migrations.mjs`
-  (append-only, fails on an unrecorded *older* migration) and
-  `scripts/migration-status.mjs` (dev/prod parity table) are the reference
-  implementations. The ledger records only what was *reported* applied — it is not
-  proof the objects exist.
+  This repo's `scripts/apply-migrations.mjs` (append-only, fails on an unrecorded
+  *older* migration; also the engine behind `deploy-migrations.yml`) and
+  `scripts/migration-status.mjs` (dev/prod parity table; `npm run
+  migration:status`) are the reference implementations — ported from
+  `synergy-costing`, which hit this problem first. The ledger records only what
+  was *reported* applied — it is not proof the objects exist.
 
 - **`autoRefreshToken: false` does NOT stop supabase-swift refreshing.** It only
   disables the background *timer*. Two accessors refresh anyway, and both were
@@ -446,9 +477,14 @@ are safe regardless.
 - **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
   **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
   prompt (in-app has an Undo; the watch hides tag/side/session controls *while
-  measuring* so the live gauge fits one screen). End-session logs the **actual
-  wall-clock duration** (read-only); only RPE is asked. Don't reintroduce the
-  discard/save prompt or an editable duration.
+  measuring* so the live gauge fits one screen). Ending the session (phone
+  Finish, watch, or a disconnect) **auto-logs to history with no confirm
+  step** (#295, mirrors the watch's `TindeqManager.logSessionNow()`) — RPE is
+  the #280 W'-depletion prediction (or its fallback), always banked
+  `rpe_confirmed = false` since nobody reviewed it, and duration is the
+  recordings' actual span. Reviewing/editing RPE (or duration) happens
+  post-hoc via History's `EditSessionSheet`. Don't reintroduce the end-of-
+  session RPE prompt or an editable duration at log time.
 - **The recording queue is TWO stores, and the split is load-bearing** (#269).
   **IndexedDB** (`src/lib/recordingDb.ts`) is the main queue — every path that
   can await (ForceView's failed-insert handler, the drain, the manual retry)

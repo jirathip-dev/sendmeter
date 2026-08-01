@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		12574DD8CDB9DC854DF1002A /* TindeqProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */; };
+		1BF20E03909FE5E21FAE141B /* TindeqRecordingLimitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C7C9314801ADDD0DB38472 /* TindeqRecordingLimitTests.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		2FEC1DFCEBB8AE841B0DD4E3 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 4CCE65502100282783D5231B /* PrivacyInfo.xcprivacy */; };
 		328AD2C63004617A00E07518 /* SendLogWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -143,6 +144,7 @@
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "../SendLogWatchCore/Tests/SendLogWatchCoreTests/TindeqProtocolTests.swift"; sourceTree = "<group>"; };
 		9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendLogWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1C7C9314801ADDD0DB38472 /* TindeqRecordingLimitTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TindeqRecordingLimitTests.swift; path = "../SendLogWatchCore/Tests/SendLogWatchCoreTests/TindeqRecordingLimitTests.swift"; sourceTree = "<group>"; };
 		C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "../SendLogWatchCore/Tests/SendLogWatchCoreTests/TagReconciliationTests.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -239,6 +241,7 @@
 				9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */,
 				C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */,
 				906892CDB6C18118BDF95638 /* RPEDepletionTests.swift */,
+				A1C7C9314801ADDD0DB38472 /* TindeqRecordingLimitTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = "<group>";
@@ -531,6 +534,7 @@
 				12574DD8CDB9DC854DF1002A /* TindeqProtocolTests.swift in Sources */,
 				703E0DDDB01CECCD44C5799A /* TagReconciliationTests.swift in Sources */,
 				4663826F0A95D4D7C303497D /* RPEDepletionTests.swift in Sources */,
+				1BF20E03909FE5E21FAE141B /* TindeqRecordingLimitTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

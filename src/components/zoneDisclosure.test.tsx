@@ -59,8 +59,8 @@ describe("ZoneBreakdownPanel (#214)", () => {
 
   it("shows the arithmetic, not just the answer", () => {
     const t = text(renderToStaticMarkup(<ZoneBreakdownPanel recs={holds} />));
-    // 34s of strength holds ÷ (10s × 5 reps) = 0.7 sets.
-    expect(t).toContain("34.0s of holds ÷ 50s per set (10s × 5 reps) = 0.7");
+    // 34s of strength holds ÷ (10s × 5 holds) = 0.7 sets.
+    expect(t).toContain("34.0s of holds ÷ 50s per set (10s × 5 holds) = 0.7");
   });
 
   it("says how many holds fed each zone, and admits the ones that fed none", () => {
@@ -125,7 +125,7 @@ describe("ZoneBreakdownPanel (#214)", () => {
           />,
         ),
       );
-      expect(t).toContain("12.0s of holds ÷ 30s per set (5s × 6 reps) = 0.4");
+      expect(t).toContain("12.0s of holds ÷ 30s per set (5s × 6 holds) = 0.4");
       expect(t).toContain("1 recorded as Power");
     });
   });
@@ -148,6 +148,7 @@ describe("ZoneFocusCard title (#214)", () => {
       exercise="FDP"
       model={null}
       onPick={() => {}}
+      locked={false}
     />,
   );
 
@@ -169,5 +170,20 @@ describe("ZoneFocusCard title (#214)", () => {
     const t = text(html);
     expect(t).toContain("0.3 sets");
     expect(t).toContain("0 sets");
+  });
+
+  it("disables the Arm button while locked (#298 round 6, finding A1)", () => {
+    // A run in progress must not let this card arm a different zone out from
+    // under it — the same lock TargetZonesCard's own chips already respect.
+    const lockedHtml = renderToStaticMarkup(
+      <ZoneFocusCard
+        recordings={recordings}
+        exercise="FDP"
+        model={null}
+        onPick={() => {}}
+        locked={true}
+      />,
+    );
+    expect(lockedHtml).toContain('disabled=""');
   });
 });

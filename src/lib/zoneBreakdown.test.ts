@@ -170,6 +170,56 @@ describe("recorded vs inferred zones (#259)", () => {
   });
 });
 
+describe("Maintenance holds (#297/#325)", () => {
+  it("routes a prehab hold into `excluded`, not `unclassified` or any zone", () => {
+    const prehabHold = { ...hold("2026-07-20T10:00:00Z", 30, "prehab-1"), zone: "prehab" as const };
+    const { zones, unclassified, excluded } = zoneBreakdown([prehabHold]);
+    expect(excluded.map((h) => h.rec.id)).toEqual(["prehab-1"]);
+    expect(unclassified).toEqual([]);
+    // A 30s hold would otherwise land in endurance — proof it moved nothing.
+    expect(zones.endurance.holds).toEqual([]);
+    expect(zones.endurance.totalHoldS).toBe(0);
+  });
+
+  it("marks an excluded hold as recorded, with its duration intact", () => {
+    const prehabHold = { ...hold("2026-07-20T10:00:00Z", 30, "prehab-1"), zone: "prehab" as const };
+    const { excluded } = zoneBreakdown([prehabHold]);
+    expect(excluded[0]).toMatchObject({ durationS: 30, source: "recorded" });
+  });
+
+  it("routes every Warm-up ramp hold into excluded, never three training zones", () => {
+    const warmupHolds = [5, 7, 10].map((durationS, i) => ({
+      ...hold(`2026-07-20T10:0${i}:00Z`, durationS, `warmup-${i + 1}`),
+      zone: "warmup" as const,
+    }));
+    const { zones, unclassified, excluded } = zoneBreakdown(warmupHolds);
+    expect(excluded.map((h) => h.rec.id)).toEqual(["warmup-1", "warmup-2", "warmup-3"]);
+    expect(unclassified).toEqual([]);
+    expect(zones.power.totalHoldS).toBe(0);
+    expect(zones["power-endurance"].totalHoldS).toBe(0);
+    expect(zones.strength.totalHoldS).toBe(0);
+    expect(zoneSets(warmupHolds)).toEqual({
+      power: 0,
+      strength: 0,
+      "power-endurance": 0,
+      endurance: 0,
+    });
+  });
+
+  it("still agrees with zoneSets bit-for-bit alongside a mix of trainable and Prehab holds", () => {
+    const recs = [
+      { ...hold("2026-07-01T10:00:00Z", 7.3, "a"), zone: "strength" as const },
+      { ...hold("2026-07-02T10:00:00Z", 30, "b"), zone: "prehab" as const },
+      hold("2026-07-03T10:00:00Z", 9.9, "c"),
+    ];
+    const { zones } = zoneBreakdown(recs);
+    const sets = zoneSets(recs);
+    for (const q of QUALITIES) {
+      expect(zones[q.id].sets).toBe(sets[q.id]);
+    }
+  });
+});
+
 describe("holdOrigin (#259)", () => {
   it("says a recorded hold was recorded, and names the zone", () => {
     expect(holdOrigin({ durationMs: 12_000, zone: "strength" })).toEqual({
@@ -178,6 +228,16 @@ describe("holdOrigin (#259)", () => {
       label: "Strength",
       short: "recorded",
       long: "recorded as Strength",
+    });
+  });
+
+  it("labels Warm-up as recorded outside training balance", () => {
+    expect(holdOrigin({ durationMs: 7_000, zone: "warmup" })).toEqual({
+      zone: "warmup",
+      source: "recorded",
+      label: "Warm-up",
+      short: "recorded",
+      long: "recorded as Warm-up — not counted toward training balance",
     });
   });
 
@@ -201,6 +261,16 @@ describe("holdOrigin (#259)", () => {
       label: null,
       short: null,
       long: null,
+    });
+  });
+
+  it("names Prehab explicitly and says it doesn't count toward training balance (#325)", () => {
+    expect(holdOrigin({ durationMs: 30_000, zone: "prehab" })).toEqual({
+      zone: "prehab",
+      source: "recorded",
+      label: "Prehab",
+      short: "recorded",
+      long: "recorded as Prehab — not counted toward training balance",
     });
   });
 

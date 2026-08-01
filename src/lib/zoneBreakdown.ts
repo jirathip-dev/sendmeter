@@ -1,4 +1,10 @@
-import { QUALITIES, ZONE_PROTOCOLS, type TrainingQuality } from "./force-curve";
+import {
+  isMaintenanceZone,
+  QUALITIES,
+  ZONE_PROTOCOLS,
+  type RecordedZone,
+  type TrainingQuality,
+} from "./force-curve";
 import {
   classifyZone,
   recordingZone,
@@ -49,6 +55,9 @@ export interface ZoneBreakdown<T> {
   /// Holds `classifyZone` refuses to bucket (under 1s — stray blips). They
   /// count toward no zone; the UI says so rather than silently dropping them.
   unclassified: ZoneHold<T>[];
+  /// Warm-up and Prehab holds — recorded outside training balance BY DESIGN,
+  /// not an inference failure like `unclassified`.
+  excluded: ZoneHold<T>[];
 }
 
 const ZONE_ORDER: TrainingQuality[] = [
@@ -68,10 +77,16 @@ export function zoneBreakdown<T extends HoldLike>(recs: T[]): ZoneBreakdown<T> {
     endurance: [] as ZoneHold<T>[],
   } satisfies Record<TrainingQuality, ZoneHold<T>[]>;
   const unclassified: ZoneHold<T>[] = [];
+  const excluded: ZoneHold<T>[] = [];
 
   for (const rec of recs) {
     const durationS = rec.durationMs / 1000;
     const { zone, source } = recordingZone(rec);
+    // Maintenance zones are recorded facts, but deliberately not trainable.
+    if (isMaintenanceZone(zone)) {
+      excluded.push({ rec, durationS, source });
+      continue;
+    }
     if (!zone) {
       unclassified.push({ rec, durationS, source });
       continue;
@@ -99,7 +114,7 @@ export function zoneBreakdown<T extends HoldLike>(recs: T[]): ZoneBreakdown<T> {
     };
   }
 
-  return { zones: entries, unclassified };
+  return { zones: entries, unclassified, excluded };
 }
 
 /// The holds a trailing window keeps — mirrors `zoneTrainingSets`' filter
@@ -158,7 +173,7 @@ export function bandFor(
 }
 
 export interface HoldOrigin {
-  zone: TrainingQuality | null;
+  zone: RecordedZone | null;
   source: ZoneSource;
   /// The zone's display label ("Strength"), or null for an unclassified blip.
   label: string | null;
@@ -177,6 +192,18 @@ export interface HoldOrigin {
 export function holdOrigin(rec: ZonedHold): HoldOrigin {
   const durationS = rec.durationMs / 1000;
   const { zone, source } = recordingZone(rec);
+  // Maintenance zones are always RECORDED (never inferred), so they get their
+  // own short-circuit rather than flowing through the trainable label lookup.
+  if (isMaintenanceZone(zone)) {
+    const label = zone === "warmup" ? "Warm-up" : "Prehab";
+    return {
+      zone,
+      source,
+      label,
+      short: "recorded",
+      long: `recorded as ${label} — not counted toward training balance`,
+    };
+  }
   const label = zone ? (QUALITIES.find((q) => q.id === zone)?.label ?? zone) : null;
   if (!zone) return { zone, source, label: null, short: null, long: null };
   if (source === "recorded") {

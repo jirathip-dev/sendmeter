@@ -14,6 +14,7 @@ import InfoDot from "./InfoDot";
 import ReadinessCard from "./ReadinessCard";
 import RecoverySheet from "./RecoverySheet";
 import SendConditionsCard from "./SendConditionsCard";
+import ForceConsistencyCard from "./ForceConsistencyCard";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
@@ -505,6 +506,10 @@ export default function Dashboard({
           <div className="card-title" style={{ marginBottom: 12 }}>Daily load</div>
           <ContributionHeatmap values={daily} />
         </div>
+
+        {/* Weekly Tindeq-training consistency (#311) — self-fetching, no
+            props needed from here. */}
+        <ForceConsistencyCard />
       </div>
 
       {showRecovery && <RecoverySheet onClose={() => setShowRecovery(false)} />}

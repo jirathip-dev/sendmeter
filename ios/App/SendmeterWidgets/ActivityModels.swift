@@ -4,8 +4,10 @@ import Foundation
 // KEEP IN SYNC with
 // native-plugins/sendlog-live-activity/ios/Sources/SendLogLiveActivity/ActivityModels.swift
 // ActivityKit matches the app's activity to this widget by unqualified type
-// name + Codable shape — the two copies must stay byte-identical or the
-// lock-screen card renders as a placeholder.
+// name + Codable shape — struct names, field names and field types must
+// match exactly (the plugin copy adds `public` + explicit inits, which
+// doesn't affect the shape), or the lock-screen card renders as a
+// placeholder. Guarded by src/lib/iosKeepInSyncInvariants.test.ts.
 
 /// Phone (or watch-mirrored) workout on the lock screen: CLIMBING count-up /
 /// RESTING countdown, boulder count, Boulder/Stop buttons.

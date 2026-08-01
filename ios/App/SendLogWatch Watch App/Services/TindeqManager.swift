@@ -5,7 +5,7 @@ import SendLogWatchCore
 import WatchConnectivity
 
 /// CoreBluetooth central for the Tindeq Progressor. Mirrors the web app's
-/// useTindeq hook: same statuses, 120 s recording cap, t rounded to ms int,
+/// useTindeq hook: same statuses, 30 min recording cap, t rounded to ms int,
 /// kg to 2 dp, identical summary — recordings look the same in the web UI.
 @Observable
 final class TindeqManager: NSObject {
@@ -45,8 +45,6 @@ final class TindeqManager: NSObject {
     var liveTag = "" { didSet { pushForceBeat() } }
     var liveSide = "" { didSet { pushForceBeat() } }
     private var beatTick = 0
-
-    private static let maxRecordingMs: Double = 120_000
 
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
@@ -242,7 +240,7 @@ final class TindeqManager: NSObject {
             // Mirror beat every 5th tick (~2 Hz) while measuring (SL-87).
             self.beatTick += 1
             if self.beatTick % 5 == 0 { self.pushForceBeat() }
-            if last.t >= Self.maxRecordingMs, self.measuring {
+            if TindeqRecordingLimit.shouldStop(elapsedMs: last.t), self.measuring {
                 _ = self.stop()
             }
         }

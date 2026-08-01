@@ -1,15 +1,20 @@
+import { isEffortRecording } from "../lib/zoneHistory";
 import type { TindeqRecordingMeta } from "../types";
 
 /// Left/right best-peak comparison for a tag — finger-strength asymmetry is a
 /// real injury-risk signal (SL-19). Uses recording metadata (peakKg + side),
 /// so no sample fetch is needed. Renders only when both sides have data.
+///
+/// Capacity recordings only: Warm-up and Prehab are submax by construction,
+/// so neither may become a side's "best" and fabricate an asymmetry reading.
 export default function SideAsymmetryCard({
   recordings,
 }: {
   recordings: TindeqRecordingMeta[];
 }) {
+  const effortRecordings = recordings.filter(isEffortRecording);
   const bestPeak = (side: string): number | null => {
-    const peaks = recordings.filter((r) => r.side === side).map((r) => r.peakKg);
+    const peaks = effortRecordings.filter((r) => r.side === side).map((r) => r.peakKg);
     return peaks.length ? Math.max(...peaks) : null;
   };
   const left = bestPeak("left");

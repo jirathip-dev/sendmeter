@@ -4,14 +4,22 @@ import {
   pickCurveRecordings,
   computeForceCurve,
   predictForce,
+  predictCapability,
   zoneTarget,
   zonePrescription,
   adjustedEndurance,
+  prehabTarget,
+  warmupTarget,
+  PREHAB_PROTOCOL,
+  WARMUP_PROTOCOL,
   ZONE_PROTOCOLS,
   ZONE_INTENSITY,
+  CURVE_WINDOWS_S,
   type ForceCurveModel,
 } from "./force-curve";
+import { curveCandidateRecordings } from "./zoneHistory";
 import type { TindeqSample } from "../types";
+import type { CapabilityFit } from "./capabilityModel";
 
 /// A constant-force hold sampled at 10 Hz (t in ms).
 function hold(seconds: number, kg: number): TindeqSample[] {
@@ -80,19 +88,51 @@ describe("predictForce", () => {
     expect(predictForce(m, 60)).toBeCloseTo(25, 5); // 20 + 300/60
     expect(predictForce(m, 1)).toBe(40); // 20 + 300 → clamped to maxF
   });
+
+  it("keeps the CF/W′ calculation for internal fatigue accounting", () => {
+    const capabilityFit: CapabilityFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
+    const m: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit };
+    expect(predictForce(m, 60)).toBe(25);
+  });
+});
+
+const capabilityFit: CapabilityFit = { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 };
+
+describe("predictCapability", () => {
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit };
+  it("is anchored, positive, monotone, and approaches CF", () => {
+    expect(predictCapability(model, 1)).toBe(40);
+    const values = [1, 3, 10, 60, 1_000_000].map((t) => predictCapability(model, t)!);
+    expect(values.every((value) => value > 0)).toBe(true);
+    expect(values.slice(1).every((value, i) => value <= values[i]!)).toBe(true);
+    expect(values.at(-1)).toBeCloseTo(20, 3);
+  });
+  it("rejects missing, invalid, and non-positive inputs without fallback", () => {
+    expect(predictCapability({ ...model, capabilityFit: undefined }, 60)).toBeNull();
+    expect(predictCapability(model, 0)).toBeNull();
+    expect(predictCapability(model, -1)).toBeNull();
+    expect(predictCapability({ capabilityFit: { ...capabilityFit, tau: 0 } }, 60)).toBeNull();
+  });
 });
 
 describe("zoneTarget", () => {
-  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit };
 
   it("derives power/strength targets from maxF", () => {
     expect(zoneTarget(model, "power")!.targetKg).toBe(38); // 40 × 0.95
     expect(zoneTarget(model, "strength")!.targetKg).toBe(34); // 40 × 0.85
   });
 
-  it("derives endurance/power-endurance targets from CF", () => {
+  it("keeps Endurance on CF and resolves Power Endurance from Hill at 60s", () => {
     expect(zoneTarget(model, "endurance")!.targetKg).toBe(18); // cf × 0.9
-    expect(zoneTarget(model, "power-endurance")!.targetKg).toBe(25); // cf + W'/60
+    expect(zoneTarget(model, "power-endurance")!.targetKg).toBe(23.1);
+  });
+
+  it("changes duration targets when the capability fit changes", () => {
+    const fitted: ForceCurveModel = { ...model, capabilityFit: { ...capabilityFit, tau: 30 } };
+    const target = zoneTarget(fitted, "power-endurance")!;
+    expect(target.targetKg).not.toBe(zoneTarget(model, "power-endurance")!.targetKg);
+    expect(target.basis).toContain("Hill capability curve at 60 seconds");
   });
 
   it("returns null for CF-based zones when CF is unknown", () => {
@@ -147,6 +187,44 @@ describe("pickCurveRecordings (SL-80)", () => {
   });
 });
 
+describe("Prehab is excluded from curve candidacy (#325)", () => {
+  const now = Date.parse("2026-07-20T00:00:00Z");
+  const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString();
+
+  it("a prehab-zoned recording never reaches pickCurveRecordings, even as the longest daily effort", () => {
+    const trainingHold = {
+      id: "t1",
+      durationMs: 20_000,
+      avgKg: 25,
+      recordedAt: daysAgo(10),
+      zone: "strength" as const,
+      tag: "FDP",
+      side: "left" as const,
+    };
+    // 30s at sub-CF load, daily — the longest single-duration effort in the
+    // pool, and exactly the shape that would otherwise win
+    // pickCurveRecordings' "keep the longest efforts regardless of load"
+    // guarantee (force-curve.ts's own comment on that behavior).
+    const prehabHolds = Array.from({ length: 5 }, (_, i) => ({
+      id: `p${i}`,
+      durationMs: 30_000,
+      avgKg: 12,
+      recordedAt: daysAgo(i),
+      zone: "prehab" as const,
+      tag: "FDP",
+      side: "left" as const,
+    }));
+    // The real filter ForceView's `curveRecordings` calls before ever calling
+    // pickCurveRecordings. This case proves the FILTER excludes prehab; that
+    // ForceView actually calls it is a separate, structural assertion — see
+    // `curveCandidateInvariants.test.ts`.
+    const curveCandidates = curveCandidateRecordings([trainingHold, ...prehabHolds], "FDP", "left");
+    const picked = pickCurveRecordings(curveCandidates, now);
+    expect(picked.some((r) => r.id.startsWith("p"))).toBe(false);
+    expect(picked.map((r) => r.id)).toContain("t1");
+  });
+});
+
 describe("computeForceCurve — multi-point fit (SL-80b)", () => {
   it("regresses over the top efforts per window, not just the envelope", () => {
     // Two flat 60s holds: a 20kg best and a 10kg repeat. Envelope-only fit
@@ -168,8 +246,45 @@ describe("computeForceCurve — multi-point fit (SL-80b)", () => {
   });
 });
 
+describe("computeForceCurve — display uncertainty and coverage", () => {
+  it("produces a reproducible recording-level bootstrap band", () => {
+    const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
+    const a = computeForceCurve(efforts, { bootstrapSamples: 120 })!;
+    const b = computeForceCurve(efforts, { bootstrapSamples: 120 })!;
+    expect(a.confidenceBand).toEqual(b.confidenceBand);
+    expect(a.confidenceBand!.length).toBeGreaterThanOrEqual(3);
+    expect(a.confidenceBand!.every((p) => p.lowKg <= p.highKg)).toBe(true);
+    expect(a.confidenceBand!.at(0)!.windowS).toBe(a.points[0]!.windowS);
+    expect(a.confidenceBand!.at(-1)!.windowS).toBe(a.points.at(-1)!.windowS);
+  });
+
+  it("never draws the model interval beyond measured duration support", () => {
+    const m = computeForceCurve(
+      [hold(15, 32), hold(30, 28), hold(60, 24)],
+      { bootstrapSamples: 200 },
+    )!;
+    expect(m.confidenceBand!.at(0)!.windowS).toBeGreaterThanOrEqual(m.points[0]!.windowS);
+    expect(m.confidenceBand!.at(-1)!.windowS).toBeLessThanOrEqual(m.points.at(-1)!.windowS);
+  });
+
+  it("preprocesses mean-max values once instead of repeating signal work per bootstrap", () => {
+    const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
+    const diagnostics = { meanMaxEvaluations: 0 };
+    computeForceCurve(efforts, { bootstrapSamples: 500, diagnostics });
+    expect(diagnostics.meanMaxEvaluations).toBe(efforts.length * CURVE_WINDOWS_S.length);
+  });
+
+  it("flags one long recording as weak coverage despite its many rolling windows", () => {
+    const m = computeForceCurve([hold(120, 22)])!;
+    expect(m.coverage?.quality).toBe("weak");
+    expect(m.coverage?.independentDurations).toBe(1);
+    expect(m.coverage?.message).toContain("distinctly different duration");
+    expect(m.coverage?.message).not.toContain("longest evidence");
+  });
+});
+
 describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () => {
-  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+  const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300, capabilityFit };
   const noCf: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
 
   it("100% is an exact no-op — same numbers as the un-adjusted zoneTarget for every zone", () => {
@@ -216,21 +331,31 @@ describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () =>
     expect(zoneTarget(noCf, "power", 70)).not.toBeNull();
   });
 
-  it("endurance keeps total time-under-tension ~constant and reps shrinks to compensate", () => {
+  it("endurance keeps total time-under-tension ~constant and sets shrinks to compensate (#320: reps stays 1)", () => {
     const t60 = zonePrescription(model, "endurance", 60)!;
     expect(t60.holdS).toBe(85); // 30 × (100/60)² ≈ 83.3 → round to nearest 5
-    expect(t60.reps).toBe(3); // round(8 × 30 / 85) = 3
+    expect(t60.reps).toBe(1);
+    expect(t60.sets).toBe(3); // round(8 × 30 / 85) = 3
     // base time-under-tension was 30 × 8 = 240s; rounding keeps it in the ballpark
-    expect(t60.holdS * t60.reps).toBeGreaterThan(200);
-    expect(t60.holdS * t60.reps).toBeLessThan(280);
-    expect(t60.reps).toBeLessThanOrEqual(ZONE_PROTOCOLS.endurance.reps);
+    expect(t60.holdS * t60.sets).toBeGreaterThan(200);
+    expect(t60.holdS * t60.sets).toBeLessThan(280);
+    expect(t60.sets).toBeLessThanOrEqual(ZONE_PROTOCOLS.endurance.sets);
+  });
+
+  it("zonePrescription(endurance, 100) returns the flipped 1×8 shape (#320)", () => {
+    const t100 = zonePrescription(model, "endurance", 100)!;
+    expect(t100.holdS).toBe(30);
+    expect(t100.reps).toBe(1);
+    expect(t100.sets).toBe(8);
+    expect(t100.restRepsS).toBe(0);
+    expect(t100.restSetsS).toBe(30);
   });
 
   it("adjustedEndurance clamps hold to [20, 240]s", () => {
     expect(adjustedEndurance(30, 8, 110).holdS).toBeGreaterThanOrEqual(20);
     // an extreme drop (well beyond the UI's 60% floor) hits the 240s cap
     expect(adjustedEndurance(30, 8, 5).holdS).toBe(240);
-    expect(adjustedEndurance(30, 8, 5).reps).toBe(1);
+    expect(adjustedEndurance(30, 8, 5).sets).toBe(1);
   });
 
   it("clamps input pct to [60, 110]", () => {
@@ -282,8 +407,75 @@ describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () =>
 
     it("power-endurance: the 5s floor engages under the same tight-margin setup", () => {
       // cf 25, wPrime 6 → f60 = 25 + 6/60 = 25.1, just above cf.
-      const tightPe: ForceCurveModel = { points: [], maxF: 40, cf: 25, wPrime: 6 };
+      const tightPe: ForceCurveModel = { points: [], maxF: 40, cf: 25, wPrime: 6, capabilityFit: { family: "hill", cf: 25, maxF: 28.05, tau: 1, p: 1, sse: 1 } };
       expect(zoneTarget(tightPe, "power-endurance", 110)!.workS).toBe(5);
     });
+  });
+});
+
+describe("PREHAB_PROTOCOL (#325)", () => {
+  it("pins the approved numbers exactly — 30s × 4, 90s rest between reps, 1 set", () => {
+    expect(PREHAB_PROTOCOL).toEqual({
+      holdS: 30,
+      reps: 4,
+      sets: 1,
+      restRepsS: 90,
+      restSetsS: 0,
+    });
+  });
+});
+
+describe("Warm-up protocol (#297)", () => {
+  it("pins the conservative progressive dose", () => {
+    expect(WARMUP_PROTOCOL).toEqual({
+      holdS: 5,
+      holdsS: [5, 7, 10],
+      reps: 2,
+      sets: 3,
+      restRepsS: 15,
+      restSetsS: 60,
+      targetPct: 40,
+      pctStep: 15,
+      pctBasis: "pr",
+    });
+  });
+
+  it("previews a 40% → 70% max-force ramp and refuses an unusable model", () => {
+    const t = warmupTarget({ points: [], maxF: 40, cf: 20, wPrime: 300 })!;
+    expect(t.targetKg).toBe(16);
+    expect(t.finalTargetKg).toBe(28);
+    expect(t.workS).toBe(5);
+    expect(t.basis).toContain("not a complete warm-up");
+    expect(warmupTarget({ points: [], maxF: 0, cf: null, wPrime: null })).toBeNull();
+  });
+});
+
+describe("prehabTarget (#325)", () => {
+  it("targets 0.70 × critical force when CF is fitted", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const t = prehabTarget(model)!;
+    expect(t.targetKg).toBeCloseTo(14, 5); // 20 × 0.70
+    expect(t.lowKg).toBeCloseTo(12.6, 5); // 14 × 0.9
+    expect(t.highKg).toBeCloseTo(15.4, 5); // 14 × 1.1
+    expect(t.workS).toBe(PREHAB_PROTOCOL.holdS);
+    expect(t.basis).not.toMatch(/\brehab\b/i);
+  });
+
+  it("falls back to 0.30 × maxF when CF isn't fitted yet", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
+    const t = prehabTarget(model)!;
+    expect(t.targetKg).toBeCloseTo(12, 5); // 40 × 0.30
+  });
+
+  it("is unavailable when neither CF nor a usable maxF is known", () => {
+    const model: ForceCurveModel = { points: [], maxF: 0, cf: null, wPrime: null };
+    expect(prehabTarget(model)).toBeNull();
+  });
+
+  it("never uses the word 'rehab' in the basis copy — no implied clinical citation", () => {
+    const withCf: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    const withoutCf: ForceCurveModel = { points: [], maxF: 40, cf: null, wPrime: null };
+    expect(prehabTarget(withCf)!.basis).not.toMatch(/\brehab\b/i);
+    expect(prehabTarget(withoutCf)!.basis).not.toMatch(/\brehab\b/i);
   });
 });

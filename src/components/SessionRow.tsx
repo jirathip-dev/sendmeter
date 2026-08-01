@@ -18,8 +18,8 @@ import DetailPage from "./DetailPage";
 import EditRecordingSheet from "./EditRecordingSheet";
 import RecordingRow from "./RecordingRow";
 import RepBoxPlotChart from "./RepBoxPlotChart";
+import WhyZoneInfo from "./WhyZoneInfo";
 import WorkoutDetailPanel from "./WorkoutDetailPanel";
-import ZoneBreakdownPanel from "./ZoneBreakdownPanel";
 
 interface Props {
   s: Session;
@@ -445,40 +445,14 @@ export default function SessionRow({
                     same layout the Training-balance page uses. The two
                     surfaces measure different things (this is one session;
                     that is one exercise over 4 weeks), so both show their
-                    working rather than leaving the difference unexplained. */}
+                    working rather than leaving the difference unexplained.
+                    #292: that explanation now lives behind the "?" instead
+                    of rendering inline all the time. */}
                 {tindeqRecs !== null && tindeqRecs.length > 0 && (
-                  <div
-                    className="card"
-                    style={{ marginBottom: 10 }}
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 7,
-                        marginBottom: 8,
-                      }}
-                    >
-                      <span className="label-eyebrow">
-                        Why this session is{" "}
-                        {zone ? QUALITIES.find((q) => q.id === zone)!.label : "unzoned"}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        fontSize: "var(--t-2xs)",
-                        color: "var(--ink-muted)",
-                        lineHeight: 1.6,
-                        marginBottom: 10,
-                      }}
-                    >
-                      This session alone, all exercises in it — not the
-                      trailing-4-week, one-exercise window the Force tab’s
-                      Training balance card counts.
-                    </div>
-                    <ZoneBreakdownPanel recs={tindeqRecs} showTag />
-                  </div>
+                  <WhyZoneInfo
+                    zoneLabel={zone ? QUALITIES.find((q) => q.id === zone)!.label : "unzoned"}
+                    recs={tindeqRecs}
+                  />
                 )}
                 {tagGroups.map((g) => (
                   <TagGroup

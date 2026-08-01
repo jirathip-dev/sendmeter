@@ -1,6 +1,6 @@
 // Type-only, and therefore erased at build time — force-curve.ts imports
 // TindeqSample back from here, so a value import would be a real cycle.
-import type { TrainingQuality } from "./lib/force-curve";
+import type { RecordedZone } from "./lib/force-curve";
 
 export type PhaseId = "capacity" | "strength" | "power" | "execution";
 export type ViewId = "dashboard" | "workout" | "history" | "tindeq";
@@ -139,13 +139,16 @@ export interface TindeqRecordingMeta {
   /// carry their set number; null for free holds / older rows.
   protocolRunId: string | null;
   setNo: number | null;
-  /// The training quality this hold was actually PERFORMED under (#259),
-  /// stamped from the armed zone/preset at save time — the LOAD-AWARE
-  /// classification, which a duration-only re-derivation can't recover.
+  /// The zone this hold was actually PERFORMED under (#259), stamped from the
+  /// armed zone/preset at save time — the LOAD-AWARE classification, which a
+  /// duration-only re-derivation can't recover. `RecordedZone` admits the
+  /// Warm-up and Prehab maintenance zones alongside the four training
+  /// qualities; those holds MUST carry their zone or duration inference would
+  /// incorrectly credit them to training balance.
   /// Null when there is nothing to record (freehand hold, watch recording) or
   /// the row predates the column; readers then infer it from `durationMs`
   /// (see lib/zoneHistory.ts `recordingZone`). Deliberately not backfilled.
-  zone: TrainingQuality | null;
+  zone: RecordedZone | null;
 }
 
 /// A saved hang protocol (hold / reps / sets / rests) — drives the guided
@@ -154,6 +157,13 @@ export interface TindeqPreset {
   id: string;
   name: string;
   holdS: number;
+  /// Per-set hold override (#332) — index 0 is set 1, etc. `holdS` is the
+  /// base/fallback: used verbatim when this is null OR shorter than `sets`
+  /// (so a preset saved before this field, or with `sets` since raised past
+  /// the list's length, keeps behaving exactly as before). Use
+  /// `holdForSet`/`holdsForSets` in `lib/protocol.ts` rather than indexing
+  /// this directly.
+  holdsS: number[] | null;
   reps: number;
   sets: number;
   restRepsS: number;
@@ -167,11 +177,11 @@ export interface TindeqPreset {
   pctBasis: "pr" | "cf";
   /// Per-set ramp: set N targets (targetPct + (N-1)·pctStep)% of the basis.
   pctStep: number;
-  /// Smart target (SL-62): derive the load from the exercise's force-duration
-  /// curve at holdS — the force sustainable for exactly that hold (CF + W'/t).
+  /// Auto curve target (SL-62): derive the load from the exercise's force-duration
+  /// Hill capability curve at holdS — the force sustainable for that hold.
   /// Overrides targetKg/targetPct when true.
   targetCurve: boolean;
-  /// Alternate left/right each SET (switch hands during the set rest).
+  /// Run both hands in every logical rep (left hold, switch, right hold).
   alternateSides: boolean;
 }
 
@@ -228,7 +238,7 @@ export interface NewTindeqRecording {
   /// Required (not optional) so every save path has to make that call
   /// deliberately; queue entries written before #259 simply carry `undefined`
   /// and insert as null.
-  zone: TrainingQuality | null;
+  zone: RecordedZone | null;
   samples: TindeqSample[];
 }
 

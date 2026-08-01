@@ -85,7 +85,7 @@ function ZoneRow({
   totalHoldS,
   setDurationS,
   sets,
-  reps,
+  holdCount,
   holdS,
   recordedCount,
   inferredCount,
@@ -96,7 +96,7 @@ function ZoneRow({
   totalHoldS: number;
   setDurationS: number;
   sets: number;
-  reps: number;
+  holdCount: number;
   holdS: number;
   recordedCount: number;
   inferredCount: number;
@@ -142,7 +142,7 @@ function ZoneRow({
         ) : (
           <>
             {fmt1(totalHoldS)}s of holds ÷ {setDurationS}s per set ({holdS}s ×{" "}
-            {reps} reps) = {fmt1(sets)}
+            {holdCount} holds) = {fmt1(sets)}
           </>
         )}
       </div>
@@ -195,7 +195,14 @@ function ZoneRow({
 /// both by the Training-balance detail page and by a Tindeq session in
 /// History, so "why this zone" reads the same in both places.
 export default function ZoneBreakdownPanel({ recs, showTag }: Props) {
-  const { zones, unclassified } = zoneBreakdown(recs);
+  const { zones, unclassified, excluded } = zoneBreakdown(recs);
+  const excludedSummary = ["Warm-up", "Prehab"]
+    .map((label) => {
+      const count = excluded.filter((h) => holdOrigin(h.rec).label === label).length;
+      return count > 0 ? `${count} ${label} hold${count === 1 ? "" : "s"}` : null;
+    })
+    .filter((part): part is string => part !== null)
+    .join(" · ");
 
   return (
     <div>
@@ -211,7 +218,11 @@ export default function ZoneBreakdownPanel({ recs, showTag }: Props) {
             setDurationS={e.setDurationS}
             sets={e.sets}
             holdS={zp.holdS}
-            reps={zp.reps}
+            // #320: endurance's set length is holdS × reps × sets (8 holds,
+            // not zp.reps's 1) — divide back out of setDurationS so the
+            // identity shown (holdS × count = setDurationS) stays true for
+            // every zone instead of drifting for endurance alone.
+            holdCount={e.setDurationS / zp.holdS}
             recordedCount={e.recordedCount}
             inferredCount={e.inferredCount}
             showTag={showTag}
@@ -223,6 +234,14 @@ export default function ZoneBreakdownPanel({ recs, showTag }: Props) {
         <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 2 }}>
           {unclassified.length} hold{unclassified.length === 1 ? "" : "s"} under
           1s counted toward nothing (stray blips)
+        </div>
+      )}
+
+      {/* Maintenance holds are recorded outside training balance BY DESIGN —
+          said outright rather than lumped in with the blip line above. */}
+      {excluded.length > 0 && (
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 2 }}>
+          {excludedSummary} recorded outside training balance
         </div>
       )}
 

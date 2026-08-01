@@ -8,7 +8,8 @@ export type InfoTopic =
   | "forceCurve"
   | "gaugeTarget"
   | "phaseStepBack"
-  | "trainingBalance";
+  | "trainingBalance"
+  | "tindeqConsistency";
 
 const CONTENT: Record<
   InfoTopic,
@@ -97,15 +98,23 @@ const CONTENT: Record<
     body: [
       {
         heading: "Anchored to YOUR curve",
-        text: "Each zone is a percentage band of your own force–duration fit for the selected exercise (and side): POWER and STRENGTH anchor to your max force; POW END and ENDURANCE anchor to your critical force (CF) — the sustainable ceiling from the fit.",
+        text: "Each zone uses your own data for the selected exercise (and side): POWER and STRENGTH anchor to measured max force, POW END reads the purple Hill capability curve at 60 seconds, and ENDURANCE anchors to critical force (CF).",
       },
       {
         heading: "Why %max vs %CF",
-        text: "Short maximal efforts (<10s) are limited by maximal recruitment, so power/strength work is prescribed off max. Longer efforts are limited by the forearm's aerobic ceiling, so endurance work is prescribed off CF — just below CF extends capacity, just above it trains your anaerobic reserve.",
+        text: "Short maximal efforts (<10s) are prescribed from max force. Endurance work stays just below CF. Power Endurance and Auto curve presets read the same purple Hill capability curve you see on the chart. W′ stays internal to RPE, fatigue, and dose-equivalent timing.",
       },
       {
         heading: "Using a target",
         text: "Picking a zone draws its band on the live gauge and arms its guided timer — keep the trace inside the band for the prescribed work time. Zones sharpen as your curve gets more data (especially one all-out 30–60s hold). The Intensity slider on this card (60–110%) applies to the RECOMMENDED ZONES only: it scales the target load and adapts hold time to keep the training dose equivalent — dial it down for a lighter session, or above 100% for a heavier one (shorter holds, extra strain on your pulleys — only when fully warmed up). Custom presets are never modified by this dial; a preset's quality badge still reflects whatever load it actually resolves to (fixed kg, or a %-of-PR/CF/curve target).",
+      },
+      {
+        heading: "Warm-up is a primer",
+        text: "Warm-up ramps 5s → 7s → 10s holds and 40% → 55% → 70% of your exercise PR over three short sets. It is deliberately low-volume, unaffected by the Intensity slider, and excluded from training balance. Use it after general movement and easy climbing: evidence supports progressive climbing-specific warm-up, but no published study establishes this exact finger-dynamometer dose or shows that it can replace climbing movement.",
+      },
+      {
+        heading: "Prehab is maintenance",
+        text: "Prehab is a fixed 30s × 4 dose below critical force, so the Intensity slider does not apply and its recordings are excluded from training balance. Its load is derived from your force curve and shaped by tendon-loading research, but no published work establishes a finger-dynamometer prehab prescription. Treat it as a maintenance guide, not clinical advice.",
       },
     ],
   },
@@ -135,7 +144,7 @@ const CONTENT: Record<
       },
       {
         heading: "Sets, not sessions",
-        text: "Each zone's total hold time in the window, divided by that zone's own protocol set length (power 6 × 5s = 30s; strength 5 × 10s = 50s; pow end 6 × 7s = 42s; endurance 8 × 30s = 240s). A short warm-up shows up as a fraction of a set rather than needing a whole session to register.",
+        text: "Each zone's total hold time in the window, divided by that zone's own protocol set length (power 6 × 5s = 30s; strength 5 × 10s = 50s; pow end 6 × 7s = 42s; endurance 8 × 30s = 240s). Holds recorded under the Warm-up or Prehab maintenance protocols are excluded; an unlabelled free hold can still register as fractional training credit.",
       },
       {
         heading: "The zone is inferred, not stored",
@@ -147,20 +156,49 @@ const CONTENT: Record<
       },
     ],
   },
+  tindeqConsistency: {
+    title: "How force consistency is tracked",
+    body: [
+      {
+        heading: "A day counts once",
+        text: "Each bar is how many DISTINCT DAYS you recorded at least one force hold in that rolling 7-day window (0–7) — not rep count or total time, so one huge session can't dwarf the rest of the week. Filtering to one exercise still counts a day once even if you did several holds of it.",
+      },
+      {
+        heading: "Rolling weekly windows",
+        text: "Same windowing as Weekly load above: 'Now' is the last 7 days including today, '1w' the 7 days before that, and so on back 8 weeks.",
+      },
+      {
+        heading: "Hidden tags are excluded",
+        text: "Exercises you've hidden from the Force tab's tag picker don't count here either — same list, same reasoning.",
+      },
+    ],
+  },
   forceCurve: {
     title: "How the Force Curve works",
     body: [
       {
-        heading: "Force–duration curve",
-        text: "From your recordings, the best average force you can hold for every window length (1s…120s) is extracted. Huge force for seconds, much less for minutes — the decay between them is highly individual and trainable.",
+        heading: "Dots are measured; the line is estimated",
+        text: "For each recording, Sendmeter finds the best average force held over windows from 1–120 seconds. Small dots show the spread of those efforts and large dots show the best measured value at each duration. The line is a smooth regression, so it intentionally does not pass through every dot.",
+      },
+      {
+        heading: "The capability curve",
+        text: "Sendmeter fits one constrained Hill (log-logistic) capability curve. It declines smoothly from your measured maximum toward critical force. The purple line is also the source for Power Endurance at 60 seconds and Auto curve targets at each set's hold duration.",
+      },
+      {
+        heading: "The shaded 95% uncertainty band",
+        text: "Sendmeter repeatedly resamples whole recordings, refits the curve and takes the pointwise middle 95% of those predictions. A wider band means your recordings support more possible curves. The band is a model estimate, not a guarantee; where duration coverage is weak, its long-duration tail is extrapolated and should be treated cautiously.",
       },
       {
         heading: "Critical force (CF) & W′",
-        text: "The curve is fitted with the hyperbolic critical-power model adapted to fingers: F(t) = CF + W′/t. CF is the force you can theoretically sustain 'indefinitely' (the forearm's aerobic ceiling); W′ is the fixed anaerobic reserve above CF you can spend before failing. The fit needs at least one long (30–60s+) all-out hold to be trustworthy.",
+        text: "CF remains the curve's sustainable asymptote and the Endurance reference. W′ remains a separate internal fatigue-reserve estimate used by RPE and dose-equivalent timing; it does not draw or prescribe a competing capability curve.",
+      },
+      {
+        heading: "Duration coverage matters",
+        text: "Several genuinely all-out recordings at distinctly different durations are more informative than many repeats of one hold length. The coverage warning reflects both the longest evidence and how many independent duration ranges you recorded. Include at least one 30–60s+ maximal hold to make CF, W′ and the curve tail more trustworthy.",
       },
       {
         heading: "Training zones",
-        text: "The POWER / STRENGTH / POW END / ENDURANCE targets are percentage bands anchored to your max force and CF. They translate the fit into 'hang at X kg for Y seconds' prescriptions.",
+        text: "The shaded regions visualize the existing load-and-duration classifier. Power and Strength use measured max force, Power Endurance reads the purple curve at 60 seconds, and Endurance uses CF. Weak coverage is provisional; without a valid Hill fit, curve-based targets are unavailable rather than guessed.",
       },
     ],
   },

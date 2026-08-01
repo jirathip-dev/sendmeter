@@ -166,23 +166,64 @@ final class WorkoutPhaseFillTests: XCTestCase {
         }
     }
 
-    /// The whole point is glanceability: the three live phases must be
-    /// distinguishable *as colours*, not just as labels — including dimmed,
-    /// where a muddy palette collapses.
-    func testLivePhasesAreVisiblyDistinct() {
-        let live: [WorkoutPhase] = [.climbing, .resting, .restOver]
+    /// Accepted hue-adjacency trade (#277 follow-up): climbing now takes the
+    /// phone's climbing blue and resting takes the phone's resting purple —
+    /// both blue-leaning, so the earlier palette's "every phase owns a
+    /// different dominant channel" guarantee is gone by design. What survives
+    /// glanceability: rest-over is the ONLY band with a red-dominant channel
+    /// (the one flip that must still read under a red/green colour
+    /// deficiency), and climbing vs resting still separate by a clear margin
+    /// per channel and by how much red each carries — that's what reads as
+    /// "blue" vs "purple" at this size.
+    func testLivePhasesKeepTheAcceptedSeparation() {
         for reduced in [false, true] {
-            let bands = live.map { WorkoutPhasePalette.fill(for: $0, luminanceReduced: reduced).band }
-            for (i, a) in bands.enumerated() {
-                for b in bands[(i + 1)...] {
-                    // Each pair differs by a clear margin on at least one channel.
-                    let delta = max(abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue))
-                    XCTAssertGreaterThan(delta, 0.08, "\(a) vs \(b) (reduced: \(reduced))")
-                    // ...and each phase's dominant channel is its own.
-                    XCTAssertNotEqual(dominantChannel(a), dominantChannel(b))
-                }
-            }
+            let climbing = WorkoutPhasePalette.fill(for: .climbing, luminanceReduced: reduced).band
+            let resting = WorkoutPhasePalette.fill(for: .resting, luminanceReduced: reduced).band
+            let restOver = WorkoutPhasePalette.fill(for: .restOver, luminanceReduced: reduced).band
+
+            XCTAssertEqual(dominantChannel(restOver), "r", "reduced: \(reduced)")
+            XCTAssertNotEqual(dominantChannel(climbing), "r", "reduced: \(reduced)")
+            XCTAssertNotEqual(dominantChannel(resting), "r", "reduced: \(reduced)")
+
+            // Dimming scales every channel down together, so the gap between
+            // climbing and resting shrinks with it — the floor is lower for
+            // the always-on variant, not dropped.
+            let delta = max(
+                abs(climbing.red - resting.red),
+                abs(climbing.green - resting.green),
+                abs(climbing.blue - resting.blue)
+            )
+            XCTAssertGreaterThan(delta, reduced ? 0.025 : 0.06, "reduced: \(reduced) delta \(delta)")
+
+            func redShare(_ c: PhaseRGB) -> Double { c.red / (c.red + c.green + c.blue) }
+            XCTAssertGreaterThan(
+                redShare(resting) - redShare(climbing), 0.04,
+                "reduced: \(reduced) redShare climbing \(redShare(climbing)) resting \(redShare(resting))"
+            )
         }
+    }
+
+    /// Pins the palette to the phone's exact hex values (`--success`,
+    /// `--primary`, `--danger`, dark theme) composited toward black — so a
+    /// future edit can't silently drift the hue away from the phone's
+    /// meanings while still passing every contrast test.
+    func testBandsAreThePhoneHuesCompositedTowardBlack() {
+        let phoneSuccess = PhaseRGB(0x4F / 255, 0xB0 / 255, 0xFF / 255)
+        let phonePrimary = PhaseRGB(0x5B / 255, 0x5F / 255, 0xC7 / 255)
+        let phoneDanger = PhaseRGB(0xF0 / 255, 0x86 / 255, 0x4C / 255)
+
+        XCTAssertEqual(
+            WorkoutPhasePalette.fill(for: .climbing).band,
+            phoneSuccess.over(.black, opacity: 0.48)
+        )
+        XCTAssertEqual(
+            WorkoutPhasePalette.fill(for: .resting).band,
+            phonePrimary.over(.black, opacity: 0.65)
+        )
+        XCTAssertEqual(
+            WorkoutPhasePalette.fill(for: .restOver).band,
+            phoneDanger.over(.black, opacity: 0.48)
+        )
     }
 
     /// Idle draws no band at all — the view keeps the stock black background

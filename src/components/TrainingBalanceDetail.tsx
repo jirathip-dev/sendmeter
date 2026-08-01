@@ -3,8 +3,8 @@ import { dateStr } from "../lib/dates";
 import { QUALITIES, type TrainingQuality } from "../lib/force-curve";
 import { holdsInWindow } from "../lib/zoneBreakdown";
 import {
+  balanceScopeCounts,
   CURVE_BIAS_RATIO,
-  recordingZone,
   TIE_BAND_SETS,
   type ZoneRecommendation,
 } from "../lib/zoneHistory";
@@ -78,9 +78,12 @@ export default function TrainingBalanceDetail({
   // Scoped with the same filter the bars use (`holdsInWindow`), not a second
   // copy of the cutoff rule.
   const windowRecs = holdsInWindow(recordings, now, windowDays);
-  const recorded = windowRecs.filter(
-    (r) => recordingZone(r).source === "recorded",
-  ).length;
+  // The two sentences below describe what fed the numbers on THIS page —
+  // Maintenance holds don't (zoneSets drops them), so counting them here
+  // would make both sentences literally false. `windowRecs` (unfiltered)
+  // still goes to ZoneBreakdownPanel below, which states the maintenance count on
+  // its own "excluded" line instead of silently folding it into these totals.
+  const { effortCount, recordedCount: recorded } = balanceScopeCounts(windowRecs);
   const d = rec.detail;
   const tiedOthers = d.tied.filter((z) => z !== rec.zone);
 
@@ -106,8 +109,8 @@ export default function TrainingBalanceDetail({
         <ScopeRow label="Sets, not sessions">
           Each zone's total hold time divided by that zone's own protocol set
           length, so a 5-minute warm-up registers as a fraction of a set instead
-          of a whole session. {windowRecs.length} recording
-          {windowRecs.length === 1 ? "" : "s"} fed the numbers below.
+          of a whole session. {effortCount} recording
+          {effortCount === 1 ? "" : "s"} fed the numbers below.
         </ScopeRow>
         {/* #259: the page's numbers are part fact, part inference — say how
             much of each rather than letting the reader assume all fact. */}
@@ -120,12 +123,12 @@ export default function TrainingBalanceDetail({
             </>
           ) : (
             <>
-              {recorded} of {windowRecs.length} hold
-              {windowRecs.length === 1 ? "" : "s"} store the zone they were
+              {recorded} of {effortCount} hold
+              {effortCount === 1 ? "" : "s"} store the zone they were
               performed under and are counted as that;{" "}
-              {windowRecs.length - recorded === 0
+              {effortCount - recorded === 0
                 ? "none are inferred"
-                : `the other ${windowRecs.length - recorded} have it inferred from hold length`}
+                : `the other ${effortCount - recorded} have it inferred from hold length`}
               .
             </>
           )}

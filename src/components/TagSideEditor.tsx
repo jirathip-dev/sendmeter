@@ -18,12 +18,19 @@ export default function TagSideEditor({
   allTags,
   onTag,
   onSide,
+  locked,
 }: {
   tag: string;
   side: TindeqSide;
   allTags: string[];
   onTag: (t: string) => void;
   onSide: (s: TindeqSide) => void;
+  /// #298 round 5 (finding 4): ForceView locks the gauge inputs (tag/side/
+  /// selection/intensity/PR) for the whole duration of a run — disables
+  /// every chip and the new-tag input here rather than leaving them looking
+  /// live but inert (a tap that produces no visible change, then applies
+  /// silently after Stop).
+  locked: boolean;
 }) {
   const [addingTag, setAddingTag] = useState(false);
   const [showAllTags, setShowAllTags] = useState(false);
@@ -92,6 +99,7 @@ export default function TagSideEditor({
             label={t}
             active={t === trimmed}
             onClick={() => onTag(t === trimmed ? "" : t)}
+            disabled={locked}
           />
         ))}
         {hiddenCount > 0 && (
@@ -106,6 +114,7 @@ export default function TagSideEditor({
           label="＋"
           active={addingTag}
           onClick={() => setAddingTag((v) => !v)}
+          disabled={locked}
         />
       </div>
       {addingTag && (
@@ -119,12 +128,13 @@ export default function TagSideEditor({
               if (e.key === "Enter") commitDraft();
             }}
             placeholder="New exercise — e.g. FDP"
+            disabled={locked}
             style={{ flex: 1, minWidth: 0 }}
           />
           <button
             className="btn-primary"
             style={{ width: "auto", flexShrink: 0, padding: "0 16px" }}
-            disabled={!draft.trim()}
+            disabled={locked || !draft.trim()}
             onClick={commitDraft}
           >
             Add
@@ -141,6 +151,7 @@ export default function TagSideEditor({
             label={o.label}
             active={side === o.value}
             onClick={() => onSide(o.value)}
+            disabled={locked}
             style={{ flex: 1 }}
           />
         ))}
