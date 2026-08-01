@@ -86,7 +86,28 @@ function normalize(raw: string): string {
 /// every property line that merely *references* the enum by name looks
 /// identical in both copies.
 const DECL_RE = /^(struct|enum)\s+(\S+)\s*:\s*(.+?)\s*\{$/;
-const PROPERTY_RE = /^(var|let)\s+(\S+):\s*(.+)$/;
+/// Swift attributes may prefix a stored property, with or without arguments.
+/// They don't affect its Codable field name/type and therefore aren't emitted
+/// into the signature, but they must not prevent the property from matching.
+const PROPERTY_RE =
+  /^(?:@[\w.]+(?:\([^)]*\))?\s+)*(var|let)\s+(\S+):\s*(.+)$/;
+const TYPEALIAS_RE = /^typealias\b/;
+
+/// Typealiases make two textually identical property declarations resolve to
+/// different wire types without that difference appearing in the property
+/// signature. Resolving arbitrary Swift aliases is outside this structural
+/// guard's deliberately small parser, so reject aliases explicitly instead.
+function assertNoTypealiases(normalized: string): void {
+  const typealias = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => TYPEALIAS_RE.test(line));
+  if (typealias) {
+    throw new Error(
+      `ActivityModels.swift must not use typealias declarations: ${typealias}`,
+    );
+  }
+}
 
 /// Extracts, in file order, just the parts of a Codable shape that
 /// ActivityKit's decode actually cares about: struct/enum names + their
@@ -95,8 +116,11 @@ const PROPERTY_RE = /^(var|let)\s+(\S+):\s*(.+)$/;
 /// their bodies — the plugin copy's explicit memberwise inits are exactly
 /// the allowed difference this signature has to be blind to.
 function shapeSignature(raw: string): string[] {
+  const normalized = normalize(raw);
+  assertNoTypealiases(normalized);
+
   const signature: string[] = [];
-  for (const rawLine of normalize(raw).split("\n")) {
+  for (const rawLine of normalized.split("\n")) {
     const line = rawLine.trim();
     if (line === "") continue;
 
@@ -260,5 +284,43 @@ describe("shapeSignature() hardening against regex blind spots (#288 revision)",
 
     expect(shapeSignature(withPrivate)).toEqual(shapeSignature(withoutModifier));
     expect(shapeSignature(withInternal)).toEqual(shapeSignature(withoutModifier));
+  });
+
+  it("catches stored-property type drift behind leading Swift attributes", () => {
+    const withStringProperty = `
+      struct S: Codable {
+        @MainActor @available(iOS 17, *) var debugTag: String
+      }
+    `;
+    const withIntProperty = `
+      struct S: Codable {
+        @available(iOS 17, *) public var debugTag: Int
+      }
+    `;
+
+    expect(shapeSignature(withStringProperty)).toContain("var debugTag: String");
+    expect(shapeSignature(withIntProperty)).not.toEqual(
+      shapeSignature(withStringProperty),
+    );
+  });
+
+  it("rejects typealias indirection instead of silently comparing the alias name", () => {
+    const withStringAlias = `
+      typealias PhaseRaw = String
+      struct S: Codable {
+        var phase: PhaseRaw
+      }
+    `;
+    const withIntAlias = `
+      public typealias PhaseRaw = Int
+      struct S: Codable {
+        var phase: PhaseRaw
+      }
+    `;
+
+    expect(() => shapeSignature(withStringAlias)).toThrow(
+      /must not use typealias/,
+    );
+    expect(() => shapeSignature(withIntAlias)).toThrow(/must not use typealias/);
   });
 });
