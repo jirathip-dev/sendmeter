@@ -598,17 +598,16 @@ are safe regardless.
   workout state machine), `rest-target-s`, `gauge-prepare`, `passkey-prompt`,
   `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202).
 - **Auth diagnostics don't live in localStorage on native.** `auth-events`,
-  `auth-heartbeat`, `webview-canary` and `auth-events-flushed` go through
-  `authEventStore.ts`: Capacitor **Preferences** (NSUserDefaults) on native,
+  `auth-heartbeat` and `webview-canary` go through `authEventStore.ts`:
+  Capacitor **Preferences** (NSUserDefaults) on native,
   `localStorage` on web — because the WebView store is exactly what may be
   getting wiped, and evidence stored next to the session dies with it. The
   seam is synchronous by contract (write-behind cache + serialized async
   writes) so the auth path never awaits a disk write and a failed write can't
   throw into it. `webview-canary` is written to BOTH stores: present in
   Preferences but gone from `localStorage` = the WebView's data was purged.
-  The ring is pushed to `auth_events` on the next sign-in
-  (`authEventFlush.ts`, upsert on `(user_id, reason, first_at)` — idempotent,
-  never blocks sign-in).
+  The bounded 20-event ring stays on-device and is readable in the Account
+  troubleshooting section; it is never uploaded.
 - **Sentry only ever sees an allow-listed event** (#227, `src/lib/monitoring.ts`).
   It initializes *only* when a build-time `VITE_SENTRY_DSN` is present — no DSN
   (dev, tests, any un-configured build) and the SDK is dead-code-eliminated

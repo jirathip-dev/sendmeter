@@ -8,8 +8,6 @@ import {
   recordSessionHeartbeat,
 } from "../lib/authDiagnostics";
 import { signOutUser, type SignOutOptions } from "../lib/signOut";
-import { flushAuthEvents } from "../lib/authEventFlush";
-import { upsertAuthEvents } from "../lib/repo";
 import {
   onWatchSessionRequest,
   relaySessionToWatch,
@@ -36,7 +34,7 @@ export function useAuth() {
       relaySessionToWatch(s);
       relayHealthSession(s);
       // #227: the auth uuid is the ONLY identity attached to an error report —
-      // same key `auth_events` uses, never the email.
+      // never the email.
       setMonitoringUser(s?.user.id ?? null);
       if (s && !healthStarted) {
         healthStarted = true;
@@ -48,10 +46,6 @@ export function useAuth() {
         // gap to the next recorded event is what turns a bare cause into
         // "valid at 23:40, gone at 06:50, cause X".
         recordSessionHeartbeat(s);
-        // Ship whatever the ring holds. Fire-and-forget and idempotent —
-        // flushAuthEvents never throws and skips the network entirely when
-        // nothing changed since the last successful send.
-        void flushAuthEvents(s.user.id, { upsert: upsertAuthEvents });
       }
     }
 
