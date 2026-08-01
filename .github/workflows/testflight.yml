@@ -1,10 +1,12 @@
 # TestFlight CD — fastlane beta, on demand (#133, cost-gated per #150).
 # macOS runner minutes are the repo's dominant CI cost (Blacksmith macOS is
 # billed at 20–40x the Ubuntu rate), and device verification happens in
-# batches, not per-merge — so staging pushes only build when the pushed
-# commit *subject* (first line) opts in with "[testflight]" (for a squash
-# merge, put it in the PR title). workflow_dispatch covers everything else:
-# on-demand builds, reruns, and the external-tester builds cut from main.
+# batches, not per-merge — so main pushes only build when the pushed
+# commit *subject* (first line) opts in with "[testflight]". workflow_dispatch
+# is the normal release path after promoting staging and verifying the main
+# migration; it also covers reruns. The gate rejects any ref except main.
+# TestFlight uses the production Supabase project, so accepting staging here
+# would pair staging code with a production schema that has not migrated yet.
 # No paths filter: the [testflight] tag is the single trigger source, and a
 # paths filter would silently swallow a tagged merge that only touched
 # untracked paths. Untagged pushes show as skipped runs, which cost nothing.
@@ -15,7 +17,7 @@ name: TestFlight
 
 on:
   push:
-    branches: [staging]
+    branches: [main]
   workflow_dispatch:
     inputs:
       runner:
@@ -33,6 +35,10 @@ permissions:
   contents: read
 
 jobs:
+  # TestFlight is a production-backend release candidate. Keep the ref check
+  # inside the job as well as the push filter because workflow_dispatch lets a
+  # caller choose any branch in GitHub's UI or API.
+  #
   # The tag must be in the commit subject, not anywhere in the message:
   # contains(head_commit.message, ...) matched the whole body, so the commit
   # that introduced the gate triggered itself off its own description, and
@@ -40,16 +46,26 @@ jobs:
   # would start a paid macOS build. Expressions can't split lines, hence a
   # seconds-long Ubuntu job to extract the first line.
   gate:
-    if: github.event_name == 'push'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 5
     outputs:
-      build: ${{ steps.subject.outputs.build }}
+      build: ${{ steps.decision.outputs.build }}
     steps:
-      - id: subject
+      - id: decision
         env:
+          EVENT_NAME: ${{ github.event_name }}
           MESSAGE: ${{ github.event.head_commit.message }}
         run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "TestFlight builds must run from main; got $GITHUB_REF" >&2
+            exit 1
+          fi
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "build=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           subject="${MESSAGE%%$'\n'*}"
           case "$subject" in
             *"[testflight]"*) echo "build=true" >>"$GITHUB_OUTPUT" ;;
@@ -58,11 +74,7 @@ jobs:
 
   beta:
     needs: gate
-    # gate is skipped on workflow_dispatch, and a skipped need fails the
-    # default success() check — !cancelled() lets the dispatch path through.
-    if: >-
-      !cancelled() &&
-      (github.event_name == 'workflow_dispatch' || needs.gate.outputs.build == 'true')
+    if: needs.gate.outputs.build == 'true'
     runs-on: ${{ inputs.runner || 'blacksmith-6vcpu-macos-26' }}
     environment: testflight
     timeout-minutes: 60
