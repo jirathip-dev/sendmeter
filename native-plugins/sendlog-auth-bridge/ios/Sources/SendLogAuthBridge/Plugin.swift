@@ -29,16 +29,19 @@ private enum WatchBuildStore {
     private static let lock = NSLock()
     private static var lastWrite: (identity: BuildIdentity, at: Double)?
 
-    static func record(_ identity: BuildIdentity) {
+    /// Records the report and returns whether the identity actually changed.
+    @discardableResult
+    static func record(_ identity: BuildIdentity) -> Bool {
         let now = Date().timeIntervalSince1970
         lock.lock()
+        let changed = self.identity != identity
         // The live-force beat runs at ~2 Hz: rewriting three keys per beat
         // would be pure churn. The same build seen a moment ago says nothing
         // new — only a changed build, or a report worth re-timestamping,
         // reaches the disk.
         if let last = lastWrite, last.identity == identity, now - last.at < 60 {
             lock.unlock()
-            return
+            return changed
         }
         lastWrite = (identity, now)
         lock.unlock()
@@ -47,6 +50,7 @@ private enum WatchBuildStore {
         defaults.set(identity.version, forKey: versionKey)
         defaults.set(identity.build, forKey: buildKey)
         defaults.set(now, forKey: reportedAtKey)
+        return changed
     }
 }
 
@@ -75,15 +79,18 @@ private enum WatchSyncStore {
     private static let lock = NSLock()
     private static var lastWrite: (count: Int, at: Double)?
 
-    static func record(_ count: Int) {
+    /// Records the report and returns whether the depth actually changed.
+    @discardableResult
+    static func record(_ count: Int) -> Bool {
         let now = Date().timeIntervalSince1970
         lock.lock()
+        let changed = pendingCount != count
         // Same throttle as the build store — the force beat runs at ~2 Hz and
         // an unchanged count says nothing new. A *changed* count always
         // writes: that's the transition worth seeing.
         if let last = lastWrite, last.count == count, now - last.at < 60 {
             lock.unlock()
-            return
+            return changed
         }
         lastWrite = (count, now)
         lock.unlock()
@@ -91,6 +98,7 @@ private enum WatchSyncStore {
         let defaults = UserDefaults.standard
         defaults.set(count, forKey: countKey)
         defaults.set(now, forKey: reportedAtKey)
+        return changed
     }
 }
 
@@ -143,7 +151,12 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
         var context: [String: Any] = [
             "event": "signedIn",
             "accessToken": accessToken,
-            "expiresAt": expiresAt
+            "expiresAt": expiresAt,
+            // Temporary #368 compatibility for pre-#270 watches, whose
+            // decoder required this key. This fixed literal never came from
+            // Supabase and therefore cannot rotate/revoke a session family.
+            // Current watches ignore it and keep no refresh-token field.
+            "refreshToken": SessionRelay.legacyRefreshTokenSentinel
         ]
         // A hint only — the watch reads `sub` out of the token itself.
         if let userId = call.getString("userId") { context["userId"] = userId }
@@ -254,6 +267,11 @@ extension SendLogAuthBridge: WCSessionDelegate {
         session.activate()
     }
 
+    public func sessionWatchStateDidChange(_ session: WCSession) {
+        // Install/update/uninstall can change while AccountSheet is open.
+        notifyListeners("watchInfoChanged", data: [:])
+    }
+
     /// Watch → phone messages. The workout live-beat rides this session as a
     /// Bluetooth-fast mirror path (sub-second, no network hop) alongside the
     /// Supabase heartbeat; the WebView keeps whichever source is newest. The
@@ -282,15 +300,20 @@ extension SendLogAuthBridge: WCSessionDelegate {
         // #228: every watch→phone message carries the watch's build. Recorded
         // before the kind switch, so a message this build doesn't understand
         // still tells us which watch build sent it.
-        if let identity = WatchBuildReport.identity(in: message) {
-            WatchBuildStore.record(identity)
-        }
+        let buildChanged = WatchBuildReport.identity(in: message)
+            .map(WatchBuildStore.record) ?? false
         // #21: and its offline-queue depth, on the same terms — recorded here
         // so any message the watch sends refreshes the answer.
-        if let pending = WatchBuildReport.pendingSync(in: message) {
-            WatchSyncStore.record(pending)
+        let pendingChanged = WatchBuildReport.pendingSync(in: message)
+            .map(WatchSyncStore.record) ?? false
+        let kind = message["kind"] as? String
+        // Live force arrives around 2 Hz. Refresh diagnostics only for a real
+        // build/count transition, or explicit control/status messages where
+        // pairing/install state may also have changed.
+        if buildChanged || pendingChanged || kind == "requestSession" || kind == "queueStatus" {
+            notifyListeners("watchInfoChanged", data: [:])
         }
-        guard let kind = message["kind"] as? String else { return }
+        guard let kind else { return }
         switch kind {
         case "liveWorkout", "liveForce":
             // Stripped, so the forwarded payloads keep exactly the shape the
@@ -301,6 +324,8 @@ extension SendLogAuthBridge: WCSessionDelegate {
         case "requestSession":
             // The WebView (useAuth) listens and re-relays the current session.
             notifyListeners("sessionRequested", data: [:])
+        case "queueStatus":
+            break
         default:
             break
         }

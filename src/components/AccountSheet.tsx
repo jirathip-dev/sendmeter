@@ -12,6 +12,7 @@ import type { AuthEventStoreKind } from "../lib/authEventStore";
 import { buildTag, loadBuildTag } from "../lib/appVersion";
 import {
   loadWatchBuildInfo,
+  onWatchInfoChanged,
   watchBuildLine,
   watchSyncLine,
   type WatchBuildInfo,
@@ -176,11 +177,25 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [watchInfo, setWatchInfo] = useState<WatchBuildInfo | null>(null);
   useEffect(() => {
     let alive = true;
-    void loadWatchBuildInfo().then((info) => {
+    const refresh = () => void loadWatchBuildInfo().then((info) => {
       if (alive) setWatchInfo(info);
+    });
+    refresh();
+    // Reconcile after registration closes the gap between the initial read
+    // and the native listener becoming active.
+    const listener = onWatchInfoChanged(refresh).then((handle) => {
+      if (!alive) {
+        void handle?.remove();
+        return null;
+      }
+      refresh();
+      return handle;
     });
     return () => {
       alive = false;
+      // If registration is pending, its branch removes and returns null;
+      // otherwise this removes the active listener exactly once.
+      void listener.then((handle) => handle?.remove());
     };
   }, []);
   const watchLine = watchBuildLine(watchInfo);

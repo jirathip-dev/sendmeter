@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		12574DD8CDB9DC854DF1002A /* TindeqProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */; };
 		1BF20E03909FE5E21FAE141B /* TindeqRecordingLimitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C7C9314801ADDD0DB38472 /* TindeqRecordingLimitTests.swift */; };
+		C0A1E5C1D8A14B4EB2B5A001 /* CoalescingDrainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		2FEC1DFCEBB8AE841B0DD4E3 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 4CCE65502100282783D5231B /* PrivacyInfo.xcprivacy */; };
 		328AD2C63004617A00E07518 /* SendLogWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -146,6 +147,7 @@
 		9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendLogWatchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1C7C9314801ADDD0DB38472 /* TindeqRecordingLimitTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TindeqRecordingLimitTests.swift; path = "../SendLogWatchCore/Tests/SendLogWatchCoreTests/TindeqRecordingLimitTests.swift"; sourceTree = "<group>"; };
 		C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "../SendLogWatchCore/Tests/SendLogWatchCoreTests/TagReconciliationTests.swift"; sourceTree = "<group>"; };
+		C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "../SendLogWatchCore/Tests/SendLogWatchCoreTests/CoalescingDrainTests.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -235,6 +237,7 @@
 			children = (
 				1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */,
 				F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */,
+				C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */,
 				929803D573A0FA4074230787 /* DateExtensionsTests.swift */,
 				5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */,
 				553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */,
@@ -528,6 +531,7 @@
 			files = (
 				E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */,
 				D1C2B3A4F5E6708192A3B4C5 /* ACWRTests.swift in Sources */,
+				C0A1E5C1D8A14B4EB2B5A001 /* CoalescingDrainTests.swift in Sources */,
 				4F9BA0DA906E18E88FCDFCA8 /* DateExtensionsTests.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* PendingQueueUserMatchTests.swift in Sources */,
 				607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */,
