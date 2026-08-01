@@ -77,6 +77,7 @@ import {
   needsHandReferences,
   nextLockedAlternatingPrescription,
   prescriptionForSegment,
+  resolveAlternatingMaintenance,
   resolveAlternatingPreset,
   resolveAlternatingRecommendation,
   type AlternatingPrescription,
@@ -942,20 +943,25 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     prKg,
   );
   const alternatingQuality = selectedQuality(gaugeInputs.zoneSel);
+  const alternatingMaintenance =
+    gaugeInputs.zoneSel?.protocol.id === "zone:warmup" ||
+    gaugeInputs.zoneSel?.protocol.id === "zone:prehab";
   const liveAlternatingPrescription = gaugeInputs.preset?.alternateSides
     ? resolveAlternatingPreset(gaugeInputs.preset, alternatingInputs)
-    : alternatingArmed && alternatingQuality && effectiveTag && alternatingModelsSettled
-      ? resolveAlternatingRecommendation(
-          alternatingInputs,
-          alternatingQuality,
-          effectiveTag,
-          gaugeInputs.intensityPct,
-          gaugeInputs.zoneSel?.protocol.sets ?? 1,
-        )
-      : null;
+    : alternatingMaintenance && gaugeInputs.zoneSel && alternatingModelsSettled
+      ? resolveAlternatingMaintenance(gaugeInputs.zoneSel.protocol, alternatingInputs)
+      : alternatingArmed && alternatingQuality && effectiveTag && alternatingModelsSettled
+        ? resolveAlternatingRecommendation(
+            alternatingInputs,
+            alternatingQuality,
+            effectiveTag,
+            gaugeInputs.intensityPct,
+            gaugeInputs.zoneSel?.protocol.sets ?? 1,
+          )
+        : null;
   const alternatingTargetNeedsBoth =
     alternatingArmed &&
-    (alternatingQuality !== null ||
+    (alternatingQuality !== null || alternatingMaintenance ||
       (gaugeInputs.preset !== null && needsHandReferences(gaugeInputs.preset)));
   const alternatingReferencesPending =
     alternatingTargetNeedsBoth && effectiveTag !== null && !alternatingModelsSettled;
@@ -1717,9 +1723,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               armedZone?.protocol.sets ?? 1,
             ) !== null
           }
-          alternatingPrescription={
-            alternatingQuality ? alternatingPrescription : null
-          }
+          alternatingPrescription={alternatingPrescription}
           onClear={clearProtocol}
         />
       )}
@@ -1831,7 +1835,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               : alternatingTargetNeedsBoth && alternatingPrescription === null
                 ? alternatingQuality
                   ? "Alternating needs a fit for both hands before Start."
-                  : "Alternating target needs force references for both hands before Start."
+                  : "This maintenance protocol needs force references for both hands before Start."
                 : null
           }
           saving={saving}
