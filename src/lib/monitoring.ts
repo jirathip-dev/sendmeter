@@ -284,3 +284,32 @@ export function captureAppError(error: unknown, componentStack?: string): void {
     componentStack ? { contexts: { react: { componentStack } } } : undefined,
   );
 }
+
+export type MonitoringPlatform = "web" | "ios" | "android";
+
+/**
+ * Send one synthetic error to prove the deployed bundle reaches Sentry (#373).
+ *
+ * This is deliberately an explicit Account-sheet action, not a launch-time
+ * canary: a successful launch must never create noise, and the person checking
+ * the dashboard needs a specific event id to match. The message is constant
+ * and the only attached values are deployment facts already allowed by the
+ * privacy scrub. Returns null when this build has no DSN, so the UI never says
+ * an event was sent from an inert local build.
+ */
+export function captureMonitoringDiagnostic(
+  platform: MonitoringPlatform,
+  build: string | null,
+  capture: typeof Sentry.captureException = Sentry.captureException,
+): string | null {
+  if (!started) return null;
+  const error = new Error("sentry-e2e: manual diagnostic");
+  error.name = "SendmeterMonitoringDiagnostic";
+  return capture(error, {
+    tags: {
+      platform,
+      native: platform !== "web",
+      build: build ?? "web",
+    },
+  });
+}
