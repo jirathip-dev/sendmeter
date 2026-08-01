@@ -12,6 +12,7 @@ import type {
 } from "../../types";
 import { today } from "../dates";
 import { unwrap } from "./shared";
+import { unwrapOneMutation } from "../mutationInvariant";
 
 // ---- Routine presets (Workout tab guided routine timer) ----
 
@@ -234,7 +235,7 @@ export async function insertPhoneWorkout(input: {
     ),
   );
   const n = input.attempts.length;
-  const session = unwrap<{ id: string }>(
+  const session = unwrapOneMutation<{ id: string }>(
     await supabase
       .from("sessions")
       .insert({
@@ -251,9 +252,9 @@ export async function insertPhoneWorkout(input: {
         rpe_confirmed: false,
       })
       .select("id")
-      .single(),
+      .maybeSingle(),
   );
-  const workout = unwrap<{ id: string }>(
+  const workout = unwrapOneMutation<{ id: string }>(
     await supabase
       .from("climb_workouts")
       .insert({
@@ -266,7 +267,7 @@ export async function insertPhoneWorkout(input: {
         source: "phone",
       })
       .select("id")
-      .single(),
+      .maybeSingle(),
   );
   if (n > 0) {
     unwrap(

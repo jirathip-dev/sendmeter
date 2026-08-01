@@ -1,4 +1,5 @@
 import { supabase } from "../supabase";
+import { unwrapOneMutation } from "../mutationInvariant";
 
 /// Throws on a Postgrest error, otherwise returns `data`. Safe for any
 /// query except `.maybeSingle()`, where `data: null` with no error is a
@@ -19,21 +20,35 @@ export function makeSoftDeleteOps(table: "sessions" | "tindeq_recordings") {
   return {
     /// Soft delete: sets deleted_at so the row can be recovered from Trash.
     async remove(id: string): Promise<void> {
-      unwrap(
+      unwrapOneMutation(
         await supabase
           .from(table)
           .update({ deleted_at: new Date().toISOString() })
-          .eq("id", id),
+          .eq("id", id)
+          .select("id")
+          .maybeSingle(),
       );
     },
     async restore(id: string): Promise<void> {
-      unwrap(
-        await supabase.from(table).update({ deleted_at: null }).eq("id", id),
+      unwrapOneMutation(
+        await supabase
+          .from(table)
+          .update({ deleted_at: null })
+          .eq("id", id)
+          .select("id")
+          .maybeSingle(),
       );
     },
     /// Permanent delete — used only from the Trash view's "Delete forever".
     async purge(id: string): Promise<void> {
-      unwrap(await supabase.from(table).delete().eq("id", id));
+      unwrapOneMutation(
+        await supabase
+          .from(table)
+          .delete()
+          .eq("id", id)
+          .select("id")
+          .maybeSingle(),
+      );
     },
   };
 }

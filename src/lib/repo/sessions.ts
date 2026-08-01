@@ -9,6 +9,7 @@ import type {
 import { SESSION_TYPES } from "../../constants";
 import { today } from "../dates";
 import { makeSoftDeleteOps, unwrap } from "./shared";
+import { unwrapOneMutation } from "../mutationInvariant";
 
 export type SessionRow = {
   id: string;
@@ -80,7 +81,7 @@ export async function fetchDeletedSessions(): Promise<DeletedSession[]> {
 
 export async function insertSession(form: LogFormState): Promise<Session> {
   const typeInfo = SESSION_TYPES.find((t) => t.id === form.type);
-  const data = unwrap(
+  const data = unwrapOneMutation(
     await supabase
       .from("sessions")
       .insert({
@@ -93,7 +94,7 @@ export async function insertSession(form: LogFormState): Promise<Session> {
         phase: form.phase,
       })
       .select(SESSION_COLS)
-      .single()
+      .maybeSingle()
       .overrideTypes<SessionRow, { merge: false }>(),
   );
   return toSession(data);
@@ -106,7 +107,7 @@ export async function updateSession(
   id: string,
   patch: SessionPatch,
 ): Promise<Session> {
-  const data = unwrap(
+  const data = unwrapOneMutation(
     await supabase
       .from("sessions")
       .update({
@@ -121,7 +122,7 @@ export async function updateSession(
       })
       .eq("id", id)
       .select(SESSION_COLS)
-      .single()
+      .maybeSingle()
       .overrideTypes<SessionRow, { merge: false }>(),
   );
   return toSession(data);
@@ -147,7 +148,7 @@ export async function insertTindeqSession(input: {
   /// sessions opt into the product-facing Force label.
   typeLabel?: string;
 }): Promise<Session> {
-  const data = unwrap(
+  const data = unwrapOneMutation(
     await supabase
       .from("sessions")
       .insert({
@@ -162,7 +163,7 @@ export async function insertTindeqSession(input: {
         group_id: input.groupId,
       })
       .select(SESSION_COLS)
-      .single()
+      .maybeSingle()
       .overrideTypes<SessionRow, { merge: false }>(),
   );
   return toSession(data);

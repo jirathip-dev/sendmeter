@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Sentry from "@sentry/react";
 import type { Breadcrumb, ErrorEvent } from "@sentry/react";
-import { scrubBreadcrumb, scrubEvent, stripQuery } from "./monitoring";
+import {
+  classifyHandledFailure,
+  scrubBreadcrumb,
+  scrubEvent,
+  stripQuery,
+} from "./monitoring";
 import type { HealthMetric } from "../types";
+import { ZeroRowMutationError } from "./mutationInvariant";
 
 // The health metric a real user's app state holds. Values are deliberately
 // distinctive decimals so a substring search for them can't collide with an
@@ -233,11 +239,26 @@ describe("scrubBreadcrumb", () => {
   });
 });
 
+describe("handled operational failure classification", () => {
+  it.each([
+    [{ code: "42501", message: "permission denied" }, "permission"],
+    [{ status: 401, message: "expired bearer" }, "auth"],
+    [new TypeError("Failed to fetch"), "network"],
+    [{ code: "23514", message: "check violation" }, "constraint"],
+    [{ code: "PGRST204", message: "schema cache" }, "schema"],
+    [new ZeroRowMutationError(), "invariant"],
+    [{ code: "XX000", message: "unrecognized failure" }, "unknown"],
+  ] as const)("classifies %o as %s", (error, expected) => {
+    expect(classifyHandledFailure(error)).toBe(expected);
+  });
+});
+
 describe("initMonitoring — the DSN gate", () => {
   afterEach(async () => {
     await Sentry.getClient()?.close();
     Sentry.setCurrentClient(undefined as never);
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.resetModules();
   });
 
@@ -258,6 +279,16 @@ describe("initMonitoring — the DSN gate", () => {
     const capture = vi.fn<typeof Sentry.captureException>(() => "event-id");
     expect(m.captureMonitoringDiagnostic("ios", "1.4.0 (57)", capture)).toBeNull();
     expect(capture).not.toHaveBeenCalled();
+    const captureMessage = vi.fn<typeof Sentry.captureMessage>(() => "event-id");
+    expect(
+      m.captureHandledOperationalFailure(
+        "session.insert",
+        { code: "42501", message: "private database response" },
+        { automatic: true },
+        captureMessage,
+      ),
+    ).toBeNull();
+    expect(captureMessage).not.toHaveBeenCalled();
     expect(Sentry.getClient()).toBeUndefined();
   });
 
@@ -318,6 +349,228 @@ describe("initMonitoring — the DSN gate", () => {
     expect(hint).toEqual({
       tags: { platform: "ios", native: true, build: "1.4.0 (57)" },
     });
+  });
+
+  it("captures only the controlled handled-failure shape, never the raw failure", async () => {
+    const m = await loadWithDsn("https://examplePublicKey@o0.ingest.sentry.io/0");
+    m.initMonitoring();
+    const capture = vi.fn<typeof Sentry.captureMessage>(() => "handled-event-id");
+    const rawFailure = {
+      status: 403,
+      code: "42501",
+      message:
+        "RLS rejected note 'secret redpoint beta' with readiness 63 and hrvSdnnMs 48.732 for climber@example.com",
+      details: {
+        row: {
+          note: "secret redpoint beta",
+          duration_min: 97,
+          rpe: 9,
+          hrv_sdnn_ms: 48.732,
+        },
+      },
+      hint: "raw server hint",
+      body: "raw response body",
+    };
+
+    expect(
+      m.captureHandledOperationalFailure(
+        "session.insert",
+        rawFailure,
+        { automatic: true },
+        capture,
+      ),
+    ).toBe("handled-event-id");
+    expect(capture).toHaveBeenCalledOnce();
+    expect(capture).toHaveBeenCalledWith("handled operational failure", {
+      level: "error",
+      tags: {
+        operation: "session.insert",
+        failure_class: "permission",
+        outcome: "recovery-exhausted",
+      },
+      fingerprint: [
+        "handled-operational-failure",
+        "session.insert",
+        "permission",
+      ],
+      extra: { automatic: true, status: 403 },
+    });
+    const serialized = JSON.stringify(capture.mock.calls[0]);
+    for (const forbidden of [
+      "secret redpoint beta",
+      "duration_min",
+      "rpe",
+      "hrvSdnnMs",
+      "48.732",
+      "climber@example.com",
+      "raw server hint",
+      "raw response body",
+      "42501",
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("reports a zero-row mutation as an invariant with no raw database error", async () => {
+    const m = await loadWithDsn("https://examplePublicKey@o0.ingest.sentry.io/0");
+    m.initMonitoring();
+    const capture = vi.fn<typeof Sentry.captureMessage>(() => "zero-row-event");
+
+    m.captureHandledOperationalFailure(
+      "session.update",
+      new ZeroRowMutationError(),
+      { automatic: false },
+      capture,
+    );
+
+    expect(capture).toHaveBeenCalledWith("handled operational failure", {
+      level: "error",
+      tags: {
+        operation: "session.update",
+        failure_class: "invariant",
+        outcome: "zero-row-invariant",
+      },
+      fingerprint: [
+        "handled-operational-failure",
+        "session.update",
+        "invariant",
+      ],
+      extra: { automatic: false, affected_rows: 0 },
+    });
+  });
+
+  it("deduplicates exhausted training-data loads for the app launch", async () => {
+    const m = await loadWithDsn("https://examplePublicKey@o0.ingest.sentry.io/0");
+    m.initMonitoring();
+    const capture = vi.fn<typeof Sentry.captureMessage>(() => "load-event");
+
+    const first = m.captureHandledOperationalFailure(
+      "training-data.load",
+      new TypeError("Failed to fetch"),
+      { retryAttempts: 3 },
+      capture,
+    );
+    const duplicate = m.captureHandledOperationalFailure(
+      "training-data.load",
+      { code: "42501", message: "permission denied" },
+      { retryAttempts: 3 },
+      capture,
+    );
+
+    expect(first).toBe("load-event");
+    expect(duplicate).toBeNull();
+    expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it("excludes expected cancellation, invalid credentials, BLE disconnect, offline, and queued recording cases", async () => {
+    const m = await loadWithDsn("https://examplePublicKey@o0.ingest.sentry.io/0");
+    m.initMonitoring();
+    const capture = vi.fn<typeof Sentry.captureMessage>(() => "unexpected-event");
+
+    m.captureHandledOperationalFailure(
+      "session.insert",
+      { name: "AbortError", message: "The operation was aborted" },
+      {},
+      capture,
+    );
+    m.captureHandledOperationalFailure(
+      "session.insert",
+      { code: "invalid_credentials", message: "Invalid login credentials" },
+      {},
+      capture,
+    );
+    m.captureHandledOperationalFailure(
+      "workout.insert",
+      { code: "BLE_DISCONNECTED", message: "Device disconnected" },
+      {},
+      capture,
+    );
+    vi.stubGlobal("navigator", { onLine: false });
+    m.captureHandledOperationalFailure(
+      "training-data.load",
+      new TypeError("Failed to fetch"),
+      { retryAttempts: 3 },
+      capture,
+    );
+    vi.unstubAllGlobals();
+    m.captureHandledOperationalFailure(
+      "session.insert",
+      new Error("recording insert failed"),
+      { retainedOffline: true },
+      capture,
+    );
+
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("rejects an operation outside the closed code-owned set at runtime", async () => {
+    const m = await loadWithDsn("https://examplePublicKey@o0.ingest.sentry.io/0");
+    m.initMonitoring();
+    const capture = vi.fn<typeof Sentry.captureMessage>(() => "unexpected-event");
+
+    const eventId = m.captureHandledOperationalFailure(
+      "user-entered operation" as never,
+      new Error("private user-entered message"),
+      {},
+      capture,
+    );
+
+    expect(eventId).toBeNull();
+    expect(capture).not.toHaveBeenCalled();
+  });
+
+  it("keeps handled-failure allow-listed fields through the existing scrub", async () => {
+    const m = await loadWithDsn("https://examplePublicKey@o0.ingest.sentry.io/0");
+    const event = m.scrubEvent({
+      message: "handled operational failure",
+      tags: {
+        operation: "workout.insert",
+        failure_class: "network",
+        outcome: "recovery-exhausted",
+        raw_error: "secret",
+      },
+      extra: {
+        retry_attempts: 3,
+        automatic: true,
+        affected_rows: 0,
+        status: 503,
+        row: { note: "secret training note" },
+      },
+    } as unknown as ErrorEvent);
+
+    expect(event.tags).toEqual({
+      operation: "workout.insert",
+      failure_class: "network",
+      outcome: "recovery-exhausted",
+    });
+    expect(event.extra).toEqual({
+      retry_attempts: 3,
+      automatic: true,
+      affected_rows: 0,
+      status: 503,
+    });
+    expect(JSON.stringify(event)).not.toContain("secret");
+  });
+
+  it("drops arbitrary values smuggled through handled-failure tag/detail keys", async () => {
+    const m = await loadWithDsn("https://examplePublicKey@o0.ingest.sentry.io/0");
+    const event = m.scrubEvent({
+      tags: {
+        operation: "secret user operation",
+        failure_class: "secret server class",
+        outcome: "secret response outcome",
+      },
+      extra: {
+        retry_attempts: "secret attempts",
+        automatic: "secret automatic",
+        affected_rows: 97,
+        status: "secret status",
+      },
+    } as unknown as ErrorEvent);
+
+    expect(event.tags).toBeUndefined();
+    expect(event.extra).toBeUndefined();
+    expect(JSON.stringify(event)).not.toContain("secret");
   });
 });
 

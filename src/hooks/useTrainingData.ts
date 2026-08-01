@@ -10,6 +10,7 @@ import { today } from "../lib/dates";
 import * as repo from "../lib/repo";
 import type { UserSettings } from "../lib/repo/settings";
 import { supabase } from "../lib/supabase";
+import { captureHandledOperationalFailure } from "../lib/monitoring";
 import { useRealtimeVersion } from "./useRealtimeVersion";
 
 export function sortSessions(list: Session[]): Session[] {
@@ -45,6 +46,7 @@ export interface RunFetchDeps {
     phasePeriods: PhasePeriod[];
   }) => void;
   onError: (message: string) => void;
+  onExhausted?: (error: unknown, attempts: number) => void;
 }
 
 /// Pure orchestrator for `runFetch`'s retry loop + stale-generation guard —
@@ -52,8 +54,16 @@ export interface RunFetchDeps {
 /// fakes so the retry/backoff/guard sequencing is testable without a real
 /// Supabase client or timers (#220).
 export async function runFetchAttempts(deps: RunFetchDeps): Promise<void> {
-  const { fetchAll, refreshSession, delay, guard, generation, onSuccess, onError } =
-    deps;
+  const {
+    fetchAll,
+    refreshSession,
+    delay,
+    guard,
+    generation,
+    onSuccess,
+    onError,
+    onExhausted,
+  } = deps;
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -79,6 +89,7 @@ export async function runFetchAttempts(deps: RunFetchDeps): Promise<void> {
     }
   }
   if (!guard.isCurrent(generation)) return;
+  onExhausted?.(lastError, 3);
   onError(lastError instanceof Error ? lastError.message : "Failed to load data");
 }
 
@@ -92,6 +103,7 @@ export async function withOptimisticUpdate<T>(opts: {
   rollback: () => void;
   onError: (message: string) => void;
   fallbackMessage: string;
+  onFailure?: (error: unknown) => void;
 }): Promise<T | undefined> {
   opts.apply();
   try {
@@ -100,6 +112,7 @@ export async function withOptimisticUpdate<T>(opts: {
     return result;
   } catch (e) {
     opts.rollback();
+    opts.onFailure?.(e);
     opts.onError(e instanceof Error ? e.message : opts.fallbackMessage);
     return undefined;
   }
@@ -113,12 +126,14 @@ export async function addTindeqSessionAction(opts: {
   action: () => Promise<Session>;
   onSuccess: (saved: Session) => void;
   onError: (message: string) => void;
+  onFailure?: (error: unknown) => void;
 }): Promise<boolean> {
   try {
     const saved = await opts.action();
     opts.onSuccess(saved);
     return true;
   } catch (e) {
+    opts.onFailure?.(e);
     opts.onError(e instanceof Error ? e.message : "Failed to log session");
     return false;
   }
@@ -211,6 +226,11 @@ export function useTrainingData(userId: string) {
   // createGenerationGuard's own state (not the ref) is what actually tracks
   // the generation counter (#220).
   const guardRef = useRef(createGenerationGuard());
+  // Only the first current load for this hook instance is "initial". A later
+  // realtime refetch failure is user-visible but not the launch failure #382
+  // asks us to monitor; the monitoring entry point also dedupes across hook
+  // remounts for the full app-launch lifecycle.
+  const initialLoadPendingRef = useRef(true);
 
   // No synchronous setState before the first `await` here — the mount/
   // realtime-version effect below calls this directly (an effect calling
@@ -230,6 +250,7 @@ export function useTrainingData(userId: string) {
       guard: guardRef.current,
       generation,
       onSuccess: (data) => {
+        initialLoadPendingRef.current = false;
         setSessions(data.sessions);
         setCurrentPhase(data.currentPhase);
         setPhaseStartDate(data.phaseStartDate);
@@ -240,6 +261,13 @@ export function useTrainingData(userId: string) {
       onError: (message) => {
         setError(message);
         setLoading(false);
+      },
+      onExhausted: (failure, attempts) => {
+        if (!initialLoadPendingRef.current) return;
+        initialLoadPendingRef.current = false;
+        captureHandledOperationalFailure("training-data.load", failure, {
+          retryAttempts: attempts,
+        });
       },
     });
   }, []);
@@ -287,6 +315,10 @@ export function useTrainingData(userId: string) {
       rollback: () => setSessions((list) => rollbackAddSession(list, temp.id)),
       onError: (message) => setError(message),
       fallbackMessage: "Failed to save session",
+      onFailure: (failure) =>
+        captureHandledOperationalFailure("session.insert", failure, {
+          automatic: false,
+        }),
     });
   }
 
@@ -305,6 +337,10 @@ export function useTrainingData(userId: string) {
       action: () => repo.insertTindeqSession({ ...input, phase: currentPhase }),
       onSuccess: (saved) => setSessions((list) => sortSessions([...list, saved])),
       onError: (message) => setError(message),
+      onFailure: (failure) =>
+        captureHandledOperationalFailure("session.insert", failure, {
+          automatic: true,
+        }),
     });
   }
 
@@ -321,6 +357,10 @@ export function useTrainingData(userId: string) {
       rollback: () => setSessions(prev),
       onError: (message) => setError(message),
       fallbackMessage: "Failed to update session",
+      onFailure: (failure) =>
+        captureHandledOperationalFailure("session.update", failure, {
+          automatic: false,
+        }),
     });
   }
 
@@ -333,6 +373,10 @@ export function useTrainingData(userId: string) {
       rollback: () => setSessions(prev),
       onError: (message) => setError(message),
       fallbackMessage: "Failed to delete session",
+      onFailure: (failure) =>
+        captureHandledOperationalFailure("session.delete", failure, {
+          automatic: false,
+        }),
     });
   }
 

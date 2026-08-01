@@ -9,6 +9,7 @@ import {
 } from "../lib/repo";
 import Sheet from "./Sheet";
 import type { DeletedSession, DeletedTindeqRecording } from "../types";
+import { captureHandledOperationalFailure } from "../lib/monitoring";
 
 interface Props {
   onClose: () => void;
@@ -64,6 +65,9 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
       setSessions((list) => (list ? list.filter((s) => s.id !== id) : list));
       onSessionRestored();
     } catch (e) {
+      captureHandledOperationalFailure("session.restore", e, {
+        automatic: false,
+      });
       setError(e instanceof Error ? e.message : "Failed to restore");
     } finally {
       setBusyId(null);
@@ -100,6 +104,11 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
       }
       setConfirmPurge(null);
     } catch (e) {
+      if (kind === "session") {
+        captureHandledOperationalFailure("session.purge", e, {
+          automatic: false,
+        });
+      }
       setError(e instanceof Error ? e.message : "Failed to delete forever");
     } finally {
       setBusyId(null);
