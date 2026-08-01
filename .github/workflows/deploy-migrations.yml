@@ -43,7 +43,14 @@ jobs:
     # one, so a lowercase name here would run with no secrets and no error.
     environment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Preview' }}
     steps:
+      # Pin the event commit explicitly so checkout uses detached HEAD. The
+      # local stale-checkout guard must not reject an already-queued deploy
+      # just because a newer staging/main commit landed while it was waiting;
+      # this job is intentionally responsible for the migrations visible at
+      # its own reviewed push SHA, and later queued runs handle later SHAs.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
 
       - uses: actions/setup-node@v4
         with:
