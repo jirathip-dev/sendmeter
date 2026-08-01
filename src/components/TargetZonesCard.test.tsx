@@ -25,6 +25,7 @@ function render(
   selected: ZoneSelection | null = null,
   alternatingReady = true,
   alternatingPrescription: AlternatingPrescription | null = null,
+  unarmedNotice: { quality: "endurance" | "power-endurance"; tag: string } | null = null,
 ) {
   return renderToStaticMarkup(
     <TargetZonesCard
@@ -39,6 +40,7 @@ function render(
       alternatingReady={alternatingReady}
       alternatingPrescription={alternatingPrescription}
       onClear={() => undefined}
+      unarmedNotice={unarmedNotice}
     />,
   );
 }
@@ -118,5 +120,34 @@ describe("TargetZonesCard (#344)", () => {
     expect(html).toContain("do general movement and easy climbing first");
     expect(html).toContain("alternates L/R automatically");
     expect(html).not.toContain('aria-label="Session intensity"');
+  });
+
+  it("renders a persistent accessible post-fit unarm status (#333)", () => {
+    const html = render(null, true, null, { quality: "endurance", tag: "FDP L" });
+    expect(html).toContain('role="status"');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain(
+      "Endurance unarmed — the updated curve no longer has a valid critical-force fit. Add an all-out 30–60s hold to restore it.",
+    );
+  });
+
+  it("does not render a post-fit status belonging to another tag (#333)", () => {
+    const html = render(null, true, null, {
+      quality: "endurance",
+      tag: "Open hand",
+    });
+    expect(html).not.toContain('role="status"');
+    expect(html).not.toContain("Endurance unarmed");
+  });
+
+  it("renders the Power Endurance post-fit guidance (#333)", () => {
+    const html = render(null, true, null, {
+      quality: "power-endurance",
+      tag: "FDP L",
+    });
+    expect(html).toContain('role="status"');
+    expect(html).toContain(
+      "Power Endurance unarmed — the updated curve no longer has a usable Hill capability fit. Add all-out holds at varied durations to restore it.",
+    );
   });
 });

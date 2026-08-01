@@ -74,6 +74,10 @@ import {
   type ZoneSelection,
 } from "../lib/zoneSelection";
 import {
+  postFitZoneDecision,
+  type PostFitZoneState,
+} from "../lib/postFitZoneDecision";
+import {
   alternatingCurveInputKey,
   alternatingHoldDurations,
   needsHandReferences,
@@ -229,7 +233,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // double call inserted two sessions for the same groupId.
   const endedGroupsRef = useRef<Set<string>>(new Set());
   const [listError, setListError] = useState<string | null>(null);
-  const [zoneSel, setZoneSel] = useState<ZoneSelection | null>(null);
+  const [zoneState, setZoneState] = useState<PostFitZoneState>({
+    selection: null,
+    notice: null,
+    revision: 0,
+  });
+  const zoneSel = zoneState.selection;
   const [preset, setPreset] = useState<TindeqPreset | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const manualGroupRef = useRef<string | null>(null);
@@ -242,21 +251,35 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // see forceSelection.ts for the rule and why it's needed.
   function selectZone(sel: ZoneSelection | null) {
     const { selection, clearsPersistedPreset } = selectZoneOutcome({ zoneSel, preset }, sel);
-    setZoneSel(selection.zoneSel);
+    setZoneState((current) => ({
+      selection: selection.zoneSel,
+      notice: null,
+      revision: current.revision + 1,
+    }));
     setPreset(selection.preset);
     if (clearsPersistedPreset) clearPersistedPreset();
   }
   function selectPreset(p: TindeqPreset | null) {
     const next = withPresetSelected({ zoneSel, preset }, p);
     setPreset(next.preset);
-    if (next.zoneSel !== zoneSel) setZoneSel(next.zoneSel);
+    // Selecting a custom preset must also clear a post-fit zone notice when
+    // the zone was already null, so this write is intentionally unconditional.
+    setZoneState((current) => ({
+      selection: next.zoneSel,
+      notice: null,
+      revision: current.revision + 1,
+    }));
   }
   // #298: one explicit "unarm" affordance for both the tab and the
   // fullscreen — drops whichever of zone/preset is active AND the persisted
   // preset key, so a stale key can't re-arm the preset on the next mount
   // (the #296 class; `PresetManager` owns that key at `clearPersistedPreset`).
   function clearProtocol() {
-    setZoneSel(null);
+    setZoneState((current) => ({
+      selection: null,
+      notice: null,
+      revision: current.revision + 1,
+    }));
     setPreset(null);
     clearPersistedPreset();
   }
@@ -724,15 +747,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     //
     // #298 round 5: `react-hooks/purity` flags this `Date.now()` call, but
     // it's a false positive from this rule attributing the pure-updater
-    // requirement of the `setZoneSel` functional update below onto the WHOLE
+    // requirement of the functional state update below onto the WHOLE
     // effect callback — effects (this one included) are allowed to be
-    // impure; only the updater passed to `setZoneSel` itself needs to be a
-    // pure function of its `prev` argument, and it is (`rederiveSelection` is
-    // pure). Confirmed by isolating this exact call: removing the
-    // `setZoneSel(prev => ...)` below makes the diagnostic disappear with
-    // nothing else changed.
+    // impure; only the updater passed to `setZoneState` itself needs to be a
+    // pure function of its current argument, and it is
+    // (`postFitZoneDecision` is pure). Confirmed by isolating this exact call:
+    // removing the functional state update below makes the diagnostic
+    // disappear with nothing else changed.
     // eslint-disable-next-line react-hooks/purity
     const now = Date.now();
+    const fitZoneRevision = zoneState.revision;
     const recs = pickCurveRecordings(curveRecordings, now);
     // Per-period picks for the curve-shift overlays (strict windows — an
     // empty period is an honestly absent curve, not a fallback).
@@ -778,8 +802,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         // Functional update (never the `zoneSel` closed over at effect-
         // creation time) per the CLAUDE.md stale-closure rule — this `.then`
         // can resolve after the user has since armed a different zone.
-        setZoneSel((prev) =>
-          rederiveSelection(prev, m, zoneTag, intensityPctRef.current) ? prev : null,
+        setZoneState((current) =>
+          postFitZoneDecision(
+            current,
+            m,
+            zoneTag,
+            intensityPctRef.current,
+            fitZoneRevision,
+          ),
         );
         setPeriodCurves(
           periodPicks.map((p) => ({
@@ -1046,7 +1076,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     if (next === intensityPct) return;
     setIntensityPct(next);
     saveIntensity(next);
-    setZoneSel(applyIntensity(zoneSel, model, zoneTag, next));
+    setZoneState((current) => ({
+      ...current,
+      selection: applyIntensity(current.selection, model, zoneTag, next),
+    }));
   }
 
   // Get-ready countdown preference (5s PREPARE before the first hold).
@@ -1757,6 +1790,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           }
           alternatingPrescription={alternatingPrescription}
           onClear={clearProtocol}
+          unarmedNotice={zoneState.notice}
         />
       )}
       {effectiveTag && zoneTag && (
@@ -1787,7 +1821,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           // fetch was in flight still wins (forceSelection.test.ts covers
           // the race).
           const next = restoredSelection({ zoneSel, preset }, p);
-          setZoneSel(next.zoneSel);
+          setZoneState((current) => ({
+            selection: next.zoneSel,
+            notice: null,
+            revision: current.revision + 1,
+          }));
           setPreset(next.preset);
         }}
         presetRefs={presetRefs}
