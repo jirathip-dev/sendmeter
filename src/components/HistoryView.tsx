@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveWorkout } from "../hooks/useLiveWorkout";
+import { usePendingUploads } from "../hooks/usePendingUploads";
 import {
   useRealtimeBump,
   useRealtimeVersion,
 } from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
+import { useWatchInfo } from "../hooks/useWatchInfo";
 import {
   deleteRecording,
   fetchRecordings,
@@ -15,6 +17,7 @@ import {
   updateRecordingGroup,
 } from "../lib/repo";
 import { dominantZone, zoneSets } from "../lib/zoneHistory";
+import { uploadWarningPresentation } from "../lib/watchBuild";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
 import EditRecordingSheet from "./EditRecordingSheet";
 import LiveSessionRow from "./LiveSessionRow";
@@ -60,6 +63,10 @@ export default function HistoryView({
   const [live] = useLiveWorkout(userId);
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
+  const uploadWarning = uploadWarningPresentation(
+    useWatchInfo(),
+    usePendingUploads(),
+  );
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   // Lazy render (SL-86): mount the timeline in pages.
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -244,6 +251,22 @@ export default function HistoryView({
         {ungrouped.length > 0 &&
           ` · ${ungrouped.length} loose recording${ungrouped.length === 1 ? "" : "s"}`}
       </div>
+      {uploadWarning && (
+        <div className="upload-status-banner" role="status">
+          <div className="upload-status-title">{uploadWarning.title}</div>
+          {uploadWarning.items.map((item) => (
+            <div className="upload-status-item" key={item.source}>
+              <div>{item.text}</div>
+              <div className="upload-status-detail">
+                {item.detail}
+                {item.reportedAt !== undefined
+                  ? ` Last report: ${new Date(item.reportedAt * 1000).toLocaleString()}.`
+                  : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {/* Pinned live-workout row (SL-98) — outside the paginated list so it's
           always visible; disappears on its own when the workout ends. */}
       {live && <LiveSessionRow live={live} />}

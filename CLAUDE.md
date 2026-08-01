@@ -538,11 +538,13 @@ are safe regardless.
   offline sessions) and still reports to monitoring — a non-zero `evicted` on
   the IndexedDB path is now a finding, not routine degradation.
 - **Queue depth is ambient, never an interrupt** (#269). `usePendingUploads` →
-  a muted line on the Force tab and a "This iPhone · N recordings pending sync"
-  row in the account sheet, next to the watch's own queue line (#21). A toast
+  a muted line on the Force tab and an actionable History banner when this
+  iPhone or the watch has uploads waiting (#21/#369). Empty queues keep History
+  quiet; pairing/install/build state lives in Account. A toast
   or alert per failed upload fires exactly when the user is mid-outage and can
   do nothing, and then repeats per rep — don't add one. Same honest-states rule
-  as `watchSyncLine`: "not read yet" must not render as "empty".
+  as `uploadWarningPresentation`: unknown must not render as empty, and a stale
+  watch count must read as the last report rather than a current queue depth.
 - **Recording samples store `t` in milliseconds.** `tindeq_recordings.samples`
   time is ms — charts must divide by 1000 to show seconds (a mislabeled axis once
   showed "25152.0s").

@@ -5,8 +5,10 @@ import { subscribePendingUploads } from "../lib/pendingUploads";
 import { pendingRecordingsCount } from "../lib/recordingQueue";
 
 /// #269: the offline recording queue's depth, for the ambient indicators.
-/// `null` until the first read completes — callers must render "not known yet"
-/// rather than "empty" for it (see `pendingUploadsLine`).
+/// `null` until the first read completes — callers must not treat it as an
+/// empty queue. History intentionally stays quiet until there is an actionable
+/// pending count; diagnostic surfaces can use `pendingUploadsLine` when they
+/// need to distinguish unknown from empty.
 ///
 /// Re-reads on three signals, because the queue changes from places this
 /// component can't see: the module-level notification (something queued or
