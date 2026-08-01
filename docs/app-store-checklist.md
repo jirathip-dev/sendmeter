@@ -11,6 +11,9 @@ for the App Store Connect forms.
 - **Privacy policy page**: `public/privacy.html` → will be live at
   `https://<your-domain>/privacy.html` once the web app deploys. That URL goes in
   App Store Connect → App Privacy → Privacy Policy URL.
+- **Support page**: `public/support.html` → `https://sendmeter.app/support.html`.
+  Use this for the required version-level Support URL; it contains contact,
+  troubleshooting, account-deletion, and privacy information.
 - **In-app account deletion** (guideline 5.1.1(v)): Account sheet → Danger zone →
   Delete account. Removes the auth user; every table cascades.
 - **Password sign-in**: needed for the reviewer demo account (magic-link-only apps
@@ -159,7 +162,9 @@ Put that email/password in the review notes.
    `com.jirathip.sendlog`. The watch app is an **embedded companion**
    (`com.jirathip.sendlog.watchkitapp`) that ships inside the iOS app — it is
    **not** a separate App Store record.
-3. Deploy the web app so the privacy-policy URL is live; paste the URL.
+3. Deploy the web app so the privacy-policy and support URLs are live; paste
+   `https://sendmeter.app/privacy.html` under App Privacy and
+   `https://sendmeter.app/support.html` under the iOS version's Support URL.
 4. Fill App Privacy per the table above.
 5. ~~Capture iPhone + watch screenshots.~~ **Automated:** see the next section.
 6. Export compliance: uses only standard TLS → answer "standard encryption,
