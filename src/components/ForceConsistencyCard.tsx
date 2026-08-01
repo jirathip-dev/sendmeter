@@ -13,7 +13,7 @@ import type { TindeqRecordingMeta } from "../types";
 /// computeTindeqWeeks for why bar height is days trained, not rep count, and
 /// why a stacked-by-tag bar would double-count a day carrying two tags. The
 /// tag filter narrows the SAME bars to one exercise instead of stacking.
-export default function TindeqConsistencyCard() {
+export default function ForceConsistencyCard() {
   const realtimeVersion = useRealtimeVersion();
   const recordings = useCancellableFetch<TindeqRecordingMeta[] | null>(
     fetchRecordings,
@@ -43,7 +43,7 @@ export default function TindeqConsistencyCard() {
         className="card-title"
         style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}
       >
-        <span>Tindeq consistency</span>
+        <span>Force consistency</span>
         <InfoDot topic="tindeqConsistency" />
       </div>
 
@@ -87,7 +87,7 @@ export default function TindeqConsistencyCard() {
 
       {loaded && !hasAny && (
         <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)" }}>
-          No Tindeq recordings in the last 8 weeks
+          No force recordings in the last 8 weeks
         </div>
       )}
 
