@@ -171,7 +171,16 @@ Put that email/password in the review notes.
    and the required-reason section must list UserDefaults (`CA92.1`, `1C8F.1`)
    and FileTimestamp (`C617.1`) and nothing else. This can only be done from
    Xcode on a real archive — it is not reproducible in CI.
-9. Xcode → Archive → Distribute (per app) → TestFlight first, then Submit.
+9. Promote `staging` to `main`, wait for the Production migration workflow,
+   then dispatch the TestFlight workflow from `main`. The archive uses the
+   production Supabase project, so the workflow deliberately rejects
+   `staging` and other refs. Select the uploaded build in App Store Connect,
+   test it in TestFlight, then submit it for review.
+
+For iPhone testing before promotion, use `npm run sync:local` with paired
+simulators. A physical-device build cannot reach the laptop's local Supabase
+stack and currently uses production; use a throwaway production account for
+device-only Bluetooth, HealthKit, and signing checks.
 
 ## App Store screenshot automation
 
