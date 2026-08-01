@@ -9,9 +9,9 @@ unless the user described them.
 
 **What it does not catch:** anything that fails *silently*. The #202 overnight
 logout throws nothing — auth-js removes the session and emits `SIGNED_OUT`, no
-exception, no rejection. That is what `auth_events` / `src/lib/authDiagnostics.ts`
-exist for, and this does not replace them. Don't expect Sentry to explain a
-"logged out again" report.
+exception, no rejection. That is what the bounded on-device ring in
+`src/lib/authDiagnostics.ts` exists for, and this does not replace it. Don't
+expect Sentry to explain a "logged out again" report.
 
 Native crash reporting (Sentry Cocoa) is **out of scope** — this is the WebView
 JS layer only. A Swift crash in the watch app or a plugin still shows up only in

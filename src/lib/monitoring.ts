@@ -171,7 +171,7 @@ export function scrubBreadcrumb(crumb: Breadcrumb): Breadcrumb | null {
 export function scrubEvent<T extends Event>(event: T): T {
   const e = event as Event;
 
-  // Identity: the Supabase auth uuid only — same key `auth_events` uses.
+  // Identity: the Supabase auth uuid only.
   // Never email, username, or ip.
   const id = e.user?.id;
   e.user = id ? { id: String(id) } : undefined;

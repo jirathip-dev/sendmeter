@@ -85,19 +85,18 @@ Declare these under **Data Types Collected**, all with:
 | Health & fitness data (HR, HRV, sleep, workouts) | Health & Fitness → Health / Fitness |
 | Body weight | Health & Fitness → Health |
 | Training/session logs, force recordings | User Content → Other User Content |
-| Auth + error diagnostics (null-session cause, timestamps, app build; crash/error reports) | Diagnostics → Other Diagnostic Data |
+| Error diagnostics (crash/error reports) | Diagnostics → Other Diagnostic Data |
 
-The Diagnostics row covers two things, both keyed to `user_id`/auth uuid — which
-is why it answers "linked to identity: yes" like every other row here:
+The Diagnostics row covers error monitoring keyed to the auth uuid, which is why
+it answers "linked to identity: yes" like every other row here:
 
-1. **Auth diagnostics** — `supabase/migrations/20260726090000_auth_events.sql`
-   (the columns are exactly what is collected), written by
-   `src/lib/authEventFlush.ts`: a per-account record of why a sign-in session
-   went away. Stays on our own Supabase project; no third party involved.
-2. **Error monitoring** (issue #227) — uncaught JavaScript exceptions, React
-   render errors and unhandled promise rejections, processed by **Sentry**
-   (`sentry.io`, Functional Software, Inc.) — the one **third-party processor**
-   the app uses. `src/lib/monitoring.ts` is the only place it is configured.
+**Error monitoring** (issue #227) covers uncaught JavaScript exceptions, React
+render errors and unhandled promise rejections, processed by **Sentry**
+(`sentry.io`, Functional Software, Inc.) — the one **third-party processor**
+the app uses. `src/lib/monitoring.ts` is the only place it is configured.
+
+The bounded auth-diagnostics ring remains on-device in Preferences and is not
+uploaded or included in the App Privacy collected-data answers.
 
 What Sentry receives is built from an allow-list in `beforeSend` /
 `beforeBreadcrumb`, not filtered after the fact:

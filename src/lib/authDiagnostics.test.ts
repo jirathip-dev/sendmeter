@@ -653,8 +653,7 @@ describe("attribution across the init race (issue #202 review)", () => {
     recordAuthStateChange("SIGNED_OUT", { now: () => "2026-07-26T06:51:00.000Z" });
 
     // `build` is part of the incident identity, so a pre-init record stamped
-    // with no build would split this into two ring entries — and two
-    // auth_events rows for one incident.
+    // with no build would split this into two ring entries for one incident.
     const stored = loadAuthEvents(store);
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({ count: 2, build: "1.4.1 (58)" });
@@ -812,7 +811,7 @@ describe("useAuth's launch sequence (issue #202 review, round 2)", () => {
     await init;
     // Same cause and origin, after init: an unattributed first record would
     // have had a different incident identity (`build` is part of the key) and
-    // split this into two ring entries and two auth_events rows.
+    // split this into two ring entries.
     await getSessionWithDiagnostics(client, HOSTED_URL, web);
 
     const stored = loadAuthEvents(store);

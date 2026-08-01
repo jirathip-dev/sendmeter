@@ -63,8 +63,8 @@
 				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
 			</array>
 		</dict>
-		<!-- auth_events: why a sign-in session went away (reason, timestamps,
-		     app build). Written by src/lib/authEventFlush.ts, keyed to user_id. -->
+		<!-- Sentry error reports, scrubbed and keyed to the auth uuid. The local
+		     auth-diagnostics Preferences ring is not uploaded. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeOtherDiagnosticData</string>
