@@ -204,6 +204,8 @@ fastlane snapshot UI-test schemes sequentially. It produces:
 - the same four screens on iPhone 13 Pro Max (6.5", 1284×2778), retained for
   the issue's explicit compatibility request even though App Store Connect can
   scale the 6.9" set down;
+- the same four screens in portrait on iPad Pro 13-inch (M5, 2064×2752),
+  satisfying App Store Connect's required 13-inch iPad display set;
 - two real watch-app screens on Apple Watch Ultra 3 (422×514), with deterministic
   readiness/ACWR fixture values enabled only by snapshot's launch argument.
 
