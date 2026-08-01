@@ -623,7 +623,7 @@ export const WARMUP_PROTOCOL = {
   reps: 2,
   sets: 3,
   restRepsS: 15,
-  restSetsS: 60,
+  restSetsS: 30,
   targetPct: 40,
   pctStep: 15,
   pctBasis: "pr",

@@ -111,7 +111,7 @@ describe("buildPrehabSelection (#325)", () => {
     expect(buildPrehabSelection(dead, "FDP L")).toBeNull();
   });
 
-  it("assembles the target + protocol at 0.70 × CF, single-sided", () => {
+  it("assembles the target + automatically alternating protocol at 0.70 × CF", () => {
     const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
     const result = buildPrehabSelection(model, "FDP L")!;
     expect(result.tag).toBe("FDP L");
@@ -125,7 +125,7 @@ describe("buildPrehabSelection (#325)", () => {
       restRepsS: PREHAB_PROTOCOL.restRepsS,
       restSetsS: PREHAB_PROTOCOL.restSetsS,
       targetKg: 14,
-      alternateSides: false,
+      alternateSides: true,
     });
   });
 
@@ -163,12 +163,12 @@ describe("buildWarmupSelection (#297)", () => {
       reps: 2,
       sets: 3,
       restRepsS: 15,
-      restSetsS: 60,
+      restSetsS: 30,
       targetKg: null,
       targetPct: 40,
       pctBasis: "pr",
       pctStep: 15,
-      alternateSides: false,
+      alternateSides: true,
     });
     const refs = { prKg: 40, cf: 20, wPrime: 300, maxF: 40 };
     expect([1, 2, 3].map((set) => presetTargetKg(result.protocol, refs, set))).toEqual([
