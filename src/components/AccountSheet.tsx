@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Capacitor } from "@capacitor/core";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
 import { authRedirectUrl } from "../lib/authRedirect";
@@ -11,10 +10,6 @@ import {
 } from "../lib/authDiagnostics";
 import type { AuthEventStoreKind } from "../lib/authEventStore";
 import { buildTag, loadBuildTag } from "../lib/appVersion";
-import {
-  captureMonitoringDiagnostic,
-  type MonitoringPlatform,
-} from "../lib/monitoring";
 import {
   watchStatusPresentation,
   type WatchStatusPresentation,
@@ -162,11 +157,6 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     resolve: (choice: QueueRemainderChoice) => void;
   } | null>(null);
   const [showHelp, setShowHelp] = useState(false);
-  // #373: exact id of the one-shot synthetic Sentry event. Keeping it visible
-  // (instead of only in a transient toast) lets the person holding the phone
-  // match this TestFlight build to the dashboard without ambiguity.
-  const [diagnosticEventId, setDiagnosticEventId] = useState<string | null>(null);
-  const [diagnosticUnavailable, setDiagnosticUnavailable] = useState(false);
   // Read once at mount — issue #202's on-device record of null-session
   // events (see authDiagnostics.ts). Read-only, so no need to re-read on an
   // interval; a relaunch remounts this sheet fresh anyway.
@@ -310,18 +300,6 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     } finally {
       setClearing(false);
     }
-  }
-
-  function sendMonitoringDiagnostic() {
-    const platform = Capacitor.getPlatform() as MonitoringPlatform;
-    const eventId = captureMonitoringDiagnostic(platform, build);
-    if (!eventId) {
-      setDiagnosticUnavailable(true);
-      return;
-    }
-    setDiagnosticUnavailable(false);
-    setDiagnosticEventId(eventId);
-    toast("Sentry test error sent", "info");
   }
 
   const eyebrow = (text: string, danger = false) => (
@@ -534,52 +512,6 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
 
             <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
               {eyebrow("Troubleshooting")}
-              <div style={{ marginBottom: 14 }}>
-                <div
-                  style={{
-                    fontSize: "var(--t-xs)",
-                    color: "var(--ink-muted)",
-                    lineHeight: 1.5,
-                    marginBottom: 8,
-                  }}
-                >
-                  Send one synthetic error to verify this build reaches the
-                  Sentry dashboard. It contains the app build and platform,
-                  but no training or health data.
-                </div>
-                <button
-                  className="btn-ghost"
-                  disabled={diagnosticEventId !== null}
-                  onClick={sendMonitoringDiagnostic}
-                >
-                  {diagnosticEventId ? "Test error sent" : "Send Sentry test error"}
-                </button>
-                {diagnosticEventId && (
-                  <div
-                    style={{
-                      marginTop: 8,
-                      fontSize: "var(--t-xs)",
-                      color: "var(--success)",
-                      lineHeight: 1.5,
-                      overflowWrap: "anywhere",
-                    }}
-                  >
-                    Event ID: {diagnosticEventId}
-                  </div>
-                )}
-                {diagnosticUnavailable && (
-                  <div
-                    style={{
-                      marginTop: 8,
-                      fontSize: "var(--t-xs)",
-                      color: "var(--danger)",
-                      lineHeight: 1.5,
-                    }}
-                  >
-                    Monitoring is not enabled in this build.
-                  </div>
-                )}
-              </div>
               <details className="troubleshooting-details">
                 <summary>Sign-in diagnostics</summary>
                 <div className="troubleshooting-body">

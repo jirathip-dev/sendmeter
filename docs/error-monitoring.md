@@ -146,29 +146,20 @@ a browser one.
 must export `VITE_DEPLOY_ENV=ios` — same requirement as `VITE_SENTRY_DSN`
 above, and un-set means the TestFlight build reports `local`.
 
-## Verification (device / TestFlight — not doable headlessly)
+## End-to-end verification
 
-The build/typecheck/lint/test gate proves the scrub and the wiring; it cannot
-prove an event reaches the dashboard. Do this once on a real build:
+Issue #373 verified the full path on 2026-08-01 from both a preview deployment
+and TestFlight. Sentry received the synthetic event with the expected
+`preview`/`ios` environment, an `ios` platform tag for TestFlight, a bare auth
+uuid, and a query-free `capacitor://localhost` URL. The temporary Account-sheet
+diagnostic action was removed after that verification; normal monitoring stays
+enabled.
 
-1. Open Account → Account → Session and tap **Send Sentry test error**. The
-   action stays disabled afterward and shows the exact event id; a DSN-less
-   build instead says monitoring is not enabled and does not claim success.
-2. Leave the app foregrounded for ten seconds, then find that event id in
-   Sentry. Its error is `SendmeterMonitoringDiagnostic` / `sentry-e2e: manual
-   diagnostic`.
-3. Open the event and read it end to end: user is a bare
-   uuid, no email, no query strings, no `extra`/`contexts` beyond the allow-list,
-   and **no health numbers anywhere**.
-4. Check the event's `environment` — a preview deploy must read `preview`, not
-   `production`. That is the one thing only a real Vercel build can prove; the
-   local gate can only show the fallback and an override.
-5. Repeat 1–4 from a TestFlight build once the lane carries the DSN, since the
-   native WebView is a different runtime from the browser. It should read `ios`.
-
-The diagnostic proves the app's DSN, initialization, privacy hook, transport,
-ingestion and dashboard path in one event. To test Sentry's default global
-handlers separately on the web, run
+The build/typecheck/lint/test gate proves the scrub and wiring but cannot prove
+transport and dashboard ingestion. If the end-to-end path needs reverification,
+use a temporary diagnostic in a dedicated test build rather than restoring a
+permanent production control. To test Sentry's default global handlers on the
+web, run
 `setTimeout(() => { throw new Error("sentry-e2e-web"); }, 0)` in browser devtools
-and confirm that event arrives too. The release WebView is deliberately not
-inspectable, so the explicit Account action is the TestFlight path.
+and confirm that event arrives. The release WebView remains deliberately
+non-inspectable.

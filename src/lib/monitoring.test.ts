@@ -276,9 +276,6 @@ describe("initMonitoring — the DSN gate", () => {
     // The user/report entry points stay inert too.
     m.setMonitoringUser("8f14e45f-ceea-467a-9575-28db6c1a4bd3");
     m.captureAppError(new Error("boom"));
-    const capture = vi.fn<typeof Sentry.captureException>(() => "event-id");
-    expect(m.captureMonitoringDiagnostic("ios", "1.4.0 (57)", capture)).toBeNull();
-    expect(capture).not.toHaveBeenCalled();
     const captureMessage = vi.fn<typeof Sentry.captureMessage>(() => "event-id");
     expect(
       m.captureHandledOperationalFailure(
@@ -328,27 +325,6 @@ describe("initMonitoring — the DSN gate", () => {
     const json = JSON.stringify(scrubbed);
     for (const field of HEALTH_FIELDS) expect(json).not.toContain(field);
     for (const value of HEALTH_VALUES) expect(json).not.toContain(value);
-  });
-
-  it("returns a searchable event id for the manual end-to-end diagnostic", async () => {
-    const m = await loadWithDsn("https://examplePublicKey@o0.ingest.sentry.io/0");
-    m.initMonitoring();
-    const capture = vi.fn<typeof Sentry.captureException>(
-      () => "0123456789abcdef0123456789abcdef",
-    );
-
-    const eventId = m.captureMonitoringDiagnostic("ios", "1.4.0 (57)", capture);
-
-    expect(eventId).toBe("0123456789abcdef0123456789abcdef");
-    expect(capture).toHaveBeenCalledOnce();
-    const [error, hint] = capture.mock.calls[0]!;
-    expect(error).toMatchObject({
-      name: "SendmeterMonitoringDiagnostic",
-      message: "sentry-e2e: manual diagnostic",
-    });
-    expect(hint).toEqual({
-      tags: { platform: "ios", native: true, build: "1.4.0 (57)" },
-    });
   });
 
   it("captures only the controlled handled-failure shape, never the raw failure", async () => {
