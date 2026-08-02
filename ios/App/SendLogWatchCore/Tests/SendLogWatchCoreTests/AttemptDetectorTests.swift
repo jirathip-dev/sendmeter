@@ -67,6 +67,40 @@ final class AttemptDetectorTests: XCTestCase {
         XCTAssertEqual(run(trace).count, 0)
     }
 
+    func testLowFortyFiveSecondClimbUsesAltitudeAndHRSupport() {
+        var trace: [(Double, Double, Double?)] = []
+        trace += Array(repeating: (-2.0, 0.02, 80.0), count: 30)
+        for i in 0..<45 {
+            trace.append((-2.0 + Double(i) / 44.0, 0.12, 80.0 + Double(i) * 0.8))
+        }
+        for i in 0..<8 { trace.append((-1.0 - Double(i) / 7.0, 0.10, 120)) }
+        trace += Array(repeating: (-2.0, 0.02, 95.0), count: 12)
+        let attempts = run(trace)
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertGreaterThanOrEqual(attempts[0].elevationGainM, 0.9)
+    }
+
+    func testSlowClimbDoesNotNeedOldTenSecondGain() {
+        var trace: [(Double, Double, Double?)] = []
+        trace += Array(repeating: (0.0, 0.02, nil), count: 30)
+        for i in 0..<50 { trace.append((Double(i) * 2.5 / 49.0, 0.13, nil)) }
+        for i in 0..<10 { trace.append((2.5 - Double(i) * 0.25, 0.10, nil)) }
+        trace += Array(repeating: (0.0, 0.02, nil), count: 12)
+        XCTAssertEqual(run(trace).count, 1)
+    }
+
+    func testNegativeDriftStillUsesLocalFloor() {
+        var trace: [(Double, Double, Double?)] = []
+        for i in 0..<40 { trace.append((-5.0 - Double(i) * 0.01, 0.02, 80)) }
+        let floor = trace.last!.0
+        for i in 0..<30 { trace.append((floor + Double(i) * 1.4 / 29.0, 0.13, 105)) }
+        for i in 0..<8 { trace.append((floor + 1.4 - Double(i) * 0.2, 0.10, 115)) }
+        trace += Array(repeating: (floor, 0.02, 90), count: 12)
+        let attempts = run(trace)
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertGreaterThan(attempts[0].elevationGainM, 1.2)
+    }
+
     /// Short hop (<8s, <1.2m) gets filtered.
     func testShortHopRejected() {
         var trace: [(Double, Double, Double?)] = []
@@ -97,6 +131,157 @@ final class AttemptDetectorTests: XCTestCase {
         XCTAssertEqual(attempts.count, 1)
         XCTAssertEqual(attempts[0].source, .manual)
         XCTAssertNotNil(attempts[0].peakHR)
+    }
+
+    func testStableSnapshotExposesAutomaticOpenAndClose() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .resting)
+        for i in 30..<50 {
+            d.ingest(MotionSample(t: Double(i), altitude: Double(i - 30) * 0.08, motionRMS: 0.13, hr: 110), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .autoClimbing)
+        XCTAssertNotNil(d.snapshot.phaseStartedAt)
+        for i in 50..<58 {
+            d.ingest(MotionSample(t: Double(i), altitude: max(0, 1.5 - Double(i - 50) * 0.25), motionRMS: 0.03, hr: 110), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 58..<68 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 95), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .resting)
+    }
+
+    func testAutoReturnToFloorClosesDespiteWalkingMotionExactlyOnce() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 30..<50 {
+            d.ingest(MotionSample(t: Double(i), altitude: Double(i - 30) * 0.08, motionRMS: 0.13, hr: 110), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .autoClimbing)
+        for i in 50..<58 {
+            d.ingest(MotionSample(t: Double(i), altitude: max(0, 1.5 - Double(i - 50) * 0.25), motionRMS: 0.10, hr: 110), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 58..<68 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.10, hr: 100), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .resting)
+        XCTAssertEqual(d.liveAttemptCount, 1)
+        XCTAssertEqual(d.finalize().count, 1)
+    }
+
+    func testForgottenManualReturnToFloorClosesWhileWalkingExactlyOnce() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<20 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        d.beginManualAttempt(at: start.addingTimeInterval(20))
+        for i in 20..<35 {
+            d.ingest(MotionSample(t: Double(i), altitude: Double(i - 20) * 0.1, motionRMS: 0.15, hr: 120), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 35..<40 {
+            d.ingest(MotionSample(t: Double(i), altitude: max(0, 1.4 - Double(i - 35) * 0.4), motionRMS: 0.10, hr: 110), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 40..<48 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.10, hr: 100), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .resting)
+        d.endManualAttempt(at: start.addingTimeInterval(48))
+        XCTAssertEqual(d.finalize().filter { $0.source == .manual }.count, 1)
+    }
+
+    func testQuietPauseWhileElevatedDoesNotClose() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 30..<45 {
+            d.ingest(MotionSample(t: Double(i), altitude: Double(i - 30) * 0.1, motionRMS: 0.14, hr: 110), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 45..<60 {
+            d.ingest(MotionSample(t: Double(i), altitude: 1.4, motionRMS: 0.01, hr: 115), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .autoClimbing)
+    }
+
+    func testHROnlyAttemptClosesWithQuietFallback() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 30..<42 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.13, hr: 110), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .autoClimbing)
+        for i in 42..<53 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 110), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .resting)
+        XCTAssertEqual(d.finalize().count, 1)
+    }
+
+    func testSnapshotLocalHeightTracksDescentAndClampsAtZero() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: -2, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 30..<45 {
+            d.ingest(MotionSample(t: Double(i), altitude: -2 + Double(i - 30) * 0.1, motionRMS: 0.14, hr: 110), at: start.addingTimeInterval(Double(i)))
+        }
+        let peakHeight = d.snapshot.localHeightM
+        d.ingest(MotionSample(t: 45, altitude: -1.5, motionRMS: 0.10, hr: 110), at: start.addingTimeInterval(45))
+        XCTAssertLessThan(d.snapshot.localHeightM, peakHeight)
+        d.ingest(MotionSample(t: 46, altitude: -2.2, motionRMS: 0.10, hr: 105), at: start.addingTimeInterval(46))
+        XCTAssertEqual(d.snapshot.localHeightM, 0)
+    }
+
+    func testForgottenManualStopAutoClosesExactlyOnce() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<20 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        d.beginManualAttempt(at: start.addingTimeInterval(20))
+        for i in 20..<35 {
+            d.ingest(MotionSample(t: Double(i), altitude: Double(i - 20) * 0.1, motionRMS: 0.15, hr: 120), at: start.addingTimeInterval(Double(i)))
+        }
+        for i in 35..<48 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 100), at: start.addingTimeInterval(Double(i)))
+        }
+        XCTAssertEqual(d.snapshot.state, .resting)
+        XCTAssertEqual(d.liveAttemptCount, 1)
+        d.endManualAttempt(at: start.addingTimeInterval(48))
+        XCTAssertEqual(d.finalize().filter { $0.source == .manual }.count, 1)
+    }
+
+    func testExplicitManualStopIsIdempotent() {
+        let d = AttemptDetector(tunables: .default)
+        d.beginManualAttempt(at: start)
+        for i in 0..<5 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0.2, motionRMS: 0.1, hr: nil), at: start.addingTimeInterval(Double(i)))
+        }
+        d.endManualAttempt(at: start.addingTimeInterval(5))
+        d.endManualAttempt(at: start.addingTimeInterval(6))
+        let attempts = d.finalize()
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertEqual(attempts[0].source, .manual)
+    }
+
+    func testManualStartAndStopBeforeFirstSensorTickIsSafe() {
+        let d = AttemptDetector(tunables: .default)
+        d.beginManualAttempt(at: start)
+        XCTAssertEqual(d.liveAttemptCount, 0)
+        d.endManualAttempt(at: start.addingTimeInterval(0.5))
+        XCTAssertEqual(d.snapshot.state, .resting)
+        XCTAssertEqual(d.liveAttemptCount, 0)
+
+        d.ingest(
+            MotionSample(t: 1, altitude: 0, motionRMS: 0.02, hr: 80),
+            at: start.addingTimeInterval(1)
+        )
+        XCTAssertEqual(d.finalize().count, 0)
     }
 
     /// While a manual attempt is open, a big altitude rise does NOT spawn a

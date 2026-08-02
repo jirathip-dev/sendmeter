@@ -14,5 +14,6 @@ CI, dependency updates, and refactors unless users experience a change.
 
 - Force setup guidance now focuses on measurement equipment and your own reference marks without prescribing exercises or claiming to assess form.
 - Training-load details now open from the ACWR card, with weekly and daily views plus a 28-day activity breakdown.
+- Apple Watch boulder tracking now uses wrist motion, local height, and heart-rate changes to detect attempts and keep the climbing/rest display in sync automatically.
 
 ### Fixed
