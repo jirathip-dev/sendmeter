@@ -17,3 +17,5 @@ CI, dependency updates, and refactors unless users experience a change.
 - Apple Watch boulder tracking now uses wrist motion, local height, and heart-rate changes to detect attempts and keep the climbing/rest display in sync automatically.
 
 ### Fixed
+
+- Bottom sheets on mobile now keep their drag handle reachable while scrolling and respond to a short downward flick.
