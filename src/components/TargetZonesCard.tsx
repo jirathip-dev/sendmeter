@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
   QUALITIES,
   ZONE_INTENSITY,
@@ -14,6 +13,7 @@ import {
   buildPrehabSelection,
   buildWarmupSelection,
   buildZoneSelection,
+  buildZoneSelectionPreservingSides,
   selectedQuality,
   type ZoneSelection,
 } from "../lib/zoneSelection";
@@ -82,7 +82,10 @@ export default function TargetZonesCard({
   onClear,
   unarmedNotice,
 }: Props) {
-  const [alternate, setAlternate] = useState(false);
+  // Side mode belongs to the armed protocol, not local UI state. This keeps
+  // the checkbox honest when the sibling Focus Next card arms a new quality
+  // and gives every recommended-zone entry point one shared value (#408).
+  const alternate = selected?.protocol.alternateSides ?? false;
   // Above the recommended load — the number, the slider fill and the note all
   // switch to the warning hue together (100% IS the recommendation, so it
   // stays neutral).
@@ -149,7 +152,13 @@ export default function TargetZonesCard({
                       return;
                     }
                     onSelect(
-                      buildZoneSelection(model, q.id, tag, alternate, intensityPct),
+                      buildZoneSelectionPreservingSides(
+                        model,
+                        q.id,
+                        tag,
+                        selected,
+                        intensityPct,
+                      ),
                     );
                   }}
                 />
@@ -487,7 +496,6 @@ export default function TargetZonesCard({
                   checked={alternate}
                   disabled={locked || !alternatingReady}
                   onChange={(e) => {
-                    setAlternate(e.target.checked);
                     if (quality)
                       onSelect(
                         buildZoneSelection(model, quality, tag, e.target.checked, intensityPct),
