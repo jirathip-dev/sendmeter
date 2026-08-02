@@ -1,0 +1,426 @@
+import { useEffect, useRef } from "react";
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { presentationForMode } from "../lib/forceExerciseExamples";
+import type {
+  BodyJoint,
+  BodyPose,
+  ForceExerciseExample,
+  Point3,
+} from "../lib/forceExerciseExamples";
+import type { ForceMeasurementMode } from "../lib/forceSetup";
+
+const LIMBS: readonly [BodyJoint, BodyJoint][] = [
+  ["leftShoulder", "leftElbow"],
+  ["leftElbow", "leftWrist"],
+  ["rightShoulder", "rightElbow"],
+  ["rightElbow", "rightWrist"],
+  ["leftHip", "leftKnee"],
+  ["leftKnee", "leftAnkle"],
+  ["rightHip", "rightKnee"],
+  ["rightKnee", "rightAnkle"],
+] as const;
+
+function vector(point: Point3): THREE.Vector3 {
+  return new THREE.Vector3(point[0], point[1], point[2]);
+}
+
+function mixPoint(a: Point3, b: Point3, t: number): Point3 {
+  return [
+    THREE.MathUtils.lerp(a[0], b[0], t),
+    THREE.MathUtils.lerp(a[1], b[1], t),
+    THREE.MathUtils.lerp(a[2], b[2], t),
+  ];
+}
+
+function mixPose(start: BodyPose, end: BodyPose, t: number): BodyPose {
+  return Object.fromEntries(
+    (Object.keys(start) as BodyJoint[]).map((joint) => [
+      joint,
+      mixPoint(start[joint], end[joint], t),
+    ]),
+  ) as unknown as BodyPose;
+}
+
+function midpoint(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 {
+  return a.clone().add(b).multiplyScalar(0.5);
+}
+
+function setSegment(
+  mesh: THREE.Mesh,
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  radius = 0.075,
+): void {
+  const delta = b.clone().sub(a);
+  const length = Math.max(0.001, delta.length());
+  mesh.position.copy(midpoint(a, b));
+  mesh.scale.set(radius, length, radius);
+  mesh.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    delta.normalize(),
+  );
+}
+
+function springPoints(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3[] {
+  const direction = b.clone().sub(a);
+  const length = direction.length();
+  if (length < 0.001) return [a, b];
+  const unit = direction.clone().normalize();
+  const reference = Math.abs(unit.y) < 0.85
+    ? new THREE.Vector3(0, 1, 0)
+    : new THREE.Vector3(1, 0, 0);
+  const normal = new THREE.Vector3().crossVectors(unit, reference).normalize();
+  const binormal = new THREE.Vector3().crossVectors(unit, normal).normalize();
+  const coils = 7;
+  const points: THREE.Vector3[] = [];
+  for (let index = 0; index <= coils * 4; index++) {
+    const t = index / (coils * 4);
+    const angle = t * Math.PI * 2 * coils;
+    const taper = Math.sin(Math.PI * t);
+    points.push(
+      a.clone()
+        .addScaledVector(direction, t)
+        .addScaledVector(normal, Math.cos(angle) * 0.055 * taper)
+        .addScaledVector(binormal, Math.sin(angle) * 0.055 * taper),
+    );
+  }
+  return points;
+}
+
+export default function ForceExerciseScene3D({
+  example,
+  mode,
+}: {
+  example: ForceExerciseExample;
+  mode: ForceMeasurementMode;
+}) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const presentation = presentationForMode(example, mode);
+
+  function resetView() {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    if (!camera || !controls) return;
+    camera.position.copy(vector(example.camera));
+    controls.target.copy(vector(example.cameraTarget));
+    controls.update();
+  }
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    } catch {
+      const fallback = document.createElement("div");
+      fallback.className = "force-exercise-scene-fallback";
+      fallback.textContent =
+        "3D preview unavailable. Follow the written position and force-path cues below.";
+      host.replaceChildren(fallback);
+      return () => fallback.remove();
+    }
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearColor(0x000000, 0);
+    renderer.domElement.setAttribute("role", "img");
+    renderer.domElement.setAttribute(
+      "aria-label",
+      `${example.title}. ${presentation.description}`,
+    );
+    host.append(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(34, 1, 0.05, 50);
+    camera.position.copy(vector(example.camera));
+    cameraRef.current = camera;
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enablePan = false;
+    controls.enableDamping = false;
+    controls.minDistance = 2.4;
+    controls.maxDistance = 8;
+    controls.target.copy(vector(example.cameraTarget));
+    controls.update();
+    controlsRef.current = controls;
+
+    scene.add(new THREE.HemisphereLight(0xf8fbff, 0x26303f, 2.4));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.7);
+    keyLight.position.set(3, 6, 5);
+    scene.add(keyLight);
+    const rimLight = new THREE.DirectionalLight(0x77b8ff, 1.3);
+    rimLight.position.set(-4, 2, -3);
+    scene.add(rimLight);
+
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(2.8, 64),
+      new THREE.MeshStandardMaterial({ color: 0x151b24, roughness: 0.95 }),
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = 0;
+    scene.add(ground);
+    const grid = new THREE.GridHelper(5.2, 16, 0x3d526c, 0x263445);
+    grid.position.y = 0.004;
+    scene.add(grid);
+
+    const bodyMaterial = new THREE.MeshStandardMaterial({
+      color: 0x8d9aaa,
+      roughness: 0.72,
+      metalness: 0.04,
+    });
+    const activeMaterial = new THREE.MeshStandardMaterial({
+      color: 0xf6a23a,
+      roughness: 0.62,
+    });
+    const jointMaterial = new THREE.MeshStandardMaterial({
+      color: 0xb9c4d0,
+      roughness: 0.7,
+    });
+    const equipmentMaterial = new THREE.MeshStandardMaterial({
+      color: 0x41a8ff,
+      roughness: 0.42,
+      metalness: 0.25,
+    });
+    const handleMaterial = new THREE.MeshStandardMaterial({
+      color: 0xe8eef5,
+      roughness: 0.65,
+    });
+    const cableMaterial = new THREE.LineBasicMaterial({ color: 0xd4e6fa });
+    const springMaterial = new THREE.LineBasicMaterial({ color: 0xffb34d });
+    const ghostMaterial = new THREE.MeshBasicMaterial({
+      color: 0x65b5ff,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+    });
+
+    const segmentGeometry = new THREE.CylinderGeometry(1, 1, 1, 14);
+    const jointGeometry = new THREE.SphereGeometry(0.09, 16, 10);
+    const limbMeshes = LIMBS.map(([from, to]) => {
+      const active = from === example.originJoint || to === example.originJoint;
+      const mesh = new THREE.Mesh(
+        segmentGeometry,
+        active ? activeMaterial : bodyMaterial,
+      );
+      scene.add(mesh);
+      return { from, to, mesh };
+    });
+    const spine = new THREE.Mesh(segmentGeometry, bodyMaterial);
+    const shoulderBar = new THREE.Mesh(segmentGeometry, bodyMaterial);
+    const hipBar = new THREE.Mesh(segmentGeometry, bodyMaterial);
+    scene.add(spine, shoulderBar, hipBar);
+
+    const jointMeshes = new Map<BodyJoint, THREE.Mesh>();
+    for (const joint of Object.keys(presentation.startPose) as BodyJoint[]) {
+      const sphere = new THREE.Mesh(jointGeometry, jointMaterial);
+      scene.add(sphere);
+      jointMeshes.set(joint, sphere);
+    }
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.17, 20, 14),
+      new THREE.MeshStandardMaterial({ color: 0xc4a384, roughness: 0.85 }),
+    );
+    scene.add(head);
+
+    const anchor = new THREE.Mesh(
+      new THREE.TorusGeometry(0.11, 0.035, 10, 24),
+      equipmentMaterial,
+    );
+    anchor.position.copy(vector(example.anchor));
+    anchor.rotation.x = Math.PI / 2;
+    scene.add(anchor);
+
+    const sensor = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.23, 0.09),
+      equipmentMaterial,
+    );
+    scene.add(sensor);
+    const handle = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.11, 0.08),
+      handleMaterial,
+    );
+    scene.add(handle);
+
+    const cableBefore = new THREE.Line(new THREE.BufferGeometry(), cableMaterial);
+    const cableAfter = new THREE.Line(new THREE.BufferGeometry(), cableMaterial);
+    const spring = new THREE.Line(new THREE.BufferGeometry(), springMaterial);
+    scene.add(cableBefore, cableAfter, spring);
+
+    const arrow = new THREE.ArrowHelper(
+      new THREE.Vector3(1, 0, 0),
+      new THREE.Vector3(),
+      0.38,
+      0xffb34d,
+      0.13,
+      0.08,
+    );
+    scene.add(arrow);
+
+    const endMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 18, 12),
+      ghostMaterial,
+    );
+    endMarker.position.copy(vector(presentation.endPose[example.originJoint]));
+    endMarker.visible = mode === "movement";
+    scene.add(endMarker);
+
+    const fixedAttachmentMarker = new THREE.Mesh(
+      new THREE.TorusGeometry(0.15, 0.025, 10, 28),
+      new THREE.MeshBasicMaterial({ color: 0x65b5ff }),
+    );
+    fixedAttachmentMarker.position.copy(
+      vector(presentation.startPose[example.attachmentJoint]),
+    );
+    fixedAttachmentMarker.visible = mode === "movement";
+    scene.add(fixedAttachmentMarker);
+
+    if (example.id === "rotator-cuff-supported") {
+      const pad = new THREE.Mesh(
+        new THREE.BoxGeometry(0.46, 0.14, 0.5),
+        new THREE.MeshStandardMaterial({ color: 0x39475a, roughness: 0.9 }),
+      );
+      pad.position.set(0.62, 1.47, 0.02);
+      scene.add(pad);
+    }
+    if (example.id === "hip-rotator-seated") {
+      const seat = new THREE.Mesh(
+        new THREE.BoxGeometry(0.75, 0.13, 0.72),
+        new THREE.MeshStandardMaterial({ color: 0x39475a, roughness: 0.9 }),
+      );
+      seat.position.set(0.58, 0.48, 0);
+      scene.add(seat);
+    }
+
+    const pelvis = (current: BodyPose) => midpoint(
+      vector(current.leftHip),
+      vector(current.rightHip),
+    );
+    const shoulderCenter = (current: BodyPose) => midpoint(
+      vector(current.leftShoulder),
+      vector(current.rightShoulder),
+    );
+
+    function update(current: BodyPose) {
+      for (const { from, to, mesh } of limbMeshes) {
+        setSegment(mesh, vector(current[from]), vector(current[to]));
+      }
+      setSegment(spine, pelvis(current), shoulderCenter(current), 0.24);
+      setSegment(
+        shoulderBar,
+        vector(current.leftShoulder),
+        vector(current.rightShoulder),
+        0.1,
+      );
+      setSegment(hipBar, vector(current.leftHip), vector(current.rightHip), 0.13);
+      for (const [joint, mesh] of jointMeshes) {
+        mesh.position.copy(vector(current[joint]));
+      }
+      const neck = vector(current.neck);
+      const headDirection = neck.clone().sub(pelvis(current)).normalize();
+      head.position.copy(neck).addScaledVector(headDirection, 0.2);
+
+      const attachment = vector(current[example.attachmentJoint]);
+      const anchorPoint = vector(example.anchor);
+      const path = attachment.clone().sub(anchorPoint);
+      const sensorPoint = anchorPoint.clone().addScaledVector(path, 0.28);
+      const springStart = anchorPoint.clone().addScaledVector(path, 0.48);
+      const springEnd = anchorPoint.clone().addScaledVector(path, 0.72);
+      sensor.position.copy(sensorPoint);
+      sensor.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 1, 0),
+        path.clone().normalize(),
+      );
+      handle.position.copy(attachment);
+      cableBefore.geometry.setFromPoints([anchorPoint, springStart]);
+      if (mode === "movement") {
+        spring.visible = true;
+        spring.geometry.setFromPoints(springPoints(springStart, springEnd));
+        cableAfter.geometry.setFromPoints([springEnd, attachment]);
+      } else {
+        spring.visible = false;
+        cableAfter.geometry.setFromPoints([springStart, attachment]);
+      }
+      const pull = anchorPoint.clone().sub(attachment).normalize();
+      arrow.position.copy(attachment);
+      arrow.setDirection(pull);
+    }
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const render = () => renderer.render(scene, camera);
+    controls.addEventListener("change", render);
+    let inView = true;
+    const intersection = new IntersectionObserver(([entry]) => {
+      inView = entry?.isIntersecting ?? true;
+    });
+    intersection.observe(host);
+
+    const resize = new ResizeObserver(() => {
+      const width = Math.max(1, host.clientWidth);
+      const height = Math.max(1, host.clientHeight);
+      renderer.setSize(width, height, false);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      render();
+    });
+    resize.observe(host);
+
+    let frame = 0;
+    const started = performance.now();
+    function animate(now: number) {
+      const cycle = ((now - started) % 6000) / 6000;
+      const outAndBack = cycle < 0.5 ? cycle * 2 : (1 - cycle) * 2;
+      const eased = THREE.MathUtils.smoothstep(outAndBack, 0, 1);
+      update(mixPose(presentation.startPose, presentation.endPose, eased));
+      if (inView && !document.hidden) render();
+      frame = window.requestAnimationFrame(animate);
+    }
+    if (mode === "movement" && !reducedMotion) {
+      frame = window.requestAnimationFrame(animate);
+    } else {
+      const position = mode === "movement" ? 0.5 : 0;
+      update(mixPose(presentation.startPose, presentation.endPose, position));
+      render();
+    }
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resize.disconnect();
+      intersection.disconnect();
+      controls.removeEventListener("change", render);
+      controls.dispose();
+      scene.traverse((object) => {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Line) {
+          object.geometry.dispose();
+          const materials = Array.isArray(object.material)
+            ? object.material
+            : [object.material];
+          materials.forEach((material) => material.dispose());
+        }
+      });
+      renderer.dispose();
+      renderer.domElement.remove();
+      cameraRef.current = null;
+      controlsRef.current = null;
+    };
+  }, [example, mode, presentation]);
+
+  return (
+    <div className="force-exercise-scene-shell">
+      <div ref={hostRef} className="force-exercise-scene" />
+      <div className="force-exercise-scene-badge">
+        {mode === "movement" ? "ATTACHMENT FIXED · ORIGIN MOVES" : "HOLD POSITION"}
+      </div>
+      <button
+        type="button"
+        className="force-exercise-reset glass-pill"
+        onClick={resetView}
+      >
+        Reset view
+      </button>
+      <div className="force-exercise-orbit-hint">Drag to rotate · pinch to zoom</div>
+    </div>
+  );
+}

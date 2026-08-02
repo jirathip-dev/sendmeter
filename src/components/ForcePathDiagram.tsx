@@ -4,19 +4,19 @@ export default function ForcePathDiagram({ mode }: { mode: ForceMeasurementMode 
   const movement = mode === "movement";
   const title = movement ? "Movement set force path" : "Static hold force path";
   const description = movement
-    ? "Fixed anchor, then dynamometer, then a compliant spring, then the handle, all aligned with the pull."
-    : "Fixed anchor, then dynamometer, then the handle or edge, all aligned with the pull.";
+    ? "Example equipment order: rated anchor, force sensor, compliant element, then contact point—all aligned with the force path."
+    : "Example equipment order: rated anchor, force sensor, then contact point—all aligned with the force path.";
   const nodes = movement
     ? [
-        { x: 45, label: "Fixed\nanchor", kind: "anchor" },
+        { x: 45, label: "Rated\nanchor", kind: "anchor" },
         { x: 145, label: "Force\nsensor", kind: "sensor" },
         { x: 245, label: "Spring /\ncompliance", kind: "spring" },
-        { x: 345, label: "Handle", kind: "handle" },
+        { x: 345, label: "Contact\npoint", kind: "handle" },
       ]
     : [
-        { x: 70, label: "Fixed\nanchor", kind: "anchor" },
+        { x: 70, label: "Rated\nanchor", kind: "anchor" },
         { x: 200, label: "Force\nsensor", kind: "sensor" },
-        { x: 330, label: "Handle /\nedge", kind: "handle" },
+        { x: 330, label: "Contact\npoint", kind: "handle" },
       ];
 
   return (
@@ -54,6 +54,20 @@ export default function ForcePathDiagram({ mode }: { mode: ForceMeasurementMode 
         ))}
       </svg>
       <figcaption>{description}</figcaption>
+      <dl className="force-reference-guide">
+        <div>
+          <dt>Stays at its mark</dt>
+          <dd>{movement ? "Resisted contact point and equipment alignment" : "All user-defined setup references"}</dd>
+        </div>
+        <div>
+          <dt>Changes</dt>
+          <dd>{movement ? "Only the user-defined moving reference between its endpoints" : "Force rises while the setup position remains unchanged"}</dd>
+        </div>
+        <div>
+          <dt>Sendmeter measures</dt>
+          <dd>Force through the sensor—not form, joint position, or exercise safety</dd>
+        </div>
+      </dl>
     </figure>
   );
 }
