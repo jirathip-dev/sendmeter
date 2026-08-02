@@ -189,8 +189,9 @@ describe("Force fullscreen coaching activity gate", () => {
     expect(targetZoneCoachActive({ ...base, guided: false, guidedPhase: null })).toBe(true);
   });
 
-  it("coaches only actual guided hold segments", () => {
+  it("coaches only actual guided hold or cadence-movement segments", () => {
     expect(targetZoneCoachActive(base)).toBe(true);
+    expect(targetZoneCoachActive({ ...base, guidedPhase: "move" })).toBe(true);
     for (const guidedPhase of ["prepare", "rest", "switch", "setRest"] as const) {
       expect(targetZoneCoachActive({ ...base, guidedPhase })).toBe(false);
     }

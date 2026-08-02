@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveForce } from "../hooks/useLiveForce";
 import { interruptionNote, recoveredTagSide } from "../hooks/useTindeq";
@@ -23,7 +23,12 @@ import {
   ZONE_INTENSITY,
 } from "../lib/force-curve";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
-import { buildTimeline, holdForSet, presetTargetKg, timelineAt } from "../lib/protocol";
+import {
+  buildTimeline,
+  prescriptionWorkS,
+  presetTargetKg,
+  timelineAt,
+} from "../lib/protocol";
 import { nextLockedCapabilityFit } from "../lib/capabilityFitLock";
 import {
   curveCandidateRecordings,
@@ -32,6 +37,17 @@ import {
   isMeasuredRecording,
 } from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
+import {
+  buildReverseActionTimeline,
+  buildReverseActionSetRecording,
+  buildUnclaimedReverseActionSalvage,
+  completesReverseActionSetAt,
+  persistReverseActionSetOnce,
+  reverseActionSetKey,
+  reverseActionSetWindow,
+  reverseActionTargetBand,
+  type ReverseActionSegment,
+} from "../lib/reverseAction";
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
 import type { GaugeInputs } from "../lib/gaugeInputLock";
 import {
@@ -56,6 +72,7 @@ import type {
   NewTindeqRecording,
   TindeqPreset,
   TindeqRecordingMeta,
+  TindeqSample,
   TindeqSide,
 } from "../types";
 import ForceCurveCard from "./ForceCurveCard";
@@ -112,6 +129,8 @@ interface ForceViewProps {
     typeLabel?: string;
   }) => Promise<boolean>;
 }
+
+type ForceTimelineSegment = ProtocolSegment | ReverseActionSegment;
 
 export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const toast = useToast();
@@ -452,6 +471,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // carries it (+ its set number), so History can treat the run/set as a
   // group and edits can apply to all of it. Null while free-holding.
   const protocolRunIdRef = useRef<string | null>(null);
+  const reverseSetClaimsRef = useRef<Set<string>>(new Set());
+  const reverseSetIdsRef = useRef<Map<string, string>>(new Map());
+  const reverseRunGroupIdRef = useRef<string | null>(null);
   async function saveHoldSlice(
     seg: ProtocolSegment,
     segIdx: number,
@@ -538,6 +560,71 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     }
   }
 
+  /// Save one continuous Reverse Action SET. Completed-set autosave, manual
+  /// Stop and interruption recovery all enter here; the run/set claim is made
+  /// before the first persistence await by `persistReverseActionSetOnce`.
+  async function saveReverseActionSet(
+    set: number,
+    endMsOverride?: number,
+    note = "",
+  ) {
+    const runId = protocolRunIdRef.current;
+    const snapshot = reverseSalvageStateRef.current;
+    const protocol = snapshot.protocol;
+    const runTimeline = snapshot.timeline;
+    if (!runId || !protocol || !runTimeline) return;
+    const targetKg = presetTargetKg(protocol, snapshot.refs, set);
+    const band = reverseActionTargetBand(
+      targetKg,
+      protocol.toleranceMode ?? "percent",
+      protocol.toleranceValue ?? 10,
+    );
+    if (!band) return;
+    const key = reverseActionSetKey(runId, set);
+    let id = reverseSetIdsRef.current.get(key);
+    if (!id) {
+      id = crypto.randomUUID();
+      reverseSetIdsRef.current.set(key, id);
+    }
+    const rec = buildReverseActionSetRecording({
+      id,
+      samples: tindeq.samplesRef.current,
+      timeline: runTimeline,
+      set,
+      physicalEndMs: endMsOverride,
+      protocolShiftS: snapshot.protocolShiftS,
+      targetBand: band,
+      cadenceOutS: protocol.cadenceOutS ?? 3,
+      cadenceReturnS: protocol.cadenceReturnS ?? 3,
+      base: {
+        note,
+        tag: snapshot.tag,
+        side: snapshot.side,
+        groupId:
+          reverseRunGroupIdRef.current ?? snapshot.groupId ?? ensureSession(),
+        protocolRunId: runId,
+        zone: performedQuality(protocol, targetKg, snapshot.refs, set),
+        setupNote: protocol.setupNote ?? "",
+      },
+    });
+    if (!rec) return;
+    const outcome = await persistReverseActionSetOnce(
+      key,
+      reverseSetClaimsRef.current,
+      rec,
+      async (input) => {
+        const saved = await insertRecording(input);
+        outageRef.current = false;
+        setRecordings((list) => [saved, ...list]);
+        setJustSaved(saved);
+      },
+      queueFailedRecording,
+    );
+    if (outcome === "lost") {
+      setListError("Failed to save Reverse Action set");
+    }
+  }
+
   // Stop always saves — the tag was required before Start, so there's nothing
   // to decide here. Guided protocols save PER REP (each hold is already its
   // own recording); a free hold saves the whole pull as one recording.
@@ -585,9 +672,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         // Flush any completed-but-unflushed holds, then a ≥1s partial hold.
         let idx = runTimeline.findIndex((s) => effS < s.startS + s.durS);
         if (idx === -1) idx = runTimeline.length;
+        const reverseSnapshot = reverseSalvageStateRef.current;
+        const reverseTimeline = reverseSnapshot.protocol
+          ? reverseSnapshot.timeline
+          : null;
+        const reverseShiftS = reverseSnapshot.protocolShiftS;
         for (let i = savedThroughRef.current; i < idx; i++) {
           const seg = runTimeline[i]!;
           if (seg.phase === "hold") await saveHoldSlice(seg, i);
+          if (reverseTimeline && completesReverseActionSetAt(reverseTimeline, i)) {
+            await saveReverseActionSet(seg.set);
+          }
         }
         savedThroughRef.current = idx;
         const pos = timelineAt(runTimeline, effS);
@@ -599,6 +694,15 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           endPhysMs - (pos.seg.startS - protoShiftS) * 1000 >= 1000
         ) {
           await saveHoldSlice(pos.seg, idx, endPhysMs);
+        }
+        if (reverseTimeline && pos?.seg.phase === "move") {
+          const window = reverseActionSetWindow(reverseTimeline, pos.seg.set);
+          const physicalSetStartMs = window
+            ? (window.startS - reverseShiftS) * 1000
+            : endPhysMs;
+          if (endPhysMs - physicalSetStartMs >= 1000) {
+            await saveReverseActionSet(pos.seg.set, endPhysMs, note);
+          }
         }
       } finally {
         setSaving(false);
@@ -1069,13 +1173,21 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const activeProtocol: TindeqPreset | null =
     gaugeInputs.preset ?? alternatingPrescription?.protocol ?? armedZone?.protocol ?? null;
   const presetKgSet1 = gaugeInputs.preset ? presetTargetKg(gaugeInputs.preset, presetRefs, 1) : null;
+  const reverseBand =
+    gaugeInputs.preset?.protocolMode === "reverse_action"
+      ? reverseActionTargetBand(
+          presetKgSet1,
+          gaugeInputs.preset.toleranceMode ?? "percent",
+          gaugeInputs.preset.toleranceValue ?? 10,
+        )
+      : null;
   const bandTarget: GaugeTarget | null =
     gaugeInputs.preset && presetKgSet1 != null
       ? {
           kg: presetKgSet1,
-          lowKg: presetKgSet1 * 0.9,
-          highKg: presetKgSet1 * 1.1,
-          workS: holdForSet(gaugeInputs.preset, 1),
+          lowKg: reverseBand?.lowKg ?? presetKgSet1 * 0.9,
+          highKg: reverseBand?.highKg ?? presetKgSet1 * 1.1,
+          workS: prescriptionWorkS(gaugeInputs.preset, 1),
           label: gaugeInputs.preset.name,
         }
       : (armedZone?.target ?? null);
@@ -1153,12 +1265,21 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // 4: `activeProtocol` is itself derived from the LOCKED gauge inputs above,
   // so this is automatically stable for the whole run — one plan, nothing to
   // keep in sync separately.
-  const timeline = activeProtocol
-      ? buildTimeline(activeProtocol, {
-        switchS: 3,
-        prepareS: prepare ? 5 : 0,
-        alternatingHolds: alternatingHoldDurations(alternatingPrescription),
-      })
+  const timeline: ForceTimelineSegment[] | null = activeProtocol
+    ? activeProtocol.protocolMode === "reverse_action"
+      ? buildReverseActionTimeline({
+          reps: activeProtocol.reps,
+          sets: activeProtocol.sets,
+          cadenceOutS: activeProtocol.cadenceOutS ?? 3,
+          cadenceReturnS: activeProtocol.cadenceReturnS ?? 3,
+          restSetsS: activeProtocol.restSetsS,
+          prepareS: activeProtocol.prepareS ?? 5,
+        })
+      : buildTimeline(activeProtocol, {
+          switchS: 3,
+          prepareS: prepare ? 5 : 0,
+          alternatingHolds: alternatingHoldDurations(alternatingPrescription),
+        })
     : null;
 
   // Per-rep recorder: as the measurement clock passes each hold segment,
@@ -1168,13 +1289,112 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // double-saving the ones this effect already wrote.
   const savedThroughRef = useRef(0);
   const wasMeasuringRef = useRef(false);
+  const reverseCompletionClaimRef = useRef(false);
   // Protocol seconds = physical clock (frozen while paused) + Pause/Skip shift.
   const protoTS = (pausedAtS ?? tindeq.elapsedMs / 1000) + protoShiftS;
   const paused = pausedAtS !== null;
+  const reverseSalvageStateRef = useRef<{
+    protocol: TindeqPreset | null;
+    timeline: ReverseActionSegment[] | null;
+    refs: typeof presetRefs;
+    tag: string;
+    side: TindeqSide;
+    groupId: string | null;
+    protocolShiftS: number;
+  }>({
+    protocol: null,
+    timeline: null,
+    refs: presetRefs,
+    tag: "",
+    side: "",
+    groupId: null,
+    protocolShiftS: 0,
+  });
+  useLayoutEffect(() => {
+    reverseSalvageStateRef.current = {
+      protocol:
+        activeProtocol?.protocolMode === "reverse_action" ? activeProtocol : null,
+      timeline:
+        activeProtocol?.protocolMode === "reverse_action"
+          ? (timeline as ReverseActionSegment[])
+          : null,
+      refs: {
+        prKg: presetRefs.prKg,
+        cf: presetRefs.cf,
+        wPrime: presetRefs.wPrime,
+        maxF: presetRefs.maxF,
+        capabilityFit: presetRefs.capabilityFit,
+      },
+      tag: gaugeInputs.pendingTag,
+      side: gaugeInputs.pendingSide,
+      groupId: gaugeSession?.groupId ?? null,
+      protocolShiftS: protoShiftS,
+    };
+  }, [
+    activeProtocol,
+    gaugeInputs.pendingSide,
+    gaugeInputs.pendingTag,
+    gaugeSession,
+    presetRefs.capabilityFit,
+    presetRefs.cf,
+    presetRefs.maxF,
+    presetRefs.prKg,
+    presetRefs.wPrime,
+    protoShiftS,
+    timeline,
+  ]);
+
+  function buildReverseSalvageRecordings(
+    samples: readonly TindeqSample[],
+  ): (NewTindeqRecording & { id: string })[] | null {
+    const snapshot = reverseSalvageStateRef.current;
+    const runId = protocolRunIdRef.current;
+    if (!snapshot.protocol || !snapshot.timeline || !runId) return null;
+    const protocol = snapshot.protocol;
+    const reverseTimeline = snapshot.timeline;
+    return buildUnclaimedReverseActionSalvage({
+      samples,
+      timeline: reverseTimeline,
+      sets: protocol.sets,
+      runId,
+      claims: reverseSetClaimsRef.current,
+      ids: reverseSetIdsRef.current,
+      createId: () => crypto.randomUUID(),
+      protocolShiftS: snapshot.protocolShiftS,
+      cadenceOutS: protocol.cadenceOutS ?? 3,
+      cadenceReturnS: protocol.cadenceReturnS ?? 3,
+      targetBandForSet: (set) =>
+        reverseActionTargetBand(
+          presetTargetKg(protocol, snapshot.refs, set),
+          protocol.toleranceMode ?? "percent",
+          protocol.toleranceValue ?? 10,
+        ),
+      baseForSet: (set) => {
+        const targetKg = presetTargetKg(protocol, snapshot.refs, set);
+        return {
+          note: "Recovered after sign-out",
+          tag: snapshot.tag,
+          side: snapshot.side,
+          groupId: reverseRunGroupIdRef.current ?? snapshot.groupId,
+          protocolRunId: runId,
+          zone: performedQuality(
+            protocol,
+            targetKg,
+            snapshot.refs,
+            set,
+          ),
+          setupNote: protocol.setupNote ?? "",
+        };
+      },
+    });
+  }
   useEffect(() => {
     if (measuring && !wasMeasuringRef.current) {
       savedThroughRef.current = 0;
       savedSegsRef.current = new Set();
+      reverseSetClaimsRef.current = new Set();
+      reverseSetIdsRef.current = new Map();
+      reverseCompletionClaimRef.current = false;
     }
     wasMeasuringRef.current = measuring;
     if (!measuring || !timeline) return;
@@ -1184,12 +1404,37 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     for (let i = savedThroughRef.current; i < idx; i++) {
       const seg = timeline[i]!;
       if (seg.phase === "hold") void saveHoldSlice(seg, i);
+      if (
+        activeProtocol?.protocolMode === "reverse_action" &&
+        completesReverseActionSetAt(timeline as ReverseActionSegment[], i)
+      ) {
+        void saveReverseActionSet(seg.set);
+      }
     }
     if (idx > savedThroughRef.current) savedThroughRef.current = idx;
     // saveHoldSlice is stable enough for this use (reads refs/state at call
     // time); depending on it would re-run every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measuring, timeline, protoTS]);
+
+  useEffect(() => {
+    if (
+      !measuring ||
+      activeProtocol?.protocolMode !== "reverse_action" ||
+      !timeline ||
+      reverseCompletionClaimRef.current
+    ) {
+      return;
+    }
+    const last = timeline.at(-1);
+    if (!last || protoTS < last.startS + last.durS) return;
+    // Claim before calling the async Stop path. A completion tick, emergency
+    // Stop and disconnect can all land together; only one may own the buffer.
+    reverseCompletionClaimRef.current = true;
+    void handleStop();
+    // handleStop reads the current locked run snapshot and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProtocol?.protocolMode, measuring, protoTS, timeline]);
 
   // Pause / Skip during a guided run. Both first FINALIZE an in-progress hold
   // (save the rep-so-far, mark it done) so the recorder never has to slice a
@@ -1210,7 +1455,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     void saveHoldSlice(pos.seg, idx, physNowMs);
   }
   function skipSegment() {
-    if (!measuring || !timeline) return;
+    if (!measuring || !timeline || activeProtocol?.protocolMode === "reverse_action") return;
     const pos = timelineAt(timeline, protoTS);
     if (!pos) return;
     finalizeHoldIfOpen();
@@ -1219,7 +1464,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     setProtoShiftS((s) => s + pos.remaining);
   }
   function togglePause() {
-    if (!measuring) return;
+    if (!measuring || activeProtocol?.protocolMode === "reverse_action") return;
     if (pausedAtS !== null) {
       // Resume: keep protocol time where it froze, then track physical again.
       const physNow = tindeq.elapsedMs / 1000;
@@ -1307,6 +1552,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // throwaway dev accounts, not just hypothetical).
       userId,
       stopInFlight: stopInFlightRef.current,
+      buildSalvageRecordings: buildReverseSalvageRecordings,
     }));
     // setSalvageContext itself is useCallback-stable ([] deps in useTindeq);
     // depending on the whole `tindeq` object instead would re-run this every
@@ -1588,8 +1834,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       <button
         className="btn-primary"
         style={{ marginTop: 10, background: "var(--surface-2)", color: "var(--primary)", border: "1px solid var(--primary)" }}
-        disabled={!activeProtocol || !pendingTag.trim() || runActive}
-        title={!activeProtocol ? "Choose a protocol preset first" : !pendingTag.trim() ? "Add an exercise first" : undefined}
+        disabled={!activeProtocol || activeProtocol.protocolMode === "reverse_action" || !pendingTag.trim() || runActive}
+        title={!activeProtocol ? "Choose a protocol preset first" : activeProtocol.protocolMode === "reverse_action" ? "Reverse Action requires a force trace" : !pendingTag.trim() ? "Add an exercise first" : undefined}
         onClick={() => {
           if (!timeline || !activeProtocol || !pendingTag.trim()) return;
           manualGroupRef.current = crypto.randomUUID();
@@ -2004,12 +2250,15 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           onClearProtocol={clearProtocol}
           canStart={
             !!gaugeInputs.pendingTag &&
+            (activeProtocol?.protocolMode !== "reverse_action" || presetKgSet1 !== null) &&
             !zoneCurvePending &&
             !alternatingReferencesPending &&
             (!alternatingTargetNeedsBoth || alternatingPrescription !== null)
           }
           startBlockedReason={
-            zoneCurvePending
+            activeProtocol?.protocolMode === "reverse_action" && presetKgSet1 === null
+              ? "This Reverse Action target cannot be resolved yet — add the required force reference or choose a fixed kg target."
+            : zoneCurvePending
               ? "Updating this exercise's curve — try Start again in a moment, or tap Clear — free hold to start without a target."
               : alternatingReferencesPending
                 ? "Updating both hands' force references — try Start again in a moment."
@@ -2044,11 +2293,19 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             // New run id for guided runs; free holds stay unstamped (SL-79).
             protocolRunIdRef.current =
               timeline && activeProtocol ? crypto.randomUUID() : null;
+            reverseRunGroupIdRef.current =
+              activeProtocol?.protocolMode === "reverse_action"
+                ? ensureSession()
+                : null;
             void tindeq.start();
             // Lock-screen card for guided runs: hand the whole segment
             // schedule to native up front — the countdown renders from
             // timestamps with no further JS involvement.
-            if (timeline && activeProtocol) {
+            if (
+              timeline &&
+              activeProtocol &&
+              activeProtocol.protocolMode !== "reverse_action"
+            ) {
               // #298 round 6 (finding B3): the LOCKED gaugeInputs.pendingTag —
               // cosmetic (lock-screen label) but the same "read the run's own
               // tag, not whatever's currently typed" rule as everywhere else.
@@ -2059,17 +2316,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
                 // omit it until the native API accepts segment targets.
                 alternatingArmed ? null : (presetKgSet1 ?? bandTarget?.kg ?? null),
                 Date.now(),
-                timeline,
+                timeline as ProtocolSegment[],
               );
             }
           }}
           onMinimize={() => setGaugeMinimized(true)}
         />
       )}
-      {manualOpen && timeline && activeProtocol && (
+      {manualOpen && timeline && activeProtocol && activeProtocol.protocolMode !== "reverse_action" && (
         <ManualForceFullscreen
           name={`${activeProtocol.name} · ${gaugeInputs.pendingTag}`}
-          timeline={timeline}
+          timeline={timeline as ProtocolSegment[]}
           targetKg={(set) => presetTargetKg(activeProtocol, presetRefs, set)}
           onAttempt={async ({ seg, actualDurationMs, externalLoadKg, outcome }) => {
             const groupId = manualGroupRef.current;
