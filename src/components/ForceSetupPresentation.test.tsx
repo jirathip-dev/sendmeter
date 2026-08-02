@@ -4,14 +4,18 @@ import ForcePathDiagram from "./ForcePathDiagram";
 import ForceSetupSummary from "./ForceSetupSummary";
 
 describe("Force setup presentation", () => {
-  it("bundles distinct labelled force-path diagrams for both modes", () => {
+  it("keeps both force-path diagrams equipment-only and explicit about measurement limits", () => {
     const staticDiagram = renderToStaticMarkup(<ForcePathDiagram mode="static" />);
     const movementDiagram = renderToStaticMarkup(<ForcePathDiagram mode="movement" />);
     expect(staticDiagram).toContain("Static hold force path");
-    expect(staticDiagram).toContain("handle or edge");
+    expect(staticDiagram).toContain("contact point");
+    expect(staticDiagram).toContain("All user-defined setup references");
     expect(staticDiagram).not.toContain("Spring /<tspan");
     expect(movementDiagram).toContain("Movement set force path");
-    expect(movementDiagram).toContain("compliant spring");
+    expect(movementDiagram).toContain("compliant element");
+    expect(movementDiagram).toContain("user-defined moving reference");
+    expect(movementDiagram).toContain("not form, joint position, or exercise safety");
+    expect(movementDiagram).not.toMatch(/rotator cuff|hip rotator|block pull/i);
     expect(movementDiagram).toContain('role="img"');
   });
 

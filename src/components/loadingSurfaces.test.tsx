@@ -23,7 +23,8 @@ describe("loading surfaces", () => {
     expect(html).toContain("skeleton-phase-card");
     expect(html).toContain("skeleton-readiness-card");
     expect(html).toContain("skeleton-acwr-card");
-    expect(html).toContain("skeleton-weekly-card");
-    expect(html).toContain("skeleton-daily-card");
+    expect(html).toContain("skeleton-projection-card");
+    expect(html).not.toContain("skeleton-weekly-card");
+    expect(html).not.toContain("skeleton-daily-card");
   });
 });

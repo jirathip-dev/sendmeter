@@ -1,5 +1,5 @@
 import { useSvgScale } from "../hooks/useSvgScale";
-import { parseLocalDate, relativeDayLabel, today } from "../lib/dates";
+import { parseLocalDate, relativeDayLabel } from "../lib/dates";
 import {
   PROJECTION_DAYS,
   projectAcwr,
@@ -7,8 +7,7 @@ import {
   type ProjectedDay,
 } from "../lib/acwrProjection";
 import { ewmaLoadState, getACWRStatus } from "../lib/metrics";
-import { ZONE_COLORS } from "../lib/readinessZones";
-import type { HealthMetric, Phase, Session } from "../types";
+import type { Phase, Session } from "../types";
 import InfoDot from "./InfoDot";
 
 const W = 300;
@@ -21,9 +20,6 @@ const CROSSING_LABEL_HALF_WIDTH = 12;
 interface Props {
   phase: Phase;
   sessions: Session[];
-  /// Most recent health row (may be older than today, may be absent). Passed
-  /// down rather than fetched again — Dashboard already has it.
-  latestReadiness: HealthMetric | null;
 }
 
 /// The plain-language version of the projection: what leaves the band, when.
@@ -166,16 +162,11 @@ export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string
 /// would have to be to keep it in band. It deliberately stops there — it does
 /// not schedule rest or training days, and it never presents readiness as
 /// something that was projected forward.
-export default function AcwrProjectionCard({ phase, sessions, latestReadiness }: Props) {
+export default function AcwrProjectionCard({ phase, sessions }: Props) {
   const projection = projectAcwr(ewmaLoadState(sessions), {
     low: phase.acwrLow,
     high: phase.acwrHigh,
   });
-  const readinessDate = latestReadiness?.date ?? null;
-  const readinessValue = latestReadiness?.readiness ?? null;
-  const readinessColor =
-    (latestReadiness?.zone ? ZONE_COLORS[latestReadiness.zone] : null) ?? "var(--ink-muted)";
-
   return (
     <div className="card">
       <div
@@ -216,47 +207,6 @@ export default function AcwrProjectionCard({ phase, sessions, latestReadiness }:
           )}
         </>
       )}
-
-      {/* Today's readiness, walled off from the projection above: HRV, resting
-          HR and sleep cannot be forecast, so this number is never stepped
-          forward. The divider + the explicit "measured" label are the point. */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          marginTop: 12,
-          paddingTop: 10,
-          borderTop: "1px solid var(--hairline)",
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div className="label-eyebrow">
-            Readiness ·{" "}
-            {readinessDate === null
-              ? "no reading"
-              : readinessDate === today()
-                ? "today"
-                : relativeDayLabel(readinessDate)}
-          </div>
-          <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 2 }}>
-            Measured, not projected
-          </div>
-        </div>
-        <div
-          style={{
-            fontFamily: "Inter, sans-serif",
-            fontSize: 24,
-            fontWeight: 800,
-            letterSpacing: "-0.03em",
-            lineHeight: 1,
-            color: readinessValue === null ? "var(--ink-faint)" : readinessColor,
-          }}
-        >
-          {readinessValue === null ? "—" : Math.round(readinessValue)}
-        </div>
-      </div>
     </div>
   );
 }

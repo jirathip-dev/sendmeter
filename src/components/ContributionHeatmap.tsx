@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useChartHover } from "../hooks/useChartHover";
-import { SESSION_TYPES } from "../constants";
+import { ACTIVITY_COLORS, activityColor, activityLabel } from "../lib/activityTypes";
 import ChartTooltip from "./ChartTooltip";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -11,23 +11,7 @@ const GAP = 2;
 // Each day is colored by its dominant activity type (SL-60); load magnitude
 // modulates the opacity (the 4 GitHub-style intensity levels). Hues stay in the
 // theme scale — cool blues/teals/purples + warm orange/amber, no red or green.
-const TYPE_COLORS: Record<string, string> = {
-  board: "#2E96F0",       // electric blue
-  fingerboard: "#7B83EB", // violet
-  gym: "#5B5FC7",         // indigo
-  outdoor: "#2FB6C0",     // teal
-  arc: "#56C2E6",         // sky
-  antagonist: "#9B6BE0",  // purple
-  campus: "#E5743A",      // orange (high intensity)
-  tindeq: "#E0913D",      // amber
-  auto: "#3DA5F4",        // azure
-  custom: "#8E8E93",      // neutral
-};
-const DEFAULT_TYPE_COLOR = "#8E8E93";
 const LEVEL_ALPHA = [0, 0.34, 0.55, 0.78, 1]; // index by level 0..4
-const TYPE_LABEL: Record<string, string> = Object.fromEntries(
-  SESSION_TYPES.map((t) => [t.id, t.label]),
-);
 
 /// #RRGGBB → rgba() at the given alpha (CSS vars can't take a runtime alpha).
 function withAlpha(hex: string, a: number): string {
@@ -100,13 +84,17 @@ export default function ContributionHeatmap({
   const cellColor = (cell: Cell) =>
     cell.value <= 0
       ? "var(--surface-2)"
-      : withAlpha(TYPE_COLORS[cell.type] ?? DEFAULT_TYPE_COLOR, LEVEL_ALPHA[level(cell.value)]!);
+      : withAlpha(activityColor(cell.type), LEVEL_ALPHA[level(cell.value)]!);
 
   // Activity types that actually appear (for the legend), in the palette order.
   const presentTypes = useMemo(() => {
     const seen = new Set<string>();
     for (const v of values.values()) if (v.total > 0) seen.add(v.type);
-    return Object.keys(TYPE_COLORS).filter((t) => seen.has(t));
+    return Array.from(seen).sort((a, b) => {
+      const ai = Object.keys(ACTIVITY_COLORS).indexOf(a);
+      const bi = Object.keys(ACTIVITY_COLORS).indexOf(b);
+      return (ai < 0 ? Number.MAX_SAFE_INTEGER : ai) - (bi < 0 ? Number.MAX_SAFE_INTEGER : bi);
+    });
   }, [values]);
 
   // Month labels: mark a column when the month of its first (Sunday) cell
@@ -217,7 +205,7 @@ export default function ContributionHeatmap({
                           style={di < 4 ? { bottom: "auto", top: "100%", marginTop: 6 } : undefined}
                         >
                           {cell.value > 0
-                            ? `${cell.key} · ${cell.value} ${unit}${cell.type ? ` · ${TYPE_LABEL[cell.type] ?? cell.type}` : ""}`
+                            ? `${cell.key} · ${cell.value} ${unit}${cell.type ? ` · ${activityLabel(cell.type)}` : ""}`
                             : `${cell.key} · rest`}
                         </ChartTooltip>
                       )}
@@ -249,10 +237,10 @@ export default function ContributionHeatmap({
                   width: 9,
                   height: 9,
                   borderRadius: 2,
-                  background: TYPE_COLORS[t],
+                  background: activityColor(t),
                 }}
               />
-              {TYPE_LABEL[t] ?? t}
+              {activityLabel(t)}
             </span>
           ))}
         </div>

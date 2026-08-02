@@ -517,6 +517,10 @@ textarea.field { resize: none; }
 .force-path-sensor { fill: color-mix(in srgb, var(--primary) 15%, var(--canvas)); stroke: var(--primary); stroke-width: 3; }
 .force-path-label { fill: var(--ink); font-family: Inter, sans-serif; font-weight: 700; font-size: 12px; }
 .force-path-figure figcaption { color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.45; }
+.force-reference-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 10px 0 0; }
+.force-reference-guide > div { padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--canvas); }
+.force-reference-guide dt { color: var(--ink); font-size: var(--t-2xs); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.force-reference-guide dd { margin: 3px 0 0; color: var(--ink-muted); font-size: var(--t-2xs); line-height: 1.4; }
 .force-guide-note, .force-guide-caution { border-radius: 10px; padding: 10px 12px; font-size: var(--t-xs) !important; line-height: 1.5 !important; }
 .force-guide-note { background: color-mix(in srgb, var(--info) 10%, var(--surface-1)); color: var(--ink-muted); }
 .force-guide-note strong { color: var(--ink); }
@@ -558,6 +562,7 @@ textarea.field { resize: none; }
   .force-mode-cards button { min-height: 0; }
   .force-setup-summary.compact { align-items: flex-start; flex-direction: column; }
   .force-device-status { grid-template-columns: 1fr; }
+  .force-reference-guide { grid-template-columns: 1fr; }
 }
 
 /* Desktop: web layout — nav on top, content widens */
@@ -845,21 +850,7 @@ textarea.field { resize: none; }
   border-top: 1px solid var(--hairline);
 }
 .skeleton-stat-row .skeleton-line { flex: 1; max-width: 120px; }
-.skeleton-weekly-card { min-height: 146px; }
-.skeleton-bars {
-  height: 90px; display: flex; align-items: flex-end; gap: 8px;
-  padding-top: 18px;
-}
-.skeleton-bar { flex: 1; border-radius: 4px 4px 2px 2px; }
-.skeleton-bar-short { height: 28%; }
-.skeleton-bar-medium { height: 55%; }
-.skeleton-bar-tall { height: 82%; }
-.skeleton-daily-card { min-height: 118px; }
-.skeleton-heatmap {
-  display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
-  margin-top: 18px;
-}
-.skeleton-heatmap-cell { aspect-ratio: 1.8; border-radius: 3px; }
+.skeleton-projection-card { min-height: 196px; }
 
 /* Error banner with retry */
 .error-banner {
