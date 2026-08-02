@@ -13,6 +13,7 @@ export type TindeqStatus =
   | "idle"
   | "connecting"
   | "connected"
+  | "armed"
   | "measuring";
 
 export interface StoppedRecording {
@@ -52,6 +53,13 @@ export function summarize(samples: TindeqSample[]): StoppedRecording | null {
   };
 }
 
+export function samplesThrough(
+  samples: TindeqSample[],
+  endMs: number | null | undefined,
+): TindeqSample[] {
+  return endMs == null ? samples : samples.filter((sample) => sample.t <= endMs);
+}
+
 /// What ForceView (the tag/side/session owner) knows at the moment this hook
 /// unmounts — supplied via setSalvageContext, consumed only by the
 /// unmount-salvage cleanup below (#106).
@@ -76,7 +84,7 @@ export interface SalvageContext {
 /// condition is independently unit-testable. A single test on this would
 /// have caught a prior, inverted version of this check. `measuring` is OR-ed
 /// with `pendingInterruption` because a mid-measurement BLE drop clears
-/// measuringRef before the deferred stop handler can run — a logout in that
+/// recordingRef before the deferred stop handler can run — a logout in that
 /// same tick must still salvage (#113).
 export function shouldSalvageOnUnmount(params: {
   measuring: boolean;
@@ -178,11 +186,20 @@ export function useTindeq() {
   const connectionRef = useRef<DynamometerConnection | null>(null);
   const samplesRef = useRef<TindeqSample[]>([]);
   const t0Ref = useRef<number | null>(null);
-  const measuringRef = useRef(false);
+  // A Progressor only publishes force after startMeasuring(), so hands-free
+  // arming needs a live sensor stream before the actual recording begins.
+  // Keep transport streaming separate from recording ownership: pre-start
+  // samples drive the trigger UI but must never be saved or salvaged.
+  const streamingRef = useRef(false);
+  const recordingRef = useRef(false);
+  // Claim transport transitions before their first await. A quick double tap
+  // must not send duplicate start/stop commands or create two fake timers.
+  const streamStartInFlightRef = useRef(false);
+  const armCancelInFlightRef = useRef(false);
   // #113: set on a mid-measurement BLE drop, cleared when any stop/start
   // takes ownership of the buffer; OR-ed into the salvage gate so a drop +
   // logout in the same tick still salvages (the disconnect callback clears
-  // measuringRef before the deferred stop handler can run).
+  // recordingRef before the deferred stop handler can run).
   const pendingInterruptionRef = useRef(false);
   const latestRef = useRef({ kg: 0, t: 0 });
   // Running mean of the current pull (sum/count over all samples) — flushed
@@ -238,7 +255,7 @@ export function useTindeq() {
   // everything after it is milliseconds since then (what the DB stores).
   const handleSamples = useCallback(
     (incoming: ForceSample[]) => {
-      if (!measuringRef.current) return;
+      if (!streamingRef.current) return;
       for (const s of incoming) {
         if (t0Ref.current === null) t0Ref.current = s.us;
         const t = (s.us - t0Ref.current) / 1000;
@@ -252,7 +269,8 @@ export function useTindeq() {
   );
 
   const cleanupDevice = useCallback(() => {
-    measuringRef.current = false;
+    streamingRef.current = false;
+    recordingRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
     connectionRef.current = null;
@@ -263,7 +281,7 @@ export function useTindeq() {
   /// can never drift.
   const handleDeviceDropped = useCallback(() => {
     // keep samples so an interrupted recording can still be saved
-    const wasMeasuring = measuringRef.current;
+    const wasMeasuring = recordingRef.current;
     cleanupDevice();
     setStatus("idle");
     setErrorMsg("Device disconnected");
@@ -284,13 +302,13 @@ export function useTindeq() {
     return () => {
       // INVARIANT: wasMeasuring/pendingInterruption/sampleCount MUST be
       // captured here, in this SAME cleanup, BEFORE cleanupDevice() runs —
-      // cleanupDevice() sets measuringRef.current = false, so reading it
+      // cleanupDevice() sets recordingRef.current = false, so reading it
       // after (or from a separate effect that might reorder relative to this
       // one) would always see "not measuring" and silently disable salvage.
       // cleanupDevice() doesn't touch pendingInterruptionRef today, but the
       // same capture-before-cleanup discipline covers it so that never
       // regresses. Don't split this cleanup or reorder these lines.
-      const wasMeasuring = measuringRef.current;
+      const wasMeasuring = recordingRef.current;
       const pendingInterruption = pendingInterruptionRef.current;
       const sampleCount = samplesRef.current.length;
       const connection = connectionRef.current;
@@ -440,12 +458,7 @@ export function useTindeq() {
     }
   }, [runCommand]);
 
-  const start = useCallback(async () => {
-    // A new pull resets samplesRef, so any stale salvage claim on the old
-    // buffer is void (#113).
-    pendingInterruptionRef.current = false;
-    setPendingInterruption(false);
-    setInterruptionContext(null);
+  const resetBuffer = useCallback(() => {
     samplesRef.current = [];
     t0Ref.current = null;
     latestRef.current = { kg: 0, t: 0 };
@@ -454,28 +467,103 @@ export function useTindeq() {
     setPeak(0);
     setAvg(0);
     setElapsedMs(0);
+  }, []);
+
+  const startFakeSamples = useCallback(() => {
+    if (!FAKE_MODE) return;
+    const started = performance.now();
+    fakeTimerRef.current = window.setInterval(() => {
+      const t = performance.now() - started;
+      const kg =
+        Math.max(0, 20 + 15 * Math.sin(t / 900) + 2 * Math.sin(t / 90)) *
+        (t < 500 ? t / 500 : 1);
+      handleSamples([{ us: t * 1000, kg }]);
+    }, 12);
+  }, [handleSamples]);
+
+  const claimNewStream = useCallback(() => {
+    // A new stream resets the old buffer and voids any stale salvage claim.
+    pendingInterruptionRef.current = false;
+    setPendingInterruption(false);
+    setInterruptionContext(null);
+    resetBuffer();
     setErrorMsg(null);
+  }, [resetBuffer]);
+
+  const start = useCallback(async () => {
+    if (streamingRef.current || streamStartInFlightRef.current) return;
+    streamStartInFlightRef.current = true;
+    claimNewStream();
     try {
       await runCommand((c) => c.startMeasuring());
-      measuringRef.current = true;
+      if (!FAKE_MODE && !connectionRef.current) return;
+      streamingRef.current = true;
+      recordingRef.current = true;
       setStatus("measuring");
       startRaf();
-      if (FAKE_MODE) {
-        const started = performance.now();
-        fakeTimerRef.current = window.setInterval(() => {
-          const t = performance.now() - started;
-          const kg =
-            Math.max(0, 20 + 15 * Math.sin(t / 900) + 2 * Math.sin(t / 90)) *
-            (t < 500 ? t / 500 : 1);
-          handleSamples([{ us: t * 1000, kg }]);
-        }, 12);
-      }
+      startFakeSamples();
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "Failed to start");
+    } finally {
+      streamStartInFlightRef.current = false;
     }
-  }, [runCommand, startRaf, handleSamples]);
+  }, [claimNewStream, runCommand, startFakeSamples, startRaf]);
 
-  const stop = useCallback(async (): Promise<StoppedRecording | null> => {
+  const arm = useCallback(async () => {
+    if (streamingRef.current || streamStartInFlightRef.current) return false;
+    streamStartInFlightRef.current = true;
+    claimNewStream();
+    try {
+      await runCommand((c) => c.startMeasuring());
+      if (!FAKE_MODE && !connectionRef.current) return false;
+      streamingRef.current = true;
+      recordingRef.current = false;
+      setStatus("armed");
+      startRaf();
+      startFakeSamples();
+      return true;
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Failed to arm");
+      return false;
+    } finally {
+      streamStartInFlightRef.current = false;
+    }
+  }, [claimNewStream, runCommand, startFakeSamples, startRaf]);
+
+  // Promote an already-streaming armed sensor to a real recording without a
+  // second BLE command. The pre-start samples are discarded synchronously,
+  // before recordingRef claims ownership, so no arming load can leak into the
+  // saved force curve or a disconnect salvage.
+  const beginArmedRecording = useCallback((): boolean => {
+    if (!streamingRef.current || recordingRef.current) return false;
+    resetBuffer();
+    recordingRef.current = true;
+    setStatus("measuring");
+    return true;
+  }, [resetBuffer]);
+
+  const cancelArm = useCallback(async () => {
+    if (
+      !streamingRef.current ||
+      recordingRef.current ||
+      armCancelInFlightRef.current
+    ) return;
+    armCancelInFlightRef.current = true;
+    streamingRef.current = false;
+    stopRaf();
+    clearInterval(fakeTimerRef.current);
+    try {
+      await runCommand((c) => c.stopMeasuring());
+    } catch {
+      // A disconnect while cancelling already stopped the stream.
+    } finally {
+      resetBuffer();
+      setStatus(connectionRef.current || FAKE_MODE ? "connected" : "idle");
+      armCancelInFlightRef.current = false;
+    }
+  }, [resetBuffer, runCommand, stopRaf]);
+
+  const stop = useCallback(async (endMs?: number): Promise<StoppedRecording | null> => {
     // The Stop flow now owns this data (save or queue-on-failure), so the
     // salvage claim must be released — otherwise a later normal logout would
     // queue a duplicate of an already-saved pull (#113).
@@ -484,7 +572,8 @@ export function useTindeq() {
     // Released with the claim (#119). Safe because the recovery save reads the
     // snapshot BEFORE awaiting stop() — see runStop in ForceView.
     setInterruptionContext(null);
-    measuringRef.current = false;
+    streamingRef.current = false;
+    recordingRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
     try {
@@ -493,11 +582,14 @@ export function useTindeq() {
       // device may already be gone; the recording is still valid
     }
     setStatus(connectionRef.current || FAKE_MODE ? "connected" : "idle");
-    const summary = summarize(samplesRef.current);
+    // Hands-free release waits through a grace period before stopping, but
+    // the low-force grace tail is not part of the performed hold.
+    const summary = summarize(samplesThrough(samplesRef.current, endMs));
     if (summary) {
       setCurrent(0);
       setElapsedMs(summary.durationMs);
       setPeak(summary.peakKg);
+      setAvg(summary.avgKg);
     }
     return summary;
   }, [stopRaf, runCommand]);
@@ -546,6 +638,9 @@ export function useTindeq() {
     connect,
     disconnect,
     tare,
+    arm,
+    beginArmedRecording,
+    cancelArm,
     start,
     stop,
     setSalvageContext,
