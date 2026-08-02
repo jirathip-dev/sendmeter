@@ -3,7 +3,7 @@ import { boxStats, type BoxStats } from "../lib/boxplot";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
-import type { TindeqRecordingMeta, TindeqSide } from "../types";
+import type { TindeqRecordingMeta, TindeqSample, TindeqSide } from "../types";
 
 interface Props {
   /// This tag's recordings, in the group's stored (newest-first) order —
@@ -15,7 +15,7 @@ interface Props {
   /// (still loading); an id present with an `[]` value means "fetched,
   /// genuinely no samples" — these render differently below (see
   /// `RepState`, SL-102 #2).
-  samplesById: Map<string, number[]>;
+  samplesById: Map<string, TindeqSample[]>;
 }
 
 /// Per-rep loading state, distinguishing "haven't heard back yet" from
@@ -98,7 +98,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
     if (samples === undefined) return { loaded: false };
     if (samples.length === 0) return { loaded: true, stats: null };
     // boxStats only returns null for empty input, already ruled out above.
-    return { loaded: true, stats: boxStats(samples)! };
+    return { loaded: true, stats: boxStats(samples.map((sample) => sample.kg))! };
   });
   // A completed fetch of empty arrays still counts as "loaded" (SL-102 #2) —
   // otherwise a group whose every rep genuinely has no samples never flips
