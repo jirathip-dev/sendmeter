@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SwiftUI
 import WidgetKit
 
@@ -33,40 +34,90 @@ struct StatusWidgetView: View {
 
     private var readinessText: String { snap.readiness.map(String.init) ?? "—" }
     private var acwrText: String { snap.acwr.map { String(format: "%.2f", $0) } ?? "—" }
+    private var readinessZone: String? { StatusPresentation.readinessZoneLabel(snap.readinessZone) }
+    private var risk: ACWRRiskBand? { StatusPresentation.acwrRiskBand(snap.acwr) }
+    private var inlineText: String {
+        let readiness = readinessZone.map { "R \(readinessText) \($0)" } ?? "R \(readinessText)"
+        let acwr = risk.map { "A \(acwrText) \($0.label)" } ?? "A \(acwrText)"
+        return "\(readiness) · \(acwr)"
+    }
+
+    private var readinessAccessibility: String {
+        guard let readiness = snap.readiness else { return "Readiness, no data" }
+        return "Readiness, \(readiness) out of 100, \(readinessZone ?? "zone unavailable")"
+    }
+
+    private var acwrAccessibility: String {
+        guard snap.acwr != nil, let risk else { return "ACWR, no data" }
+        return "ACWR, \(acwrText), \(risk.label)"
+    }
 
     var body: some View {
         switch family {
         case .accessoryCircular:
-            Gauge(value: Double(snap.readiness ?? 0), in: 0...100) {
-                Text("RDY")
-            } currentValueLabel: {
-                Text(readinessText).font(.system(size: 15, weight: .bold))
-            }
-            .gaugeStyle(.accessoryCircular)
-            .tint(readinessColor(snap.readinessZone))
+            ReadinessRingView(
+                score: snap.readiness,
+                zone: snap.readinessZone,
+                lineWidth: 5,
+                valueFontSize: 15
+            )
+            .padding(3)
 
         case .accessoryCorner:
-            Text(readinessText)
-                .font(.system(size: 17, weight: .bold))
-                .widgetLabel("ACWR \(acwrText)")
+            ReadinessRingView(
+                score: snap.readiness,
+                zone: snap.readinessZone,
+                lineWidth: 5,
+                valueFontSize: 15
+            )
+            .padding(3)
+            .widgetLabel("ACWR \(acwrText) \(risk?.label ?? "No data")")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Readiness and ACWR")
+            .accessibilityValue("\(readinessAccessibility); \(acwrAccessibility)")
 
         case .accessoryInline:
-            Text("Readiness \(readinessText) · ACWR \(acwrText)")
+            Text(inlineText)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Readiness and ACWR")
+                .accessibilityValue("\(readinessAccessibility); \(acwrAccessibility)")
 
         default: // .accessoryRectangular
-            VStack(alignment: .leading, spacing: 2) {
-                Text("SENDMETER")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 4) {
-                    Text(readinessText)
-                        .font(.system(size: 22, weight: .heavy))
+            HStack(spacing: 8) {
+                VStack(spacing: 2) {
+                    ReadinessRingView(
+                        score: snap.readiness,
+                        zone: snap.readinessZone,
+                        lineWidth: 5,
+                        valueFontSize: 16
+                    )
+                    .frame(width: 43, height: 43)
+                    Text(readinessZone ?? (snap.readiness == nil ? "No data" : "No zone"))
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(readinessColor(snap.readinessZone))
-                    Text("readiness").font(.system(size: 11)).foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .accessibilityHidden(true)
                 }
-                Text("ACWR \(acwrText)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(acwrColor(snap.acwrRisk))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("ACWR")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(acwrText)
+                            .font(.system(size: 18, weight: .heavy, design: .rounded))
+                            .monospacedDigit()
+                        Text(risk?.label ?? "No data")
+                            .font(.system(size: 9, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(acwrColor(risk))
+                    .accessibilityHidden(true)
+
+                    ACWRRiskTrackView(value: snap.acwr, bandHeight: 6)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -78,7 +129,7 @@ struct StatusWidget: Widget {
         StaticConfiguration(kind: "SendmeterStatus", provider: StatusProvider()) { entry in
             StatusWidgetView(snap: entry.snap)
                 .containerBackground(.clear, for: .widget)
-                .widgetURL(WidgetRoute.workout)
+                .widgetURL(WidgetRoute.status)
         }
         .configurationDisplayName("Readiness & ACWR")
         .description("Today's readiness score and training-load ratio.")

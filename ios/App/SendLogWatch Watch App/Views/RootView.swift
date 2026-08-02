@@ -7,10 +7,15 @@ enum WatchDest: Hashable {
     case force, workout
 }
 
+enum WatchHomePage: Hashable {
+    case status, actions
+}
+
 struct RootView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(TindeqManager.self) private var tindeq
     @State private var path: [WatchDest] = []
+    @State private var homePage: WatchHomePage = .status
 
     @ViewBuilder
     var body: some View {
@@ -40,7 +45,7 @@ struct RootView: View {
             // attached HERE, to the stack root, and not inside either page:
             // a `.navigationDestination` declared inside a paged TabView is
             // only registered while its page is realized.
-            HomeView()
+            HomeView(selection: $homePage)
                 .navigationDestination(for: WatchDest.self) { dest in
                     switch dest {
                     case .force: ForceGaugeView()
@@ -53,13 +58,14 @@ struct RootView: View {
         .onOpenURL { open($0) }
     }
 
-    /// Routes a complication's deep link (`sendmeter://force|workout`) by
-    /// replacing the stack's path. Setting `path` — rather than driving the
-    /// TabView's selection — is what keeps this working now that the home is a
-    /// paged TabView (#278): the destination is pushed over both pages, so the
-    /// visible page when the link arrives doesn't matter.
+    /// Routes complication deep links. Status first clears any pushed screen
+    /// and selects page one; force/workout replace the stack path and therefore
+    /// work regardless of which home page is currently visible.
     private func open(_ url: URL) {
         switch url.host {
+        case "status":
+            path = []
+            homePage = .status
         case "force": path = [.force]
         case "workout": path = [.workout]
         default: break

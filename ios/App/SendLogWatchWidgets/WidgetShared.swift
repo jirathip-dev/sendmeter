@@ -12,7 +12,7 @@ struct WidgetSnapshot: Codable {
     var readiness: Int?          // 0–100, nil until the iPhone syncs Health
     var readinessZone: String?   // recover | maintain | push
     var acwr: Double?            // acute:chronic training-load ratio
-    var acwrRisk: String?        // low | optimal | high (drives the color)
+    var acwrRisk: String?        // low | optimal | caution | high
 
     // Live workout mirror (Music-style now-playing)
     var workoutActive: Bool
@@ -53,6 +53,7 @@ enum WidgetStore {
 /// these (see .onOpenURL). KEEP IN SYNC across both targets.
 enum WidgetRoute {
     static let scheme = "sendmeter"
+    static let status = URL(string: "\(scheme)://status")!
     static let workout = URL(string: "\(scheme)://workout")!
     static let force = URL(string: "\(scheme)://force")!
 }
