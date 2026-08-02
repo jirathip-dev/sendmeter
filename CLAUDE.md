@@ -40,6 +40,10 @@ alongside each module (`*.test.ts` in `src/lib` and `src/hooks`). The **Swift** 
 
 Always run `npm run typecheck && npm run lint && npm test && npm run build` after web changes.
 
+User-facing changes must add a concise entry to `RELEASE_NOTES.md` under the
+categorized **Unreleased** section. Internal-only work does not need an entry;
+the App Store release workflow is in `docs/app-store-checklist.md`.
+
 ## Local dev environment (issue #95)
 
 **Default to this for all web work** — develop and test against the local stack;
