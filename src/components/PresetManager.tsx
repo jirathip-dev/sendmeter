@@ -15,6 +15,8 @@ import {
   holdsSummary,
   presetTargetKg,
   presetTargetKgRange,
+  prescriptionWorkS,
+  protocolDurationS,
   timelineDurationS,
 } from "../lib/protocol";
 import type { PresetRefs } from "../lib/protocol";
@@ -29,6 +31,11 @@ import ConfirmDialog from "./ConfirmDialog";
 import NumInput from "./NumInput";
 import PresetPlanChart from "./PresetPlanChart";
 import type { TindeqPreset } from "../types";
+import type {
+  ReverseActionToleranceMode,
+  TindeqProtocolMode,
+} from "../types";
+import ReverseActionPresetFields from "./ReverseActionPresetFields";
 
 interface Props {
   selectedId: string | null;
@@ -74,7 +81,11 @@ function QualityBadge({
   hasTarget: boolean;
   refs: PresetRefs;
 }) {
-  const qualities = holdsForSets(preset).map((h, i) =>
+  const qualities = Array.from({ length: preset.sets }, (_, i) =>
+    preset.protocolMode === "reverse_action"
+      ? prescriptionWorkS(preset, i + 1)
+      : holdsForSets(preset)[i]!,
+  ).map((h, i) =>
     classifyZoneLoaded(h, hasTarget ? presetTargetKg(preset, refs, i + 1) : null, refs),
   );
   const q = qualities[0];
@@ -170,6 +181,14 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   const [pctBasis, setPctBasis] = useState<"pr" | "cf">("pr");
   const [pctStep, setPctStep] = useState(0); // +% per set
   const [alternateSides, setAlternateSides] = useState(false);
+  const [protocolMode, setProtocolMode] = useState<TindeqProtocolMode>("hold");
+  const [cadenceOutS, setCadenceOutS] = useState(3);
+  const [cadenceReturnS, setCadenceReturnS] = useState(3);
+  const [toleranceMode, setToleranceMode] =
+    useState<ReverseActionToleranceMode>("percent");
+  const [toleranceValue, setToleranceValue] = useState(10);
+  const [prepareS, setPrepareS] = useState(5);
+  const [setupNote, setSetupNote] = useState("");
   // Issue #143: gate preset delete behind a confirm dialog. Holds the preset
   // being confirmed (need its name for the dialog copy).
   const [confirmDelete, setConfirmDelete] = useState<TindeqPreset | null>(null);
@@ -192,6 +211,13 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
     setPctBasis(p.pctBasis);
     setPctStep(p.pctStep);
     setAlternateSides(p.alternateSides);
+    setProtocolMode(p.protocolMode ?? "hold");
+    setCadenceOutS(p.cadenceOutS ?? 3);
+    setCadenceReturnS(p.cadenceReturnS ?? 3);
+    setToleranceMode(p.toleranceMode ?? "percent");
+    setToleranceValue(p.toleranceValue ?? 10);
+    setPrepareS(p.prepareS ?? 5);
+    setSetupNote(p.setupNote ?? "");
     setAdding(true);
   }
 
@@ -254,6 +280,30 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   // #316 (part 2 of #332/#331): shared between `save()` and the live plan
   // chart so the preview can never disagree with what actually saves.
   function draftPlanPreset(): PlanPreset {
+    if (protocolMode === "reverse_action") {
+      const continuousSetS = reps * (cadenceOutS + cadenceReturnS);
+      return {
+        holdS: Math.max(1, Math.min(600, continuousSetS)),
+        holdsS: null,
+        reps,
+        sets,
+        restRepsS: 0,
+        restSetsS,
+        targetKg: targetMode === "kg" && targetKg > 0 ? targetKg : null,
+        targetPct: targetMode === "pct" && targetPct > 0 ? targetPct : null,
+        pctBasis,
+        pctStep: targetMode === "pct" && targetPct > 0 ? pctStep : 0,
+        targetCurve: targetMode === "curve",
+        alternateSides: false,
+        protocolMode,
+        cadenceOutS,
+        cadenceReturnS,
+        toleranceMode,
+        toleranceValue,
+        prepareS,
+        setupNote: setupNote.trim(),
+      };
+    }
     const { holdBase, holdsS } = deriveHoldsField(varyHolds, holdS, holds, sets);
     return {
       holdS: holdBase,
@@ -268,10 +318,21 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
       pctStep: targetMode === "pct" && targetPct > 0 ? pctStep : 0,
       targetCurve: targetMode === "curve",
       alternateSides,
+      protocolMode: "hold",
+      cadenceOutS: 3,
+      cadenceReturnS: 3,
+      toleranceMode: "percent",
+      toleranceValue: 10,
+      prepareS: 5,
+      setupNote: "",
     };
   }
 
   async function save() {
+    if (protocolMode === "reverse_action" && targetMode === "off") {
+      setError("Reverse Action needs a target load or prescription.");
+      return;
+    }
     setSaving(true);
     setError(null);
     const draft = draftPlanPreset();
@@ -335,8 +396,8 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
 
       {presets.length === 0 && !adding && (
         <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)", marginBottom: 10, lineHeight: 1.5 }}>
-          Save a hang protocol (hold · reps · sets · rest) — selecting one runs
-          a guided HOLD/REST timer on the gauge.
+          Save a hold or Reverse Action protocol — selecting one runs its guided
+          timer on the gauge.
         </div>
       )}
 
@@ -414,9 +475,17 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 <QualityBadge preset={p} hasTarget={hasTarget} refs={presetRefs} />
               </div>
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
-                hold {holdsSummary(p)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
-                {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total{" "}
-                {fmt(timelineDurationS(buildTimeline(p, { switchS: 3 })))}
+                {p.protocolMode === "reverse_action" ? (
+                  <>
+                    Reverse Action · {p.cadenceOutS ?? 3}s out / {p.cadenceReturnS ?? 3}s return · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · {fmt(protocolDurationS(p))} total
+                  </>
+                ) : (
+                  <>
+                    hold {holdsSummary(p)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
+                    {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total{" "}
+                    {fmt(timelineDurationS(buildTimeline(p, { switchS: 3 })))}
+                  </>
+                )}
                 {p.targetCurve ? (
                   <span style={{ color: "var(--success)" }}>
                     {" "}
@@ -441,6 +510,11 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 )}
                 {p.alternateSides && (
                   <span style={{ color: "var(--warning)" }}> · L⇄R</span>
+                )}
+                {p.protocolMode === "reverse_action" && (
+                  <span style={{ color: "var(--info)" }}>
+                    {" "}· ±{p.toleranceValue ?? 10}{p.toleranceMode === "kg" ? " kg" : "%"}
+                  </span>
                 )}
               </div>
             </div>
@@ -509,44 +583,76 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
             className="field"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Repeaters 7:3"
+            placeholder={protocolMode === "reverse_action" ? "Reverse Action 3:3" : "Repeaters 7:3"}
           />
-          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-            <NumField label="Hold s" value={holdS} onChange={setHoldS} min={1} max={600} />
-            <NumField label="Reps" value={reps} onChange={setReps} min={1} max={50} />
-            <NumField label="Sets" value={sets} onChange={setSets} min={1} max={20} />
+          <span className="field-label">Protocol</span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {(
+              [
+                ["hold", "Hold / hang"],
+                ["reverse_action", "Reverse Action"],
+              ] as const
+            ).map(([mode, label]) => (
+              <button
+                key={mode}
+                className="tag"
+                onClick={() => {
+                  setProtocolMode(mode);
+                  if (mode === "reverse_action" && targetMode === "off") {
+                    setTargetMode("kg");
+                    if (targetKg <= 0) setTargetKg(20);
+                  }
+                }}
+                style={{
+                  background: protocolMode === mode ? "var(--primary)" : "var(--surface-1)",
+                  color: protocolMode === mode ? "#ffffff" : "var(--ink-muted)",
+                  border: `1px solid ${protocolMode === mode ? "var(--primary)" : "var(--border)"}`,
+                  cursor: "pointer",
+                  fontFamily: "Inter, sans-serif",
+                }}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          <label
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginTop: 10,
-              fontSize: "var(--t-sm)",
-              color: "var(--ink-muted)",
-              cursor: "pointer",
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={varyHolds}
-              onChange={(e) => setVaryHolds(e.target.checked)}
-            />
-            Vary hold per set
-          </label>
-          {varyHolds && (
-            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-              {/* Derived, not stored: seeded from `holds[i]` when the user has
+          {protocolMode === "hold" ? (
+            <>
+              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                <NumField label="Hold s" value={holdS} onChange={setHoldS} min={1} max={600} />
+                <NumField label="Reps" value={reps} onChange={setReps} min={1} max={50} />
+                <NumField label="Sets" value={sets} onChange={setSets} min={1} max={20} />
+              </div>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 10,
+                  fontSize: "var(--t-sm)",
+                  color: "var(--ink-muted)",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={varyHolds}
+                  onChange={(e) => setVaryHolds(e.target.checked)}
+                />
+                Vary hold per set
+              </label>
+              {varyHolds && (
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  {/* Derived, not stored: seeded from `holds[i]` when the user has
                   typed that slot, else from the base `holdS` — so raising
                   `sets` reseeds the new slots from `holdS` for free, with no
                   effect keyed on `sets`. Same `deriveHoldsField` the save path
                   uses, just reading `.resolved`. */}
-              {deriveHoldsField(varyHolds, holdS, holds, sets).resolved.map((h, i) => (
-                <NumField
-                  key={i}
-                  label={`Set ${i + 1}`}
-                  value={h}
-                  onChange={(v) => {
+                  {deriveHoldsField(varyHolds, holdS, holds, sets).resolved.map((h, i) => (
+                    <NumField
+                      key={i}
+                      label={`Set ${i + 1}`}
+                      value={h}
+                      onChange={(v) => {
                     // Functional updater reading `prev`, not the render-closure
                     // `holds` (CLAUDE.md's stale-closure rule) — `commitHoldEdit`
                     // preserves any slots typed while `sets` was higher, leaves
@@ -556,29 +662,57 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                     // fires this on every blur, even a focus+blur with no edit
                     // (#332 round 6 finding b), which would otherwise freeze the
                     // slot at whatever `holdS` resolved to right then.
-                    setHolds((prev) => commitHoldEdit(prev, i, v, h));
-                  }}
-                  min={1}
-                  max={600}
-                />
-              ))}
-            </div>
+                        setHolds((prev) => commitHoldEdit(prev, i, v, h));
+                      }}
+                      min={1}
+                      max={600}
+                    />
+                  ))}
+                </div>
+              )}
+              <PresetPlanChart preset={draftPlanPreset()} refs={presetRefs} />
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <NumField label="Rest / rep s" value={restRepsS} onChange={setRestRepsS} min={0} max={600} />
+                <NumField label="Rest / set s" value={restSetsS} onChange={setRestSetsS} min={0} max={1200} />
+              </div>
+            </>
+          ) : (
+            <ReverseActionPresetFields
+              reps={reps}
+              sets={sets}
+              cadenceOutS={cadenceOutS}
+              cadenceReturnS={cadenceReturnS}
+              restSetsS={restSetsS}
+              prepareS={prepareS}
+              toleranceMode={toleranceMode}
+              toleranceValue={toleranceValue}
+              setupNote={setupNote}
+              onReps={setReps}
+              onSets={setSets}
+              onCadenceOutS={setCadenceOutS}
+              onCadenceReturnS={setCadenceReturnS}
+              onRestSetsS={setRestSetsS}
+              onPrepareS={setPrepareS}
+              onToleranceMode={setToleranceMode}
+              onToleranceValue={setToleranceValue}
+              onSetupNote={setSetupNote}
+            />
           )}
-          <PresetPlanChart preset={draftPlanPreset()} refs={presetRefs} />
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <NumField label="Rest / rep s" value={restRepsS} onChange={setRestRepsS} min={0} max={600} />
-            <NumField label="Rest / set s" value={restSetsS} onChange={setRestSetsS} min={0} max={1200} />
-          </div>
           {/* Target load — how the band on the live gauge is set. */}
           <span className="field-label">Target load</span>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {(
-              [
-                ["off", "None"],
-                ["kg", "Fixed kg"],
-                ["pct", "% of…"],
-                ["curve", "Auto (curve)"],
-              ] as const
+            {(protocolMode === "reverse_action"
+              ? ([
+                  ["kg", "Fixed kg"],
+                  ["pct", "% of…"],
+                  ["curve", "Auto (curve)"],
+                ] as const)
+              : ([
+                  ["off", "None"],
+                  ["kg", "Fixed kg"],
+                  ["pct", "% of…"],
+                  ["curve", "Auto (curve)"],
+                ] as const)
             ).map(([m, label]) => (
               <button
                 key={m}
@@ -654,21 +788,27 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
 
           {targetMode === "curve" && (
             <>
-              <span className="field-label">{curveCopy.label}</span>
-              <input
-                type="range"
-                min={3}
-                max={240}
-                value={holdS}
-                onChange={(e) => setHoldS(Number(e.target.value))}
-                style={{ width: "100%", accentColor: "var(--primary)" }}
-              />
+              {protocolMode === "hold" && (
+                <>
+                  <span className="field-label">{curveCopy.label}</span>
+                  <input
+                    type="range"
+                    min={3}
+                    max={240}
+                    value={holdS}
+                    onChange={(e) => setHoldS(Number(e.target.value))}
+                    style={{ width: "100%", accentColor: "var(--primary)" }}
+                  />
+                </>
+              )}
               <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
-                {curveCopy.description}
+                {protocolMode === "reverse_action"
+                  ? `Auto curve: target the force sustainable for one continuous ${prescriptionWorkS(draftPlanPreset(), 1)}s movement set.`
+                  : curveCopy.description}
               </div>
             </>
           )}
-          <label
+          {protocolMode === "hold" && <label
             style={{
               display: "flex",
               alignItems: "center",
@@ -685,7 +825,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               onChange={(e) => setAlternateSides(e.target.checked)}
             />
             Alternate left ⇄ right each rep (otherwise uses the selected side)
-          </label>
+          </label>}
           <div style={{ marginTop: 14 }}>
             <button className="btn-primary" disabled={saving} onClick={() => void save()}>
               {saving ? "Saving…" : editingId ? "Save Changes" : "Save Preset"}

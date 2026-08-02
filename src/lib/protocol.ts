@@ -142,9 +142,23 @@ export function commitHoldEdit(
 /// rows. Alternating timelines can run longer; use timelineDurationS for
 /// the exact figure.
 export function protocolDurationS(p: TindeqPreset): number {
+  if (p.protocolMode === "reverse_action") {
+    const setWork =
+      p.reps * ((p.cadenceOutS ?? 3) + (p.cadenceReturnS ?? 3));
+    return p.sets * setWork + (p.sets - 1) * p.restSetsS;
+  }
   const holdWork = holdsForSets(p).reduce((sum, h) => sum + p.reps * h, 0);
   const setWork = holdWork + p.sets * (p.reps - 1) * p.restRepsS;
   return setWork + (p.sets - 1) * p.restSetsS;
+}
+
+/// Duration the target prescription must be sustainable for. A normal preset
+/// targets one hold; Reverse Action targets the whole continuous movement set.
+export function prescriptionWorkS(p: PlanPreset, set: number): number {
+  if (p.protocolMode === "reverse_action") {
+    return p.reps * ((p.cadenceOutS ?? 3) + (p.cadenceReturnS ?? 3));
+  }
+  return holdForSet(p, set);
 }
 
 /// The target load for a given set: %-of-PR mode ramps per set
@@ -174,7 +188,7 @@ export function presetTargetKg(
   // (a per-set hold list moves the curve reference set-by-set, same as the
   // %-of-PR ramp below moves the load).
   if (p.targetCurve) {
-    const h = holdForSet(p, set);
+    const h = prescriptionWorkS(p, set);
     const f = predictCapability({ capabilityFit: refs.capabilityFit ?? undefined }, h);
     return f == null ? null : Math.round(f * 10) / 10;
   }
@@ -345,16 +359,16 @@ export function buildTimeline(
   return segs;
 }
 
-export function timelineDurationS(segs: ProtocolSegment[]): number {
+export function timelineDurationS(segs: { startS: number; durS: number }[]): number {
   const last = segs[segs.length - 1];
   return last ? last.startS + last.durS : 0;
 }
 
 /// Where the protocol is at `t` seconds after Start. Null = done.
-export function timelineAt(
-  segs: ProtocolSegment[],
+export function timelineAt<T extends { startS: number; durS: number }>(
+  segs: T[],
   t: number,
-): TimelinePosition | null {
+): { seg: T; remaining: number } | null {
   for (const seg of segs) {
     if (t < seg.startS + seg.durS) {
       return { seg, remaining: seg.startS + seg.durS - Math.max(t, seg.startS) };

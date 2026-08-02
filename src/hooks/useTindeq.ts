@@ -6,7 +6,11 @@ import {
 import type { DynamometerConnection, ForceSample } from "../lib/dynamometer";
 import { reportPersistFailure } from "../lib/lostRecordings";
 import { persistRecording } from "../lib/recordingQueue";
-import type { TindeqSample, TindeqSide } from "../types";
+import type {
+  NewTindeqRecording,
+  TindeqSample,
+  TindeqSide,
+} from "../types";
 
 export type TindeqStatus =
   | "unsupported"
@@ -78,6 +82,16 @@ export interface SalvageContext {
   /// — that path already owns saving (or queuing, on failure) this data, so
   /// the salvage cleanup must stand down rather than double-save it.
   stopInFlight: boolean;
+  /// A protocol owner may provide self-describing synchronous salvage rows.
+  /// Called only after the unmount gate passes, with the still-live raw buffer.
+  /// Reverse Action uses this to keep its current set/markers/metrics instead
+  /// of degrading the whole run to one free-hold-shaped blob.
+  /// `null` means "not this protocol" and enables generic salvage; an empty
+  /// array means the protocol owned the buffer but no set had started long
+  /// enough to save, so prep/rest samples must not become a fake free hold.
+  buildSalvageRecordings?: (
+    samples: readonly TindeqSample[],
+  ) => (NewTindeqRecording & { id: string })[] | null;
 }
 
 /// Pure gate for the unmount-salvage cleanup — pulled out so the exact
@@ -330,6 +344,7 @@ export function useTindeq() {
         side: "" as TindeqSide,
         groupId: null,
         stopInFlight: false,
+        buildSalvageRecordings: undefined,
       };
       const userId: string | null = registered?.userId ?? null;
       if (
@@ -353,8 +368,17 @@ export function useTindeq() {
       // into IndexedDB by `absorbSyncLane` on the next foreground. Do not
       // "simplify" this to the async path — see the policy block in
       // recordingQueue.ts.
-      const result = persistRecording(
-        {
+      let specialized: (NewTindeqRecording & { id: string })[] | null = null;
+      try {
+        specialized = ctx.buildSalvageRecordings?.(samplesRef.current) ?? null;
+      } catch {
+        // A protocol-specific builder must never turn a recoverable raw buffer
+        // into total loss. Fall back to the established generic salvage row.
+      }
+      const salvageRows =
+        specialized !== null
+          ? specialized
+          : [{
           id: crypto.randomUUID(),
           durationMs: summary.durationMs,
           peakKg: summary.peakKg,
@@ -375,13 +399,16 @@ export function useTindeq() {
           // performed quality to record. It falls back to inference.
           zone: null,
           samples: summary.samples,
-        },
-        // null only via the no-context fallback above — a REGISTERED
-        // context always carries the real signed-in user id, so a pull
-        // captured under one account can never drain into another
-        // (drainQueue attempts null-user entries for ANY signed-in user).
-        userId,
-      );
+        }];
+      for (const row of salvageRows) {
+        const result = persistRecording(
+          row,
+          // null only via the no-context fallback above — a REGISTERED
+          // context always carries the real signed-in user id, so a pull
+          // captured under one account can never drain into another
+          // (drainQueue attempts null-user entries for ANY signed-in user).
+          userId,
+        );
       // #264: this is the ONE path that can lose a recording with nothing
       // the user can do about it — no toast/UI is reachable from an unmount
       // cleanup, and the buffer is gone the moment this function returns.
@@ -389,7 +416,8 @@ export function useTindeq() {
       // we can see it happened, plus a durable one-shot notice that App.tsx
       // surfaces on the next mount/foreground so the user learns of the loss
       // rather than discovering a missing rep in History weeks later.
-      reportPersistFailure("salvage-on-unmount", result, summary.samples.length);
+        reportPersistFailure("salvage-on-unmount", result, row.samples.length);
+      }
     };
   }, [cleanupDevice]);
 

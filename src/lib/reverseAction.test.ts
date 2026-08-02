@@ -2,10 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { NewTindeqRecording, TindeqSample } from "../types";
 import {
   buildReverseActionTimeline,
+  buildReverseActionSetRecording,
+  buildUnclaimedReverseActionSalvage,
   cadenceMarkersForSet,
+  completesReverseActionSetAt,
   parseCadenceMarkers,
   parseReverseActionSetMetrics,
   persistReverseActionSetOnce,
+  reverseActionCadenceKey,
   reverseActionSetKey,
   reverseActionSetMetrics,
   reverseActionSetWindow,
@@ -46,16 +50,16 @@ function recording(id = "set-1"): NewTindeqRecording & { id: string } {
 describe("Reverse Action cadence", () => {
   it("expands prepare, continuous OUT/RETURN reps, and inter-set rest", () => {
     expect(buildReverseActionTimeline(prescription)).toEqual([
-      { phase: "prepare", direction: null, rep: 1, set: 1, startS: 0, durS: 5 },
-      { phase: "move", direction: "out", rep: 1, set: 1, startS: 5, durS: 3 },
-      { phase: "move", direction: "return", rep: 1, set: 1, startS: 8, durS: 2 },
-      { phase: "move", direction: "out", rep: 2, set: 1, startS: 10, durS: 3 },
-      { phase: "move", direction: "return", rep: 2, set: 1, startS: 13, durS: 2 },
-      { phase: "setRest", direction: null, rep: 2, set: 1, startS: 15, durS: 10 },
-      { phase: "move", direction: "out", rep: 1, set: 2, startS: 25, durS: 3 },
-      { phase: "move", direction: "return", rep: 1, set: 2, startS: 28, durS: 2 },
-      { phase: "move", direction: "out", rep: 2, set: 2, startS: 30, durS: 3 },
-      { phase: "move", direction: "return", rep: 2, set: 2, startS: 33, durS: 2 },
+      { phase: "prepare", side: null, direction: null, rep: 1, set: 1, startS: 0, durS: 5 },
+      { phase: "move", side: null, direction: "out", rep: 1, set: 1, startS: 5, durS: 3 },
+      { phase: "move", side: null, direction: "return", rep: 1, set: 1, startS: 8, durS: 2 },
+      { phase: "move", side: null, direction: "out", rep: 2, set: 1, startS: 10, durS: 3 },
+      { phase: "move", side: null, direction: "return", rep: 2, set: 1, startS: 13, durS: 2 },
+      { phase: "setRest", side: null, direction: null, rep: 2, set: 1, startS: 15, durS: 10 },
+      { phase: "move", side: null, direction: "out", rep: 1, set: 2, startS: 25, durS: 3 },
+      { phase: "move", side: null, direction: "return", rep: 1, set: 2, startS: 28, durS: 2 },
+      { phase: "move", side: null, direction: "out", rep: 2, set: 2, startS: 30, durS: 3 },
+      { phase: "move", side: null, direction: "return", rep: 2, set: 2, startS: 33, durS: 2 },
     ]);
   });
 
@@ -72,6 +76,11 @@ describe("Reverse Action cadence", () => {
       { tMs: 5000, rep: 2, direction: "out" },
       { tMs: 8000, rep: 2, direction: "return" },
     ]);
+    expect(completesReverseActionSetAt(timeline, 4)).toBe(true);
+    expect(completesReverseActionSetAt(timeline, 3)).toBe(false);
+    expect(reverseActionCadenceKey(timeline[1]!)).not.toBe(
+      reverseActionCadenceKey(timeline[2]!),
+    );
   });
 
   it("slices one continuous raw trace per set and omits unreached markers", () => {
@@ -89,6 +98,49 @@ describe("Reverse Action cadence", () => {
       { tMs: 5000, rep: 2, direction: "out" },
     ]);
     expect(partial?.plannedDurationMs).toBe(10_000);
+  });
+
+  it("builds one self-describing recording row for a complete set", () => {
+    const timeline = buildReverseActionTimeline({ ...prescription, sets: 1 });
+    const built = buildReverseActionSetRecording({
+      id: "set-1",
+      samples: [
+        { t: 5_000, kg: 20 },
+        { t: 10_000, kg: 20 },
+        { t: 15_000, kg: 20 },
+      ],
+      timeline,
+      set: 1,
+      targetBand: { kg: 20, lowKg: 18, highKg: 22 },
+      cadenceOutS: 3,
+      cadenceReturnS: 2,
+      base: {
+        note: "",
+        tag: "Reverse curl",
+        side: "left",
+        groupId: "group-1",
+        protocolRunId: "run-1",
+        zone: "strength",
+        setupNote: "red spring",
+      },
+    });
+    expect(built).toMatchObject({
+      id: "set-1",
+      durationMs: 10_000,
+      protocolMode: "reverse_action",
+      setNo: 1,
+      targetKg: 20,
+      cadenceMarkers: [
+        { tMs: 0, rep: 1, direction: "out" },
+        { tMs: 3000, rep: 1, direction: "return" },
+        { tMs: 5000, rep: 2, direction: "out" },
+        { tMs: 8000, rep: 2, direction: "return" },
+      ],
+      setupNote: "red spring",
+      plannedDurationMs: 10_000,
+      actualDurationMs: 10_000,
+    });
+    expect(built?.setMetrics?.cadenceAdherencePct).toBe(100);
   });
 });
 
@@ -182,6 +234,52 @@ describe("Reverse Action stored JSON guards", () => {
 });
 
 describe("Reverse Action exactly-once persistence", () => {
+  it("sign-out salvage skips an autosave claim and claims the partial current set once", () => {
+    const timeline = buildReverseActionTimeline(prescription);
+    const claims = new Set([reverseActionSetKey("run-1", 1)]);
+    const ids = new Map<string, string>();
+    let nextId = 0;
+    const samples = Array.from({ length: 59 }, (_, index) => ({
+      t: index * 500,
+      kg: 20,
+    }));
+    const build = () =>
+      buildUnclaimedReverseActionSalvage({
+        samples,
+        timeline,
+        sets: 2,
+        runId: "run-1",
+        claims,
+        ids,
+        createId: () => `id-${++nextId}`,
+        protocolShiftS: 0,
+        cadenceOutS: 3,
+        cadenceReturnS: 2,
+        targetBandForSet: () => ({ kg: 20, lowKg: 18, highKg: 22 }),
+        baseForSet: () => ({
+          note: "Recovered after sign-out",
+          tag: "Reverse curl",
+          side: "left",
+          groupId: "group-1",
+          protocolRunId: "run-1",
+          zone: "strength",
+          setupNote: "",
+        }),
+      });
+
+    const first = build();
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ setNo: 2, id: "id-1" });
+    expect(first[0]!.setMetrics?.cadenceAdherencePct).toBe(40);
+    expect(build()).toEqual([]);
+    expect(claims).toEqual(
+      new Set([
+        reverseActionSetKey("run-1", 1),
+        reverseActionSetKey("run-1", 2),
+      ]),
+    );
+  });
+
   it("claims before the first await so concurrent stop causes save one row", async () => {
     const claims = new Set<string>();
     const persist = vi.fn(async () => {
