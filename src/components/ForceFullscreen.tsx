@@ -24,6 +24,13 @@ import {
 import type { PresetRefs, ProtocolSegment } from "../lib/protocol";
 import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
 import { DEFAULT_HANDS_FREE_FORCE_CONFIG } from "../lib/handsFreeForce";
+import {
+  idleTargetZoneCoach,
+  stepTargetZoneCoach,
+  targetZoneCoachActive,
+  type TargetZone,
+  type TargetZoneCue,
+} from "../lib/targetZoneCoach";
 import type { TindeqPreset, TindeqSide } from "../types";
 import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
@@ -69,6 +76,8 @@ interface Props {
   saving: boolean;
   handsFree: boolean;
   onToggleHandsFree: (on: boolean) => void;
+  targetCoach: boolean;
+  onToggleTargetCoach: (on: boolean) => void;
   onArm: () => void;
   onCancelArm: () => void;
   /// Get-ready countdown before the first hold (persisted preference).
@@ -93,6 +102,63 @@ const PHASE_META = {
   rest: { label: "REST", color: "var(--primary)" },
   setRest: { label: "SET REST", color: "var(--info)" },
 } as const;
+
+interface CoachDisplay {
+  active: boolean;
+  zone: TargetZone;
+  lowKg: number | null;
+  highKg: number | null;
+}
+
+const IDLE_COACH_DISPLAY: CoachDisplay = {
+  active: false,
+  zone: "unknown",
+  lowKg: null,
+  highKg: null,
+};
+
+const COACH_PRESENTATION: Record<
+  TargetZone,
+  { label: string; symbol: string; color: string }
+> = {
+  unknown: { label: "COACHING…", symbol: "•", color: "var(--ink-muted)" },
+  below: { label: "BELOW", symbol: "↓", color: "var(--info)" },
+  "in-zone": { label: "IN ZONE", symbol: "✓", color: "var(--success)" },
+  above: { label: "ABOVE", symbol: "↑", color: "var(--danger)" },
+};
+
+function playTargetZoneCue(ctx: AudioContext | null, cue: TargetZoneCue) {
+  if (!ctx) return;
+  const tones =
+    cue === "below"
+      ? [
+          { hz: 360, offsetS: 0 },
+          { hz: 260, offsetS: 0.09 },
+        ]
+      : cue === "above"
+        ? [
+            { hz: 1_120, offsetS: 0 },
+            { hz: 1_420, offsetS: 0.09 },
+          ]
+        : [{ hz: 720, offsetS: 0 }];
+  try {
+    for (const tone of tones) {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "triangle";
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.frequency.value = tone.hz;
+      const startsAt = ctx.currentTime + tone.offsetS;
+      gain.gain.setValueAtTime(cue === "in-zone" ? 0.14 : 0.2, startsAt);
+      gain.gain.exponentialRampToValueAtTime(0.001, startsAt + 0.07);
+      oscillator.start(startsAt);
+      oscillator.stop(startsAt + 0.075);
+    }
+  } catch {
+    // Audio is optional; the visible state remains the source of truth.
+  }
+}
 
 function fmt(sec: number): string {
   const s = Math.max(0, Math.ceil(sec));
@@ -121,6 +187,8 @@ export default function ForceFullscreen({
   saving,
   handsFree,
   onToggleHandsFree,
+  targetCoach,
+  onToggleTargetCoach,
   onArm,
   onCancelArm,
   prepare,
@@ -150,7 +218,7 @@ export default function ForceFullscreen({
   function primeAudio() {
     try {
       if (!audioRef.current) audioRef.current = new AudioContext();
-      void audioRef.current.resume();
+      void audioRef.current.resume().catch(() => {});
     } catch {
       // no audio
     }
@@ -384,6 +452,85 @@ export default function ForceFullscreen({
         }
       : target);
 
+  // One shared coach for targeted free holds and guided hold segments. The
+  // current per-set `band` above is deliberately the only target source.
+  const coachBandValid =
+    band !== null &&
+    Number.isFinite(band.lowKg) &&
+    Number.isFinite(band.highKg) &&
+    band.lowKg < band.highKg;
+  const coachingActive = targetZoneCoachActive({
+    enabled: targetCoach,
+    measuring,
+    hasTarget: coachBandValid,
+    guided: protocol !== null,
+    guidedPhase: pos?.seg.phase ?? null,
+    paused,
+  });
+  const currentKg = tindeq.current;
+  const sampleTimestampMs = tindeq.elapsedMs;
+  const targetLowKg = band?.lowKg ?? null;
+  const targetHighKg = band?.highKg ?? null;
+  const coachMachineRef = useRef(idleTargetZoneCoach());
+  const [coachDisplay, setCoachDisplay] = useState<CoachDisplay>(IDLE_COACH_DISPLAY);
+  const coachDisplayRef = useRef<CoachDisplay>(IDLE_COACH_DISPLAY);
+  useEffect(() => {
+    const stepped = stepTargetZoneCoach(coachMachineRef.current, {
+      currentKg,
+      targetLowKg,
+      targetHighKg,
+      timestampMs: sampleTimestampMs,
+      active: coachingActive,
+    });
+    // Claim the transition before audio or the deferred React-state publish.
+    coachMachineRef.current = stepped.state;
+
+    const nextDisplay: CoachDisplay =
+      coachingActive && targetLowKg !== null && targetHighKg !== null
+      ? { active: true, zone: stepped.state.zone, lowKg: targetLowKg, highKg: targetHighKg }
+      : IDLE_COACH_DISPLAY;
+    const priorDisplay = coachDisplayRef.current;
+    if (
+      priorDisplay.active !== nextDisplay.active ||
+      priorDisplay.zone !== nextDisplay.zone ||
+      priorDisplay.lowKg !== nextDisplay.lowKg ||
+      priorDisplay.highKg !== nextDisplay.highKg
+    ) {
+      coachDisplayRef.current = nextDisplay;
+      const claimedState = stepped.state;
+      queueMicrotask(() => {
+        // This callback is asynchronous: only publish the snapshot if the refs
+        // still identify the transition claimed above (#295 stale-closure rule).
+        if (
+          coachMachineRef.current !== claimedState ||
+          coachDisplayRef.current !== nextDisplay
+        ) return;
+        setCoachDisplay(nextDisplay);
+      });
+    }
+
+    if (stepped.cue) {
+      playTargetZoneCue(audioRef.current, stepped.cue);
+      navigator.vibrate?.(
+        stepped.cue === "in-zone" ? 45 : stepped.cue === "below" ? [35, 45, 70] : [70, 45, 35],
+      );
+    }
+  }, [
+    coachingActive,
+    currentKg,
+    sampleTimestampMs,
+    targetHighKg,
+    targetLowKg,
+  ]);
+
+  const displayedCoachZone =
+    coachDisplay.active &&
+    coachDisplay.lowKg === band?.lowKg &&
+    coachDisplay.highKg === band?.highKg
+      ? coachDisplay.zone
+      : "unknown";
+  const coachPresentation = COACH_PRESENTATION[displayedCoachZone];
+
   return createPortal(
     <div
       className="fullscreen-overlay"
@@ -469,6 +616,52 @@ export default function ForceFullscreen({
             Disconnect
           </button>
         </div>
+
+        {coachingActive && band && (
+          <div
+            role="meter"
+            aria-label="Force target zone"
+            aria-valuemin={0}
+            aria-valuemax={Math.max(1, band.highKg * 1.5, tindeq.current)}
+            aria-valuenow={Math.max(0, tindeq.current)}
+            aria-valuetext={`${coachPresentation.label}; target ${band.lowKg.toFixed(1)} to ${band.highKg.toFixed(1)} kilograms`}
+            style={{
+              borderRadius: 16,
+              padding: "10px 14px",
+              flexShrink: 0,
+              textAlign: "center",
+              background: `color-mix(in srgb, ${coachPresentation.color} 18%, var(--surface-1))`,
+              border: `2px solid color-mix(in srgb, ${coachPresentation.color} 65%, transparent)`,
+              transition: "background 0.2s, border-color 0.2s",
+            }}
+          >
+            <div
+              aria-live="polite"
+              style={{
+                color: coachPresentation.color,
+                fontFamily: "Inter, sans-serif",
+                fontWeight: 850,
+                fontSize: "clamp(1.65rem, 8vw, 2.4rem)",
+                letterSpacing: "0.08em",
+                lineHeight: 1,
+              }}
+            >
+              <span aria-hidden="true">{coachPresentation.symbol} </span>
+              {coachPresentation.label}
+            </div>
+            <div
+              style={{
+                color: "var(--ink)",
+                fontSize: "var(--t-sm)",
+                fontWeight: 750,
+                marginTop: 5,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              TARGET {band.lowKg.toFixed(1)}–{band.highKg.toFixed(1)} kg
+            </div>
+          </div>
+        )}
 
         {/* Colorful phase banner (Timer-Plus style) */}
         <div
@@ -758,7 +951,10 @@ export default function ForceFullscreen({
           {measuring && timeline && !done && (
             <div style={{ display: "flex", gap: 10, marginBottom: 2 }}>
               <button
-                onClick={onPause}
+                onClick={() => {
+                  primeAudio();
+                  onPause();
+                }}
                 className="glass-pill"
                 style={
                   {
@@ -879,6 +1075,28 @@ export default function ForceFullscreen({
                 onChange={(e) => onToggleHandsFree(e.target.checked)}
               />
               Hands-free — load to start, release to save
+            </label>
+          )}
+          {!measuring && !armed && !counting && coachBandValid && (
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: "var(--t-xs)",
+                color: "var(--ink-muted)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={targetCoach}
+                onChange={(e) => {
+                  if (e.target.checked) primeAudio();
+                  onToggleTargetCoach(e.target.checked);
+                }}
+              />
+              Audio coach — cues below, in zone, and above
             </label>
           )}
           {!measuring && !armed && !counting && !handsFreeActive && (

@@ -35,6 +35,18 @@ export function idleHandsFreeForce(): HandsFreeForceState {
   return { phase: "idle" };
 }
 
+/// Reconcile the control claim while the transport reports an inactive
+/// status. `connected + armed` is the one intentional overlap: Arm claims the
+/// machine synchronously, then the async transport may render once with its
+/// old connected status before publishing armed.
+export function handsFreeForceAtInactiveStatus(
+  state: HandsFreeForceState,
+  status: "connected" | "idle" | "unsupported",
+): HandsFreeForceState {
+  if (status === "connected" && state.phase === "armed") return state;
+  return state.phase === "idle" ? state : idleHandsFreeForce();
+}
+
 /// Observe one live force sample. The returned state claims an emitted action
 /// before the caller performs any async work: `recording` claims Start and
 /// `stopping` claims Stop, so repeated samples cannot emit the same action.
