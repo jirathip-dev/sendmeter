@@ -42,6 +42,8 @@ import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
 import PresetPlanChart from "./PresetPlanChart";
 import type { GaugeTarget } from "./ForceCurveCard";
+import type { ForceMeasurementMode, ForceSetupInputs } from "../lib/forceSetup";
+import ForceSetupSummary from "./ForceSetupSummary";
 import ReverseActionWorkDisplay from "./ReverseActionWorkDisplay";
 import {
   prescriptionForSegment,
@@ -71,6 +73,11 @@ interface Props {
   allTags: string[];
   onTag: (t: string) => void;
   onSide: (s: TindeqSide) => void;
+  setup: ForceSetupInputs;
+  setupConfirmed: boolean;
+  setupTargetKg: number | null;
+  onSetupMode: (mode: ForceMeasurementMode) => void;
+  onOpenSetupGuide: () => void;
   /// Unarm the active zone/preset (#298) — falls back to a free hold.
   onClearProtocol: () => void;
   canStart: boolean;
@@ -189,6 +196,11 @@ export default function ForceFullscreen({
   allTags,
   onTag,
   onSide,
+  setup,
+  setupConfirmed,
+  setupTargetKg,
+  onSetupMode,
+  onOpenSetupGuide,
   onClearProtocol,
   canStart,
   startBlockedReason,
@@ -660,14 +672,15 @@ export default function ForceFullscreen({
               Low battery
             </span>
           )}
-          <button
-            onClick={() => void tindeq.tare()}
-            disabled={measuring || armed || counting}
-            className="glass-pill"
-            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
-          >
-            Tare
-          </button>
+          {!measuring && !armed && !counting && (
+            <button
+              onClick={onOpenSetupGuide}
+              className="glass-pill"
+              style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
+            >
+              Setup
+            </button>
+          )}
           <button
             onClick={tindeq.disconnect}
             className="glass-pill"
@@ -939,6 +952,15 @@ export default function ForceFullscreen({
                   Clear — free hold
                 </button>
               )}
+              <ForceSetupSummary
+                setup={setup}
+                confirmed={setupConfirmed}
+                targetKg={setupTargetKg}
+                locked={false}
+                compact
+                onMode={onSetupMode}
+                onOpenGuide={onOpenSetupGuide}
+              />
             </>
           )}
         </div>}

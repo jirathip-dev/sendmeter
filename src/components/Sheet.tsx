@@ -10,12 +10,15 @@ interface Props {
   /// Fix the sheet to full screen height instead of hugging its content
   /// (e.g. the Phases sheet, whose height otherwise jumps as it loads).
   fullHeight?: boolean;
+  /// Optional scope for sheets that must sit above another fixed surface
+  /// (the Force setup guide opens from the z-indexed fullscreen gauge).
+  className?: string;
   children: ReactNode;
 }
 
 const CLOSE_THRESHOLD = 100; // px dragged down before release dismisses
 
-export default function Sheet({ onClose, fullHeight, children }: Props) {
+export default function Sheet({ onClose, fullHeight, className, children }: Props) {
   const [dragY, setDragY] = useState(0);
   const dragging = useRef(false);
   const startY = useRef(0);
@@ -55,7 +58,7 @@ export default function Sheet({ onClose, fullHeight, children }: Props) {
 
   return (
     <div
-      className="modal-bg"
+      className={`modal-bg${className ? ` ${className}` : ""}`}
       // The backdrop dismisses on its own tap (below) — but it is also an
       // ancestor of everything in the sheet, so without muting it a tap on
       // plain sheet copy would resolve to whatever tappable card the sheet

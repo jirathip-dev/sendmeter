@@ -117,6 +117,22 @@ import ForceFullscreen from "./ForceFullscreen";
 import ManualForceFullscreen from "./ManualForceFullscreen";
 import ForceTrendChart from "./ForceTrendChart";
 import LiveForceSparkline from "./LiveForceSparkline";
+import ForceSetupGuide from "./ForceSetupGuide";
+import ForceSetupSummary from "./ForceSetupSummary";
+import {
+  EMPTY_FORCE_SETUP_METADATA,
+  forceMeasurementMode,
+  forceSetupContextKey,
+  isForceSetupConfirmed,
+  markForceSetupSeen,
+  parseForceSetupMemory,
+  rememberForceSetup,
+  saveForceSetupDraft,
+  shouldAutoShowForceSetup,
+  type ForceMeasurementMode,
+  type ForceSetupInputs,
+  type ForceSetupMemory,
+} from "../lib/forceSetup";
 
 interface ForceViewProps {
   userId: string;
@@ -134,6 +150,21 @@ type ForceTimelineSegment = ProtocolSegment | ReverseActionSegment;
 
 export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const toast = useToast();
+  const setupStorageKey = `sendmeter:force-setup:${userId}`;
+  const [setupMemory, setSetupMemory] = useState<ForceSetupMemory>(() =>
+    parseForceSetupMemory(localStorage.getItem(setupStorageKey)),
+  );
+  const setupMemoryRef = useRef(setupMemory);
+  const [setupMode, setSetupMode] = useState<ForceMeasurementMode>(
+    () => parseForceSetupMemory(localStorage.getItem(setupStorageKey)).selectedMode,
+  );
+  const [setupGuideOpen, setSetupGuideOpen] = useState(false);
+  const restoredSetupSidesRef = useRef(new Set<string>());
+  function commitSetupMemory(next: ForceSetupMemory) {
+    setupMemoryRef.current = next;
+    localStorage.setItem(setupStorageKey, JSON.stringify(next));
+    setSetupMemory(next);
+  }
   // #106: a rep whose insert fails (dead auth session, dropped connection)
   // gets queued instead of dropped — App.tsx drains it once a session comes
   // back. Tracks whether the PREVIOUS attempt (of either kind) failed, so the
@@ -287,6 +318,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // #296: keep the zone and custom-preset selections mutually exclusive —
   // see forceSelection.ts for the rule and why it's needed.
   function selectZone(sel: ZoneSelection | null) {
+    changeSetupMode("static");
     const { selection, clearsPersistedPreset } = selectZoneOutcome({ zoneSel, preset }, sel);
     setZoneState((current) => ({
       selection: selection.zoneSel,
@@ -297,6 +329,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     if (clearsPersistedPreset) clearPersistedPreset();
   }
   function selectPreset(p: TindeqPreset | null) {
+    changeSetupMode(forceMeasurementMode(p?.protocolMode ?? "hold"));
     const next = withPresetSelected({ zoneSel, preset }, p);
     setPreset(next.preset);
     // Selecting a custom preset must also clear a post-fit zone notice when
@@ -319,6 +352,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     }));
     setPreset(null);
     clearPersistedPreset();
+    changeSetupMode("static");
   }
   // Global session-intensity dial (SL-97b) — one number for the whole
   // Protocol-presets section (zones AND custom presets), lazily seeded from
@@ -413,6 +447,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     const groupId = gaugeSession.groupId;
     const wallClockMin = Math.max(
       1,
+      // `endSession` only runs from event/effect paths; this is elapsed wall
+      // time, not a render-time value.
+      // eslint-disable-next-line react-hooks/purity
       Math.round((Date.now() - gaugeSession.startedAt) / 60000),
     );
     clearSession();
@@ -1192,6 +1229,81 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         }
       : (armedZone?.target ?? null);
 
+  // Setup mode remains presentation state, but protocol selection synchronizes
+  // it through `forceMeasurementMode`: an armed Reverse Action preset must
+  // never present the Static-hold guide (or vice versa).
+  function setupMetadataFor(mode: ForceMeasurementMode, exercise = pendingTag) {
+    return (
+      setupMemory.metadataByContext[
+        forceSetupContextKey({ mode, exercise })
+      ] ?? EMPTY_FORCE_SETUP_METADATA
+    );
+  }
+  const currentSetup: ForceSetupInputs = {
+    mode: setupMode,
+    exercise: pendingTag,
+    side: pendingSide,
+    ...setupMetadataFor(setupMode),
+  };
+  const currentSetupContextKey = forceSetupContextKey(currentSetup);
+  const rememberedSetupSide = setupMemory.sideByContext[currentSetupContextKey] ?? "";
+  useEffect(() => {
+    if (!pendingTag.trim() || restoredSetupSidesRef.current.has(currentSetupContextKey)) return;
+    // Claim this context before the deferred write. A user side change that
+    // lands before the microtask must win rather than being overwritten by a
+    // second restore attempt from another render.
+    restoredSetupSidesRef.current.add(currentSetupContextKey);
+    if (!pendingSide && rememberedSetupSide) {
+      queueMicrotask(() => setPendingSide((current) => current || rememberedSetupSide));
+    }
+  }, [currentSetupContextKey, pendingSide, pendingTag, rememberedSetupSide]);
+  const setupConfirmed = isForceSetupConfirmed(setupMemory, currentSetup);
+  const setupTargetKg = presetKgSet1 ?? bandTarget?.kg ?? null;
+
+  function changeSetupMode(nextMode: ForceMeasurementMode) {
+    if (runActive) return;
+    if (
+      activeProtocol &&
+      forceMeasurementMode(activeProtocol.protocolMode ?? "hold") !== nextMode
+    ) {
+      // A mode choice cannot leave an incompatible protocol armed behind the
+      // setup copy. Selection handlers call this before arming their new mode.
+      setZoneState((current) => ({
+        selection: null,
+        notice: null,
+        revision: current.revision + 1,
+      }));
+      setPreset(null);
+      clearPersistedPreset();
+    }
+    if (nextMode === setupMode) return;
+    const currentMemory = setupGuideOpen
+      ? markForceSetupSeen(setupMemoryRef.current, setupMode)
+      : setupMemoryRef.current;
+    const nextMemory = { ...currentMemory, selectedMode: nextMode };
+    commitSetupMemory(nextMemory);
+    setSetupMode(nextMode);
+    if (!setupGuideOpen && shouldAutoShowForceSetup(nextMemory, nextMode)) {
+      setSetupGuideOpen(true);
+    }
+  }
+
+  function saveSetupDraft(input: ForceSetupInputs) {
+    commitSetupMemory(saveForceSetupDraft(setupMemoryRef.current, input));
+  }
+
+  function closeSetupGuide() {
+    commitSetupMemory(markForceSetupSeen(setupMemoryRef.current, setupMode));
+    setSetupGuideOpen(false);
+  }
+
+  function confirmSetup(input: ForceSetupInputs) {
+    commitSetupMemory(
+      rememberForceSetup(setupMemoryRef.current, input, new Date().toISOString()),
+    );
+    setSetupGuideOpen(false);
+  }
+
   // Move the global intensity dial (the slider on TargetZonesCard, #172):
   // persist + update state, and if a zone is currently armed, re-arm it at the
   // new pct so its baked target/timer numbers update immediately. Custom
@@ -1605,7 +1717,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // Keep the screen awake while the gauge is live so a short auto-lock doesn't
   // interrupt a hold/protocol mid-recording.
   useWakeLock(
-    status === "connected" || status === "armed" || status === "measuring" || manualOpen,
+    status === "connected" || status === "checking" || status === "armed" || status === "measuring" || manualOpen,
   );
   const prevStatusRef = useRef(status);
   useEffect(() => {
@@ -1613,10 +1725,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     prevStatusRef.current = status;
     if (status === "connected" && prev === "connecting") {
       setGaugeMinimized(false);
+      if (shouldAutoShowForceSetup(setupMemoryRef.current, setupMode)) {
+        queueMicrotask(() => setSetupGuideOpen(true));
+      }
     }
     if (
       status === "idle" &&
-      (prev === "connected" || prev === "armed" || prev === "measuring")
+      (prev === "connected" || prev === "checking" || prev === "armed" || prev === "measuring")
     ) {
       // Defer so any interrupted-save from the same disconnect lands first,
       // and to avoid a synchronous setState in the effect body.
@@ -1929,6 +2044,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           onSide={setPendingSide}
           locked={runActive}
         />
+        <ForceSetupSummary
+          setup={currentSetup}
+          confirmed={setupConfirmed}
+          targetKg={setupTargetKg}
+          locked={runActive}
+          onMode={changeSetupMode}
+          onOpenGuide={() => setSetupGuideOpen(true)}
+        />
         {runActive && (
           <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
             Locked while armed or measuring — applies to your next run.
@@ -2178,6 +2301,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           // fetch was in flight still wins (forceSelection.test.ts covers
           // the race).
           const next = restoredSelection({ zoneSel, preset }, p);
+          changeSetupMode(
+            forceMeasurementMode(next.preset?.protocolMode ?? "hold"),
+          );
           setZoneState((current) => ({
             selection: next.zoneSel,
             notice: null,
@@ -2247,6 +2373,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           allTags={allTags}
           onTag={setPendingTag}
           onSide={setPendingSide}
+          setup={currentSetup}
+          setupConfirmed={setupConfirmed}
+          setupTargetKg={setupTargetKg}
+          onSetupMode={changeSetupMode}
+          onOpenSetupGuide={() => setSetupGuideOpen(true)}
           onClearProtocol={clearProtocol}
           canStart={
             !!gaugeInputs.pendingTag &&
@@ -2402,6 +2533,27 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             return ok;
           }}
           onCancel={() => setManualOpen(false)}
+        />
+      )}
+      {setupGuideOpen && !runActive && (
+        <ForceSetupGuide
+          tindeq={tindeq}
+          mode={setupMode}
+          exercise={pendingTag}
+          side={pendingSide}
+          allTags={allTags}
+          targetKg={setupTargetKg}
+          autoShow={setupMemory.autoShow}
+          metadataForMode={(nextMode) => setupMetadataFor(nextMode, pendingTag)}
+          onMode={changeSetupMode}
+          onTag={setPendingTag}
+          onSide={setPendingSide}
+          onSaveDraft={saveSetupDraft}
+          onConfirm={confirmSetup}
+          onAutoShow={(enabled) =>
+            commitSetupMemory({ ...setupMemoryRef.current, autoShow: enabled })
+          }
+          onClose={closeSetupGuide}
         />
       )}
     </div>
