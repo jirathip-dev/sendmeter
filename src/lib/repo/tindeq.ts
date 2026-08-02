@@ -11,12 +11,17 @@ import type { RecordedZone } from "../force-curve";
 import { localDayRange } from "../dates";
 import {
   legacyPresetRow,
-  retryWithoutPresetHoldsColumn,
+  preReversePresetRow,
+  retryPresetSchema,
 } from "../presetSchemaCompat";
 import { unwrap, makeSoftDeleteOps } from "./shared";
+import {
+  parseCadenceMarkers,
+  parseReverseActionSetMetrics,
+} from "../reverseAction";
 
 const RECORDING_COLS =
-  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no";
+  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no, protocol_mode, target_kg, target_low_kg, target_high_kg, cadence_out_s, cadence_return_s, cadence_markers, set_metrics, setup_note";
 
 type RecordingRow = {
   id: string;
@@ -38,6 +43,15 @@ type RecordingRow = {
   planned_duration_ms: number | null;
   actual_duration_ms: number | null;
   rep_no: number | null;
+  protocol_mode: string;
+  target_kg: number | null;
+  target_low_kg: number | null;
+  target_high_kg: number | null;
+  cadence_out_s: number | null;
+  cadence_return_s: number | null;
+  cadence_markers: unknown;
+  set_metrics: unknown;
+  setup_note: string;
 };
 
 function toRecording(r: RecordingRow): TindeqRecordingMeta {
@@ -64,6 +78,15 @@ function toRecording(r: RecordingRow): TindeqRecordingMeta {
     plannedDurationMs: r.planned_duration_ms,
     actualDurationMs: r.actual_duration_ms,
     repNo: r.rep_no,
+    protocolMode: r.protocol_mode === "reverse_action" ? "reverse_action" : "hold",
+    targetKg: r.target_kg,
+    targetLowKg: r.target_low_kg,
+    targetHighKg: r.target_high_kg,
+    cadenceOutS: r.cadence_out_s,
+    cadenceReturnS: r.cadence_return_s,
+    cadenceMarkers: parseCadenceMarkers(r.cadence_markers),
+    setMetrics: parseReverseActionSetMetrics(r.set_metrics),
+    setupNote: r.setup_note,
   };
 }
 
@@ -203,6 +226,29 @@ export async function insertRecording(
         planned_duration_ms: rec.plannedDurationMs ?? null,
         actual_duration_ms: rec.actualDurationMs ?? null,
         rep_no: rec.repNo ?? null,
+        protocol_mode: rec.protocolMode ?? "hold",
+        target_kg: rec.targetKg ?? null,
+        target_low_kg: rec.targetLowKg ?? null,
+        target_high_kg: rec.targetHighKg ?? null,
+        cadence_out_s: rec.cadenceOutS ?? null,
+        cadence_return_s: rec.cadenceReturnS ?? null,
+        cadence_markers:
+          rec.cadenceMarkers?.map((marker) => ({
+            tMs: marker.tMs,
+            rep: marker.rep,
+            direction: marker.direction,
+          })) ?? null,
+        set_metrics: rec.setMetrics
+          ? {
+              meanKg: rec.setMetrics.meanKg,
+              coefficientVariationPct: rec.setMetrics.coefficientVariationPct,
+              inTargetPct: rec.setMetrics.inTargetPct,
+              timeUnderTensionMs: rec.setMetrics.timeUnderTensionMs,
+              driftPct: rec.setMetrics.driftPct,
+              cadenceAdherencePct: rec.setMetrics.cadenceAdherencePct,
+            }
+          : null,
+        setup_note: rec.setupNote ?? "",
         samples: rec.samples.map((s) => [s.t, s.kg]),
       })
       .select(RECORDING_COLS)
@@ -214,6 +260,8 @@ export async function insertRecording(
 // MARK: Tindeq presets (hang protocols for the guided gauge timer)
 
 const PRESET_COLS =
+  "id, name, hold_s, holds_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides, protocol_mode, cadence_out_s, cadence_return_s, tolerance_mode, tolerance_value, prepare_s, setup_note";
+const PRE_REVERSE_PRESET_COLS =
   "id, name, hold_s, holds_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides";
 const LEGACY_PRESET_COLS =
   "id, name, hold_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides";
@@ -238,6 +286,13 @@ type PresetRow = LegacyPresetRow & {
   // Absent only when the server predates `preset_holds_per_set`; normalize
   // those rows to the same null used by ordinary presets on the new schema.
   holds_s?: number[] | null;
+  protocol_mode?: string;
+  cadence_out_s?: number;
+  cadence_return_s?: number;
+  tolerance_mode?: string;
+  tolerance_value?: number;
+  prepare_s?: number;
+  setup_note?: string;
 };
 
 function toPreset(r: PresetRow): TindeqPreset {
@@ -256,6 +311,13 @@ function toPreset(r: PresetRow): TindeqPreset {
     pctStep: r.pct_step,
     targetCurve: r.target_curve,
     alternateSides: r.alternate_sides,
+    protocolMode: r.protocol_mode === "reverse_action" ? "reverse_action" : "hold",
+    cadenceOutS: r.cadence_out_s ?? 3,
+    cadenceReturnS: r.cadence_return_s ?? 3,
+    toleranceMode: r.tolerance_mode === "kg" ? "kg" : "percent",
+    toleranceValue: r.tolerance_value ?? 10,
+    prepareS: r.prepare_s ?? 5,
+    setupNote: r.setup_note ?? "",
   };
 }
 
@@ -274,16 +336,28 @@ function presetToRow(p: Omit<TindeqPreset, "id">) {
     pct_step: p.pctStep,
     target_curve: p.targetCurve,
     alternate_sides: p.alternateSides,
+    protocol_mode: p.protocolMode ?? "hold",
+    cadence_out_s: p.cadenceOutS ?? 3,
+    cadence_return_s: p.cadenceReturnS ?? 3,
+    tolerance_mode: p.toleranceMode ?? "percent",
+    tolerance_value: p.toleranceValue ?? 10,
+    prepare_s: p.prepareS ?? 5,
+    setup_note: p.setupNote ?? "",
   };
 }
 
 export async function fetchPresets(): Promise<TindeqPreset[]> {
   const data = unwrap<PresetRow[]>(
-    await retryWithoutPresetHoldsColumn<PresetRow[]>(
+    await retryPresetSchema<PresetRow[]>(
       () =>
         supabase
           .from("tindeq_presets")
           .select(PRESET_COLS)
+          .order("created_at", { ascending: false }),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .select(PRE_REVERSE_PRESET_COLS)
           .order("created_at", { ascending: false }),
       () =>
         supabase
@@ -299,7 +373,7 @@ export async function insertPreset(
   p: Omit<TindeqPreset, "id">,
 ): Promise<TindeqPreset> {
   const data = unwrap<PresetRow>(
-    await retryWithoutPresetHoldsColumn<PresetRow>(
+    await retryPresetSchema<PresetRow>(
       () =>
         supabase
           .from("tindeq_presets")
@@ -309,7 +383,13 @@ export async function insertPreset(
       () =>
         supabase
           .from("tindeq_presets")
-          .insert(legacyPresetRow(presetToRow(p)))
+          .insert(preReversePresetRow(presetToRow(p)))
+          .select(PRE_REVERSE_PRESET_COLS)
+          .single(),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .insert(legacyPresetRow(preReversePresetRow(presetToRow(p))))
           .select(LEGACY_PRESET_COLS)
           .single(),
     ),
@@ -322,7 +402,7 @@ export async function updatePreset(
   p: Omit<TindeqPreset, "id">,
 ): Promise<TindeqPreset> {
   const data = unwrap<PresetRow>(
-    await retryWithoutPresetHoldsColumn<PresetRow>(
+    await retryPresetSchema<PresetRow>(
       () =>
         supabase
           .from("tindeq_presets")
@@ -333,7 +413,14 @@ export async function updatePreset(
       () =>
         supabase
           .from("tindeq_presets")
-          .update(legacyPresetRow(presetToRow(p)))
+          .update(preReversePresetRow(presetToRow(p)))
+          .eq("id", id)
+          .select(PRE_REVERSE_PRESET_COLS)
+          .single(),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .update(legacyPresetRow(preReversePresetRow(presetToRow(p))))
           .eq("id", id)
           .select(LEGACY_PRESET_COLS)
           .single(),

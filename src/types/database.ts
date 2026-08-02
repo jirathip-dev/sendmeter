@@ -7,10 +7,30 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
@@ -258,6 +278,30 @@ export type Database = {
         }
         Relationships: []
       }
+      routine_presets: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          steps: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name?: string
+          steps: Json
+          user_id?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          steps?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
       sessions: {
         Row: {
           created_at: string
@@ -315,6 +359,8 @@ export type Database = {
       tindeq_presets: {
         Row: {
           alternate_sides: boolean
+          cadence_out_s: number
+          cadence_return_s: number
           created_at: string
           hold_s: number
           holds_s: number[] | null
@@ -322,17 +368,24 @@ export type Database = {
           name: string
           pct_basis: string
           pct_step: number
+          prepare_s: number
+          protocol_mode: string
           reps: number
           rest_reps_s: number
           rest_sets_s: number
           sets: number
+          setup_note: string
           target_curve: boolean
           target_kg: number | null
           target_pct: number | null
+          tolerance_mode: string
+          tolerance_value: number
           user_id: string
         }
         Insert: {
           alternate_sides?: boolean
+          cadence_out_s?: number
+          cadence_return_s?: number
           created_at?: string
           hold_s: number
           holds_s?: number[] | null
@@ -340,17 +393,24 @@ export type Database = {
           name?: string
           pct_basis?: string
           pct_step?: number
+          prepare_s?: number
+          protocol_mode?: string
           reps: number
           rest_reps_s: number
           rest_sets_s: number
           sets: number
+          setup_note?: string
           target_curve?: boolean
           target_kg?: number | null
           target_pct?: number | null
+          tolerance_mode?: string
+          tolerance_value?: number
           user_id?: string
         }
         Update: {
           alternate_sides?: boolean
+          cadence_out_s?: number
+          cadence_return_s?: number
           created_at?: string
           hold_s?: number
           holds_s?: number[] | null
@@ -358,14 +418,121 @@ export type Database = {
           name?: string
           pct_basis?: string
           pct_step?: number
+          prepare_s?: number
+          protocol_mode?: string
           reps?: number
           rest_reps_s?: number
           rest_sets_s?: number
           sets?: number
+          setup_note?: string
           target_curve?: boolean
           target_kg?: number | null
           target_pct?: number | null
+          tolerance_mode?: string
+          tolerance_value?: number
           user_id?: string
+        }
+        Relationships: []
+      }
+      tindeq_recordings: {
+        Row: {
+          actual_duration_ms: number | null
+          avg_kg: number | null
+          cadence_markers: Json | null
+          cadence_out_s: number | null
+          cadence_return_s: number | null
+          deleted_at: string | null
+          duration_ms: number
+          external_load_kg: number | null
+          group_id: string | null
+          id: string
+          note: string
+          outcome: string | null
+          peak_kg: number | null
+          planned_duration_ms: number | null
+          protocol_mode: string
+          protocol_run_id: string | null
+          recorded_at: string
+          rep_no: number | null
+          sample_count: number
+          samples: Json
+          set_metrics: Json | null
+          set_no: number | null
+          setup_note: string
+          side: string
+          source: string
+          tag: string
+          target_high_kg: number | null
+          target_kg: number | null
+          target_low_kg: number | null
+          user_id: string
+          zone: string | null
+        }
+        Insert: {
+          actual_duration_ms?: number | null
+          avg_kg?: number | null
+          cadence_markers?: Json | null
+          cadence_out_s?: number | null
+          cadence_return_s?: number | null
+          deleted_at?: string | null
+          duration_ms: number
+          external_load_kg?: number | null
+          group_id?: string | null
+          id?: string
+          note?: string
+          outcome?: string | null
+          peak_kg?: number | null
+          planned_duration_ms?: number | null
+          protocol_mode?: string
+          protocol_run_id?: string | null
+          recorded_at?: string
+          rep_no?: number | null
+          sample_count: number
+          samples: Json
+          set_metrics?: Json | null
+          set_no?: number | null
+          setup_note?: string
+          side?: string
+          source?: string
+          tag?: string
+          target_high_kg?: number | null
+          target_kg?: number | null
+          target_low_kg?: number | null
+          user_id?: string
+          zone?: string | null
+        }
+        Update: {
+          actual_duration_ms?: number | null
+          avg_kg?: number | null
+          cadence_markers?: Json | null
+          cadence_out_s?: number | null
+          cadence_return_s?: number | null
+          deleted_at?: string | null
+          duration_ms?: number
+          external_load_kg?: number | null
+          group_id?: string | null
+          id?: string
+          note?: string
+          outcome?: string | null
+          peak_kg?: number | null
+          planned_duration_ms?: number | null
+          protocol_mode?: string
+          protocol_run_id?: string | null
+          recorded_at?: string
+          rep_no?: number | null
+          sample_count?: number
+          samples?: Json
+          set_metrics?: Json | null
+          set_no?: number | null
+          setup_note?: string
+          side?: string
+          source?: string
+          tag?: string
+          target_high_kg?: number | null
+          target_kg?: number | null
+          target_low_kg?: number | null
+          user_id?: string
+          zone?: string | null
         }
         Relationships: []
       }
@@ -405,81 +572,6 @@ export type Database = {
         }
         Relationships: []
       }
-      tindeq_recordings: {
-        Row: {
-          actual_duration_ms: number | null
-          avg_kg: number | null
-          deleted_at: string | null
-          duration_ms: number
-          group_id: string | null
-          id: string
-          external_load_kg: number | null
-          note: string
-          outcome: string | null
-          peak_kg: number | null
-          protocol_run_id: string | null
-          recorded_at: string
-          planned_duration_ms: number | null
-          rep_no: number | null
-          sample_count: number
-          samples: Json
-          set_no: number | null
-          side: string
-          source: string
-          tag: string
-          user_id: string
-          zone: string | null
-        }
-        Insert: {
-          actual_duration_ms?: number | null
-          avg_kg?: number | null
-          deleted_at?: string | null
-          duration_ms: number
-          group_id?: string | null
-          id?: string
-          external_load_kg?: number | null
-          note?: string
-          outcome?: string | null
-          peak_kg?: number | null
-          protocol_run_id?: string | null
-          recorded_at?: string
-          planned_duration_ms?: number | null
-          rep_no?: number | null
-          sample_count: number
-          samples: Json
-          set_no?: number | null
-          side?: string
-          source?: string
-          tag?: string
-          user_id?: string
-          zone?: string | null
-        }
-        Update: {
-          actual_duration_ms?: number | null
-          avg_kg?: number | null
-          deleted_at?: string | null
-          duration_ms?: number
-          group_id?: string | null
-          id?: string
-          external_load_kg?: number | null
-          note?: string
-          outcome?: string | null
-          peak_kg?: number | null
-          protocol_run_id?: string | null
-          recorded_at?: string
-          planned_duration_ms?: number | null
-          rep_no?: number | null
-          sample_count?: number
-          samples?: Json
-          set_no?: number | null
-          side?: string
-          source?: string
-          tag?: string
-          user_id?: string
-          zone?: string | null
-        }
-        Relationships: []
-      }
       user_settings: {
         Row: {
           current_phase: string
@@ -501,30 +593,6 @@ export type Database = {
         }
         Relationships: []
       }
-      routine_presets: {
-        Row: {
-          created_at: string
-          id: string
-          name: string
-          steps: Json
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          name?: string
-          steps: Json
-          user_id?: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          name?: string
-          steps?: Json
-          user_id?: string
-        }
-        Relationships: []
-      }
     }
     Views: {
       [_ in never]: never
@@ -532,7 +600,7 @@ export type Database = {
     Functions: {
       delete_account: { Args: never; Returns: undefined }
       rename_tindeq_tag: {
-        Args: { old_name: string; new_name: string }
+        Args: { new_name: string; old_name: string }
         Returns: undefined
       }
     }
@@ -663,6 +731,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },

@@ -35,6 +35,35 @@ export function isMissingPresetHoldsColumn(error: unknown): boolean {
   );
 }
 
+const REVERSE_ACTION_PRESET_COLUMNS = [
+  "protocol_mode",
+  "cadence_out_s",
+  "cadence_return_s",
+  "tolerance_mode",
+  "tolerance_value",
+  "prepare_s",
+  "setup_note",
+] as const;
+
+export function isMissingReverseActionPresetColumn(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { code, message } = error as PostgrestErrorLike;
+  if (typeof code !== "string" || typeof message !== "string") return false;
+  const names = REVERSE_ACTION_PRESET_COLUMNS.join("|");
+  if (code === "42703") {
+    return new RegExp(`tindeq_presets["']?\\s*\\.\\s*["']?(?:${names})\\b`, "i").test(
+      message,
+    ) && /\bdoes not exist\b/i.test(message);
+  }
+  return (
+    code === "PGRST204" &&
+    new RegExp(
+      `could not find the ['"](?:${names})['"] column of ['"]tindeq_presets['"] in the schema cache`,
+      "i",
+    ).test(message)
+  );
+}
+
 /// Run the normal query first and make exactly one legacy attempt only when
 /// PostgREST says `tindeq_presets.holds_s` is absent. Mutation errors of these
 /// forms are transaction failures (no row is committed), so the fallback is
@@ -46,6 +75,29 @@ export async function retryWithoutPresetHoldsColumn<T>(
   const result = await current();
   if (!result.error || !isMissingPresetHoldsColumn(result.error)) return result;
   return await legacy();
+}
+
+/// Three schema generations can briefly exist during append-only rollout:
+/// current (Reverse Action + varied holds), pre-Reverse (varied holds), and
+/// pre-varied-holds. Preserve `holds_s` whenever the server has it; only take
+/// the oldest fallback when PostgREST specifically reports that column absent.
+export async function retryPresetSchema<T>(
+  current: () => PromiseLike<QueryResult<T>>,
+  preReverse: () => PromiseLike<QueryResult<T>>,
+  legacy: () => PromiseLike<QueryResult<T>>,
+): Promise<QueryResult<T>> {
+  const currentResult = await current();
+  if (!currentResult.error) return currentResult;
+  if (isMissingPresetHoldsColumn(currentResult.error)) return await legacy();
+  if (!isMissingReverseActionPresetColumn(currentResult.error)) return currentResult;
+  const preReverseResult = await preReverse();
+  if (
+    preReverseResult.error &&
+    isMissingPresetHoldsColumn(preReverseResult.error)
+  ) {
+    return await legacy();
+  }
+  return preReverseResult;
 }
 
 export const VARIED_HOLDS_REQUIRE_MIGRATION =
@@ -60,4 +112,47 @@ export function legacyPresetRow<Row extends { holds_s: number[] | null }>(
   const { holds_s: holdsS, ...legacy } = row;
   if (holdsS !== null) throw new Error(VARIED_HOLDS_REQUIRE_MIGRATION);
   return legacy;
+}
+
+export const REVERSE_ACTION_REQUIRES_MIGRATION =
+  "This server does not support Reverse Action presets yet. An administrator must apply the reverse_action_protocol migration before this preset can be saved.";
+
+type ReverseActionPresetRow = {
+  protocol_mode: string;
+  cadence_out_s: number;
+  cadence_return_s: number;
+  tolerance_mode: string;
+  tolerance_value: number;
+  prepare_s: number;
+  setup_note: string;
+};
+
+/// Remove the #400 columns only for an ordinary hold preset whose values are
+/// the migration defaults. Reverse Action behavior/setup must never be
+/// silently collapsed during a deploy race.
+export function preReversePresetRow<Row extends ReverseActionPresetRow>(
+  row: Row,
+): Omit<Row, keyof ReverseActionPresetRow> {
+  const {
+    protocol_mode: protocolMode,
+    cadence_out_s: cadenceOutS,
+    cadence_return_s: cadenceReturnS,
+    tolerance_mode: toleranceMode,
+    tolerance_value: toleranceValue,
+    prepare_s: prepareS,
+    setup_note: setupNote,
+    ...preReverse
+  } = row;
+  if (
+    protocolMode !== "hold" ||
+    cadenceOutS !== 3 ||
+    cadenceReturnS !== 3 ||
+    toleranceMode !== "percent" ||
+    toleranceValue !== 10 ||
+    prepareS !== 5 ||
+    setupNote !== ""
+  ) {
+    throw new Error(REVERSE_ACTION_REQUIRES_MIGRATION);
+  }
+  return preReverse;
 }
