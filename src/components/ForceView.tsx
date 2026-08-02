@@ -70,7 +70,7 @@ import {
   applyIntensity,
   armedAlternates,
   armedForDifferentTag,
-  buildZoneSelection,
+  buildZoneSelectionPreservingSides,
   chartSideFor,
   loadIntensity,
   performedQuality,
@@ -1886,7 +1886,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           // carries the selected side and would overclaim (#214).
           exercise={effectiveTag}
           model={model}
-          onPick={(q) => selectZone(buildZoneSelection(model, q, zoneTag, false, intensityPct))}
+          onPick={(q) =>
+            selectZone(
+              buildZoneSelectionPreservingSides(
+                model,
+                q,
+                zoneTag,
+                armedZone,
+                intensityPct,
+              ),
+            )
+          }
           locked={runActive}
         />
       )}

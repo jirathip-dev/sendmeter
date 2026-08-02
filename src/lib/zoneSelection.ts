@@ -82,6 +82,26 @@ export function buildZoneSelection(
   };
 }
 
+/// Rebuild a recommended training zone while carrying the currently armed
+/// recommended protocol's side mode. Both the zone chips and the separate
+/// Focus Next card change training quality; neither should silently turn an
+/// alternating run back into a selected-side run (#408).
+export function buildZoneSelectionPreservingSides(
+  model: ForceCurveModel | null,
+  q: TrainingQuality,
+  tag: string,
+  current: ZoneSelection | null,
+  intensityPct = 100,
+): ZoneSelection | null {
+  return buildZoneSelection(
+    model,
+    q,
+    tag,
+    current?.protocol.alternateSides ?? false,
+    intensityPct,
+  );
+}
+
 /// Build the gauge band + guided protocol for Prehab (#325) — mirrors
 /// `buildZoneSelection` but isn't one: Prehab has no `TrainingQuality`, so it
 /// can't go through `zonePrescription`. It always alternates hands; the

@@ -6,6 +6,7 @@ import {
   buildPrehabSelection,
   buildWarmupSelection,
   buildZoneSelection,
+  buildZoneSelectionPreservingSides,
   chartSideFor,
   loadIntensity,
   performedQuality,
@@ -98,6 +99,48 @@ describe("buildZoneSelection", () => {
     for (const q of ["power", "strength", "power-endurance", "endurance"] as const) {
       expect(buildZoneSelection(model, q, "FDP L", true)!.protocol.holdsS).toBeNull();
     }
+  });
+});
+
+describe("buildZoneSelectionPreservingSides (#408)", () => {
+  const model: ForceCurveModel = {
+    points: [],
+    maxF: 40,
+    cf: 20,
+    wPrime: 300,
+    capabilityFit: { family: "hill", cf: 20, maxF: 40, tau: 10, p: 1, sse: 1 },
+  };
+
+  it("carries alternating mode when Focus Next changes quality", () => {
+    const current = buildZoneSelection(model, "strength", "FDP", true)!;
+    const next = buildZoneSelectionPreservingSides(
+      model,
+      "power",
+      "FDP",
+      current,
+    );
+    expect(next?.protocol.alternateSides).toBe(true);
+  });
+
+  it("carries selected-side mode when Focus Next changes quality", () => {
+    const current = buildZoneSelection(model, "strength", "FDP L", false)!;
+    const next = buildZoneSelectionPreservingSides(
+      model,
+      "power",
+      "FDP L",
+      current,
+    );
+    expect(next?.protocol.alternateSides).toBe(false);
+  });
+
+  it("defaults to selected-side mode without a current recommendation", () => {
+    const next = buildZoneSelectionPreservingSides(
+      model,
+      "power",
+      "FDP L",
+      null,
+    );
+    expect(next?.protocol.alternateSides).toBe(false);
   });
 });
 
