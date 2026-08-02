@@ -135,9 +135,14 @@ describe("buildPrehabSelection (#325)", () => {
     expect(result.target.kg).toBeCloseTo(12, 5); // 40 × 0.30
   });
 
-  it("#332 no-regression: leaves holdsS null", () => {
+  it("supports selected-side mode", () => {
     const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
-    expect(buildPrehabSelection(model, "FDP L")!.protocol.holdsS).toBeNull();
+    expect(buildPrehabSelection(model, "FDP L", false)!.protocol.alternateSides).toBe(false);
+  });
+
+  it("uses the approved per-set hold ramp", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    expect(buildPrehabSelection(model, "FDP L")!.protocol.holdsS).toEqual([90, 60, 30, 30]);
   });
 });
 
@@ -152,31 +157,34 @@ describe("buildWarmupSelection (#297)", () => {
     ).toBeNull();
   });
 
-  it("assembles progressive holds and a 40% → 70% PR load ramp", () => {
+  it("assembles progressive holds and a 30% → 60% PR load ramp", () => {
     const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
     const result = buildWarmupSelection(model, "FDP L")!;
-    expect(result.target.kg).toBe(16);
+    expect(result.target.kg).toBe(12);
     expect(result.protocol).toMatchObject({
       id: "zone:warmup",
-      holdS: 5,
-      holdsS: [5, 7, 10],
-      reps: 2,
-      sets: 3,
-      restRepsS: 15,
-      restSetsS: 30,
+      holdS: 20,
+      holdsS: [20, 15, 10, 10],
+      reps: 1,
+      sets: 4,
+      restRepsS: 0,
+      restSetsS: 60,
       targetKg: null,
-      targetPct: 40,
+      targetPct: 30,
       pctBasis: "pr",
-      pctStep: 15,
+      pctStep: 10,
       alternateSides: true,
     });
     const refs = { prKg: 40, cf: 20, wPrime: 300, maxF: 40 };
-    expect([1, 2, 3].map((set) => presetTargetKg(result.protocol, refs, set))).toEqual([
-      16,
-      22,
-      28,
+    expect([1, 2, 3, 4].map((set) => presetTargetKg(result.protocol, refs, set))).toEqual([
+      12, 16, 20, 24,
     ]);
     expect(result.protocol.holdsS).toEqual(WARMUP_PROTOCOL.holdsS);
+  });
+
+  it("supports selected-side mode", () => {
+    const model: ForceCurveModel = { points: [], maxF: 40, cf: 20, wPrime: 300 };
+    expect(buildWarmupSelection(model, "FDP L", 40, false)!.protocol.alternateSides).toBe(false);
   });
 });
 
@@ -327,12 +335,17 @@ describe("rederiveSelection (#298)", () => {
       const rederived = rederiveSelection(armed, otherModel, "FDP R", 100)!;
       expect(protocolQuality(rederived.protocol)).toBe("prehab");
       expect(rederived.target.kg).toBeCloseTo(28, 5); // 40 × 0.70, the NEW tag's CF
-      expect(rederived.protocol.holdS).toBe(30); // dose never varies
+      expect(rederived.protocol.holdS).toBe(90);
     });
 
     it("holds the current selection when the model is null (still fitting, not a rejection)", () => {
       const armed = buildPrehabSelection(model, "FDP L")!;
       expect(rederiveSelection(armed, null, "FDP R", 100)).toBe(armed);
+    });
+
+    it("preserves selected-side mode while re-deriving", () => {
+      const armed = buildPrehabSelection(model, "FDP L", false)!;
+      expect(rederiveSelection(armed, model, "FDP R", 100)!.protocol.alternateSides).toBe(false);
     });
 
     it("returns null (disarms) when there's no tag to derive against", () => {
@@ -353,10 +366,15 @@ describe("rederiveSelection (#298)", () => {
       const otherModel: ForceCurveModel = { points: [], maxF: 80, cf: 40, wPrime: 300 };
       const rederived = rederiveSelection(armed, otherModel, "FDP R", 100)!;
       expect(protocolQuality(rederived.protocol)).toBe("warmup");
-      expect(rederived.target.kg).toBe(32);
-      expect(rederived.protocol.holdsS).toEqual([5, 7, 10]);
-      expect(rederived.protocol.targetPct).toBe(40);
-      expect(rederived.protocol.pctStep).toBe(15);
+      expect(rederived.target.kg).toBe(24);
+      expect(rederived.protocol.holdsS).toEqual([20, 15, 10, 10]);
+      expect(rederived.protocol.targetPct).toBe(30);
+      expect(rederived.protocol.pctStep).toBe(10);
+    });
+
+    it("preserves selected-side mode while re-deriving", () => {
+      const armed = buildWarmupSelection(model, "FDP L", 40, false)!;
+      expect(rederiveSelection(armed, model, "FDP R", 100, 40)!.protocol.alternateSides).toBe(false);
     });
   });
 });

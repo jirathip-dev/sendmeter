@@ -418,13 +418,14 @@ describe("zoneTarget / zonePrescription — adjustable intensity (SL-97)", () =>
 });
 
 describe("PREHAB_PROTOCOL (#325)", () => {
-  it("pins the approved numbers exactly — 30s × 4, 90s rest between reps, 1 set", () => {
+  it("pins the approved progressive duration dose", () => {
     expect(PREHAB_PROTOCOL).toEqual({
-      holdS: 30,
-      reps: 4,
-      sets: 1,
-      restRepsS: 90,
-      restSetsS: 0,
+      holdS: 90,
+      holdsS: [90, 60, 30, 30],
+      reps: 1,
+      sets: 4,
+      restRepsS: 0,
+      restSetsS: 20,
     });
   });
 });
@@ -432,23 +433,23 @@ describe("PREHAB_PROTOCOL (#325)", () => {
 describe("Warm-up protocol (#297)", () => {
   it("pins the conservative progressive dose", () => {
     expect(WARMUP_PROTOCOL).toEqual({
-      holdS: 5,
-      holdsS: [5, 7, 10],
-      reps: 2,
-      sets: 3,
-      restRepsS: 15,
-      restSetsS: 30,
-      targetPct: 40,
-      pctStep: 15,
+      holdS: 20,
+      holdsS: [20, 15, 10, 10],
+      reps: 1,
+      sets: 4,
+      restRepsS: 0,
+      restSetsS: 60,
+      targetPct: 30,
+      pctStep: 10,
       pctBasis: "pr",
     });
   });
 
-  it("previews a 40% → 70% max-force ramp and refuses an unusable model", () => {
+  it("previews a 30% → 60% max-force ramp and refuses an unusable model", () => {
     const t = warmupTarget({ points: [], maxF: 40, cf: 20, wPrime: 300 })!;
-    expect(t.targetKg).toBe(16);
-    expect(t.finalTargetKg).toBe(28);
-    expect(t.workS).toBe(5);
+    expect(t.targetKg).toBe(12);
+    expect(t.finalTargetKg).toBe(24);
+    expect(t.workS).toBe(20);
     expect(t.basis).toContain("not a complete warm-up");
     expect(warmupTarget({ points: [], maxF: 0, cf: null, wPrime: null })).toBeNull();
   });

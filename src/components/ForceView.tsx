@@ -1778,15 +1778,20 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           locked={runActive}
           alternatingReady={
             alternatingModelsSettled &&
-            selectedQuality(armedZone) !== null &&
             effectiveTag !== null &&
-            resolveAlternatingRecommendation(
-              alternatingInputs,
-              selectedQuality(armedZone)!,
-              effectiveTag,
-              intensityPct,
-              armedZone?.protocol.sets ?? 1,
-            ) !== null
+            (armedZone?.protocol.id === "zone:warmup" || armedZone?.protocol.id === "zone:prehab"
+              ? resolveAlternatingMaintenance(
+                  { ...armedZone.protocol, alternateSides: true },
+                  alternatingInputs,
+                ) !== null
+              : selectedQuality(armedZone) !== null &&
+                resolveAlternatingRecommendation(
+                  alternatingInputs,
+                  selectedQuality(armedZone)!,
+                  effectiveTag,
+                  intensityPct,
+                  armedZone?.protocol.sets ?? 1,
+                ) !== null)
           }
           alternatingPrescription={alternatingPrescription}
           onClear={clearProtocol}

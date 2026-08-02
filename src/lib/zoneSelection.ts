@@ -90,6 +90,7 @@ export function buildZoneSelection(
 export function buildPrehabSelection(
   model: ForceCurveModel | null,
   tag: string,
+  alternateSides = true,
 ): ZoneSelection | null {
   if (!model) return null;
   const t = prehabTarget(model);
@@ -107,7 +108,7 @@ export function buildPrehabSelection(
       id: "zone:prehab",
       name: `${t.label} · ${tag}`,
       holdS: PREHAB_PROTOCOL.holdS,
-      holdsS: null,
+      holdsS: [...PREHAB_PROTOCOL.holdsS],
       reps: PREHAB_PROTOCOL.reps,
       sets: PREHAB_PROTOCOL.sets,
       restRepsS: PREHAB_PROTOCOL.restRepsS,
@@ -117,7 +118,7 @@ export function buildPrehabSelection(
       pctBasis: "pr",
       pctStep: 0,
       targetCurve: false,
-      alternateSides: true,
+      alternateSides,
     },
   };
 }
@@ -129,6 +130,7 @@ export function buildWarmupSelection(
   model: ForceCurveModel | null,
   tag: string,
   prKg = model?.maxF ?? 0,
+  alternateSides = true,
 ): ZoneSelection | null {
   if (!model) return null;
   const t = warmupTarget(model, prKg);
@@ -156,7 +158,7 @@ export function buildWarmupSelection(
       pctBasis: WARMUP_PROTOCOL.pctBasis,
       pctStep: WARMUP_PROTOCOL.pctStep,
       targetCurve: false,
-      alternateSides: true,
+      alternateSides,
     },
   };
 }
@@ -265,8 +267,8 @@ export function rederiveSelection(
     if (!model) return sel;
     if (!tag) return null;
     return recordedZone === "prehab"
-      ? buildPrehabSelection(model, tag)
-      : buildWarmupSelection(model, tag, prKg ?? model.maxF);
+      ? buildPrehabSelection(model, tag, sel.protocol.alternateSides)
+      : buildWarmupSelection(model, tag, prKg ?? model.maxF, sel.protocol.alternateSides);
   }
   const q = selectedQuality(sel);
   if (!sel || !q) return sel;
