@@ -44,6 +44,7 @@ import { reportPersistFailure } from "../lib/lostRecordings";
 import { persistRecordingDurable } from "../lib/recordingQueue";
 import {
   armedHandsFreeForce,
+  handsFreeForceAtInactiveStatus,
   idleHandsFreeForce,
   stepHandsFreeForce,
   type HandsFreeForceState,
@@ -204,6 +205,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   } = useTindeqSession();
   const [handsFreeEnabled, setHandsFreeEnabled] = useState(
     () => localStorage.getItem("sendmeter:gauge-hands-free") === "1",
+  );
+  const [targetCoachEnabled, setTargetCoachEnabled] = useState(
+    () => localStorage.getItem("sendmeter:gauge-zone-coach") === "1",
   );
   // Pure threshold state lives in a ref because force samples arrive every
   // animation frame. Each emitted action advances the ref to its claimed
@@ -1111,6 +1115,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     localStorage.setItem("sendmeter:gauge-hands-free", on ? "1" : "0");
   }
 
+  function toggleTargetCoach(on: boolean) {
+    setTargetCoachEnabled(on);
+    localStorage.setItem("sendmeter:gauge-zone-coach", on ? "1" : "0");
+  }
+
   async function armHandsFree() {
     if (handsFreeArmInFlightRef.current || tindeq.status !== "connected") return;
     handsFreeArmInFlightRef.current = true;
@@ -1315,7 +1324,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   useEffect(() => {
     const machine = handsFreeControlRef.current;
     if (status === "connected" || status === "idle" || status === "unsupported") {
-      if (machine.phase !== "idle") handsFreeControlRef.current = idleHandsFreeForce();
+      // `armHandsFree` claims `armed` before awaiting the transport. State
+      // updates inside tindeq.arm() can render once with the OLD connected
+      // status before its final setStatus("armed") lands; clearing that ref
+      // here loses the claim and leaves a loaded fake/real device stuck ARMED.
+      // Cancellation claims idle first, and failed arms reset it themselves,
+      // so an armed ref while still connected belongs to the in-flight Arm.
+      handsFreeControlRef.current = handsFreeForceAtInactiveStatus(machine, status);
       return;
     }
     const observingArmed = status === "armed" && machine.phase === "armed";
@@ -2007,6 +2022,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           saving={saving}
           handsFree={handsFreeEnabled}
           onToggleHandsFree={toggleHandsFree}
+          targetCoach={targetCoachEnabled}
+          onToggleTargetCoach={toggleTargetCoach}
           onArm={() => void armHandsFree()}
           onCancelArm={cancelHandsFreeArm}
           prepare={prepare}

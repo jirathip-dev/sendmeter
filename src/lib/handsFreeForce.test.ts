@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   armedHandsFreeForce,
+  handsFreeForceAtInactiveStatus,
   idleHandsFreeForce,
   stepHandsFreeForce,
   type HandsFreeForceConfig,
@@ -19,6 +20,15 @@ function step(state: HandsFreeForceState, atMs: number, kg: number) {
 }
 
 describe("hands-free Force control (#400)", () => {
+  it("preserves the synchronous Arm claim through an intermediate connected render", () => {
+    const armed = armedHandsFreeForce();
+    expect(handsFreeForceAtInactiveStatus(armed, "connected")).toBe(armed);
+    expect(handsFreeForceAtInactiveStatus(armed, "idle")).toEqual({ phase: "idle" });
+    expect(
+      handsFreeForceAtInactiveStatus({ phase: "recording", belowSinceMs: null }, "connected"),
+    ).toEqual({ phase: "idle" });
+  });
+
   it("requires continuous load above the start threshold", () => {
     let state = armedHandsFreeForce();
     ({ state } = step(state, 0, 2.1));
