@@ -9,7 +9,6 @@ interface Props {
   targetKg: number | null;
   locked: boolean;
   compact?: boolean;
-  onMode: (mode: ForceMeasurementMode) => void;
   onOpenGuide: () => void;
 }
 
@@ -24,11 +23,11 @@ export default function ForceSetupSummary({
   targetKg,
   locked,
   compact = false,
-  onMode,
   onOpenGuide,
 }: Props) {
   const selected = MODES.find((item) => item.value === setup.mode)!;
   const details = [
+    setup.executionMethod === "cadence_only" ? "cadence only" : "sensor",
     setup.equipment.trim() || "equipment not named",
     setup.side ? setup.side[0]!.toUpperCase() + setup.side.slice(1) : "side not set",
     targetKg && targetKg > 0 ? `${targetKg.toFixed(1)} kg target` : null,
@@ -42,7 +41,7 @@ export default function ForceSetupSummary({
           <span> · {details.join(" · ")}</span>
         </div>
         <button type="button" className="glass-pill" onClick={onOpenGuide}>
-          {confirmed ? "Setup checked · View guide" : "Check setup"}
+          {confirmed ? "Equipment checked · View" : "Check equipment"}
         </button>
       </div>
     );
@@ -52,30 +51,14 @@ export default function ForceSetupSummary({
     <section className="force-setup-summary" aria-labelledby="force-setup-summary-title">
       <div className="force-setup-summary-head">
         <div>
-          <div className="label-eyebrow" id="force-setup-summary-title">Measurement setup</div>
+          <div className="label-eyebrow" id="force-setup-summary-title">Equipment setup</div>
           <div className={`force-setup-state ${confirmed ? "checked" : "needs-check"}`}>
-            {confirmed ? "Setup checked" : "Needs confirmation"}
+            {confirmed ? "Equipment checked" : "Not checked"}
           </div>
         </div>
         <button type="button" className="glass-pill" onClick={onOpenGuide} disabled={locked}>
-          {confirmed ? "Edit / view guide" : "How to set up"}
+          {confirmed ? "Edit / view" : "Check equipment"}
         </button>
-      </div>
-      <div className="force-mode-picker" role="radiogroup" aria-label="Measurement mode">
-        {MODES.map((item) => (
-          <button
-            type="button"
-            role="radio"
-            aria-checked={setup.mode === item.value}
-            className={setup.mode === item.value ? "selected" : ""}
-            key={item.value}
-            onClick={() => onMode(item.value)}
-            disabled={locked}
-          >
-            <strong>{item.title}</strong>
-            <span>{item.support}</span>
-          </button>
-        ))}
       </div>
       <p className="force-setup-summary-line">
         {selected.title} · {details.join(" · ")}

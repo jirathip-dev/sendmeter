@@ -68,7 +68,7 @@ function validInput(
   );
 }
 
-function rawZone(kg: number, lowKg: number, highKg: number): TargetZoneCue {
+export function targetZoneAtForce(kg: number, lowKg: number, highKg: number): TargetZoneCue {
   if (kg < lowKg) return "below";
   if (kg > highKg) return "above";
   return "in-zone";
@@ -97,7 +97,7 @@ function observedZone(
     if (kg > highKg + hysteresisKg) return "above";
     return "in-zone";
   }
-  return rawZone(kg, lowKg, highKg);
+  return targetZoneAtForce(kg, lowKg, highKg);
 }
 
 function beginObservation(
@@ -105,7 +105,7 @@ function beginObservation(
 ): TargetZoneCoachState {
   return {
     zone: "unknown",
-    candidateZone: rawZone(input.currentKg, input.targetLowKg, input.targetHighKg),
+    candidateZone: targetZoneAtForce(input.currentKg, input.targetLowKg, input.targetHighKg),
     candidateSinceMs: input.timestampMs,
     lastTimestampMs: input.timestampMs,
     targetLowKg: input.targetLowKg,

@@ -7,6 +7,7 @@ import {
   type TrainingQuality,
 } from "./force-curve";
 import type { TindeqSide } from "../types";
+import type { ForceCapacityModality, TindeqProtocolMode } from "../types";
 
 /// SL-100: which training QUALITY a saved hold belongs to, INFERRED from its
 /// duration — the fallback for a recording that doesn't carry the zone it was
@@ -47,6 +48,15 @@ export interface ZonedHold {
   durationMs: number;
   zone?: RecordedZone | null;
   source?: "dynamometer" | "manual";
+  protocolMode?: TindeqProtocolMode;
+  capacityEvidence?: boolean | null;
+}
+
+/** Historical null/absent protocol modes are Static by contract. */
+export function recordingCapacityModality(
+  rec: Pick<ZonedHold, "protocolMode">,
+): ForceCapacityModality {
+  return rec.protocolMode === "reverse_action" ? "reverse_action" : "static";
 }
 
 export function isMeasuredRecording<T extends { source?: "dynamometer" | "manual"; peakKg?: number | null; avgKg?: number | null }>(
@@ -95,10 +105,20 @@ export function isDepletionEffortRecording(rec: ZonedHold): boolean {
 /// by walkover when there is no maximal-intent effort yet.
 export function effortPeakKg<
   T extends ZonedHold & { tag: string; side: TindeqSide; peakKg: number | null },
->(recs: T[], tag: string | null, side: TindeqSide | null): number | null {
+>(
+  recs: T[],
+  tag: string | null,
+  side: TindeqSide | null,
+  modality: ForceCapacityModality = "static",
+): number | null {
   if (tag === null) return null;
   const matches = recs.filter((r): r is T & { peakKg: number; avgKg: number } =>
-    r.tag === tag && (side === null || r.side === side) && isEffortRecording(r) && isMeasuredRecording(r),
+    r.tag === tag &&
+    (side === null || r.side === side) &&
+    recordingCapacityModality(r) === modality &&
+    isEffortRecording(r) &&
+    isMeasuredRecording(r) &&
+    (modality === "static" || r.capacityEvidence !== false),
   );
   return matches.length ? Math.max(...matches.map((r) => r.peakKg)) : null;
 }
@@ -112,10 +132,23 @@ export function effortPeakKg<
 /// filter it's meant to catch the removal of.
 export function curveCandidateRecordings<
   T extends ZonedHold & { tag: string; side: TindeqSide; peakKg?: number | null; avgKg?: number | null },
->(recs: T[], tag: string | null, side: TindeqSide | null): (T & { peakKg: number; avgKg: number })[] {
+>(
+  recs: T[],
+  tag: string | null,
+  side: TindeqSide | null,
+  modality: ForceCapacityModality = "static",
+): (T & { peakKg: number; avgKg: number })[] {
   if (tag === null) return [];
   return recs.filter((r): r is T & { peakKg: number; avgKg: number } =>
-    r.tag === tag && (side === null || r.side === side) && isEffortRecording(r) && isMeasuredRecording(r),
+    r.tag === tag &&
+    (side === null || r.side === side) &&
+    recordingCapacityModality(r) === modality &&
+    isEffortRecording(r) &&
+    isMeasuredRecording(r) &&
+    // New ordinary Reverse Action prescriptions stamp false so they cannot
+    // improve the curve they were prescribed from. Null/undefined preserves
+    // existing measured Reverse Action rows as historical evidence.
+    (modality === "static" || r.capacityEvidence !== false),
   );
 }
 

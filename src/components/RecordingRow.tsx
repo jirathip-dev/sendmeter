@@ -190,6 +190,7 @@ export default function RecordingRow({
       ? rec.externalLoadKg
       : rec.peakKg;
   const date = new Date(rec.recordedAt);
+  const cadenceOnly = reverseAction && rec.source === "manual";
   const dateLabel =`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 
   return (
@@ -245,7 +246,7 @@ export default function RecordingRow({
             }}
           >
             <span>
-              <span
+              {!cadenceOnly && <span
                 style={{
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
@@ -253,8 +254,8 @@ export default function RecordingRow({
                 }}
               >
                 {primaryKg?.toFixed(1)} kg
-              </span>{" "}
-              {reverseAction ? " mean" : rec.source === "manual" ? " external" : " peak"}
+              </span>}{!cadenceOnly && " "}
+              {cadenceOnly ? "Clock-guided cadence" : reverseAction ? " mean" : rec.source === "manual" ? " external" : " peak"}
             </span>
             {reverseAction && (
               <span
@@ -266,6 +267,11 @@ export default function RecordingRow({
                 }}
               >
                 REVERSE ACTION
+              </span>
+            )}
+            {reverseAction && rec.capacityEvidence === true && (
+              <span className="tag" style={{ color: "var(--warning)", border: "1px solid color-mix(in srgb, var(--warning) 45%, transparent)" }}>
+                CAPACITY TEST
               </span>
             )}
             {rec.tag && (
@@ -295,7 +301,9 @@ export default function RecordingRow({
           </div>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s
-            {rec.source === "manual" ? ` · manual · ${rec.outcome?.replace("_", " ") ?? ""} · planned ${((rec.plannedDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s` : ` · avg ${rec.avgKg?.toFixed(1)} kg`}
+            {cadenceOnly
+              ? ` · cadence only · movement not detected · ${rec.completedReps ?? 0} rep${rec.completedReps === 1 ? "" : "s"} · ${rec.completionStatus ?? "partial"} · planned ${((rec.plannedDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s`
+              : rec.source === "manual" ? ` · manual · ${rec.outcome?.replace("_", " ") ?? ""} · planned ${((rec.plannedDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s` : ` · avg ${rec.avgKg?.toFixed(1)} kg`}
             {rec.setNo !== null && (
               <span style={{ color: "var(--info)" }}> · set {rec.setNo}</span>
             )}

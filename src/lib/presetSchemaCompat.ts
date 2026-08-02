@@ -45,6 +45,18 @@ const REVERSE_ACTION_PRESET_COLUMNS = [
   "setup_note",
 ] as const;
 
+export function isMissingCapacityEvidencePresetColumn(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { code, message } = error as PostgrestErrorLike;
+  if (typeof code !== "string" || typeof message !== "string") return false;
+  if (code === "42703") {
+    return /tindeq_presets["']?\s*\.\s*["']?capacity_evidence\b/i.test(message) &&
+      /\bdoes not exist\b/i.test(message);
+  }
+  return code === "PGRST204" &&
+    /could not find the ['"]capacity_evidence['"] column of ['"]tindeq_presets['"] in the schema cache/i.test(message);
+}
+
 export function isMissingReverseActionPresetColumn(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const { code, message } = error as PostgrestErrorLike;
@@ -77,19 +89,29 @@ export async function retryWithoutPresetHoldsColumn<T>(
   return await legacy();
 }
 
-/// Three schema generations can briefly exist during append-only rollout:
-/// current (Reverse Action + varied holds), pre-Reverse (varied holds), and
-/// pre-varied-holds. Preserve `holds_s` whenever the server has it; only take
-/// the oldest fallback when PostgREST specifically reports that column absent.
+/// Four schema generations can briefly exist during append-only rollout:
+/// current (#422 capacity evidence), #400 Reverse Action, pre-Reverse (varied
+/// holds), and pre-varied-holds. Preserve every supported generation and only
+/// fall back for the specific missing-column errors above.
 export async function retryPresetSchema<T>(
   current: () => PromiseLike<QueryResult<T>>,
+  preCapacity: () => PromiseLike<QueryResult<T>>,
   preReverse: () => PromiseLike<QueryResult<T>>,
   legacy: () => PromiseLike<QueryResult<T>>,
 ): Promise<QueryResult<T>> {
   const currentResult = await current();
   if (!currentResult.error) return currentResult;
   if (isMissingPresetHoldsColumn(currentResult.error)) return await legacy();
-  if (!isMissingReverseActionPresetColumn(currentResult.error)) return currentResult;
+  if (isMissingCapacityEvidencePresetColumn(currentResult.error)) {
+    const preCapacityResult = await preCapacity();
+    if (!preCapacityResult.error) return preCapacityResult;
+    if (isMissingPresetHoldsColumn(preCapacityResult.error)) return await legacy();
+    if (!isMissingReverseActionPresetColumn(preCapacityResult.error)) {
+      return preCapacityResult;
+    }
+  } else if (!isMissingReverseActionPresetColumn(currentResult.error)) {
+    return currentResult;
+  }
   const preReverseResult = await preReverse();
   if (
     preReverseResult.error &&
@@ -155,4 +177,18 @@ export function preReversePresetRow<Row extends ReverseActionPresetRow>(
     throw new Error(REVERSE_ACTION_REQUIRES_MIGRATION);
   }
   return preReverse;
+}
+
+export const CAPACITY_EVIDENCE_REQUIRES_MIGRATION =
+  "This server does not support Reverse Action capacity evidence yet. An administrator must apply the reverse_action_modalities_and_cadence migration before this preset can be saved.";
+
+/// Remove only #422's opt-in field for a server that already supports #400.
+/// False is the schema default and can be represented faithfully; true must
+/// never disappear during a deploy race.
+export function preCapacityPresetRow<Row extends { capacity_evidence: boolean }>(
+  row: Row,
+): Omit<Row, "capacity_evidence"> {
+  const { capacity_evidence: capacityEvidence, ...preCapacity } = row;
+  if (capacityEvidence) throw new Error(CAPACITY_EVIDENCE_REQUIRES_MIGRATION);
+  return preCapacity;
 }

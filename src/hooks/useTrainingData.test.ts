@@ -25,6 +25,7 @@ import {
   rollbackSetPhase,
   runFetchAttempts,
   sortSessions,
+  upsertSessionById,
   withOptimisticUpdate,
   type PhaseSnapshot,
   type RunFetchDeps,
@@ -306,6 +307,12 @@ describe("applyAddSessionOptimistic / reconcileAddSession / rollbackAddSession",
     const temp = makeSession({ id: "temp-1" });
     const result = rollbackAddSession([other, temp], "temp-1");
     expect(result).toEqual([other]);
+  });
+
+  it("upserts a retried client-keyed session without duplicating History", () => {
+    const old = makeSession({ id: "stable", note: "before" });
+    const saved = makeSession({ id: "stable", note: "after" });
+    expect(upsertSessionById([old], saved)).toEqual([saved]);
   });
 });
 

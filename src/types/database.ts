@@ -359,6 +359,7 @@ export type Database = {
       tindeq_presets: {
         Row: {
           alternate_sides: boolean
+          capacity_evidence: boolean
           cadence_out_s: number
           cadence_return_s: number
           created_at: string
@@ -384,6 +385,7 @@ export type Database = {
         }
         Insert: {
           alternate_sides?: boolean
+          capacity_evidence?: boolean
           cadence_out_s?: number
           cadence_return_s?: number
           created_at?: string
@@ -409,6 +411,7 @@ export type Database = {
         }
         Update: {
           alternate_sides?: boolean
+          capacity_evidence?: boolean
           cadence_out_s?: number
           cadence_return_s?: number
           created_at?: string
@@ -438,9 +441,12 @@ export type Database = {
         Row: {
           actual_duration_ms: number | null
           avg_kg: number | null
+          capacity_evidence: boolean | null
           cadence_markers: Json | null
           cadence_out_s: number | null
           cadence_return_s: number | null
+          completed_reps: number | null
+          completion_status: string | null
           deleted_at: string | null
           duration_ms: number
           external_load_kg: number | null
@@ -471,9 +477,12 @@ export type Database = {
         Insert: {
           actual_duration_ms?: number | null
           avg_kg?: number | null
+          capacity_evidence?: boolean | null
           cadence_markers?: Json | null
           cadence_out_s?: number | null
           cadence_return_s?: number | null
+          completed_reps?: number | null
+          completion_status?: string | null
           deleted_at?: string | null
           duration_ms: number
           external_load_kg?: number | null
@@ -504,9 +513,12 @@ export type Database = {
         Update: {
           actual_duration_ms?: number | null
           avg_kg?: number | null
+          capacity_evidence?: boolean | null
           cadence_markers?: Json | null
           cadence_out_s?: number | null
           cadence_return_s?: number | null
+          completed_reps?: number | null
+          completion_status?: string | null
           deleted_at?: string | null
           duration_ms?: number
           external_load_kg?: number | null
@@ -545,6 +557,10 @@ export type Database = {
           hidden: boolean
           id: string
           name: string
+          reverse_cf_kg: number | null
+          reverse_curve_fitted_at: string | null
+          reverse_curve_recording_count: number | null
+          reverse_w_prime_kgs: number | null
           user_id: string
           w_prime_kgs: number | null
         }
@@ -556,6 +572,10 @@ export type Database = {
           hidden?: boolean
           id?: string
           name: string
+          reverse_cf_kg?: number | null
+          reverse_curve_fitted_at?: string | null
+          reverse_curve_recording_count?: number | null
+          reverse_w_prime_kgs?: number | null
           user_id?: string
           w_prime_kgs?: number | null
         }
@@ -567,6 +587,10 @@ export type Database = {
           hidden?: boolean
           id?: string
           name?: string
+          reverse_cf_kg?: number | null
+          reverse_curve_fitted_at?: string | null
+          reverse_curve_recording_count?: number | null
+          reverse_w_prime_kgs?: number | null
           user_id?: string
           w_prime_kgs?: number | null
         }

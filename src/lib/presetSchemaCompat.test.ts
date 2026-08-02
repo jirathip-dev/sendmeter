@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  isMissingCapacityEvidencePresetColumn,
   isMissingPresetHoldsColumn,
   isMissingReverseActionPresetColumn,
   legacyPresetRow,
+  preCapacityPresetRow,
   preReversePresetRow,
   retryPresetSchema,
   retryWithoutPresetHoldsColumn,
@@ -88,9 +90,10 @@ describe("Reverse Action preset schema rollout (#400)", () => {
       message: "column tindeq_presets.protocol_mode does not exist",
     };
     const current = vi.fn(async () => ({ data: null, error: reverseMissing }));
+    const preCapacity = vi.fn(async () => ({ data: null, error: reverseMissing }));
     const preReverse = vi.fn(async () => ({ data: ["holds"], error: null }));
     const legacy = vi.fn(async () => ({ data: ["legacy"], error: null }));
-    await expect(retryPresetSchema(current, preReverse, legacy)).resolves.toEqual({
+    await expect(retryPresetSchema(current, preCapacity, preReverse, legacy)).resolves.toEqual({
       data: ["holds"],
       error: null,
     });
@@ -115,6 +118,45 @@ describe("Reverse Action preset schema rollout (#400)", () => {
     ).toThrow(/does not support Reverse Action/);
     expect(() => preReversePresetRow({ ...ordinary, setup_note: "red spring" })).toThrow(
       /does not support Reverse Action/,
+    );
+  });
+});
+
+describe("capacity-evidence preset schema rollout (#422)", () => {
+  it("recognizes the specific new preset column", () => {
+    expect(isMissingCapacityEvidencePresetColumn({
+      code: "42703",
+      message: "column tindeq_presets.capacity_evidence does not exist",
+    })).toBe(true);
+    expect(isMissingCapacityEvidencePresetColumn({
+      code: "42703",
+      message: "column tindeq_recordings.capacity_evidence does not exist",
+    })).toBe(false);
+  });
+
+  it("retries against the #400 schema without losing Reverse Action", async () => {
+    const missing = {
+      code: "PGRST204",
+      message: "Could not find the 'capacity_evidence' column of 'tindeq_presets' in the schema cache",
+    };
+    const current = vi.fn(async () => ({ data: null, error: missing }));
+    const preCapacity = vi.fn(async () => ({ data: ["reverse"], error: null }));
+    const preReverse = vi.fn(async () => ({ data: ["old"], error: null }));
+    const legacy = vi.fn(async () => ({ data: ["legacy"], error: null }));
+    await expect(retryPresetSchema(current, preCapacity, preReverse, legacy)).resolves.toEqual({
+      data: ["reverse"],
+      error: null,
+    });
+    expect(preReverse).not.toHaveBeenCalled();
+    expect(legacy).not.toHaveBeenCalled();
+  });
+
+  it("strips only false and never silently drops explicit capacity intent", () => {
+    expect(preCapacityPresetRow({ name: "Spring", capacity_evidence: false })).toEqual({
+      name: "Spring",
+    });
+    expect(() => preCapacityPresetRow({ name: "Test", capacity_evidence: true })).toThrow(
+      /capacity evidence/,
     );
   });
 });

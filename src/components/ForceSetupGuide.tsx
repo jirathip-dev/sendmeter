@@ -25,8 +25,8 @@ interface Props {
   allTags: string[];
   targetKg: number | null;
   autoShow: boolean;
+  sensor: boolean;
   metadataForMode: (mode: ForceMeasurementMode) => ForceSetupMetadata;
-  onMode: (mode: ForceMeasurementMode) => void;
   onTag: (tag: string) => void;
   onSide: (side: TindeqSide) => void;
   onSaveDraft: (setup: ForceSetupInputs) => void;
@@ -65,8 +65,8 @@ export default function ForceSetupGuide({
   allTags,
   targetKg,
   autoShow,
+  sensor,
   metadataForMode,
-  onMode,
   onTag,
   onSide,
   onSaveDraft,
@@ -78,7 +78,7 @@ export default function ForceSetupGuide({
   const [draft, setDraft] = useState(() => metadataForMode(mode));
   const [equipmentConfirmed, setEquipmentConfirmed] = useState(false);
   const [positionConfirmed, setPositionConfirmed] = useState(false);
-  const connected = ["connected", "checking", "armed", "measuring"].includes(tindeq.status);
+  const connected = sensor && ["connected", "checking", "armed", "measuring"].includes(tindeq.status);
   const [readiness, setReadiness] = useState<ForceReadinessState>(() =>
     emptyForceReadiness(connected),
   );
@@ -105,7 +105,7 @@ export default function ForceSetupGuide({
   }, [step]);
 
   useEffect(() => {
-    if (tindeq.status !== "checking") return;
+    if (!sensor || tindeq.status !== "checking") return;
     const sample = { atMs: performance.now(), kg: tindeq.current };
     queueMicrotask(() => {
       setReadiness((previous) => {
@@ -114,7 +114,7 @@ export default function ForceSetupGuide({
         return next;
       });
     });
-  }, [tindeq, targetKg]);
+  }, [sensor, tindeq, targetKg]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -127,22 +127,11 @@ export default function ForceSetupGuide({
 
   const setup = (): ForceSetupInputs => ({
     mode: modeRef.current,
+    executionMethod: sensor ? "sensor" : "cadence_only",
     exercise,
     side,
     ...draftRef.current,
   });
-
-  function chooseMode(next: ForceMeasurementMode) {
-    onSaveDraft(setup());
-    modeRef.current = next;
-    const nextDraft = metadataForMode(next);
-    draftRef.current = nextDraft;
-    setDraft(nextDraft);
-    setEquipmentConfirmed(false);
-    setPositionConfirmed(false);
-    setReadiness(emptyForceReadiness(connected));
-    onMode(next);
-  }
 
   function close() {
     onSaveDraft(setup());
@@ -216,15 +205,17 @@ export default function ForceSetupGuide({
     readiness: readinessView,
     equipmentConfirmed,
     positionConfirmed,
+    sensor,
   });
+  const finalStep = sensor ? 2 : 1;
   return (
     <Sheet onClose={close} fullHeight className="force-setup-sheet">
       <div className="force-setup-guide" role="dialog" aria-modal="true" aria-labelledby="force-setup-guide-title">
         <header className="force-setup-guide-header">
           <div>
-            <div className="label-eyebrow">Force setup · {step + 1} of 3</div>
+            <div className="label-eyebrow">Equipment setup · {step + 1} of {finalStep + 1}</div>
             <h2 id="force-setup-guide-title" tabIndex={-1} ref={headingRef}>
-              {step === 0 ? "Choose how force is measured" : step === 1 ? "Make the setup repeatable" : "Check the live signal"}
+              {step === 0 ? "Review the execution path" : step === 1 ? "Make the equipment repeatable" : "Check the live signal"}
             </h2>
           </div>
           <button type="button" className="modal-x" onClick={close} aria-label="Close setup guide">×</button>
@@ -233,27 +224,19 @@ export default function ForceSetupGuide({
         <div className="force-setup-guide-body">
           {step === 0 && (
             <>
-              <p>Choose the measurement pattern you intend to use. Sendmeter records force; it does not select an exercise or determine a safe body position, load, or range.</p>
-              <div className="force-mode-cards" role="radiogroup" aria-label="Measurement mode">
-                {(["static", "movement"] as const).map((value) => {
-                  const copy = MODE_COPY[value];
-                  return (
-                    <button key={value} type="button" role="radio" aria-checked={mode === value} className={mode === value ? "selected" : ""} onClick={() => chooseMode(value)}>
-                      <strong>{copy.title}</strong>
-                      <span>{copy.support}</span>
-                      <p>{copy.instruction}</p>
-                    </button>
-                  );
-                })}
-              </div>
-              <ForcePathDiagram mode={mode} />
+              <div className="force-guide-note"><strong>{MODE_COPY[mode].title} · {sensor ? "sensor" : "cadence only"}</strong><br />{MODE_COPY[mode].instruction}</div>
+              <p>This is derived from the armed protocol and the launch path you chose; equipment setup does not arm or clear a protocol.</p>
+              {sensor && <ForcePathDiagram mode={mode} />}
               <div className="force-guide-note">
-                <strong>Equipment principle, not an exercise prescription.</strong> Keep the sensor inline with the equipment path and follow the device and equipment manufacturers' instructions. Avoid twisting the sensor, sideways load, and cable interference.
+                <strong>Equipment principle, not an exercise prescription.</strong> {sensor
+                  ? "Keep the sensor inline with the equipment path and follow the device and equipment manufacturers' instructions. Avoid twisting the sensor, sideways load, and cable interference."
+                  : "Follow the equipment manufacturer's instructions, keep connectors and anchors in their intended load path, and keep the movement area clear."}
               </div>
               <p className="force-guide-caution">Use a setup you already know is appropriate for you. Sendmeter cannot evaluate technique or detect whether a movement is safe. Stop if you feel pain, numbness, or loss of control; seek guidance from a qualified clinician when exercising with an injury or when unsure.</p>
-              {mode === "movement" && (
+              {mode === "movement" && sensor && (
                 <p className="force-guide-caution">Maintain force through your previously selected range and move smoothly; jerking to chase the target can create misleading peaks. The gauge does not prescribe spring stiffness, range, or a clinical protocol.</p>
               )}
+              {!sensor && <p className="force-guide-caution">Cadence only has no force sensor, target band, tare, or movement detection. The clock guides OUT and RETURN; equipment resistance is whatever your setup provides.</p>}
             </>
           )}
 
@@ -279,14 +262,15 @@ export default function ForceSetupGuide({
                 </label>
               </div>
               <div className="force-guide-checks">
-                <label><input type="checkbox" checked={equipmentConfirmed} onChange={(event) => setEquipmentConfirmed(event.target.checked)} /> I inspected the anchor, handle, rated connectors{mode === "movement" ? ", spring/compliant element, and safety tether or clear area" : ""}; the cable is clear.</label>
+                <label><input type="checkbox" checked={equipmentConfirmed} onChange={(event) => setEquipmentConfirmed(event.target.checked)} /> I inspected the anchor, handle, rated connectors{mode === "movement" ? ", spring/compliant element, and safety tether or clear area" : ""}{sensor ? "; the sensor cable is clear" : ""}.</label>
                 <label><input type="checkbox" checked={positionConfirmed} onChange={(event) => setPositionConfirmed(event.target.checked)} /> I marked a repeatable body position, grip, side, direction of force, and {mode === "movement" ? "both movement endpoints with a clear path" : "static joint/body position"}.</label>
               </div>
-              <p className="force-guide-caution">A stable sensor signal cannot prove an anchor or movement is safe. Stay clear of pinch and impact paths and use components rated for the expected load.</p>
+              <p className="force-guide-caution">{sensor ? "A stable sensor signal cannot prove an anchor or movement is safe. " : ""}Stay clear of pinch and impact paths and use components rated for the expected load.</p>
+              <div className="force-guide-note">These detailed equipment fields stay on this device. The concise setup note saved in the protocol is the synced history snapshot; Sendmeter does not yet have a stable cross-device setup profile identifier.</div>
             </>
           )}
 
-          {step === 2 && (
+          {sensor && step === 2 && (
             <>
               <div className="force-device-status">
                 <div><strong>{tindeq.deviceName}</strong><span>{connected ? "Connected" : "Not connected"}</span></div>
@@ -332,10 +316,10 @@ export default function ForceSetupGuide({
           <label className="force-auto-show"><input type="checkbox" checked={!autoShow} onChange={(event) => onAutoShow(!event.target.checked)} /> Do not show automatically next time</label>
           <div>
             {step > 0 && <button type="button" className="btn-ghost" onClick={() => setStep(step - 1)}>Back</button>}
-            {step < 2 ? (
+            {step < finalStep ? (
               <button type="button" className="btn-primary" onClick={() => { onSaveDraft(setup()); setStep(step + 1); }}>Continue</button>
             ) : (
-              <button type="button" className="btn-primary" disabled={!confirmEnabled} onClick={() => void confirm()}>Setup checked · Arm workout</button>
+              <button type="button" className="btn-primary" disabled={!confirmEnabled} onClick={() => void confirm()}>Save equipment check</button>
             )}
           </div>
         </footer>

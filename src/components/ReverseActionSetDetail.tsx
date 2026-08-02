@@ -165,12 +165,20 @@ export default function ReverseActionSetDetail({
   samples: TindeqSample[];
 }) {
   const metrics = reverseActionMetricItems(rec.setMetrics ?? null, rec.peakKg);
+  if (rec.source === "manual") {
+    return <div style={{ marginTop: 10, padding: 10, borderRadius: 9, background: "var(--surface-1)", color: "var(--ink-muted)", fontSize: "var(--t-xs)", lineHeight: 1.55 }}>
+      <strong style={{ color: "var(--ink)" }}>Cadence only · clock-guided, not detected</strong><br />
+      Set {rec.setNo ?? 1} · {rec.completedReps ?? 0} completed rep{rec.completedReps === 1 ? "" : "s"} · {rec.completionStatus ?? "partial"} · {((rec.actualDurationMs ?? rec.durationMs) / 1_000).toFixed(1)}s actual / {((rec.plannedDurationMs ?? rec.durationMs) / 1_000).toFixed(1)}s planned
+      {rec.cadenceOutS != null && rec.cadenceReturnS != null ? ` · ${rec.cadenceOutS}s OUT / ${rec.cadenceReturnS}s RETURN` : ""}
+      <br />Equipment resistance{rec.setupNote ? ` · ${rec.setupNote}` : " · setup not recorded"}. No force, target band, or movement detection was recorded.
+    </div>;
+  }
   return (
     <div style={{ marginTop: 10 }}>
       <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 7 }}>
         {rec.targetKg !== null && rec.targetKg !== undefined
           ? `Target ${rec.targetKg.toFixed(1)} kg${rec.targetLowKg != null && rec.targetHighKg != null ? ` (${rec.targetLowKg.toFixed(1)}–${rec.targetHighKg.toFixed(1)})` : ""}`
-          : "Target unavailable"}
+          : "Equipment resistance · no kg target"}
         {rec.cadenceOutS != null && rec.cadenceReturnS != null
           ? ` · ${rec.cadenceOutS}s OUT / ${rec.cadenceReturnS}s RETURN`
           : ""}

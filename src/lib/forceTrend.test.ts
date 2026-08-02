@@ -195,4 +195,20 @@ describe("trendChartRecordings excludes maintenance protocols (#297/#325)", () =
     const filtered = trendChartRecordings(recordings, "FDP", "left");
     expect(filtered.map((r) => r.id)).toEqual([recordings[0]!.id]);
   });
+
+  it("partitions measured trends by modality and excludes non-capacity Reverse Action work", () => {
+    const staticRow = rec("2026-07-01T10:00:00Z", 40, { protocolMode: "hold" });
+    const historicalReverse = rec("2026-07-02T10:00:00Z", 35, {
+      protocolMode: "reverse_action",
+      capacityEvidence: null,
+    });
+    const ordinaryReverse = rec("2026-07-03T10:00:00Z", 36, {
+      protocolMode: "reverse_action",
+      capacityEvidence: false,
+    });
+    expect(trendChartRecordings([staticRow, historicalReverse, ordinaryReverse], "FDP", "left", "static"))
+      .toEqual([staticRow]);
+    expect(trendChartRecordings([staticRow, historicalReverse, ordinaryReverse], "FDP", "left", "reverse_action"))
+      .toEqual([historicalReverse]);
+  });
 });
