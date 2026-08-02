@@ -15,6 +15,7 @@ import {
   firstHoldSide,
   holdForSet,
   holdsSummary,
+  prescriptionWorkS,
   presetTargetKg,
   presetTargetKgRange,
   protocolBandLabel,
@@ -22,12 +23,30 @@ import {
   timelineDurationS,
 } from "../lib/protocol";
 import type { PresetRefs, ProtocolSegment } from "../lib/protocol";
+import {
+  reverseActionCadenceKey,
+  reverseActionTargetBand,
+  type ReverseActionSegment,
+} from "../lib/reverseAction";
 import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
+import { DEFAULT_HANDS_FREE_FORCE_CONFIG } from "../lib/handsFreeForce";
+import {
+  idleTargetZoneCoach,
+  stepTargetZoneCoach,
+  targetZoneCoachActive,
+  targetZoneAtForce,
+  type TargetZone,
+  type TargetZoneCue,
+} from "../lib/targetZoneCoach";
 import type { TindeqPreset, TindeqSide } from "../types";
 import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
 import PresetPlanChart from "./PresetPlanChart";
 import type { GaugeTarget } from "./ForceCurveCard";
+import type { ForceSetupInputs } from "../lib/forceSetup";
+import ForceSetupSummary from "./ForceSetupSummary";
+import ReverseActionWorkDisplay from "./ReverseActionWorkDisplay";
+import ProtocolBadge from "./ProtocolBadge";
 import {
   prescriptionForSegment,
   targetHoldSegment,
@@ -40,7 +59,7 @@ interface Props {
   /// expanded timeline — built by the parent so the per-rep recorder and this
   /// display always agree. Null = free hold.
   protocol: TindeqPreset | null;
-  timeline: ProtocolSegment[] | null;
+  timeline: (ProtocolSegment | ReverseActionSegment)[] | null;
   /// Fallback load band for the live chart (zone band / set-1 preset band —
   /// with a %-of-PR ramp the band is re-derived here per CURRENT set).
   target: GaugeTarget | null;
@@ -56,6 +75,10 @@ interface Props {
   allTags: string[];
   onTag: (t: string) => void;
   onSide: (s: TindeqSide) => void;
+  setup: ForceSetupInputs;
+  setupConfirmed: boolean;
+  setupTargetKg: number | null;
+  onOpenSetupGuide: () => void;
   /// Unarm the active zone/preset (#298) — falls back to a free hold.
   onClearProtocol: () => void;
   canStart: boolean;
@@ -66,6 +89,12 @@ interface Props {
   /// false must always say why.
   startBlockedReason: string | null;
   saving: boolean;
+  handsFree: boolean;
+  onToggleHandsFree: (on: boolean) => void;
+  targetCoach: boolean;
+  onToggleTargetCoach: (on: boolean) => void;
+  onArm: () => void;
+  onCancelArm: () => void;
   /// Get-ready countdown before the first hold (persisted preference).
   prepare: boolean;
   onTogglePrepare: (on: boolean) => void;
@@ -79,6 +108,7 @@ interface Props {
   onStart: () => void;
   onStop: () => void;
   onMinimize: () => void;
+  protocolQuality: string | null;
 }
 
 const PHASE_META = {
@@ -87,7 +117,65 @@ const PHASE_META = {
   switch: { label: "SWITCH HANDS", color: "var(--warning)" },
   rest: { label: "REST", color: "var(--primary)" },
   setRest: { label: "SET REST", color: "var(--info)" },
+  move: { label: "MOVE", color: "var(--success)" },
 } as const;
+
+interface CoachDisplay {
+  active: boolean;
+  zone: TargetZone;
+  lowKg: number | null;
+  highKg: number | null;
+}
+
+const IDLE_COACH_DISPLAY: CoachDisplay = {
+  active: false,
+  zone: "unknown",
+  lowKg: null,
+  highKg: null,
+};
+
+const COACH_PRESENTATION: Record<
+  TargetZone,
+  { label: string; symbol: string; color: string }
+> = {
+  unknown: { label: "COACHING…", symbol: "•", color: "var(--ink-muted)" },
+  below: { label: "BELOW", symbol: "↓", color: "var(--info)" },
+  "in-zone": { label: "IN ZONE", symbol: "✓", color: "var(--success)" },
+  above: { label: "ABOVE", symbol: "↑", color: "var(--danger)" },
+};
+
+function playTargetZoneCue(ctx: AudioContext | null, cue: TargetZoneCue) {
+  if (!ctx) return;
+  const tones =
+    cue === "below"
+      ? [
+          { hz: 360, offsetS: 0 },
+          { hz: 260, offsetS: 0.09 },
+        ]
+      : cue === "above"
+        ? [
+            { hz: 1_120, offsetS: 0 },
+            { hz: 1_420, offsetS: 0.09 },
+          ]
+        : [{ hz: 720, offsetS: 0 }];
+  try {
+    for (const tone of tones) {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "triangle";
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.frequency.value = tone.hz;
+      const startsAt = ctx.currentTime + tone.offsetS;
+      gain.gain.setValueAtTime(cue === "in-zone" ? 0.14 : 0.2, startsAt);
+      gain.gain.exponentialRampToValueAtTime(0.001, startsAt + 0.07);
+      oscillator.start(startsAt);
+      oscillator.stop(startsAt + 0.075);
+    }
+  } catch {
+    // Audio is optional; the visible state remains the source of truth.
+  }
+}
 
 function fmt(sec: number): string {
   const s = Math.max(0, Math.ceil(sec));
@@ -110,10 +198,20 @@ export default function ForceFullscreen({
   allTags,
   onTag,
   onSide,
+  setup,
+  setupConfirmed,
+  setupTargetKg,
+  onOpenSetupGuide,
   onClearProtocol,
   canStart,
   startBlockedReason,
   saving,
+  handsFree,
+  onToggleHandsFree,
+  targetCoach,
+  onToggleTargetCoach,
+  onArm,
+  onCancelArm,
   prepare,
   onTogglePrepare,
   protoTS,
@@ -123,8 +221,13 @@ export default function ForceFullscreen({
   onStart,
   onStop,
   onMinimize,
+  protocolQuality,
 }: Props) {
   const measuring = tindeq.status === "measuring";
+  const armed = tindeq.status === "armed";
+  // Hands-free is deliberately a free-hold first slice. A saved preference
+  // must not change countdown behavior when a guided protocol is armed.
+  const handsFreeActive = handsFree && !protocol;
   // Walk the timeline in protocol time (parent-owned; freezes while paused).
   const pos = timeline && measuring ? timelineAt(timeline, protoTS) : null;
   const done = timeline !== null && measuring && pos === null;
@@ -137,11 +240,35 @@ export default function ForceFullscreen({
   function primeAudio() {
     try {
       if (!audioRef.current) audioRef.current = new AudioContext();
-      void audioRef.current.resume();
+      void audioRef.current.resume().catch(() => {});
     } catch {
       // no audio
     }
   }
+  const lastHandsFreeStatusRef = useRef<"idle" | "armed" | "measuring">("idle");
+  useEffect(() => {
+    const next = handsFreeActive ? (armed ? "armed" : measuring ? "measuring" : "idle") : "idle";
+    const prev = lastHandsFreeStatusRef.current;
+    if (next === prev) return;
+    lastHandsFreeStatusRef.current = next;
+    if (next === "idle") return;
+    const ctx = audioRef.current;
+    if (ctx) {
+      try {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.frequency.value = next === "armed" ? 440 : 990;
+        g.gain.setValueAtTime(0.25, ctx.currentTime);
+        o.start();
+        o.stop(ctx.currentTime + 0.15);
+      } catch {
+        // no audio
+      }
+    }
+    navigator.vibrate?.(next === "armed" ? 80 : 150);
+  }, [armed, measuring, handsFreeActive]);
   useEffect(() => {
     if (!measuring || !timeline) {
       lastKeyRef.current = null;
@@ -150,18 +277,35 @@ export default function ForceFullscreen({
     const key = done
       ? "done"
       : pos
-        ? `${pos.seg.phase}-${pos.seg.set}-${pos.seg.rep}-${pos.seg.side ?? ""}`
+        ? pos.seg.phase === "move"
+          ? reverseActionCadenceKey(pos.seg)
+          : `${pos.seg.phase}-${pos.seg.set}-${pos.seg.rep}-${pos.seg.side ?? ""}`
         : null;
     if (key === null || lastKeyRef.current === key) return;
     const isFirst = lastKeyRef.current === null;
     lastKeyRef.current = key;
-    if (isFirst) return;
+    // Normal protocols do not re-cue their first visible segment. Reverse
+    // Action does: the initial OUT command is an instruction, not ambient
+    // phase state, and must be distinguishable from the following RETURN.
+    if (isFirst && pos?.seg.phase !== "move") return;
     const ctx = audioRef.current;
     const phase = done ? "done" : pos!.seg.phase;
+    const direction =
+      pos?.seg.phase === "move" ? pos.seg.direction : null;
     if (ctx) {
       try {
-        const freq = phase === "hold" ? 990 : phase === "done" ? 660 : 440;
-        const beeps = phase === "done" ? 3 : phase === "switch" ? 2 : 1;
+        const freq =
+          direction === "out"
+            ? 880
+            : direction === "return"
+              ? 620
+              : phase === "hold"
+                ? 990
+                : phase === "done"
+                  ? 660
+                  : 440;
+        const beeps =
+          phase === "done" ? 3 : phase === "switch" || direction === "return" ? 2 : 1;
         for (let i = 0; i < beeps; i++) {
           const o = ctx.createOscillator();
           const g = ctx.createGain();
@@ -177,7 +321,13 @@ export default function ForceFullscreen({
         // ignore
       }
     }
-    navigator.vibrate?.(phase === "hold" ? 150 : [80, 60, 80]);
+    navigator.vibrate?.(
+      direction === "return"
+        ? [70, 60, 70]
+        : phase === "hold" || phase === "move"
+          ? 150
+          : [80, 60, 80],
+    );
   }, [measuring, timeline, pos, done]);
 
   // Free-hold get-ready countdown (#312) — null while idle/measuring/guided.
@@ -255,11 +405,13 @@ export default function ForceFullscreen({
     ? "var(--warning)"
     : counting
       ? PHASE_META.prepare.color
+      : armed
+        ? "var(--warning)"
       : (meta?.color ?? (measuring ? "var(--success)" : "var(--primary)"));
 
   // Side shown on a hold: the segment's own hand, else the global pick.
   const holdSide =
-    pos?.seg.phase === "hold"
+    pos?.seg.phase === "hold" || pos?.seg.phase === "move"
       ? (pos.seg.side ??
         (globalSide === "left" || globalSide === "right" ? globalSide : null))
       : null;
@@ -280,19 +432,30 @@ export default function ForceFullscreen({
   // (nothing is "current" yet). Always the timeline's own pick, never a
   // stored preference.
   const autoSide =
-    pos?.seg.side ?? nextHoldSide ?? (timeline ? firstHoldSide(timeline) : null);
+    pos?.seg.side ??
+    nextHoldSide ??
+    (timeline && protocol?.protocolMode !== "reverse_action"
+      ? firstHoldSide(timeline as ProtocolSegment[])
+      : null);
 
   // Tags only make sense to change before Start. The side row stays up
   // through an alternating run too (#298) — it's a live indicator there,
   // not a control — but a non-alternating run has nothing new to show once
   // measuring starts, so it keeps the original idle-only visibility.
-  const showTagPicker = !measuring && !counting;
-  const showSideRow = !counting && (!measuring || !!protocol?.alternateSides);
+  const showTagPicker = !measuring && !armed && !counting;
+  const showSideRow = !armed && !counting && (!measuring || !!protocol?.alternateSides);
 
   // Per-set target band: a %-of-PR preset ramps up each set; the chart band
   // follows the CURRENT set live (set 1 while idle, last set once done).
   const currentSet = pos?.seg.set ?? (done ? (protocol?.sets ?? 1) : 1);
-  const targetSegment = targetHoldSegment(timeline, pos?.seg ?? null, done);
+  const targetSegment =
+    protocol?.protocolMode === "reverse_action"
+      ? null
+      : targetHoldSegment(
+          timeline as ProtocolSegment[] | null,
+          pos?.seg as ProtocolSegment | null,
+          done,
+        );
   const protocolKg = protocol ? presetTargetKg(protocol, presetRefs, currentSet) : null;
   // #332: with a per-set hold list, a `targetCurve` preset resolves a
   // different kg per set (possibly non-monotonically), so a "set N: X kg"
@@ -301,6 +464,14 @@ export default function ForceFullscreen({
   // still tracks the CURRENT set (what to aim for right now); only the text
   // label changes to describe the whole protocol.
   const protocolKgRange = protocol?.targetCurve ? presetTargetKgRange(protocol, presetRefs) : null;
+  const reverseBand =
+    protocol?.protocolMode === "reverse_action"
+      ? reverseActionTargetBand(
+          protocolKg,
+          protocol.toleranceMode ?? "percent",
+          protocol.toleranceValue ?? 10,
+        )
+      : null;
   const handTarget = prescriptionForSegment(
     alternatingPrescription,
     targetSegment?.side,
@@ -335,26 +506,118 @@ export default function ForceFullscreen({
         })
       : undefined;
   const band: GaugeTarget | null =
-    handTarget ?? (protocol && protocolKg != null
+    reverseBand && protocol
+      ? {
+          ...reverseBand,
+          workS: prescriptionWorkS(protocol, currentSet),
+          label: protocolBandLabel(protocol, reverseBand.kg, currentSet, protocolKgRange),
+        }
+    : handTarget ?? (protocol && protocolKg != null
       ? {
           kg: protocolKg,
           lowKg: protocolKg * 0.9,
           highKg: protocolKg * 1.1,
-          workS: holdForSet(protocol, currentSet),
+          workS: prescriptionWorkS(protocol, currentSet),
           label: protocolBandLabel(protocol, protocolKg, currentSet, protocolKgRange),
         }
       : target);
+
+  // One shared coach for targeted free holds and guided hold segments. The
+  // current per-set `band` above is deliberately the only target source.
+  const coachBandValid =
+    band !== null &&
+    Number.isFinite(band.lowKg) &&
+    Number.isFinite(band.highKg) &&
+    band.lowKg < band.highKg;
+  const coachingActive = targetZoneCoachActive({
+    enabled: targetCoach,
+    measuring,
+    hasTarget: coachBandValid,
+    guided: protocol !== null,
+    guidedPhase: pos?.seg.phase ?? null,
+    paused,
+  });
+  const currentKg = tindeq.current;
+  const sampleTimestampMs = tindeq.elapsedMs;
+  const targetLowKg = band?.lowKg ?? null;
+  const targetHighKg = band?.highKg ?? null;
+  const coachMachineRef = useRef(idleTargetZoneCoach());
+  const [coachDisplay, setCoachDisplay] = useState<CoachDisplay>(IDLE_COACH_DISPLAY);
+  const coachDisplayRef = useRef<CoachDisplay>(IDLE_COACH_DISPLAY);
+  useEffect(() => {
+    const stepped = stepTargetZoneCoach(coachMachineRef.current, {
+      currentKg,
+      targetLowKg,
+      targetHighKg,
+      timestampMs: sampleTimestampMs,
+      active: coachingActive,
+    });
+    // Claim the transition before audio or the deferred React-state publish.
+    coachMachineRef.current = stepped.state;
+
+    const nextDisplay: CoachDisplay =
+      coachingActive && targetLowKg !== null && targetHighKg !== null
+      ? { active: true, zone: stepped.state.zone, lowKg: targetLowKg, highKg: targetHighKg }
+      : IDLE_COACH_DISPLAY;
+    const priorDisplay = coachDisplayRef.current;
+    if (
+      priorDisplay.active !== nextDisplay.active ||
+      priorDisplay.zone !== nextDisplay.zone ||
+      priorDisplay.lowKg !== nextDisplay.lowKg ||
+      priorDisplay.highKg !== nextDisplay.highKg
+    ) {
+      coachDisplayRef.current = nextDisplay;
+      const claimedState = stepped.state;
+      queueMicrotask(() => {
+        // This callback is asynchronous: only publish the snapshot if the refs
+        // still identify the transition claimed above (#295 stale-closure rule).
+        if (
+          coachMachineRef.current !== claimedState ||
+          coachDisplayRef.current !== nextDisplay
+        ) return;
+        setCoachDisplay(nextDisplay);
+      });
+    }
+
+    if (stepped.cue) {
+      playTargetZoneCue(audioRef.current, stepped.cue);
+      navigator.vibrate?.(
+        stepped.cue === "in-zone" ? 45 : stepped.cue === "below" ? [35, 45, 70] : [70, 45, 35],
+      );
+    }
+  }, [
+    coachingActive,
+    currentKg,
+    sampleTimestampMs,
+    targetHighKg,
+    targetLowKg,
+  ]);
+
+  const coachedZone =
+    coachDisplay.active &&
+    coachDisplay.lowKg === band?.lowKg &&
+    coachDisplay.highKg === band?.highKg
+      ? coachDisplay.zone
+      : "unknown";
+  const reverseWorking =
+    measuring && protocol?.protocolMode === "reverse_action" && band !== null;
+  const displayedCoachZone = reverseWorking && band
+    ? targetZoneAtForce(tindeq.current, band.lowKg, band.highKg)
+    : coachedZone;
+  const coachPresentation = COACH_PRESENTATION[displayedCoachZone];
+  const reverseSegment =
+    reverseWorking && pos ? (pos.seg as ReverseActionSegment) : null;
 
   return createPortal(
     <div
       className="fullscreen-overlay"
       style={{
         // The whole screen takes the phase color, Timer-Plus style.
-        background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting ? 13 : 6}%, var(--canvas))`,
+        background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 13 : 6}%, var(--canvas))`,
         transition: "background 0.3s",
         display: "flex",
         justifyContent: "center",
-        overflowY: "auto",
+        overflowY: reverseWorking ? "hidden" : "auto",
       }}
     >
       <div
@@ -389,6 +652,8 @@ export default function ForceFullscreen({
                 ? "var(--warning)"
                 : measuring
                   ? "var(--success)"
+                  : armed
+                    ? "var(--warning)"
                   : "var(--info)",
               animation:
                 measuring && !paused ? "pulse 1.6s ease-in-out infinite" : undefined,
@@ -397,7 +662,7 @@ export default function ForceFullscreen({
           <span style={{ fontSize: "var(--t-sm)", color: "var(--ink)", flex: 1 }}>
             Progressor{" "}
             <span style={{ color: "var(--ink-muted)" }}>
-              · {paused ? "paused" : measuring ? "measuring" : "connected"}
+              · {paused ? "paused" : measuring ? "measuring" : armed ? "armed" : "connected"}
             </span>
           </span>
           {tindeq.lowBattery && (
@@ -412,14 +677,15 @@ export default function ForceFullscreen({
               Low battery
             </span>
           )}
-          <button
-            onClick={() => void tindeq.tare()}
-            disabled={measuring || counting}
-            className="glass-pill"
-            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
-          >
-            Tare
-          </button>
+          {!measuring && !armed && !counting && (
+            <button
+              onClick={onOpenSetupGuide}
+              className="glass-pill"
+              style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
+            >
+              Setup
+            </button>
+          )}
           <button
             onClick={tindeq.disconnect}
             className="glass-pill"
@@ -429,12 +695,79 @@ export default function ForceFullscreen({
           </button>
         </div>
 
+        {reverseWorking && band && protocol && (
+          <>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", flexShrink: 0 }}>
+            <span style={{ fontWeight: 850, fontSize: "var(--t-base)", overflowWrap: "anywhere" }}>{protocol.name}</span>
+            <ProtocolBadge mode="reverse_action" quality={protocolQuality} />
+          </div>
+          <ReverseActionWorkDisplay
+            currentKg={tindeq.current}
+            targetKg={band.kg}
+            lowKg={band.lowKg}
+            highKg={band.highKg}
+            zone={displayedCoachZone}
+            segment={reverseSegment}
+            remainingS={pos?.remaining ?? null}
+            done={done}
+            reps={protocol.reps}
+            sets={protocol.sets}
+            side={globalSide}
+          /></>
+        )}
+
+        {!reverseWorking && coachingActive && band && (
+          <div
+            role="meter"
+            aria-label="Force target zone"
+            aria-valuemin={0}
+            aria-valuemax={Math.max(1, band.highKg * 1.5, tindeq.current)}
+            aria-valuenow={Math.max(0, tindeq.current)}
+            aria-valuetext={`${coachPresentation.label}; target ${band.lowKg.toFixed(1)} to ${band.highKg.toFixed(1)} kilograms`}
+            style={{
+              borderRadius: 16,
+              padding: "10px 14px",
+              flexShrink: 0,
+              textAlign: "center",
+              background: `color-mix(in srgb, ${coachPresentation.color} 18%, var(--surface-1))`,
+              border: `2px solid color-mix(in srgb, ${coachPresentation.color} 65%, transparent)`,
+              transition: "background 0.2s, border-color 0.2s",
+            }}
+          >
+            <div
+              aria-live="polite"
+              style={{
+                color: coachPresentation.color,
+                fontFamily: "Inter, sans-serif",
+                fontWeight: 850,
+                fontSize: "clamp(1.65rem, 8vw, 2.4rem)",
+                letterSpacing: "0.08em",
+                lineHeight: 1,
+              }}
+            >
+              <span aria-hidden="true">{coachPresentation.symbol} </span>
+              {coachPresentation.label}
+            </div>
+            <div
+              style={{
+                color: "var(--ink)",
+                fontSize: "var(--t-sm)",
+                fontWeight: 750,
+                marginTop: 5,
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              TARGET {band.lowKg.toFixed(1)}–{band.highKg.toFixed(1)} kg
+            </div>
+          </div>
+        )}
+
         {/* Colorful phase banner (Timer-Plus style) */}
-        <div
+        {!reverseWorking && <div
           style={{
             borderRadius: 18,
             padding: `${clampCss(BANNER_PAD_Y)} 16px`,
-            background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting ? 22 : 12}%, var(--surface-1))`,
+            background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 22 : 12}%, var(--surface-1))`,
             border: `1px solid color-mix(in srgb, ${bannerColor} 50%, transparent)`,
             textAlign: "center",
             transition: "background 0.25s, border-color 0.25s",
@@ -471,7 +804,11 @@ export default function ForceFullscreen({
                   color: meta.color,
                 }}
               >
-                {meta.label}
+                {pos.seg.phase === "move"
+                  ? pos.seg.direction === "out"
+                    ? "OUT"
+                    : "RETURN"
+                  : meta.label}
                 {holdSide && ` · ${holdSide.toUpperCase()}`}
                 {pos.seg.phase === "switch" && pos.seg.side && ` → ${pos.seg.side.toUpperCase()}`}
               </div>
@@ -520,6 +857,27 @@ export default function ForceFullscreen({
                 get on the hold…
               </div>
             </>
+          ) : armed ? (
+            <>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
+                ARMED
+              </div>
+              <div
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontWeight: 800,
+                  fontVariantNumeric: "tabular-nums",
+                  fontSize: heroFontCss(FORCE_HERO_SM_FONT),
+                  lineHeight: 1,
+                }}
+              >
+                {tindeq.current.toFixed(1)}
+                <span style={{ fontSize: "var(--t-xl)", color: "var(--ink-muted)" }}> kg</span>
+              </div>
+              <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", marginTop: 4 }}>
+                Load to at least {DEFAULT_HANDS_FREE_FORCE_CONFIG.startKg.toFixed(1)} kg and hold steady
+              </div>
+            </>
           ) : measuring ? (
             <>
               <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
@@ -537,6 +895,11 @@ export default function ForceFullscreen({
                 {(tindeq.elapsedMs / 1000).toFixed(1)}
                 <span style={{ fontSize: "var(--t-xl)", color: "var(--ink-muted)" }}>s</span>
               </div>
+              {handsFreeActive && (
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginTop: 4 }}>
+                  Release to {DEFAULT_HANDS_FREE_FORCE_CONFIG.stopKg.toFixed(1)} kg or less for {(DEFAULT_HANDS_FREE_FORCE_CONFIG.stopGraceMs / 1_000).toFixed(1)}s to save
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -546,20 +909,31 @@ export default function ForceFullscreen({
               <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
                 {protocol && timeline ? (
                   <>
-                    <span style={{ color: "var(--ink)", fontWeight: 600 }}>{protocol.name}</span>{" "}
-                    · {readyLeft && readyRight
-                      ? `L ${fmt(readyLeft.workS)} / R ${fmt(readyRight.workS)}`
-                      : holdsSummary(protocol)} × {protocol.reps} × {protocol.sets}
-                    {protocol.alternateSides && " · L⇄R"} · ~
-                    {Math.round(timelineDurationS(timeline) / 60)}min
-                    <br />
-                    {readyLeft && readyRight && (
+                    <span style={{ color: "var(--ink)", fontWeight: 700, overflowWrap: "anywhere" }}>{protocol.name}</span>{" "}
+                    <ProtocolBadge mode={protocol.protocolMode ?? "hold"} quality={protocolQuality} />{" "}
+                    {protocol.protocolMode === "reverse_action" ? (
                       <>
-                        L {readyLeft.kg.toFixed(1)} kg · R {readyRight.kg.toFixed(1)} kg
-                        <br />
+                        · {protocol.cadenceOutS ?? 3}s OUT / {protocol.cadenceReturnS ?? 3}s RETURN · {protocol.reps} rep{protocol.reps === 1 ? "" : "s"} × {protocol.sets} set{protocol.sets === 1 ? "" : "s"} · ~
+                        {Math.round(timelineDurationS(timeline) / 60)}min
+                        <br />one continuous raw trace saves per set
                       </>
-                      )}
-                    each rep saves as its own recording
+                    ) : (
+                      <>
+                        · {readyLeft && readyRight
+                          ? `L ${fmt(readyLeft.workS)} / R ${fmt(readyRight.workS)}`
+                          : holdsSummary(protocol)} × {protocol.reps} × {protocol.sets}
+                        {protocol.alternateSides && " · L⇄R"} · ~
+                        {Math.round(timelineDurationS(timeline) / 60)}min
+                        <br />
+                        {readyLeft && readyRight && (
+                          <>
+                            L {readyLeft.kg.toFixed(1)} kg · R {readyRight.kg.toFixed(1)} kg
+                            <br />
+                          </>
+                        )}
+                        each rep saves as its own recording
+                      </>
+                    )}
                   </>
                 ) : band ? (
                   <>
@@ -569,7 +943,7 @@ export default function ForceFullscreen({
                   "Free hold — pick a zone or preset in the tab for a guided timer."
                 )}
               </div>
-              {protocol && timeline && (
+              {protocol && timeline && protocol.protocolMode !== "reverse_action" && (
                 <PresetPlanChart
                   preset={protocol}
                   refs={presetRefs}
@@ -588,9 +962,17 @@ export default function ForceFullscreen({
                   Clear — free hold
                 </button>
               )}
+              <ForceSetupSummary
+                setup={setup}
+                confirmed={setupConfirmed}
+                targetKg={setupTargetKg}
+                locked={false}
+                compact
+                onOpenGuide={onOpenSetupGuide}
+              />
             </>
           )}
-        </div>
+        </div>}
 
         {/* Quick exercise + side pickers — arm a free hold without leaving
             the gauge (brand-new tags are typed in the tab). Box chips, no
@@ -678,7 +1060,7 @@ export default function ForceFullscreen({
             avg={tindeq.avg}
             elapsedMs={tindeq.elapsedMs}
             samplesRef={tindeq.samplesRef}
-            live={measuring}
+            live={measuring || armed}
             target={band}
             fill
           />
@@ -688,10 +1070,13 @@ export default function ForceFullscreen({
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {/* Pause / Skip — guided runs only. Both finalize the current rep in
               the parent before touching the protocol clock. */}
-          {measuring && timeline && !done && (
+          {measuring && timeline && !done && protocol?.protocolMode !== "reverse_action" && (
             <div style={{ display: "flex", gap: 10, marginBottom: 2 }}>
               <button
-                onClick={onPause}
+                onClick={() => {
+                  primeAudio();
+                  onPause();
+                }}
                 className="glass-pill"
                 style={
                   {
@@ -731,9 +1116,14 @@ export default function ForceFullscreen({
             </div>
           )}
           <button
+            aria-label={measuring && protocol?.protocolMode === "reverse_action" ? "Emergency stop and save partial Reverse Action set" : undefined}
             onClick={() => {
               if (measuring) {
                 onStop();
+                return;
+              }
+              if (armed) {
+                onCancelArm();
                 return;
               }
               if (counting) {
@@ -743,21 +1133,25 @@ export default function ForceFullscreen({
                 return;
               }
               primeAudio();
+              if (handsFreeActive) {
+                onArm();
+                return;
+              }
               if (startsWithCountdown(protocol, prepare)) {
                 setPrepStartedMs(Date.now());
               } else {
                 onStart();
               }
             }}
-            disabled={measuring ? saving : counting ? false : !canStart}
+            disabled={measuring ? saving : armed ? false : counting ? false : !canStart}
             style={{
               width: clampCss(FORCE_ACTION_CIRCLE),
               height: clampCss(FORCE_ACTION_CIRCLE),
               flexShrink: 0,
               borderRadius: "50%",
-              border: `3px solid ${measuring || counting ? "var(--danger)" : "var(--success)"}`,
-              background: `color-mix(in srgb, ${measuring || counting ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
-              color: measuring || counting ? "var(--danger)" : "var(--success)",
+              border: `3px solid ${measuring || armed || counting ? "var(--danger)" : "var(--success)"}`,
+              background: `color-mix(in srgb, ${measuring || armed || counting ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
+              color: measuring || armed || counting ? "var(--danger)" : "var(--success)",
               cursor: "pointer",
               fontFamily: "Inter, sans-serif",
               fontWeight: 800,
@@ -767,15 +1161,15 @@ export default function ForceFullscreen({
               alignItems: "center",
               justifyContent: "center",
               gap: 3,
-              opacity: (measuring ? saving : counting ? false : !canStart) ? 0.45 : 1,
+              opacity: (measuring ? saving : armed ? false : counting ? false : !canStart) ? 0.45 : 1,
             }}
           >
             {measuring ? (
               <>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
-                {saving ? "SAVING…" : "STOP"}
+                {saving ? "SAVING…" : protocol?.protocolMode === "reverse_action" ? "STOP NOW" : "STOP"}
               </>
-            ) : counting ? (
+            ) : armed || counting ? (
               <>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
                 CANCEL
@@ -783,11 +1177,52 @@ export default function ForceFullscreen({
             ) : (
               <>
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                START
+                {handsFreeActive ? "ARM" : "START"}
               </>
             )}
           </button>
-          {!measuring && !counting && (
+          {!measuring && !armed && !counting && !protocol && (
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: "var(--t-xs)",
+                color: "var(--ink-muted)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={handsFree}
+                onChange={(e) => onToggleHandsFree(e.target.checked)}
+              />
+              Hands-free — load to start, release to save
+            </label>
+          )}
+          {!measuring && !armed && !counting && coachBandValid && (
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: "var(--t-xs)",
+                color: "var(--ink-muted)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={targetCoach}
+                onChange={(e) => {
+                  if (e.target.checked) primeAudio();
+                  onToggleTargetCoach(e.target.checked);
+                }}
+              />
+              Audio coach — cues below, in zone, and above
+            </label>
+          )}
+          {!measuring && !armed && !counting && !handsFreeActive && protocol?.protocolMode !== "reverse_action" && (
             <label
               style={{
                 display: "flex",
@@ -806,7 +1241,7 @@ export default function ForceFullscreen({
               5s get-ready countdown
             </label>
           )}
-          {!canStart && !measuring && !counting && (
+          {!canStart && !measuring && !armed && !counting && (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", textAlign: "center" }}>
               {startBlockedReason
                 ? startBlockedReason

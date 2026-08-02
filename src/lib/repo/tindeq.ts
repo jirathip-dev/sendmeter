@@ -6,17 +6,28 @@ import type {
   TindeqRecordingMeta,
   TindeqSample,
   TindeqSide,
+  ForceCapacityModality,
 } from "../../types";
 import type { RecordedZone } from "../force-curve";
 import { localDayRange } from "../dates";
 import {
   legacyPresetRow,
-  retryWithoutPresetHoldsColumn,
+  preCapacityPresetRow,
+  preReversePresetRow,
+  retryRecordingModalitySchema,
+  retryPresetSchema,
+  retryTagReverseCurveSchema,
 } from "../presetSchemaCompat";
 import { unwrap, makeSoftDeleteOps } from "./shared";
+import {
+  parseCadenceMarkers,
+  parseReverseActionSetMetrics,
+} from "../reverseAction";
 
 const RECORDING_COLS =
-  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no";
+  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no, protocol_mode, target_kg, target_low_kg, target_high_kg, cadence_out_s, cadence_return_s, cadence_markers, set_metrics, setup_note, capacity_evidence, completed_reps, completion_status";
+const PRE_MODALITY_RECORDING_COLS =
+  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no, protocol_mode, target_kg, target_low_kg, target_high_kg, cadence_out_s, cadence_return_s, cadence_markers, set_metrics, setup_note";
 
 type RecordingRow = {
   id: string;
@@ -38,6 +49,18 @@ type RecordingRow = {
   planned_duration_ms: number | null;
   actual_duration_ms: number | null;
   rep_no: number | null;
+  protocol_mode: string;
+  target_kg: number | null;
+  target_low_kg: number | null;
+  target_high_kg: number | null;
+  cadence_out_s: number | null;
+  cadence_return_s: number | null;
+  cadence_markers: unknown;
+  set_metrics: unknown;
+  setup_note: string;
+  capacity_evidence?: boolean | null;
+  completed_reps?: number | null;
+  completion_status?: string | null;
 };
 
 function toRecording(r: RecordingRow): TindeqRecordingMeta {
@@ -64,17 +87,30 @@ function toRecording(r: RecordingRow): TindeqRecordingMeta {
     plannedDurationMs: r.planned_duration_ms,
     actualDurationMs: r.actual_duration_ms,
     repNo: r.rep_no,
+    protocolMode: r.protocol_mode === "reverse_action" ? "reverse_action" : "hold",
+    targetKg: r.target_kg,
+    targetLowKg: r.target_low_kg,
+    targetHighKg: r.target_high_kg,
+    cadenceOutS: r.cadence_out_s,
+    cadenceReturnS: r.cadence_return_s,
+    cadenceMarkers: parseCadenceMarkers(r.cadence_markers),
+    setMetrics: parseReverseActionSetMetrics(r.set_metrics),
+    setupNote: r.setup_note,
+    capacityEvidence: r.capacity_evidence ?? null,
+    completedReps: r.completed_reps ?? null,
+    completionStatus: (r.completion_status ?? null) as TindeqRecordingMeta["completionStatus"],
   };
 }
 
 export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
   // samples deliberately excluded — the list view only needs metadata
-  const data = unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .select(RECORDING_COLS)
-      .is("deleted_at", null)
-      .order("recorded_at", { ascending: false }),
+  const data = unwrap<RecordingRow[]>(
+    await retryRecordingModalitySchema(
+      () => supabase.from("tindeq_recordings").select(RECORDING_COLS)
+        .is("deleted_at", null).order("recorded_at", { ascending: false }),
+      () => supabase.from("tindeq_recordings").select(PRE_MODALITY_RECORDING_COLS)
+        .is("deleted_at", null).order("recorded_at", { ascending: false }),
+    ),
   );
   return data.map(toRecording);
 }
@@ -82,12 +118,13 @@ export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
 export async function fetchDeletedRecordings(): Promise<
   DeletedTindeqRecording[]
 > {
-  const data = unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .select(`${RECORDING_COLS}, deleted_at`)
-      .not("deleted_at", "is", null)
-      .order("deleted_at", { ascending: false }),
+  const data = unwrap<(RecordingRow & { deleted_at: string | null })[]>(
+    await retryRecordingModalitySchema(
+      () => supabase.from("tindeq_recordings").select(`${RECORDING_COLS}, deleted_at`)
+        .not("deleted_at", "is", null).order("deleted_at", { ascending: false }),
+      () => supabase.from("tindeq_recordings").select(`${PRE_MODALITY_RECORDING_COLS}, deleted_at`)
+        .not("deleted_at", "is", null).order("deleted_at", { ascending: false }),
+    ),
   );
   return data.map((r) => ({ ...toRecording(r), deletedAt: r.deleted_at! }));
 }
@@ -95,15 +132,15 @@ export async function fetchDeletedRecordings(): Promise<
 export async function fetchRecordingsByGroup(
   groupId: string,
 ): Promise<TindeqRecordingMeta[]> {
-  const data = unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .select(RECORDING_COLS)
-      .eq("group_id", groupId)
-      .is("deleted_at", null)
-      // Newest-first, matching the outer History timeline (SL-58) — a session's
-      // reps read top-to-bottom the same way loose recordings do.
-      .order("recorded_at", { ascending: false }),
+  const data = unwrap<RecordingRow[]>(
+    await retryRecordingModalitySchema(
+      () => supabase.from("tindeq_recordings").select(RECORDING_COLS)
+        .eq("group_id", groupId).is("deleted_at", null)
+        .order("recorded_at", { ascending: false }),
+      () => supabase.from("tindeq_recordings").select(PRE_MODALITY_RECORDING_COLS)
+        .eq("group_id", groupId).is("deleted_at", null)
+        .order("recorded_at", { ascending: false }),
+    ),
   );
   return data.map(toRecording);
 }
@@ -118,15 +155,15 @@ export async function fetchUnlinkedRecordingsForDate(
   date: string,
 ): Promise<TindeqRecordingMeta[]> {
   const { start, end } = localDayRange(date);
-  const data = unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .select(RECORDING_COLS)
-      .is("group_id", null)
-      .is("deleted_at", null)
-      .gte("recorded_at", start)
-      .lt("recorded_at", end)
-      .order("recorded_at", { ascending: false }),
+  const data = unwrap<RecordingRow[]>(
+    await retryRecordingModalitySchema(
+      () => supabase.from("tindeq_recordings").select(RECORDING_COLS)
+        .is("group_id", null).is("deleted_at", null).gte("recorded_at", start)
+        .lt("recorded_at", end).order("recorded_at", { ascending: false }),
+      () => supabase.from("tindeq_recordings").select(PRE_MODALITY_RECORDING_COLS)
+        .is("group_id", null).is("deleted_at", null).gte("recorded_at", start)
+        .lt("recorded_at", end).order("recorded_at", { ascending: false }),
+    ),
   );
   return data.map(toRecording);
 }
@@ -140,10 +177,11 @@ export async function fetchRecordingSamples(
   return data.samples.map(([t, kg]) => ({ t, kg }));
 }
 
-/// Raw kg samples for a specific set of recordings, keyed by recording id —
+/// Raw time/force samples for a specific set of recordings, keyed by id —
 /// one query per request rather than one per rep (issue #100's per-rep box
-/// plots). Only the kg half of each `[tMs, kg]` pair is kept; the box plot
-/// only needs the force distribution, not time.
+/// plots). Keeping both halves lets Reverse Action History overlay prescribed
+/// direction/rep markers on the same one-shot batch fetch; ordinary box plots
+/// still derive their force-only distribution at the component boundary.
 ///
 /// Scoped to explicit ids (not a whole `group_id`) rather than always
 /// pulling every recording in the session: `SessionRow` calls this with all
@@ -155,7 +193,7 @@ export async function fetchRecordingSamples(
 /// realtime bump while the detail was open).
 export async function fetchSamplesForRecordings(
   ids: string[],
-): Promise<Map<string, number[]>> {
+): Promise<Map<string, TindeqSample[]>> {
   if (ids.length === 0) return new Map();
   // Typed as the raw jsonb shape (not the narrower tuple-array type used
   // elsewhere) — TS's structural check for an ARRAY of objects containing a
@@ -170,14 +208,18 @@ export async function fetchSamplesForRecordings(
       .is("deleted_at", null)
       .overrideTypes<{ id: string; samples: [number, number][] | null }[], { merge: false }>(),
   );
-  return new Map(data.map((r) => [r.id, (r.samples ?? []).map(([, kg]) => kg)]));
+  return new Map(
+    data.map((r) => [
+      r.id,
+      (r.samples ?? []).map(([t, kg]) => ({ t, kg })),
+    ]),
+  );
 }
 
 export async function insertRecording(
   rec: NewTindeqRecording,
 ): Promise<TindeqRecordingMeta> {
-  const data = unwrap<RecordingRow>(
-    await supabase
+  const result = await supabase
       .from("tindeq_recordings")
       .insert({
         // Only set when the caller minted one for retry-idempotency (#106) —
@@ -203,17 +245,60 @@ export async function insertRecording(
         planned_duration_ms: rec.plannedDurationMs ?? null,
         actual_duration_ms: rec.actualDurationMs ?? null,
         rep_no: rec.repNo ?? null,
+        protocol_mode: rec.protocolMode ?? "hold",
+        target_kg: rec.targetKg ?? null,
+        target_low_kg: rec.targetLowKg ?? null,
+        target_high_kg: rec.targetHighKg ?? null,
+        cadence_out_s: rec.cadenceOutS ?? null,
+        cadence_return_s: rec.cadenceReturnS ?? null,
+        cadence_markers:
+          rec.cadenceMarkers?.map((marker) => ({
+            tMs: marker.tMs,
+            rep: marker.rep,
+            direction: marker.direction,
+          })) ?? null,
+        set_metrics: rec.setMetrics
+          ? {
+              meanKg: rec.setMetrics.meanKg,
+              coefficientVariationPct: rec.setMetrics.coefficientVariationPct,
+              inTargetPct: rec.setMetrics.inTargetPct,
+              timeUnderTensionMs: rec.setMetrics.timeUnderTensionMs,
+              driftPct: rec.setMetrics.driftPct,
+              cadenceAdherencePct: rec.setMetrics.cadenceAdherencePct,
+            }
+          : null,
+        setup_note: rec.setupNote ?? "",
+        capacity_evidence: rec.capacityEvidence ?? null,
+        completed_reps: rec.completedReps ?? null,
+        completion_status: rec.completionStatus ?? null,
         samples: rec.samples.map((s) => [s.t, s.kg]),
       })
       .select(RECORDING_COLS)
-      .single(),
-  );
+      .single();
+  // A client-minted id is a durable exactly-once key. If the first response
+  // was lost but the insert committed, a refresh/retry gets 23505; return the
+  // already-written row so callers can finish their local transition.
+  if (result.error?.code === "23505" && rec.id) {
+    const existing = unwrap<RecordingRow>(
+      await supabase
+        .from("tindeq_recordings")
+        .select(RECORDING_COLS)
+        .eq("id", rec.id)
+        .single(),
+    );
+    return toRecording(existing);
+  }
+  const data = unwrap<RecordingRow>(result);
   return toRecording(data);
 }
 
 // MARK: Tindeq presets (hang protocols for the guided gauge timer)
 
 const PRESET_COLS =
+  "id, name, hold_s, holds_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides, protocol_mode, cadence_out_s, cadence_return_s, tolerance_mode, tolerance_value, prepare_s, setup_note, capacity_evidence";
+const PRE_CAPACITY_PRESET_COLS =
+  "id, name, hold_s, holds_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides, protocol_mode, cadence_out_s, cadence_return_s, tolerance_mode, tolerance_value, prepare_s, setup_note";
+const PRE_REVERSE_PRESET_COLS =
   "id, name, hold_s, holds_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides";
 const LEGACY_PRESET_COLS =
   "id, name, hold_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides";
@@ -238,6 +323,14 @@ type PresetRow = LegacyPresetRow & {
   // Absent only when the server predates `preset_holds_per_set`; normalize
   // those rows to the same null used by ordinary presets on the new schema.
   holds_s?: number[] | null;
+  protocol_mode?: string;
+  cadence_out_s?: number;
+  cadence_return_s?: number;
+  tolerance_mode?: string;
+  tolerance_value?: number;
+  prepare_s?: number;
+  setup_note?: string;
+  capacity_evidence?: boolean;
 };
 
 function toPreset(r: PresetRow): TindeqPreset {
@@ -256,6 +349,14 @@ function toPreset(r: PresetRow): TindeqPreset {
     pctStep: r.pct_step,
     targetCurve: r.target_curve,
     alternateSides: r.alternate_sides,
+    protocolMode: r.protocol_mode === "reverse_action" ? "reverse_action" : "hold",
+    cadenceOutS: r.cadence_out_s ?? 3,
+    cadenceReturnS: r.cadence_return_s ?? 3,
+    toleranceMode: r.tolerance_mode === "kg" ? "kg" : "percent",
+    toleranceValue: r.tolerance_value ?? 10,
+    prepareS: r.prepare_s ?? 5,
+    setupNote: r.setup_note ?? "",
+    capacityEvidence: r.capacity_evidence ?? false,
   };
 }
 
@@ -274,16 +375,34 @@ function presetToRow(p: Omit<TindeqPreset, "id">) {
     pct_step: p.pctStep,
     target_curve: p.targetCurve,
     alternate_sides: p.alternateSides,
+    protocol_mode: p.protocolMode ?? "hold",
+    cadence_out_s: p.cadenceOutS ?? 3,
+    cadence_return_s: p.cadenceReturnS ?? 3,
+    tolerance_mode: p.toleranceMode ?? "percent",
+    tolerance_value: p.toleranceValue ?? 10,
+    prepare_s: p.prepareS ?? 5,
+    setup_note: p.setupNote ?? "",
+    capacity_evidence: p.capacityEvidence ?? false,
   };
 }
 
 export async function fetchPresets(): Promise<TindeqPreset[]> {
   const data = unwrap<PresetRow[]>(
-    await retryWithoutPresetHoldsColumn<PresetRow[]>(
+    await retryPresetSchema<PresetRow[]>(
       () =>
         supabase
           .from("tindeq_presets")
           .select(PRESET_COLS)
+          .order("created_at", { ascending: false }),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .select(PRE_CAPACITY_PRESET_COLS)
+          .order("created_at", { ascending: false }),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .select(PRE_REVERSE_PRESET_COLS)
           .order("created_at", { ascending: false }),
       () =>
         supabase
@@ -299,7 +418,7 @@ export async function insertPreset(
   p: Omit<TindeqPreset, "id">,
 ): Promise<TindeqPreset> {
   const data = unwrap<PresetRow>(
-    await retryWithoutPresetHoldsColumn<PresetRow>(
+    await retryPresetSchema<PresetRow>(
       () =>
         supabase
           .from("tindeq_presets")
@@ -309,7 +428,19 @@ export async function insertPreset(
       () =>
         supabase
           .from("tindeq_presets")
-          .insert(legacyPresetRow(presetToRow(p)))
+          .insert(preCapacityPresetRow(presetToRow(p)))
+          .select(PRE_CAPACITY_PRESET_COLS)
+          .single(),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .insert(preReversePresetRow(preCapacityPresetRow(presetToRow(p))))
+          .select(PRE_REVERSE_PRESET_COLS)
+          .single(),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .insert(legacyPresetRow(preReversePresetRow(preCapacityPresetRow(presetToRow(p)))))
           .select(LEGACY_PRESET_COLS)
           .single(),
     ),
@@ -322,7 +453,7 @@ export async function updatePreset(
   p: Omit<TindeqPreset, "id">,
 ): Promise<TindeqPreset> {
   const data = unwrap<PresetRow>(
-    await retryWithoutPresetHoldsColumn<PresetRow>(
+    await retryPresetSchema<PresetRow>(
       () =>
         supabase
           .from("tindeq_presets")
@@ -333,7 +464,21 @@ export async function updatePreset(
       () =>
         supabase
           .from("tindeq_presets")
-          .update(legacyPresetRow(presetToRow(p)))
+          .update(preCapacityPresetRow(presetToRow(p)))
+          .eq("id", id)
+          .select(PRE_CAPACITY_PRESET_COLS)
+          .single(),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .update(preReversePresetRow(preCapacityPresetRow(presetToRow(p))))
+          .eq("id", id)
+          .select(PRE_REVERSE_PRESET_COLS)
+          .single(),
+      () =>
+        supabase
+          .from("tindeq_presets")
+          .update(legacyPresetRow(preReversePresetRow(preCapacityPresetRow(presetToRow(p)))))
           .eq("id", id)
           .select(LEGACY_PRESET_COLS)
           .single(),
@@ -472,31 +617,54 @@ export async function fetchHiddenTags(): Promise<string[]> {
   return data.map((r) => r.name);
 }
 
-/// A tag's persisted critical-force fit (#280). Null params = never fitted.
+/// A tag's persisted critical-force fit, partitioned by execution modality.
+/// The watch consumes only Static columns for backwards compatibility.
 export interface TagCurve {
   name: string;
+  modality: ForceCapacityModality;
   cf: number | null;
   wPrime: number | null;
 }
 
-/// Every tag that has a stored curve — the phone's read side of #280, used to
+/// Every tag/modality that has a stored curve — the phone read side, used to
 /// predict a gauge session's RPE from W' depletion across whatever mix of
-/// exercises the session contained. (The watch reads the same columns as part
-/// of its tag fetch, so it costs no extra round trip there.)
+/// exercises the session contained. Reverse Action never borrows the Static
+/// fields the watch already understands.
 export async function fetchTagCurves(): Promise<TagCurve[]> {
-  const data = unwrap<{ name: string; cf_kg: number | null; w_prime_kgs: number | null }[]>(
-    await supabase
-      .from("tindeq_tags")
-      .select("name, cf_kg, w_prime_kgs")
-      .not("cf_kg", "is", null),
+  const data = unwrap<{
+    name: string;
+    cf_kg: number | null;
+    w_prime_kgs: number | null;
+    reverse_cf_kg?: number | null;
+    reverse_w_prime_kgs?: number | null;
+  }[]>(
+    await retryTagReverseCurveSchema(
+      () => supabase.from("tindeq_tags")
+        .select("name, cf_kg, w_prime_kgs, reverse_cf_kg, reverse_w_prime_kgs")
+        .or("cf_kg.not.is.null,reverse_cf_kg.not.is.null"),
+      () => supabase.from("tindeq_tags")
+        .select("name, cf_kg, w_prime_kgs")
+        .not("cf_kg", "is", null),
+    ),
   );
-  return data.map((r) => ({ name: r.name, cf: r.cf_kg, wPrime: r.w_prime_kgs }));
+  return data.flatMap((r) => [
+    ...(r.cf_kg === null
+      ? []
+      : [{ name: r.name, modality: "static" as const, cf: r.cf_kg, wPrime: r.w_prime_kgs }]),
+    ...(r.reverse_cf_kg == null
+      ? []
+      : [{
+          name: r.name,
+          modality: "reverse_action" as const,
+          cf: r.reverse_cf_kg,
+          wPrime: r.reverse_w_prime_kgs ?? null,
+        }]),
+  ]);
 }
 
-/// Persist a tag's fitted curve (#280) so the watch — which can't refit it,
-/// having no raw sample streams — can still predict session RPE from two
-/// numbers. Upserts the registry row, creating it when the tag has never been
-/// hidden.
+/// Persist exactly one modality's fitted curve without overwriting the other.
+/// Static stays in #280's original columns so existing watch builds retain
+/// their contract; Reverse Action lives only in the #422 columns.
 ///
 /// The payload deliberately carries ONLY the curve columns: PostgREST's upsert
 /// sets exactly the keys it's given, so `hidden` is left untouched on an
@@ -504,17 +672,28 @@ export async function fetchTagCurves(): Promise<TagCurve[]> {
 /// `hidden` here would silently unhide a hidden tag on every recompute.
 export async function saveTagCurve(input: {
   name: string;
+  modality: ForceCapacityModality;
   cf: number;
   wPrime: number;
   recordingCount: number;
 }): Promise<void> {
+  const curveColumns = input.modality === "reverse_action"
+    ? {
+        reverse_cf_kg: input.cf,
+        reverse_w_prime_kgs: input.wPrime,
+        reverse_curve_fitted_at: new Date().toISOString(),
+        reverse_curve_recording_count: input.recordingCount,
+      }
+    : {
+        cf_kg: input.cf,
+        w_prime_kgs: input.wPrime,
+        curve_fitted_at: new Date().toISOString(),
+        curve_recording_count: input.recordingCount,
+      };
   const { error } = await supabase.from("tindeq_tags").upsert(
     {
       name: input.name,
-      cf_kg: input.cf,
-      w_prime_kgs: input.wPrime,
-      curve_fitted_at: new Date().toISOString(),
-      curve_recording_count: input.recordingCount,
+      ...curveColumns,
     },
     { onConflict: "user_id,name" },
   );

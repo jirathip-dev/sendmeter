@@ -9,24 +9,32 @@ public struct Tunables: Sendable {
 
     // Baseline altitude (pressure-drift tracking; updated only while resting)
     public var baselineTauS: Double = 60.0
+    public var localFloorWindowS: Double = 60.0
 
     // Attempt start
-    public var startGainM: Double = 1.5         // altitude - baseline within trailing window
-    public var startWindowS: Double = 10.0
+    public var startWindowS: Double = 45.0
     public var startMotionG: Double = 0.08
-    public var startMotionTicks: Int = 3        // of the last 5 ticks
+    public var startMotionWindowS: Double = 8.0
+    public var startMotionTicks: Int = 5
+    public var startAltitudeSupportM: Double = 0.45
+    public var startStrongAltitudeM: Double = 1.0
+    public var startHRRiseBPM: Double = 12.0
+    public var startStrongHRRiseBPM: Double = 25.0
+    public var startConfidenceRequired: Int = 2 // low altitude + HR, or strong altitude
 
     // Attempt end
-    public var endReturnM: Double = 1.0         // back within baseline + this ...
+    public var endReturnM: Double = 0.35        // back within local floor + this ...
     public var endReturnTicks: Int = 3          // ... for this many consecutive ticks
-    public var quietMotionG: Double = 0.05      // OR motion below this ...
+    public var quietMotionG: Double = 0.05      // HR-only fallback: motion below this ...
     public var quietTicks: Int = 10             // ... for this many consecutive ticks
+    public var establishedAltitudeGainM: Double = 0.4
+    public var assistedManualMinS: Double = 12.0
     public var maxAttemptS: Double = 300.0
 
     // Post-processing
     public var mergeGapS: Double = 15.0
     public var minAttemptS: Double = 8.0
-    public var minGainM: Double = 1.2
+    public var minActiveMotionTicks: Int = 8
     public var hrLagS: Double = 15.0            // extend HR window past attempt end
 
     // Effort & RPE (simple math v1; swap for ML later)

@@ -12,13 +12,21 @@ enum WidgetBridge {
     /// foreground.
     static func refreshStatus() async {
         var snap = WidgetStore.load()
-        if let row = try? await Repo.fetchLatestHealthMetric() {
-            snap.readiness = row.readiness
-            snap.readinessZone = row.zone
+        do {
+            let row = try await Repo.fetchLatestHealthMetric()
+            // A successful empty response clears an old reading. A network
+            // error keeps the last snapshot instead of pretending "no data".
+            snap.readiness = row?.readiness
+            snap.readinessZone = row?.readiness == nil ? nil : row?.zone
+        } catch {
+            // Preserve the last known status while offline.
         }
-        if let ratio = try? await computeACWR() {
+        do {
+            let ratio = try await computeACWR()
             snap.acwr = ratio
-            snap.acwrRisk = ratio < 0.8 ? "low" : (ratio > 1.5 ? "high" : "optimal")
+            snap.acwrRisk = StatusPresentation.acwrRiskBand(ratio)?.rawValue
+        } catch {
+            // Preserve the last known status while offline.
         }
         snap.updatedAt = Date().timeIntervalSince1970
         WidgetStore.save(snap)

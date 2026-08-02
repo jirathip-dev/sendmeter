@@ -56,15 +56,16 @@ describe("TargetZonesCard (#344)", () => {
     expect(html).toContain('aria-label="Session intensity"');
   });
 
-  it("shows the compact fixed Prehab dose without an intensity control", () => {
+  it("shows the progressive Prehab dose without an intensity control", () => {
     const html = render(buildPrehabSelection(model, "FDP L"));
-    expect(html).toContain("30s × 4/hand");
-    expect(html).toContain("about 7m12s");
+    expect(html).toContain("1m30s→1m→30s→30s · 1 hold/hand per set");
+    expect(html).toContain("at least 20s recovery per hand");
+    expect(html).toContain("about 7m21s");
     expect(html).toContain(
-      "Fixed dose · alternates L/R automatically · below critical force · excluded from training balance",
+      "Progressive duration · alternates L/R · below critical force · excluded from training balance",
     );
     expect(html).toContain(
-      "Prehab alternates automatically and needs a usable force target for both hands.",
+      "Alternating Prehab needs a usable force target for both hands.",
     );
     expect(html).not.toContain('aria-label="Session intensity"');
   });
@@ -77,7 +78,7 @@ describe("TargetZonesCard (#344)", () => {
     })!;
     const html = render(selected, true, prescription);
     expect(html).toContain("L 14.0 kg · R 9.6 kg");
-    expect(html).toContain("about 7m12s");
+    expect(html).toContain("about 7m21s");
     expect(html).not.toContain("needs a usable force target for both hands");
   });
 
@@ -113,13 +114,32 @@ describe("TargetZonesCard (#344)", () => {
     })!;
     const html = render(selected, true, prescription);
     expect(html.indexOf("Warm-up")).toBeLessThan(html.indexOf("Prehab"));
-    expect(html).toContain("5s→7s→10s holds × 2/hand");
-    expect(html).toContain("40% → 55% → 70% PR");
-    expect(html).toContain("L 16.0 → 28.0 kg · R 12.0 → 21.0 kg");
-    expect(html).toMatch(/about\s+2m57s/);
+    expect(html).toContain("20s→15s→10s→10s · 1 pull/hand per set");
+    expect(html).toContain("at least 1m recovery per hand");
+    expect(html).toContain("30% → 40% → 50% → 60% PR");
+    expect(html).toContain("L 12.0 → 24.0 kg · R 9.0 → 18.0 kg");
+    expect(html).toMatch(/about\s+4m27s/);
     expect(html).toContain("do general movement and easy climbing first");
-    expect(html).toContain("alternates L/R automatically");
+    expect(html).toContain("alternates L/R");
     expect(html).not.toContain('aria-label="Session intensity"');
+  });
+
+  it("allows selected-side maintenance while missing the other-hand reference", () => {
+    const selected = buildWarmupSelection(model, "FDP L", 40, false)!;
+    const html = render(selected, false);
+    expect(html).toMatch(/type="checkbox"[^>]*disabled/);
+    expect(html).not.toMatch(/type="checkbox"[^>]*checked/);
+    expect(html).toContain("1 pull per set");
+    expect(html).not.toContain("1 pull/hand per set");
+    expect(html).toContain("selected side only");
+    expect(html).toMatch(/about\s+3m55s/);
+  });
+
+  it("still allows turning alternation off when the other-hand reference is missing", () => {
+    const selected = buildWarmupSelection(model, "FDP L")!;
+    const html = render(selected, false);
+    expect(html).toMatch(/type="checkbox"[^>]*checked/);
+    expect(html).not.toMatch(/type="checkbox"[^>]*disabled/);
   });
 
   it("renders a persistent accessible post-fit unarm status (#333)", () => {

@@ -63,8 +63,8 @@ const CONTENT: Record<
         text: "Every day you deviate from 'no training' the rest of the curve becomes fiction, and deviation is the normal case. A 4-week version would look more useful while being less true.",
       },
       {
-        heading: "Readiness is today's, never projected",
-        text: "HRV, resting heart rate and sleep can't be forecast — the readiness shown here is the current score, sitting alongside the projection rather than inside it.",
+        heading: "Readiness stays separate",
+        text: "This projection models workload only. HRV, resting heart rate and sleep can't be forecast, so they remain in the separate Readiness card rather than being mixed into this curve.",
       },
       {
         heading: "A guardrail, not a target",
@@ -110,11 +110,11 @@ const CONTENT: Record<
       },
       {
         heading: "Warm-up is a primer",
-        text: "Warm-up alternates left and right automatically, ramping 5s → 7s → 10s holds and 40% → 55% → 70% of each hand's exercise PR over three short sets with 30s recovery between sets. It is deliberately low-volume, unaffected by the Intensity slider, and excluded from training balance. Use it after general movement and easy climbing: evidence supports progressive climbing-specific warm-up, but no published study establishes this exact finger-dynamometer dose or shows that it can replace climbing movement.",
+        text: "Warm-up ramps 20s → 15s → 10s → 10s holds and 30% → 40% → 50% → 60% of the exercise PR, with at least 60s recovery per hand between stages. It alternates left and right by default, or you can use only the selected side. It is unaffected by the Intensity slider and excluded from training balance. Use it after general movement and easy climbing: evidence supports progressive climbing-specific warm-up, but no published study establishes this exact finger-dynamometer dose or shows that it can replace climbing movement.",
       },
       {
         heading: "Prehab is maintenance",
-        text: "Prehab alternates left and right automatically for four 30s holds per hand, preserving 90s recovery for each hand between holds. The dose stays below each hand's critical force, so the Intensity slider does not apply and its recordings are excluded from training balance. Its load is derived from your force curve and shaped by tendon-loading research, but no published work establishes a finger-dynamometer prehab prescription. Treat it as a maintenance guide, not clinical advice.",
+        text: "Prehab uses 90s → 60s → 30s → 30s holds with at least 20s recovery per hand between stages. It alternates left and right by default, or you can use only the selected side. The dose stays below each hand's critical force, so the Intensity slider does not apply and its recordings are excluded from training balance. Its load is derived from your force curve and shaped by tendon-loading research, but no published work establishes this finger-dynamometer prescription. Treat it as a maintenance guide, not injury treatment or clinical advice.",
       },
     ],
   },

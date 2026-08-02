@@ -1,32 +1,33 @@
+import SendLogWatchCore
 import SwiftUI
 
-/// Colour mapping for the two glanceable status values (readiness zone, ACWR
-/// risk), shared by the watch app's status page and the complications so the
-/// same number never reads as two different colours in the two places.
+/// Health-scale colours for the glanceable status values. These mirror the
+/// dark-theme web tokens: violet for low load, blue for optimal/push, yellow
+/// for caution/maintain and orange for high/recover.
 ///
-/// KEEP IN SYNC with the identical copy in the SendLogWatchWidgets target —
-/// the widgets are a separate process and a separate filesystem-synchronized
-/// group, so (like WidgetShared.swift) this is duplicated rather than shared.
-/// Unlike WidgetShared.swift drift here doesn't break decode; it just makes the
-/// watch face and the app disagree about what "optimal" looks like.
-///
-/// `nil` maps to the neutral middle colour, which is right for a complication
-/// (it renders one tint either way) but NOT for a screen that has room to be
-/// honest — the status page shows `—` in a muted colour instead of pretending
-/// an unknown value sits in the middle band.
+/// KEEP IN SYNC with the identical copy in the SendLogWatchWidgets target.
+extension Color {
+    static let statusLow = Color(red: 0x7B / 255, green: 0x83 / 255, blue: 0xEB / 255)
+    static let statusOptimal = Color(red: 0x4F / 255, green: 0xB0 / 255, blue: 0xFF / 255)
+    static let statusCaution = Color(red: 0xE8 / 255, green: 0xC2 / 255, blue: 0x4E / 255)
+    static let statusHigh = Color(red: 0xF0 / 255, green: 0x86 / 255, blue: 0x4C / 255)
+}
 
-func acwrColor(_ risk: String?) -> Color {
+func acwrColor(_ risk: ACWRRiskBand?) -> Color {
     switch risk {
-    case "high": return .orange
-    case "low": return .purple
-    default: return .blue // optimal / unknown
+    case .low: .statusLow
+    case .optimal: .statusOptimal
+    case .caution: .statusCaution
+    case .high: .statusHigh
+    case nil: .secondary
     }
 }
 
 func readinessColor(_ zone: String?) -> Color {
-    switch zone {
-    case "push": return .blue
-    case "recover": return .orange
-    default: return .yellow // maintain / unknown
+    switch zone?.lowercased() {
+    case "push": .statusOptimal
+    case "maintain": .statusCaution
+    case "recover": .statusHigh
+    default: .secondary
     }
 }

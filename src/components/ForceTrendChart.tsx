@@ -11,7 +11,7 @@ import {
 import { fetchWeightHistory } from "../lib/repo";
 import BoxChip from "./BoxChip";
 import SvgChartTooltip from "./SvgChartTooltip";
-import type { TindeqRecordingMeta, TindeqSide } from "../types";
+import type { ForceCapacityModality, TindeqRecordingMeta, TindeqSide } from "../types";
 
 interface Props {
   recordings: TindeqRecordingMeta[];
@@ -19,6 +19,7 @@ interface Props {
   /// this chart has no filters of its own.
   selectedTag: string | null;
   selectedSide: TindeqSide | null;
+  modality: ForceCapacityModality;
 }
 
 const W = 300;
@@ -325,13 +326,14 @@ export default function ForceTrendChart({
   recordings,
   selectedTag,
   selectedSide,
+  modality,
 }: Props) {
   const [mode, setMode] = useState<"kg" | "bw">(() =>
     localStorage.getItem(MODE_KEY) === "bw" ? "bw" : "kg",
   );
   const weights = useCancellableFetch(fetchWeightHistory, [], 0);
 
-  const filtered = trendChartRecordings(recordings, selectedTag, selectedSide);
+  const filtered = trendChartRecordings(recordings, selectedTag, selectedSide, modality);
   if (recordings.length < 2) return null;
 
   // No weigh-ins yet → the %BW mode has nothing to divide by.
@@ -383,7 +385,7 @@ export default function ForceTrendChart({
         }}
       >
         <div className="label-eyebrow">
-          Peak Force Trend
+          {modality === "reverse_action" ? "Reverse Action" : "Static"} Peak Force Trend
           {selectedTag && (
             <span style={{ color: "var(--ink-faint)" }}>
               {" "}

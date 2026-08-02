@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent, ReactNode } from "react";
 import { sheetHaptic, tapHaptic } from "../lib/haptics";
+import { shouldDismissSheetGesture } from "../lib/sheetGesture";
 
 interface Props {
   /// Omit to make the sheet non-dismissable by backdrop click (e.g. a
@@ -10,16 +11,26 @@ interface Props {
   /// Fix the sheet to full screen height instead of hugging its content
   /// (e.g. the Phases sheet, whose height otherwise jumps as it loads).
   fullHeight?: boolean;
+  /// Optional scope for sheets that must sit above another fixed surface
+  /// (the Force setup guide opens from the z-indexed fullscreen gauge).
+  className?: string;
   children: ReactNode;
 }
 
-const CLOSE_THRESHOLD = 100; // px dragged down before release dismisses
+const FLICK_SAMPLE_MAX_AGE_MS = 100;
 
-export default function Sheet({ onClose, fullHeight, children }: Props) {
+interface DragGesture {
+  pointerId: number;
+  startY: number;
+  lastY: number;
+  lastAt: number;
+  velocitySampleY: number;
+  velocitySampleAt: number;
+}
+
+export default function Sheet({ onClose, fullHeight, className, children }: Props) {
   const [dragY, setDragY] = useState(0);
-  const dragging = useRef(false);
-  const startY = useRef(0);
-  const dragYRef = useRef(0);
+  const gestureRef = useRef<DragGesture | null>(null);
 
   // #171: the sheet appearing IS the feedback for whatever opened it. The
   // gesture guard means the opening tap (a button, a card) has usually spent
@@ -32,30 +43,62 @@ export default function Sheet({ onClose, fullHeight, children }: Props) {
 
   function onDown(e: PointerEvent<HTMLDivElement>) {
     if (!onClose) return;
-    dragging.current = true;
-    startY.current = e.clientY;
+    gestureRef.current = {
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      lastY: e.clientY,
+      lastAt: e.timeStamp,
+      velocitySampleY: e.clientY,
+      velocitySampleAt: e.timeStamp,
+    };
     e.currentTarget.setPointerCapture(e.pointerId);
   }
   function onMove(e: PointerEvent<HTMLDivElement>) {
-    if (!dragging.current) return;
-    const dy = Math.max(0, e.clientY - startY.current);
-    dragYRef.current = dy;
+    const gesture = gestureRef.current;
+    if (!gesture || gesture.pointerId !== e.pointerId) return;
+
+    if (e.timeStamp - gesture.velocitySampleAt > FLICK_SAMPLE_MAX_AGE_MS) {
+      gesture.velocitySampleY = gesture.lastY;
+      gesture.velocitySampleAt = gesture.lastAt;
+    }
+    gesture.lastY = e.clientY;
+    gesture.lastAt = e.timeStamp;
+
+    const dy = Math.max(0, e.clientY - gesture.startY);
     setDragY(dy);
   }
-  function onUp() {
-    if (!dragging.current) return;
-    dragging.current = false;
-    if (dragYRef.current > CLOSE_THRESHOLD) {
+  function finishDrag(e: PointerEvent<HTMLDivElement>, cancelled: boolean) {
+    const gesture = gestureRef.current;
+    if (!gesture || gesture.pointerId !== e.pointerId) return;
+    gestureRef.current = null;
+
+    const distancePx = Math.max(0, e.clientY - gesture.startY);
+    const velocitySampleAgeMs = e.timeStamp - gesture.velocitySampleAt;
+    const velocityPxPerMs =
+      velocitySampleAgeMs > 0 &&
+      velocitySampleAgeMs <= FLICK_SAMPLE_MAX_AGE_MS
+        ? Math.max(
+            0,
+            (e.clientY - gesture.velocitySampleY) / velocitySampleAgeMs,
+          )
+        : 0;
+    if (
+      shouldDismissSheetGesture({
+        dismissible: Boolean(onClose),
+        cancelled,
+        distancePx,
+        velocityPxPerMs,
+      })
+    ) {
       tapHaptic();
       onClose?.();
     }
-    dragYRef.current = 0;
     setDragY(0);
   }
 
   return (
     <div
-      className="modal-bg"
+      className={`modal-bg${className ? ` ${className}` : ""}`}
       // The backdrop dismisses on its own tap (below) — but it is also an
       // ancestor of everything in the sheet, so without muting it a tap on
       // plain sheet copy would resolve to whatever tappable card the sheet
@@ -81,12 +124,12 @@ export default function Sheet({ onClose, fullHeight, children }: Props) {
           className="modal-drag"
           onPointerDown={onDown}
           onPointerMove={onMove}
-          onPointerUp={onUp}
-          onPointerCancel={onUp}
+          onPointerUp={(e) => finishDrag(e, false)}
+          onPointerCancel={(e) => finishDrag(e, true)}
         >
           <div className="modal-handle" />
         </div>
-        {children}
+        <div className="modal-content">{children}</div>
       </div>
     </div>
   );

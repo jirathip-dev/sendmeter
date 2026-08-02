@@ -76,18 +76,20 @@ describe("alternating force prescriptions (#331)", () => {
 
   it("resolves Warm-up and Prehab independently for both hands", () => {
     const warmup = resolveAlternatingMaintenance(preset({
-      id: "zone:warmup", name: "Warm-up", holdsS: [5, 7, 10], reps: 2,
-      sets: 3, restRepsS: 15, restSetsS: 30, targetPct: 40, pctStep: 15,
+      id: "zone:warmup", name: "Warm-up", holdS: 20, holdsS: [20, 15, 10, 10], reps: 1,
+      sets: 4, restRepsS: 0, restSetsS: 60, targetPct: 30, pctStep: 10,
     }), inputs)!;
-    expect(warmup.left.targets.map((t) => t!.kg)).toEqual([16.8, 23.1, 29.4]);
-    expect(warmup.right.targets.map((t) => t!.kg)).toEqual([13.2, 18.2, 23.1]);
+    expect(warmup.left.targets.map((t) => t!.kg)).toEqual([12.6, 16.8, 21, 25.2]);
+    expect(warmup.right.targets.map((t) => t!.kg)).toEqual([9.9, 13.2, 16.5, 19.8]);
 
     const prehab = resolveAlternatingMaintenance(preset({
-      id: "zone:prehab", name: "Prehab", holdS: 30, holdsS: null,
-      reps: 4, sets: 1, restRepsS: 90, restSetsS: 0, targetKg: 14,
+      id: "zone:prehab", name: "Prehab", holdS: 90, holdsS: [90, 60, 30, 30],
+      reps: 1, sets: 4, restRepsS: 0, restSetsS: 20, targetKg: 14,
     }), { ...inputs, right: { model: { ...right, cf: null }, prKg: 33 } })!;
     expect(prehab.left.targets[0]!.kg).toBe(14);
     expect(prehab.right.targets[0]!.kg).toBe(9.6);
+    expect(prehab.left.targets.map((t) => t!.workS)).toEqual([90, 60, 30, 30]);
+    expect(prehab.right.targets.map((t) => t!.workS)).toEqual([90, 60, 30, 30]);
   });
 
   it("does not borrow a reference when either maintenance hand is missing", () => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   interruptionNote,
   recoveredTagSide,
+  samplesThrough,
   shouldSalvageOnUnmount,
   snapshotInterruption,
   summarize,
@@ -246,5 +247,22 @@ describe("summarize", () => {
     expect(result!.peakKg).toBe(30.01); // rounded from 30.005
     expect(result!.avgKg).toBe(20); // (10 + 30.01 + 20) / 3, rounded to 2dp
     expect(result!.samples).toHaveLength(3);
+  });
+});
+
+describe("samplesThrough (#400)", () => {
+  const samples = [
+    { t: 0, kg: 10 },
+    { t: 500, kg: 10 },
+    { t: 1_000, kg: 0.5 },
+    { t: 2_500, kg: 0 },
+  ];
+
+  it("removes the release grace tail at the first low sample", () => {
+    expect(samplesThrough(samples, 1_000)).toEqual(samples.slice(0, 3));
+  });
+
+  it("preserves normal manual-stop samples when no boundary is supplied", () => {
+    expect(samplesThrough(samples, undefined)).toBe(samples);
   });
 });

@@ -152,8 +152,8 @@ export function resolveAlternatingMaintenance(
     if (!resolved) return null;
     return {
       refs: refs(input),
-      targets: Array.from({ length: preset.sets }, () =>
-        target(resolved.targetKg, preset.holdS, `${preset.name} ${side}`),
+      targets: Array.from({ length: preset.sets }, (_, index) =>
+        target(resolved.targetKg, holdForSet(preset, index + 1), `${preset.name} ${side}`),
       ),
     };
   };

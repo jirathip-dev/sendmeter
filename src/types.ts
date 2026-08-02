@@ -124,6 +124,33 @@ export interface TindeqSample {
 
 export type TindeqSide = "" | "left" | "right" | "both";
 
+export type TindeqProtocolMode = "hold" | "reverse_action";
+export type ForceCapacityModality = "static" | "reverse_action";
+export type ForceExecutionMethod = "sensor" | "cadence_only";
+export type ReverseActionDirection = "out" | "return";
+export type ReverseActionToleranceMode = "percent" | "kg";
+
+/// Expected cadence boundary inside one Reverse Action set. These are clock
+/// markers, not observed joint-position measurements: v1 deliberately does
+/// not infer motion repetitions from a deliberately flat force trace.
+export interface CadenceMarker {
+  tMs: number;
+  rep: number;
+  direction: ReverseActionDirection;
+}
+
+/// Time-weighted quality summary for one continuous Reverse Action set.
+export interface ReverseActionSetMetrics {
+  meanKg: number | null;
+  coefficientVariationPct: number | null;
+  inTargetPct: number | null;
+  timeUnderTensionMs: number;
+  driftPct: number | null;
+  /// Portion of the prescribed cadence clock completed. This does not claim
+  /// that motion was observed; it is 100% for a full clock-driven set.
+  cadenceAdherencePct: number;
+}
+
 export interface TindeqRecordingMeta {
   id: string;
   recordedAt: string; // ISO timestamp
@@ -155,6 +182,22 @@ export interface TindeqRecordingMeta {
   plannedDurationMs?: number | null;
   actualDurationMs?: number | null;
   repNo?: number | null;
+  protocolMode?: TindeqProtocolMode;
+  targetKg?: number | null;
+  targetLowKg?: number | null;
+  targetHighKg?: number | null;
+  cadenceOutS?: number | null;
+  cadenceReturnS?: number | null;
+  cadenceMarkers?: CadenceMarker[] | null;
+  setMetrics?: ReverseActionSetMetrics | null;
+  setupNote?: string;
+  /// Null/undefined preserves pre-#422 Reverse Action rows as capacity
+  /// evidence. New prescribed Reverse Action sets stamp an explicit value.
+  capacityEvidence?: boolean | null;
+  /// Cadence-only progress is prescribed-clock progress, never motion
+  /// detection. Null for measured rows and historical/manual holds.
+  completedReps?: number | null;
+  completionStatus?: "complete" | "partial" | null;
 }
 
 /// A saved hang protocol (hold / reps / sets / rests) — drives the guided
@@ -189,6 +232,19 @@ export interface TindeqPreset {
   targetCurve: boolean;
   /// Run both hands in every logical rep (left hold, switch, right hold).
   alternateSides: boolean;
+  /// Ordinary guided hangs retain the existing timeline and per-hold saves.
+  /// Reverse Action runs a cadence clock and saves one continuous row per set.
+  protocolMode?: TindeqProtocolMode;
+  cadenceOutS?: number;
+  cadenceReturnS?: number;
+  toleranceMode?: ReverseActionToleranceMode;
+  toleranceValue?: number;
+  prepareS?: number;
+  /// Optional data seam only. Issue #401 owns instructional setup guidance.
+  setupNote?: string;
+  /// Reverse Action only: explicitly author this as a maximal/capacity test.
+  /// Defaults false so ordinary prescribed work cannot feed its own model.
+  capacityEvidence?: boolean;
 }
 
 /// One timed step of a guided routine. (A type alias, not an interface, so it
@@ -252,6 +308,18 @@ export interface NewTindeqRecording {
   plannedDurationMs?: number | null;
   actualDurationMs?: number | null;
   repNo?: number | null;
+  protocolMode?: TindeqProtocolMode;
+  targetKg?: number | null;
+  targetLowKg?: number | null;
+  targetHighKg?: number | null;
+  cadenceOutS?: number | null;
+  cadenceReturnS?: number | null;
+  cadenceMarkers?: CadenceMarker[] | null;
+  setMetrics?: ReverseActionSetMetrics | null;
+  setupNote?: string;
+  capacityEvidence?: boolean | null;
+  completedReps?: number | null;
+  completionStatus?: "complete" | "partial" | null;
 }
 
 export interface WorkoutAttempt {

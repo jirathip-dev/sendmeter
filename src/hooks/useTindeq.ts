@@ -6,13 +6,19 @@ import {
 import type { DynamometerConnection, ForceSample } from "../lib/dynamometer";
 import { reportPersistFailure } from "../lib/lostRecordings";
 import { persistRecording } from "../lib/recordingQueue";
-import type { TindeqSample, TindeqSide } from "../types";
+import type {
+  NewTindeqRecording,
+  TindeqSample,
+  TindeqSide,
+} from "../types";
 
 export type TindeqStatus =
   | "unsupported"
   | "idle"
   | "connecting"
   | "connected"
+  | "checking"
+  | "armed"
   | "measuring";
 
 export interface StoppedRecording {
@@ -52,6 +58,13 @@ export function summarize(samples: TindeqSample[]): StoppedRecording | null {
   };
 }
 
+export function samplesThrough(
+  samples: TindeqSample[],
+  endMs: number | null | undefined,
+): TindeqSample[] {
+  return endMs == null ? samples : samples.filter((sample) => sample.t <= endMs);
+}
+
 /// What ForceView (the tag/side/session owner) knows at the moment this hook
 /// unmounts — supplied via setSalvageContext, consumed only by the
 /// unmount-salvage cleanup below (#106).
@@ -70,13 +83,23 @@ export interface SalvageContext {
   /// — that path already owns saving (or queuing, on failure) this data, so
   /// the salvage cleanup must stand down rather than double-save it.
   stopInFlight: boolean;
+  /// A protocol owner may provide self-describing synchronous salvage rows.
+  /// Called only after the unmount gate passes, with the still-live raw buffer.
+  /// Reverse Action uses this to keep its current set/markers/metrics instead
+  /// of degrading the whole run to one free-hold-shaped blob.
+  /// `null` means "not this protocol" and enables generic salvage; an empty
+  /// array means the protocol owned the buffer but no set had started long
+  /// enough to save, so prep/rest samples must not become a fake free hold.
+  buildSalvageRecordings?: (
+    samples: readonly TindeqSample[],
+  ) => (NewTindeqRecording & { id: string })[] | null;
 }
 
 /// Pure gate for the unmount-salvage cleanup — pulled out so the exact
 /// condition is independently unit-testable. A single test on this would
 /// have caught a prior, inverted version of this check. `measuring` is OR-ed
 /// with `pendingInterruption` because a mid-measurement BLE drop clears
-/// measuringRef before the deferred stop handler can run — a logout in that
+/// recordingRef before the deferred stop handler can run — a logout in that
 /// same tick must still salvage (#113).
 export function shouldSalvageOnUnmount(params: {
   measuring: boolean;
@@ -178,11 +201,20 @@ export function useTindeq() {
   const connectionRef = useRef<DynamometerConnection | null>(null);
   const samplesRef = useRef<TindeqSample[]>([]);
   const t0Ref = useRef<number | null>(null);
-  const measuringRef = useRef(false);
+  // A Progressor only publishes force after startMeasuring(), so hands-free
+  // arming needs a live sensor stream before the actual recording begins.
+  // Keep transport streaming separate from recording ownership: pre-start
+  // samples drive the trigger UI but must never be saved or salvaged.
+  const streamingRef = useRef(false);
+  const recordingRef = useRef(false);
+  // Claim transport transitions before their first await. A quick double tap
+  // must not send duplicate start/stop commands or create two fake timers.
+  const streamStartInFlightRef = useRef(false);
+  const armCancelInFlightRef = useRef(false);
   // #113: set on a mid-measurement BLE drop, cleared when any stop/start
   // takes ownership of the buffer; OR-ed into the salvage gate so a drop +
   // logout in the same tick still salvages (the disconnect callback clears
-  // measuringRef before the deferred stop handler can run).
+  // recordingRef before the deferred stop handler can run).
   const pendingInterruptionRef = useRef(false);
   const latestRef = useRef({ kg: 0, t: 0 });
   // Running mean of the current pull (sum/count over all samples) — flushed
@@ -238,7 +270,7 @@ export function useTindeq() {
   // everything after it is milliseconds since then (what the DB stores).
   const handleSamples = useCallback(
     (incoming: ForceSample[]) => {
-      if (!measuringRef.current) return;
+      if (!streamingRef.current) return;
       for (const s of incoming) {
         if (t0Ref.current === null) t0Ref.current = s.us;
         const t = (s.us - t0Ref.current) / 1000;
@@ -252,7 +284,8 @@ export function useTindeq() {
   );
 
   const cleanupDevice = useCallback(() => {
-    measuringRef.current = false;
+    streamingRef.current = false;
+    recordingRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
     connectionRef.current = null;
@@ -263,7 +296,7 @@ export function useTindeq() {
   /// can never drift.
   const handleDeviceDropped = useCallback(() => {
     // keep samples so an interrupted recording can still be saved
-    const wasMeasuring = measuringRef.current;
+    const wasMeasuring = recordingRef.current;
     cleanupDevice();
     setStatus("idle");
     setErrorMsg("Device disconnected");
@@ -284,13 +317,13 @@ export function useTindeq() {
     return () => {
       // INVARIANT: wasMeasuring/pendingInterruption/sampleCount MUST be
       // captured here, in this SAME cleanup, BEFORE cleanupDevice() runs —
-      // cleanupDevice() sets measuringRef.current = false, so reading it
+      // cleanupDevice() sets recordingRef.current = false, so reading it
       // after (or from a separate effect that might reorder relative to this
       // one) would always see "not measuring" and silently disable salvage.
       // cleanupDevice() doesn't touch pendingInterruptionRef today, but the
       // same capture-before-cleanup discipline covers it so that never
       // regresses. Don't split this cleanup or reorder these lines.
-      const wasMeasuring = measuringRef.current;
+      const wasMeasuring = recordingRef.current;
       const pendingInterruption = pendingInterruptionRef.current;
       const sampleCount = samplesRef.current.length;
       const connection = connectionRef.current;
@@ -312,6 +345,7 @@ export function useTindeq() {
         side: "" as TindeqSide,
         groupId: null,
         stopInFlight: false,
+        buildSalvageRecordings: undefined,
       };
       const userId: string | null = registered?.userId ?? null;
       if (
@@ -335,8 +369,17 @@ export function useTindeq() {
       // into IndexedDB by `absorbSyncLane` on the next foreground. Do not
       // "simplify" this to the async path — see the policy block in
       // recordingQueue.ts.
-      const result = persistRecording(
-        {
+      let specialized: (NewTindeqRecording & { id: string })[] | null = null;
+      try {
+        specialized = ctx.buildSalvageRecordings?.(samplesRef.current) ?? null;
+      } catch {
+        // A protocol-specific builder must never turn a recoverable raw buffer
+        // into total loss. Fall back to the established generic salvage row.
+      }
+      const salvageRows =
+        specialized !== null
+          ? specialized
+          : [{
           id: crypto.randomUUID(),
           durationMs: summary.durationMs,
           peakKg: summary.peakKg,
@@ -357,13 +400,16 @@ export function useTindeq() {
           // performed quality to record. It falls back to inference.
           zone: null,
           samples: summary.samples,
-        },
-        // null only via the no-context fallback above — a REGISTERED
-        // context always carries the real signed-in user id, so a pull
-        // captured under one account can never drain into another
-        // (drainQueue attempts null-user entries for ANY signed-in user).
-        userId,
-      );
+        }];
+      for (const row of salvageRows) {
+        const result = persistRecording(
+          row,
+          // null only via the no-context fallback above — a REGISTERED
+          // context always carries the real signed-in user id, so a pull
+          // captured under one account can never drain into another
+          // (drainQueue attempts null-user entries for ANY signed-in user).
+          userId,
+        );
       // #264: this is the ONE path that can lose a recording with nothing
       // the user can do about it — no toast/UI is reachable from an unmount
       // cleanup, and the buffer is gone the moment this function returns.
@@ -371,7 +417,8 @@ export function useTindeq() {
       // we can see it happened, plus a durable one-shot notice that App.tsx
       // surfaces on the next mount/foreground so the user learns of the loss
       // rather than discovering a missing rep in History weeks later.
-      reportPersistFailure("salvage-on-unmount", result, summary.samples.length);
+        reportPersistFailure("salvage-on-unmount", result, row.samples.length);
+      }
     };
   }, [cleanupDevice]);
 
@@ -435,17 +482,14 @@ export function useTindeq() {
       // A driver without `capabilities.tare` resolves this as a no-op rather
       // than throwing, so there's nothing to branch on here.
       await runCommand((c) => c.tare());
+      return true;
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "Tare failed");
+      return false;
     }
   }, [runCommand]);
 
-  const start = useCallback(async () => {
-    // A new pull resets samplesRef, so any stale salvage claim on the old
-    // buffer is void (#113).
-    pendingInterruptionRef.current = false;
-    setPendingInterruption(false);
-    setInterruptionContext(null);
+  const resetBuffer = useCallback(() => {
     samplesRef.current = [];
     t0Ref.current = null;
     latestRef.current = { kg: 0, t: 0 };
@@ -454,28 +498,157 @@ export function useTindeq() {
     setPeak(0);
     setAvg(0);
     setElapsedMs(0);
+  }, []);
+
+  const startFakeSamples = useCallback((profile: "workout" | "readiness" = "workout") => {
+    if (!FAKE_MODE) return;
+    const started = performance.now();
+    fakeTimerRef.current = window.setInterval(() => {
+      const t = performance.now() - started;
+      // Readiness has a browser-testable unloaded baseline followed by a
+      // gradual small pull. It is a hook concern (like FAKE_MODE itself), not
+      // a fictional dynamometer driver capability.
+      const readinessT = t % 12_000;
+      const kg = profile === "readiness"
+        ? readinessT < 6_000
+          ? 0.04 * Math.sin(t / 80)
+          : readinessT < 8_500
+            ? Math.min(6, (readinessT - 6_000) / 400) + 0.04 * Math.sin(t / 80)
+            : readinessT < 9_500
+              ? 6 + 0.04 * Math.sin(t / 80)
+              : readinessT < 11_000
+                ? Math.max(0, 6 * (1 - (readinessT - 9_500) / 1_500))
+                : 0.04 * Math.sin(t / 80)
+        : Math.max(0, 20 + 15 * Math.sin(t / 900) + 2 * Math.sin(t / 90)) *
+          (t < 500 ? t / 500 : 1);
+      handleSamples([{ us: t * 1000, kg }]);
+    }, 12);
+  }, [handleSamples]);
+
+  const claimNewStream = useCallback(() => {
+    // A new stream resets the old buffer and voids any stale salvage claim.
+    pendingInterruptionRef.current = false;
+    setPendingInterruption(false);
+    setInterruptionContext(null);
+    resetBuffer();
     setErrorMsg(null);
+  }, [resetBuffer]);
+
+  const start = useCallback(async () => {
+    if (streamingRef.current || streamStartInFlightRef.current) return;
+    streamStartInFlightRef.current = true;
+    claimNewStream();
     try {
       await runCommand((c) => c.startMeasuring());
-      measuringRef.current = true;
+      if (!FAKE_MODE && !connectionRef.current) return;
+      streamingRef.current = true;
+      recordingRef.current = true;
       setStatus("measuring");
       startRaf();
-      if (FAKE_MODE) {
-        const started = performance.now();
-        fakeTimerRef.current = window.setInterval(() => {
-          const t = performance.now() - started;
-          const kg =
-            Math.max(0, 20 + 15 * Math.sin(t / 900) + 2 * Math.sin(t / 90)) *
-            (t < 500 ? t / 500 : 1);
-          handleSamples([{ us: t * 1000, kg }]);
-        }, 12);
-      }
+      startFakeSamples();
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : "Failed to start");
+    } finally {
+      streamStartInFlightRef.current = false;
     }
-  }, [runCommand, startRaf, handleSamples]);
+  }, [claimNewStream, runCommand, startFakeSamples, startRaf]);
 
-  const stop = useCallback(async (): Promise<StoppedRecording | null> => {
+  const arm = useCallback(async () => {
+    if (streamingRef.current || streamStartInFlightRef.current) return false;
+    streamStartInFlightRef.current = true;
+    claimNewStream();
+    try {
+      await runCommand((c) => c.startMeasuring());
+      if (!FAKE_MODE && !connectionRef.current) return false;
+      streamingRef.current = true;
+      recordingRef.current = false;
+      setStatus("armed");
+      startRaf();
+      startFakeSamples();
+      return true;
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Failed to arm");
+      return false;
+    } finally {
+      streamStartInFlightRef.current = false;
+    }
+  }, [claimNewStream, runCommand, startFakeSamples, startRaf]);
+
+  // Promote an already-streaming armed sensor to a real recording without a
+  // second BLE command. The pre-start samples are discarded synchronously,
+  // before recordingRef claims ownership, so no arming load can leak into the
+  // saved force curve or a disconnect salvage.
+  const beginArmedRecording = useCallback((): boolean => {
+    if (!streamingRef.current || recordingRef.current) return false;
+    resetBuffer();
+    recordingRef.current = true;
+    setStatus("measuring");
+    return true;
+  }, [resetBuffer]);
+
+  // A readiness stream is live force without recording ownership. It is
+  // intentionally distinct from `arm()`: hands-free observes `armed`, so
+  // borrowing that state here could turn a setup test pull into a workout.
+  const beginReadinessCheck = useCallback(async () => {
+    if (streamingRef.current || streamStartInFlightRef.current) return false;
+    streamStartInFlightRef.current = true;
+    claimNewStream();
+    try {
+      await runCommand((c) => c.startMeasuring());
+      if (!FAKE_MODE && !connectionRef.current) return false;
+      streamingRef.current = true;
+      recordingRef.current = false;
+      setStatus("checking");
+      startRaf();
+      startFakeSamples("readiness");
+      return true;
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Failed to start setup check");
+      return false;
+    } finally {
+      streamStartInFlightRef.current = false;
+    }
+  }, [claimNewStream, runCommand, startFakeSamples, startRaf]);
+
+  const endReadinessCheck = useCallback(async () => {
+    if (!streamingRef.current || recordingRef.current || armCancelInFlightRef.current) return;
+    armCancelInFlightRef.current = true;
+    streamingRef.current = false;
+    stopRaf();
+    clearInterval(fakeTimerRef.current);
+    try {
+      await runCommand((c) => c.stopMeasuring());
+    } catch {
+      // A disconnect while ending the check already stopped the stream.
+    } finally {
+      resetBuffer();
+      setStatus(connectionRef.current || FAKE_MODE ? "connected" : "idle");
+      armCancelInFlightRef.current = false;
+    }
+  }, [resetBuffer, runCommand, stopRaf]);
+
+  const cancelArm = useCallback(async () => {
+    if (
+      !streamingRef.current ||
+      recordingRef.current ||
+      armCancelInFlightRef.current
+    ) return;
+    armCancelInFlightRef.current = true;
+    streamingRef.current = false;
+    stopRaf();
+    clearInterval(fakeTimerRef.current);
+    try {
+      await runCommand((c) => c.stopMeasuring());
+    } catch {
+      // A disconnect while cancelling already stopped the stream.
+    } finally {
+      resetBuffer();
+      setStatus(connectionRef.current || FAKE_MODE ? "connected" : "idle");
+      armCancelInFlightRef.current = false;
+    }
+  }, [resetBuffer, runCommand, stopRaf]);
+
+  const stop = useCallback(async (endMs?: number): Promise<StoppedRecording | null> => {
     // The Stop flow now owns this data (save or queue-on-failure), so the
     // salvage claim must be released — otherwise a later normal logout would
     // queue a duplicate of an already-saved pull (#113).
@@ -484,7 +657,8 @@ export function useTindeq() {
     // Released with the claim (#119). Safe because the recovery save reads the
     // snapshot BEFORE awaiting stop() — see runStop in ForceView.
     setInterruptionContext(null);
-    measuringRef.current = false;
+    streamingRef.current = false;
+    recordingRef.current = false;
     stopRaf();
     clearInterval(fakeTimerRef.current);
     try {
@@ -493,11 +667,14 @@ export function useTindeq() {
       // device may already be gone; the recording is still valid
     }
     setStatus(connectionRef.current || FAKE_MODE ? "connected" : "idle");
-    const summary = summarize(samplesRef.current);
+    // Hands-free release waits through a grace period before stopping, but
+    // the low-force grace tail is not part of the performed hold.
+    const summary = summarize(samplesThrough(samplesRef.current, endMs));
     if (summary) {
       setCurrent(0);
       setElapsedMs(summary.durationMs);
       setPeak(summary.peakKg);
+      setAvg(summary.avgKg);
     }
     return summary;
   }, [stopRaf, runCommand]);
@@ -546,6 +723,11 @@ export function useTindeq() {
     connect,
     disconnect,
     tare,
+    beginReadinessCheck,
+    endReadinessCheck,
+    arm,
+    beginArmedRecording,
+    cancelArm,
     start,
     stop,
     setSalvageContext,
@@ -555,5 +737,6 @@ export function useTindeq() {
     /// comments there — so nothing reads this yet; it's the handle for whoever
     /// does that copy pass when a second driver exists.
     deviceName: DRIVER.deviceName,
+    capabilities: DRIVER.capabilities,
   };
 }

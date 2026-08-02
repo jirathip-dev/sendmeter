@@ -7,8 +7,17 @@ final class SendmeterWatchScreenshots: XCTestCase {
         setupSnapshot(app, waitForAnimations: true)
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["READINESS"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.staticTexts["82"].exists)
+        let readiness = app.descendants(matching: .any)
+            .matching(identifier: "readiness-ring").firstMatch
+        XCTAssertTrue(readiness.waitForExistence(timeout: 15))
+        XCTAssertEqual(readiness.label, "Readiness")
+        XCTAssertEqual(readiness.value as? String, "82 out of 100, Push")
+
+        let acwr = app.descendants(matching: .any)
+            .matching(identifier: "acwr-risk-track").firstMatch
+        XCTAssertTrue(acwr.waitForExistence(timeout: 5))
+        XCTAssertEqual(acwr.label, "ACWR")
+        XCTAssertEqual(acwr.value as? String, "1.08, Optimal")
         snapshot("01-watch-status")
 
         app.swipeLeft()

@@ -449,15 +449,17 @@ textarea.field { resize: none; }
 
 /* Modal */
 .modal-bg { position: fixed; inset: 0; background: var(--overlay); z-index: 200; display: flex; flex-direction: column; justify-content: flex-end; }
-.modal-sheet { background: var(--canvas); color: var(--ink); border-radius: 16px 16px 0 0; padding: 20px 16px calc(16px + env(safe-area-inset-bottom)); max-height: 92dvh; overflow-y: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+.modal-sheet { background: var(--canvas); color: var(--ink); border-radius: 16px 16px 0 0; max-height: 92dvh; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.4); display: flex; flex-direction: column; }
 /* Full-height variant (e.g. Phases) — fixed to the screen instead of hugging content */
 .modal-sheet.full { height: 92dvh; }
-.modal-sheet::-webkit-scrollbar-track { background: var(--canvas); }
-.modal-sheet::-webkit-scrollbar-thumb { background: var(--border); }
+.modal-content { min-height: 0; overflow-y: auto; padding: 0 16px calc(16px + env(safe-area-inset-bottom)); }
+.modal-content::-webkit-scrollbar-track { background: var(--canvas); }
+.modal-content::-webkit-scrollbar-thumb { background: var(--border); }
 .modal-handle { width: 36px; height: 5px; background: var(--border); border-radius: 3px; margin: 0 auto; }
-/* Drag-to-close grab area around the handle — touch-action:none so the drag
-   isn't stolen by the sheet's own scroll. */
-.modal-drag { touch-action: none; cursor: grab; padding: 2px 0 16px; margin-top: -4px; }
+/* The handle stays outside the scrolling content, so its finger-sized target
+   remains reachable at every scroll position. touch-action:none keeps a drag
+   that starts here from being stolen by content scrolling. */
+.modal-drag { flex: 0 0 44px; min-height: 44px; touch-action: none; cursor: grab; padding-top: 12px; box-sizing: border-box; }
 .modal-drag:active { cursor: grabbing; }
 /* nested cards inside modals sit on the canvas — give them a well tint */
 .modal-sheet .card { background: var(--surface-1); border-color: transparent; box-shadow: none; }
@@ -472,6 +474,98 @@ textarea.field { resize: none; }
 
 /* Focus visibility */
 :focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 2px; }
+
+/* Protocol-specific Force setup guide (#401). Code-native diagrams and all
+   copy ship in the bundle, so the guide is equally available offline. */
+.force-setup-summary {
+  margin-top: 12px; padding: 12px; border-radius: 12px;
+  background: var(--surface-1); border: 1px solid var(--border);
+}
+.modal-bg.force-setup-sheet { z-index: 1000; }
+.force-setup-summary-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.force-setup-state { margin-top: 4px; font-size: var(--t-xs); font-weight: 750; }
+.force-setup-state.checked { color: var(--success); }
+.force-setup-state.needs-check { color: var(--warning); }
+.force-mode-picker, .force-mode-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.force-mode-picker button, .force-mode-cards button {
+  min-width: 0; min-height: 58px; padding: 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--canvas); color: var(--ink);
+  font: inherit; text-align: left; cursor: pointer;
+}
+.force-mode-picker button.selected, .force-mode-cards button.selected {
+  border-color: var(--primary); background: color-mix(in srgb, var(--primary) 11%, var(--canvas));
+}
+.force-mode-picker strong, .force-mode-cards strong { display: block; font-size: var(--t-sm); }
+.force-mode-picker span, .force-mode-cards span { display: block; color: var(--ink-muted); font-size: var(--t-2xs); margin-top: 2px; }
+.force-setup-summary-line { margin: 9px 0 0; color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.45; }
+.force-setup-summary.compact { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; text-align: left; }
+.force-setup-summary.compact > div { min-width: 0; color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.4; }
+.force-setup-summary.compact strong { color: var(--ink); }
+.force-setup-summary.compact .glass-pill { flex-shrink: 0; font-size: var(--t-2xs); }
+
+.force-setup-guide { height: 100%; min-height: 0; display: flex; flex-direction: column; max-width: 680px; margin: 0 auto; }
+.force-setup-guide-header { display: flex; align-items: flex-start; gap: 12px; flex-shrink: 0; border-bottom: 1px solid var(--hairline); padding-bottom: 12px; }
+.force-setup-guide-header > div { flex: 1; min-width: 0; }
+.force-setup-guide h2 { margin: 4px 0 0; font-family: Inter, sans-serif; font-size: var(--t-xl); line-height: 1.15; }
+.force-setup-guide .modal-x { width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--surface-1); color: var(--ink-muted); font-size: 26px; cursor: pointer; }
+.force-setup-guide-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 2px 18px; }
+.force-setup-guide-body > p { margin: 0 0 12px; color: var(--ink-muted); font-size: var(--t-sm); line-height: 1.55; }
+.force-mode-cards button { min-height: 132px; }
+.force-mode-cards p { margin: 10px 0 0; color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.45; }
+.force-path-figure { margin: 14px 0; padding: 10px; border-radius: 14px; background: var(--surface-1); color: var(--primary); }
+.force-path-figure svg { width: 100%; height: auto; min-height: 150px; display: block; overflow: visible; }
+.force-path-line { stroke: currentColor; stroke-width: 3; }
+.force-path-node { fill: none; stroke: var(--ink); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.force-path-sensor { fill: color-mix(in srgb, var(--primary) 15%, var(--canvas)); stroke: var(--primary); stroke-width: 3; }
+.force-path-label { fill: var(--ink); font-family: Inter, sans-serif; font-weight: 700; font-size: 12px; }
+.force-path-figure figcaption { color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.45; }
+.force-reference-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 10px 0 0; }
+.force-reference-guide > div { padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--canvas); }
+.force-reference-guide dt { color: var(--ink); font-size: var(--t-2xs); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+.force-reference-guide dd { margin: 3px 0 0; color: var(--ink-muted); font-size: var(--t-2xs); line-height: 1.4; }
+.force-guide-note, .force-guide-caution { border-radius: 10px; padding: 10px 12px; font-size: var(--t-xs) !important; line-height: 1.5 !important; }
+.force-guide-note { background: color-mix(in srgb, var(--info) 10%, var(--surface-1)); color: var(--ink-muted); }
+.force-guide-note strong { color: var(--ink); }
+.force-guide-caution { margin-top: 12px !important; background: color-mix(in srgb, var(--warning) 10%, var(--surface-1)); color: var(--ink-muted) !important; }
+.force-setup-fields { display: grid; gap: 10px; margin-top: 14px; }
+.force-setup-fields label > span { display: block; margin-bottom: 5px; color: var(--ink-muted); font-size: var(--t-xs); font-weight: 700; }
+.force-setup-fields .field { width: 100%; box-sizing: border-box; }
+.force-guide-checks { display: grid; gap: 10px; margin-top: 14px; }
+.force-guide-checks label, .force-no-tare { display: flex; align-items: flex-start; gap: 9px; color: var(--ink); font-size: var(--t-sm); line-height: 1.45; }
+.force-guide-checks input, .force-no-tare input, .force-auto-show input { margin-top: 3px; flex-shrink: 0; }
+.force-device-status { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.force-device-status > div { padding: 10px; border-radius: 10px; background: var(--surface-1); }
+.force-device-status strong, .force-device-status span { display: block; }
+.force-device-status strong { font-size: var(--t-xs); }
+.force-device-status span { margin-top: 4px; color: var(--ink-muted); font-size: var(--t-2xs); line-height: 1.35; }
+.force-live-reading { margin: 12px 0; padding: 14px; border-radius: 14px; background: var(--surface-1); text-align: center; }
+.force-live-reading > span, .force-live-reading > strong, .force-live-reading > em { display: block; }
+.force-live-reading > span { color: var(--ink-muted); font-size: var(--t-eyebrow); letter-spacing: .08em; }
+.force-live-reading > strong { margin-top: 3px; font: 800 clamp(2.4rem, 12vw, 4rem)/1 Inter, sans-serif; font-variant-numeric: tabular-nums; }
+.force-live-reading small { color: var(--ink-muted); font-size: var(--t-lg); }
+.force-live-reading em { margin-top: 7px; color: var(--ink-muted); font-size: var(--t-xs); font-style: normal; }
+.force-readiness-list { margin-top: 12px; }
+.force-readiness-row { display: flex; gap: 9px; align-items: flex-start; padding: 7px 2px; font-size: var(--t-sm); line-height: 1.4; }
+.force-readiness-row > span:first-child { width: 18px; flex-shrink: 0; font-weight: 850; }
+.force-readiness-row.pass { color: var(--success); }
+.force-readiness-row.pass > span:last-child { color: var(--ink); }
+.force-readiness-row.pending { color: var(--ink-faint); }
+.force-tare-control { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+.force-tare-control > span { color: var(--ink-muted); font-size: var(--t-2xs); line-height: 1.4; }
+.force-setup-guide-footer { flex-shrink: 0; border-top: 1px solid var(--hairline); padding-top: 10px; }
+.force-auto-show { display: flex; align-items: flex-start; gap: 7px; color: var(--ink-muted); font-size: var(--t-xs); }
+.force-setup-guide-footer > div { display: flex; gap: 8px; margin-top: 10px; }
+.force-setup-guide-footer .btn-primary, .force-setup-guide-footer .btn-ghost { margin: 0; min-height: 46px; }
+.force-setup-guide-footer .btn-primary { flex: 1; }
+.force-setup-guide-footer .btn-ghost { width: auto; min-width: 90px; }
+
+@media (max-width: 420px) {
+  .force-mode-cards { grid-template-columns: 1fr; }
+  .force-mode-cards button { min-height: 0; }
+  .force-setup-summary.compact { align-items: flex-start; flex-direction: column; }
+  .force-device-status { grid-template-columns: 1fr; }
+  .force-reference-guide { grid-template-columns: 1fr; }
+}
 
 /* Desktop: web layout — nav on top, content widens */
 @media (min-width: 720px) {
@@ -543,15 +637,29 @@ textarea.field { resize: none; }
     max-width: 560px;
     width: 100%;
     max-height: 86vh;
+    display: block;
+    overflow-y: auto;
+    padding: 20px 16px calc(16px + env(safe-area-inset-bottom));
   }
   .modal-sheet.full { height: 86vh; }
-  .modal-handle { display: none; }
-  .modal-drag { padding: 0; margin: 0; } /* no grab strip on the centered desktop dialog */
+  .modal-drag { display: none; } /* no grab strip on the centered desktop dialog */
+  .modal-content { display: contents; }
 }
 
 /* iPad uses the desktop-width layout but still needs finger-sized chrome.
    Keep the denser header for mouse/trackpad desktops. */
 @media (min-width: 720px) and (pointer: coarse) {
+  /* A wide touch device still needs the reachable drag target. Keep the
+     centered dialog treatment, but restore the fixed-handle/scrolling-content
+     split that the desktop breakpoint flattens for mouse and trackpad users. */
+  .modal-sheet { display: flex; overflow: hidden; padding: 0; }
+  .modal-drag { display: block; }
+  .modal-content {
+    display: block;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 16px calc(16px + env(safe-area-inset-bottom));
+  }
   .account-fab {
     top: env(safe-area-inset-top);
     width: 44px;
@@ -758,21 +866,7 @@ textarea.field { resize: none; }
   border-top: 1px solid var(--hairline);
 }
 .skeleton-stat-row .skeleton-line { flex: 1; max-width: 120px; }
-.skeleton-weekly-card { min-height: 146px; }
-.skeleton-bars {
-  height: 90px; display: flex; align-items: flex-end; gap: 8px;
-  padding-top: 18px;
-}
-.skeleton-bar { flex: 1; border-radius: 4px 4px 2px 2px; }
-.skeleton-bar-short { height: 28%; }
-.skeleton-bar-medium { height: 55%; }
-.skeleton-bar-tall { height: 82%; }
-.skeleton-daily-card { min-height: 118px; }
-.skeleton-heatmap {
-  display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
-  margin-top: 18px;
-}
-.skeleton-heatmap-cell { aspect-ratio: 1.8; border-radius: 3px; }
+.skeleton-projection-card { min-height: 196px; }
 
 /* Error banner with retry */
 .error-banner {

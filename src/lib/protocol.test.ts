@@ -10,6 +10,7 @@ import {
   holdForSet,
   holdsForSets,
   holdsSummary,
+  prescriptionWorkS,
   presetTargetKg,
   presetTargetKgRange,
   protocolBandLabel,
@@ -114,6 +115,22 @@ describe("presetTargetKg", () => {
     // a null-list preset keeps resolving off the single holdS, unchanged
     const uniform: TindeqPreset = { ...repeaters, holdS: 30, targetCurve: true };
     expect(presetTargetKg(uniform, refs, 1)).toBe(presetTargetKg(uniform, refs, 3));
+  });
+
+  it("uses the continuous set duration for a Reverse Action curve target", () => {
+    const reverse: TindeqPreset = {
+      ...repeaters,
+      protocolMode: "reverse_action",
+      holdS: 999,
+      reps: 2,
+      cadenceOutS: 3,
+      cadenceReturnS: 2,
+      targetCurve: true,
+    };
+    const equivalentHold: TindeqPreset = { ...repeaters, holdS: 10, targetCurve: true };
+
+    expect(prescriptionWorkS(reverse, 1)).toBe(10);
+    expect(presetTargetKg(reverse, refs, 1)).toBe(presetTargetKg(equivalentHold, refs, 1));
   });
 });
 
@@ -375,6 +392,21 @@ describe("protocolDurationS", () => {
     expect(protocolDurationS(varying)).toBe(549);
     expect(protocolDurationS(varying)).toBe(timelineDurationS(buildTimeline(varying)));
   });
+
+  it("sums Reverse Action movement cycles and between-set rests", () => {
+    const reverse: TindeqPreset = {
+      ...repeaters,
+      protocolMode: "reverse_action",
+      reps: 4,
+      sets: 3,
+      cadenceOutS: 3,
+      cadenceReturnS: 3,
+      restSetsS: 60,
+    };
+
+    // 4 reps × (3s out + 3s return) × 3 sets + 2 × 60s set rests.
+    expect(protocolDurationS(reverse)).toBe(192);
+  });
 });
 
 describe("buildTimeline — single side", () => {
@@ -502,17 +534,19 @@ describe("buildTimeline — alternating every logical rep (#348)", () => {
 
   it("expands the paired maintenance doses with their exact durations (#366)", () => {
     const warmup: TindeqPreset = {
-      ...alt, id: "zone:warmup", holdS: 5, holdsS: [5, 7, 10],
-      reps: 2, sets: 3, restRepsS: 15, restSetsS: 30,
+      ...alt, id: "zone:warmup", holdS: 20, holdsS: [20, 15, 10, 10],
+      reps: 1, sets: 4, restRepsS: 0, restSetsS: 60,
     };
     const prehab: TindeqPreset = {
-      ...alt, id: "zone:prehab", holdS: 30, holdsS: null,
-      reps: 4, sets: 1, restRepsS: 90, restSetsS: 0,
+      ...alt, id: "zone:prehab", holdS: 90, holdsS: [90, 60, 30, 30],
+      reps: 1, sets: 4, restRepsS: 0, restSetsS: 20,
     };
-    expect(timelineDurationS(buildTimeline(warmup, { switchS: 3 }))).toBe(177);
-    expect(timelineDurationS(buildTimeline(prehab, { switchS: 3 }))).toBe(432);
+    expect(timelineDurationS(buildTimeline({ ...warmup, alternateSides: false }))).toBe(235);
+    expect(timelineDurationS(buildTimeline(warmup, { switchS: 3 }))).toBe(267);
+    expect(timelineDurationS(buildTimeline({ ...prehab, alternateSides: false }))).toBe(270);
+    expect(timelineDurationS(buildTimeline(prehab, { switchS: 3 }))).toBe(441);
     expect(holds(warmup).map((h) => h.side)).toEqual(
-      Array.from({ length: 6 }, () => ["left", "right"]).flat(),
+      Array.from({ length: 4 }, () => ["left", "right"]).flat(),
     );
     expect(holds(prehab).map((h) => h.side)).toEqual(
       Array.from({ length: 4 }, () => ["left", "right"]).flat(),

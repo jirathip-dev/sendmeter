@@ -1,0 +1,397 @@
+import type { ForceMeasurementMode } from "./forceSetup";
+
+export type Point3 = readonly [x: number, y: number, z: number];
+
+export type BodyJoint =
+  | "neck"
+  | "leftShoulder"
+  | "leftElbow"
+  | "leftWrist"
+  | "rightShoulder"
+  | "rightElbow"
+  | "rightWrist"
+  | "leftHip"
+  | "leftKnee"
+  | "leftAnkle"
+  | "rightHip"
+  | "rightKnee"
+  | "rightAnkle";
+
+export type BodyPose = Record<BodyJoint, Point3>;
+
+export type ForceExerciseFamily = "block_pull" | "rotator_cuff" | "hip_rotator";
+
+export interface ForceExerciseModePresentation {
+  description: string;
+  actionCue: string;
+  startPose: BodyPose;
+  endPose: BodyPose;
+}
+
+export interface ForceExerciseExample {
+  id: string;
+  family: ForceExerciseFamily;
+  familyLabel: string;
+  variantLabel: string;
+  title: string;
+  setupCue: string;
+  safetyCue: string;
+  attachmentLabel: string;
+  attachmentJoint: BodyJoint;
+  originLabel: string;
+  originJoint: BodyJoint;
+  anchor: Point3;
+  modes: Record<ForceMeasurementMode, ForceExerciseModePresentation>;
+  camera: Point3;
+  cameraTarget: Point3;
+}
+
+const standing: BodyPose = {
+  neck: [0, 2.12, 0],
+  leftShoulder: [-0.34, 1.98, 0],
+  leftElbow: [-0.38, 1.48, 0],
+  leftWrist: [-0.38, 1.0, 0],
+  rightShoulder: [0.34, 1.98, 0],
+  rightElbow: [0.38, 1.48, 0],
+  rightWrist: [0.38, 1.0, 0],
+  leftHip: [-0.18, 1.08, 0],
+  leftKnee: [-0.2, 0.57, 0],
+  leftAnkle: [-0.23, 0.06, 0],
+  rightHip: [0.18, 1.08, 0],
+  rightKnee: [0.2, 0.57, 0],
+  rightAnkle: [0.23, 0.06, 0],
+};
+
+function pose(overrides: Partial<BodyPose>): BodyPose {
+  return { ...standing, ...overrides };
+}
+
+const floorPullStatic = pose({
+  rightElbow: [0.2, 1.48, 0.02],
+  rightWrist: [0, 0.96, 0.02],
+});
+
+const floorPullOriginMoved = pose({
+  neck: [0.16, 2.04, 0.18],
+  leftShoulder: [-0.18, 1.91, 0.16],
+  leftElbow: [-0.28, 1.43, 0.14],
+  leftWrist: [-0.3, 0.96, 0.12],
+  rightShoulder: [0.5, 1.93, 0.2],
+  rightElbow: [0.4, 1.46, 0.16],
+  rightWrist: [0, 0.96, 0.02],
+  leftHip: [-0.02, 1.01, 0.14],
+  leftKnee: [-0.14, 0.51, 0.08],
+  rightHip: [0.34, 1.01, 0.15],
+  rightKnee: [0.3, 0.51, 0.08],
+});
+
+const sidePullStatic = pose({
+  neck: [0.72, 0.72, 0],
+  leftShoulder: [0.48, 0.69, -0.16],
+  leftElbow: [0.08, 0.55, -0.18],
+  leftWrist: [-0.34, 0.42, -0.17],
+  rightShoulder: [0.48, 0.69, 0.16],
+  rightElbow: [0.02, 0.76, 0.14],
+  rightWrist: [-0.48, 0.82, 0.12],
+  leftHip: [1.15, 0.47, -0.14],
+  leftKnee: [1.64, 0.34, -0.15],
+  leftAnkle: [2.05, 0.22, -0.15],
+  rightHip: [1.15, 0.47, 0.14],
+  rightKnee: [1.55, 0.83, 0.12],
+  rightAnkle: [1.95, 1.14, 0.1],
+});
+
+const sidePullOriginMoved = pose({
+  ...sidePullStatic,
+  neck: [0.9, 0.78, 0.08],
+  leftShoulder: [0.62, 0.73, -0.11],
+  leftElbow: [0.16, 0.6, -0.15],
+  leftWrist: [-0.27, 0.48, -0.15],
+  rightShoulder: [0.65, 0.76, 0.2],
+  rightElbow: [0.04, 0.78, 0.16],
+  rightWrist: [-0.48, 0.82, 0.12],
+  leftHip: [1.34, 0.51, -0.08],
+  leftKnee: [1.8, 0.38, -0.11],
+  leftAnkle: [2.18, 0.24, -0.12],
+  rightHip: [1.34, 0.53, 0.2],
+  rightKnee: [1.72, 0.89, 0.17],
+  rightAnkle: [2.08, 1.2, 0.14],
+});
+
+const supportedCuffStatic = pose({
+  rightShoulder: [0.34, 1.98, 0],
+  rightElbow: [0.62, 1.62, 0.02],
+  rightWrist: [0.72, 1.64, 0.48],
+});
+
+const supportedCuffOriginMoved = pose({
+  neck: [-0.14, 2.04, -0.08],
+  leftShoulder: [-0.48, 1.9, -0.12],
+  leftElbow: [-0.48, 1.42, -0.1],
+  leftWrist: [-0.42, 0.96, -0.08],
+  rightShoulder: [0.18, 1.91, -0.04],
+  rightElbow: [0.62, 1.62, 0.02],
+  rightWrist: [0.72, 1.64, 0.48],
+  leftHip: [-0.32, 1.02, -0.1],
+  rightHip: [0.04, 1.02, -0.06],
+});
+
+const standingCuffStatic = pose({
+  leftShoulder: [-0.34, 1.98, 0],
+  leftElbow: [-0.38, 1.55, 0.02],
+  leftWrist: [0.08, 1.55, 0.12],
+});
+
+const standingCuffOriginMoved = pose({
+  neck: [0.2, 2.1, 0.17],
+  leftShoulder: [-0.13, 1.95, 0.15],
+  leftElbow: [-0.25, 1.56, 0.08],
+  leftWrist: [0.08, 1.55, 0.12],
+  rightShoulder: [0.53, 1.99, 0.19],
+  rightElbow: [0.54, 1.5, 0.17],
+  rightWrist: [0.48, 1.02, 0.15],
+  leftHip: [0.02, 1.08, 0.12],
+  rightHip: [0.38, 1.08, 0.16],
+});
+
+const seatedHipStart = pose({
+  neck: [0.62, 1.38, 0],
+  leftShoulder: [0.32, 1.27, -0.25],
+  leftElbow: [0.1, 0.91, -0.4],
+  leftWrist: [-0.03, 0.64, -0.48],
+  rightShoulder: [0.32, 1.27, 0.25],
+  rightElbow: [0.68, 0.95, 0.38],
+  rightWrist: [0.76, 0.65, 0.48],
+  leftHip: [0.55, 0.58, -0.18],
+  leftKnee: [-0.04, 0.55, -0.17],
+  leftAnkle: [-0.15, 0.06, -0.08],
+  rightHip: [0.55, 0.58, 0.18],
+  rightKnee: [0.4, 0.52, 0.73],
+  rightAnkle: [0.64, 0.06, 0.93],
+});
+
+const seatedHipOriginMoved = pose({
+  ...seatedHipStart,
+  neck: [0.82, 1.42, 0.2],
+  leftShoulder: [0.5, 1.29, -0.02],
+  leftElbow: [0.22, 0.92, -0.25],
+  leftWrist: [0.02, 0.65, -0.36],
+  rightShoulder: [0.52, 1.3, 0.46],
+  rightElbow: [0.83, 0.96, 0.56],
+  rightWrist: [0.88, 0.67, 0.65],
+  leftHip: [0.72, 0.61, 0.1],
+  leftKnee: [-0.04, 0.55, -0.17],
+  rightHip: [0.72, 0.61, 0.42],
+  rightKnee: [0.53, 0.53, 0.88],
+  rightAnkle: [0.78, 0.06, 1.04],
+});
+
+function staticPresentation(
+  description: string,
+  actionCue: string,
+  staticPose: BodyPose,
+): ForceExerciseModePresentation {
+  return { description, actionCue, startPose: staticPose, endPose: staticPose };
+}
+
+function movementPresentation(
+  description: string,
+  actionCue: string,
+  startPose: BodyPose,
+  endPose: BodyPose,
+): ForceExerciseModePresentation {
+  return { description, actionCue, startPose, endPose };
+}
+
+export const FORCE_EXERCISE_EXAMPLES: readonly ForceExerciseExample[] = [
+  {
+    id: "block-pull-floor",
+    family: "block_pull",
+    familyLabel: "Block pull",
+    variantLabel: "Floor anchor",
+    title: "Midline standing block pull",
+    setupCue: "Place the block on the body's midline between the feet. Stack block, sensor and low anchor without letting the cable rub either leg.",
+    safetyCue: "Use a rated floor anchor and connectors; keep feet and face out of the recoil path.",
+    attachmentLabel: "Block",
+    attachmentJoint: "rightWrist",
+    originLabel: "elbow / forearm origin",
+    originJoint: "rightElbow",
+    anchor: [0, 0.08, 0.02],
+    modes: {
+      static: staticPresentation(
+        "Stand tall and pull the block from the middle of the body without changing the arm or trunk position.",
+        "The centered hand and body both remain still while force rises.",
+        floorPullStatic,
+      ),
+      movement: movementPresentation(
+        "Keep the centered block and hand fixed while the elbow, forearm origin and proximal body position move against the spring.",
+        "The hand is the fixed resisted attachment; move the origin-side segment.",
+        floorPullStatic,
+        floorPullOriginMoved,
+      ),
+    },
+    camera: [3.8, 2.3, 4.5],
+    cameraTarget: [0, 1.05, 0],
+  },
+  {
+    id: "block-pull-supported",
+    family: "block_pull",
+    familyLabel: "Block pull",
+    variantLabel: "Side-lying",
+    title: "Side-lying lateral block pull",
+    setupCue: "Lie fully on your side and reach laterally toward the block. Set the anchor to the side so cable, block and forearm share one line.",
+    safetyCue: "Use a stable side support and make sure the body cannot slide toward the lateral anchor.",
+    attachmentLabel: "Block",
+    attachmentJoint: "rightWrist",
+    originLabel: "elbow / forearm origin",
+    originJoint: "rightElbow",
+    anchor: [-1.18, 0.82, 0.12],
+    modes: {
+      static: staticPresentation(
+        "Lie sideways and pull from the side, keeping the reached arm and side-lying body position still.",
+        "The pull is lateral—not overhead or diagonally across the body.",
+        sidePullStatic,
+      ),
+      movement: movementPresentation(
+        "Keep the laterally reached hand and block fixed while the elbow, shoulder and side-lying body move away from the attachment.",
+        "The hand stays fixed; the origin-side segment moves along the supported line.",
+        sidePullStatic,
+        sidePullOriginMoved,
+      ),
+    },
+    camera: [3.6, 2.45, 4.6],
+    cameraTarget: [0.45, 0.65, 0],
+  },
+  {
+    id: "rotator-cuff-supported",
+    family: "rotator_cuff",
+    familyLabel: "Rotator cuff",
+    variantLabel: "Elbow supported",
+    title: "Supported external rotation",
+    setupCue: "Support the elbow and align the spring with the fixed hand at the working position.",
+    safetyCue: "Use a light spring and a pain-free range. This is an example setup, not a rehabilitation prescription.",
+    attachmentLabel: "Handle",
+    attachmentJoint: "rightWrist",
+    originLabel: "shoulder / scapular origin",
+    originJoint: "rightShoulder",
+    anchor: [-0.95, 0.55, 0.05],
+    modes: {
+      static: staticPresentation(
+        "Hold the supported arm, shoulder and handle position still while maintaining isometric force.",
+        "Nothing moves during the timed hold.",
+        supportedCuffStatic,
+      ),
+      movement: movementPresentation(
+        "Keep the supported hand and handle fixed while the shoulder/scapular origin and trunk move relative to the arm.",
+        "The resisted hand stays fixed; move the shoulder-side origin.",
+        supportedCuffStatic,
+        supportedCuffOriginMoved,
+      ),
+    },
+    camera: [3.7, 2.45, 4.8],
+    cameraTarget: [0.1, 1.15, 0],
+  },
+  {
+    id: "rotator-cuff-standing",
+    family: "rotator_cuff",
+    familyLabel: "Rotator cuff",
+    variantLabel: "Standing",
+    title: "Standing internal rotation",
+    setupCue: "Set the anchor near elbow height and establish the fixed handle position before moving the proximal segment.",
+    safetyCue: "Stay far enough from the anchor to maintain tension without overstretching the spring.",
+    attachmentLabel: "Handle",
+    attachmentJoint: "leftWrist",
+    originLabel: "shoulder / scapular origin",
+    originJoint: "leftShoulder",
+    anchor: [-1.35, 1.55, 0.04],
+    modes: {
+      static: staticPresentation(
+        "Stand with the elbow near the side and hold the handle, arm and trunk still against the lateral resistance.",
+        "The handle and origin-side body position remain fixed.",
+        standingCuffStatic,
+      ),
+      movement: movementPresentation(
+        "Keep the handle and hand fixed while the shoulder/scapular origin and trunk rotate relative to the fixed arm.",
+        "Do not sweep the handle across the torso; the origin-side body moves instead.",
+        standingCuffStatic,
+        standingCuffOriginMoved,
+      ),
+    },
+    camera: [3.8, 2.4, 4.6],
+    cameraTarget: [0, 1.2, 0],
+  },
+  {
+    id: "hip-rotator-seated",
+    family: "hip_rotator",
+    familyLabel: "Hip rotator",
+    variantLabel: "Seated",
+    title: "Seated hip rotation",
+    setupCue: "Place the strap above the knee, establish its fixed position, and align the spring clear of the other leg.",
+    safetyCue: "Use a stable seat and clear the spring recoil path. Stop if the hip or knee feels pinched.",
+    attachmentLabel: "Thigh strap",
+    attachmentJoint: "leftKnee",
+    originLabel: "pelvis-side origin",
+    originJoint: "leftHip",
+    anchor: [-1.2, 0.95, -0.12],
+    modes: {
+      static: staticPresentation(
+        "Sit with the working hip and strapped knee fixed while holding steady force.",
+        "The strapped knee and pelvis remain still during the hold.",
+        seatedHipStart,
+      ),
+      movement: movementPresentation(
+        "Keep the strapped knee fixed while the pelvis-side origin and seated trunk move relative to it.",
+        "The knee strap is the fixed resisted attachment; move the pelvis-side origin.",
+        seatedHipStart,
+        seatedHipOriginMoved,
+      ),
+    },
+    camera: [3.8, 2.4, 4.7],
+    cameraTarget: [0.2, 0.72, 0],
+  },
+] as const;
+
+export const FORCE_EXERCISE_FAMILIES = [
+  { id: "block_pull", label: "Block pull" },
+  { id: "rotator_cuff", label: "Rotator cuff" },
+  { id: "hip_rotator", label: "Hip rotator" },
+] as const;
+
+function normalized(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ");
+}
+
+export function suggestedExerciseFamily(exercise: string): ForceExerciseFamily {
+  const value = normalized(exercise);
+  if (/\b(hip|glute|piriformis)\b/.test(value)) return "hip_rotator";
+  if (/\b(rotator|cuff|shoulder|external rotation|internal rotation)\b/.test(value)) {
+    return "rotator_cuff";
+  }
+  return "block_pull";
+}
+
+export function examplesForFamily(family: ForceExerciseFamily): ForceExerciseExample[] {
+  return FORCE_EXERCISE_EXAMPLES.filter((example) => example.family === family);
+}
+
+export function presentationForMode(
+  example: ForceExerciseExample,
+  mode: ForceMeasurementMode,
+): ForceExerciseModePresentation {
+  return example.modes[mode];
+}
+
+export function exampleModeCopy(mode: ForceMeasurementMode): {
+  label: string;
+  instruction: string;
+} {
+  return mode === "movement"
+    ? {
+        label: "Movement demonstration",
+        instruction: "The resisted distal attachment stays fixed while the highlighted origin-side segment moves. The loop is illustrative, not protocol timing or body tracking.",
+      }
+    : {
+        label: "Isometric setup",
+        instruction: "The model holds the working position while the force path remains fixed.",
+      };
+}

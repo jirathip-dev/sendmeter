@@ -131,6 +131,7 @@ export async function updateSession(
 /// Log a completed Tindeq gauge session into the training log so it feeds
 /// ACWR and shows in History, linked back to its recordings via group_id.
 export async function insertTindeqSession(input: {
+  id?: string;
   durationMin: number;
   rpe: number;
   phase: PhaseId;
@@ -148,10 +149,10 @@ export async function insertTindeqSession(input: {
   /// sessions opt into the product-facing Force label.
   typeLabel?: string;
 }): Promise<Session> {
-  const data = unwrapOneMutation(
-    await supabase
+  const result = await supabase
       .from("sessions")
       .insert({
+        ...(input.id ? { id: input.id } : {}),
         date: input.date ?? today(),
         type: "tindeq",
         type_label: input.typeLabel ?? "Tindeq",
@@ -164,8 +165,19 @@ export async function insertTindeqSession(input: {
       })
       .select(SESSION_COLS)
       .maybeSingle()
-      .overrideTypes<SessionRow, { merge: false }>(),
-  );
+      .overrideTypes<SessionRow, { merge: false }>();
+  if (result.error?.code === "23505" && input.id) {
+    const existing = unwrapOneMutation(
+      await supabase
+        .from("sessions")
+        .select(SESSION_COLS)
+        .eq("id", input.id)
+        .maybeSingle()
+        .overrideTypes<SessionRow, { merge: false }>(),
+    );
+    return toSession(existing);
+  }
+  const data = unwrapOneMutation(result);
   return toSession(data);
 }
 

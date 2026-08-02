@@ -82,6 +82,26 @@ export function buildZoneSelection(
   };
 }
 
+/// Rebuild a recommended training zone while carrying the currently armed
+/// recommended protocol's side mode. Both the zone chips and the separate
+/// Focus Next card change training quality; neither should silently turn an
+/// alternating run back into a selected-side run (#408).
+export function buildZoneSelectionPreservingSides(
+  model: ForceCurveModel | null,
+  q: TrainingQuality,
+  tag: string,
+  current: ZoneSelection | null,
+  intensityPct = 100,
+): ZoneSelection | null {
+  return buildZoneSelection(
+    model,
+    q,
+    tag,
+    current?.protocol.alternateSides ?? false,
+    intensityPct,
+  );
+}
+
 /// Build the gauge band + guided protocol for Prehab (#325) — mirrors
 /// `buildZoneSelection` but isn't one: Prehab has no `TrainingQuality`, so it
 /// can't go through `zonePrescription`. It always alternates hands; the
@@ -90,6 +110,7 @@ export function buildZoneSelection(
 export function buildPrehabSelection(
   model: ForceCurveModel | null,
   tag: string,
+  alternateSides = true,
 ): ZoneSelection | null {
   if (!model) return null;
   const t = prehabTarget(model);
@@ -107,7 +128,7 @@ export function buildPrehabSelection(
       id: "zone:prehab",
       name: `${t.label} · ${tag}`,
       holdS: PREHAB_PROTOCOL.holdS,
-      holdsS: null,
+      holdsS: [...PREHAB_PROTOCOL.holdsS],
       reps: PREHAB_PROTOCOL.reps,
       sets: PREHAB_PROTOCOL.sets,
       restRepsS: PREHAB_PROTOCOL.restRepsS,
@@ -117,7 +138,7 @@ export function buildPrehabSelection(
       pctBasis: "pr",
       pctStep: 0,
       targetCurve: false,
-      alternateSides: true,
+      alternateSides,
     },
   };
 }
@@ -129,6 +150,7 @@ export function buildWarmupSelection(
   model: ForceCurveModel | null,
   tag: string,
   prKg = model?.maxF ?? 0,
+  alternateSides = true,
 ): ZoneSelection | null {
   if (!model) return null;
   const t = warmupTarget(model, prKg);
@@ -156,7 +178,7 @@ export function buildWarmupSelection(
       pctBasis: WARMUP_PROTOCOL.pctBasis,
       pctStep: WARMUP_PROTOCOL.pctStep,
       targetCurve: false,
-      alternateSides: true,
+      alternateSides,
     },
   };
 }
@@ -265,8 +287,8 @@ export function rederiveSelection(
     if (!model) return sel;
     if (!tag) return null;
     return recordedZone === "prehab"
-      ? buildPrehabSelection(model, tag)
-      : buildWarmupSelection(model, tag, prKg ?? model.maxF);
+      ? buildPrehabSelection(model, tag, sel.protocol.alternateSides)
+      : buildWarmupSelection(model, tag, prKg ?? model.maxF, sel.protocol.alternateSides);
   }
   const q = selectedQuality(sel);
   if (!sel || !q) return sel;

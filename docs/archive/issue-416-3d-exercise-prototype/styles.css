@@ -1,0 +1,48 @@
+/* Archived with the unshipped issue #416 Three.js exercise prototype. */
+.force-exercise-examples { margin: 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--surface-1) 70%, transparent); }
+.force-exercise-examples-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.force-exercise-examples-head h3 { margin: 3px 0 0; color: var(--ink); font-family: Inter, sans-serif; font-size: var(--t-lg); line-height: 1.2; }
+.force-example-disclaimer { flex-shrink: 0; padding: 4px 7px; border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--border)); border-radius: 999px; color: var(--warning); font-size: var(--t-2xs); font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; }
+.force-example-open { width: 100%; display: grid; grid-template-columns: 34px 1fr 16px; align-items: center; gap: 9px; margin-top: 11px; padding: 10px; border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--primary) 9%, var(--canvas)); color: var(--ink); text-align: left; cursor: pointer; }
+.force-example-open > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: color-mix(in srgb, var(--primary) 18%, var(--canvas)); color: var(--primary); font-size: 20px; }
+.force-example-open strong, .force-example-open small { display: block; }
+.force-example-open strong { font-family: Inter, sans-serif; font-size: var(--t-xs); }
+.force-example-open small { margin-top: 2px; color: var(--ink-muted); font-size: var(--t-2xs); line-height: 1.35; }
+.force-example-open em { color: var(--primary); font-size: 24px; font-style: normal; }
+.force-example-family-tabs, .force-example-variant-tabs { display: flex; gap: 6px; margin-top: 11px; overflow-x: auto; scrollbar-width: none; }
+.force-example-family-tabs::-webkit-scrollbar, .force-example-variant-tabs::-webkit-scrollbar { display: none; }
+.force-example-family-tabs button, .force-example-variant-tabs button { flex: 0 0 auto; min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--canvas); color: var(--ink-muted); font-family: Inter, sans-serif; font-size: var(--t-xs); font-weight: 750; cursor: pointer; }
+.force-example-family-tabs button.selected { border-color: color-mix(in srgb, var(--primary) 65%, var(--border)); background: color-mix(in srgb, var(--primary) 15%, var(--canvas)); color: var(--primary); }
+.force-example-variant-tabs { margin-top: 7px; }
+.force-example-variant-tabs button { min-height: 30px; padding: 5px 9px; border-radius: 999px; font-size: var(--t-2xs); }
+.force-example-variant-tabs button.selected { border-color: color-mix(in srgb, var(--info) 65%, var(--border)); color: var(--info); }
+.force-exercise-scene-shell { position: relative; min-height: 290px; margin-top: 10px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border)); border-radius: 14px; background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--primary) 15%, var(--surface-1)), var(--canvas) 72%); }
+.force-exercise-scene-shell.loading { display: grid; place-items: center; color: var(--ink-muted); font-size: var(--t-xs); }
+.force-exercise-scene { position: absolute; inset: 0; }
+.force-exercise-scene canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+.force-exercise-scene-fallback { height: 100%; display: grid; place-items: center; padding: 24px; color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.5; text-align: center; }
+.force-exercise-scene-badge { position: absolute; top: 10px; left: 10px; pointer-events: none; padding: 6px 9px; border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--canvas) 82%, transparent); color: var(--warning); font-size: var(--t-2xs); font-weight: 850; letter-spacing: 0.08em; backdrop-filter: blur(10px); }
+.force-exercise-reset { position: absolute; top: 8px; right: 8px; min-height: 32px; padding: 5px 9px; background: color-mix(in srgb, var(--canvas) 82%, transparent); font-size: var(--t-2xs); backdrop-filter: blur(10px); }
+.force-exercise-orbit-hint { position: absolute; right: 10px; bottom: 8px; pointer-events: none; color: color-mix(in srgb, var(--ink-muted) 82%, transparent); font-size: var(--t-2xs); text-shadow: 0 1px 4px var(--canvas); }
+.force-example-copy { padding: 12px 2px 1px; }
+.force-example-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.force-example-title-row > div { min-width: 0; }
+.force-example-title-row span { display: block; color: var(--primary); font-size: var(--t-2xs); font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; }
+.force-example-title-row strong { display: block; margin-top: 2px; color: var(--ink); font-family: Inter, sans-serif; font-size: var(--t-base); }
+.force-example-title-row em { flex-shrink: 0; color: var(--ink-faint); font-size: var(--t-2xs); font-style: normal; }
+.force-example-copy > p { margin: 7px 0 0; color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.5; }
+.force-example-roles { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+.force-example-roles span { display: inline-flex; gap: 5px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--canvas); color: var(--ink-muted); font-size: var(--t-2xs); }
+.force-example-roles b { color: var(--primary); text-transform: uppercase; letter-spacing: 0.05em; }
+.force-example-cue { display: grid; grid-template-columns: 24px 1fr; gap: 7px; margin-top: 9px; padding: 8px; border-radius: 10px; background: color-mix(in srgb, var(--info) 9%, var(--canvas)); color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.4; }
+.force-example-cue > span { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--info) 18%, var(--canvas)); color: var(--info); font-weight: 900; }
+.force-example-cue strong { display: block; margin-bottom: 1px; color: var(--ink); }
+.force-example-cue.caution { background: color-mix(in srgb, var(--warning) 8%, var(--canvas)); }
+.force-example-cue.caution > span { background: color-mix(in srgb, var(--warning) 17%, var(--canvas)); color: var(--warning); }
+.force-example-copy > p.force-example-tracking-note { padding-top: 8px; border-top: 1px solid var(--hairline); color: var(--ink-faint); font-size: var(--t-2xs); }
+
+@media (max-width: 640px) {
+  .force-exercise-examples { margin-inline: -2px; padding: 10px; }
+  .force-exercise-scene-shell { min-height: 260px; }
+  .force-example-title-row { flex-direction: column; gap: 3px; }
+}
