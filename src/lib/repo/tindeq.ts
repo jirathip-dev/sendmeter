@@ -163,10 +163,11 @@ export async function fetchRecordingSamples(
   return data.samples.map(([t, kg]) => ({ t, kg }));
 }
 
-/// Raw kg samples for a specific set of recordings, keyed by recording id —
+/// Raw time/force samples for a specific set of recordings, keyed by id —
 /// one query per request rather than one per rep (issue #100's per-rep box
-/// plots). Only the kg half of each `[tMs, kg]` pair is kept; the box plot
-/// only needs the force distribution, not time.
+/// plots). Keeping both halves lets Reverse Action History overlay prescribed
+/// direction/rep markers on the same one-shot batch fetch; ordinary box plots
+/// still derive their force-only distribution at the component boundary.
 ///
 /// Scoped to explicit ids (not a whole `group_id`) rather than always
 /// pulling every recording in the session: `SessionRow` calls this with all
@@ -178,7 +179,7 @@ export async function fetchRecordingSamples(
 /// realtime bump while the detail was open).
 export async function fetchSamplesForRecordings(
   ids: string[],
-): Promise<Map<string, number[]>> {
+): Promise<Map<string, TindeqSample[]>> {
   if (ids.length === 0) return new Map();
   // Typed as the raw jsonb shape (not the narrower tuple-array type used
   // elsewhere) — TS's structural check for an ARRAY of objects containing a
@@ -193,7 +194,12 @@ export async function fetchSamplesForRecordings(
       .is("deleted_at", null)
       .overrideTypes<{ id: string; samples: [number, number][] | null }[], { merge: false }>(),
   );
-  return new Map(data.map((r) => [r.id, (r.samples ?? []).map(([, kg]) => kg)]));
+  return new Map(
+    data.map((r) => [
+      r.id,
+      (r.samples ?? []).map(([t, kg]) => ({ t, kg })),
+    ]),
+  );
 }
 
 export async function insertRecording(

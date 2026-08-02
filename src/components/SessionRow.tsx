@@ -13,7 +13,12 @@ import {
   recalcTindeqSessionDuration,
 } from "../lib/repo";
 import { QUALITY_COLORS } from "../lib/zoneSelection";
-import type { Session, TindeqRecordingMeta, WorkoutDetail } from "../types";
+import type {
+  Session,
+  TindeqRecordingMeta,
+  TindeqSample,
+  WorkoutDetail,
+} from "../types";
 import DetailPage from "./DetailPage";
 import EditRecordingSheet from "./EditRecordingSheet";
 import RecordingRow from "./RecordingRow";
@@ -48,14 +53,27 @@ function TagGroup({
   recs: TindeqRecordingMeta[];
   /// Recording id → raw kg samples for the whole session (issue #100) — the
   /// per-rep box plot below reads each rep's distribution out of this.
-  samplesById: Map<string, number[]>;
+  samplesById: Map<string, TindeqSample[]>;
   onEditRec: (r: TindeqRecordingMeta) => void;
   onDeleteRec: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const measured = recs.filter((r) => r.source !== "manual" && r.peakKg != null);
+  const reverse = recs.filter((r) => r.protocolMode === "reverse_action");
+  const measured = recs.filter(
+    (r) =>
+      r.protocolMode !== "reverse_action" &&
+      r.source !== "manual" &&
+      r.peakKg != null,
+  );
   const manual = recs.filter((r) => r.source === "manual");
   const best = measured.length ? Math.max(...measured.map((r) => r.peakKg!)) : null;
+  const displayRecs =
+    reverse.length === recs.length
+      ? [...recs].sort(
+          (a, b) =>
+            new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime(),
+        )
+      : recs;
   return (
     <div style={{ marginBottom: 8 }}>
       <button
@@ -78,7 +96,10 @@ function TagGroup({
           {tag || "untagged"}
         </span>
         <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
-          {recs.length} rep{recs.length === 1 ? "" : "s"}{manual.length ? ` · ${manual.length} manual` : ""}{best != null && <> · best <span style={{ color: "var(--success)", fontWeight: 700 }}>{best.toFixed(1)} kg</span></>}
+          {reverse.length === recs.length
+            ? `${reverse.length} set${reverse.length === 1 ? "" : "s"}`
+            : `${recs.length} entr${recs.length === 1 ? "y" : "ies"}`}
+          {manual.length ? ` · ${manual.length} manual` : ""}{best != null && <> · best <span style={{ color: "var(--success)", fontWeight: 700 }}>{best.toFixed(1)} kg</span></>}
         </span>
         <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
           {open ? "▾" : "▸"}
@@ -97,10 +118,12 @@ function TagGroup({
       </div>
       {open && (
         <div style={{ marginTop: 6 }}>
-          {recs.map((r) => (
+          {displayRecs.map((r) => (
             <RecordingRow
               key={r.id}
               rec={r}
+              prefetchedSamples={samplesById.get(r.id)}
+              defaultExpanded={r.protocolMode === "reverse_action"}
               onEdit={onEditRec}
               onDelete={onDeleteRec}
             />
@@ -143,7 +166,7 @@ export default function SessionRow({
   // distribution to draw. Starts empty rather than null: the header/meta
   // above never waits on this, and `RepBoxPlotChart` treats "id missing from
   // the map" as "still loading".
-  const [tindeqSamples, setTindeqSamples] = useState<Map<string, number[]>>(
+  const [tindeqSamples, setTindeqSamples] = useState<Map<string, TindeqSample[]>>(
     () => new Map(),
   );
   const [editingRec, setEditingRec] = useState<TindeqRecordingMeta | null>(null);
