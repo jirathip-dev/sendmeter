@@ -850,21 +850,7 @@ textarea.field { resize: none; }
   border-top: 1px solid var(--hairline);
 }
 .skeleton-stat-row .skeleton-line { flex: 1; max-width: 120px; }
-.skeleton-weekly-card { min-height: 146px; }
-.skeleton-bars {
-  height: 90px; display: flex; align-items: flex-end; gap: 8px;
-  padding-top: 18px;
-}
-.skeleton-bar { flex: 1; border-radius: 4px 4px 2px 2px; }
-.skeleton-bar-short { height: 28%; }
-.skeleton-bar-medium { height: 55%; }
-.skeleton-bar-tall { height: 82%; }
-.skeleton-daily-card { min-height: 118px; }
-.skeleton-heatmap {
-  display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
-  margin-top: 18px;
-}
-.skeleton-heatmap-cell { aspect-ratio: 1.8; border-radius: 3px; }
+.skeleton-projection-card { min-height: 196px; }
 
 /* Error banner with retry */
 .error-banner {
