@@ -166,7 +166,9 @@ Put that email/password in the review notes.
    `https://sendmeter.app/privacy.html` under App Privacy and
    `https://sendmeter.app/support.html` under the iOS version's Support URL.
 4. Fill App Privacy per the table above.
-5. ~~Capture iPhone + watch screenshots.~~ **Automated:** see the next section.
+5. Review the existing App Store screenshots and reuse them by default. Replace
+   them only when they no longer accurately represent the UI in the build being
+   submitted; when replacement is needed, use the automation in the next section.
 6. Export compliance: uses only standard TLS → answer "standard encryption,
    exempt" (France declaration auto-handled).
 7. Age rating questionnaire: all "None" → 4+.
@@ -179,8 +181,13 @@ Put that email/password in the review notes.
 9. Promote `staging` to `main`, wait for the Production migration workflow,
    then dispatch the TestFlight workflow from `main`. The archive uses the
    production Supabase project, so the workflow deliberately rejects
-   `staging` and other refs. Select the uploaded build in App Store Connect,
-   test it in TestFlight, then submit it for review.
+   `staging` and other refs. Select the uploaded build in App Store Connect and
+   test it in TestFlight. Before submission, review `RELEASE_NOTES.md` and turn
+   its **Unreleased** entries into concise, plain-language App Store **What’s New
+   in This Version** copy. In `RELEASE_NOTES.md`, archive those entries under
+   `## <version> — <YYYY-MM-DD>` using the release version and ISO date, then
+   recreate one empty **Unreleased** section with **Added**, **Improved**, and
+   **Fixed** headings. Submit the tested build for review.
 
 For iPhone testing before promotion, use `npm run sync:local` with paired
 simulators. A physical-device build cannot reach the laptop's local Supabase
@@ -189,8 +196,10 @@ device-only Bluetooth, HealthKit, and signing checks.
 
 ## App Store screenshot automation
 
-Run screenshots only for a release or after a meaningful UI change; this is
-deliberately separate from `fastlane beta` and every normal build:
+Preserve and reuse the current App Store screenshots by default. Run the
+screenshot automation only when the existing images no longer accurately
+represent the shipped UI; it is deliberately separate from `fastlane beta` and
+every normal build:
 
 ```bash
 LANG=en_US.UTF-8 bundle exec fastlane screenshots
