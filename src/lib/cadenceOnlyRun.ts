@@ -17,6 +17,9 @@ export interface CadenceOnlyRunState {
   sessionId: string;
   setRecordingIds: string[];
   startedMs: number;
+  /// Persisted before any partial/completion writes. A refresh on the outcome
+  /// screen must not resume the clock and relabel a partial run as complete.
+  endedMs?: number;
 }
 
 export interface CadenceOnlyPosition {
@@ -43,6 +46,17 @@ export function cadenceOnlyTimeline(state: CadenceOnlyRunState): ReverseActionSe
 export function cadenceOnlyPlannedEndMs(state: CadenceOnlyRunState): number {
   const last = cadenceOnlyTimeline(state).at(-1);
   return state.startedMs + Math.round((last ? last.startS + last.durS : 0) * 1_000);
+}
+
+export function cadenceOnlyPlannedDurationMs(state: CadenceOnlyRunState): number {
+  return Math.max(0, cadenceOnlyPlannedEndMs(state) - state.startedMs);
+}
+
+export function cadenceOnlyRunComplete(
+  state: CadenceOnlyRunState,
+  elapsedMs: number,
+): boolean {
+  return elapsedMs >= cadenceOnlyPlannedDurationMs(state);
 }
 
 export function cadenceOnlyPosition(
@@ -158,7 +172,14 @@ export function loadCadenceOnlyRun(): CadenceOnlyRunState | null {
       value.setRecordingIds.length !== value.preset.sets ||
       typeof value.startedMs !== "number"
     ) return null;
-    return value as CadenceOnlyRunState;
+    const restored = value as CadenceOnlyRunState;
+    if (
+      restored.endedMs !== undefined &&
+      (!Number.isFinite(restored.endedMs) ||
+        restored.endedMs < restored.startedMs ||
+        restored.endedMs > cadenceOnlyPlannedEndMs(restored))
+    ) return null;
+    return restored;
   } catch {
     return null;
   }

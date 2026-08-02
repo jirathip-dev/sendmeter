@@ -27,7 +27,6 @@ import {
   buildTimeline,
   prescriptionWorkS,
   presetTargetKg,
-  protocolDurationS,
   timelineAt,
 } from "../lib/protocol";
 import { nextLockedCapabilityFit } from "../lib/capabilityFitLock";
@@ -142,6 +141,7 @@ import {
   type ForceSetupMemory,
 } from "../lib/forceSetup";
 import {
+  cadenceOnlyRunComplete,
   loadCadenceOnlyRun,
   saveCadenceOnlyRun,
   type CadenceOnlyRunState,
@@ -1067,8 +1067,18 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // parallel. The all-sides curve above remains the chart/reference outside
   // a run; it is never borrowed for a missing hand.
   const alternatingArmed = armedAlternates(gaugeInputs.preset, gaugeInputs.zoneSel);
-  const leftCurveRecordings = curveCandidateRecordings(recordings, effectiveTag, "left", "static");
-  const rightCurveRecordings = curveCandidateRecordings(recordings, effectiveTag, "right", "static");
+  const leftCurveRecordings = curveCandidateRecordings(
+    recordings,
+    effectiveTag,
+    "left",
+    capacityModality,
+  );
+  const rightCurveRecordings = curveCandidateRecordings(
+    recordings,
+    effectiveTag,
+    "right",
+    capacityModality,
+  );
   const alternatingCurveKey = alternatingCurveInputKey(
     effectiveTag,
     leftCurveRecordings,
@@ -1124,11 +1134,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const alternatingInputs = {
     left: {
       model: alternatingModelsSettled ? alternatingModels.left : null,
-      prKg: effortPeakKg(recordings, effectiveTag, "left", "static"),
+      prKg: effortPeakKg(recordings, effectiveTag, "left", capacityModality),
     },
     right: {
       model: alternatingModelsSettled ? alternatingModels.right : null,
-      prKg: effortPeakKg(recordings, effectiveTag, "right", "static"),
+      prKg: effortPeakKg(recordings, effectiveTag, "right", capacityModality),
     },
   };
 
@@ -2592,8 +2602,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             // Stable sessionId was persisted before the runtime opened. A
             // lost response/reload retries the same primary key, not a second
             // session; insertTindeqSession treats that collision as success.
-            const plannedMs = protocolDurationS(cadenceRun.preset) * 1_000;
-            const complete = elapsedMs >= plannedMs;
+            const complete = cadenceOnlyRunComplete(cadenceRun, elapsedMs);
             return await onLogSession({
               id: cadenceRun.sessionId,
               durationMin: Math.max(1, Math.round(elapsedMs / 60_000)),

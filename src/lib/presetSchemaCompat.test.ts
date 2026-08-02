@@ -3,10 +3,14 @@ import {
   isMissingCapacityEvidencePresetColumn,
   isMissingPresetHoldsColumn,
   isMissingReverseActionPresetColumn,
+  isMissingRecordingModalityColumn,
+  isMissingTagReverseCurveColumn,
   legacyPresetRow,
   preCapacityPresetRow,
   preReversePresetRow,
   retryPresetSchema,
+  retryRecordingModalitySchema,
+  retryTagReverseCurveSchema,
   retryWithoutPresetHoldsColumn,
   VARIED_HOLDS_REQUIRE_MIGRATION,
 } from "./presetSchemaCompat";
@@ -158,6 +162,42 @@ describe("capacity-evidence preset schema rollout (#422)", () => {
     expect(() => preCapacityPresetRow({ name: "Test", capacity_evidence: true })).toThrow(
       /capacity evidence/,
     );
+  });
+});
+
+describe("Reverse Action read-schema rollout (#422)", () => {
+  it("recognizes only the new recording and tag columns on their own tables", () => {
+    expect(isMissingRecordingModalityColumn({
+      code: "42703",
+      message: "column tindeq_recordings.completed_reps does not exist",
+    })).toBe(true);
+    expect(isMissingRecordingModalityColumn({
+      code: "42703",
+      message: "column tindeq_presets.completed_reps does not exist",
+    })).toBe(false);
+    expect(isMissingTagReverseCurveColumn({
+      code: "PGRST204",
+      message: "Could not find the 'reverse_cf_kg' column of 'tindeq_tags' in the schema cache",
+    })).toBe(true);
+  });
+
+  it("keeps Force reads available while the migration workflow catches up", async () => {
+    const recordingMissing = {
+      code: "42703",
+      message: "column tindeq_recordings.capacity_evidence does not exist",
+    };
+    const tagMissing = {
+      code: "42703",
+      message: "column tindeq_tags.reverse_cf_kg does not exist",
+    };
+    await expect(retryRecordingModalitySchema(
+      async () => ({ data: null, error: recordingMissing }),
+      async () => ({ data: ["recordings"], error: null }),
+    )).resolves.toEqual({ data: ["recordings"], error: null });
+    await expect(retryTagReverseCurveSchema(
+      async () => ({ data: null, error: tagMissing }),
+      async () => ({ data: ["static"], error: null }),
+    )).resolves.toEqual({ data: ["static"], error: null });
   });
 });
 

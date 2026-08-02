@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TindeqPreset } from "../types";
 import {
   buildCadenceOnlySetRecording,
   cadenceOnlyPlannedEndMs,
+  cadenceOnlyPlannedDurationMs,
   cadenceOnlyPosition,
+  cadenceOnlyRunComplete,
   claimCadenceOnlyRows,
+  loadCadenceOnlyRun,
+  saveCadenceOnlyRun,
   type CadenceOnlyRunState,
 } from "./cadenceOnlyRun";
 
@@ -23,6 +27,8 @@ const state: CadenceOnlyRunState = {
 };
 
 describe("cadence-only Reverse Action run (#422)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("uses the shared wall-clock timeline through background time", () => {
     expect(cadenceOnlyPosition(state, 7_000).segment).toMatchObject({
       phase: "move", direction: "out", set: 1, rep: 1,
@@ -31,6 +37,11 @@ describe("cadence-only Reverse Action run (#422)", () => {
       phase: "move", direction: "out", set: 2, rep: 1,
     });
     expect(cadenceOnlyPlannedEndMs(state)).toBe(36_000);
+    expect(cadenceOnlyPlannedDurationMs(state)).toBe(35_000);
+    // Prepare time is part of the run. Work/rest duration alone (30s here)
+    // must not label a stopped protocol complete.
+    expect(cadenceOnlyRunComplete(state, 30_000)).toBe(false);
+    expect(cadenceOnlyRunComplete(state, 35_000)).toBe(true);
   });
 
   it("builds provenance without inventing force or detected movement", () => {
@@ -56,5 +67,18 @@ describe("cadence-only Reverse Action run (#422)", () => {
     expect(claimCadenceOnlyRows(state, 16_000, false, claims)).toHaveLength(1);
     expect(claimCadenceOnlyRows(state, 16_000, false, claims)).toHaveLength(0);
     expect(claims).toEqual(new Set([1]));
+  });
+
+  it("restores a persisted partial-stop timestamp instead of resuming its clock", () => {
+    let stored: string | null = null;
+    vi.stubGlobal("localStorage", {
+      getItem: () => stored,
+      setItem: (_key: string, value: string) => { stored = value; },
+      removeItem: () => { stored = null; },
+    });
+    const stopped = { ...state, endedMs: 9_000 };
+    saveCadenceOnlyRun(stopped);
+    expect(loadCadenceOnlyRun()).toEqual(stopped);
+    expect(cadenceOnlyRunComplete(stopped, stopped.endedMs! - stopped.startedMs)).toBe(false);
   });
 });

@@ -8,6 +8,68 @@ type PostgrestErrorLike = {
   message?: unknown;
 };
 
+function isMissingTableColumn(
+  error: unknown,
+  table: string,
+  columns: readonly string[],
+): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { code, message } = error as PostgrestErrorLike;
+  if (typeof code !== "string" || typeof message !== "string") return false;
+  const names = columns.join("|");
+  if (code === "42703") {
+    return new RegExp(`${table}["']?\\s*\\.\\s*["']?(?:${names})\\b`, "i").test(message) &&
+      /\bdoes not exist\b/i.test(message);
+  }
+  return code === "PGRST204" && new RegExp(
+    `could not find the ['"](?:${names})['"] column of ['"]${table}['"] in the schema cache`,
+    "i",
+  ).test(message);
+}
+
+const RECORDING_MODALITY_COLUMNS = [
+  "capacity_evidence",
+  "completed_reps",
+  "completion_status",
+] as const;
+
+const TAG_REVERSE_CURVE_COLUMNS = [
+  "reverse_cf_kg",
+  "reverse_w_prime_kgs",
+  "reverse_curve_fitted_at",
+  "reverse_curve_recording_count",
+] as const;
+
+export function isMissingRecordingModalityColumn(error: unknown): boolean {
+  return isMissingTableColumn(
+    error,
+    "tindeq_recordings",
+    RECORDING_MODALITY_COLUMNS,
+  );
+}
+
+export function isMissingTagReverseCurveColumn(error: unknown): boolean {
+  return isMissingTableColumn(error, "tindeq_tags", TAG_REVERSE_CURVE_COLUMNS);
+}
+
+export async function retryRecordingModalitySchema<T>(
+  current: () => PromiseLike<QueryResult<T>>,
+  preModality: () => PromiseLike<QueryResult<T>>,
+): Promise<QueryResult<T>> {
+  const result = await current();
+  if (!result.error || !isMissingRecordingModalityColumn(result.error)) return result;
+  return await preModality();
+}
+
+export async function retryTagReverseCurveSchema<T>(
+  current: () => PromiseLike<QueryResult<T>>,
+  preModality: () => PromiseLike<QueryResult<T>>,
+): Promise<QueryResult<T>> {
+  const result = await current();
+  if (!result.error || !isMissingTagReverseCurveColumn(result.error)) return result;
+  return await preModality();
+}
+
 /// True only for the two errors PostgREST emits when the #332 `holds_s`
 /// migration has not reached the server yet:
 /// - PostgreSQL's undefined-column error for a select projection.

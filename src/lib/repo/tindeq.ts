@@ -14,7 +14,9 @@ import {
   legacyPresetRow,
   preCapacityPresetRow,
   preReversePresetRow,
+  retryRecordingModalitySchema,
   retryPresetSchema,
+  retryTagReverseCurveSchema,
 } from "../presetSchemaCompat";
 import { unwrap, makeSoftDeleteOps } from "./shared";
 import {
@@ -24,6 +26,8 @@ import {
 
 const RECORDING_COLS =
   "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no, protocol_mode, target_kg, target_low_kg, target_high_kg, cadence_out_s, cadence_return_s, cadence_markers, set_metrics, setup_note, capacity_evidence, completed_reps, completion_status";
+const PRE_MODALITY_RECORDING_COLS =
+  "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no, protocol_mode, target_kg, target_low_kg, target_high_kg, cadence_out_s, cadence_return_s, cadence_markers, set_metrics, setup_note";
 
 type RecordingRow = {
   id: string;
@@ -54,9 +58,9 @@ type RecordingRow = {
   cadence_markers: unknown;
   set_metrics: unknown;
   setup_note: string;
-  capacity_evidence: boolean | null;
-  completed_reps: number | null;
-  completion_status: string | null;
+  capacity_evidence?: boolean | null;
+  completed_reps?: number | null;
+  completion_status?: string | null;
 };
 
 function toRecording(r: RecordingRow): TindeqRecordingMeta {
@@ -92,20 +96,21 @@ function toRecording(r: RecordingRow): TindeqRecordingMeta {
     cadenceMarkers: parseCadenceMarkers(r.cadence_markers),
     setMetrics: parseReverseActionSetMetrics(r.set_metrics),
     setupNote: r.setup_note,
-    capacityEvidence: r.capacity_evidence,
-    completedReps: r.completed_reps,
-    completionStatus: r.completion_status as TindeqRecordingMeta["completionStatus"],
+    capacityEvidence: r.capacity_evidence ?? null,
+    completedReps: r.completed_reps ?? null,
+    completionStatus: (r.completion_status ?? null) as TindeqRecordingMeta["completionStatus"],
   };
 }
 
 export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
   // samples deliberately excluded — the list view only needs metadata
-  const data = unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .select(RECORDING_COLS)
-      .is("deleted_at", null)
-      .order("recorded_at", { ascending: false }),
+  const data = unwrap<RecordingRow[]>(
+    await retryRecordingModalitySchema(
+      () => supabase.from("tindeq_recordings").select(RECORDING_COLS)
+        .is("deleted_at", null).order("recorded_at", { ascending: false }),
+      () => supabase.from("tindeq_recordings").select(PRE_MODALITY_RECORDING_COLS)
+        .is("deleted_at", null).order("recorded_at", { ascending: false }),
+    ),
   );
   return data.map(toRecording);
 }
@@ -113,12 +118,13 @@ export async function fetchRecordings(): Promise<TindeqRecordingMeta[]> {
 export async function fetchDeletedRecordings(): Promise<
   DeletedTindeqRecording[]
 > {
-  const data = unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .select(`${RECORDING_COLS}, deleted_at`)
-      .not("deleted_at", "is", null)
-      .order("deleted_at", { ascending: false }),
+  const data = unwrap<(RecordingRow & { deleted_at: string | null })[]>(
+    await retryRecordingModalitySchema(
+      () => supabase.from("tindeq_recordings").select(`${RECORDING_COLS}, deleted_at`)
+        .not("deleted_at", "is", null).order("deleted_at", { ascending: false }),
+      () => supabase.from("tindeq_recordings").select(`${PRE_MODALITY_RECORDING_COLS}, deleted_at`)
+        .not("deleted_at", "is", null).order("deleted_at", { ascending: false }),
+    ),
   );
   return data.map((r) => ({ ...toRecording(r), deletedAt: r.deleted_at! }));
 }
@@ -126,15 +132,15 @@ export async function fetchDeletedRecordings(): Promise<
 export async function fetchRecordingsByGroup(
   groupId: string,
 ): Promise<TindeqRecordingMeta[]> {
-  const data = unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .select(RECORDING_COLS)
-      .eq("group_id", groupId)
-      .is("deleted_at", null)
-      // Newest-first, matching the outer History timeline (SL-58) — a session's
-      // reps read top-to-bottom the same way loose recordings do.
-      .order("recorded_at", { ascending: false }),
+  const data = unwrap<RecordingRow[]>(
+    await retryRecordingModalitySchema(
+      () => supabase.from("tindeq_recordings").select(RECORDING_COLS)
+        .eq("group_id", groupId).is("deleted_at", null)
+        .order("recorded_at", { ascending: false }),
+      () => supabase.from("tindeq_recordings").select(PRE_MODALITY_RECORDING_COLS)
+        .eq("group_id", groupId).is("deleted_at", null)
+        .order("recorded_at", { ascending: false }),
+    ),
   );
   return data.map(toRecording);
 }
@@ -149,15 +155,15 @@ export async function fetchUnlinkedRecordingsForDate(
   date: string,
 ): Promise<TindeqRecordingMeta[]> {
   const { start, end } = localDayRange(date);
-  const data = unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .select(RECORDING_COLS)
-      .is("group_id", null)
-      .is("deleted_at", null)
-      .gte("recorded_at", start)
-      .lt("recorded_at", end)
-      .order("recorded_at", { ascending: false }),
+  const data = unwrap<RecordingRow[]>(
+    await retryRecordingModalitySchema(
+      () => supabase.from("tindeq_recordings").select(RECORDING_COLS)
+        .is("group_id", null).is("deleted_at", null).gte("recorded_at", start)
+        .lt("recorded_at", end).order("recorded_at", { ascending: false }),
+      () => supabase.from("tindeq_recordings").select(PRE_MODALITY_RECORDING_COLS)
+        .is("group_id", null).is("deleted_at", null).gte("recorded_at", start)
+        .lt("recorded_at", end).order("recorded_at", { ascending: false }),
+    ),
   );
   return data.map(toRecording);
 }
@@ -629,25 +635,29 @@ export async function fetchTagCurves(): Promise<TagCurve[]> {
     name: string;
     cf_kg: number | null;
     w_prime_kgs: number | null;
-    reverse_cf_kg: number | null;
-    reverse_w_prime_kgs: number | null;
+    reverse_cf_kg?: number | null;
+    reverse_w_prime_kgs?: number | null;
   }[]>(
-    await supabase
-      .from("tindeq_tags")
-      .select("name, cf_kg, w_prime_kgs, reverse_cf_kg, reverse_w_prime_kgs")
-      .or("cf_kg.not.is.null,reverse_cf_kg.not.is.null"),
+    await retryTagReverseCurveSchema(
+      () => supabase.from("tindeq_tags")
+        .select("name, cf_kg, w_prime_kgs, reverse_cf_kg, reverse_w_prime_kgs")
+        .or("cf_kg.not.is.null,reverse_cf_kg.not.is.null"),
+      () => supabase.from("tindeq_tags")
+        .select("name, cf_kg, w_prime_kgs")
+        .not("cf_kg", "is", null),
+    ),
   );
   return data.flatMap((r) => [
     ...(r.cf_kg === null
       ? []
       : [{ name: r.name, modality: "static" as const, cf: r.cf_kg, wPrime: r.w_prime_kgs }]),
-    ...(r.reverse_cf_kg === null
+    ...(r.reverse_cf_kg == null
       ? []
       : [{
           name: r.name,
           modality: "reverse_action" as const,
           cf: r.reverse_cf_kg,
-          wPrime: r.reverse_w_prime_kgs,
+          wPrime: r.reverse_w_prime_kgs ?? null,
         }]),
   ]);
 }

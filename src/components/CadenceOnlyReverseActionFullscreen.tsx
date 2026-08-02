@@ -4,6 +4,7 @@ import {
   cadenceOnlyPosition,
   claimCadenceOnlyRows,
   clearCadenceOnlyRun,
+  saveCadenceOnlyRun,
   type CadenceOnlyRunState,
 } from "../lib/cadenceOnlyRun";
 import type { NewTindeqRecording } from "../types";
@@ -21,14 +22,23 @@ export default function CadenceOnlyReverseActionFullscreen({
   onClose: () => void;
 }) {
   const plannedEndMs = cadenceOnlyPlannedEndMs(run);
-  const [now, setNow] = useState(() => Date.now());
-  const initialEndMs = now >= plannedEndMs ? plannedEndMs : null;
+  const [initialClock] = useState(() => {
+    const wallNow = Date.now();
+    const endMs = run.endedMs ?? (wallNow >= plannedEndMs ? plannedEndMs : null);
+    return { nowMs: endMs ?? wallNow, endMs };
+  });
+  const initialEndMs = initialClock.endMs;
+  const [now, setNow] = useState(initialClock.nowMs);
   const [endedAtMs, setEndedAtMs] = useState<number | null>(initialEndMs);
-  const [stopped, setStopped] = useState(false);
+  const [stopped, setStopped] = useState(
+    () => initialEndMs !== null && initialEndMs < plannedEndMs,
+  );
   const [rpe, setRpe] = useState(5);
   const [outcome, setOutcome] = useState<"too_easy" | "good" | "failed">("good");
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const claimsRef = useRef(new Set<number>());
+  const persistenceRef = useRef(new Set<Promise<boolean>>());
   const finishingRef = useRef(false);
   const stopClaimRef = useRef(false);
   const endedAtRef = useRef<number | null>(initialEndMs);
@@ -36,15 +46,40 @@ export default function CadenceOnlyReverseActionFullscreen({
   const position = cadenceOnlyPosition(run, now);
   const finished = endedAtMs !== null;
 
-  async function persistDue(at: number, partial: boolean) {
+  function persistDue(at: number, partial: boolean): Promise<boolean> {
     const rows = claimCadenceOnlyRows(run, at, partial, claimsRef.current);
-    for (const row of rows) {
-      const ok = await onRecording(row);
-      if (!ok) claimsRef.current.delete(row.setNo!);
-    }
+    const task = (async () => {
+      let allSaved = true;
+      for (const row of rows) {
+        const ok = await onRecording(row);
+        if (!ok) {
+          claimsRef.current.delete(row.setNo!);
+          allSaved = false;
+        }
+      }
+      return allSaved;
+    })();
+    persistenceRef.current.add(task);
+    void task.finally(() => persistenceRef.current.delete(task)).catch(() => {});
+    return task;
+  }
+
+  async function flushDue(at: number, partial: boolean): Promise<boolean> {
+    const pending = [...persistenceRef.current];
+    if (pending.length > 0) await Promise.allSettled(pending);
+    // A failed in-flight write released its synchronous claim. Re-claim and
+    // retry it before the stable session id is committed and the run cleared.
+    return await persistDue(at, partial);
   }
 
   useEffect(() => {
+    if (initialEndMs !== null) {
+      if (run.endedMs !== initialEndMs) {
+        saveCadenceOnlyRun({ ...run, endedMs: initialEndMs });
+      }
+      void persistDue(initialEndMs, initialEndMs < plannedEndMs);
+      return;
+    }
     void persistDue(Math.min(Date.now(), plannedEndMs), false);
     const timer = setInterval(() => {
       if (endedAtRef.current !== null) return;
@@ -54,6 +89,7 @@ export default function CadenceOnlyReverseActionFullscreen({
       void persistDue(persistenceTime, false);
       if (at >= plannedEndMs && endedAtRef.current === null) {
         endedAtRef.current = plannedEndMs;
+        saveCadenceOnlyRun({ ...run, endedMs: plannedEndMs });
         setEndedAtMs(plannedEndMs);
       }
     }, 200);
@@ -91,6 +127,9 @@ export default function CadenceOnlyReverseActionFullscreen({
     if (stopClaimRef.current) return;
     stopClaimRef.current = true;
     const stoppedAt = Math.min(Date.now(), plannedEndMs);
+    // Durable end claim before the first await: a refresh from the outcome
+    // screen must retry this same partial/completed run, never resume it.
+    saveCadenceOnlyRun({ ...run, endedMs: stoppedAt });
     endedAtRef.current = stoppedAt;
     setNow(stoppedAt);
     setEndedAtMs(stoppedAt);
@@ -131,17 +170,25 @@ export default function CadenceOnlyReverseActionFullscreen({
       <div style={{ display: "flex", gap: 7, marginBottom: 14 }}>
         {(["too_easy", "good", "failed"] as const).map((value) => <button key={value} className={outcome === value ? "btn-primary" : "header-btn"} style={{ flex: 1 }} onClick={() => setOutcome(value)}>{value === "too_easy" ? "Too easy" : value === "good" ? "Good" : "Failed"}</button>)}
       </div>
+      {saveError && <div style={{ color: "var(--danger)", fontSize: "var(--t-sm)", marginBottom: 10 }}>{saveError}</div>}
       <button className="btn-primary" disabled={saving} onClick={() => {
         if (finishingRef.current) return;
         finishingRef.current = true;
         setSaving(true);
+        setSaveError(null);
         const endedAt = endedAtRef.current ?? Date.now();
-        void onFinish(rpe, outcome, Math.max(1, endedAt - run.startedMs)).then((ok) => {
+        void flushDue(endedAt, endedAt < plannedEndMs).then(async (rowsSaved) => {
+          if (!rowsSaved) return false;
+          return await onFinish(rpe, outcome, Math.max(1, endedAt - run.startedMs));
+        }).then((ok) => {
           setSaving(false);
           if (ok) {
             clearCadenceOnlyRun();
             onClose();
-          } else finishingRef.current = false;
+          } else {
+            finishingRef.current = false;
+            setSaveError("Could not safely save this run yet. Check your connection and try again.");
+          }
         });
       }}>{saving ? "Saving…" : "Save session"}</button>
     </div>}
