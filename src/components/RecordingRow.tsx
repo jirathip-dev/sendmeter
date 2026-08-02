@@ -6,6 +6,7 @@ import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import SvgChartTooltip from "./SvgChartTooltip";
 import type { TindeqRecordingMeta, TindeqSample } from "../types";
+import ReverseActionSetDetail from "./ReverseActionSetDetail";
 
 interface Props {
   rec: TindeqRecordingMeta;
@@ -17,6 +18,12 @@ interface Props {
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (id: string) => void;
+  /// Session detail already batch-fetched these samples for its overview.
+  /// Reuse them rather than issuing one query per expanded set.
+  prefetchedSamples?: TindeqSample[];
+  /// Reverse Action sets open with their trace/metrics when their exercise
+  /// group opens; ordinary recordings keep the established collapsed row.
+  defaultExpanded?: boolean;
 }
 
 const H = 80;
@@ -154,16 +161,19 @@ export default function RecordingRow({
   selectable,
   selected,
   onToggleSelect,
+  prefetchedSamples,
+  defaultExpanded = false,
 }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [samples, setSamples] = useState<TindeqSample[] | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const displaySamples = prefetchedSamples ?? samples;
 
   async function toggle() {
     if (rec.source === "manual") return;
     const next = !expanded;
     setExpanded(next);
-    if (next && !samples) {
+    if (next && !displaySamples) {
       try {
         setSamples(await fetchRecordingSamples(rec.id));
       } catch {
@@ -173,6 +183,12 @@ export default function RecordingRow({
   }
 
   const origin = holdOrigin(rec);
+  const reverseAction = rec.protocolMode === "reverse_action";
+  const primaryKg = reverseAction
+    ? (rec.setMetrics?.meanKg ?? rec.avgKg)
+    : rec.source === "manual"
+      ? rec.externalLoadKg
+      : rec.peakKg;
   const date = new Date(rec.recordedAt);
   const dateLabel =`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 
@@ -236,10 +252,22 @@ export default function RecordingRow({
                   color: "var(--success)",
                 }}
               >
-                {rec.source === "manual" ? rec.externalLoadKg?.toFixed(1) : rec.peakKg?.toFixed(1)} kg
+                {primaryKg?.toFixed(1)} kg
               </span>{" "}
-              {rec.source === "manual" ? " external" : " peak"}
+              {reverseAction ? " mean" : rec.source === "manual" ? " external" : " peak"}
             </span>
+            {reverseAction && (
+              <span
+                className="tag"
+                style={{
+                  background: "color-mix(in srgb, var(--primary) 12%, transparent)",
+                  color: "var(--primary)",
+                  border: "1px solid color-mix(in srgb, var(--primary) 35%, transparent)",
+                }}
+              >
+                REVERSE ACTION
+              </span>
+            )}
             {rec.tag && (
               <span
                 className="tag"
@@ -270,6 +298,13 @@ export default function RecordingRow({
             {rec.source === "manual" ? ` · manual · ${rec.outcome?.replace("_", " ") ?? ""} · planned ${((rec.plannedDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s` : ` · avg ${rec.avgKg?.toFixed(1)} kg`}
             {rec.setNo !== null && (
               <span style={{ color: "var(--info)" }}> · set {rec.setNo}</span>
+            )}
+            {reverseAction && rec.setMetrics && (
+              <>
+                <span> · {rec.setMetrics.inTargetPct?.toFixed(1) ?? "—"}% in target</span>
+                <span> · {rec.setMetrics.cadenceAdherencePct.toFixed(1)}% cadence</span>
+                <span> · peak {rec.peakKg?.toFixed(1) ?? "—"} kg</span>
+              </>
             )}
             {/* #214: the zone this hold counts toward, and what put it there
                 — visible next to the hold length rather than only aggregated
@@ -313,8 +348,12 @@ export default function RecordingRow({
         </button>
       </div>
       {expanded &&
-        (samples ? (
-          <SamplesPreview samples={samples} />
+        (displaySamples ? (
+          reverseAction ? (
+            <ReverseActionSetDetail rec={rec} samples={displaySamples} />
+          ) : (
+            <SamplesPreview samples={displaySamples} />
+          )
         ) : (
           <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
             {loadError ? "Failed to load trace" : "Loading trace…"}

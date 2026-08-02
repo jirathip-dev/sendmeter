@@ -187,7 +187,7 @@ export interface TargetZoneCoachActivity {
   measuring: boolean;
   hasTarget: boolean;
   guided: boolean;
-  guidedPhase: ProtocolSegment["phase"] | null;
+  guidedPhase: ProtocolSegment["phase"] | "move" | null;
   paused: boolean;
 }
 
@@ -197,5 +197,9 @@ export function targetZoneCoachActive(activity: TargetZoneCoachActivity): boolea
   if (!activity.enabled || !activity.measuring || !activity.hasTarget || activity.paused) {
     return false;
   }
-  return !activity.guided || activity.guidedPhase === "hold";
+  return (
+    !activity.guided ||
+    activity.guidedPhase === "hold" ||
+    activity.guidedPhase === "move"
+  );
 }

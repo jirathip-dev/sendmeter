@@ -18,6 +18,7 @@ export interface ReverseActionPrescription {
 
 export interface ReverseActionSegment {
   phase: "prepare" | "move" | "setRest";
+  side: null;
   direction: ReverseActionDirection | null;
   rep: number;
   set: number;
@@ -35,6 +36,22 @@ export interface ReverseActionSetSlice {
   samples: TindeqSample[];
   markers: CadenceMarker[];
   plannedDurationMs: number;
+}
+
+export interface BuildReverseActionRecordingInput {
+  id: string;
+  samples: readonly TindeqSample[];
+  timeline: readonly ReverseActionSegment[];
+  set: number;
+  physicalEndMs?: number;
+  protocolShiftS?: number;
+  targetBand: ReverseActionTargetBand;
+  cadenceOutS: number;
+  cadenceReturnS: number;
+  base: Pick<
+    NewTindeqRecording,
+    "note" | "tag" | "side" | "groupId" | "protocolRunId" | "zone"
+  > & { setupNote: string };
 }
 
 function round(value: number, places: number): number {
@@ -58,7 +75,7 @@ export function buildReverseActionTimeline(
     durS: number,
   ) => {
     if (durS <= 0) return;
-    segments.push({ phase, direction, rep, set, startS, durS });
+    segments.push({ phase, side: null, direction, rep, set, startS, durS });
     startS += durS;
   };
 
@@ -78,6 +95,24 @@ export function reverseActionSetSegments(
   set: number,
 ): ReverseActionSegment[] {
   return timeline.filter((segment) => segment.phase === "move" && segment.set === set);
+}
+
+export function completesReverseActionSetAt(
+  timeline: readonly ReverseActionSegment[],
+  index: number,
+): boolean {
+  const segment = timeline[index];
+  if (!segment || segment.phase !== "move") return false;
+  return !timeline
+    .slice(index + 1)
+    .some((candidate) => candidate.phase === "move" && candidate.set === segment.set);
+}
+
+/// Stable transition key for audio/haptic cadence cues. Direction is
+/// intentionally part of the identity: OUT and RETURN share rep/set/phase,
+/// so omitting it suppresses every RETURN cue.
+export function reverseActionCadenceKey(segment: ReverseActionSegment): string {
+  return `${segment.phase}-${segment.set}-${segment.rep}-${segment.direction ?? ""}`;
 }
 
 export function reverseActionSetWindow(
@@ -247,6 +282,103 @@ export function reverseActionSetMetrics(
       1,
     ),
   };
+}
+
+export function buildReverseActionSetRecording(
+  input: BuildReverseActionRecordingInput,
+): (NewTindeqRecording & { id: string }) | null {
+  const slice = sliceReverseActionSet(
+    input.samples,
+    input.timeline,
+    input.set,
+    input.physicalEndMs,
+    input.protocolShiftS,
+  );
+  if (!slice) return null;
+  const metrics = reverseActionSetMetrics(
+    slice.samples,
+    input.targetBand,
+    slice.plannedDurationMs,
+  );
+  const kgs = slice.samples.map((sample) => sample.kg);
+  const durationMs = Math.max(1, Math.round(slice.samples.at(-1)!.t));
+  return {
+    id: input.id,
+    durationMs,
+    peakKg: Math.max(...kgs),
+    avgKg: metrics.meanKg,
+    ...input.base,
+    setNo: input.set,
+    samples: slice.samples,
+    protocolMode: "reverse_action",
+    targetKg: input.targetBand.kg,
+    targetLowKg: input.targetBand.lowKg,
+    targetHighKg: input.targetBand.highKg,
+    cadenceOutS: input.cadenceOutS,
+    cadenceReturnS: input.cadenceReturnS,
+    cadenceMarkers: slice.markers,
+    setMetrics: metrics,
+    setupNote: input.base.setupNote,
+    plannedDurationMs: slice.plannedDurationMs,
+    actualDurationMs: durationMs,
+  };
+}
+
+export interface BuildReverseActionSalvageInput {
+  samples: readonly TindeqSample[];
+  timeline: readonly ReverseActionSegment[];
+  sets: number;
+  runId: string;
+  claims: Set<string>;
+  ids: Map<string, string>;
+  createId: () => string;
+  protocolShiftS: number;
+  cadenceOutS: number;
+  cadenceReturnS: number;
+  targetBandForSet: (set: number) => ReverseActionTargetBand | null;
+  baseForSet: (set: number) => BuildReverseActionRecordingInput["base"];
+}
+
+/// Synchronous unmount salvage for every started, not-yet-claimed set. This is
+/// shared pure logic so the sign-out race is covered without mounting React:
+/// a set already claimed by autosave/Stop is skipped, and every returned row
+/// is claimed before control returns to the caller's persistence loop.
+export function buildUnclaimedReverseActionSalvage(
+  input: BuildReverseActionSalvageInput,
+): (NewTindeqRecording & { id: string })[] {
+  const lastPhysicalMs = input.samples.at(-1)?.t ?? 0;
+  const rows: (NewTindeqRecording & { id: string })[] = [];
+  for (let set = 1; set <= input.sets; set += 1) {
+    const window = reverseActionSetWindow(input.timeline, set);
+    if (!window) continue;
+    const physicalStartMs = (window.startS - input.protocolShiftS) * 1_000;
+    if (lastPhysicalMs - physicalStartMs < 1_000) continue;
+    const key = reverseActionSetKey(input.runId, set);
+    if (input.claims.has(key)) continue;
+    const targetBand = input.targetBandForSet(set);
+    if (!targetBand) continue;
+    let id = input.ids.get(key);
+    if (!id) {
+      id = input.createId();
+      input.ids.set(key, id);
+    }
+    const row = buildReverseActionSetRecording({
+      id,
+      samples: input.samples,
+      timeline: input.timeline,
+      set,
+      physicalEndMs: lastPhysicalMs,
+      protocolShiftS: input.protocolShiftS,
+      targetBand,
+      cadenceOutS: input.cadenceOutS,
+      cadenceReturnS: input.cadenceReturnS,
+      base: input.baseForSet(set),
+    });
+    if (!row) continue;
+    input.claims.add(key);
+    rows.push(row);
+  }
+  return rows;
 }
 
 export function parseCadenceMarkers(value: unknown): CadenceMarker[] | null {
