@@ -1,0 +1,62 @@
+import { describe, expect, it } from "vitest";
+import {
+  examplesForFamily,
+  FORCE_EXERCISE_EXAMPLES,
+  presentationForMode,
+  suggestedExerciseFamily,
+} from "./forceExerciseExamples";
+
+describe("force exercise examples", () => {
+  it("keeps stable ids and complete static/movement poses for all five examples", () => {
+    expect(FORCE_EXERCISE_EXAMPLES).toHaveLength(5);
+    expect(new Set(FORCE_EXERCISE_EXAMPLES.map((example) => example.id)).size).toBe(5);
+    for (const example of FORCE_EXERCISE_EXAMPLES) {
+      const staticHold = presentationForMode(example, "static");
+      expect(staticHold.endPose).toEqual(staticHold.startPose);
+      for (const mode of ["static", "movement"] as const) {
+        const presentation = presentationForMode(example, mode);
+        expect(Object.keys(presentation.startPose)).toHaveLength(13);
+        expect(Object.keys(presentation.endPose)).toHaveLength(13);
+        expect(presentation.startPose[example.attachmentJoint]).toBeDefined();
+        expect(presentation.endPose[example.originJoint]).toBeDefined();
+      }
+    }
+  });
+
+  it("keeps the resisted attachment fixed and moves the origin in every movement set", () => {
+    for (const example of FORCE_EXERCISE_EXAMPLES) {
+      const movement = presentationForMode(example, "movement");
+      expect(movement.endPose[example.attachmentJoint]).toEqual(
+        movement.startPose[example.attachmentJoint],
+      );
+      expect(movement.endPose[example.originJoint]).not.toEqual(
+        movement.startPose[example.originJoint],
+      );
+    }
+  });
+
+  it("centres the standing block and makes the side-lying pull lateral", () => {
+    const [standing, sideLying] = examplesForFamily("block_pull");
+    const standingPose = presentationForMode(standing!, "static").startPose;
+    expect(standing!.anchor[0]).toBe(0);
+    expect(standingPose[standing!.attachmentJoint][0]).toBe(0);
+
+    const sidePose = presentationForMode(sideLying!, "static").startPose;
+    expect(sideLying!.anchor[1]).toBe(sidePose[sideLying!.attachmentJoint][1]);
+    expect(sideLying!.anchor[2]).toBe(sidePose[sideLying!.attachmentJoint][2]);
+    expect(sideLying!.anchor[0]).toBeLessThan(sidePose[sideLying!.attachmentJoint][0]);
+  });
+
+  it("groups the supplied two block, two cuff and one hip variants", () => {
+    expect(examplesForFamily("block_pull")).toHaveLength(2);
+    expect(examplesForFamily("rotator_cuff")).toHaveLength(2);
+    expect(examplesForFamily("hip_rotator")).toHaveLength(1);
+  });
+
+  it("suggests a family from familiar free-text exercise tags", () => {
+    expect(suggestedExerciseFamily("Half crimp block pull")).toBe("block_pull");
+    expect(suggestedExerciseFamily("Rotator cuff ER")).toBe("rotator_cuff");
+    expect(suggestedExerciseFamily("Shoulder internal rotation")).toBe("rotator_cuff");
+    expect(suggestedExerciseFamily("Hip external rotation")).toBe("hip_rotator");
+  });
+});

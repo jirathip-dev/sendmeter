@@ -1,0 +1,156 @@
+import { lazy, Suspense, useState } from "react";
+import {
+  exampleModeCopy,
+  examplesForFamily,
+  FORCE_EXERCISE_FAMILIES,
+  presentationForMode,
+  suggestedExerciseFamily,
+  type ForceExerciseFamily,
+} from "../lib/forceExerciseExamples";
+import type { ForceMeasurementMode } from "../lib/forceSetup";
+
+const ForceExerciseScene3D = lazy(() => import("./ForceExerciseScene3D"));
+
+export default function ForceExerciseExamples({
+  mode,
+  exercise,
+}: {
+  mode: ForceMeasurementMode;
+  exercise: string;
+}) {
+  const suggested = suggestedExerciseFamily(exercise);
+  const [opened, setOpened] = useState(false);
+  const [chosenFamily, setChosenFamily] = useState<ForceExerciseFamily | null>(null);
+  const [chosenExampleId, setChosenExampleId] = useState<string | null>(null);
+  const family = chosenFamily ?? suggested;
+  const variants = examplesForFamily(family);
+  const example =
+    variants.find((item) => item.id === chosenExampleId) ?? variants[0]!;
+  const presentation = presentationForMode(example, mode);
+  const modeCopy = exampleModeCopy(mode);
+
+  function chooseFamily(next: ForceExerciseFamily) {
+    setChosenFamily(next);
+    setChosenExampleId(null);
+  }
+
+  return (
+    <section className="force-exercise-examples" aria-labelledby="force-exercise-examples-title">
+      <div className="force-exercise-examples-head">
+        <div>
+          <div className="label-eyebrow">
+            {mode === "movement" ? "Movement-set examples" : "Static examples"}
+          </div>
+          <h3 id="force-exercise-examples-title">
+            {mode === "movement" ? "See the origin movement in 3D" : "See the isometric position in 3D"}
+          </h3>
+        </div>
+        <span className="force-example-disclaimer">Illustrative only</span>
+      </div>
+
+      {!opened && (
+        <button
+          type="button"
+          className="force-example-open"
+          onClick={() => setOpened(true)}
+        >
+          <span aria-hidden="true">◫</span>
+          <div>
+            <strong>Explore five interactive examples</strong>
+            <small>
+              {mode === "movement"
+                ? "Fixed attachment with moving origin · block pull, rotator cuff and hip rotation"
+                : "Fixed body position · block pull, rotator cuff and hip rotation"}
+            </small>
+          </div>
+          <em aria-hidden="true">›</em>
+        </button>
+      )}
+
+      {opened && (
+        <div className="force-example-family-tabs" role="tablist" aria-label="Exercise family">
+          {FORCE_EXERCISE_FAMILIES.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={family === item.id}
+              className={family === item.id ? "selected" : ""}
+              onClick={() => chooseFamily(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {opened && variants.length > 1 && (
+        <div className="force-example-variant-tabs" role="radiogroup" aria-label={`${example.familyLabel} variation`}>
+          {variants.map((variant) => (
+            <button
+              key={variant.id}
+              type="button"
+              role="radio"
+              aria-checked={variant.id === example.id}
+              className={variant.id === example.id ? "selected" : ""}
+              onClick={() => setChosenExampleId(variant.id)}
+            >
+              {variant.variantLabel}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {opened && (
+        <Suspense
+          fallback={(
+            <div className="force-exercise-scene-shell loading" aria-label="Loading 3D exercise example">
+              Loading 3D example…
+            </div>
+          )}
+        >
+          <ForceExerciseScene3D example={example} mode={mode} />
+        </Suspense>
+      )}
+
+      {opened && (
+        <div className="force-example-copy">
+          <div className="force-example-title-row">
+            <div>
+              <span>{example.familyLabel} · {example.variantLabel}</span>
+              <strong>{example.title}</strong>
+            </div>
+            <em>{modeCopy.label}</em>
+          </div>
+          <p>{presentation.description}</p>
+          <div className="force-example-roles">
+            {mode === "movement" ? (
+              <>
+                <span><b>Fixed</b>{example.attachmentLabel}</span>
+                <span><b>Moves</b>{example.originLabel}</span>
+              </>
+            ) : (
+              <span><b>Static</b>attachment and origin</span>
+            )}
+          </div>
+          <div className="force-example-cue movement-principle">
+            <span aria-hidden="true">{mode === "movement" ? "◎" : "■"}</span>
+            <div>
+              <strong>{mode === "movement" ? "Move the origin" : "Hold the position"}</strong>
+              {presentation.actionCue}
+            </div>
+          </div>
+          <div className="force-example-cue">
+            <span aria-hidden="true">↗</span>
+            <div><strong>Set the line of pull</strong>{example.setupCue}</div>
+          </div>
+          <div className="force-example-cue caution">
+            <span aria-hidden="true">!</span>
+            <div><strong>Keep it controlled</strong>{example.safetyCue}</div>
+          </div>
+          <p className="force-example-tracking-note">{modeCopy.instruction}</p>
+        </div>
+      )}
+    </section>
+  );
+}
