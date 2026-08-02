@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SwiftUI
 
 /// Page 1 of the watch home (#278): today's glanceable status — readiness and
@@ -27,7 +28,7 @@ struct StatusView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 9) {
                 readiness
                 Divider()
                 acwr
@@ -43,21 +44,41 @@ struct StatusView: View {
     // MARK: Blocks
 
     private var readiness: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: 4) {
             eyebrow("READINESS")
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                value(
-                    snap.readiness.map(String.init),
-                    color: readinessColor(snap.readinessZone)
+            HStack(spacing: 10) {
+                ReadinessRingView(
+                    score: snap.readiness,
+                    zone: snap.readinessZone,
+                    lineWidth: 7,
+                    valueFontSize: 25,
+                    emptyAccessibilityHint: "Open Sendmeter on your iPhone to sync Health"
                 )
-                if let zone = snap.readinessZone, snap.readiness != nil {
-                    Text(zone)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                .frame(width: 68, height: 68)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    if let zone = StatusPresentation.readinessZoneLabel(snap.readinessZone),
+                       snap.readiness != nil {
+                        Text(zone)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(readinessColor(snap.readinessZone))
+                    } else if snap.readiness != nil {
+                        Text("Zone unavailable")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("No score")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("0–100")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
                 }
+                .accessibilityHidden(true)
             }
             // Honest empty state: readiness stays nil until the iPhone syncs
-            // Health, and a zeroed gauge would read as "you're wrecked".
+            // Health; the ring helper draws a neutral outline, not a zero.
             if snap.readiness == nil {
                 hint("Open Sendmeter on your iPhone to sync Health")
             }
@@ -65,19 +86,37 @@ struct StatusView: View {
     }
 
     private var acwr: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        let risk = StatusPresentation.acwrRiskBand(snap.acwr)
+        return VStack(alignment: .leading, spacing: 4) {
             eyebrow("ACWR")
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                value(
-                    snap.acwr.map { String(format: "%.2f", $0) },
-                    color: acwrColor(snap.acwrRisk)
-                )
-                if let risk = snap.acwrRisk, snap.acwr != nil {
-                    Text(risk)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                Text(snap.acwr.map { String(format: "%.2f", $0) } ?? "—")
+                    .font(.system(size: 28, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(acwrColor(risk))
+                if let risk {
+                    Text(risk.label)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(acwrColor(risk))
                 }
             }
+            .accessibilityHidden(true)
+
+            ACWRRiskTrackView(
+                value: snap.acwr,
+                bandHeight: 8,
+                emptyAccessibilityHint: "Not enough logged sessions yet"
+            )
+
+            HStack {
+                Text("0")
+                Spacer()
+                Text("2")
+            }
+            .font(.system(size: 8, weight: .medium, design: .rounded))
+            .foregroundStyle(.tertiary)
+            .accessibilityHidden(true)
+
             if snap.acwr == nil {
                 hint("Not enough logged sessions yet")
             }
@@ -90,16 +129,7 @@ struct StatusView: View {
         Text(text)
             .font(.system(size: 10, weight: .bold))
             .foregroundStyle(.secondary)
-    }
-
-    /// The number, or an em dash when we haven't got one. A missing value is
-    /// drawn muted rather than in its zone/risk colour — an unknown must not
-    /// borrow the look of a real reading.
-    private func value(_ text: String?, color: Color) -> some View {
-        Text(text ?? "—")
-            .font(.system(size: 36, weight: .heavy, design: .rounded))
-            .monospacedDigit()
-            .foregroundStyle(text == nil ? AnyShapeStyle(.tertiary) : AnyShapeStyle(color))
+            .accessibilityHidden(true)
     }
 
     private func hint(_ text: String) -> some View {
@@ -107,6 +137,7 @@ struct StatusView: View {
             .font(.system(size: 11))
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
+            .accessibilityHidden(true)
     }
 
     // MARK: Refresh

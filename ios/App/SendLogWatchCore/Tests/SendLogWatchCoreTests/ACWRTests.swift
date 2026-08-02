@@ -78,3 +78,46 @@ final class ACWRTests: XCTestCase {
         XCTAssertEqual(series, [0])
     }
 }
+
+final class StatusPresentationTests: XCTestCase {
+    func testACWRRiskBandsMatchWebBoundaries() {
+        XCTAssertEqual(StatusPresentation.acwrRiskBand(0.799), .low)
+        XCTAssertEqual(StatusPresentation.acwrRiskBand(0.8), .low)
+        XCTAssertEqual(StatusPresentation.acwrRiskBand(0.801), .optimal)
+        XCTAssertEqual(StatusPresentation.acwrRiskBand(1.3), .optimal)
+        XCTAssertEqual(StatusPresentation.acwrRiskBand(1.301), .caution)
+        XCTAssertEqual(StatusPresentation.acwrRiskBand(1.5), .caution)
+        XCTAssertEqual(StatusPresentation.acwrRiskBand(1.501), .high)
+    }
+
+    func testACWRTrackClampsToZeroThroughTwoScale() {
+        XCTAssertEqual(StatusPresentation.acwrTrackPosition(-1), 0)
+        XCTAssertEqual(StatusPresentation.acwrTrackPosition(0.8), 0.4)
+        XCTAssertEqual(StatusPresentation.acwrTrackPosition(1.3), 0.65)
+        XCTAssertEqual(StatusPresentation.acwrTrackPosition(1.5), 0.75)
+        XCTAssertEqual(StatusPresentation.acwrTrackPosition(3), 1)
+    }
+
+    func testNilAndNonFiniteValuesStayUnknown() {
+        XCTAssertNil(StatusPresentation.acwrRiskBand(nil))
+        XCTAssertNil(StatusPresentation.acwrRiskBand(.nan))
+        XCTAssertNil(StatusPresentation.acwrRiskBand(.infinity))
+        XCTAssertNil(StatusPresentation.acwrTrackPosition(nil))
+        XCTAssertNil(StatusPresentation.acwrTrackPosition(.nan))
+    }
+
+    func testReadinessProgressClampsAndNilDoesNotBecomeZero() {
+        XCTAssertNil(StatusPresentation.readinessProgress(nil))
+        XCTAssertEqual(StatusPresentation.readinessProgress(-10), 0)
+        XCTAssertEqual(StatusPresentation.readinessProgress(82), 0.82)
+        XCTAssertEqual(StatusPresentation.readinessProgress(120), 1)
+    }
+
+    func testReadinessZoneLabelsAreNormalizedWithoutInventingUnknownZones() {
+        XCTAssertEqual(StatusPresentation.readinessZoneLabel("recover"), "Recover")
+        XCTAssertEqual(StatusPresentation.readinessZoneLabel("Maintain"), "Maintain")
+        XCTAssertEqual(StatusPresentation.readinessZoneLabel("PUSH"), "Push")
+        XCTAssertNil(StatusPresentation.readinessZoneLabel(nil))
+        XCTAssertNil(StatusPresentation.readinessZoneLabel("unknown"))
+    }
+}

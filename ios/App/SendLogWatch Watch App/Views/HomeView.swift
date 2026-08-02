@@ -16,12 +16,15 @@ import SwiftUI
 /// registered while its page is realized, which is exactly how a deep link
 /// arriving on the wrong page silently does nothing.
 struct HomeView: View {
+    @Binding var selection: WatchHomePage
     @State private var showGaugeSessionLoss = false
 
     var body: some View {
-        TabView {
+        TabView(selection: $selection) {
             StatusView()
+                .tag(WatchHomePage.status)
             ActionsView()
+                .tag(WatchHomePage.actions)
         }
         .tabViewStyle(.page)
         .navigationTitle("Sendmeter")
