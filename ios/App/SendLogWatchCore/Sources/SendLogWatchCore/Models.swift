@@ -16,6 +16,30 @@ public struct MotionSample: Sendable {
     }
 }
 
+/// Stable, multi-reader view of the detector. Callers compare snapshots before
+/// and after ingesting a sample; no consumable transition event can be lost.
+public struct AttemptDetectorSnapshot: Equatable, Sendable {
+    public enum State: Equatable, Sendable {
+        case resting
+        case autoClimbing
+        case manualClimbing
+    }
+
+    public let state: State
+    public let phaseStartedAt: Date?
+    /// Non-negative height above the attempt's recent local resting floor.
+    public let localHeightM: Double
+
+    public init(state: State, phaseStartedAt: Date?, localHeightM: Double) {
+        self.state = state
+        self.phaseStartedAt = phaseStartedAt
+        self.localHeightM = localHeightM
+    }
+
+    public var isClimbing: Bool { state != .resting }
+    public var isManual: Bool { state == .manualClimbing }
+}
+
 public enum AttemptSource: String, Codable, Sendable {
     case auto    // altimeter/motion state machine
     case manual  // logged via the Boulder/Stop button

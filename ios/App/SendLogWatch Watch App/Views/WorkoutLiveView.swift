@@ -198,6 +198,13 @@ struct WorkoutLiveView: View {
             }
         }
         .onAppear { scheduleRestAlarm() }
+        .onChange(of: workout.manualClimbing) { _, climbing in
+            if climbing {
+                cancelRestAlarm()
+            } else {
+                scheduleRestAlarm()
+            }
+        }
         .onDisappear { cancelRestAlarm() }
     }
 
@@ -301,11 +308,6 @@ struct WorkoutLiveView: View {
             // for, down to 40mm.
             Button {
                 workout.toggleManualAttempt()
-                if workout.manualClimbing {
-                    cancelRestAlarm()
-                } else {
-                    scheduleRestAlarm()
-                }
             } label: {
                 Image(systemName: workout.manualClimbing ? "stop.fill" : "play.fill")
                     .font(.system(size: 16, weight: .bold))
@@ -325,7 +327,7 @@ struct WorkoutLiveView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Text(String(format: "%+.1fm", workout.relativeAltitude))
+                Text(String(format: "%.1fm", workout.relativeAltitude))
                     .font(.system(size: 11)).monospacedDigit()
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -432,7 +434,7 @@ extension WorkoutManager {
         m.heartRate = 148
         m.activeKcal = 327
         m.elapsed = 2_712
-        m.relativeAltitude = -3.4
+        m.relativeAltitude = 1.4
         m.liveAttempts = 12
         m.manualClimbing = climbing
         m.climbingSince = climbing ? Date().addingTimeInterval(-73) : nil

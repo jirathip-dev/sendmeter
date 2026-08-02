@@ -14,11 +14,12 @@ final class WorkoutManager: NSObject {
     var heartRate: Double?
     var activeKcal: Double = 0
     var elapsed: TimeInterval = 0
+    /// Non-negative height above the current attempt's local resting floor.
     var relativeAltitude: Double = 0
     var liveAttempts = 0
-    /// True while a manual boulder is open (Boulder/Stop button).
+    /// True while either an automatic or manual boulder is visibly open.
     var manualClimbing = false
-    /// When the current manual boulder started (nil while resting).
+    /// When the current visible boulder started (nil while resting).
     var climbingSince: Date?
     /// When the current rest began — workout start, or the last boulder's end.
     /// The rest countdown starts automatically (phone-workout logic).
@@ -50,8 +51,7 @@ final class WorkoutManager: NSObject {
     private var accelBuffer: [(t: TimeInterval, mag: Double)] = []
     private var fusionTimer: Timer?
     private var startDate: Date?
-    private var maxAltitudeSeen: Double = 0
-    private var minAltitudeSeen: Double = 0
+    private var rawRelativeAltitude: Double = 0
     private var rawTrace: [[Double?]] = []
     // Generated at start so the live_workouts heartbeat and the final
     // climb_workouts row share one id (web correlation).
@@ -86,12 +86,11 @@ final class WorkoutManager: NSObject {
         activeKcal = 0
         elapsed = 0
         relativeAltitude = 0
+        rawRelativeAltitude = 0
         liveAttempts = 0
         manualClimbing = false
         climbingSince = nil
         restStartedAt = nil
-        maxAltitudeSeen = 0
-        minAltitudeSeen = 0
         fusionTick = 0
         workoutId = UUID()
 
@@ -135,15 +134,15 @@ final class WorkoutManager: NSObject {
         }
     }
 
-    /// Toggle a manual boulder attempt (Boulder ⇄ Stop). Auto detection is
-    /// suspended while one is open. Stopping drops straight into the rest
-    /// countdown (phone-workout logic); both transitions beat immediately so
+    /// Toggle the visible boulder attempt (Boulder ⇄ Stop). A new attempt is
+    /// manual; stopping an auto attempt preserves its auto provenance. Stop
+    /// drops into the rest countdown; both transitions beat immediately so
     /// the phone mirror flips without waiting for the 5 s heartbeat.
     @MainActor
     func toggleManualAttempt() {
         let now = Date()
-        if detector.isManualAttemptOpen {
-            detector.endManualAttempt(at: now)
+        if detector.snapshot.isClimbing {
+            detector.endCurrentAttempt(at: now)
             climbingSince = nil
             restStartedAt = now
         } else {
@@ -151,7 +150,8 @@ final class WorkoutManager: NSObject {
             climbingSince = now
             restStartedAt = nil
         }
-        manualClimbing = detector.isManualAttemptOpen
+        manualClimbing = detector.snapshot.isClimbing
+        relativeAltitude = detector.snapshot.localHeightM
         liveAttempts = detector.liveAttemptCount
         pushBeat()
         WidgetBridge.updateLiveWorkout(
@@ -186,8 +186,8 @@ final class WorkoutManager: NSObject {
         let hr = heartRate
         let count = liveAttempts
         let kcal = activeKcal
-        let gain = max(0, maxAltitudeSeen - minAltitudeSeen)
-        let climbing = detector.isManualAttemptOpen
+        let gain = detector.totalElevationGainM
+        let climbing = detector.snapshot.isClimbing
         let cs = climbingSince
         let rs = restStartedAt
         let rt = restTargetS
@@ -325,7 +325,7 @@ final class WorkoutManager: NSObject {
             avgHR: avgHR,
             maxHR: maxHR,
             activeKcal: kcal,
-            elevationGainM: max(0, maxAltitudeSeen - minAltitudeSeen),
+            elevationGainM: attempts.reduce(0) { $0 + max(0, $1.elevationGainM) },
             attempts: attempts,
             predictedRPE: predictedRPE,
             rawTrace: rawTrace
@@ -338,7 +338,7 @@ final class WorkoutManager: NSObject {
         guard CMAltimeter.isRelativeAltitudeAvailable() else { return }
         altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, _ in
             guard let self, let data else { return }
-            self.relativeAltitude = data.relativeAltitude.doubleValue
+            self.rawRelativeAltitude = data.relativeAltitude.doubleValue
         }
     }
 
@@ -373,13 +373,32 @@ final class WorkoutManager: NSObject {
                 rms = (sumSq / Double(self.accelBuffer.count)).squareRoot()
             }
 
-            let alt = self.relativeAltitude
-            self.maxAltitudeSeen = max(self.maxAltitudeSeen, alt)
-            self.minAltitudeSeen = min(self.minAltitudeSeen, alt)
-
+            let alt = self.rawRelativeAltitude
             let sample = MotionSample(t: t, altitude: alt, motionRMS: rms, hr: self.heartRate)
+            let before = self.detector.snapshot
             self.detector.ingest(sample, at: now)
+            let after = self.detector.snapshot
             self.liveAttempts = self.detector.liveAttemptCount
+            self.relativeAltitude = after.localHeightM
+            if before.state != after.state {
+                if after.isClimbing {
+                    self.climbingSince = after.phaseStartedAt ?? now
+                    self.restStartedAt = nil
+                } else {
+                    self.climbingSince = nil
+                    self.restStartedAt = now
+                }
+                // Publish the observable phase only after its clock is ready;
+                // WorkoutLiveView's onChange schedules/cancels the rest alarm.
+                self.manualClimbing = after.isClimbing
+                self.pushBeat()
+                WidgetBridge.updateLiveWorkout(
+                    active: true, boulders: self.liveAttempts,
+                    climbing: after.isClimbing,
+                    phaseSince: after.isClimbing ? self.climbingSince : self.restStartedAt,
+                    restTargetS: self.restTargetS
+                )
+            }
 
             if self.tunables.keepRawTrace
                 && self.fusionTick % self.tunables.rawTraceStride == 0 {
@@ -408,7 +427,7 @@ final class WorkoutManager: NSObject {
             id: workoutId,
             startedAt: startDate,
             endedAt: Date(),
-            elevationGainM: max(0, maxAltitudeSeen - minAltitudeSeen),
+            elevationGainM: detector.totalElevationGainM,
             attemptsDetected: liveAttempts,
             attemptsConfirmed: liveAttempts,
             raw: tunables.keepRawTrace ? rawTrace : nil

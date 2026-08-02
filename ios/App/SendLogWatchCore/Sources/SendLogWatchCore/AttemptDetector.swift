@@ -1,5 +1,23 @@
 import Foundation
 
+/// Pure end-state policy shared by automatic and assisted-manual attempts.
+/// An established altitude ascent closes on return regardless of floor-level
+/// motion; an HR-only attempt has no return signal, so quiet is its fallback.
+public enum AttemptEndResolver {
+    public static func shouldEnd(
+        establishedAltitudeAscent: Bool,
+        returnedToFloor: Bool,
+        hasHRSupport: Bool,
+        quiet: Bool,
+        durationS: Double,
+        maxDurationS: Double
+    ) -> Bool {
+        if durationS > maxDurationS { return true }
+        if establishedAltitudeAscent { return returnedToFloor }
+        return hasHRSupport && quiet
+    }
+}
+
 /// Pure Swift boulder-attempt detector — no frameworks, unit-testable.
 /// Fed 1 Hz MotionSamples fused from CMAltimeter + CMMotionManager + HR.
 public final class AttemptDetector {
@@ -19,6 +37,8 @@ public final class AttemptDetector {
     private let t: Tunables
     private var phase: Phase = .rest
     private var baseline: Double?
+    private var restingAltitudes: [(tick: Int, altitude: Double)] = []
+    private var restingHR: Double?
     private var ticks: [MotionSample] = []
     private var rawAttempts: [RawAttempt] = []
     private var workoutStart: Date?
@@ -32,10 +52,31 @@ public final class AttemptDetector {
         processedAttempts().count
     }
 
-    /// True while a manual boulder is open — drives the Boulder/Stop toggle.
+    /// True only for a manual boulder. Visible UI state should use `snapshot`.
     public var isManualAttemptOpen: Bool {
         if case .manual = phase { return true }
         return false
+    }
+
+    public var snapshot: AttemptDetectorSnapshot {
+        switch phase {
+        case .rest:
+            return AttemptDetectorSnapshot(state: .resting, phaseStartedAt: nil, localHeightM: 0)
+        case .climbing(_, let date, let floor, let maxAlt):
+            return AttemptDetectorSnapshot(
+                state: .autoClimbing, phaseStartedAt: date,
+                localHeightM: max(0, (ticks.last?.altitude ?? maxAlt) - floor)
+            )
+        case .manual(_, let date, let floor, let maxAlt):
+            return AttemptDetectorSnapshot(
+                state: .manualClimbing, phaseStartedAt: date,
+                localHeightM: max(0, (ticks.last?.altitude ?? maxAlt) - floor)
+            )
+        }
+    }
+
+    public var totalElevationGainM: Double {
+        processedAttempts().reduce(0) { $0 + max(0, $1.elevationGainM) }
     }
 
     public func ingest(_ sample: MotionSample, at date: Date) {
@@ -51,13 +92,20 @@ public final class AttemptDetector {
             // climbing never drags it up.
             let dt = 1.0 / t.tickHz
             baseline! += (sample.altitude - baseline!) * (dt / t.baselineTauS)
+            restingAltitudes.append((i, sample.altitude))
+            let oldest = i - Int(t.localFloorWindowS * t.tickHz)
+            restingAltitudes.removeAll { $0.tick < oldest }
+            if let hr = sample.hr {
+                restingHR = restingHR.map { $0 + (hr - $0) * (dt / t.baselineTauS) } ?? hr
+            }
 
             if shouldStartAttempt(at: i) {
                 let startTick = riseStartTick(from: i)
+                let floor = localFloor(at: i) ?? baseline!
                 phase = .climbing(
                     startTick: startTick,
                     startDate: date.addingTimeInterval(-Double(i - startTick) / t.tickHz),
-                    baselineAtStart: baseline!,
+                    baselineAtStart: floor,
                     maxAlt: sample.altitude
                 )
             }
@@ -67,30 +115,47 @@ public final class AttemptDetector {
             phase = .climbing(startTick: startTick, startDate: startDate, baselineAtStart: baselineAtStart, maxAlt: maxAlt)
 
             let duration = Double(i - startTick) / t.tickHz
-            if hasReturnedToGround(at: i, baseline: baselineAtStart)
-                || hasGoneQuiet(at: i)
-                || duration > t.maxAttemptS {
+            if AttemptEndResolver.shouldEnd(
+                establishedAltitudeAscent: maxAlt - baselineAtStart >= t.establishedAltitudeGainM,
+                returnedToFloor: hasReturnedToGround(at: i, baseline: baselineAtStart),
+                hasHRSupport: hasHRSupport(from: startTick, through: i),
+                quiet: hasGoneQuiet(at: i),
+                durationS: duration,
+                maxDurationS: t.maxAttemptS
+            ) {
                 rawAttempts.append((startTick, i, startDate, baselineAtStart, maxAlt, .auto))
                 phase = .rest
             }
 
         case .manual(let startTick, let startDate, let baselineAtStart, var maxAlt):
-            // No auto start/end predicates while manual — just track maxAlt for
-            // the elevation gain. Ends only via endManualAttempt().
             maxAlt = max(maxAlt, sample.altitude)
             phase = .manual(startTick: startTick, startDate: startDate, baselineAtStart: baselineAtStart, maxAlt: maxAlt)
+            let duration = Double(i - startTick) / t.tickHz
+            if duration >= t.assistedManualMinS,
+               AttemptEndResolver.shouldEnd(
+                   establishedAltitudeAscent: maxAlt - baselineAtStart >= t.establishedAltitudeGainM,
+                   returnedToFloor: hasReturnedToGround(at: i, baseline: baselineAtStart),
+                   hasHRSupport: hasHRSupport(from: startTick, through: i),
+                   quiet: hasGoneQuiet(at: i),
+                   durationS: duration,
+                   maxDurationS: t.maxAttemptS
+               ) {
+                rawAttempts.append((startTick, i, startDate, baselineAtStart, maxAlt, .manual))
+                phase = .rest
+            }
         }
     }
 
     /// Open a manual boulder attempt. Suspends auto detection; if an auto
     /// attempt was already open it's closed and kept first (no overlap).
     public func beginManualAttempt(at date: Date) {
+        if case .manual = phase { return }
         if workoutStart == nil { workoutStart = date }
         if case .climbing(let s, let sd, let b, let m) = phase {
             rawAttempts.append((s, max(s, ticks.count - 1), sd, b, m, .auto))
         }
         let i = max(0, ticks.count - 1)
-        let base = baseline ?? ticks.last?.altitude ?? 0
+        let base = localFloor(at: i) ?? baseline ?? ticks.last?.altitude ?? 0
         let alt = ticks.last?.altitude ?? base
         phase = .manual(startTick: i, startDate: date, baselineAtStart: base, maxAlt: alt)
     }
@@ -98,8 +163,26 @@ public final class AttemptDetector {
     /// Close the open manual attempt (Stop). No-op if none is open.
     public func endManualAttempt(at date: Date) {
         guard case .manual(let s, let sd, let b, let m) = phase else { return }
+        guard !ticks.isEmpty else {
+            phase = .rest
+            return
+        }
         rawAttempts.append((s, ticks.count - 1, sd, b, m, .manual))
         phase = .rest
+    }
+
+    /// Close whichever attempt is visible. Its original provenance is kept.
+    /// Repeated calls while resting are a no-op.
+    public func endCurrentAttempt(at date: Date) {
+        switch phase {
+        case .climbing(let s, let sd, let b, let m):
+            rawAttempts.append((s, max(s, ticks.count - 1), sd, b, m, .auto))
+            phase = .rest
+        case .manual:
+            endManualAttempt(at: date)
+        case .rest:
+            break
+        }
     }
 
     public func finalize() -> [Attempt] {
@@ -108,7 +191,9 @@ public final class AttemptDetector {
         case .climbing(let s, let sd, let b, let m):
             rawAttempts.append((s, ticks.count - 1, sd, b, m, .auto))
         case .manual(let s, let sd, let b, let m):
-            rawAttempts.append((s, ticks.count - 1, sd, b, m, .manual))
+            if !ticks.isEmpty {
+                rawAttempts.append((s, ticks.count - 1, sd, b, m, .manual))
+            }
         case .rest:
             break
         }
@@ -119,6 +204,7 @@ public final class AttemptDetector {
     // MARK: Post-processing
 
     private func processedAttempts() -> [Attempt] {
+        guard !ticks.isEmpty else { return [] }
         var open = rawAttempts
         switch phase {
         case .climbing(let s, let sd, let b, let m):
@@ -152,11 +238,14 @@ public final class AttemptDetector {
 
         return merged.compactMap { a in
             let duration = Double(a.endTick - a.startTick) / t.tickHz
-            let gain = a.maxAlt - a.baselineAtStart
-            // Manual attempts are exempt from the min duration/gain filters —
-            // the user explicitly logged them (e.g. a low-angle traverse).
+            let gain = max(0, a.maxAlt - a.baselineAtStart)
+            // Manual attempts are exempt from the auto duration/motion filters
+            // because the user explicitly logged them (e.g. a traverse).
             if a.source == .auto {
-                guard duration >= t.minAttemptS, gain >= t.minGainM else { return nil }
+                guard duration >= t.minAttemptS else { return nil }
+                let activeTicks = ticks[a.startTick...a.endTick]
+                    .filter { $0.motionRMS >= t.startMotionG }.count
+                guard activeTicks >= t.minActiveMotionTicks else { return nil }
             }
 
             // HR window extended past the end to absorb sensor lag
@@ -184,17 +273,24 @@ public final class AttemptDetector {
     // MARK: Transition predicates
 
     private func shouldStartAttempt(at i: Int) -> Bool {
-        guard let baseline else { return false }
         let sample = ticks[i]
-        guard sample.altitude - baseline >= t.startGainM else { return false }
-        // Rise must have happened within the trailing window
-        let windowStart = max(0, i - Int(t.startWindowS * t.tickHz))
-        guard let minInWindow = ticks[windowStart...i].map(\.altitude).min(),
-              sample.altitude - minInWindow >= t.startGainM else { return false }
-        // Motion gate: ≥ startMotionTicks of the last 5 above threshold
-        let last5 = ticks[max(0, i - 4)...i]
-        let active = last5.filter { $0.motionRMS >= t.startMotionG }.count
-        return active >= t.startMotionTicks
+        let motionStart = max(0, i - Int(t.startMotionWindowS * t.tickHz) + 1)
+        let active = ticks[motionStart...i].filter { $0.motionRMS >= t.startMotionG }.count
+        guard active >= t.startMotionTicks else { return false }
+
+        guard let floor = localFloor(at: i) else { return false }
+        let gain = sample.altitude - floor
+        var confidence = 0
+        if gain >= t.startAltitudeSupportM { confidence += 1 }
+        if gain >= t.startStrongAltitudeM { confidence += 1 }
+        if let hr = sample.hr, let restingHR, hr - restingHR >= t.startHRRiseBPM { confidence += 1 }
+        if let hr = sample.hr, let restingHR, hr - restingHR >= t.startStrongHRRiseBPM { confidence += 1 }
+        return confidence >= t.startConfidenceRequired
+    }
+
+    private func localFloor(at i: Int) -> Double? {
+        let oldest = i - Int(t.localFloorWindowS * t.tickHz)
+        return restingAltitudes.lazy.filter { $0.tick >= oldest }.map(\.altitude).min()
     }
 
     private func riseStartTick(from i: Int) -> Int {
@@ -220,6 +316,12 @@ public final class AttemptDetector {
         let n = t.quietTicks
         guard i + 1 >= n else { return false }
         return ticks[(i - n + 1)...i].allSatisfy { $0.motionRMS < t.quietMotionG }
+    }
+
+    private func hasHRSupport(from start: Int, through end: Int) -> Bool {
+        guard let restingHR,
+              let peak = ticks[start...end].compactMap(\.hr).max() else { return false }
+        return peak - restingHR >= t.startHRRiseBPM
     }
 
     // MARK: Effort & RPE math (v1 simple; replace with ML later)
