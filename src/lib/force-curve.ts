@@ -610,22 +610,22 @@ export function zonePrescription(
 // ---------------------------------------------------------------------------
 // Warm-up (#297 Part B2): a short finger-specific primer to use AFTER general
 // movement and easy climbing, not as a replacement for either. The dose ramps
-// both duration and load without accumulating training volume: two reps per
-// set at 5s/7s/10s and 40%/55%/70% of the exercise PR, with enough rest to
+// both duration and load without accumulating training volume: one rep per
+// set at 20s/15s/10s/10s and 30%/40%/50%/60% of the exercise PR, with enough rest to
 // keep the last pulls crisp. The evidence supports progressive,
 // climbing-specific warm-up but does not establish one dynamometer protocol,
 // so the user-facing basis says this is a conservative product prescription.
 // It is recorded under its own maintenance zone and excluded from training
 // balance/curve/PR calculations.
 export const WARMUP_PROTOCOL = {
-  holdS: 5,
-  holdsS: [5, 7, 10],
-  reps: 2,
-  sets: 3,
-  restRepsS: 15,
-  restSetsS: 30,
-  targetPct: 40,
-  pctStep: 15,
+  holdS: 20,
+  holdsS: [20, 15, 10, 10],
+  reps: 1,
+  sets: 4,
+  restRepsS: 0,
+  restSetsS: 60,
+  targetPct: 30,
+  pctStep: 10,
   pctBasis: "pr",
 } as const;
 
@@ -661,7 +661,7 @@ export function warmupTarget(
     label: "Warm-up",
     basis:
       `${firstPct}% → ${finalPct}% of your best short-window force ` +
-      `(${round1(prKg)} kg), with 5s → 7s → 10s holds. A conservative ` +
+      `(${round1(prKg)} kg), with 20s → 15s → 10s → 10s holds. A conservative ` +
       "finger-specific primer after general movement and easy climbing — not a complete warm-up or clinical prescription.",
   };
 }
@@ -672,27 +672,25 @@ export function warmupTarget(
 // "prehab" zone (see RecordedZone above) so it counts toward NOTHING in
 // training balance rather than being inferred back into training credit.
 //
-// Numbers approved on #297: 30s × 4 reps, 90s rest between reps, one set, at
+// Product prescription updated in #399: four one-rep sets at 90s, 60s, 30s,
+// 30s, with 20s between sets, at
 // 0.70 × critical force (0.30 × maxF when CF isn't fitted yet). Baar's tendon
-// work puts the refractory ceiling at ~10 min of loading and demonstrates
-// four 30s holds over an ~8 min window; 30s is the duration sweet spot (past
-// it, 2 min adds only ~15% more stiffness adaptation), and long-duration
-// isometrics produce greater stiffness adaptation than short ones at equal
-// volume. Load stays below CF deliberately — inside this window the loading
-// signal is largely load-independent, so there's no reason to buy adaptation
-// with fatigue when daily (or twice-daily, ≥6h apart) repeatability is the
-// point. The two load figures agree by construction: CF ≈ 41% MVC, and
+// work informs the low-load maintenance intent, but does not establish these
+// durations as a finger-dynamometer prescription. Load stays below CF
+// deliberately to limit fatigue. The two load figures agree by construction:
+// CF ≈ 41% MVC, and
 // 0.70 × 0.41 ≈ 0.29 ≈ 0.30 × maxF.
 //
 // Nobody has published prehab numbers for a finger dynamometer — `basis`
 // below says so; this is derived from the user's own curve and shaped by
 // tendon-loading research, not a citation.
 export const PREHAB_PROTOCOL = {
-  holdS: 30,
-  reps: 4,
-  sets: 1,
-  restRepsS: 90,
-  restSetsS: 0,
+  holdS: 90,
+  holdsS: [90, 60, 30, 30],
+  reps: 1,
+  sets: 4,
+  restRepsS: 0,
+  restSetsS: 20,
 } as const;
 
 export interface PrehabTarget {

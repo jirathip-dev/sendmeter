@@ -250,6 +250,39 @@ export default function TargetZonesCard({
                 Maintenance protocols need a usable force-curve target.
               </div>
             )}
+            {maintenanceActive && selected && (
+              <>
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginTop: 8,
+                    fontSize: "var(--t-xs)",
+                    color: "var(--ink-muted)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.protocol.alternateSides}
+                    disabled={locked || (!selected.protocol.alternateSides && !alternatingReady)}
+                    onChange={(e) => {
+                      const enabled = e.target.checked;
+                      onSelect(warmupActive
+                        ? buildWarmupSelection(model, tag, prKg ?? 0, enabled)
+                        : buildPrehabSelection(model, tag, enabled));
+                    }}
+                  />
+                  Alternate left ⇄ right (otherwise uses the selected side)
+                </label>
+                {!alternatingReady && !selected.protocol.alternateSides && (
+                  <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
+                    Alternating needs a force reference for both hands.
+                  </div>
+                )}
+              </>
+            )}
           </div>
           {locked && (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
@@ -280,8 +313,9 @@ export default function TargetZonesCard({
                 </span>
               </div>
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 4 }}>
-                {holdsSummary(selected.protocol)} holds × {selected.protocol.reps}/hand · {" "}
-                {selected.protocol.sets} sets · 40% → 55% → 70% PR · about {" "}
+                {holdsSummary(selected.protocol)} · {selected.protocol.alternateSides
+                  ? "1 pull/hand per set"
+                  : "1 pull per set"} · {selected.protocol.sets} sets · 30% → 40% → 50% → 60% PR · at least {fmt(selected.protocol.restSetsS)} recovery per hand · about {" "}
                 {fmt(
                   timelineDurationS(
                     buildTimeline(selected.protocol, {
@@ -298,11 +332,11 @@ export default function TargetZonesCard({
                   marginTop: 8,
                 }}
               >
-                Progressive primer · alternates L/R automatically · do general movement and easy climbing first · excluded from training balance
+                Progressive primer · {selected.protocol.alternateSides ? "alternates L/R" : "selected side only"} · do general movement and easy climbing first · excluded from training balance
               </div>
-              {!alternatingPrescription && (
+              {selected.protocol.alternateSides && !alternatingPrescription && (
                 <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
-                  Warm-up alternates automatically and needs a PR for both hands.
+                  Alternating Warm-up needs a PR for both hands.
                 </div>
               )}
               <button
@@ -341,8 +375,9 @@ export default function TargetZonesCard({
                 )}
               </div>
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 4 }}>
-                {fmt(selected.protocol.holdS)} × {selected.protocol.reps}/hand ·{" "}
-                {fmt(selected.protocol.restRepsS)} rest · about{" "}
+                {holdsSummary(selected.protocol)} · {selected.protocol.alternateSides
+                  ? "1 hold/hand per set"
+                  : "1 hold per set"} · at least {fmt(selected.protocol.restSetsS)} recovery per hand · about{" "}
                 {fmt(
                   timelineDurationS(
                     buildTimeline(selected.protocol, {
@@ -359,11 +394,11 @@ export default function TargetZonesCard({
                   marginTop: 8,
                 }}
               >
-                Fixed dose · alternates L/R automatically · below critical force · excluded from training balance
+                Progressive duration · {selected.protocol.alternateSides ? "alternates L/R" : "selected side only"} · below critical force · excluded from training balance
               </div>
-              {!alternatingPrescription && (
+              {selected.protocol.alternateSides && !alternatingPrescription && (
                 <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
-                  Prehab alternates automatically and needs a usable force target for both hands.
+                  Alternating Prehab needs a usable force target for both hands.
                 </div>
               )}
               <button

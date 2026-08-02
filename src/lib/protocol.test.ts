@@ -502,17 +502,19 @@ describe("buildTimeline — alternating every logical rep (#348)", () => {
 
   it("expands the paired maintenance doses with their exact durations (#366)", () => {
     const warmup: TindeqPreset = {
-      ...alt, id: "zone:warmup", holdS: 5, holdsS: [5, 7, 10],
-      reps: 2, sets: 3, restRepsS: 15, restSetsS: 30,
+      ...alt, id: "zone:warmup", holdS: 20, holdsS: [20, 15, 10, 10],
+      reps: 1, sets: 4, restRepsS: 0, restSetsS: 60,
     };
     const prehab: TindeqPreset = {
-      ...alt, id: "zone:prehab", holdS: 30, holdsS: null,
-      reps: 4, sets: 1, restRepsS: 90, restSetsS: 0,
+      ...alt, id: "zone:prehab", holdS: 90, holdsS: [90, 60, 30, 30],
+      reps: 1, sets: 4, restRepsS: 0, restSetsS: 20,
     };
-    expect(timelineDurationS(buildTimeline(warmup, { switchS: 3 }))).toBe(177);
-    expect(timelineDurationS(buildTimeline(prehab, { switchS: 3 }))).toBe(432);
+    expect(timelineDurationS(buildTimeline({ ...warmup, alternateSides: false }))).toBe(235);
+    expect(timelineDurationS(buildTimeline(warmup, { switchS: 3 }))).toBe(267);
+    expect(timelineDurationS(buildTimeline({ ...prehab, alternateSides: false }))).toBe(270);
+    expect(timelineDurationS(buildTimeline(prehab, { switchS: 3 }))).toBe(441);
     expect(holds(warmup).map((h) => h.side)).toEqual(
-      Array.from({ length: 6 }, () => ["left", "right"]).flat(),
+      Array.from({ length: 4 }, () => ["left", "right"]).flat(),
     );
     expect(holds(prehab).map((h) => h.side)).toEqual(
       Array.from({ length: 4 }, () => ["left", "right"]).flat(),
