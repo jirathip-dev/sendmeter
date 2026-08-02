@@ -1,6 +1,3 @@
-const WEEKLY_BARS = ["short", "medium", "tall", "medium", "short", "tall"];
-const HEATMAP_CELLS = Array.from({ length: 35 }, (_, index) => index);
-
 function Block({ className = "" }: { className?: string }) {
   return <div className={`skeleton-block${className ? ` ${className}` : ""}`} />;
 }
@@ -40,22 +37,10 @@ export default function TrainingDataSkeleton() {
           </div>
         </div>
 
-        <div className="card skeleton-card skeleton-weekly-card">
+        <div className="card skeleton-card skeleton-projection-card">
           <Block className="skeleton-line skeleton-line-medium" />
-          <div className="skeleton-bars">
-            {WEEKLY_BARS.map((height, index) => (
-              <Block key={index} className={`skeleton-bar skeleton-bar-${height}`} />
-            ))}
-          </div>
-        </div>
-
-        <div className="card skeleton-card skeleton-daily-card">
-          <Block className="skeleton-line skeleton-line-medium" />
-          <div className="skeleton-heatmap">
-            {HEATMAP_CELLS.map((cell) => (
-              <Block key={cell} className="skeleton-heatmap-cell" />
-            ))}
-          </div>
+          <Block className="skeleton-line skeleton-line-short" />
+          <div className="skeleton-chart-line" />
         </div>
       </div>
     </div>

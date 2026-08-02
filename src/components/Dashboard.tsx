@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type {
   AcwrData,
   AcwrStatus,
@@ -8,15 +8,13 @@ import type {
   WeeklyLoad,
 } from "../types";
 import AcwrProjectionCard from "./AcwrProjectionCard";
-import ChartTooltip from "./ChartTooltip";
-import ContributionHeatmap from "./ContributionHeatmap";
 import InfoDot from "./InfoDot";
 import ReadinessCard from "./ReadinessCard";
 import RecoverySheet from "./RecoverySheet";
 import SendConditionsCard from "./SendConditionsCard";
 import ForceConsistencyCard from "./ForceConsistencyCard";
+import TrainingLoadSheet from "./TrainingLoadSheet";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
-import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { daysAgo } from "../lib/dates";
 import { ACWR_TRACK_GRADIENT, phaseAcwrFit, suggestPhaseStepBack } from "../lib/metrics";
@@ -27,18 +25,6 @@ import { fetchHealthMetrics } from "../lib/repo";
 // on a fresh one — e.g. readiness recovers, phase stays in power, then slides
 // low again later. Persisted (SL-23), like the app's other one-shot prompts.
 const STEP_BACK_DISMISS_KEY = "sendmeter:phase-step-back-dismissed";
-
-// Sign convention/formatting for a week-over-week AU delta, shared by the
-// "Weekly load" header badge and the per-bar tooltip.
-function weekDelta(cur: number, prev: number): { pct: number; arrow: string; color: string } | null {
-  if (prev <= 0) return null;
-  const pct = ((cur - prev) / prev) * 100;
-  return {
-    pct,
-    arrow: pct > 0 ? "▲" : pct < 0 ? "▼" : "",
-    color: Math.abs(pct) < 1 ? "var(--ink-muted)" : pct > 0 ? "var(--success)" : "var(--danger)",
-  };
-}
 
 interface Props {
   phase: Phase;
@@ -52,9 +38,8 @@ interface Props {
   onChangePhase: () => void;
 }
 
-/// Home: phase banner + ACWR with the full training-load detail inline
-/// (acute/chronic, weekly totals, daily heatmap — formerly the LoadSheet
-/// drill-in) + readiness. Sessions live in History; logging lives in Workout.
+/// Home: phase banner, readiness and ACWR summary. Detailed load views open
+/// from the ACWR card so the dashboard stays focused on today's status.
 export default function Dashboard({
   phase,
   phaseDays,
@@ -67,7 +52,7 @@ export default function Dashboard({
   onChangePhase,
 }: Props) {
   const [showRecovery, setShowRecovery] = useState(false);
-  const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
+  const [showTrainingLoad, setShowTrainingLoad] = useState(false);
 
   // Recovery-adjusted phase suggestion (SL-23): reuses the same 14-day
   // readiness fetch shape ReadinessCard uses (its own instance — components
@@ -92,40 +77,6 @@ export default function Dashboard({
     localStorage.setItem(STEP_BACK_DISMISS_KEY, streakStart);
     setDismissedStreakStart(streakStart);
   }
-
-  const maxW = Math.max(...weeklyLoads.map((w) => w.total), 1);
-  // Week-over-week delta: the windows are rolling 7-day sums, so "Now" vs
-  // "1w" is a fair full-window comparison. No baseline (prev 0) hides it.
-  const curWeek = weeklyLoads[weeklyLoads.length - 1]?.total ?? 0;
-  const prevWeek = weeklyLoads[weeklyLoads.length - 2]?.total ?? 0;
-  const curWeekDelta = weekDelta(curWeek, prevWeek);
-  // Per-day total load AND the day's dominant activity type (most load) — the
-  // heatmap hues each cell by type (SL-60).
-  const daily = useMemo(() => {
-    const acc = new Map<string, { total: number; byType: Map<string, number> }>();
-    for (const s of sessions) {
-      let e = acc.get(s.date);
-      if (!e) {
-        e = { total: 0, byType: new Map() };
-        acc.set(s.date, e);
-      }
-      e.total += s.load;
-      e.byType.set(s.type, (e.byType.get(s.type) ?? 0) + s.load);
-    }
-    const out = new Map<string, { total: number; type: string }>();
-    for (const [date, e] of acc) {
-      let type = "";
-      let best = -1;
-      for (const [t, load] of e.byType) {
-        if (load > best) {
-          best = load;
-          type = t;
-        }
-      }
-      out.set(date, { total: e.total, type });
-    }
-    return out;
-  }, [sessions]);
 
   return (
     <div>
@@ -293,8 +244,25 @@ export default function Dashboard({
         {/* Readiness is the hero (SL-60): the day's actionable number leads. */}
         <ReadinessCard onClick={() => setShowRecovery(true)} />
 
-        {/* ACWR — the load detail now lives right below, no drill-in */}
-        <div className="card">
+        {/* The summary remains visible; tapping anywhere except InfoDot opens detail. */}
+        <div
+          className="card"
+          role="button"
+          aria-label="Open training load details"
+          tabIndex={0}
+          data-haptic="light"
+          onClick={() => setShowTrainingLoad(true)}
+          onKeyDown={(event) => {
+            // The nested InfoDot is its own keyboard target. Its click handler
+            // stops propagation, but its keydown reaches this card first.
+            if (event.target !== event.currentTarget) return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setShowTrainingLoad(true);
+            }
+          }}
+          style={{ cursor: "pointer" }}
+        >
           <div
             className="card-title"
             style={{
@@ -305,7 +273,15 @@ export default function Dashboard({
             }}
           >
             <span>ACWR</span>
-            <InfoDot topic="acwr" />
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <InfoDot topic="acwr" />
+              <span
+                aria-hidden="true"
+                style={{ color: "var(--ink-faint)", fontSize: 22, lineHeight: 1 }}
+              >
+                ›
+              </span>
+            </span>
           </div>
           <div
             style={{
@@ -386,7 +362,7 @@ export default function Dashboard({
             <span style={{ position: "absolute", left: "100%", transform: "translateX(-100%)" }}>2</span>
           </div>
 
-          {/* Acute / chronic (formerly the LoadSheet drill-in) */}
+          {/* Keep the two numbers that explain the ratio on the dashboard. */}
           <div
             style={{
               display: "flex",
@@ -412,100 +388,7 @@ export default function Dashboard({
           </div>
         </div>
 
-        {/* Where that ratio goes with no training (#224) — sits directly
-            under the ACWR it extends, and reuses this component's readiness
-            fetch rather than opening a third one. */}
-        <AcwrProjectionCard
-          phase={phase}
-          sessions={sessions}
-          latestReadiness={readinessHistory[readinessHistory.length - 1] ?? null}
-        />
-
-        {/* Weekly totals */}
-        <div className="card">
-          <div
-            className="card-title"
-            style={{
-              marginBottom: 12,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "baseline",
-            }}
-          >
-            <span>Weekly load</span>
-            {curWeekDelta !== null && (
-              <span
-                style={{
-                  fontSize: "var(--t-2xs)",
-                  fontVariantNumeric: "tabular-nums",
-                  color: curWeekDelta.color,
-                }}
-              >
-                {curWeekDelta.arrow} {Math.abs(curWeekDelta.pct).toFixed(0)}% vs prior wk
-              </span>
-            )}
-          </div>
-          <div
-            className="chart-scrub"
-            style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 88 }}
-          >
-            {weeklyLoads.map((w, i) => {
-              const delta = i > 0 ? weekDelta(w.total, weeklyLoads[i - 1]!.total) : null;
-              return (
-                <div
-                  key={i}
-                  style={{
-                    flex: 1,
-                    position: "relative",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    gap: 4,
-                    height: "100%",
-                    justifyContent: "flex-end",
-                  }}
-                  {...hoverWeekProps(i)}
-                >
-                  {hoveredWeek === i && (
-                    <ChartTooltip
-                      align={i < 2 ? "start" : i > weeklyLoads.length - 3 ? "end" : "center"}
-                    >
-                      <div style={{ fontWeight: 600 }}>{w.label}</div>
-                      <div style={{ color: "var(--ink-muted)" }}>{w.total.toLocaleString()} AU</div>
-                      {delta !== null && (
-                        <div style={{ color: delta.color }}>
-                          {delta.arrow} {Math.abs(delta.pct).toFixed(0)}% vs prior wk
-                        </div>
-                      )}
-                    </ChartTooltip>
-                  )}
-                  <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>
-                    {w.total.toLocaleString()}
-                  </span>
-                  <div
-                    style={{
-                      width: "100%",
-                      height: Math.max((w.total / maxW) * 64, 2),
-                      background: i === weeklyLoads.length - 1 ? "var(--success)" : "var(--border)",
-                      borderRadius: 3,
-                      opacity: hoveredWeek === null || hoveredWeek === i ? 1 : 0.5,
-                      boxShadow: hoveredWeek === i ? "0 0 0 1.5px var(--ink)" : "none",
-                      cursor: "pointer",
-                      transition: "opacity 0.1s",
-                    }}
-                  />
-                  <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)" }}>{w.label}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Daily AU heatmap */}
-        <div className="card">
-          <div className="card-title" style={{ marginBottom: 12 }}>Daily load</div>
-          <ContributionHeatmap values={daily} />
-        </div>
+        <AcwrProjectionCard phase={phase} sessions={sessions} />
 
         {/* Weekly Tindeq-training consistency (#311) — self-fetching, no
             props needed from here. */}
@@ -513,6 +396,13 @@ export default function Dashboard({
       </div>
 
       {showRecovery && <RecoverySheet onClose={() => setShowRecovery(false)} />}
+      {showTrainingLoad && (
+        <TrainingLoadSheet
+          weeklyLoads={weeklyLoads}
+          sessions={sessions}
+          onClose={() => setShowTrainingLoad(false)}
+        />
+      )}
     </div>
   );
 }
