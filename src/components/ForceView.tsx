@@ -42,6 +42,12 @@ import {
 import { endGaugeSession } from "../lib/gaugeSessionEnd";
 import { reportPersistFailure } from "../lib/lostRecordings";
 import { persistRecordingDurable } from "../lib/recordingQueue";
+import {
+  armedHandsFreeForce,
+  idleHandsFreeForce,
+  stepHandsFreeForce,
+  type HandsFreeForceState,
+} from "../lib/handsFreeForce";
 import { usePendingUploads } from "../hooks/usePendingUploads";
 import { PENDING_BACKED_UP } from "../lib/pendingUploads";
 import { appendUniqueById, claimManualAttempt, claimManualSession, manualAttemptKey } from "../lib/manualForceSubmission";
@@ -196,6 +202,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     minimized: gaugeMinimized,
     setMinimized: setGaugeMinimized,
   } = useTindeqSession();
+  const [handsFreeEnabled, setHandsFreeEnabled] = useState(
+    () => localStorage.getItem("sendmeter:gauge-hands-free") === "1",
+  );
+  // Pure threshold state lives in a ref because force samples arrive every
+  // animation frame. Each emitted action advances the ref to its claimed
+  // phase before any callback can await, preventing duplicate Start/Stop.
+  const handsFreeControlRef = useRef<HandsFreeForceState>(idleHandsFreeForce());
+  const handsFreeArmInFlightRef = useRef(false);
   // Watch gauge mirror (SL-87) — non-null while the watch's Progressor
   // screen is connected/measuring and the phone is WC-reachable.
   const liveForce = useLiveForce();
@@ -530,17 +544,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // `note` labels the free-hold save — "" for a normal stop; the interruption
   // effect below passes "Recovered after connection loss" when the drop fired
   // while this view was unmounted (#117).
-  async function handleStop(note = "") {
+  async function handleStop(note = "", endMs?: number) {
     if (stopInFlightRef.current) return;
     stopInFlightRef.current = true;
     try {
-      await runStop(note);
+      await runStop(note, endMs);
     } finally {
       stopInFlightRef.current = false;
     }
   }
 
-  async function runStop(note: string) {
+  async function runStop(note: string, endMs?: number) {
     // #298 round 5: `timeline` is itself derived from the LOCKED gauge
     // inputs, which now stay locked for as long as `runActive` — measuring OR
     // `tindeq.pendingInterruption` — not just `measuring` alone (finding 1).
@@ -607,7 +621,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide },
             tindeq.interruptionContext,
           );
-    const summary = await tindeq.stop();
+    const summary = await tindeq.stop(endMs);
     void endTindeqLiveActivity();
     if (!summary) return;
     setSaving(true);
@@ -659,6 +673,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // Charts fall back to the most-recorded tag while the input doesn't match
   // an existing one (mid-typing / brand-new tag).
   const measuring = tindeq.status === "measuring";
+  const armed = tindeq.status === "armed";
   // #298 round 5 (finding 1): a mid-measurement BLE drop batches
   // `setStatus("idle")` with claiming the interruption in the SAME render
   // (useTindeq's handleDeviceDropped), so `measuring` alone already reads
@@ -666,7 +681,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // The gauge-input lock below holds for as long as `runActive` — releasing
   // only once `tindeq.stop()` (inside that deferred stop) clears
   // `pendingInterruption`, i.e. exactly when the run is really over.
-  const runActive = measuring || tindeq.pendingInterruption || manualOpen;
+  const runActive = measuring || armed || tindeq.pendingInterruption || manualOpen;
   const trimmedTag = pendingTag.trim();
   const liveEffectiveTag = allTags.includes(trimmedTag)
     ? trimmedTag
@@ -1091,6 +1106,38 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     localStorage.setItem("sendmeter:gauge-prepare", on ? "1" : "0");
   }
 
+  function toggleHandsFree(on: boolean) {
+    setHandsFreeEnabled(on);
+    localStorage.setItem("sendmeter:gauge-hands-free", on ? "1" : "0");
+  }
+
+  async function armHandsFree() {
+    if (handsFreeArmInFlightRef.current || tindeq.status !== "connected") return;
+    handsFreeArmInFlightRef.current = true;
+    handsFreeControlRef.current = armedHandsFreeForce();
+    setJustSaved(null);
+    setProtoShiftS(0);
+    setPausedAtS(null);
+    protocolRunIdRef.current = null;
+    const didArm = await tindeq.arm();
+    if (!didArm) handsFreeControlRef.current = idleHandsFreeForce();
+    handsFreeArmInFlightRef.current = false;
+  }
+
+  function cancelHandsFreeArm() {
+    // Claim cancellation synchronously; samples arriving while the BLE stop
+    // command is in flight cannot re-trigger Start.
+    handsFreeControlRef.current = idleHandsFreeForce();
+    void tindeq.cancelArm();
+  }
+
+  function stopHandsFreeNow() {
+    if (handsFreeControlRef.current.phase === "recording") {
+      handsFreeControlRef.current = { phase: "stopping" };
+    }
+    void handleStop();
+  }
+
   // The expanded protocol timeline — built here (not in the fullscreen) so
   // the per-rep recorder below and the countdown display walk the SAME
   // segments and can never disagree. Cheap to rebuild per render. #298 round
@@ -1265,9 +1312,40 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // session, prompt to finish it (SL-58 #5) — the connection now persists
   // across tabs, so a disconnect is a deliberate end (or the device dying).
   const { status } = tindeq;
+  useEffect(() => {
+    const machine = handsFreeControlRef.current;
+    if (status === "connected" || status === "idle" || status === "unsupported") {
+      if (machine.phase !== "idle") handsFreeControlRef.current = idleHandsFreeForce();
+      return;
+    }
+    const observingArmed = status === "armed" && machine.phase === "armed";
+    const observingRecording = status === "measuring" && machine.phase === "recording";
+    if (!handsFreeEnabled || (!observingArmed && !observingRecording)) return;
+
+    const releaseStartedMs = machine.phase === "recording" ? machine.belowSinceMs : null;
+    const stepped = stepHandsFreeForce(machine, {
+      atMs: tindeq.elapsedMs,
+      kg: tindeq.current,
+    });
+    // Claim before either branch can enter an async path (#400 / #295 rule).
+    handsFreeControlRef.current = stepped.state;
+    if (stepped.action === "start") {
+      if (!tindeq.beginArmedRecording()) {
+        handsFreeControlRef.current = idleHandsFreeForce();
+        return;
+      }
+      return;
+    }
+    if (stepped.action === "stop") void handleStop("", releaseStartedMs ?? undefined);
+    // `handleStop` owns current refs and its own pre-await re-entrancy claim.
+    // The hook callbacks are stable; force/elapsed/status are the sample clock.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, tindeq.current, tindeq.elapsedMs, handsFreeEnabled]);
   // Keep the screen awake while the gauge is live so a short auto-lock doesn't
   // interrupt a hold/protocol mid-recording.
-  useWakeLock(status === "connected" || status === "measuring" || manualOpen);
+  useWakeLock(
+    status === "connected" || status === "armed" || status === "measuring" || manualOpen,
+  );
   const prevStatusRef = useRef(status);
   useEffect(() => {
     const prev = prevStatusRef.current;
@@ -1275,7 +1353,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     if (status === "connected" && prev === "connecting") {
       setGaugeMinimized(false);
     }
-    if (status === "idle" && (prev === "connected" || prev === "measuring")) {
+    if (
+      status === "idle" &&
+      (prev === "connected" || prev === "armed" || prev === "measuring")
+    ) {
       // Defer so any interrupted-save from the same disconnect lands first,
       // and to avoid a synchronous setState in the effect body.
       const t = setTimeout(() => void endSession(), 150);
@@ -1509,7 +1590,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       {!activeProtocol && <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 6 }}>Choose a Force protocol below to train without a sensor.</div>}
 
       {/* Connected: the gauge lives fullscreen; this is the resume bar */}
-      {(status === "connected" || status === "measuring") && (
+      {(status === "connected" || status === "armed" || status === "measuring") && (
         <button
           onClick={() => setGaugeMinimized(false)}
           style={{
@@ -1517,7 +1598,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             textAlign: "left",
             cursor: "pointer",
             background: "var(--canvas)",
-            border: `1px solid color-mix(in srgb, ${status === "measuring" ? "var(--success)" : "var(--info)"} 45%, transparent)`,
+            border: `1px solid color-mix(in srgb, ${status === "measuring" ? "var(--success)" : status === "armed" ? "var(--warning)" : "var(--info)"} 45%, transparent)`,
             borderRadius: 12,
             padding: 16,
             display: "flex",
@@ -1532,14 +1613,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               width: 8,
               height: 8,
               borderRadius: "50%",
-              background: status === "measuring" ? "var(--success)" : "var(--info)",
+              background: status === "measuring" ? "var(--success)" : status === "armed" ? "var(--warning)" : "var(--info)",
               animation: status === "measuring" ? "pulse 1.6s ease-in-out infinite" : undefined,
             }}
           />
           <span style={{ fontSize: "var(--t-base)", color: "var(--ink)", flex: 1 }}>
             Progressor{" "}
             <span style={{ color: "var(--ink-muted)" }}>
-              · {status === "measuring" ? "measuring" : "connected"}
+              · {status === "measuring" ? "measuring" : status === "armed" ? "armed" : "connected"}
             </span>
           </span>
           <span style={{ color: "var(--primary)", fontWeight: 700, fontSize: "var(--t-base)" }}>
@@ -1589,11 +1670,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         />
         {runActive && (
           <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8 }}>
-            Locked while measuring — applies to your next run.
+            Locked while armed or measuring — applies to your next run.
           </div>
         )}
         {!pendingTag.trim() &&
-          (status === "connected" || status === "measuring") && (
+          (status === "connected" || status === "armed" || status === "measuring") && (
             <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 8 }}>
               Add a tag to start recording.
             </div>
@@ -1882,7 +1963,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       </div>
 
       {/* Immersive fullscreen gauge (overlays everything while connected) */}
-      {(status === "connected" || status === "measuring") && !gaugeMinimized && (
+      {(status === "connected" || status === "armed" || status === "measuring") && !gaugeMinimized && (
         <ForceFullscreen
           tindeq={tindeq}
           protocol={activeProtocol}
@@ -1914,9 +1995,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
                 : null
           }
           saving={saving}
+          handsFree={handsFreeEnabled}
+          onToggleHandsFree={toggleHandsFree}
+          onArm={() => void armHandsFree()}
+          onCancelArm={cancelHandsFreeArm}
           prepare={prepare}
           onTogglePrepare={togglePrepare}
-          onStop={() => void handleStop()}
+          onStop={stopHandsFreeNow}
           protoTS={protoTS}
           paused={paused}
           onPause={togglePause}

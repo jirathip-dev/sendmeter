@@ -23,6 +23,7 @@ import {
 } from "../lib/protocol";
 import type { PresetRefs, ProtocolSegment } from "../lib/protocol";
 import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
+import { DEFAULT_HANDS_FREE_FORCE_CONFIG } from "../lib/handsFreeForce";
 import type { TindeqPreset, TindeqSide } from "../types";
 import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
@@ -66,6 +67,10 @@ interface Props {
   /// false must always say why.
   startBlockedReason: string | null;
   saving: boolean;
+  handsFree: boolean;
+  onToggleHandsFree: (on: boolean) => void;
+  onArm: () => void;
+  onCancelArm: () => void;
   /// Get-ready countdown before the first hold (persisted preference).
   prepare: boolean;
   onTogglePrepare: (on: boolean) => void;
@@ -114,6 +119,10 @@ export default function ForceFullscreen({
   canStart,
   startBlockedReason,
   saving,
+  handsFree,
+  onToggleHandsFree,
+  onArm,
+  onCancelArm,
   prepare,
   onTogglePrepare,
   protoTS,
@@ -125,6 +134,10 @@ export default function ForceFullscreen({
   onMinimize,
 }: Props) {
   const measuring = tindeq.status === "measuring";
+  const armed = tindeq.status === "armed";
+  // Hands-free is deliberately a free-hold first slice. A saved preference
+  // must not change countdown behavior when a guided protocol is armed.
+  const handsFreeActive = handsFree && !protocol;
   // Walk the timeline in protocol time (parent-owned; freezes while paused).
   const pos = timeline && measuring ? timelineAt(timeline, protoTS) : null;
   const done = timeline !== null && measuring && pos === null;
@@ -142,6 +155,30 @@ export default function ForceFullscreen({
       // no audio
     }
   }
+  const lastHandsFreeStatusRef = useRef<"idle" | "armed" | "measuring">("idle");
+  useEffect(() => {
+    const next = handsFreeActive ? (armed ? "armed" : measuring ? "measuring" : "idle") : "idle";
+    const prev = lastHandsFreeStatusRef.current;
+    if (next === prev) return;
+    lastHandsFreeStatusRef.current = next;
+    if (next === "idle") return;
+    const ctx = audioRef.current;
+    if (ctx) {
+      try {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.frequency.value = next === "armed" ? 440 : 990;
+        g.gain.setValueAtTime(0.25, ctx.currentTime);
+        o.start();
+        o.stop(ctx.currentTime + 0.15);
+      } catch {
+        // no audio
+      }
+    }
+    navigator.vibrate?.(next === "armed" ? 80 : 150);
+  }, [armed, measuring, handsFreeActive]);
   useEffect(() => {
     if (!measuring || !timeline) {
       lastKeyRef.current = null;
@@ -255,6 +292,8 @@ export default function ForceFullscreen({
     ? "var(--warning)"
     : counting
       ? PHASE_META.prepare.color
+      : armed
+        ? "var(--warning)"
       : (meta?.color ?? (measuring ? "var(--success)" : "var(--primary)"));
 
   // Side shown on a hold: the segment's own hand, else the global pick.
@@ -286,8 +325,8 @@ export default function ForceFullscreen({
   // through an alternating run too (#298) — it's a live indicator there,
   // not a control — but a non-alternating run has nothing new to show once
   // measuring starts, so it keeps the original idle-only visibility.
-  const showTagPicker = !measuring && !counting;
-  const showSideRow = !counting && (!measuring || !!protocol?.alternateSides);
+  const showTagPicker = !measuring && !armed && !counting;
+  const showSideRow = !armed && !counting && (!measuring || !!protocol?.alternateSides);
 
   // Per-set target band: a %-of-PR preset ramps up each set; the chart band
   // follows the CURRENT set live (set 1 while idle, last set once done).
@@ -350,7 +389,7 @@ export default function ForceFullscreen({
       className="fullscreen-overlay"
       style={{
         // The whole screen takes the phase color, Timer-Plus style.
-        background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting ? 13 : 6}%, var(--canvas))`,
+        background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 13 : 6}%, var(--canvas))`,
         transition: "background 0.3s",
         display: "flex",
         justifyContent: "center",
@@ -389,6 +428,8 @@ export default function ForceFullscreen({
                 ? "var(--warning)"
                 : measuring
                   ? "var(--success)"
+                  : armed
+                    ? "var(--warning)"
                   : "var(--info)",
               animation:
                 measuring && !paused ? "pulse 1.6s ease-in-out infinite" : undefined,
@@ -397,7 +438,7 @@ export default function ForceFullscreen({
           <span style={{ fontSize: "var(--t-sm)", color: "var(--ink)", flex: 1 }}>
             Progressor{" "}
             <span style={{ color: "var(--ink-muted)" }}>
-              · {paused ? "paused" : measuring ? "measuring" : "connected"}
+              · {paused ? "paused" : measuring ? "measuring" : armed ? "armed" : "connected"}
             </span>
           </span>
           {tindeq.lowBattery && (
@@ -414,7 +455,7 @@ export default function ForceFullscreen({
           )}
           <button
             onClick={() => void tindeq.tare()}
-            disabled={measuring || counting}
+            disabled={measuring || armed || counting}
             className="glass-pill"
             style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
           >
@@ -434,7 +475,7 @@ export default function ForceFullscreen({
           style={{
             borderRadius: 18,
             padding: `${clampCss(BANNER_PAD_Y)} 16px`,
-            background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting ? 22 : 12}%, var(--surface-1))`,
+            background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 22 : 12}%, var(--surface-1))`,
             border: `1px solid color-mix(in srgb, ${bannerColor} 50%, transparent)`,
             textAlign: "center",
             transition: "background 0.25s, border-color 0.25s",
@@ -520,6 +561,27 @@ export default function ForceFullscreen({
                 get on the hold…
               </div>
             </>
+          ) : armed ? (
+            <>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
+                ARMED
+              </div>
+              <div
+                style={{
+                  fontFamily: "Inter, sans-serif",
+                  fontWeight: 800,
+                  fontVariantNumeric: "tabular-nums",
+                  fontSize: heroFontCss(FORCE_HERO_SM_FONT),
+                  lineHeight: 1,
+                }}
+              >
+                {tindeq.current.toFixed(1)}
+                <span style={{ fontSize: "var(--t-xl)", color: "var(--ink-muted)" }}> kg</span>
+              </div>
+              <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", marginTop: 4 }}>
+                Load to at least {DEFAULT_HANDS_FREE_FORCE_CONFIG.startKg.toFixed(1)} kg and hold steady
+              </div>
+            </>
           ) : measuring ? (
             <>
               <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
@@ -537,6 +599,11 @@ export default function ForceFullscreen({
                 {(tindeq.elapsedMs / 1000).toFixed(1)}
                 <span style={{ fontSize: "var(--t-xl)", color: "var(--ink-muted)" }}>s</span>
               </div>
+              {handsFreeActive && (
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginTop: 4 }}>
+                  Release to {DEFAULT_HANDS_FREE_FORCE_CONFIG.stopKg.toFixed(1)} kg or less for {(DEFAULT_HANDS_FREE_FORCE_CONFIG.stopGraceMs / 1_000).toFixed(1)}s to save
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -678,7 +745,7 @@ export default function ForceFullscreen({
             avg={tindeq.avg}
             elapsedMs={tindeq.elapsedMs}
             samplesRef={tindeq.samplesRef}
-            live={measuring}
+            live={measuring || armed}
             target={band}
             fill
           />
@@ -736,6 +803,10 @@ export default function ForceFullscreen({
                 onStop();
                 return;
               }
+              if (armed) {
+                onCancelArm();
+                return;
+              }
               if (counting) {
                 // Cancel — nothing is measuring yet, so this must never
                 // call onStop (#312).
@@ -743,21 +814,25 @@ export default function ForceFullscreen({
                 return;
               }
               primeAudio();
+              if (handsFreeActive) {
+                onArm();
+                return;
+              }
               if (startsWithCountdown(protocol, prepare)) {
                 setPrepStartedMs(Date.now());
               } else {
                 onStart();
               }
             }}
-            disabled={measuring ? saving : counting ? false : !canStart}
+            disabled={measuring ? saving : armed ? false : counting ? false : !canStart}
             style={{
               width: clampCss(FORCE_ACTION_CIRCLE),
               height: clampCss(FORCE_ACTION_CIRCLE),
               flexShrink: 0,
               borderRadius: "50%",
-              border: `3px solid ${measuring || counting ? "var(--danger)" : "var(--success)"}`,
-              background: `color-mix(in srgb, ${measuring || counting ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
-              color: measuring || counting ? "var(--danger)" : "var(--success)",
+              border: `3px solid ${measuring || armed || counting ? "var(--danger)" : "var(--success)"}`,
+              background: `color-mix(in srgb, ${measuring || armed || counting ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
+              color: measuring || armed || counting ? "var(--danger)" : "var(--success)",
               cursor: "pointer",
               fontFamily: "Inter, sans-serif",
               fontWeight: 800,
@@ -767,7 +842,7 @@ export default function ForceFullscreen({
               alignItems: "center",
               justifyContent: "center",
               gap: 3,
-              opacity: (measuring ? saving : counting ? false : !canStart) ? 0.45 : 1,
+              opacity: (measuring ? saving : armed ? false : counting ? false : !canStart) ? 0.45 : 1,
             }}
           >
             {measuring ? (
@@ -775,7 +850,7 @@ export default function ForceFullscreen({
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
                 {saving ? "SAVING…" : "STOP"}
               </>
-            ) : counting ? (
+            ) : armed || counting ? (
               <>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
                 CANCEL
@@ -783,11 +858,30 @@ export default function ForceFullscreen({
             ) : (
               <>
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                START
+                {handsFreeActive ? "ARM" : "START"}
               </>
             )}
           </button>
-          {!measuring && !counting && (
+          {!measuring && !armed && !counting && !protocol && (
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: "var(--t-xs)",
+                color: "var(--ink-muted)",
+                cursor: "pointer",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={handsFree}
+                onChange={(e) => onToggleHandsFree(e.target.checked)}
+              />
+              Hands-free — load to start, release to save
+            </label>
+          )}
+          {!measuring && !armed && !counting && !handsFreeActive && (
             <label
               style={{
                 display: "flex",
@@ -806,7 +900,7 @@ export default function ForceFullscreen({
               5s get-ready countdown
             </label>
           )}
-          {!canStart && !measuring && !counting && (
+          {!canStart && !measuring && !armed && !counting && (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", textAlign: "center" }}>
               {startBlockedReason
                 ? startBlockedReason
