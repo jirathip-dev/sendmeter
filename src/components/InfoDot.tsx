@@ -63,8 +63,8 @@ const CONTENT: Record<
         text: "Every day you deviate from 'no training' the rest of the curve becomes fiction, and deviation is the normal case. A 4-week version would look more useful while being less true.",
       },
       {
-        heading: "Readiness is today's, never projected",
-        text: "HRV, resting heart rate and sleep can't be forecast — the readiness shown here is the current score, sitting alongside the projection rather than inside it.",
+        heading: "Readiness stays separate",
+        text: "This projection models workload only. HRV, resting heart rate and sleep can't be forecast, so they remain in the separate Readiness card rather than being mixed into this curve.",
       },
       {
         heading: "A guardrail, not a target",

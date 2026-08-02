@@ -13,5 +13,6 @@ CI, dependency updates, and refactors unless users experience a change.
 ### Improved
 
 - Force setup guidance now focuses on measurement equipment and your own reference marks without prescribing exercises or claiming to assess form.
+- Training-load details now open from the ACWR card, with weekly and daily views plus a 28-day activity breakdown.
 
 ### Fixed
