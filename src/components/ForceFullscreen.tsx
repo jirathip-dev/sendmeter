@@ -34,6 +34,7 @@ import {
   idleTargetZoneCoach,
   stepTargetZoneCoach,
   targetZoneCoachActive,
+  targetZoneAtForce,
   type TargetZone,
   type TargetZoneCue,
 } from "../lib/targetZoneCoach";
@@ -42,9 +43,10 @@ import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
 import PresetPlanChart from "./PresetPlanChart";
 import type { GaugeTarget } from "./ForceCurveCard";
-import type { ForceMeasurementMode, ForceSetupInputs } from "../lib/forceSetup";
+import type { ForceSetupInputs } from "../lib/forceSetup";
 import ForceSetupSummary from "./ForceSetupSummary";
 import ReverseActionWorkDisplay from "./ReverseActionWorkDisplay";
+import ProtocolBadge from "./ProtocolBadge";
 import {
   prescriptionForSegment,
   targetHoldSegment,
@@ -76,7 +78,6 @@ interface Props {
   setup: ForceSetupInputs;
   setupConfirmed: boolean;
   setupTargetKg: number | null;
-  onSetupMode: (mode: ForceMeasurementMode) => void;
   onOpenSetupGuide: () => void;
   /// Unarm the active zone/preset (#298) — falls back to a free hold.
   onClearProtocol: () => void;
@@ -107,6 +108,7 @@ interface Props {
   onStart: () => void;
   onStop: () => void;
   onMinimize: () => void;
+  protocolQuality: string | null;
 }
 
 const PHASE_META = {
@@ -199,7 +201,6 @@ export default function ForceFullscreen({
   setup,
   setupConfirmed,
   setupTargetKg,
-  onSetupMode,
   onOpenSetupGuide,
   onClearProtocol,
   canStart,
@@ -220,6 +221,7 @@ export default function ForceFullscreen({
   onStart,
   onStop,
   onMinimize,
+  protocolQuality,
 }: Props) {
   const measuring = tindeq.status === "measuring";
   const armed = tindeq.status === "armed";
@@ -591,15 +593,18 @@ export default function ForceFullscreen({
     targetLowKg,
   ]);
 
-  const displayedCoachZone =
+  const coachedZone =
     coachDisplay.active &&
     coachDisplay.lowKg === band?.lowKg &&
     coachDisplay.highKg === band?.highKg
       ? coachDisplay.zone
       : "unknown";
-  const coachPresentation = COACH_PRESENTATION[displayedCoachZone];
   const reverseWorking =
     measuring && protocol?.protocolMode === "reverse_action" && band !== null;
+  const displayedCoachZone = reverseWorking && band
+    ? targetZoneAtForce(tindeq.current, band.lowKg, band.highKg)
+    : coachedZone;
+  const coachPresentation = COACH_PRESENTATION[displayedCoachZone];
   const reverseSegment =
     reverseWorking && pos ? (pos.seg as ReverseActionSegment) : null;
 
@@ -612,7 +617,7 @@ export default function ForceFullscreen({
         transition: "background 0.3s",
         display: "flex",
         justifyContent: "center",
-        overflowY: "auto",
+        overflowY: reverseWorking ? "hidden" : "auto",
       }}
     >
       <div
@@ -691,6 +696,11 @@ export default function ForceFullscreen({
         </div>
 
         {reverseWorking && band && protocol && (
+          <>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", flexShrink: 0 }}>
+            <span style={{ fontWeight: 850, fontSize: "var(--t-base)", overflowWrap: "anywhere" }}>{protocol.name}</span>
+            <ProtocolBadge mode="reverse_action" quality={protocolQuality} />
+          </div>
           <ReverseActionWorkDisplay
             currentKg={tindeq.current}
             targetKg={band.kg}
@@ -703,7 +713,7 @@ export default function ForceFullscreen({
             reps={protocol.reps}
             sets={protocol.sets}
             side={globalSide}
-          />
+          /></>
         )}
 
         {!reverseWorking && coachingActive && band && (
@@ -899,13 +909,13 @@ export default function ForceFullscreen({
               <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginTop: 6, lineHeight: 1.5 }}>
                 {protocol && timeline ? (
                   <>
-                    <span style={{ color: "var(--ink)", fontWeight: 600 }}>{protocol.name}</span>{" "}
+                    <span style={{ color: "var(--ink)", fontWeight: 700, overflowWrap: "anywhere" }}>{protocol.name}</span>{" "}
+                    <ProtocolBadge mode={protocol.protocolMode ?? "hold"} quality={protocolQuality} />{" "}
                     {protocol.protocolMode === "reverse_action" ? (
                       <>
                         · {protocol.cadenceOutS ?? 3}s OUT / {protocol.cadenceReturnS ?? 3}s RETURN · {protocol.reps} rep{protocol.reps === 1 ? "" : "s"} × {protocol.sets} set{protocol.sets === 1 ? "" : "s"} · ~
                         {Math.round(timelineDurationS(timeline) / 60)}min
-                        <br />
-                        one continuous raw trace saves per set
+                        <br />one continuous raw trace saves per set
                       </>
                     ) : (
                       <>
@@ -958,7 +968,6 @@ export default function ForceFullscreen({
                 targetKg={setupTargetKg}
                 locked={false}
                 compact
-                onMode={onSetupMode}
                 onOpenGuide={onOpenSetupGuide}
               />
             </>
@@ -1044,7 +1053,7 @@ export default function ForceFullscreen({
             above and below is intrinsically sized, so the trace takes the
             leftover height (down to its own floor) and the overlay fits one
             screen instead of scrolling (#221). */}
-        {!reverseWorking && <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           <ForceGauge
             current={tindeq.current}
             peak={tindeq.peak}
@@ -1055,7 +1064,7 @@ export default function ForceFullscreen({
             target={band}
             fill
           />
-        </div>}
+        </div>
 
         {/* Big circular action (like the workout timer) */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -1107,6 +1116,7 @@ export default function ForceFullscreen({
             </div>
           )}
           <button
+            aria-label={measuring && protocol?.protocolMode === "reverse_action" ? "Emergency stop and save partial Reverse Action set" : undefined}
             onClick={() => {
               if (measuring) {
                 onStop();
@@ -1157,7 +1167,7 @@ export default function ForceFullscreen({
             {measuring ? (
               <>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
-                {saving ? "SAVING…" : "STOP"}
+                {saving ? "SAVING…" : protocol?.protocolMode === "reverse_action" ? "STOP NOW" : "STOP"}
               </>
             ) : armed || counting ? (
               <>

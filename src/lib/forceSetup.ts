@@ -1,11 +1,10 @@
 import type { DynamometerCapabilities } from "./dynamometer";
-import type { TindeqProtocolMode, TindeqSide } from "../types";
+import type { ForceExecutionMethod, TindeqProtocolMode, TindeqSide } from "../types";
 
 export type ForceMeasurementMode = "static" | "movement";
 
-/** Keep the guide's plain-language choice separate from the runtime contract.
- * The movement lane can consume this seam without pulling cadence, recording,
- * metrics, or history concerns into setup state. */
+/** Presentation mapping only. The armed protocol selects this value; equipment
+ * setup never acts as an independent Static/Movement switch. */
 export function forceProtocolMode(mode: ForceMeasurementMode): TindeqProtocolMode {
   return mode === "movement" ? "reverse_action" : "hold";
 }
@@ -23,6 +22,7 @@ export interface ForceSetupMetadata {
 
 export interface ForceSetupInputs extends ForceSetupMetadata {
   mode: ForceMeasurementMode;
+  executionMethod?: ForceExecutionMethod;
   exercise: string;
   side: TindeqSide;
 }
@@ -35,6 +35,8 @@ export interface ForceSetupConfirmation {
 export interface ForceSetupMemory {
   version: 1;
   autoShow: boolean;
+  /** Legacy #401 field retained so existing local memory remains readable.
+   * #422 derives the visible mode from the armed protocol and never writes it. */
   selectedMode: ForceMeasurementMode;
   seenModes: ForceMeasurementMode[];
   metadataByContext: Record<string, ForceSetupMetadata>;
@@ -71,20 +73,23 @@ function normalized(value: string): string {
 export function forceSetupContextKey(input: {
   mode: ForceMeasurementMode;
   exercise: string;
+  executionMethod?: ForceExecutionMethod;
 }): string {
-  return JSON.stringify([input.mode, normalized(input.exercise)]);
+  const legacy = [input.mode, normalized(input.exercise)];
+  return JSON.stringify(input.executionMethod === "cadence_only" ? [...legacy, "cadence_only"] : legacy);
 }
 
 /** The exact inputs that make a setup confirmation valid. Optional notes are
  * not keys: editing prose must not erase unrelated configuration. Equipment is
  * a key because changing a spring/handle/edge materially changes the force path. */
 export function forceSetupValidityKey(input: ForceSetupInputs): string {
-  return JSON.stringify([
+  const legacy = [
     input.mode,
     normalized(input.exercise),
     input.side,
     normalized(input.equipment),
-  ]);
+  ];
+  return JSON.stringify(input.executionMethod === "cadence_only" ? [...legacy, "cadence_only"] : legacy);
 }
 
 export function isForceSetupConfirmed(
@@ -326,7 +331,11 @@ export function canConfirmForceSetup(input: {
   readiness: ForceReadinessState;
   equipmentConfirmed: boolean;
   positionConfirmed: boolean;
+  sensor?: boolean;
 }): boolean {
+  if (input.sensor === false) {
+    return input.equipmentConfirmed && input.positionConfirmed;
+  }
   const zeroReady = input.capabilities.tare
     ? input.readiness.tareComplete
     : input.readiness.noTareAcknowledged;

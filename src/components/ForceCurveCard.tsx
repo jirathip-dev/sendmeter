@@ -10,6 +10,7 @@ import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
 import InfoDot from "./InfoDot";
 import SvgChartTooltip from "./SvgChartTooltip";
+import type { ForceCapacityModality } from "../types";
 
 export interface GaugeTarget {
   kg: number;
@@ -27,6 +28,7 @@ interface Props {
   periods: PeriodCurve[];
   computing: boolean;
   error: string | null;
+  modality: ForceCapacityModality;
 }
 
 /// One hue per trailing window — hex literals because SVG attributes can't
@@ -252,7 +254,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
   );
 }
 
-export default function ForceCurveCard({ tag, model, periods, computing, error }: Props) {
+export default function ForceCurveCard({ tag, model, periods, computing, error, modality }: Props) {
   // Which trailing windows are overlaid (multi-select chips).
   const [activePeriods, setActivePeriods] = useState<Set<string>>(new Set());
   const overlays: Overlay[] = periods.flatMap((p) =>
@@ -271,7 +273,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
           alignItems: "center",
         }}
       >
-        <span>Force Curve · {tag}</span>
+        <span>{modality === "reverse_action" ? "Reverse Action" : "Static"} Hill / CF · {tag}</span>
         <InfoDot topic="forceCurve" />
       </div>
 
@@ -281,7 +283,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error }
             {computing
               ? "Computing your force–duration curve…"
               : error ??
-                "The force–duration curve builds from this tag's recordings. The purple constrained Hill capability curve drives Power Endurance and Auto curve targets. CF remains the Endurance reference; W′ stays internal to fatigue, RPE, and dose accounting."}
+                `This ${modality === "reverse_action" ? "Reverse Action" : "Static"} model uses only matching measured capacity evidence. Hill/CF estimates never cross between execution types.`}
           </div>
         </div>
       ) : (

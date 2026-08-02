@@ -51,7 +51,7 @@ export interface BuildReverseActionRecordingInput {
   base: Pick<
     NewTindeqRecording,
     "note" | "tag" | "side" | "groupId" | "protocolRunId" | "zone"
-  > & { setupNote: string };
+  > & { setupNote: string; capacityEvidence?: boolean | null };
 }
 
 function round(value: number, places: number): number {
@@ -319,6 +319,7 @@ export function buildReverseActionSetRecording(
     cadenceMarkers: slice.markers,
     setMetrics: metrics,
     setupNote: input.base.setupNote,
+    capacityEvidence: input.base.capacityEvidence ?? null,
     plannedDurationMs: slice.plannedDurationMs,
     actualDurationMs: durationMs,
   };

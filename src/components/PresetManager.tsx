@@ -22,7 +22,6 @@ import {
 import type { PresetRefs } from "../lib/protocol";
 import { QUALITIES } from "../lib/force-curve";
 import { classifyZoneLoaded } from "../lib/zoneHistory";
-import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useToast } from "../hooks/useToast";
 import { restoreAt } from "../lib/restoreAt";
 import { FORCE_PRESET_SELECTED_KEY } from "../lib/forcePresetStorage";
@@ -36,6 +35,7 @@ import type {
   TindeqProtocolMode,
 } from "../types";
 import ReverseActionPresetFields from "./ReverseActionPresetFields";
+import ProtocolBadge from "./ProtocolBadge";
 
 interface Props {
   selectedId: string | null;
@@ -91,26 +91,8 @@ function QualityBadge({
   const q = qualities[0];
   if (!q) return null;
   const varies = qualities.some((x) => x !== q);
-  const color = QUALITY_COLORS[q];
   const label = QUALITIES.find((x) => x.id === q)?.label ?? q;
-  return (
-    <span
-      style={{
-        fontSize: "var(--t-2xs)",
-        fontWeight: 700,
-        color,
-        border: `1px solid ${color}`,
-        borderRadius: 6,
-        padding: "1px 6px",
-        flexShrink: 0,
-        textTransform: "uppercase",
-        letterSpacing: "0.04em",
-      }}
-    >
-      {label}
-      {varies && " · set 1"}
-    </span>
-  );
+  return <ProtocolBadge mode={preset.protocolMode ?? "hold"} quality={`${label}${varies ? " · SET 1" : ""}`} />;
 }
 
 // Selected-protocol persistence (SL-76): ForceView unmounts on tab switch and
@@ -189,6 +171,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   const [toleranceValue, setToleranceValue] = useState(10);
   const [prepareS, setPrepareS] = useState(5);
   const [setupNote, setSetupNote] = useState("");
+  const [capacityEvidence, setCapacityEvidence] = useState(false);
   // Issue #143: gate preset delete behind a confirm dialog. Holds the preset
   // being confirmed (need its name for the dialog copy).
   const [confirmDelete, setConfirmDelete] = useState<TindeqPreset | null>(null);
@@ -218,6 +201,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
     setToleranceValue(p.toleranceValue ?? 10);
     setPrepareS(p.prepareS ?? 5);
     setSetupNote(p.setupNote ?? "");
+    setCapacityEvidence(p.capacityEvidence ?? false);
     setAdding(true);
   }
 
@@ -302,6 +286,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         toleranceValue,
         prepareS,
         setupNote: setupNote.trim(),
+        capacityEvidence,
       };
     }
     const { holdBase, holdsS } = deriveHoldsField(varyHolds, holdS, holds, sets);
@@ -325,14 +310,11 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
       toleranceValue: 10,
       prepareS: 5,
       setupNote: "",
+      capacityEvidence: false,
     };
   }
 
   async function save() {
-    if (protocolMode === "reverse_action" && targetMode === "off") {
-      setError("Reverse Action needs a target load or prescription.");
-      return;
-    }
     setSaving(true);
     setError(null);
     const draft = draftPlanPreset();
@@ -459,15 +441,13 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               }}
             />
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                 <span
                   style={{
                     fontSize: "var(--t-base)",
                     color: "var(--ink)",
                     fontWeight: 600,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    overflowWrap: "anywhere",
                   }}
                 >
                   {p.name}
@@ -477,11 +457,11 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
                 {p.protocolMode === "reverse_action" ? (
                   <>
-                    Reverse Action · {p.cadenceOutS ?? 3}s out / {p.cadenceReturnS ?? 3}s return · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · {fmt(protocolDurationS(p))} total
+                    {(p.cadenceOutS ?? 3)}s out / {p.cadenceReturnS ?? 3}s return · {p.reps} rep{p.reps === 1 ? "" : "s"} · {p.sets} set{p.sets === 1 ? "" : "s"} · {fmt(protocolDurationS(p))} total
                   </>
                 ) : (
                   <>
-                    hold {holdsSummary(p)} · {p.reps} reps · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
+                    hold {holdsSummary(p)} · {p.reps} rep{p.reps === 1 ? "" : "s"} · {p.sets} set{p.sets === 1 ? "" : "s"} · rest{" "}
                     {fmt(p.restRepsS)}/{fmt(p.restSetsS)} · total{" "}
                     {fmt(timelineDurationS(buildTimeline(p, { switchS: 3 })))}
                   </>
@@ -503,11 +483,11 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                     % {p.pctBasis === "cf" ? "CF" : "PR"}
                     {resolvedKg !== null && ` · ${resolvedKg.toFixed(1)} kg`}
                   </span>
-                ) : (
-                  p.targetKg !== null && (
-                    <span style={{ color: "var(--success)" }}> · {p.targetKg.toFixed(1)} kg</span>
-                  )
-                )}
+                ) : p.targetKg !== null ? (
+                  <span style={{ color: "var(--success)" }}> · {p.targetKg.toFixed(1)} kg</span>
+                ) : p.protocolMode === "reverse_action" ? (
+                  <span style={{ color: "var(--info)" }}> · equipment resistance · no kg target</span>
+                ) : null}
                 {p.alternateSides && (
                   <span style={{ color: "var(--warning)" }}> · L⇄R</span>
                 )}
@@ -598,10 +578,6 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 className="tag"
                 onClick={() => {
                   setProtocolMode(mode);
-                  if (mode === "reverse_action" && targetMode === "off") {
-                    setTargetMode("kg");
-                    if (targetKg <= 0) setTargetKg(20);
-                  }
                 }}
                 style={{
                   background: protocolMode === mode ? "var(--primary)" : "var(--surface-1)",
@@ -701,19 +677,12 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
           {/* Target load — how the band on the live gauge is set. */}
           <span className="field-label">Target load</span>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {(protocolMode === "reverse_action"
-              ? ([
+            {([
+                  ["off", protocolMode === "reverse_action" ? "Equipment resistance" : "None"],
                   ["kg", "Fixed kg"],
                   ["pct", "% of…"],
                   ["curve", "Auto (curve)"],
-                ] as const)
-              : ([
-                  ["off", "None"],
-                  ["kg", "Fixed kg"],
-                  ["pct", "% of…"],
-                  ["curve", "Auto (curve)"],
-                ] as const)
-            ).map(([m, label]) => (
+                ] as const).map(([m, label]) => (
               <button
                 key={m}
                 className="tag"
@@ -730,6 +699,12 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               </button>
             ))}
           </div>
+
+          {protocolMode === "reverse_action" && targetMode === "off" && (
+            <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 6 }}>
+              Cadence-only runs use the spring or machine resistance in your equipment setup. Starting with a sensor needs a numeric target.
+            </div>
+          )}
 
           {targetMode === "kg" && (
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
@@ -775,8 +750,8 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               </div>
               <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
                 {pctBasis === "pr"
-                  ? "% of your best recorded peak for the exercise (max-strength work)."
-                  : "% of critical force — the sustainable-force asymptote of the curve (endurance work)."}
+                  ? `% of your best ${protocolMode === "reverse_action" ? "Reverse Action" : "Static"} capacity peak for the exercise.`
+                  : `% of ${protocolMode === "reverse_action" ? "Reverse Action" : "Static"} critical force — models never fall back across execution types.`}
                 {pctStep > 0 &&
                   ` Sets run ${targetPct}%${Array.from(
                     { length: Math.min(sets, 4) - 1 },
@@ -803,11 +778,15 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               )}
               <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
                 {protocolMode === "reverse_action"
-                  ? `Auto curve: target the force sustainable for one continuous ${prescriptionWorkS(draftPlanPreset(), 1)}s movement set.`
+                  ? `Reverse Action auto: target the force sustainable for one continuous ${prescriptionWorkS(draftPlanPreset(), 1)}s movement set. Unavailable until that distinct model can be fitted.`
                   : curveCopy.description}
               </div>
             </>
           )}
+          {protocolMode === "reverse_action" && <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12, fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>
+            <input type="checkbox" checked={capacityEvidence} onChange={(event) => setCapacityEvidence(event.target.checked)} />
+            <span><strong style={{ color: "var(--ink)" }}>Capacity test</strong><br />Include measured sensor sets in the Reverse Action Hill/CF model. Leave off for ordinary prescribed work to avoid self-feedback.</span>
+          </label>}
           {protocolMode === "hold" && <label
             style={{
               display: "flex",

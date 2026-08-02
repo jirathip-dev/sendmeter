@@ -10,8 +10,11 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Reverse Action protocols can now run as a resumable cadence-only timer without a force sensor, with set progress and partial completion saved to History.
+
 ### Improved
 
+- Reverse Action now keeps its live force trace visible and uses capacity models separate from Static holds, with clear protocol and model labels throughout Force.
 - Force setup guidance now focuses on measurement equipment and your own reference marks without prescribing exercises or claiming to assess form.
 - Training-load details now open from the ACWR card, with weekly and daily views plus a 28-day activity breakdown.
 - Apple Watch boulder tracking now uses wrist motion, local height, and heart-rate changes to detect attempts and keep the climbing/rest display in sync automatically.

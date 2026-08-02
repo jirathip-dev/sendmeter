@@ -11,6 +11,7 @@ import {
   isEffortRecording,
   isMeasuredRecording,
   recommendZone,
+  recordingCapacityModality,
   recordingZone,
   TIE_BAND_SETS,
   zoneSetDurationS,
@@ -25,6 +26,67 @@ describe("isMeasuredRecording (#367)", () => {
     expect(isMeasuredRecording({ source: "manual", peakKg: 30, avgKg: 25 })).toBe(false);
     expect(isMeasuredRecording({ source: "dynamometer", peakKg: null, avgKg: 25 })).toBe(false);
     expect(isMeasuredRecording({ source: "dynamometer", peakKg: 30, avgKg: null })).toBe(false);
+  });
+});
+
+describe("capacity modality partitioning (#422)", () => {
+  const measured = (
+    id: string,
+    protocolMode?: "hold" | "reverse_action",
+    capacityEvidence?: boolean | null,
+  ) => ({
+    id,
+    durationMs: 30_000,
+    tag: "FDP",
+    side: "left" as const,
+    zone: "endurance" as const,
+    peakKg: 30,
+    avgKg: 25,
+    source: "dynamometer" as const,
+    protocolMode,
+    capacityEvidence,
+  });
+
+  it("treats historical null/hold rows as Static and Reverse Action only as Reverse Action", () => {
+    expect(recordingCapacityModality({})).toBe("static");
+    expect(recordingCapacityModality({ protocolMode: "hold" })).toBe("static");
+    expect(recordingCapacityModality({ protocolMode: "reverse_action" })).toBe("reverse_action");
+  });
+
+  it("never lets Static and Reverse Action rows enter each other's curve or PR", () => {
+    const rows = [measured("legacy"), measured("hold", "hold"), measured("reverse", "reverse_action")];
+    expect(curveCandidateRecordings(rows, "FDP", "left", "static").map((r) => r.id)).toEqual([
+      "legacy",
+      "hold",
+    ]);
+    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action").map((r) => r.id)).toEqual([
+      "reverse",
+    ]);
+    expect(effortPeakKg(rows, "FDP", "left", "static")).toBe(30);
+    expect(effortPeakKg(rows, "FDP", "left", "reverse_action")).toBe(30);
+  });
+
+  it("keeps historical Reverse Action evidence but excludes new ordinary prescribed sets", () => {
+    const rows = [
+      measured("historical", "reverse_action", null),
+      measured("capacity", "reverse_action", true),
+      measured("ordinary", "reverse_action", false),
+    ];
+    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action").map((r) => r.id)).toEqual([
+      "historical",
+      "capacity",
+    ]);
+  });
+
+  it("excludes cadence-only rows from both models regardless of stamped mode", () => {
+    const cadence = {
+      ...measured("cadence", "reverse_action", true),
+      source: "manual" as const,
+      peakKg: null,
+      avgKg: null,
+    };
+    expect(curveCandidateRecordings([cadence], "FDP", "left", "reverse_action")).toEqual([]);
+    expect(effortPeakKg([cadence], "FDP", "left", "reverse_action")).toBeNull();
   });
 });
 

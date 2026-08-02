@@ -3,6 +3,7 @@ import {
   idleTargetZoneCoach,
   stepTargetZoneCoach,
   targetZoneCoachActive,
+  targetZoneAtForce,
   type TargetZoneCoachConfig,
   type TargetZoneCoachInput,
   type TargetZoneCoachState,
@@ -38,6 +39,11 @@ function commitAt(currentKg: number): TargetZoneCoachState {
 }
 
 describe("target-zone coach state machine (#400)", () => {
+  it("exposes the immediate visual zone independently from optional coaching", () => {
+    expect(targetZoneAtForce(9, 10, 12)).toBe("below");
+    expect(targetZoneAtForce(11, 10, 12)).toBe("in-zone");
+    expect(targetZoneAtForce(13, 10, 12)).toBe("above");
+  });
   it("treats both exact target boundaries as in-zone", () => {
     let low = step(idleTargetZoneCoach(), 0, 10);
     low = step(low.state, 300, 10);

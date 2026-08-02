@@ -75,6 +75,14 @@ describe("force setup visibility and validity", () => {
     );
   });
 
+  it("keeps legacy sensor keys stable and separates cadence-only equipment", () => {
+    expect(forceSetupContextKey(setup)).toBe('["static","20 mm edge"]');
+    expect(forceSetupValidityKey(setup)).toBe('["static","20 mm edge","left","portable board"]');
+    expect(forceSetupContextKey({ ...setup, executionMethod: "cadence_only" })).not.toBe(
+      forceSetupContextKey(setup),
+    );
+  });
+
   it("recovers safely from missing, malformed, or future storage", () => {
     expect(parseForceSetupMemory(null)).toEqual(emptyForceSetupMemory());
     expect(parseForceSetupMemory("not json")).toEqual(emptyForceSetupMemory());
@@ -131,6 +139,16 @@ describe("force readiness decisions", () => {
     };
     expect(canConfirmForceSetup({ capabilities: noTare, readiness, equipmentConfirmed: true, positionConfirmed: true })).toBe(true);
     expect(canConfirmForceSetup({ capabilities: caps, readiness, equipmentConfirmed: true, positionConfirmed: true })).toBe(false);
+  });
+
+  it("confirms cadence-only equipment without requiring sensor readiness", () => {
+    expect(canConfirmForceSetup({
+      capabilities: caps,
+      readiness: emptyForceReadiness(false),
+      equipmentConfirmed: true,
+      positionConfirmed: true,
+      sensor: false,
+    })).toBe(true);
   });
 
   it("deduplicates async actions when the claim is taken before awaiting", () => {

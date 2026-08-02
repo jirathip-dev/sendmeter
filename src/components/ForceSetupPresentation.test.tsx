@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import ForcePathDiagram from "./ForcePathDiagram";
 import ForceSetupSummary from "./ForceSetupSummary";
+import ForceConnectionCard from "./ForceConnectionCard";
+import { sensorlessLaunchAvailable } from "../lib/forceConnection";
 
 describe("Force setup presentation", () => {
   it("keeps both force-path diagrams equipment-only and explicit about measurement limits", () => {
@@ -35,7 +37,6 @@ describe("Force setup presentation", () => {
         targetKg={12}
         locked={false}
         compact
-        onMode={() => {}}
         onOpenGuide={() => {}}
       />,
     );
@@ -43,6 +44,30 @@ describe("Force setup presentation", () => {
     expect(html).toContain("Blue spring");
     expect(html).toContain("Left");
     expect(html).toContain("12.0 kg target");
-    expect(html).toContain("Setup checked · View guide");
+    expect(html).toContain("Equipment checked · View");
+  });
+
+  it("keeps setup compact in the connected Progressor card", () => {
+    const html = renderToStaticMarkup(
+      <ForceConnectionCard
+        status="connected"
+        setupConfirmed={false}
+        locked={false}
+        onOpenGauge={() => {}}
+        onOpenSetup={() => {}}
+      />,
+    );
+    expect(html).toContain("Progressor");
+    expect(html).toContain("Open gauge");
+    expect(html).toContain("Equipment setup");
+    expect(html).not.toContain("Train without sensor");
+  });
+
+  it("only offers sensorless launch before a device session exists", () => {
+    expect(sensorlessLaunchAvailable("idle")).toBe(true);
+    expect(sensorlessLaunchAvailable("unsupported")).toBe(true);
+    for (const status of ["connecting", "connected", "checking", "armed", "measuring"] as const) {
+      expect(sensorlessLaunchAvailable(status)).toBe(false);
+    }
   });
 });

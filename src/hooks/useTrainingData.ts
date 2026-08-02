@@ -17,6 +17,16 @@ export function sortSessions(list: Session[]): Session[] {
   return [...list].sort((a, b) => b.date.localeCompare(a.date));
 }
 
+/** A retry of a client-keyed session can resolve to the row already present
+ * in state. Replace by id so exactly-once persistence is also exactly-once in
+ * the visible timeline. */
+export function upsertSessionById(list: Session[], saved: Session): Session[] {
+  const found = list.some((session) => session.id === saved.id);
+  return sortSessions(found
+    ? list.map((session) => session.id === saved.id ? saved : session)
+    : [...list, saved]);
+}
+
 /// Replaces a raw incrementing ref with an object exposing `start`/
 /// `isCurrent` — pulled out so the stale-reload guard used by `runFetch` is
 /// independently unit-testable (#220).
@@ -323,6 +333,7 @@ export function useTrainingData(userId: string) {
   }
 
   async function addTindeqSession(input: {
+    id?: string;
     durationMin: number;
     rpe: number;
     note: string;
@@ -335,7 +346,7 @@ export function useTrainingData(userId: string) {
   }): Promise<boolean> {
     return addTindeqSessionAction({
       action: () => repo.insertTindeqSession({ ...input, phase: currentPhase }),
-      onSuccess: (saved) => setSessions((list) => sortSessions([...list, saved])),
+      onSuccess: (saved) => setSessions((list) => upsertSessionById(list, saved)),
       onError: (message) => setError(message),
       onFailure: (failure) =>
         captureHandledOperationalFailure("session.insert", failure, {
