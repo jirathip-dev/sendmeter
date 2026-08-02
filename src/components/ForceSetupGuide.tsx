@@ -39,12 +39,12 @@ const MODE_COPY = {
   static: {
     title: "Static hold",
     support: "Isometric",
-    instruction: "Keep the joint position still. Build force smoothly and hold the target.",
+    instruction: "Keep your chosen setup at its marked reference positions. Build force smoothly and hold.",
   },
   movement: {
     title: "Movement set",
-    support: "Reverse Action",
-    instruction: "Maintain the target force while moving through your marked range at the guided cadence.",
+    support: "Fixed-contact movement",
+    instruction: "Keep the resisted contact point at its reference mark while moving between your other user-defined markers.",
   },
 } as const;
 
@@ -233,7 +233,7 @@ export default function ForceSetupGuide({
         <div className="force-setup-guide-body">
           {step === 0 && (
             <>
-              <p>Choose the movement you intend to perform. The same equipment can produce a different measurement when the movement changes.</p>
+              <p>Choose the measurement pattern you intend to use. Sendmeter records force; it does not select an exercise or determine a safe body position, load, or range.</p>
               <div className="force-mode-cards" role="radiogroup" aria-label="Measurement mode">
                 {(["static", "movement"] as const).map((value) => {
                   const copy = MODE_COPY[value];
@@ -248,10 +248,11 @@ export default function ForceSetupGuide({
               </div>
               <ForcePathDiagram mode={mode} />
               <div className="force-guide-note">
-                <strong>Force-path principle, not one prescribed rig.</strong> Keep the sensor inline and relatively stationary where the exercise permits. Avoid twisting, sideways load, and cable interference.
+                <strong>Equipment principle, not an exercise prescription.</strong> Keep the sensor inline with the equipment path and follow the device and equipment manufacturers' instructions. Avoid twisting the sensor, sideways load, and cable interference.
               </div>
+              <p className="force-guide-caution">Use a setup you already know is appropriate for you. Sendmeter cannot evaluate technique or detect whether a movement is safe. Stop if you feel pain, numbness, or loss of control; seek guidance from a qualified clinician when exercising with an injury or when unsure.</p>
               {mode === "movement" && (
-                <p className="force-guide-caution">Maintain force through the marked range. Move smoothly; jerking to chase the target can create misleading peaks. The gauge records force, but this setup guide does not prescribe spring stiffness, range, or a clinical protocol.</p>
+                <p className="force-guide-caution">Maintain force through your previously selected range and move smoothly; jerking to chase the target can create misleading peaks. The gauge does not prescribe spring stiffness, range, or a clinical protocol.</p>
               )}
             </>
           )}
@@ -269,7 +270,7 @@ export default function ForceSetupGuide({
                   <input className="field" value={draft.attachment} onChange={(event) => setDraft({ ...draft, attachment: event.target.value })} placeholder="Anchor point, connector, tether" />
                 </label>
                 <label>
-                  <span>{mode === "movement" ? "Body position + endpoint markers" : "Body + joint position marker"}</span>
+                  <span>{mode === "movement" ? "Your setup + endpoint notes" : "Your setup reference notes"}</span>
                   <textarea className="field" rows={2} value={draft.position} onChange={(event) => setDraft({ ...draft, position: event.target.value })} placeholder={mode === "movement" ? "Seat/foot mark; start and end positions" : "Seat/foot mark; joint angle or reach reference"} />
                 </label>
                 <label>
