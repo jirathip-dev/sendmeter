@@ -30,6 +30,7 @@ import {
 } from "../lib/reverseAction";
 import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
 import { DEFAULT_HANDS_FREE_FORCE_CONFIG } from "../lib/handsFreeForce";
+import { adaptiveStaticHolds, type AdaptiveStaticState } from "../lib/adaptiveStaticProtocol";
 import {
   idleTargetZoneCoach,
   stepTargetZoneCoach,
@@ -90,6 +91,7 @@ interface Props {
   startBlockedReason: string | null;
   saving: boolean;
   handsFree: boolean;
+  adaptiveState: AdaptiveStaticState | null;
   onToggleHandsFree: (on: boolean) => void;
   targetCoach: boolean;
   onToggleTargetCoach: (on: boolean) => void;
@@ -207,6 +209,7 @@ export default function ForceFullscreen({
   startBlockedReason,
   saving,
   handsFree,
+  adaptiveState,
   onToggleHandsFree,
   targetCoach,
   onToggleTargetCoach,
@@ -225,12 +228,11 @@ export default function ForceFullscreen({
 }: Props) {
   const measuring = tindeq.status === "measuring";
   const armed = tindeq.status === "armed";
-  // Hands-free is deliberately a free-hold first slice. A saved preference
-  // must not change countdown behavior when a guided protocol is armed.
-  const handsFreeActive = handsFree && !protocol;
+  const handsFreeActive = handsFree && protocol?.protocolMode !== "reverse_action";
+  const adaptive = handsFreeActive && protocol !== null;
   // Walk the timeline in protocol time (parent-owned; freezes while paused).
-  const pos = timeline && measuring ? timelineAt(timeline, protoTS) : null;
-  const done = timeline !== null && measuring && pos === null;
+  const pos = timeline && measuring && !adaptive ? timelineAt(timeline, protoTS) : null;
+  const done = adaptive ? adaptiveState?.phase === "complete" : timeline !== null && measuring && pos === null;
   const meta = pos ? PHASE_META[pos.seg.phase] : null;
 
   // Beep + haptic on segment transitions (AudioContext primed on the Start
@@ -274,13 +276,15 @@ export default function ForceFullscreen({
       lastKeyRef.current = null;
       return;
     }
-    const key = done
-      ? "done"
-      : pos
-        ? pos.seg.phase === "move"
-          ? reverseActionCadenceKey(pos.seg)
-          : `${pos.seg.phase}-${pos.seg.set}-${pos.seg.rep}-${pos.seg.side ?? ""}`
-        : null;
+    const key = adaptive && adaptiveState
+      ? `${adaptiveState.phase}-${"holdIndex" in adaptiveState ? adaptiveState.holdIndex : ""}-${adaptiveState.phase === "recovery" ? adaptiveState.failed : ""}`
+      : done
+        ? "done"
+        : pos
+          ? pos.seg.phase === "move"
+            ? reverseActionCadenceKey(pos.seg)
+            : `${pos.seg.phase}-${pos.seg.set}-${pos.seg.rep}-${pos.seg.side ?? ""}`
+          : null;
     if (key === null || lastKeyRef.current === key) return;
     const isFirst = lastKeyRef.current === null;
     lastKeyRef.current = key;
@@ -289,13 +293,22 @@ export default function ForceFullscreen({
     // phase state, and must be distinguishable from the following RETURN.
     if (isFirst && pos?.seg.phase !== "move") return;
     const ctx = audioRef.current;
-    const phase = done ? "done" : pos!.seg.phase;
+    const phase = adaptiveState
+      ? adaptiveState.phase === "complete"
+        ? "done"
+        : adaptiveState.phase === "hold"
+          ? "hold"
+          : "rest"
+      : done ? "done" : pos!.seg.phase;
+    const failedTransition = adaptiveState?.phase === "recovery" && adaptiveState.failed;
     const direction =
       pos?.seg.phase === "move" ? pos.seg.direction : null;
     if (ctx) {
       try {
         const freq =
-          direction === "out"
+          failedTransition
+            ? 220
+            : direction === "out"
             ? 880
             : direction === "return"
               ? 620
@@ -305,7 +318,7 @@ export default function ForceFullscreen({
                   ? 660
                   : 440;
         const beeps =
-          phase === "done" ? 3 : phase === "switch" || direction === "return" ? 2 : 1;
+          phase === "done" ? 3 : failedTransition || phase === "switch" || direction === "return" ? 2 : 1;
         for (let i = 0; i < beeps; i++) {
           const o = ctx.createOscillator();
           const g = ctx.createGain();
@@ -322,13 +335,15 @@ export default function ForceFullscreen({
       }
     }
     navigator.vibrate?.(
-      direction === "return"
+      failedTransition
+        ? [120, 80, 120, 80, 120]
+        : direction === "return"
         ? [70, 60, 70]
         : phase === "hold" || phase === "move"
           ? 150
           : [80, 60, 80],
     );
-  }, [measuring, timeline, pos, done]);
+  }, [adaptive, adaptiveState, measuring, timeline, pos, done]);
 
   // Free-hold get-ready countdown (#312) — null while idle/measuring/guided.
   // `prepNow` is a ticked clock (never Date.now() in render, same pattern as
@@ -401,17 +416,42 @@ export default function ForceFullscreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prepStartedMs, prepRemaining]);
 
-  const bannerColor = done
-    ? "var(--warning)"
+  const bannerColor = adaptiveState?.phase === "recovery"
+    ? adaptiveState.failed ? "var(--danger)" : "var(--primary)"
+    : adaptiveState?.phase === "complete" && adaptiveState.failed
+      ? "var(--danger)"
+    : done
+      ? "var(--warning)"
     : counting
       ? PHASE_META.prepare.color
       : armed
         ? "var(--warning)"
       : (meta?.color ?? (measuring ? "var(--success)" : "var(--primary)"));
 
+  const adaptiveHolds = adaptive && timeline
+    ? adaptiveStaticHolds(timeline as ProtocolSegment[])
+    : [];
+  const adaptiveHold = adaptiveState && adaptiveState.phase !== "complete"
+    ? adaptiveHolds[adaptiveState.holdIndex]
+    : null;
+  const adaptiveSegment = adaptiveHold && timeline
+    ? timeline[adaptiveHold.segmentIndex] as ProtocolSegment
+    : null;
+  const adaptiveRemainingS = adaptiveState?.phase === "hold" && adaptiveHold
+    ? Math.max(
+        0,
+        (adaptiveState.startedMs + adaptiveHold.durationMs - adaptiveState.lastMs) / 1_000,
+      )
+    : adaptiveState?.phase === "recovery"
+      ? Math.max(0, (adaptiveState.recoveryUntilMs - adaptiveState.lastMs) / 1_000)
+      : null;
+
   // Side shown on a hold: the segment's own hand, else the global pick.
   const holdSide =
-    pos?.seg.phase === "hold" || pos?.seg.phase === "move"
+    adaptiveState?.phase === "hold" && adaptiveSegment
+      ? (adaptiveSegment.side ??
+        (globalSide === "left" || globalSide === "right" ? globalSide : null))
+    : pos?.seg.phase === "hold" || pos?.seg.phase === "move"
       ? (pos.seg.side ??
         (globalSide === "left" || globalSide === "right" ? globalSide : null))
       : null;
@@ -432,6 +472,7 @@ export default function ForceFullscreen({
   // (nothing is "current" yet). Always the timeline's own pick, never a
   // stored preference.
   const autoSide =
+    adaptiveSegment?.side ??
     pos?.seg.side ??
     nextHoldSide ??
     (timeline && protocol?.protocolMode !== "reverse_action"
@@ -447,13 +488,13 @@ export default function ForceFullscreen({
 
   // Per-set target band: a %-of-PR preset ramps up each set; the chart band
   // follows the CURRENT set live (set 1 while idle, last set once done).
-  const currentSet = pos?.seg.set ?? (done ? (protocol?.sets ?? 1) : 1);
+  const currentSet = adaptiveSegment?.set ?? pos?.seg.set ?? (done ? (protocol?.sets ?? 1) : 1);
   const targetSegment =
     protocol?.protocolMode === "reverse_action"
       ? null
       : targetHoldSegment(
           timeline as ProtocolSegment[] | null,
-          pos?.seg as ProtocolSegment | null,
+          adaptiveSegment ?? pos?.seg as ProtocolSegment | null,
           done,
         );
   const protocolKg = protocol ? presetTargetKg(protocol, presetRefs, currentSet) : null;
@@ -534,7 +575,7 @@ export default function ForceFullscreen({
     measuring,
     hasTarget: coachBandValid,
     guided: protocol !== null,
-    guidedPhase: pos?.seg.phase ?? null,
+    guidedPhase: adaptive ? (adaptiveState?.phase === "hold" ? "hold" : "rest") : pos?.seg.phase ?? null,
     paused,
   });
   const currentKg = tindeq.current;
@@ -774,7 +815,37 @@ export default function ForceFullscreen({
             flexShrink: 0,
           }}
         >
-          {done && protocol ? (
+          {adaptive && adaptiveState && protocol ? (
+            <>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
+                {adaptiveState.phase === "armed"
+                  ? "PULL TO START"
+                  : adaptiveState.phase === "hold"
+                    ? `HOLD${holdSide ? ` · ${holdSide.toUpperCase()}` : ""}`
+                    : adaptiveState.phase === "complete"
+                      ? adaptiveState.failed ? "FAILED · DONE" : "DONE"
+                      : adaptiveState.lastMs >= adaptiveState.recoveryUntilMs
+                        ? "WAITING FOR PULL"
+                        : adaptiveState.failed ? "FAILED · REST" : "REST · UNLOAD"}
+              </div>
+              <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, fontVariantNumeric: "tabular-nums", fontSize: heroFontCss(adaptiveRemainingS === null ? FORCE_HERO_SM_FONT : FORCE_TIMER_FONT), lineHeight: 1 }}>
+                {adaptiveRemainingS === null ? (
+                  <>{adaptiveState.phase === "complete" ? "✓" : tindeq.current.toFixed(1)}{adaptiveState.phase === "armed" && <span style={{ fontSize: "var(--t-xl)", color: "var(--ink-muted)" }}> kg</span>}</>
+                ) : adaptiveState.phase === "recovery" && adaptiveRemainingS <= 0 ? (
+                  "READY"
+                ) : (
+                  fmt(adaptiveRemainingS)
+                )}
+              </div>
+              <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)", marginTop: 4 }}>
+                {adaptiveState.phase === "complete"
+                  ? "protocol complete"
+                  : adaptiveSegment
+                    ? `${adaptiveState.phase === "recovery" ? "next · " : ""}rep ${adaptiveSegment.rep}/${protocol.reps} · set ${adaptiveSegment.set}/${protocol.sets}${adaptiveSegment.side ? ` · ${adaptiveSegment.side.toUpperCase()}` : ""}`
+                    : "load steadily to begin"}
+              </div>
+            </>
+          ) : done && protocol ? (
             <>
               <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.12em", fontSize: "var(--t-lg)", color: bannerColor }}>
                 DONE
@@ -1070,7 +1141,7 @@ export default function ForceFullscreen({
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {/* Pause / Skip — guided runs only. Both finalize the current rep in
               the parent before touching the protocol clock. */}
-          {measuring && timeline && !done && protocol?.protocolMode !== "reverse_action" && (
+          {measuring && timeline && !done && protocol?.protocolMode !== "reverse_action" && !adaptive && (
             <div style={{ display: "flex", gap: 10, marginBottom: 2 }}>
               <button
                 onClick={() => {
@@ -1137,7 +1208,7 @@ export default function ForceFullscreen({
                 onArm();
                 return;
               }
-              if (startsWithCountdown(protocol, prepare)) {
+              if (!adaptive && startsWithCountdown(protocol, prepare)) {
                 setPrepStartedMs(Date.now());
               } else {
                 onStart();
@@ -1181,7 +1252,7 @@ export default function ForceFullscreen({
               </>
             )}
           </button>
-          {!measuring && !armed && !counting && !protocol && (
+          {!measuring && !armed && !counting && protocol?.protocolMode !== "reverse_action" && (
             <label
               style={{
                 display: "flex",
@@ -1197,7 +1268,9 @@ export default function ForceFullscreen({
                 checked={handsFree}
                 onChange={(e) => onToggleHandsFree(e.target.checked)}
               />
-              Hands-free — load to start, release to save
+              {protocol
+                ? "Hands-free — pull to start each rep"
+                : "Hands-free — load to start, release to save"}
             </label>
           )}
           {!measuring && !armed && !counting && coachBandValid && (

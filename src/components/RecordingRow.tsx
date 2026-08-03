@@ -303,7 +303,7 @@ export default function RecordingRow({
             {dateLabel} · {(rec.durationMs / 1000).toFixed(1)}s
             {cadenceOnly
               ? ` · cadence only · movement not detected · ${rec.completedReps ?? 0} rep${rec.completedReps === 1 ? "" : "s"} · ${rec.completionStatus ?? "partial"} · planned ${((rec.plannedDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s`
-              : rec.source === "manual" ? ` · manual · ${rec.outcome?.replace("_", " ") ?? ""} · planned ${((rec.plannedDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s` : ` · avg ${rec.avgKg?.toFixed(1)} kg`}
+              : rec.source === "manual" ? ` · manual · ${rec.outcome?.replace("_", " ") ?? ""} · planned ${((rec.plannedDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s` : rec.outcome ? ` · ${rec.outcome === "failed" ? "FAILED" : "completed"} · ${((rec.actualDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s actual / ${((rec.plannedDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s planned · avg ${rec.avgKg?.toFixed(1)} kg` : ` · avg ${rec.avgKg?.toFixed(1)} kg`}
             {rec.setNo !== null && (
               <span style={{ color: "var(--info)" }}> · set {rec.setNo}</span>
             )}
