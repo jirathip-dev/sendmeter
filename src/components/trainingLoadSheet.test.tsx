@@ -49,6 +49,47 @@ describe("TrainingLoadSheet", () => {
     expect(html).toContain("Board Climbing");
     expect(html).toContain("300 AU · 75%");
     expect(html).toContain("100 AU · 25%");
+    expect(html).toContain('data-testid="activity-mix-bar"');
+    expect(html).toContain('aria-label="Activity mix: Board Climbing 75%, Gym Session 25%"');
+
+    const boardSegment = html.indexOf('data-activity-type="board"');
+    const gymSegment = html.indexOf('data-activity-type="gym"');
+    expect(boardSegment).toBeGreaterThan(-1);
+    expect(gymSegment).toBeGreaterThan(boardSegment);
+    expect(html.slice(boardSegment, gymSegment)).toContain("width:75%");
+    expect(html.slice(gymSegment)).toContain("width:25%");
+  });
+
+  it("fills the mix bar for one positive activity", () => {
+    const html = renderToStaticMarkup(
+      <TrainingLoadSheet
+        weeklyLoads={weeks}
+        sessions={[session("routine", "Routine", 80)]}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Activity mix: Routine 100%"');
+    expect(html).toContain('data-activity-type="routine"');
+    expect(html).toContain("width:100%");
+    expect(html).toContain("80 AU · 100%");
+  });
+
+  it("keeps very small shares proportional without a minimum width", () => {
+    const html = renderToStaticMarkup(
+      <TrainingLoadSheet
+        weeklyLoads={weeks}
+        sessions={[
+          session("board", "Board Climbing", 999),
+          session("gym", "Gym Session", 1),
+        ]}
+        onClose={() => {}}
+      />,
+    );
+
+    const gymSegment = html.indexOf('data-activity-type="gym"');
+    expect(html.slice(gymSegment)).toContain("width:0.1%");
+    expect(html.slice(gymSegment)).not.toContain("min-width");
   });
 
   it("renders a useful activity-mix empty state", () => {
@@ -57,5 +98,6 @@ describe("TrainingLoadSheet", () => {
     );
 
     expect(html).toContain("No training load in the last 28 days");
+    expect(html).not.toContain('data-testid="activity-mix-bar"');
   });
 });

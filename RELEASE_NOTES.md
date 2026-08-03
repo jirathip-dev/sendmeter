@@ -12,6 +12,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- See your 28-day activity mix at a glance with a proportional training-load bar.
+
 ### Fixed
 
 ## 1.0 — 2026-08-02
