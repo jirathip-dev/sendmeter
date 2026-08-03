@@ -12,6 +12,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Force: Hands-free mode now runs every static sensor protocol pull-by-pull, records completed and early-release outcomes, and waits safely for unload before the next rep.
+
 ### Fixed
 
 ## 1.0 — 2026-08-02

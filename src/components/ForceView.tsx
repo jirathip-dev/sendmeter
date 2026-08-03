@@ -66,6 +66,13 @@ import {
   stepHandsFreeForce,
   type HandsFreeForceState,
 } from "../lib/handsFreeForce";
+import {
+  adaptiveStaticHolds,
+  armAdaptiveStatic,
+  stepAdaptiveStatic,
+  type AdaptiveStaticHold,
+  type AdaptiveStaticState,
+} from "../lib/adaptiveStaticProtocol";
 import { usePendingUploads } from "../hooks/usePendingUploads";
 import { PENDING_BACKED_UP } from "../lib/pendingUploads";
 import { appendUniqueById, claimManualAttempt, claimManualSession, manualAttemptKey } from "../lib/manualForceSubmission";
@@ -275,6 +282,18 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // animation frame. Each emitted action advances the ref to its claimed
   // phase before any callback can await, preventing duplicate Start/Stop.
   const handsFreeControlRef = useRef<HandsFreeForceState>(idleHandsFreeForce());
+  const adaptiveStaticRef = useRef<AdaptiveStaticState | null>(null);
+  const adaptiveHoldsRef = useRef<AdaptiveStaticHold[]>([]);
+  const adaptiveRunSnapshotRef = useRef<{
+    protocol: TindeqPreset;
+    tag: string;
+    side: TindeqSide;
+    refs: typeof presetRefs;
+    alternatingPrescription: AlternatingPrescription | null;
+    groupId: string | null;
+    runId: string;
+  } | null>(null);
+  const [adaptiveStaticState, setAdaptiveStaticState] = useState<AdaptiveStaticState | null>(null);
   const handsFreeArmInFlightRef = useRef(false);
   // Watch gauge mirror (SL-87) — non-null while the watch's Progressor
   // screen is connected/measuring and the phone is WC-reachable.
@@ -614,6 +633,114 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     }
   }
 
+  function buildAdaptiveRecording(
+    hold: AdaptiveStaticHold,
+    samples: readonly TindeqSample[],
+    startedMs: number,
+    endedMs: number,
+    outcome: "good" | "failed",
+    note = outcome === "failed" ? "Hands-free protocol attempt failed" : "",
+  ): (NewTindeqRecording & { id: string }) | null {
+    const snapshot = adaptiveRunSnapshotRef.current;
+    if (!snapshot) return null;
+    const slice = samples
+      .filter((sample) => sample.t >= startedMs && sample.t <= endedMs)
+      .map((sample) => ({ t: Math.round((sample.t - startedMs) * 10) / 10, kg: sample.kg }));
+    if (slice.length < 2) return null;
+    const kgs = slice.map((sample) => sample.kg);
+    const { protocol } = snapshot;
+    const resolved = prescriptionForSegment(
+      snapshot.alternatingPrescription,
+      hold.side || snapshot.side,
+      hold.set,
+    );
+    return {
+      id: crypto.randomUUID(),
+      durationMs: Math.max(1, endedMs - startedMs),
+      peakKg: Math.max(...kgs),
+      avgKg: Math.round((kgs.reduce((sum, kg) => sum + kg, 0) / kgs.length) * 100) / 100,
+      note,
+      tag: snapshot.tag,
+      side: hold.side || snapshot.side,
+      groupId: snapshot.groupId,
+      protocolRunId: snapshot.runId,
+      setNo: hold.set,
+      repNo: hold.rep,
+      zone: performedQuality(
+        protocol,
+        resolved?.target?.kg ?? presetTargetKg(protocol, snapshot.refs, hold.set),
+        resolved?.hand.refs ?? snapshot.refs,
+        hold.set,
+      ),
+      outcome,
+      plannedDurationMs: hold.durationMs,
+      actualDurationMs: Math.max(1, endedMs - startedMs),
+      samples: slice,
+    };
+  }
+
+  async function saveAdaptiveHold(
+    hold: AdaptiveStaticHold,
+    startedMs: number,
+    endedMs: number,
+    outcome: "good" | "failed",
+    note?: string,
+  ) {
+    if (savedSegsRef.current.has(hold.segmentIndex)) return;
+    // Claim before building or persisting. Manual Stop, disconnect recovery,
+    // the sample effect and sign-out salvage can all converge on this hold.
+    savedSegsRef.current.add(hold.segmentIndex);
+    const rec = buildAdaptiveRecording(
+      hold,
+      tindeq.samplesRef.current,
+      startedMs,
+      endedMs,
+      outcome,
+      note,
+    );
+    if (!rec) {
+      savedSegsRef.current.delete(hold.segmentIndex);
+      return;
+    }
+    try {
+      const saved = await insertRecording(rec);
+      outageRef.current = false;
+      setRecordings((list) => [saved, ...list]);
+      setJustSaved(saved);
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : "Failed to save recording");
+      await queueFailedRecording(rec);
+    }
+  }
+
+  function buildAdaptiveStaticSalvage(
+    samples: readonly TindeqSample[],
+  ): (NewTindeqRecording & { id: string })[] | null {
+    const machine = adaptiveStaticRef.current;
+    if (!machine) return null;
+    // A recovery/complete state has no open hold. Returning [] deliberately
+    // suppresses the generic whole-buffer salvage row, which would merge
+    // already-saved adaptive reps and their rests into a false free hold.
+    if (machine.phase !== "hold") return [];
+    const hold = adaptiveHoldsRef.current[machine.holdIndex];
+    if (!hold || savedSegsRef.current.has(hold.segmentIndex)) return [];
+    savedSegsRef.current.add(hold.segmentIndex);
+    const endedMs = samples.at(-1)?.t ?? machine.lastMs;
+    const rec = buildAdaptiveRecording(
+      hold,
+      samples,
+      machine.startedMs,
+      endedMs,
+      "failed",
+      "Recovered after sign-out · Hands-free protocol attempt failed",
+    );
+    if (!rec) {
+      savedSegsRef.current.delete(hold.segmentIndex);
+      return [];
+    }
+    return [rec];
+  }
+
   /// Save one continuous Reverse Action SET. Completed-set autosave, manual
   /// Stop and interruption recovery all enter here; the run/set claim is made
   /// before the first persistence await by `persistReverseActionSetOnce`.
@@ -701,6 +828,35 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   }
 
   async function runStop(note: string, endMs?: number) {
+    const adaptive = adaptiveStaticRef.current;
+    if (adaptive) {
+      // Claim the whole adaptive stop before any save/transport await. A
+      // manual Stop and deferred disconnect recovery must not both own it.
+      adaptiveStaticRef.current = null;
+      handsFreeControlRef.current = idleHandsFreeForce();
+      setSaving(true);
+      try {
+        if (adaptive.phase === "hold") {
+          const hold = adaptiveHoldsRef.current[adaptive.holdIndex];
+          if (hold) {
+            await saveAdaptiveHold(
+              hold,
+              adaptive.startedMs,
+              endMs ?? tindeq.elapsedMs,
+              "failed",
+              note || "Hands-free protocol attempt failed",
+            );
+          }
+        }
+        await tindeq.stop();
+        void endTindeqLiveActivity();
+      } finally {
+        setSaving(false);
+        adaptiveRunSnapshotRef.current = null;
+        setAdaptiveStaticState(adaptive.phase === "complete" ? adaptive : null);
+      }
+      return;
+    }
     // #298 round 5: `timeline` is itself derived from the LOCKED gauge
     // inputs, which now stay locked for as long as `runActive` — measuring OR
     // `tindeq.pendingInterruption` — not just `measuring` alone (finding 1).
@@ -835,8 +991,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // label the next recording AND drive the target zones, trend and curve.
   // Charts fall back to the most-recorded tag while the input doesn't match
   // an existing one (mid-typing / brand-new tag).
-  const measuring = tindeq.status === "measuring";
-  const armed = tindeq.status === "armed";
+  const { status } = tindeq;
+  const measuring = status === "measuring";
+  const armed = status === "armed";
   // #298 round 5 (finding 1): a mid-measurement BLE drop batches
   // `setStatus("idle")` with claiming the interruption in the SAME render
   // (useTindeq's handleDeviceDropped), so `measuring` alone already reads
@@ -1383,8 +1540,35 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     setProtoShiftS(0);
     setPausedAtS(null);
     protocolRunIdRef.current = null;
+    if (timeline && activeProtocol && activeProtocol.protocolMode !== "reverse_action") {
+      adaptiveHoldsRef.current = adaptiveStaticHolds(timeline as ProtocolSegment[]);
+      adaptiveStaticRef.current = armAdaptiveStatic();
+      setAdaptiveStaticState(adaptiveStaticRef.current);
+      protocolRunIdRef.current = crypto.randomUUID();
+      savedSegsRef.current = new Set();
+      const runId = protocolRunIdRef.current ?? crypto.randomUUID();
+      protocolRunIdRef.current = runId;
+      adaptiveRunSnapshotRef.current = {
+        protocol: activeProtocol,
+        tag: gaugeInputs.pendingTag,
+        side: gaugeInputs.pendingSide,
+        refs: { ...presetRefs },
+        alternatingPrescription,
+        groupId: null,
+        runId,
+      };
+    } else {
+      adaptiveStaticRef.current = null;
+      adaptiveRunSnapshotRef.current = null;
+      setAdaptiveStaticState(null);
+    }
     const didArm = await tindeq.arm();
-    if (!didArm) handsFreeControlRef.current = idleHandsFreeForce();
+    if (!didArm) {
+      handsFreeControlRef.current = idleHandsFreeForce();
+      adaptiveStaticRef.current = null;
+      adaptiveRunSnapshotRef.current = null;
+      setAdaptiveStaticState(null);
+    }
     handsFreeArmInFlightRef.current = false;
   }
 
@@ -1392,10 +1576,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // Claim cancellation synchronously; samples arriving while the BLE stop
     // command is in flight cannot re-trigger Start.
     handsFreeControlRef.current = idleHandsFreeForce();
+    adaptiveStaticRef.current = null;
+    adaptiveRunSnapshotRef.current = null;
+    setAdaptiveStaticState(null);
     void tindeq.cancelArm();
   }
 
   function stopHandsFreeNow() {
+    if (adaptiveStaticRef.current) {
+      void handleStop();
+      return;
+    }
     if (handsFreeControlRef.current.phase === "recording") {
       handsFreeControlRef.current = { phase: "stopping" };
     }
@@ -1541,7 +1732,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       reverseCompletionClaimRef.current = false;
     }
     wasMeasuringRef.current = measuring;
-    if (!measuring || !timeline) return;
+    if (!measuring || !timeline || adaptiveStaticRef.current) return;
     const tS = protoTS;
     let idx = timeline.findIndex((s) => tS < s.startS + s.durS);
     if (idx === -1) idx = timeline.length;
@@ -1579,6 +1770,47 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // handleStop reads the current locked run snapshot and refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProtocol?.protocolMode, measuring, protoTS, timeline]);
+
+  useEffect(() => {
+    const machine = adaptiveStaticRef.current;
+    if (!handsFreeEnabled || !machine || (status !== "armed" && status !== "measuring")) return;
+    const stepped = stepAdaptiveStatic(machine, adaptiveHoldsRef.current, {
+      atMs: tindeq.elapsedMs,
+      kg: tindeq.current,
+    });
+    adaptiveStaticRef.current = stepped.state;
+    setAdaptiveStaticState(stepped.state);
+    const action = stepped.action;
+    if (!action) return;
+    if (action.type === "start") {
+      if (status === "armed") {
+        const snapshot = adaptiveRunSnapshotRef.current;
+        if (snapshot && snapshot.groupId === null) snapshot.groupId = ensureSession();
+        if (!tindeq.beginArmedRecording()) {
+          adaptiveStaticRef.current = null;
+          adaptiveRunSnapshotRef.current = null;
+          setAdaptiveStaticState(null);
+          return;
+        }
+        // beginArmedRecording resets the physical sample clock.
+        adaptiveStaticRef.current = { ...stepped.state, startedMs: 0, lastMs: 0 } as AdaptiveStaticState;
+        setAdaptiveStaticState(adaptiveStaticRef.current);
+      }
+      return;
+    }
+    if (action.type === "save") {
+      const hold = adaptiveHoldsRef.current[action.holdIndex];
+      if (hold) void saveAdaptiveHold(hold, action.startedMs, action.endedMs, action.outcome);
+      if (stepped.state.phase === "complete") {
+        // `runStop` owns the final transport transition and preserves the
+        // complete/failed display. The state-machine action already claimed
+        // the final recording before this async path begins.
+        void handleStop();
+      }
+    }
+    // All actions were claimed in adaptiveStaticRef before persistence.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handsFreeEnabled, status, tindeq.current, tindeq.elapsedMs]);
 
   // Pause / Skip during a guided run. Both first FINALIZE an in-progress hold
   // (save the rep-so-far, mark it done) so the recorder never has to slice a
@@ -1696,7 +1928,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // throwaway dev accounts, not just hypothetical).
       userId,
       stopInFlight: stopInFlightRef.current,
-      buildSalvageRecordings: buildReverseSalvageRecordings,
+      buildSalvageRecordings: (samples) =>
+        buildAdaptiveStaticSalvage(samples) ?? buildReverseSalvageRecordings(samples),
     }));
     // setSalvageContext itself is useCallback-stable ([] deps in useTindeq);
     // depending on the whole `tindeq` object instead would re-run this every
@@ -1710,7 +1943,6 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // override a user's minimize). And when it DISCONNECTS with an active
   // session, prompt to finish it (SL-58 #5) — the connection now persists
   // across tabs, so a disconnect is a deliberate end (or the device dying).
-  const { status } = tindeq;
   useEffect(() => {
     const machine = handsFreeControlRef.current;
     if (status === "connected" || status === "idle" || status === "unsupported") {
@@ -1725,7 +1957,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     }
     const observingArmed = status === "armed" && machine.phase === "armed";
     const observingRecording = status === "measuring" && machine.phase === "recording";
-    if (!handsFreeEnabled || (!observingArmed && !observingRecording)) return;
+    if (!handsFreeEnabled || adaptiveStaticRef.current || (!observingArmed && !observingRecording)) return;
 
     const releaseStartedMs = machine.phase === "recording" ? machine.belowSinceMs : null;
     const stepped = stepHandsFreeForce(machine, {
@@ -2448,6 +2680,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           }
           saving={saving}
           handsFree={handsFreeEnabled}
+          adaptiveState={adaptiveStaticState}
           onToggleHandsFree={toggleHandsFree}
           targetCoach={targetCoachEnabled}
           onToggleTargetCoach={toggleTargetCoach}
