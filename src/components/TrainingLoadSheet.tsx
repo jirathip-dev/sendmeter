@@ -8,6 +8,47 @@ import ChartTooltip from "./ChartTooltip";
 import ContributionHeatmap from "./ContributionHeatmap";
 import Sheet from "./Sheet";
 
+function ActivityMixBar({ activities }: { activities: ReturnType<typeof activityMix>["activities"] }) {
+  const description = activities
+    .map((activity) => `${activity.label} ${activity.percentage.toFixed(0)}%`)
+    .join(", ");
+
+  return (
+    <div
+      role="img"
+      aria-label={`Activity mix: ${description}`}
+      data-testid="activity-mix-bar"
+      style={{
+        display: "flex",
+        width: "100%",
+        height: 10,
+        overflow: "hidden",
+        borderRadius: 5,
+        background: "var(--surface-2)",
+        marginBottom: 12,
+      }}
+    >
+      {activities.map((activity, index) => (
+        <span
+          key={activity.type}
+          aria-hidden="true"
+          data-activity-type={activity.type}
+          style={{
+            width: `${activity.percentage}%`,
+            height: "100%",
+            flexShrink: 0,
+            background: activityColor(activity.type),
+            boxShadow:
+              index < activities.length - 1 && activity.percentage >= 1
+                ? "inset -1px 0 rgba(255, 255, 255, 0.7)"
+                : "none",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 function weekDelta(cur: number, prev: number): { pct: number; arrow: string; color: string } | null {
   if (prev <= 0) return null;
   const pct = ((cur - prev) / prev) * 100;
@@ -167,48 +208,51 @@ export default function TrainingLoadSheet({
             contribute.
           </div>
         ) : (
-          mix.activities.map((activity) => (
-            <div
-              key={activity.type}
-              style={{
-                display: "grid",
-                gridTemplateColumns: "10px minmax(0, 1fr) auto",
-                gap: 8,
-                alignItems: "center",
-                marginTop: 9,
-              }}
-            >
-              <span
-                aria-hidden="true"
+          <>
+            <ActivityMixBar activities={mix.activities} />
+            {mix.activities.map((activity) => (
+              <div
+                key={activity.type}
                 style={{
-                  width: 9,
-                  height: 9,
-                  borderRadius: 2,
-                  background: activityColor(activity.type),
-                }}
-              />
-              <span
-                style={{
-                  fontSize: "var(--t-xs)",
-                  color: "var(--ink)",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  display: "grid",
+                  gridTemplateColumns: "10px minmax(0, 1fr) auto",
+                  gap: 8,
+                  alignItems: "center",
+                  marginTop: 9,
                 }}
               >
-                {activity.label}
-              </span>
-              <span
-                style={{
-                  fontSize: "var(--t-xs)",
-                  color: "var(--ink-muted)",
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {activity.load.toLocaleString()} AU · {activity.percentage.toFixed(0)}%
-              </span>
-            </div>
-          ))
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: 2,
+                    background: activityColor(activity.type),
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: "var(--t-xs)",
+                    color: "var(--ink)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {activity.label}
+                </span>
+                <span
+                  style={{
+                    fontSize: "var(--t-xs)",
+                    color: "var(--ink-muted)",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {activity.load.toLocaleString()} AU · {activity.percentage.toFixed(0)}%
+                </span>
+              </div>
+            ))}
+          </>
         )}
       </div>
 
