@@ -19,6 +19,7 @@ import {
 import { dominantZone, zoneSets } from "../lib/zoneHistory";
 import {
   historyFilterOptions,
+  liveWorkoutMatchesHistoryFilters,
   looseRecordingMatchesHistoryFilters,
   sessionMatchesHistoryFilters,
 } from "../lib/historyFilters";
@@ -159,6 +160,14 @@ export default function HistoryView({
       filterOptions.activeTag,
     ),
   );
+  const filteredLive =
+    live &&
+    liveWorkoutMatchesHistoryFilters(
+      filterOptions.activeType,
+      filterOptions.activeTag,
+    )
+      ? live
+      : null;
   const total = filteredSessions.reduce((sum, session) => sum + session.load, 0);
 
   // Existing exercise tags, for the edit sheet's quick-pick chips.
@@ -340,9 +349,9 @@ export default function HistoryView({
       )}
       {/* Pinned live-workout row (SL-98) — outside the paginated list so it's
           always visible; disappears on its own when the workout ends. */}
-      {live && <LiveSessionRow live={live} />}
+      {filteredLive && <LiveSessionRow live={filteredLive} />}
       {items.length === 0 &&
-        (!live || sessions.length > 0 || ungrouped.length > 0) && (
+        (!filteredLive || sessions.length > 0 || ungrouped.length > 0) && (
         <div
           style={{
             textAlign: "center",

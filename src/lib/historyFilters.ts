@@ -69,3 +69,12 @@ export function looseRecordingMatchesHistoryFilters(
 ): boolean {
   return (!type || type === "tindeq") && (!tag || recording.tag === tag);
 }
+
+/** A watch workout will become an Auto-tracked session when it lands. It has
+ * no Force recordings yet, so any Force-tag filter excludes it. */
+export function liveWorkoutMatchesHistoryFilters(
+  type: HistoryTypeFilter,
+  tag: HistoryTagFilter,
+): boolean {
+  return !tag && (!type || type === "auto");
+}

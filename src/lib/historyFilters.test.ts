@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Session, TindeqRecordingMeta } from "../types";
 import {
   historyFilterOptions,
+  liveWorkoutMatchesHistoryFilters,
   looseRecordingMatchesHistoryFilters,
   sessionMatchesHistoryFilters,
 } from "./historyFilters";
@@ -43,6 +44,13 @@ describe("history filters", () => {
     const rec = recording("Crimp");
     expect(looseRecordingMatchesHistoryFilters(rec, "tindeq", null)).toBe(true);
     expect(looseRecordingMatchesHistoryFilters(rec, "climbing", null)).toBe(false);
+  });
+
+  it("filters the pinned live workout as its eventual Auto-tracked session", () => {
+    expect(liveWorkoutMatchesHistoryFilters(null, null)).toBe(true);
+    expect(liveWorkoutMatchesHistoryFilters("auto", null)).toBe(true);
+    expect(liveWorkoutMatchesHistoryFilters("tindeq", null)).toBe(false);
+    expect(liveWorkoutMatchesHistoryFilters(null, "Crimp")).toBe(false);
   });
 
   it("matches a grouped Tindeq session when any recording has the tag", () => {
