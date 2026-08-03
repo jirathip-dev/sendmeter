@@ -127,18 +127,8 @@ import ForceTrendChart from "./ForceTrendChart";
 import LiveForceSparkline from "./LiveForceSparkline";
 import ForceSetupGuide from "./ForceSetupGuide";
 import {
-  EMPTY_FORCE_SETUP_METADATA,
   forceMeasurementMode,
-  forceSetupContextKey,
-  isForceSetupConfirmed,
-  markForceSetupSeen,
-  parseForceSetupMemory,
-  rememberForceSetup,
-  saveForceSetupDraft,
-  shouldAutoShowForceSetup,
   type ForceMeasurementMode,
-  type ForceSetupInputs,
-  type ForceSetupMemory,
 } from "../lib/forceSetup";
 import {
   cadenceOnlyRunComplete,
@@ -164,19 +154,8 @@ type ForceTimelineSegment = ProtocolSegment | ReverseActionSegment;
 
 export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const toast = useToast();
-  const setupStorageKey = `sendmeter:force-setup:${userId}`;
-  const [setupMemory, setSetupMemory] = useState<ForceSetupMemory>(() =>
-    parseForceSetupMemory(localStorage.getItem(setupStorageKey)),
-  );
-  const setupMemoryRef = useRef(setupMemory);
-  const [setupExecution, setSetupExecution] = useState<"sensor" | "cadence_only">("sensor");
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
-  const restoredSetupSidesRef = useRef(new Set<string>());
-  function commitSetupMemory(next: ForceSetupMemory) {
-    setupMemoryRef.current = next;
-    localStorage.setItem(setupStorageKey, JSON.stringify(next));
-    setSetupMemory(next);
-  }
+  const [setupGuideSensor, setSetupGuideSensor] = useState(true);
   // #106: a rep whose insert fails (dead auth session, dropped connection)
   // gets queued instead of dropped — App.tsx drains it once a session comes
   // back. Tracks whether the PREVIOUS attempt (of either kind) failed, so the
@@ -466,7 +445,6 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       1,
       // `endSession` only runs from event/effect paths; this is elapsed wall
       // time, not a render-time value.
-      // eslint-disable-next-line react-hooks/purity
       Math.round((Date.now() - gaugeSession.startedAt) / 60000),
     );
     clearSession();
@@ -1283,57 +1261,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       )
     : null;
 
-  // Setup mode remains presentation state, but protocol selection synchronizes
-  // it through `forceMeasurementMode`: an armed Reverse Action preset must
-  // never present the Static-hold guide (or vice versa).
-  function setupMetadataFor(mode: ForceMeasurementMode, exercise = pendingTag) {
-    return (
-      setupMemory.metadataByContext[
-        forceSetupContextKey({ mode, exercise, executionMethod: setupExecution })
-      ] ?? EMPTY_FORCE_SETUP_METADATA
-    );
-  }
-  const currentSetup: ForceSetupInputs = {
-    mode: setupMode,
-    executionMethod: setupExecution,
-    exercise: pendingTag,
-    side: pendingSide,
-    ...setupMetadataFor(setupMode),
-  };
-  const currentSetupContextKey = forceSetupContextKey(currentSetup);
-  const rememberedSetupSide = setupMemory.sideByContext[currentSetupContextKey] ?? "";
-  useEffect(() => {
-    if (!pendingTag.trim() || restoredSetupSidesRef.current.has(currentSetupContextKey)) return;
-    // Claim this context before the deferred write. A user side change that
-    // lands before the microtask must win rather than being overwritten by a
-    // second restore attempt from another render.
-    restoredSetupSidesRef.current.add(currentSetupContextKey);
-    if (!pendingSide && rememberedSetupSide) {
-      queueMicrotask(() => setPendingSide((current) => current || rememberedSetupSide));
-    }
-  }, [currentSetupContextKey, pendingSide, pendingTag, rememberedSetupSide]);
-  const setupConfirmed = isForceSetupConfirmed(setupMemory, currentSetup);
-  // A numeric target belongs to measured execution. Once cadence-only is
-  // chosen, equipment setup must not imply that kilograms are prescribed.
-  const setupTargetKg = setupExecution === "cadence_only"
-    ? null
-    : (presetKgSet1 ?? bandTarget?.kg ?? null);
-
-  function saveSetupDraft(input: ForceSetupInputs) {
-    commitSetupMemory(saveForceSetupDraft(setupMemoryRef.current, input));
-  }
-
-  function closeSetupGuide() {
-    commitSetupMemory(markForceSetupSeen(setupMemoryRef.current, setupMode));
-    setSetupGuideOpen(false);
-  }
-
-  function confirmSetup(input: ForceSetupInputs) {
-    commitSetupMemory(
-      rememberForceSetup(setupMemoryRef.current, input, new Date().toISOString()),
-    );
-    setSetupGuideOpen(false);
-  }
+  // The armed protocol selects the matching informational guide. The guide is
+  // optional: it does not remember, approve, or gate a physical setup.
 
   // Move the global intensity dial (the slider on TargetZonesCard, #172):
   // persist + update state, and if a zone is currently armed, re-arm it at the
@@ -1749,7 +1678,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // Keep the screen awake while the gauge is live so a short auto-lock doesn't
   // interrupt a hold/protocol mid-recording.
   useWakeLock(
-    status === "connected" || status === "checking" || status === "armed" || status === "measuring" || manualOpen || cadenceRun !== null,
+    status === "connected" || status === "armed" || status === "measuring" || manualOpen || cadenceRun !== null,
   );
   const prevStatusRef = useRef(status);
   useEffect(() => {
@@ -1757,13 +1686,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     prevStatusRef.current = status;
     if (status === "connected" && prev === "connecting") {
       setGaugeMinimized(false);
-      if (shouldAutoShowForceSetup(setupMemoryRef.current, setupMode)) {
-        queueMicrotask(() => setSetupGuideOpen(true));
-      }
     }
     if (
       status === "idle" &&
-      (prev === "connected" || prev === "checking" || prev === "armed" || prev === "measuring")
+      (prev === "connected" || prev === "armed" || prev === "measuring")
     ) {
       // Defer so any interrupted-save from the same disconnect lands first,
       // and to avoid a synchronous setState in the effect body.
@@ -1963,7 +1889,6 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
 
       {status === "idle" && (
         <button className="btn-primary" onClick={() => {
-          setSetupExecution("sensor");
           void tindeq.connect();
         }}>
           {activeProtocol?.protocolMode === "reverse_action"
@@ -1992,24 +1917,6 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           onClick={() => {
             if (!timeline || !activeProtocol || !pendingTag.trim()) return;
             if (activeProtocol.protocolMode === "reverse_action") {
-              const cadenceSetup: ForceSetupInputs = {
-                mode: "movement",
-                executionMethod: "cadence_only",
-                exercise: pendingTag,
-                side: pendingSide,
-                ...(setupMemory.metadataByContext[
-                  forceSetupContextKey({
-                    mode: "movement",
-                    exercise: pendingTag,
-                    executionMethod: "cadence_only",
-                  })
-                ] ?? EMPTY_FORCE_SETUP_METADATA),
-              };
-              setSetupExecution("cadence_only");
-              if (!isForceSetupConfirmed(setupMemoryRef.current, cadenceSetup)) {
-                setSetupGuideOpen(true);
-                return;
-              }
               const next: CadenceOnlyRunState = {
                 version: 1,
                 preset: activeProtocol,
@@ -2039,18 +1946,32 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           {activeProtocol?.protocolMode === "reverse_action" ? "Start cadence only" : "Train without sensor"}
         </button>
         {!activeProtocol && <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 6 }}>Choose a Force protocol below to train without a sensor.</div>}
-        {activeProtocol?.protocolMode === "reverse_action" && <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 6 }}>Cadence only follows the clock; it does not detect movement or record force.</div>}
+        {activeProtocol?.protocolMode === "reverse_action" && (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)" }}>Cadence only follows the clock; it does not detect movement or record force.</div>
+            <button
+              type="button"
+              className="glass-pill"
+              style={{ marginTop: 5, fontSize: "var(--t-xs)" }}
+              onClick={() => {
+                setSetupGuideSensor(false);
+                setSetupGuideOpen(true);
+              }}
+            >
+              How to set up cadence only
+            </button>
+          </div>
+        )}
       </>}
 
       {/* Connected: the gauge lives fullscreen; this is the resume bar */}
       {isActiveTindeqStatus(status) && (
         <ForceConnectionCard
           status={status}
-          setupConfirmed={setupConfirmed}
           locked={runActive}
           onOpenGauge={() => setGaugeMinimized(false)}
           onOpenSetup={() => {
-            setSetupExecution("sensor");
+            setSetupGuideSensor(true);
             setSetupGuideOpen(true);
           }}
         />
@@ -2421,10 +2342,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           allTags={allTags}
           onTag={setPendingTag}
           onSide={setPendingSide}
-          setup={currentSetup}
-          setupConfirmed={setupConfirmed}
-          setupTargetKg={setupTargetKg}
-          onOpenSetupGuide={() => setSetupGuideOpen(true)}
+          onOpenSetupGuide={() => {
+            setSetupGuideSensor(true);
+            setSetupGuideOpen(true);
+          }}
           onClearProtocol={clearProtocol}
           canStart={
             !!gaugeInputs.pendingTag &&
@@ -2618,23 +2539,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       )}
       {setupGuideOpen && !runActive && (
         <ForceSetupGuide
-          tindeq={tindeq}
           mode={setupMode}
-          sensor={setupExecution === "sensor"}
-          exercise={pendingTag}
-          side={pendingSide}
-          allTags={allTags}
-          targetKg={setupTargetKg}
-          autoShow={setupMemory.autoShow}
-          metadataForMode={(nextMode) => setupMetadataFor(nextMode, pendingTag)}
-          onTag={setPendingTag}
-          onSide={setPendingSide}
-          onSaveDraft={saveSetupDraft}
-          onConfirm={confirmSetup}
-          onAutoShow={(enabled) =>
-            commitSetupMemory({ ...setupMemoryRef.current, autoShow: enabled })
-          }
-          onClose={closeSetupGuide}
+          sensor={setupGuideSensor}
+          onClose={() => setSetupGuideOpen(false)}
         />
       )}
     </div>

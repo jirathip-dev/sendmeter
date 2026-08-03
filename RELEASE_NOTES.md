@@ -12,6 +12,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Force equipment setup is now concise, optional guidance without checklists or training blockers.
+
 ### Fixed
 
 ## 1.0 — 2026-08-02
