@@ -3,7 +3,7 @@ import type { ForceExecutionMethod, TindeqProtocolMode, TindeqSide } from "../ty
 
 export type ForceMeasurementMode = "static" | "movement";
 
-/** Presentation mapping only. The armed protocol selects this value; equipment
+/** Presentation mapping only. The explicit protocol-list context selects this value; equipment
  * setup never acts as an independent Static/Movement switch. */
 export function forceProtocolMode(mode: ForceMeasurementMode): TindeqProtocolMode {
   return mode === "movement" ? "reverse_action" : "hold";
@@ -36,7 +36,7 @@ export interface ForceSetupMemory {
   version: 1;
   autoShow: boolean;
   /** Legacy #401 field retained so existing local memory remains readable.
-   * #422 derives the visible mode from the armed protocol and never writes it. */
+   * The explicit Static / Reverse Action selector controls the visible mode. */
   selectedMode: ForceMeasurementMode;
   seenModes: ForceMeasurementMode[];
   metadataByContext: Record<string, ForceSetupMetadata>;

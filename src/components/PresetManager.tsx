@@ -36,6 +36,8 @@ import type {
 } from "../types";
 import ReverseActionPresetFields from "./ReverseActionPresetFields";
 import ProtocolBadge from "./ProtocolBadge";
+import { presetModality, protocolModeFor } from "../lib/protocolModeContext";
+import type { ForceCapacityModality } from "../types";
 
 interface Props {
   selectedId: string | null;
@@ -52,6 +54,7 @@ interface Props {
   /// set you finish isn't the set you started. Disables all of them rather
   /// than leaving a control that looks live but is inert.
   locked: boolean;
+  modality: ForceCapacityModality;
 }
 
 function fmt(sec: number): string {
@@ -132,7 +135,7 @@ function NumField({
 
 /// Hang-protocol presets (hold / reps / sets / rests). Saved to Supabase;
 /// selecting one arms the guided timer in the fullscreen gauge.
-export default function PresetManager({ selectedId, onSelect, onRestore, presetRefs, locked }: Props) {
+export default function PresetManager({ selectedId, onSelect, onRestore, presetRefs, locked, modality }: Props) {
   const toast = useToast();
   const [presets, setPresets] = useState<TindeqPreset[]>([]);
   const [adding, setAdding] = useState(false);
@@ -163,7 +166,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   const [pctBasis, setPctBasis] = useState<"pr" | "cf">("pr");
   const [pctStep, setPctStep] = useState(0); // +% per set
   const [alternateSides, setAlternateSides] = useState(false);
-  const [protocolMode, setProtocolMode] = useState<TindeqProtocolMode>("hold");
+  const [protocolMode, setProtocolMode] = useState<TindeqProtocolMode>(() => protocolModeFor(modality));
   const [cadenceOutS, setCadenceOutS] = useState(3);
   const [cadenceReturnS, setCadenceReturnS] = useState(3);
   const [toleranceMode, setToleranceMode] =
@@ -239,6 +242,8 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         // Re-arm the previously selected protocol (survives tab switches).
         const savedId = localStorage.getItem(SELECTED_KEY);
         if (savedId && selectedIdRef.current === null) {
+          // A pre-#431 saved selection may not have a saved global mode yet.
+          // Let ForceView restore it and synchronize the explicit context.
           const saved = list.find((p) => p.id === savedId);
           if (saved) onRestoreRef.current(saved);
         }
@@ -376,14 +381,13 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginBottom: 8 }}>{error}</div>
       )}
 
-      {presets.length === 0 && !adding && (
+      {presets.filter((p) => presetModality(p) === modality).length === 0 && !adding && (
         <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)", marginBottom: 10, lineHeight: 1.5 }}>
-          Save a hold or Reverse Action protocol — selecting one runs its guided
-          timer on the gauge.
+          Save a {modality === "static" ? "static hold" : "Reverse Action"} protocol — selecting it runs its guided timer on the gauge.
         </div>
       )}
 
-      {presets.map((p) => {
+      {presets.filter((p) => presetModality(p) === modality).map((p) => {
         const selected = p.id === selectedId;
         // The load this preset's target (fixed kg, %/curve — any mode)
         // resolves to for the active exercise right now — used by the quality
@@ -531,7 +535,10 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
           under its own row (see the map above). */}
       {adding && !editingId && renderForm()}
       {!adding && (
-        <button className="btn-ghost" disabled={locked} onClick={() => setAdding(true)}>
+        <button className="btn-ghost" disabled={locked} onClick={() => {
+          setProtocolMode(protocolModeFor(modality));
+          setAdding(true);
+        }}>
           + New preset
         </button>
       )}
@@ -566,31 +573,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
             placeholder={protocolMode === "reverse_action" ? "Reverse Action 3:3" : "Repeaters 7:3"}
           />
           <span className="field-label">Protocol</span>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {(
-              [
-                ["hold", "Hold / hang"],
-                ["reverse_action", "Reverse Action"],
-              ] as const
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                className="tag"
-                onClick={() => {
-                  setProtocolMode(mode);
-                }}
-                style={{
-                  background: protocolMode === mode ? "var(--primary)" : "var(--surface-1)",
-                  color: protocolMode === mode ? "#ffffff" : "var(--ink-muted)",
-                  border: `1px solid ${protocolMode === mode ? "var(--primary)" : "var(--border)"}`,
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <ProtocolBadge mode={protocolMode} />
           {protocolMode === "hold" ? (
             <>
               <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>

@@ -12,6 +12,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Switch the Force protocol list clearly between Static and Reverse Action modes, with color-coded badges and mode-matched presets.
+
 ### Fixed
 
 ## 1.0 — 2026-08-02

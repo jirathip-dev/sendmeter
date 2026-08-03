@@ -81,6 +81,12 @@ import ForceCurveCard from "./ForceCurveCard";
 import type { GaugeTarget } from "./ForceCurveCard";
 import PresetManager from "./PresetManager";
 import { clearPersistedPreset } from "../lib/forcePresetStorage";
+import {
+  canSwitchProtocolModality,
+  loadProtocolModality,
+  presetModality,
+  saveProtocolModality,
+} from "../lib/protocolModeContext";
 import { restoredSelection, selectZoneOutcome, withPresetSelected } from "../lib/forceSelection";
 import SideAsymmetryCard from "./SideAsymmetryCard";
 import TagManagerSheet from "./TagManagerSheet";
@@ -320,6 +326,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   });
   const zoneSel = zoneState.selection;
   const [preset, setPreset] = useState<TindeqPreset | null>(null);
+  const [protocolModality, setProtocolModality] =
+    useState<ForceCapacityModality>(loadProtocolModality);
   const [manualOpen, setManualOpen] = useState(false);
   const [cadenceRun, setCadenceRun] = useState<CadenceOnlyRunState | null>(
     () => {
@@ -346,6 +354,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     if (clearsPersistedPreset) clearPersistedPreset();
   }
   function selectPreset(p: TindeqPreset | null) {
+    if (p) {
+      const nextModality = presetModality(p);
+      setProtocolModality(nextModality);
+      saveProtocolModality(nextModality);
+    }
     const next = withPresetSelected({ zoneSel, preset }, p);
     setPreset(next.preset);
     // Selecting a custom preset must also clear a post-fit zone notice when
@@ -368,6 +381,15 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     }));
     setPreset(null);
     clearPersistedPreset();
+  }
+  function selectProtocolModality(next: ForceCapacityModality) {
+    if (!canSwitchProtocolModality(protocolModality, next, runActive)) return;
+    // A zone belongs to Static and custom presets belong to their saved
+    // modality. Switching context must not leave an invisible protocol armed
+    // (or persisted for a later mount).
+    clearProtocol();
+    setProtocolModality(next);
+    saveProtocolModality(next);
   }
   // Global session-intensity dial (SL-97b) — one number for the whole
   // Protocol-presets section (zones AND custom presets), lazily seeded from
@@ -864,8 +886,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // be circular).
   // Capacity recordings only — maintenance holds must never win this PR,
   // even by walkover.
-  const liveCapacityModality: ForceCapacityModality =
-    preset?.protocolMode === "reverse_action" ? "reverse_action" : "static";
+  const liveCapacityModality = protocolModality;
   const livePrKg = effortPeakKg(
     recordings,
     liveEffectiveTag,
@@ -898,8 +919,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   if (gaugeInputs !== lockedGaugeInputs) setLockedGaugeInputs(gaugeInputs);
   const effectiveTag = gaugeInputs.tag;
   const chartSide = gaugeInputs.chartSide;
-  const capacityModality: ForceCapacityModality =
-    gaugeInputs.preset?.protocolMode === "reverse_action" ? "reverse_action" : "static";
+  const capacityModality = protocolModality;
 
   // The composed exercise label a zone selection arms/re-arms under (matches
   // the `tag` prop TargetZonesCard/ZoneFocusCard render with). Null while no
@@ -2263,16 +2283,37 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           adapts hold time to keep the training dose equivalent. Custom
           presets are never touched by it; a preset's quality badge below
           still reflects whatever load it actually resolves to. */}
-      <div
-        style={{
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, margin: "20px 0 10px" }}>
+        <div style={{
           fontSize: "var(--t-2xs)",
           color: "var(--ink-faint)",
           textTransform: "uppercase",
           letterSpacing: "0.1em",
-          margin: "20px 0 10px",
-        }}
-      >
-        Protocol presets
+        }}>
+          Protocol presets
+        </div>
+        <div role="group" aria-label="Protocol mode" style={{ display: "flex", gap: 4 }}>
+          {([ ["static", "Static"], ["reverse_action", "Reverse Action"] ] as const).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              className="tag"
+              disabled={runActive}
+              aria-pressed={protocolModality === mode}
+              onClick={() => selectProtocolModality(mode)}
+              style={{
+                background: protocolModality === mode
+                  ? mode === "static" ? "var(--success)" : "var(--primary)"
+                  : "var(--surface-1)",
+                color: protocolModality === mode ? "#fff" : "var(--ink-muted)",
+                border: `1px solid ${protocolModality === mode
+                  ? mode === "static" ? "var(--success)" : "var(--primary)"
+                  : "var(--border)"}`,
+                fontFamily: "Inter, sans-serif",
+              }}
+            >{label}</button>
+          ))}
+        </div>
       </div>
       {zoneTag && capacityModality === "static" && (
         <TargetZonesCard
@@ -2329,10 +2370,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       )}
       {zoneTag && capacityModality === "reverse_action" && (
         <div className="card" style={{ color: "var(--ink-muted)", fontSize: "var(--t-xs)" }}>
-          Static recommendations are hidden while a Reverse Action protocol is armed. Its PR, Hill/CF model, and targets use Reverse Action capacity evidence only.
+          Static recommendations are hidden in Reverse Action mode. Its PR, Hill/CF model, and targets use Reverse Action capacity evidence only.
         </div>
       )}
       <PresetManager
+        // Remounting on a deliberate mode switch closes any add/edit draft,
+        // so form state cannot leak into the other protocol context.
+        key={protocolModality}
         // #298 round 6 (finding A2): the LOCKED preset id, not raw `preset` —
         // the highlight must never diverge from what's actually running.
         selectedId={gaugeInputs.preset?.id ?? null}
@@ -2349,6 +2393,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           // fetch was in flight still wins (forceSelection.test.ts covers
           // the race).
           const next = restoredSelection({ zoneSel, preset }, p);
+          if (next.preset === p) {
+            const restoredModality = presetModality(p);
+            setProtocolModality(restoredModality);
+            saveProtocolModality(restoredModality);
+          }
           setZoneState((current) => ({
             selection: next.zoneSel,
             notice: null,
@@ -2358,6 +2407,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         }}
         presetRefs={presetRefs}
         locked={runActive}
+        modality={protocolModality}
       />
 
       {showTagManager && (
