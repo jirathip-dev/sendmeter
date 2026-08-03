@@ -44,8 +44,6 @@ import BoxChip from "./BoxChip";
 import ForceGauge from "./ForceGauge";
 import PresetPlanChart from "./PresetPlanChart";
 import type { GaugeTarget } from "./ForceCurveCard";
-import type { ForceSetupInputs } from "../lib/forceSetup";
-import ForceSetupSummary from "./ForceSetupSummary";
 import ReverseActionWorkDisplay from "./ReverseActionWorkDisplay";
 import ProtocolBadge from "./ProtocolBadge";
 import {
@@ -76,9 +74,6 @@ interface Props {
   allTags: string[];
   onTag: (t: string) => void;
   onSide: (s: TindeqSide) => void;
-  setup: ForceSetupInputs;
-  setupConfirmed: boolean;
-  setupTargetKg: number | null;
   onOpenSetupGuide: () => void;
   /// Unarm the active zone/preset (#298) — falls back to a free hold.
   onClearProtocol: () => void;
@@ -200,9 +195,6 @@ export default function ForceFullscreen({
   allTags,
   onTag,
   onSide,
-  setup,
-  setupConfirmed,
-  setupTargetKg,
   onOpenSetupGuide,
   onClearProtocol,
   canStart,
@@ -724,7 +716,7 @@ export default function ForceFullscreen({
               className="glass-pill"
               style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
             >
-              Setup
+              How to set up
             </button>
           )}
           <button
@@ -1033,14 +1025,6 @@ export default function ForceFullscreen({
                   Clear — free hold
                 </button>
               )}
-              <ForceSetupSummary
-                setup={setup}
-                confirmed={setupConfirmed}
-                targetKg={setupTargetKg}
-                locked={false}
-                compact
-                onOpenGuide={onOpenSetupGuide}
-              />
             </>
           )}
         </div>}

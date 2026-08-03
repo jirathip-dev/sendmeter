@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import ForcePathDiagram from "./ForcePathDiagram";
-import ForceSetupSummary from "./ForceSetupSummary";
+import ForceSetupGuide from "./ForceSetupGuide";
 import ForceConnectionCard from "./ForceConnectionCard";
 import { sensorlessLaunchAvailable } from "../lib/forceConnection";
 
@@ -21,37 +21,20 @@ describe("Force setup presentation", () => {
     expect(movementDiagram).toContain('role="img"');
   });
 
-  it("renders an editable compact confirmation with mode, equipment, side, and target", () => {
-    const html = renderToStaticMarkup(
-      <ForceSetupSummary
-        setup={{
-          mode: "movement",
-          exercise: "Half crimp",
-          side: "left",
-          equipment: "Blue spring",
-          preload: "1 kg",
-          attachment: "Wall anchor",
-          position: "Seat mark 2",
-        }}
-        confirmed
-        targetKg={12}
-        locked={false}
-        compact
-        onOpenGuide={() => {}}
-      />,
-    );
+  it("renders movement setup as information without checks or saved approval", () => {
+    const html = renderToStaticMarkup(<ForceSetupGuide mode="movement" sensor onClose={() => {}} />);
     expect(html).toContain("Movement set");
-    expect(html).toContain("Blue spring");
-    expect(html).toContain("Left");
-    expect(html).toContain("12.0 kg target");
-    expect(html).toContain("Equipment checked · View");
+    expect(html).toContain("Movement set force path");
+    expect(html).toContain("Equipment principles");
+    expect(html).toContain("Make the setup repeatable");
+    expect(html).not.toMatch(/equipment checked|not checked|save equipment check|live readiness check/i);
+    expect(html).not.toContain('type="checkbox"');
   });
 
-  it("keeps setup compact in the connected Progressor card", () => {
+  it("links to optional guidance from the connected Progressor card", () => {
     const html = renderToStaticMarkup(
       <ForceConnectionCard
         status="connected"
-        setupConfirmed={false}
         locked={false}
         onOpenGauge={() => {}}
         onOpenSetup={() => {}}
@@ -59,14 +42,23 @@ describe("Force setup presentation", () => {
     );
     expect(html).toContain("Progressor");
     expect(html).toContain("Open gauge");
-    expect(html).toContain("Equipment setup");
+    expect(html).toContain("How to set up");
+    expect(html).not.toMatch(/equipment checked|not checked/i);
     expect(html).not.toContain("Train without sensor");
+  });
+
+  it("explains cadence-only limits without presenting sensor controls", () => {
+    const html = renderToStaticMarkup(<ForceSetupGuide mode="movement" sensor={false} onClose={() => {}} />);
+    expect(html).toContain("Cadence only");
+    expect(html).toContain("no force sensor, target band, tare, or movement detection");
+    expect(html).not.toContain("Movement set force path");
+    expect(html).not.toMatch(/connect progressor|start live readiness|save equipment/i);
   });
 
   it("only offers sensorless launch before a device session exists", () => {
     expect(sensorlessLaunchAvailable("idle")).toBe(true);
     expect(sensorlessLaunchAvailable("unsupported")).toBe(true);
-    for (const status of ["connecting", "connected", "checking", "armed", "measuring"] as const) {
+    for (const status of ["connecting", "connected", "armed", "measuring"] as const) {
       expect(sensorlessLaunchAvailable(status)).toBe(false);
     }
   });
