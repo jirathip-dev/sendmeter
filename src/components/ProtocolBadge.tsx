@@ -12,10 +12,10 @@ export default function ProtocolBadge({
       <span style={{
         borderRadius: 999, padding: "3px 8px", fontSize: "var(--t-2xs)",
         fontWeight: 850, letterSpacing: ".04em", whiteSpace: "nowrap",
-        color: mode === "reverse_action" ? "var(--primary)" : "var(--ink-muted)",
+        color: mode === "reverse_action" ? "var(--primary)" : "var(--success)",
         background: mode === "reverse_action"
           ? "color-mix(in srgb, var(--primary) 14%, var(--surface-1))"
-          : "var(--surface-2)",
+          : "color-mix(in srgb, var(--success) 14%, var(--surface-1))",
       }}>
         {mode === "reverse_action" ? "REVERSE ACTION" : "STATIC"}
       </span>
