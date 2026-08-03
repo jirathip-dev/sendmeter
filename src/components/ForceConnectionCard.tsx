@@ -2,13 +2,11 @@ import type { ActiveTindeqStatus } from "../lib/forceConnection";
 
 export default function ForceConnectionCard({
   status,
-  setupConfirmed,
   locked,
   onOpenGauge,
   onOpenSetup,
 }: {
   status: ActiveTindeqStatus;
-  setupConfirmed: boolean;
   locked: boolean;
   onOpenGauge: () => void;
   onOpenSetup: () => void;
@@ -46,14 +44,14 @@ export default function ForceConnectionCard({
           type="button"
           disabled={locked}
           onClick={onOpenSetup}
-          aria-label={setupConfirmed ? "View checked equipment setup" : "Open optional equipment setup check"}
+          aria-label="Open equipment setup guidance"
           style={{
             display: "block",
             marginTop: 3,
             padding: 0,
             border: 0,
             background: "none",
-            color: setupConfirmed ? "var(--success)" : "var(--ink-muted)",
+            color: "var(--ink-muted)",
             fontFamily: "inherit",
             fontSize: "var(--t-xs)",
             fontWeight: 650,
@@ -61,7 +59,7 @@ export default function ForceConnectionCard({
             textAlign: "left",
           }}
         >
-          {setupConfirmed ? "Equipment checked · View" : "Equipment setup"}
+          How to set up
         </button>
       </div>
       <button

@@ -17,7 +17,6 @@ export type TindeqStatus =
   | "idle"
   | "connecting"
   | "connected"
-  | "checking"
   | "armed"
   | "measuring";
 
@@ -500,27 +499,13 @@ export function useTindeq() {
     setElapsedMs(0);
   }, []);
 
-  const startFakeSamples = useCallback((profile: "workout" | "readiness" = "workout") => {
+  const startFakeSamples = useCallback(() => {
     if (!FAKE_MODE) return;
     const started = performance.now();
     fakeTimerRef.current = window.setInterval(() => {
       const t = performance.now() - started;
-      // Readiness has a browser-testable unloaded baseline followed by a
-      // gradual small pull. It is a hook concern (like FAKE_MODE itself), not
-      // a fictional dynamometer driver capability.
-      const readinessT = t % 12_000;
-      const kg = profile === "readiness"
-        ? readinessT < 6_000
-          ? 0.04 * Math.sin(t / 80)
-          : readinessT < 8_500
-            ? Math.min(6, (readinessT - 6_000) / 400) + 0.04 * Math.sin(t / 80)
-            : readinessT < 9_500
-              ? 6 + 0.04 * Math.sin(t / 80)
-              : readinessT < 11_000
-                ? Math.max(0, 6 * (1 - (readinessT - 9_500) / 1_500))
-                : 0.04 * Math.sin(t / 80)
-        : Math.max(0, 20 + 15 * Math.sin(t / 900) + 2 * Math.sin(t / 90)) *
-          (t < 500 ? t / 500 : 1);
+      const kg = Math.max(0, 20 + 15 * Math.sin(t / 900) + 2 * Math.sin(t / 90)) *
+        (t < 500 ? t / 500 : 1);
       handleSamples([{ us: t * 1000, kg }]);
     }, 12);
   }, [handleSamples]);
@@ -585,47 +570,6 @@ export function useTindeq() {
     setStatus("measuring");
     return true;
   }, [resetBuffer]);
-
-  // A readiness stream is live force without recording ownership. It is
-  // intentionally distinct from `arm()`: hands-free observes `armed`, so
-  // borrowing that state here could turn a setup test pull into a workout.
-  const beginReadinessCheck = useCallback(async () => {
-    if (streamingRef.current || streamStartInFlightRef.current) return false;
-    streamStartInFlightRef.current = true;
-    claimNewStream();
-    try {
-      await runCommand((c) => c.startMeasuring());
-      if (!FAKE_MODE && !connectionRef.current) return false;
-      streamingRef.current = true;
-      recordingRef.current = false;
-      setStatus("checking");
-      startRaf();
-      startFakeSamples("readiness");
-      return true;
-    } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Failed to start setup check");
-      return false;
-    } finally {
-      streamStartInFlightRef.current = false;
-    }
-  }, [claimNewStream, runCommand, startFakeSamples, startRaf]);
-
-  const endReadinessCheck = useCallback(async () => {
-    if (!streamingRef.current || recordingRef.current || armCancelInFlightRef.current) return;
-    armCancelInFlightRef.current = true;
-    streamingRef.current = false;
-    stopRaf();
-    clearInterval(fakeTimerRef.current);
-    try {
-      await runCommand((c) => c.stopMeasuring());
-    } catch {
-      // A disconnect while ending the check already stopped the stream.
-    } finally {
-      resetBuffer();
-      setStatus(connectionRef.current || FAKE_MODE ? "connected" : "idle");
-      armCancelInFlightRef.current = false;
-    }
-  }, [resetBuffer, runCommand, stopRaf]);
 
   const cancelArm = useCallback(async () => {
     if (
@@ -723,8 +667,6 @@ export function useTindeq() {
     connect,
     disconnect,
     tare,
-    beginReadinessCheck,
-    endReadinessCheck,
     arm,
     beginArmedRecording,
     cancelArm,

@@ -17,6 +17,12 @@ import {
   updateRecordingGroup,
 } from "../lib/repo";
 import { dominantZone, zoneSets } from "../lib/zoneHistory";
+import {
+  historyFilterOptions,
+  liveWorkoutMatchesHistoryFilters,
+  looseRecordingMatchesHistoryFilters,
+  sessionMatchesHistoryFilters,
+} from "../lib/historyFilters";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
 import { uploadWarningPresentation } from "../lib/watchBuild";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
@@ -84,6 +90,8 @@ export default function HistoryView({
   const [assignOpen, setAssignOpen] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
+  const [selectedType, setSelectedType] = useState<string | null>(null);
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
 
   const allRecordings = useCancellableFetch<TindeqRecordingMeta[]>(
     fetchRecordings,
@@ -96,8 +104,13 @@ export default function HistoryView({
   // "Global phase" — the two vocabularies otherwise contradict each other on
   // the same session (#214). Grouped once here (no new fetch — `allRecordings`
   // already has everything) and passed down to each Tindeq SessionRow.
+  // Edits must feed every derived view (group membership, tag filters and
+  // rows), rather than only the loose-recording row that happened to be open.
+  const effectiveRecordings = allRecordings
+    .filter((r) => !removedIds.has(r.id))
+    .map((r) => editedRecs.get(r.id) ?? r);
   const recordingsByGroup = new Map<string, TindeqRecordingMeta[]>();
-  for (const r of allRecordings) {
+  for (const r of effectiveRecordings) {
     if (!r.groupId) continue;
     const list = recordingsByGroup.get(r.groupId);
     if (list) list.push(r);
@@ -118,21 +131,47 @@ export default function HistoryView({
   );
   // Optimistic local hides (delete/assign) until the realtime refetch lands,
   // and local edits (tag/side/note) applied over the fetched rows.
-  const ungrouped = allRecordings
+  const ungrouped = effectiveRecordings
     .filter(
       (r) =>
         (r.groupId === null || !sessionGroupIds.has(r.groupId)) &&
-        !removedIds.has(r.id) &&
         !assignedIds.has(r.id),
-    )
-    .map((r) => editedRecs.get(r.id) ?? r);
+    );
 
-  const total = sessions.reduce((s, x) => s + x.load, 0);
+  const filterOptions = historyFilterOptions(
+    sessions,
+    ungrouped,
+    recordingsByGroup,
+    selectedType,
+    selectedTag,
+  );
+  const filteredSessions = sessions.filter((session) =>
+    sessionMatchesHistoryFilters(
+      session,
+      recordingsByGroup,
+      filterOptions.activeType,
+      filterOptions.activeTag,
+    ),
+  );
+  const filteredUngrouped = ungrouped.filter((recording) =>
+    looseRecordingMatchesHistoryFilters(
+      recording,
+      filterOptions.activeType,
+      filterOptions.activeTag,
+    ),
+  );
+  const filteredLive =
+    live &&
+    liveWorkoutMatchesHistoryFilters(
+      filterOptions.activeType,
+      filterOptions.activeTag,
+    )
+      ? live
+      : null;
+  const total = filteredSessions.reduce((sum, session) => sum + session.load, 0);
 
   // Existing exercise tags, for the edit sheet's quick-pick chips.
-  const recentTags = [
-    ...new Set(allRecordings.map((r) => r.tag).filter(Boolean)),
-  ];
+  const recentTags = [...new Set(effectiveRecordings.map((r) => r.tag).filter(Boolean))];
 
   // Tindeq sessions the ticked recordings can be assigned into (SL-58).
   const tindeqSessions = sessions.filter(
@@ -232,13 +271,13 @@ export default function HistoryView({
   // Interleave: sessions carry a date (YYYY-MM-DD); recordings a timestamp.
   // Sort by date desc; same-day sessions come before loose recordings.
   const items: TimelineItem[] = [
-    ...sessions.map((s) => ({
+    ...filteredSessions.map((s) => ({
       kind: "session" as const,
       key: `s-${s.id}`,
       sortKey: `${s.date}~1`,
       s,
     })),
-    ...ungrouped.map((rec) => ({
+    ...filteredUngrouped.map((rec) => ({
       kind: "recording" as const,
       key: `r-${rec.id}`,
       sortKey: `${rec.recordedAt.slice(0, 10)}~0`,
@@ -261,10 +300,37 @@ export default function HistoryView({
         </button>
       </div>
       <div className="section-sub">
-        {sessions.length} sessions · {total.toLocaleString()} AU total
-        {ungrouped.length > 0 &&
-          ` · ${ungrouped.length} loose recording${ungrouped.length === 1 ? "" : "s"}`}
+        {filteredSessions.length} sessions · {total.toLocaleString()} AU total
+        {filteredUngrouped.length > 0 &&
+          ` · ${filteredUngrouped.length} loose recording${filteredUngrouped.length === 1 ? "" : "s"}`}
       </div>
+      {filterOptions.types.length > 0 && (
+        <HistoryFilterRow
+          label="Session type"
+          allLabel="All types"
+          value={filterOptions.activeType}
+          options={filterOptions.types.map((option) => ({
+            value: option.id,
+            label: option.label,
+          }))}
+          onChange={(value) => {
+            setSelectedType(value);
+            setVisibleCount(PAGE_SIZE);
+          }}
+        />
+      )}
+      {filterOptions.tags.length > 0 && (
+        <HistoryFilterRow
+          label="Force tag"
+          allLabel="All tags"
+          value={filterOptions.activeTag}
+          options={filterOptions.tags.map((tag) => ({ value: tag, label: tag }))}
+          onChange={(value) => {
+            setSelectedTag(value);
+            setVisibleCount(PAGE_SIZE);
+          }}
+        />
+      )}
       {uploadWarning && (
         <div className="upload-status-banner" role="status">
           <div className="upload-status-title">{uploadWarning.title}</div>
@@ -283,8 +349,9 @@ export default function HistoryView({
       )}
       {/* Pinned live-workout row (SL-98) — outside the paginated list so it's
           always visible; disappears on its own when the workout ends. */}
-      {live && <LiveSessionRow live={live} />}
-      {items.length === 0 && !live && (
+      {filteredLive && <LiveSessionRow live={filteredLive} />}
+      {items.length === 0 &&
+        (!filteredLive || sessions.length > 0 || ungrouped.length > 0) && (
         <div
           style={{
             textAlign: "center",
@@ -293,9 +360,11 @@ export default function HistoryView({
             padding: "60px 0",
           }}
         >
-          No sessions yet.
+          {sessions.length === 0 && ungrouped.length === 0
+            ? "No sessions yet."
+            : "No history matches these filters."}
         </div>
-      )}
+        )}
       {items.slice(0, visibleCount).map((it) =>
         it.kind === "session" ? (
           <SessionRow
@@ -303,6 +372,13 @@ export default function HistoryView({
             s={it.s}
             onDelete={onDelete}
             onEdit={onEdit}
+            onRecordingsSaved={(saved) => {
+              setEditedRecs((prev) => {
+                const next = new Map(prev);
+                for (const recording of saved) next.set(recording.id, recording);
+                return next;
+              });
+            }}
             zoneMix={it.s.groupId ? zoneByGroup.get(it.s.groupId) ?? null : null}
             zone={
               it.s.groupId
@@ -471,5 +547,75 @@ export default function HistoryView({
         </Sheet>
       )}
     </div>
+  );
+}
+
+function HistoryFilterRow({
+  label,
+  allLabel,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  allLabel: string;
+  value: string | null;
+  options: { value: string; label: string }[];
+  onChange: (value: string | null) => void;
+}) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 5 }}>
+        {label}
+      </div>
+      <div role="group" aria-label={label} style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+        <FilterButton active={value === null} onClick={() => onChange(null)}>
+          {allLabel}
+        </FilterButton>
+        {options.map((option) => (
+          <FilterButton
+            key={option.value}
+            active={value === option.value}
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </FilterButton>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FilterButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      style={{
+        flex: "0 0 auto",
+        border: `1px solid ${active ? "var(--primary)" : "var(--card-border)"}`,
+        borderRadius: 999,
+        padding: "5px 10px",
+        background: active
+          ? "color-mix(in srgb, var(--primary) 15%, var(--canvas))"
+          : "var(--canvas)",
+        color: active ? "var(--primary-accent)" : "var(--ink-muted)",
+        fontSize: "var(--t-xs)",
+        fontWeight: active ? 700 : 600,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </button>
   );
 }

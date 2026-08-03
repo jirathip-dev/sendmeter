@@ -7,6 +7,7 @@ export const ACTIVITY_COLORS: Record<string, string> = {
   outdoor: "#2FB6C0",
   arc: "#56C2E6",
   antagonist: "#9B6BE0",
+  routine: "#A855F7",
   campus: "#E5743A",
   tindeq: "#E0913D",
   auto: "#3DA5F4",
