@@ -12,6 +12,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Filter History by session type and Force tag, including loose Force recordings.
+
 ### Fixed
 
 ## 1.0 — 2026-08-02

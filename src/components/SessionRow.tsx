@@ -30,6 +30,7 @@ interface Props {
   s: Session;
   onDelete: (id: string) => void;
   onEdit?: (s: Session) => void;
+  onRecordingsSaved?: (recordings: TindeqRecordingMeta[]) => void;
   /// Dominant training quality of this Tindeq session's own recordings
   /// (#214) — badges the session by what it actually trained instead of the
   /// app-wide phase. Null for non-Tindeq sessions or when no zone could be
@@ -138,6 +139,7 @@ export default function SessionRow({
   s,
   onDelete,
   onEdit,
+  onRecordingsSaved,
   zone = null,
   zoneMix = null,
 }: Props) {
@@ -503,13 +505,14 @@ export default function SessionRow({
               : []
           }
           recentTags={[...new Set((tindeqRecs ?? []).map((r) => r.tag).filter(Boolean))]}
-          onSaved={(saved) =>
+          onSaved={(saved) => {
             setTindeqRecs((list) => {
               if (!list) return list;
               const byId = new Map(saved.map((r) => [r.id, r]));
               return list.map((x) => byId.get(x.id) ?? x);
-            })
-          }
+            });
+            onRecordingsSaved?.(saved);
+          }}
           onClose={() => setEditingRec(null)}
         />
       )}
