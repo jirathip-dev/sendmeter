@@ -92,6 +92,24 @@ describe("TrainingLoadSheet", () => {
     expect(html.slice(gymSegment)).not.toContain("min-width");
   });
 
+  it("never announces a present activity as 0%", () => {
+    const html = renderToStaticMarkup(
+      <TrainingLoadSheet
+        weeklyLoads={weeks}
+        sessions={[
+          session("board", "Board Climbing", 999),
+          session("gym", "Gym Session", 1),
+        ]}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(html).toContain('aria-label="Activity mix: Board Climbing 100%, Gym Session &lt;1%"');
+    expect(html).toContain("1 AU · &lt;1%");
+    expect(html).not.toContain("Gym Session 0%");
+    expect(html).not.toContain("1 AU · 0%");
+  });
+
   it("renders a useful activity-mix empty state", () => {
     const html = renderToStaticMarkup(
       <TrainingLoadSheet weeklyLoads={weeks} sessions={[]} onClose={() => {}} />,

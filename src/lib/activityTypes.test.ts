@@ -7,4 +7,13 @@ describe("activity colors", () => {
     expect(activityColor("routine")).toBe(ACTIVITY_COLORS.routine);
     expect(activityColor("routine")).not.toBe(activityColor("unknown-session-type"));
   });
+
+  it("keeps routine visually distinguishable from antagonist", () => {
+    expect(ACTIVITY_COLORS.routine).not.toBe(ACTIVITY_COLORS.antagonist);
+  });
+
+  it("assigns every activity a unique color", () => {
+    const values = Object.values(ACTIVITY_COLORS);
+    expect(new Set(values).size).toBe(values.length);
+  });
 });

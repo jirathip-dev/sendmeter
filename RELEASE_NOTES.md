@@ -20,6 +20,9 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Routine now has its own distinct color in the activity-mix bar, legend, and heatmap instead of looking identical to Antagonist.
+- Activity-mix percentages no longer round a real, visible share down to 0% — small shares now show as "<1%".
+
 ## 1.0 — 2026-08-02
 
 ### What’s New in This Version
