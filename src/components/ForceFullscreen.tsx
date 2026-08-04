@@ -710,6 +710,15 @@ export default function ForceFullscreen({
               Low battery
             </span>
           )}
+          {!measuring && !armed && !counting && tindeq.capabilities.tare && (
+            <button
+              onClick={() => void tindeq.tare()}
+              className="glass-pill"
+              style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
+            >
+              Tare
+            </button>
+          )}
           {!measuring && !armed && !counting && (
             <button
               onClick={onOpenSetupGuide}
