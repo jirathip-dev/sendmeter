@@ -2,7 +2,7 @@ name: Agent · Implement
 
 on:
   schedule:
-    - cron: "57 * * * *"
+    - cron: "27 * * * *"
   workflow_dispatch: {}
 
 jobs:
