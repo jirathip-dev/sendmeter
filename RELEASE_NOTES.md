@@ -20,6 +20,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Restore the Tare button in the Force fullscreen gauge so a non-zero load-cell baseline can be zeroed again.
+
 ## 1.0 — 2026-08-02
 
 ### What’s New in This Version
