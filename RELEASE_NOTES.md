@@ -20,6 +20,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- History: changing a filter no longer leaves hidden recordings in a bulk selection, a Force tag chip no longer targets sessions it can't match, and tags hidden in the Force tab no longer resurface as filter chips.
+
 ## 1.0 — 2026-08-02
 
 ### What’s New in This Version

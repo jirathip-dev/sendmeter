@@ -68,7 +68,7 @@ describe("history filters", () => {
 
   it("does not offer or match an empty force tag", () => {
     const blank = recording("");
-    const options = historyFilterOptions([], [blank], new Map(), null, "");
+    const options = historyFilterOptions([], [blank], new Map(), [], null, "");
     expect(options.tags).toEqual([]);
     expect(options.activeTag).toBeNull();
     expect(looseRecordingMatchesHistoryFilters(blank, null, null)).toBe(true);
@@ -80,6 +80,7 @@ describe("history filters", () => {
       [session("climbing"), session("tindeq", "group")],
       [recording("Pinch")],
       grouped,
+      [],
       "removed-type",
       "removed-tag",
     );
@@ -87,5 +88,32 @@ describe("history filters", () => {
     expect(options.tags).toEqual(["Crimp", "Pinch"]);
     expect(options.activeType).toBeNull();
     expect(options.activeTag).toBeNull();
+  });
+
+  it("matches a gauge session whose type was edited away from tindeq", () => {
+    // A gauge session's type is user-editable (EditSessionSheet) — the tag
+    // match must key off groupId, not the (possibly re-typed) session type.
+    const grouped = new Map([["group", [recording("Edge 20mm", "group")]]]);
+    expect(
+      sessionMatchesHistoryFilters(session("climbing", "group"), grouped, null, "Edge 20mm"),
+    ).toBe(true);
+  });
+
+  it("excludes hidden tags from the chip options but leaves their recordings matchable", () => {
+    const grouped = new Map([["group", [recording("Hidden Tag", "group")]]]);
+    const options = historyFilterOptions(
+      [session("tindeq", "group")],
+      [recording("Crimp")],
+      grouped,
+      ["Hidden Tag"],
+      null,
+      null,
+    );
+    expect(options.tags).toEqual(["Crimp"]);
+    // A hidden tag is unreachable via a chip, but a recording carrying it is
+    // still found by direct match (the recordings themselves stay visible).
+    expect(
+      sessionMatchesHistoryFilters(session("tindeq", "group"), grouped, null, "Hidden Tag"),
+    ).toBe(true);
   });
 });
