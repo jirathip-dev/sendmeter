@@ -1,4 +1,5 @@
 import { boxStats, type BoxStats } from "./boxplot";
+import { dateStr } from "./dates";
 import {
   isEffortRecording,
   isMeasuredRecording,
@@ -90,7 +91,7 @@ export interface DailyBoxStats {
 export function dailyBoxStats(sorted: TrendSample[]): DailyBoxStats[] {
   const byDate = new Map<string, { t: number; best: number; values: number[] }>();
   for (const r of sorted) {
-    const date = r.recordedAt.slice(0, 10);
+    const date = dateStr(new Date(r.recordedAt));
     const cur = byDate.get(date);
     if (!cur) {
       byDate.set(date, { t: Date.parse(r.recordedAt), best: r.val, values: [r.val] });

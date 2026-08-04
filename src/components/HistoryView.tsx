@@ -24,6 +24,7 @@ import {
   sessionMatchesHistoryFilters,
 } from "../lib/historyFilters";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
+import { dateStr } from "../lib/dates";
 import { uploadWarningPresentation } from "../lib/watchBuild";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
 import EditRecordingSheet from "./EditRecordingSheet";
@@ -243,7 +244,7 @@ export default function HistoryView({
             ...(tags.length ? [tags.join(", ")] : []),
           ].join(" · "),
           groupId,
-          date: first.recordedAt.slice(0, 10),
+          date: dateStr(new Date(first.recordedAt)),
         });
       } catch (error) {
         captureHandledOperationalFailure("session.insert", error, {
@@ -280,7 +281,7 @@ export default function HistoryView({
     ...filteredUngrouped.map((rec) => ({
       kind: "recording" as const,
       key: `r-${rec.id}`,
-      sortKey: `${rec.recordedAt.slice(0, 10)}~0`,
+      sortKey: `${dateStr(new Date(rec.recordedAt))}~0`,
       rec,
     })),
   ].sort((a, b) => b.sortKey.localeCompare(a.sortKey));

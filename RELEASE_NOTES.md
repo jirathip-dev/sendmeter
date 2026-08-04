@@ -20,6 +20,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- History, Peak Force Trend, and %BW now date recordings by your local day instead of UTC, so sessions and reps made before 07:00 no longer land on the wrong day.
+
 ## 1.0 — 2026-08-02
 
 ### What’s New in This Version
