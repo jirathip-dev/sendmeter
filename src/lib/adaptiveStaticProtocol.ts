@@ -46,6 +46,14 @@ export function armAdaptiveStatic(nowMs = 0): AdaptiveStaticState {
   return { phase: "armed", holdIndex: 0, aboveSinceMs: null, lastMs: nowMs };
 }
 
+/** The sample clock (`useTindeq`'s relative `t`, and fake mode's
+ * `performance.now()`) is fractional-millisecond, but `durationMs` /
+ * `actualDurationMs` are integer DB columns — round here, at the one place
+ * a hold's span turns into a duration, rather than at every writer. */
+export function adaptiveHoldDurationMs(startedMs: number, endedMs: number): number {
+  return Math.max(1, Math.round(endedMs - startedMs));
+}
+
 /** Pure event-driven controller. Every returned action is claimed by the
  * returned state, so callers may persist it asynchronously without duplicates. */
 export function stepAdaptiveStatic(
@@ -126,7 +134,7 @@ function finishAttempt(
     outcome,
     startedMs: state.startedMs,
     endedMs,
-    actualDurationMs: Math.max(1, endedMs - state.startedMs),
+    actualDurationMs: adaptiveHoldDurationMs(state.startedMs, endedMs),
   };
   if (state.holdIndex + 1 >= holdCount) {
     return {

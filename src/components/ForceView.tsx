@@ -67,6 +67,7 @@ import {
   type HandsFreeForceState,
 } from "../lib/handsFreeForce";
 import {
+  adaptiveHoldDurationMs,
   adaptiveStaticHolds,
   armAdaptiveStatic,
   stepAdaptiveStatic,
@@ -655,7 +656,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     );
     return {
       id: crypto.randomUUID(),
-      durationMs: Math.max(1, endedMs - startedMs),
+      durationMs: adaptiveHoldDurationMs(startedMs, endedMs),
       peakKg: Math.max(...kgs),
       avgKg: Math.round((kgs.reduce((sum, kg) => sum + kg, 0) / kgs.length) * 100) / 100,
       note,
@@ -673,7 +674,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       ),
       outcome,
       plannedDurationMs: hold.durationMs,
-      actualDurationMs: Math.max(1, endedMs - startedMs),
+      actualDurationMs: adaptiveHoldDurationMs(startedMs, endedMs),
       samples: slice,
     };
   }

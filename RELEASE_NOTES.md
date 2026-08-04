@@ -20,6 +20,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Force: fixed hands-free adaptive reps failing to save (with a "Failed to save recording" error) after the first rep of a run.
+
 ## 1.0 — 2026-08-02
 
 ### What’s New in This Version
