@@ -21,6 +21,7 @@ CI, dependency updates, and refactors unless users experience a change.
 ### Fixed
 
 - Restore the Tare button in the Force fullscreen gauge so a non-zero load-cell baseline can be zeroed again.
+- Force: fixed hands-free adaptive reps failing to save (with a "Failed to save recording" error) after the first rep of a run.
 
 ## 1.0 — 2026-08-02
 

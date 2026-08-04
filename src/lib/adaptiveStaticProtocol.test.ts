@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adaptiveHoldDurationMs,
   adaptiveStaticHolds,
   armAdaptiveStatic,
   stepAdaptiveStatic,
@@ -113,6 +114,13 @@ describe("adaptive static protocol", () => {
     });
     expect(done.state).toMatchObject({ phase: "complete", failed: true });
     expect(stepAdaptiveStatic(done.state, holds, { atMs: 900, kg: 0 }, cfg).action).toBeNull();
+  });
+
+  it("rounds a fractional hold span to an integer duration, floored at 1ms", () => {
+    expect(adaptiveHoldDurationMs(0, 12.345)).toBe(12);
+    expect(adaptiveHoldDurationMs(100.1, 1_100.9)).toBe(1_001);
+    expect(adaptiveHoldDurationMs(0, 0.2)).toBe(1);
+    expect(adaptiveHoldDurationMs(0, 0)).toBe(1);
   });
 
   it("clamps backward timestamps and never emits an action twice", () => {
