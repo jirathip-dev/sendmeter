@@ -13,12 +13,15 @@ export interface HistoryFilterOptions {
 /**
  * Options always come from the complete effective timeline. Invalid selections
  * are treated as All during render, avoiding an effect that synchronizes stale
- * state after realtime updates.
+ * state after realtime updates. `hiddenTags` (SL-92) only trims the chip
+ * list — matching still uses the recordings' raw tags, so hidden-tag
+ * recordings stay visible in the timeline, just unreachable by a chip.
  */
 export function historyFilterOptions(
   sessions: Session[],
   looseRecordings: TindeqRecordingMeta[],
   recordingsByGroup: Map<string, TindeqRecordingMeta[]>,
+  hiddenTags: string[],
   selectedType: HistoryTypeFilter,
   selectedTag: HistoryTagFilter,
 ): HistoryFilterOptions {
@@ -28,13 +31,14 @@ export function historyFilterOptions(
     labels.set("tindeq", "Tindeq");
   }
 
+  const hidden = new Set(hiddenTags);
   const tags = new Set<string>();
   for (const recording of looseRecordings) {
-    if (recording.tag) tags.add(recording.tag);
+    if (recording.tag && !hidden.has(recording.tag)) tags.add(recording.tag);
   }
   for (const recordings of recordingsByGroup.values()) {
     for (const recording of recordings) {
-      if (recording.tag) tags.add(recording.tag);
+      if (recording.tag && !hidden.has(recording.tag)) tags.add(recording.tag);
     }
   }
 
@@ -56,7 +60,7 @@ export function sessionMatchesHistoryFilters(
 ): boolean {
   if (type && session.type !== type) return false;
   if (!tag) return true;
-  if (session.type !== "tindeq" || !session.groupId) return false;
+  if (!session.groupId) return false;
   return (recordingsByGroup.get(session.groupId) ?? []).some(
     (recording) => recording.tag === tag,
   );

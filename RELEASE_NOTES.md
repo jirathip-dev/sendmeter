@@ -26,6 +26,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Activity-mix percentages no longer round a real, visible share down to 0% — small shares now show as "<1%".
 - Fixed grouping a just-edited Force recording into a session (or moving it into an existing one) sometimes leaving it stuck showing as loose until reload.
 - History, Peak Force Trend, and %BW now date recordings by your local day instead of UTC, so sessions and reps made before 07:00 no longer land on the wrong day.
+- History: changing a filter no longer leaves hidden recordings in a bulk selection, a Force tag chip no longer targets sessions it can't match, and tags hidden in the Force tab no longer resurface as filter chips.
 
 ## 1.0 — 2026-08-02
 

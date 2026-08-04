@@ -10,6 +10,7 @@ import { useToast } from "../hooks/useToast";
 import { useWatchInfo } from "../hooks/useWatchInfo";
 import {
   deleteRecording,
+  fetchHiddenTags,
   fetchRecordings,
   insertTindeqSession,
   recalcTindeqSessionDuration,
@@ -22,6 +23,8 @@ import {
   liveWorkoutMatchesHistoryFilters,
   looseRecordingMatchesHistoryFilters,
   sessionMatchesHistoryFilters,
+  type HistoryTagFilter,
+  type HistoryTypeFilter,
 } from "../lib/historyFilters";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
 import { dateStr } from "../lib/dates";
@@ -100,6 +103,13 @@ export default function HistoryView({
     [],
     realtimeVersion,
   );
+  // Tags hidden in the Force tab's tag manager (SL-92) shouldn't resurface as
+  // History filter chips — same pattern as ForceConsistencyCard.
+  const hiddenTags = useCancellableFetch<string[]>(
+    fetchHiddenTags,
+    [],
+    realtimeVersion,
+  );
   // Tindeq session badge should read as the training QUALITY the session's
   // own recordings belong to (power/strength/pow-end/endurance, same
   // classification the Training-balance card uses), not the app-wide
@@ -148,6 +158,7 @@ export default function HistoryView({
     sessions,
     ungrouped,
     recordingsByGroup,
+    hiddenTags,
     selectedType,
     selectedTag,
   );
@@ -208,6 +219,22 @@ export default function HistoryView({
     } finally {
       setAssigning(false);
     }
+  }
+
+  // A filter change can hide a ticked recording without unticking it — prune
+  // the selection to what the new filter still shows, so a bulk action never
+  // silently includes a row the user can no longer see.
+  function pruneSelectionToVisible(type: HistoryTypeFilter, tag: HistoryTagFilter) {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(
+        ungrouped
+          .filter((r) => looseRecordingMatchesHistoryFilters(r, type, tag))
+          .map((r) => r.id),
+      );
+      const next = new Set([...prev].filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
   }
 
   function toggleSelect(id: string) {
@@ -322,6 +349,7 @@ export default function HistoryView({
           onChange={(value) => {
             setSelectedType(value);
             setVisibleCount(PAGE_SIZE);
+            pruneSelectionToVisible(value, filterOptions.activeTag);
           }}
         />
       )}
@@ -334,6 +362,7 @@ export default function HistoryView({
           onChange={(value) => {
             setSelectedTag(value);
             setVisibleCount(PAGE_SIZE);
+            pruneSelectionToVisible(filterOptions.activeType, value);
           }}
         />
       )}
