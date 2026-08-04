@@ -25,6 +25,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Routine now has its own distinct color in the activity-mix bar, legend, and heatmap instead of looking identical to Antagonist.
 - Activity-mix percentages no longer round a real, visible share down to 0% — small shares now show as "<1%".
 - Fixed grouping a just-edited Force recording into a session (or moving it into an existing one) sometimes leaving it stuck showing as loose until reload.
+- History, Peak Force Trend, and %BW now date recordings by your local day instead of UTC, so sessions and reps made before 07:00 no longer land on the wrong day.
 
 ## 1.0 — 2026-08-02
 

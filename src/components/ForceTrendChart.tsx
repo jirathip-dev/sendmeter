@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { dateStr } from "../lib/dates";
 import {
   dailyBoxStats,
   hitWidthsPx,
@@ -346,7 +347,7 @@ export default function ForceTrendChart({
       id: r.id,
       recordedAt: r.recordedAt,
       val: ratioMode
-        ? (r.peakKg! / weightOn(weights, r.recordedAt.slice(0, 10))) * 100
+        ? (r.peakKg! / weightOn(weights, dateStr(new Date(r.recordedAt)))) * 100
         : r.peakKg!,
     }));
   const days = dailyBoxStats(sorted);
