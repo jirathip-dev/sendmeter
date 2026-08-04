@@ -24,6 +24,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: fixed hands-free adaptive reps failing to save (with a "Failed to save recording" error) after the first rep of a run.
 - Routine now has its own distinct color in the activity-mix bar, legend, and heatmap instead of looking identical to Antagonist.
 - Activity-mix percentages no longer round a real, visible share down to 0% — small shares now show as "<1%".
+- Fixed grouping a just-edited Force recording into a session (or moving it into an existing one) sometimes leaving it stuck showing as loose until reload.
 
 ## 1.0 — 2026-08-02
 
