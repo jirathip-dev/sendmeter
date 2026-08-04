@@ -24,6 +24,7 @@ import {
   sessionMatchesHistoryFilters,
 } from "../lib/historyFilters";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
+import { applyRecordingEdits } from "../lib/recordingEdits";
 import { uploadWarningPresentation } from "../lib/watchBuild";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
 import EditRecordingSheet from "./EditRecordingSheet";
@@ -106,9 +107,13 @@ export default function HistoryView({
   // already has everything) and passed down to each Tindeq SessionRow.
   // Edits must feed every derived view (group membership, tag filters and
   // rows), rather than only the loose-recording row that happened to be open.
-  const effectiveRecordings = allRecordings
-    .filter((r) => !removedIds.has(r.id))
-    .map((r) => editedRecs.get(r.id) ?? r);
+  // Only the user-editable fields (tag/side/note) come from the overlay — the
+  // rest, notably `groupId`, always comes from the fresh fetch, so a later
+  // grouping action isn't clobbered by a stale override (#452).
+  const effectiveRecordings = applyRecordingEdits(
+    allRecordings.filter((r) => !removedIds.has(r.id)),
+    editedRecs,
+  );
   const recordingsByGroup = new Map<string, TindeqRecordingMeta[]>();
   for (const r of effectiveRecordings) {
     if (!r.groupId) continue;
