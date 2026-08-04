@@ -654,26 +654,25 @@ are safe regardless.
 
 ## Deploy (TestFlight + Vercel)
 
-- **Release flow: TestFlight builds from `staging`, by default.** TestFlight is
-  the rung-4 device-verification channel, so build it from `staging` *before*
-  promoting: staging → `bundle exec fastlane beta` → verify on device →
-  promotion PR staging → main (which triggers the Vercel production web
-  deploy). Promoting first would ship native code to the release branch
-  before it's ever been device-verifiable, and couples "I need a build on my
-  phone" to a web prod deploy. Exception: builds for **external testers /
-  App Store submission** cut from `main` so the promoted branch is exactly
-  what ships. Note the branch is only a *code-state* distinction for native
-  builds — the compiled-in Supabase config means every device build
-  reads/writes **production** data.
+- **Release flow: TestFlight builds from `main`, by default.** TestFlight
+  uses the production Supabase project, so the workflow deliberately rejects
+  any other ref — staging code must never pair with a prod schema that
+  hasn't migrated yet. Flow: promote `staging` → `main` (Vercel production
+  web deploy fires on that merge), wait for the Production migration
+  workflow, then dispatch/tag the TestFlight build from `main`. Exception:
+  none — external-tester / App Store submission builds also cut from `main`,
+  same as every other build now. Note the branch is only a *code-state*
+  distinction for native builds — the compiled-in Supabase config means every
+  device build reads/writes **production** data.
 - **CI TestFlight builds are opt-in, not per-merge (#150).**
   `.github/workflows/testflight.yml` runs `fastlane beta` on a Blacksmith
   **6vCPU** macOS runner (`blacksmith-6vcpu-macos-26`, $0.08/min — macOS
   minutes burn the free tier at 20x the Ubuntu rate and were the dominant CI
-  cost, ~$0.5+ per build on the old always-on 12vCPU trigger). A staging push
+  cost, ~$0.5+ per build on the old always-on 12vCPU trigger). A `main` push
   only builds when the pushed commit message contains **`[testflight]`** (for
   a squash-merged PR that's the PR title); untagged pushes show as skipped
   runs. For an on-demand build use
-  `gh workflow run TestFlight --ref staging` (a `runner` input overrides the
+  `gh workflow run TestFlight --ref main` (a `runner` input overrides the
   label, e.g. back to 12vCPU for a rush build). The workflow's `concurrency`
   queues and never cancels — build numbers come from
   `latest_testflight_build_number + 1`, so parallel runs would race the same
