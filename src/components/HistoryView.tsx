@@ -162,6 +162,13 @@ export default function HistoryView({
     selectedType,
     selectedTag,
   );
+  // The selected option can vanish (last tagged recording deleted/retagged,
+  // last session of that type removed) — `filterOptions` already coerces the
+  // render to "All", but the stale value must also be cleared from state, or
+  // it silently re-engages the moment matching data reappears (realtime
+  // insert, delete-undo, a tag edit back to the selected value).
+  if (selectedType && filterOptions.activeType === null) setSelectedType(null);
+  if (selectedTag && filterOptions.activeTag === null) setSelectedTag(null);
   const filteredSessions = sessions.filter((session) =>
     sessionMatchesHistoryFilters(
       session,
