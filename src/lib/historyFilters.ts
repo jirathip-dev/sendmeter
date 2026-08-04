@@ -13,7 +13,9 @@ export interface HistoryFilterOptions {
 /**
  * Options always come from the complete effective timeline. Invalid selections
  * are treated as All during render, avoiding an effect that synchronizes stale
- * state after realtime updates.
+ * state after realtime updates. The caller (HistoryView) commits that
+ * coercion back into its own state at render time, so a stale selection
+ * doesn't silently re-engage once matching data reappears.
  */
 export function historyFilterOptions(
   sessions: Session[],
