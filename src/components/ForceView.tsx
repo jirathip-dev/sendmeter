@@ -252,6 +252,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const {
     tindeq,
     session: gaugeSession,
+    sessionRef: gaugeSessionRef,
     ensureSession,
     clearSession,
     minimized: gaugeMinimized,
@@ -492,13 +493,20 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // prediction (or its fallback), always banked unconfirmed since nobody
   // reviewed it; History's EditSessionSheet is where that review now happens.
   async function endSession() {
-    if (!gaugeSession) return;
-    const groupId = gaugeSession.groupId;
+    // #460: read the ref, not the closed-over `gaugeSession` state — this
+    // runs from the disconnect effect's deferred timeout (150ms), and on a
+    // first-rep disconnect the recovery save's ensureSession() mints the
+    // session AFTER that timeout's closure was captured. The ref is written
+    // synchronously by ensureSession/clearSession, so it reflects the
+    // recovery, while the captured `gaugeSession` would still read null.
+    const activeSession = gaugeSessionRef.current;
+    if (!activeSession) return;
+    const groupId = activeSession.groupId;
     const wallClockMin = Math.max(
       1,
       // `endSession` only runs from event/effect paths; this is elapsed wall
       // time, not a render-time value.
-      Math.round((Date.now() - gaugeSession.startedAt) / 60000),
+      Math.round((Date.now() - activeSession.startedAt) / 60000),
     );
     clearSession();
     const ok = await endGaugeSession({
