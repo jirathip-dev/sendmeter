@@ -77,6 +77,7 @@ import {
 import { usePendingUploads } from "../hooks/usePendingUploads";
 import { PENDING_BACKED_UP } from "../lib/pendingUploads";
 import { appendUniqueById, claimManualAttempt, claimManualSession, manualAttemptKey } from "../lib/manualForceSubmission";
+import { mergeUnqueuedAfterRetry } from "../lib/unqueuedRetry";
 import type {
   ForceCapacityModality,
   NewTindeqRecording,
@@ -236,7 +237,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       setRecordings((list) => [...saved, ...list]);
       setListError(null);
     }
-    setUnqueued(stillLost);
+    // #462: `pending` is a snapshot taken before the loop above; a rep can
+    // fail its insert (queueFailedRecording's functional append) while this
+    // retry is in flight. Commit functionally too, or that concurrently
+    // appended rep is erased by this write.
+    setUnqueued((current) => mergeUnqueuedAfterRetry(current, pending, stillLost));
     setRetryingUnqueued(false);
     if (saved.length > 0) {
       toast(`Saved ${saved.length} recording${saved.length === 1 ? "" : "s"}`);
