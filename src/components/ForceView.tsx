@@ -351,7 +351,18 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     setPreset(selection.preset);
     if (clearsPersistedPreset) clearPersistedPreset();
   }
+  // #442: adaptiveStaticRef / adaptiveRunSnapshotRef / adaptiveStaticState
+  // are otherwise cleared only by armHandsFree / cancelHandsFreeArm / the
+  // step effect's begin-failure branch / runStop — a protocol change must
+  // drop them too, or the new protocol inherits the old one's machine
+  // (including a stale "complete" display carrying no preset identity).
+  function clearAdaptiveStatic() {
+    adaptiveStaticRef.current = null;
+    adaptiveRunSnapshotRef.current = null;
+    setAdaptiveStaticState(null);
+  }
   function selectPreset(p: TindeqPreset | null) {
+    clearAdaptiveStatic();
     if (p) {
       const nextModality = presetModality(p);
       setProtocolModality(nextModality);
@@ -372,6 +383,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // preset key, so a stale key can't re-arm the preset on the next mount
   // (the #296 class; `PresetManager` owns that key at `clearPersistedPreset`).
   function clearProtocol() {
+    clearAdaptiveStatic();
     setZoneState((current) => ({
       selection: null,
       notice: null,
@@ -1903,6 +1915,19 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // Cancellation claims idle first, and failed arms reset it themselves,
       // so an armed ref while still connected belongs to the in-flight Arm.
       handsFreeControlRef.current = handsFreeForceAtInactiveStatus(machine, status);
+      // #442: a BLE drop or manual disconnect while ARMED (or mid-recovery,
+      // before the first hold) goes through handleDeviceDropped/disconnect
+      // with recordingRef.current === false, so runStop never runs and never
+      // claims/clears the adaptive machine. Left stale, it silently eats the
+      // next normal run: the per-rep autosave effect gates on it, and Stop's
+      // adaptive branch finds a non-"hold" phase and saves nothing. A machine
+      // that reached "complete" on its own is an intentional post-run
+      // display (runStop already nulled the ref for it) — leave it alone.
+      if (adaptiveStaticRef.current && adaptiveStaticRef.current.phase !== "complete") {
+        adaptiveStaticRef.current = null;
+        adaptiveRunSnapshotRef.current = null;
+        setAdaptiveStaticState(null);
+      }
       return;
     }
     const observingArmed = status === "armed" && machine.phase === "armed";
