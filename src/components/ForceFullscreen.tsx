@@ -285,14 +285,14 @@ export default function ForceFullscreen({
     // phase state, and must be distinguishable from the following RETURN.
     if (isFirst && pos?.seg.phase !== "move") return;
     const ctx = audioRef.current;
-    const phase = adaptiveState
+    const phase = adaptive && adaptiveState
       ? adaptiveState.phase === "complete"
         ? "done"
         : adaptiveState.phase === "hold"
           ? "hold"
           : "rest"
       : done ? "done" : pos!.seg.phase;
-    const failedTransition = adaptiveState?.phase === "recovery" && adaptiveState.failed;
+    const failedTransition = adaptive && adaptiveState?.phase === "recovery" && adaptiveState.failed;
     const direction =
       pos?.seg.phase === "move" ? pos.seg.direction : null;
     if (ctx) {
@@ -408,9 +408,9 @@ export default function ForceFullscreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prepStartedMs, prepRemaining]);
 
-  const bannerColor = adaptiveState?.phase === "recovery"
+  const bannerColor = adaptive && adaptiveState?.phase === "recovery"
     ? adaptiveState.failed ? "var(--danger)" : "var(--primary)"
-    : adaptiveState?.phase === "complete" && adaptiveState.failed
+    : adaptive && adaptiveState?.phase === "complete" && adaptiveState.failed
       ? "var(--danger)"
     : done
       ? "var(--warning)"
@@ -709,6 +709,15 @@ export default function ForceFullscreen({
             >
               Low battery
             </span>
+          )}
+          {!measuring && !armed && !counting && tindeq.capabilities.tare && (
+            <button
+              onClick={() => void tindeq.tare()}
+              className="glass-pill"
+              style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
+            >
+              Tare
+            </button>
           )}
           {!measuring && !armed && !counting && (
             <button

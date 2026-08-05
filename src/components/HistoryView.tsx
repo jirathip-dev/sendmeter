@@ -10,6 +10,7 @@ import { useToast } from "../hooks/useToast";
 import { useWatchInfo } from "../hooks/useWatchInfo";
 import {
   deleteRecording,
+  fetchHiddenTags,
   fetchRecordings,
   insertTindeqSession,
   recalcTindeqSessionDuration,
@@ -22,8 +23,13 @@ import {
   liveWorkoutMatchesHistoryFilters,
   looseRecordingMatchesHistoryFilters,
   sessionMatchesHistoryFilters,
+  type HistoryTagFilter,
+  type HistoryTypeFilter,
 } from "../lib/historyFilters";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
+import { prunePendingAssignedIds } from "../lib/assignedIds";
+import { dateStr } from "../lib/dates";
+import { applyRecordingEdits } from "../lib/recordingEdits";
 import { uploadWarningPresentation } from "../lib/watchBuild";
 import type { PhaseId, Session, TindeqRecordingMeta } from "../types";
 import EditRecordingSheet from "./EditRecordingSheet";
@@ -98,6 +104,13 @@ export default function HistoryView({
     [],
     realtimeVersion,
   );
+  // Tags hidden in the Force tab's tag manager (SL-92) shouldn't resurface as
+  // History filter chips — same pattern as ForceConsistencyCard.
+  const hiddenTags = useCancellableFetch<string[]>(
+    fetchHiddenTags,
+    [],
+    realtimeVersion,
+  );
   // Tindeq session badge should read as the training QUALITY the session's
   // own recordings belong to (power/strength/pow-end/endurance, same
   // classification the Training-balance card uses), not the app-wide
@@ -106,9 +119,13 @@ export default function HistoryView({
   // already has everything) and passed down to each Tindeq SessionRow.
   // Edits must feed every derived view (group membership, tag filters and
   // rows), rather than only the loose-recording row that happened to be open.
-  const effectiveRecordings = allRecordings
-    .filter((r) => !removedIds.has(r.id))
-    .map((r) => editedRecs.get(r.id) ?? r);
+  // Only the user-editable fields (tag/side/note) come from the overlay — the
+  // rest, notably `groupId`, always comes from the fresh fetch, so a later
+  // grouping action isn't clobbered by a stale override (#452).
+  const effectiveRecordings = applyRecordingEdits(
+    allRecordings.filter((r) => !removedIds.has(r.id)),
+    editedRecs,
+  );
   const recordingsByGroup = new Map<string, TindeqRecordingMeta[]>();
   for (const r of effectiveRecordings) {
     if (!r.groupId) continue;
@@ -129,22 +146,35 @@ export default function HistoryView({
   const sessionGroupIds = new Set(
     sessions.map((s) => s.groupId).filter((g): g is string => !!g),
   );
+  // assignedIds only needs to hide a recording until the refetch confirms
+  // its new groupId — once confirmed, drop the id so the orphan-rescue rule
+  // just below regains authority if that session is later deleted.
+  const pendingAssignedIds = prunePendingAssignedIds(assignedIds, allRecordings);
+  if (pendingAssignedIds !== assignedIds) setAssignedIds(pendingAssignedIds);
   // Optimistic local hides (delete/assign) until the realtime refetch lands,
   // and local edits (tag/side/note) applied over the fetched rows.
   const ungrouped = effectiveRecordings
     .filter(
       (r) =>
         (r.groupId === null || !sessionGroupIds.has(r.groupId)) &&
-        !assignedIds.has(r.id),
+        !pendingAssignedIds.has(r.id),
     );
 
   const filterOptions = historyFilterOptions(
     sessions,
     ungrouped,
     recordingsByGroup,
+    hiddenTags,
     selectedType,
     selectedTag,
   );
+  // The selected option can vanish (last tagged recording deleted/retagged,
+  // last session of that type removed) — `filterOptions` already coerces the
+  // render to "All", but the stale value must also be cleared from state, or
+  // it silently re-engages the moment matching data reappears (realtime
+  // insert, delete-undo, a tag edit back to the selected value).
+  if (selectedType && filterOptions.activeType === null) setSelectedType(null);
+  if (selectedTag && filterOptions.activeTag === null) setSelectedTag(null);
   const filteredSessions = sessions.filter((session) =>
     sessionMatchesHistoryFilters(
       session,
@@ -179,29 +209,48 @@ export default function HistoryView({
   );
 
   async function assignSelectionToSession(groupId: string) {
-    const ids = [...selectedIds];
-    if (ids.length === 0) return;
+    // Derived exactly like createSessionFromSelection's `recs`: only visible
+    // `ungrouped` rows, so a ticked-then-soft-deleted (or otherwise hidden)
+    // recording is never written to and the toast count matches reality.
+    const recs = ungrouped.filter((r) => selectedIds.has(r.id));
+    if (recs.length === 0) return;
     setAssigning(true);
     setAssignError(null);
     try {
-      for (const id of ids) await updateRecordingGroup(id, groupId);
+      for (const r of recs) await updateRecordingGroup(r.id, groupId);
       // The target session's span just grew — recompute its total time so the
       // duration/load reflect the newly-added recordings, not the stale value.
       await recalcTindeqSessionDuration(groupId);
       setAssignedIds((prev) => {
         const next = new Set(prev);
-        for (const id of ids) next.add(id);
+        for (const r of recs) next.add(r.id);
         return next;
       });
       setSelectedIds(new Set());
       setAssignOpen(false);
       bumpRealtime();
-      toast(`Assigned ${ids.length} recording${ids.length === 1 ? "" : "s"}`);
+      toast(`Assigned ${recs.length} recording${recs.length === 1 ? "" : "s"}`);
     } catch (e) {
       setAssignError(e instanceof Error ? e.message : "Failed to assign");
     } finally {
       setAssigning(false);
     }
+  }
+
+  // A filter change can hide a ticked recording without unticking it — prune
+  // the selection to what the new filter still shows, so a bulk action never
+  // silently includes a row the user can no longer see.
+  function pruneSelectionToVisible(type: HistoryTypeFilter, tag: HistoryTagFilter) {
+    setSelectedIds((prev) => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(
+        ungrouped
+          .filter((r) => looseRecordingMatchesHistoryFilters(r, type, tag))
+          .map((r) => r.id),
+      );
+      const next = new Set([...prev].filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
   }
 
   function toggleSelect(id: string) {
@@ -243,7 +292,7 @@ export default function HistoryView({
             ...(tags.length ? [tags.join(", ")] : []),
           ].join(" · "),
           groupId,
-          date: first.recordedAt.slice(0, 10),
+          date: dateStr(new Date(first.recordedAt)),
         });
       } catch (error) {
         captureHandledOperationalFailure("session.insert", error, {
@@ -280,7 +329,7 @@ export default function HistoryView({
     ...filteredUngrouped.map((rec) => ({
       kind: "recording" as const,
       key: `r-${rec.id}`,
-      sortKey: `${rec.recordedAt.slice(0, 10)}~0`,
+      sortKey: `${dateStr(new Date(rec.recordedAt))}~0`,
       rec,
     })),
   ].sort((a, b) => b.sortKey.localeCompare(a.sortKey));
@@ -316,6 +365,7 @@ export default function HistoryView({
           onChange={(value) => {
             setSelectedType(value);
             setVisibleCount(PAGE_SIZE);
+            pruneSelectionToVisible(value, filterOptions.activeTag);
           }}
         />
       )}
@@ -328,6 +378,7 @@ export default function HistoryView({
           onChange={(value) => {
             setSelectedTag(value);
             setVisibleCount(PAGE_SIZE);
+            pruneSelectionToVisible(filterOptions.activeType, value);
           }}
         />
       )}
@@ -392,6 +443,15 @@ export default function HistoryView({
             rec={it.rec}
             onDelete={(id) => {
               setRemovedIds((prev) => new Set(prev).add(id));
+              // A ticked recording that gets deleted must drop out of the
+              // action-bar count immediately; it stays un-ticked on
+              // undo-restore (simplest is an unconditional delete here).
+              setSelectedIds((prev) => {
+                if (!prev.has(id)) return prev;
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+              });
               void deleteRecording(id);
               // Issue #143: instant delete (unchanged) + an Undo action that
               // restores the recording and drops the optimistic hide.

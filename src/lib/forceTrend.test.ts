@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dateStr } from "./dates";
 import {
   dailyBoxStats,
   hitWidthsPx,
@@ -83,6 +84,22 @@ describe("dailyBoxStats (issue #145)", () => {
     expect(kgDays[0]!.count).toBe(bwDays[0]!.count);
     expect(kgDays[0]!.stats.median).toBe(22);
     expect(bwDays[0]!.stats.median).toBeCloseTo(36.65, 5);
+  });
+
+  it("buckets a rep near local midnight into the local day, not the UTC day (issue #448)", () => {
+    // ISO instant for today at 00:30 local time. Built from a local `Date`
+    // (not a hardcoded UTC string) so the fixture — and the expected date it
+    // round-trips to via `dateStr` — are correct at any runner timezone,
+    // while still pinning that a UTC slice (which would shift this before
+    // 07:00 in UTC+7) is not what `dailyBoxStats` uses.
+    const localMidnight = new Date();
+    localMidnight.setHours(0, 30, 0, 0);
+    const recordedAt = localMidnight.toISOString();
+
+    const days = dailyBoxStats([{ recordedAt, val: 42 }]);
+
+    expect(days).toHaveLength(1);
+    expect(days[0]!.date).toBe(dateStr(localMidnight));
   });
 });
 

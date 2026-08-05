@@ -8,9 +8,15 @@ import ChartTooltip from "./ChartTooltip";
 import ContributionHeatmap from "./ContributionHeatmap";
 import Sheet from "./Sheet";
 
+/** Rounds a share for display; a real but sub-1% sliver reads as "<1%" rather than "0%". */
+function formatSharePercent(percentage: number): string {
+  if (percentage > 0 && percentage < 1) return "<1%";
+  return `${Math.round(percentage)}%`;
+}
+
 function ActivityMixBar({ activities }: { activities: ReturnType<typeof activityMix>["activities"] }) {
   const description = activities
-    .map((activity) => `${activity.label} ${activity.percentage.toFixed(0)}%`)
+    .map((activity) => `${activity.label} ${formatSharePercent(activity.percentage)}`)
     .join(", ");
 
   return (
@@ -248,7 +254,7 @@ export default function TrainingLoadSheet({
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {activity.load.toLocaleString()} AU · {activity.percentage.toFixed(0)}%
+                  {activity.load.toLocaleString()} AU · {formatSharePercent(activity.percentage)}
                 </span>
               </div>
             ))}

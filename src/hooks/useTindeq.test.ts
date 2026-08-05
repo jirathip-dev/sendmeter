@@ -248,6 +248,12 @@ describe("summarize", () => {
     expect(result!.avgKg).toBe(20); // (10 + 30.01 + 20) / 3, rounded to 2dp
     expect(result!.samples).toHaveLength(3);
   });
+
+  it("#462: floors a single-sample buffer's duration at 1ms — the sample's t is always 0", () => {
+    const result = summarize([{ t: 0, kg: 12.5 }]);
+    expect(result).not.toBeNull();
+    expect(result!.durationMs).toBe(1);
+  });
 });
 
 describe("samplesThrough (#400)", () => {
