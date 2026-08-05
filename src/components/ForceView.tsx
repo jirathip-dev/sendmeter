@@ -252,6 +252,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const {
     tindeq,
     session: gaugeSession,
+    sessionRef: gaugeSessionRef,
     ensureSession,
     clearSession,
     minimized: gaugeMinimized,
@@ -351,7 +352,18 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     setPreset(selection.preset);
     if (clearsPersistedPreset) clearPersistedPreset();
   }
+  // #442: adaptiveStaticRef / adaptiveRunSnapshotRef / adaptiveStaticState
+  // are otherwise cleared only by armHandsFree / cancelHandsFreeArm / the
+  // step effect's begin-failure branch / runStop — a protocol change must
+  // drop them too, or the new protocol inherits the old one's machine
+  // (including a stale "complete" display carrying no preset identity).
+  function clearAdaptiveStatic() {
+    adaptiveStaticRef.current = null;
+    adaptiveRunSnapshotRef.current = null;
+    setAdaptiveStaticState(null);
+  }
   function selectPreset(p: TindeqPreset | null) {
+    clearAdaptiveStatic();
     if (p) {
       const nextModality = presetModality(p);
       setProtocolModality(nextModality);
@@ -372,6 +384,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // preset key, so a stale key can't re-arm the preset on the next mount
   // (the #296 class; `PresetManager` owns that key at `clearPersistedPreset`).
   function clearProtocol() {
+    clearAdaptiveStatic();
     setZoneState((current) => ({
       selection: null,
       notice: null,
@@ -480,13 +493,20 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // prediction (or its fallback), always banked unconfirmed since nobody
   // reviewed it; History's EditSessionSheet is where that review now happens.
   async function endSession() {
-    if (!gaugeSession) return;
-    const groupId = gaugeSession.groupId;
+    // #460: read the ref, not the closed-over `gaugeSession` state — this
+    // runs from the disconnect effect's deferred timeout (150ms), and on a
+    // first-rep disconnect the recovery save's ensureSession() mints the
+    // session AFTER that timeout's closure was captured. The ref is written
+    // synchronously by ensureSession/clearSession, so it reflects the
+    // recovery, while the captured `gaugeSession` would still read null.
+    const activeSession = gaugeSessionRef.current;
+    if (!activeSession) return;
+    const groupId = activeSession.groupId;
     const wallClockMin = Math.max(
       1,
       // `endSession` only runs from event/effect paths; this is elapsed wall
       // time, not a render-time value.
-      Math.round((Date.now() - gaugeSession.startedAt) / 60000),
+      Math.round((Date.now() - activeSession.startedAt) / 60000),
     );
     clearSession();
     const ok = await endGaugeSession({
@@ -1903,6 +1923,19 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // Cancellation claims idle first, and failed arms reset it themselves,
       // so an armed ref while still connected belongs to the in-flight Arm.
       handsFreeControlRef.current = handsFreeForceAtInactiveStatus(machine, status);
+      // #442: a BLE drop or manual disconnect while ARMED (or mid-recovery,
+      // before the first hold) goes through handleDeviceDropped/disconnect
+      // with recordingRef.current === false, so runStop never runs and never
+      // claims/clears the adaptive machine. Left stale, it silently eats the
+      // next normal run: the per-rep autosave effect gates on it, and Stop's
+      // adaptive branch finds a non-"hold" phase and saves nothing. A machine
+      // that reached "complete" on its own is an intentional post-run
+      // display (runStop already nulled the ref for it) — leave it alone.
+      if (adaptiveStaticRef.current && adaptiveStaticRef.current.phase !== "complete") {
+        adaptiveStaticRef.current = null;
+        adaptiveRunSnapshotRef.current = null;
+        setAdaptiveStaticState(null);
+      }
       return;
     }
     const observingArmed = status === "armed" && machine.phase === "armed";
