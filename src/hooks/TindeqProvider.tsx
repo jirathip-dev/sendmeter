@@ -27,7 +27,7 @@ export function TindeqProvider({ children }: { children: ReactNode }) {
 
   return (
     <TindeqContext.Provider
-      value={{ tindeq, session, ensureSession, clearSession, minimized, setMinimized }}
+      value={{ tindeq, session, sessionRef, ensureSession, clearSession, minimized, setMinimized }}
     >
       {children}
     </TindeqContext.Provider>

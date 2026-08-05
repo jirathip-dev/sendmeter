@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { RefObject } from "react";
 import type { useTindeq } from "./useTindeq";
 
 /// One live Progressor session: the group every recording taken during it
@@ -13,6 +14,11 @@ export interface TindeqContextValue {
   tindeq: ReturnType<typeof useTindeq>;
   /// The active gauge session, or null before the first recording.
   session: GaugeSession | null;
+  /// Mirrors `session` synchronously (no setState round-trip), so a deferred
+  /// callback whose closure predates a same-tick recovery (e.g. the
+  /// disconnect effect's endSession timeout, #460) reads the CURRENT session
+  /// instead of the one captured when the timeout was scheduled.
+  sessionRef: RefObject<GaugeSession | null>;
   /// Return the active session's group id, minting it on first call. Written
   /// through a ref so two near-simultaneous saves (first rep + autosave) get
   /// the SAME group id instead of racing to create two.
