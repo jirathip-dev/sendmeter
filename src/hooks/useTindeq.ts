@@ -50,7 +50,10 @@ export function summarize(samples: TindeqSample[]): StoppedRecording | null {
   }));
   const kgs = rounded.map((s) => s.kg);
   return {
-    durationMs: rounded[rounded.length - 1]!.t,
+    // A single-sample buffer's only sample is t=0 (the first BLE notification),
+    // which would otherwise write duration_ms=0 — violating the DB's `> 0`
+    // check and permanently stranding the payload in the retry queue (#462).
+    durationMs: Math.max(1, rounded[rounded.length - 1]!.t),
     peakKg: Math.max(...kgs),
     avgKg: Math.round((kgs.reduce((a, b) => a + b, 0) / kgs.length) * 100) / 100,
     samples: rounded,
