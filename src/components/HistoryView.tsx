@@ -27,6 +27,7 @@ import {
   type HistoryTypeFilter,
 } from "../lib/historyFilters";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
+import { prunePendingAssignedIds } from "../lib/assignedIds";
 import { dateStr } from "../lib/dates";
 import { applyRecordingEdits } from "../lib/recordingEdits";
 import { uploadWarningPresentation } from "../lib/watchBuild";
@@ -145,13 +146,18 @@ export default function HistoryView({
   const sessionGroupIds = new Set(
     sessions.map((s) => s.groupId).filter((g): g is string => !!g),
   );
+  // assignedIds only needs to hide a recording until the refetch confirms
+  // its new groupId — once confirmed, drop the id so the orphan-rescue rule
+  // just below regains authority if that session is later deleted.
+  const pendingAssignedIds = prunePendingAssignedIds(assignedIds, allRecordings);
+  if (pendingAssignedIds !== assignedIds) setAssignedIds(pendingAssignedIds);
   // Optimistic local hides (delete/assign) until the realtime refetch lands,
   // and local edits (tag/side/note) applied over the fetched rows.
   const ungrouped = effectiveRecordings
     .filter(
       (r) =>
         (r.groupId === null || !sessionGroupIds.has(r.groupId)) &&
-        !assignedIds.has(r.id),
+        !pendingAssignedIds.has(r.id),
     );
 
   const filterOptions = historyFilterOptions(
@@ -203,24 +209,27 @@ export default function HistoryView({
   );
 
   async function assignSelectionToSession(groupId: string) {
-    const ids = [...selectedIds];
-    if (ids.length === 0) return;
+    // Derived exactly like createSessionFromSelection's `recs`: only visible
+    // `ungrouped` rows, so a ticked-then-soft-deleted (or otherwise hidden)
+    // recording is never written to and the toast count matches reality.
+    const recs = ungrouped.filter((r) => selectedIds.has(r.id));
+    if (recs.length === 0) return;
     setAssigning(true);
     setAssignError(null);
     try {
-      for (const id of ids) await updateRecordingGroup(id, groupId);
+      for (const r of recs) await updateRecordingGroup(r.id, groupId);
       // The target session's span just grew — recompute its total time so the
       // duration/load reflect the newly-added recordings, not the stale value.
       await recalcTindeqSessionDuration(groupId);
       setAssignedIds((prev) => {
         const next = new Set(prev);
-        for (const id of ids) next.add(id);
+        for (const r of recs) next.add(r.id);
         return next;
       });
       setSelectedIds(new Set());
       setAssignOpen(false);
       bumpRealtime();
-      toast(`Assigned ${ids.length} recording${ids.length === 1 ? "" : "s"}`);
+      toast(`Assigned ${recs.length} recording${recs.length === 1 ? "" : "s"}`);
     } catch (e) {
       setAssignError(e instanceof Error ? e.message : "Failed to assign");
     } finally {
@@ -434,6 +443,15 @@ export default function HistoryView({
             rec={it.rec}
             onDelete={(id) => {
               setRemovedIds((prev) => new Set(prev).add(id));
+              // A ticked recording that gets deleted must drop out of the
+              // action-bar count immediately; it stays un-ticked on
+              // undo-restore (simplest is an unconditional delete here).
+              setSelectedIds((prev) => {
+                if (!prev.has(id)) return prev;
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+              });
               void deleteRecording(id);
               // Issue #143: instant delete (unchanged) + an Undo action that
               // restores the recording and drops the optimistic hide.
