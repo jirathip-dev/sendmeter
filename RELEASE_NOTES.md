@@ -22,6 +22,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 - Restore the Tare button in the Force fullscreen gauge so a non-zero load-cell baseline can be zeroed again.
 - Force: fixed hands-free adaptive reps failing to save (with a "Failed to save recording" error) after the first rep of a run.
+- Force: fixed a disconnect while hands-free was armed (before the first pull) silently discarding a later normal run's recordings, and fixed switching or clearing a static preset after a hands-free run carrying that run's stale state into the new one.
 - Routine now has its own distinct color in the activity-mix bar, legend, and heatmap instead of looking identical to Antagonist.
 - Activity-mix percentages no longer round a real, visible share down to 0% — small shares now show as "<1%".
 - Fixed grouping a just-edited Force recording into a session (or moving it into an existing one) sometimes leaving it stuck showing as loose until reload.
