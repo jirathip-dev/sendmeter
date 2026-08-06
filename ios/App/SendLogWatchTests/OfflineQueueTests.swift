@@ -818,6 +818,107 @@ final class OfflineQueueTests: XCTestCase {
         let recordedAfterRelaunch = await secondLaunch.lastSuccessfulSyncAt()
         XCTAssertEqual(recordedAfterRelaunch, now, "must survive a fresh actor instance over the same directory")
     }
+
+    /// Review F20: unlike `pendingCount()`/`quarantinedCount()`, which
+    /// re-derive account scoping from each on-disk item's own
+    /// `enqueuedUserId` on every read, the last-sync marker is a SINGLE
+    /// global file — without its own account stamp it would keep reporting
+    /// account A's timestamp forever, even after the phone switches to
+    /// account B and B's own queue has never synced at all. Same failure
+    /// shape as #158/#475 F4, one instance later.
+    func testLastSuccessfulSyncDoesNotLeakAcrossAccounts() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+        await queue.drain()
+        let syncedUnderA = await queue.lastSuccessfulSyncAt()
+        XCTAssertEqual(syncedUnderA, now, "account A sees its own sync")
+
+        let otherAccount = UUID()
+        signIn(as: otherAccount)
+        let syncedUnderB = await queue.lastSuccessfulSyncAt()
+        XCTAssertNil(syncedUnderB, "account B must not see account A's timestamp as if it described B's own queue")
+
+        signIn(as: testUserId)
+        let syncedBackUnderA = await queue.lastSuccessfulSyncAt()
+        XCTAssertEqual(syncedBackUnderA, now, "signing back in as A restores visibility of A's own sync")
+    }
+
+    // MARK: #472b review F18 — "retrying automatically" must reflect a real armed backoff
+
+    func testIsRetryScheduledIsFalseWhenNoDrainHasEverStalled() async throws {
+        let queue = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]),
+            clock: FixedClock(Date(timeIntervalSince1970: 1_800_000_000)),
+            baseDir: tempDir
+        )
+        let armed = await queue.isRetryScheduled()
+        XCTAssertFalse(armed)
+    }
+
+    func testIsRetryScheduledIsTrueAfterAStalledDrain() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(stage: .session, underlying: URLError(.notConnectedToInternet)),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, scheduler: RecordingScheduler())
+
+        await queue.drain()
+
+        let armed = await queue.isRetryScheduled()
+        XCTAssertTrue(armed)
+    }
+
+    /// The exact F18(a) scenario the reviewer reproduced: a signed-out
+    /// watch has a pending item (`pendingCount()` deliberately widens to
+    /// count it, #189), but `shouldDrain` returns `false` for every file
+    /// when nobody is signed in — `drainPass` `continue`s past it rather
+    /// than attempting (and possibly stalling on) it, so NO retry is ever
+    /// armed. The UI must not claim one is.
+    func testIsRetryScheduledStaysFalseWhenSignedOutEvenWithAPendingItem() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        WatchSessionStore.shared.clear() // signed out
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+
+        await queue.drain()
+
+        let armed = await queue.isRetryScheduled()
+        XCTAssertFalse(armed, "signed out — drainPass never attempts the item, so nothing can stall")
+        let pending = await queue.pendingCount()
+        XCTAssertEqual(pending, 1, "the item is still reported pending (#189) — only the retry-armed claim is false")
+    }
+
+    // MARK: #472b review F21 — a dropped scheduler callback must not disarm the backoff forever
+
+    /// Exercises the REAL production `TaskDrainScheduler`, not a test
+    /// double — the only test in this file that does, closing the "never
+    /// exercised end-to-end" gap the review noted. An earlier version
+    /// returned early when its internal sleep `Task` was already
+    /// cancelled, without ever running the action; nothing currently
+    /// cancels this unstructured `Task`, but if anything ever did, that
+    /// early return would have disarmed `OfflineQueue`'s backoff for the
+    /// rest of the process's lifetime. The fixed scheduler always runs the
+    /// action.
+    func testTaskDrainSchedulerActuallyRunsTheAction() async throws {
+        let scheduler = TaskDrainScheduler()
+        let ran = RanFlag()
+
+        scheduler.scheduleRetry(after: 0.01, RetryAction { await ran.markRan() })
+
+        try await Task.sleep(for: .seconds(1))
+        let didRun = await ran.ran
+        XCTAssertTrue(didRun, "the scheduled action must actually run after the delay")
+    }
+}
+
+private actor RanFlag {
+    private(set) var ran = false
+    func markRan() { ran = true }
 }
 
 /// Test double for `WorkoutBundleUploading` — throws a scripted error per

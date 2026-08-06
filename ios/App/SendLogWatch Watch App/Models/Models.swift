@@ -333,6 +333,15 @@ nonisolated struct RetryLedgerEntry: Codable {
 /// signal — distinct from `WatchBuildReport`'s quarantine/pending counts,
 /// which describe what the PHONE was last told, not what the watch
 /// currently knows about itself.
+///
+/// `userId` (review F20): unlike `pendingCount()`/`quarantinedCount()`,
+/// which re-derive account-scoping from each on-disk item's own
+/// `enqueuedUserId` on every read, this is a SINGLE global file — without
+/// its own account stamp it would silently describe whichever account last
+/// wrote it, forever, even after the phone switches accounts. `OfflineQueue.
+/// lastSuccessfulSyncAt()` refuses to return a stored value whose `userId`
+/// doesn't match who's signed in now.
 nonisolated struct LastSyncMarker: Codable {
     var syncedAt: Date
+    var userId: UUID?
 }

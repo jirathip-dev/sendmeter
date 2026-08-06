@@ -214,6 +214,12 @@ actor OfflineQueue {
         await drain()
     }
 
+    /// Whether a backoff retry is currently armed (#472b F18) — the watch UI
+    /// must not promise "retrying automatically" in a state where nothing
+    /// actually is (e.g. no relayed token yet, so `drainPass` never even
+    /// attempts an upload and never stalls).
+    func isRetryScheduled() -> Bool { backoffScheduled }
+
     /// Returns whether the pass stalled — stopped early on a `.retry` or
     /// `.needsAuthRelay` break rather than running to the end of the
     /// eligible files — so `drain()` knows whether to arm the backoff timer.
@@ -259,7 +265,7 @@ actor OfflineQueue {
                 try await uploader.upload(bundle)
                 try? FileManager.default.removeItem(at: file)
                 clearRetryLedger(for: bundle) // a previously-struggling item finally landed
-                recordSuccessfulSync(at: clock.now()) // #472b — the "have we synced lately" signal
+                recordSuccessfulSync(at: clock.now(), userId: currentUserId) // #472b — the "have we synced lately" signal
             } catch {
                 // #475: a generic "stop on any error" treated a permanent
                 // DB rejection exactly like a network outage, and because
@@ -482,21 +488,34 @@ actor OfflineQueue {
         baseDir.appendingPathComponent("last-successful-sync.json")
     }
 
-    private func recordSuccessfulSync(at date: Date) {
+    /// `userId` is stamped from the account that was actually signed in for
+    /// THIS successful upload (review F20): unlike `pendingCount()`/
+    /// `quarantinedCount()`, which are re-derived per file from each item's
+    /// own `enqueuedUserId` every time they're read, this marker is a single
+    /// global file — with no `userId` of its own it would silently outlive
+    /// the account it describes (account A syncs, the phone switches to
+    /// account B, B reads A's timestamp as if it were current). Read back in
+    /// `lastSuccessfulSyncAt()`, which refuses a mismatch.
+    private func recordSuccessfulSync(at date: Date, userId: UUID?) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(LastSyncMarker(syncedAt: date)) else { return }
+        guard let data = try? encoder.encode(LastSyncMarker(syncedAt: date, userId: userId)) else { return }
         try? data.write(to: lastSyncURL, options: .atomic)
     }
 
-    /// When an upload last actually landed, for `SyncFreshnessPolicy` — nil
-    /// means "never", not "just now": callers must not default a missing
-    /// value to the current time, or a queue that has never synced would
-    /// read as freshly synced.
+    /// When an upload last actually landed FOR THE CURRENTLY SIGNED-IN
+    /// ACCOUNT, for `SyncFreshnessPolicy`. nil means "never" (or "not this
+    /// account's sync") — callers must not default a missing value to the
+    /// current time, or a queue that has never synced under this account
+    /// would read as freshly synced. A stored marker whose `userId` doesn't
+    /// match `WatchSessionStore.shared.userId` right now is exactly that
+    /// case (#472b F20) and is treated the same as no marker at all.
     func lastSuccessfulSyncAt() -> Date? {
         guard let data = try? Data(contentsOf: lastSyncURL) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode(LastSyncMarker.self, from: data))?.syncedAt
+        guard let marker = try? decoder.decode(LastSyncMarker.self, from: data) else { return nil }
+        guard marker.userId == WatchSessionStore.shared.userId else { return nil }
+        return marker.syncedAt
     }
 }

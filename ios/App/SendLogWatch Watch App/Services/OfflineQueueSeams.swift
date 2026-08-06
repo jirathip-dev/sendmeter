@@ -106,6 +106,7 @@ struct AuthManagerRelayRequester: SessionRelayRequesting {
 /// captures the scheduled action instead of waiting, so "a failed drain
 /// retries later with no foreground event" is provable without a test
 /// actually sleeping for real minutes.
+///
 /// A retry callback, wrapped in a concrete `Sendable` type rather than
 /// passed as a bare `@Sendable () async -> Void` parameter. This target
 /// builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` +
@@ -129,10 +130,17 @@ protocol DrainScheduling: Sendable {
 }
 
 struct TaskDrainScheduler: DrainScheduling {
+    /// Review F21: an earlier version returned early when the sleep's own
+    /// `Task` had been cancelled, without ever running `action`. Nothing
+    /// currently cancels this unstructured `Task`, but `OfflineQueue` only
+    /// clears its "a retry is armed" flag INSIDE `action` — a dropped action
+    /// would disarm the backoff for the rest of the process's lifetime, the
+    /// exact indefinite-parking failure this feature exists to prevent. The
+    /// action always runs, whether or not the sleep completed early — a
+    /// cancelled sleep just means the retry fires sooner, never never.
     nonisolated func scheduleRetry(after delay: TimeInterval, _ action: RetryAction) {
         Task {
             try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled else { return }
             await action.run()
         }
     }
