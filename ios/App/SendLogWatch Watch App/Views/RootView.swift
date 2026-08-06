@@ -1,11 +1,11 @@
 import SwiftUI
 import SendLogWatchCore
 
-/// Navigation destinations reachable from the home list — also the targets the
-/// quick-launch complications deep-link to (see .onOpenURL below).
-enum WatchDest: Hashable {
-    case force, workout
-}
+// `WatchDest` (the navigationDestination values, also the quick-launch
+// complication deep-link targets — see .onOpenURL below) lives in
+// SendLogWatchCore now, alongside `WatchNavigation.resolvedPath` (#476):
+// keeping the running-workout navigation guard in Core makes it
+// unit-testable without a simulator.
 
 enum WatchHomePage: Hashable {
     case status, actions
@@ -14,6 +14,7 @@ enum WatchHomePage: Hashable {
 struct RootView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(TindeqManager.self) private var tindeq
+    @Environment(WorkoutManager.self) private var workout
     @State private var path: [WatchDest] = []
     @State private var homePage: WatchHomePage = .status
 
@@ -61,14 +62,18 @@ struct RootView: View {
     /// Routes complication deep links. Status first clears any pushed screen
     /// and selects page one; force/workout replace the stack path and therefore
     /// work regardless of which home page is currently visible.
+    ///
+    /// #476: this used to replace `path` unconditionally, so a Force
+    /// complication tap while a workout was running popped WorkoutLiveView
+    /// off the stack with no way back to its End control. All the routing
+    /// decision now lives in `WatchNavigation.resolvedPath` (Core,
+    /// unit-tested) — this is just plumbing, so there's no separate
+    /// untested copy of the logic to drift from what's tested.
     private func open(_ url: URL) {
-        switch url.host {
-        case "status":
-            path = []
+        guard let host = url.host.flatMap(WatchDeepLinkHost.init(rawValue:)) else { return }
+        path = WatchNavigation.resolvedPath(for: host, workoutRunning: workout.isRunning)
+        if host == .status {
             homePage = .status
-        case "force": path = [.force]
-        case "workout": path = [.workout]
-        default: break
         }
     }
 }

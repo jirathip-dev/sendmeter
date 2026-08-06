@@ -3,22 +3,13 @@ import SwiftUI
 import WatchKit
 
 struct WorkoutLiveView: View {
-    @State private var workout = WorkoutManager()
-    @State private var ending = false
-    /// Brief "Saved ✓" confirmation after auto-save-on-stop.
-    @State private var justSaved = false
-    /// Whether the just-saved bundle is still sitting in the offline queue
-    /// (issue #189) — checked right before showing `justSaved`, so
-    /// `WidgetBridge.refreshStatus()`'s own network round trip below gives
-    /// `drain()` a real chance to finish uploading first when signed in.
-    /// Signed-out stays queued deterministically (`drain()` no-ops
-    /// immediately), so this reliably distinguishes "still uploading" from
-    /// "stuck until sign-in" without touching `drain()`/`shouldDrain`.
-    @State private var stillQueued = false
-    /// Kept in memory after both persistence and direct upload fail (#287),
-    /// so Retry can replay the same idempotent bundle instead of pretending
-    /// the workout was saved.
-    @State private var failedBundle: WorkoutSaveBundle?
+    // App-scoped (#476) — see SendLogWatchApp's doc comment. This view can be
+    // popped and recreated (a complication deep link, a signedOut auth relay
+    // swapping the NavigationStack) while a workout, or a save it started,
+    // is still in flight; reading the shared manager instead of owning
+    // private @State means a freshly (re)created instance picks up the real
+    // state instead of starting blank.
+    @Environment(WorkoutManager.self) private var workout
     @State private var restAlarmTask: Task<Void, Never>?
     /// True in the always-on dimmed state. watchOS dims hard on its own, and a
     /// saturated colour block left at full value on top of that is a burn-in
@@ -27,21 +18,11 @@ struct WorkoutLiveView: View {
 
     private let restTargets = [60, 120, 180, 300]
 
-    init() {}
-
-    #if DEBUG
-    /// Preview-only seam: poses the view mid-workout so the live layout can be
-    /// checked at 40mm and 49mm (#277) without an `HKWorkoutSession`.
-    init(previewWorkout: WorkoutManager) {
-        _workout = State(initialValue: previewWorkout)
-    }
-    #endif
-
     var body: some View {
         Group {
-            if failedBundle != nil {
+            if workout.failedBundle != nil {
                 failedSaveContent
-            } else if justSaved {
+            } else if workout.justSaved {
                 savedContent
             } else if workout.isRunning {
                 liveContent
@@ -57,61 +38,6 @@ struct WorkoutLiveView: View {
         .navigationBarBackButtonHidden(workout.isRunning)
     }
 
-    // Stopping SAVES immediately (no confirm form) — banks the model's
-    // predicted RPE + detected boulders and persists locally; the upload
-    // drains in the background. Adjust RPE/type later on the phone.
-    private func endAndSave() {
-        ending = true
-        cancelRestAlarm()
-        Task {
-            guard let summary = await workout.end() else {
-                ending = false
-                return
-            }
-            let bundle = Repo.makeSaveBundle(
-                summary: summary,
-                boulders: summary.attempts.count,
-                // Bank the model's raw prediction at 0.1 precision (#107) —
-                // no rounding to half-points, adjust later on the phone. The
-                // 0.5-step steppers are for MANUAL entry only (SL-89).
-                rpe: RPEQuantization.autoTracked(summary.predictedRPE),
-                phase: workout.cachedPhase,
-                tunables: .default
-            )
-            WidgetBridge.updateLiveWorkout(active: false) // clear the live widget
-            await save(bundle)
-        }
-    }
-
-    private func retryFailedSave() {
-        guard let failedBundle, !ending else { return }
-        ending = true
-        Task { await save(failedBundle) }
-    }
-
-    private func save(_ bundle: WorkoutSaveBundle) async {
-        let outcome = await OfflineQueue.shared.enqueue(bundle)
-        guard outcome != .lost else {
-            failedBundle = bundle
-            ending = false
-            WKInterfaceDevice.current().play(.failure)
-            return
-        }
-
-        failedBundle = nil
-        await WidgetBridge.refreshStatus() // fresh ACWR after the save
-        if outcome == .queued {
-            stillQueued = await OfflineQueue.shared.pendingCount() > 0
-        } else {
-            stillQueued = false
-        }
-        ending = false
-        justSaved = true
-        WKInterfaceDevice.current().play(.success)
-        try? await Task.sleep(for: .seconds(1.6))
-        justSaved = false
-    }
-
     @ViewBuilder
     private var failedSaveContent: some View {
         VStack(spacing: 8) {
@@ -123,11 +49,11 @@ struct WorkoutLiveView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button(ending ? "Retrying…" : "Retry Save") {
-                retryFailedSave()
+            Button(workout.ending ? "Retrying…" : "Retry Save") {
+                workout.retryFailedSave()
             }
             .buttonStyle(.borderedProminent)
-            .disabled(ending)
+            .disabled(workout.ending)
         }
     }
 
@@ -137,8 +63,8 @@ struct WorkoutLiveView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 34))
                 .foregroundStyle(.green)
-            Text(stillQueued ? "Saved to watch" : "Saved").font(.headline)
-            Text(stillQueued ? "uploads when signed in" : "Set RPE on your phone")
+            Text(workout.stillQueued ? "Saved to watch" : "Saved").font(.headline)
+            Text(workout.stillQueued ? "uploads when signed in" : "Set RPE on your phone")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -182,8 +108,13 @@ struct WorkoutLiveView: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button(ending ? "…" : "End") {
-                    endAndSave()
+                Button(workout.ending ? "…" : "End") {
+                    // The rest alarm is view-local timer state (#476: no data
+                    // loss in dropping a haptic if the view goes away before
+                    // it fires), so it's cancelled here rather than hoisted
+                    // along with the save path itself.
+                    cancelRestAlarm()
+                    workout.endAndSave()
                 }
                 .font(.system(size: 12, weight: .semibold))
                 .buttonStyle(.bordered)
@@ -194,7 +125,7 @@ struct WorkoutLiveView: View {
                 // than on a band that itself can be red, so the two colours
                 // never collide.
                 .tint(color(WorkoutPhasePalette.phoneDanger))
-                .disabled(ending)
+                .disabled(workout.ending)
             }
         }
         .onAppear { scheduleRestAlarm() }
@@ -457,7 +388,10 @@ private enum PreviewScreen {
 }
 
 private func workoutPreview(_ workout: WorkoutManager, _ size: CGSize) -> some View {
-    NavigationStack { WorkoutLiveView(previewWorkout: workout) }
+    // #476: WorkoutLiveView reads the manager from the environment now
+    // (App-scoped in production), not a preview-only init.
+    NavigationStack { WorkoutLiveView() }
+        .environment(workout)
         .frame(width: size.width, height: size.height)
         .clipped()
 }

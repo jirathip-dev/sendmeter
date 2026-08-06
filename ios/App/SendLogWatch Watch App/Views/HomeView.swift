@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SwiftUI
 
 /// The watch home: two swipeable pages (#278). Page 1 is status — what shape
@@ -44,6 +45,7 @@ struct HomeView: View {
 /// Page 2 — the things you can start from the wrist.
 private struct ActionsView: View {
     @Environment(AuthManager.self) private var auth
+    @Environment(WorkoutManager.self) private var workout
     @State private var pendingUploads = 0
 
     var body: some View {
@@ -54,6 +56,16 @@ private struct ActionsView: View {
 
             NavigationLink(value: WatchDest.workout) {
                 Label("Climb Workout", systemImage: "figure.climbing")
+            }
+
+            // #476: the workout survives a Force/status complication tap now
+            // (hoisted to App scope), but this link is still the only way
+            // back to it from Home — say so, since nothing on the Force/
+            // status screens themselves hints a workout is running behind them.
+            if workout.isRunning {
+                Label("Workout running — tap Climb Workout to end it", systemImage: "figure.climbing")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
             }
 
             if pendingUploads > 0 {

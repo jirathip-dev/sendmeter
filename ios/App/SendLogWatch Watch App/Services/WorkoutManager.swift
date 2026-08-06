@@ -4,6 +4,7 @@ import HealthKit
 import Observation
 import SendLogWatchCore
 import WatchConnectivity
+import WatchKit
 
 /// Runs an HKWorkoutSession (climbing, indoor) with live HR from
 /// HKLiveWorkoutBuilder, fused at 1 Hz with CMAltimeter relative altitude and
@@ -36,6 +37,29 @@ final class WorkoutManager: NSObject {
     /// network round-trip on the critical path (it builds the bundle from this).
     var cachedPhase = "capacity"
 
+    // MARK: Save path (#476: hoisted out of WorkoutLiveView)
+    //
+    // A save started by `endAndSave()` used to run as a bare `Task` closure
+    // over WorkoutLiveView's @State — a struct's captured state, not tied to
+    // the live view identity. If the view was torn down mid-save (a
+    // complication deep link, or RootView swapping the whole NavigationStack
+    // on a signedOut auth relay), the in-flight save kept running but its
+    // completion wrote into state nobody could read any more: `failedBundle`
+    // (the #287 in-memory last copy of a workout whose disk write AND direct
+    // upload both failed) was lost right when it mattered most. Living on the
+    // App-scoped manager instead means a freshly (re)created WorkoutLiveView
+    // reads the real outcome.
+    var ending = false
+    /// Brief "Saved ✓" confirmation after auto-save-on-stop.
+    var justSaved = false
+    /// Whether the just-saved bundle is still sitting in the offline queue
+    /// (issue #189).
+    var stillQueued = false
+    /// Kept in memory after both persistence and direct upload fail (#287),
+    /// so Retry can replay the same idempotent bundle instead of pretending
+    /// the workout was saved.
+    var failedBundle: WorkoutSaveBundle?
+
     private static func loadRestTarget() -> Int {
         let v = UserDefaults.standard.integer(forKey: "restTargetS")
         return [60, 120, 180, 300].contains(v) ? v : 180
@@ -49,7 +73,20 @@ final class WorkoutManager: NSObject {
     private let altimeter = CMAltimeter()
     private let motion = CMMotionManager()
     private var accelBuffer: [(t: TimeInterval, mag: Double)] = []
-    private var fusionTimer: Timer?
+    // Not `private`: SendLogWatchTests (@testable import) exercises the
+    // deinit-invalidates-the-timer guarantee directly against these two.
+    var fusionTimer: Timer?
+    /// Guards `start()` against a double tap reaching HealthKit setup twice,
+    /// and stamps the cached-phase fetch so a stale one (from a workout that
+    /// already ended) can't overwrite a later workout's `cachedPhase` — see
+    /// `WorkoutStartGuard`'s doc comment for why hoisting makes this real.
+    private var startGuard = WorkoutStartGuard()
+    /// Test-only observable (SendLogWatchTests, @testable import): how many
+    /// `start()` calls the guard has accepted so far. A real HealthKit setup
+    /// attempt/timer isn't reliably observable from this test host (no HK
+    /// entitlement), but this directly reflects whether the guard let a call
+    /// through — a concurrent double-tap must still only ever accept one.
+    var acceptedStartCount: Int { startGuard.generation }
     private var startDate: Date?
     private var rawRelativeAltitude: Double = 0
     private var rawTrace: [[Double?]] = []
@@ -65,6 +102,15 @@ final class WorkoutManager: NSObject {
         super.init()
     }
 
+    /// `end()` already invalidates the fusion timer, but that's not the only
+    /// way this object goes away — invalidate here too, or a path that skips
+    /// `end()` (deallocation without an explicit stop) leaves the timer
+    /// registered on the run loop, which retains it and keeps firing forever
+    /// into a `[weak self]` that's already nil.
+    deinit {
+        fusionTimer?.invalidate()
+    }
+
     func requestAuthorization() async throws {
         let share: Set<HKSampleType> = [HKObjectType.workoutType()]
         let read: Set<HKObjectType> = [
@@ -76,9 +122,24 @@ final class WorkoutManager: NSObject {
 
     @MainActor
     func start() async {
+        // Rejects a second concurrent call synchronously, before the first
+        // `await` below — a double tap on Start otherwise reaches
+        // `requestAuthorization`/`startFusion` twice, and the second
+        // `startFusion` overwrites `fusionTimer` without invalidating the
+        // first, orphaning a timer the run loop keeps firing.
+        guard let generation = startGuard.begin() else { return }
+        defer { startGuard.finish() }
+
         errorMsg = nil
         // Warm the phase in the background so save-on-stop needs no network.
-        Task { cachedPhase = (try? await Repo.fetchCurrentPhase()) ?? "capacity" }
+        // Stamped with this start's generation: once hoisted, this manager
+        // outlives any single workout, so a slow fetch from a PREVIOUS start
+        // must not land on the workout that's running by the time it resolves.
+        Task {
+            let phase = (try? await Repo.fetchCurrentPhase()) ?? "capacity"
+            guard self.startGuard.isCurrent(generation) else { return }
+            self.cachedPhase = phase
+        }
         detector = AttemptDetector(tunables: tunables)
         rawTrace = []
         accelBuffer = []
@@ -332,6 +393,66 @@ final class WorkoutManager: NSObject {
         )
     }
 
+    // MARK: Save path (#476: hoisted out of WorkoutLiveView, see the state
+    // group's doc comment above)
+
+    // Stopping SAVES immediately (no confirm form) — banks the model's
+    // predicted RPE + detected boulders and persists locally; the upload
+    // drains in the background. Adjust RPE/type later on the phone.
+    @MainActor
+    func endAndSave() {
+        ending = true
+        Task {
+            guard let summary = await end() else {
+                ending = false
+                return
+            }
+            let bundle = Repo.makeSaveBundle(
+                summary: summary,
+                boulders: summary.attempts.count,
+                // Bank the model's raw prediction at 0.1 precision (#107) —
+                // no rounding to half-points, adjust later on the phone. The
+                // 0.5-step steppers are for MANUAL entry only (SL-89).
+                rpe: RPEQuantization.autoTracked(summary.predictedRPE),
+                phase: cachedPhase,
+                tunables: .default
+            )
+            WidgetBridge.updateLiveWorkout(active: false) // clear the live widget
+            await save(bundle)
+        }
+    }
+
+    @MainActor
+    func retryFailedSave() {
+        guard let failedBundle, !ending else { return }
+        ending = true
+        Task { await save(failedBundle) }
+    }
+
+    @MainActor
+    private func save(_ bundle: WorkoutSaveBundle) async {
+        let outcome = await OfflineQueue.shared.enqueue(bundle)
+        guard outcome != .lost else {
+            failedBundle = bundle
+            ending = false
+            WKInterfaceDevice.current().play(.failure)
+            return
+        }
+
+        failedBundle = nil
+        await WidgetBridge.refreshStatus() // fresh ACWR after the save
+        if outcome == .queued {
+            stillQueued = await OfflineQueue.shared.pendingCount() > 0
+        } else {
+            stillQueued = false
+        }
+        ending = false
+        justSaved = true
+        WKInterfaceDevice.current().play(.success)
+        try? await Task.sleep(for: .seconds(1.6))
+        justSaved = false
+    }
+
     // MARK: Sensors
 
     private func startAltimeter() {
@@ -358,7 +479,8 @@ final class WorkoutManager: NSObject {
         }
     }
 
-    private func startFusion() {
+    // Not `private`: see the `fusionTimer` comment above.
+    func startFusion() {
         fusionTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / tunables.tickHz, repeats: true) { [weak self] _ in
             guard let self, let startDate = self.startDate else { return }
             let now = Date()
@@ -376,11 +498,14 @@ final class WorkoutManager: NSObject {
             let alt = self.rawRelativeAltitude
             let sample = MotionSample(t: t, altitude: alt, motionRMS: rms, hr: self.heartRate)
             let before = self.detector.snapshot
+            let countBefore = self.liveAttempts
             self.detector.ingest(sample, at: now)
             let after = self.detector.snapshot
-            self.liveAttempts = self.detector.liveAttemptCount
+            let countAfter = self.detector.liveAttemptCount
+            self.liveAttempts = countAfter
             self.relativeAltitude = after.localHeightM
-            if before.state != after.state {
+            let stateChanged = before.state != after.state
+            if stateChanged {
                 if after.isClimbing {
                     self.climbingSince = after.phaseStartedAt ?? now
                     self.restStartedAt = nil
@@ -392,8 +517,14 @@ final class WorkoutManager: NSObject {
                 // WorkoutLiveView's onChange schedules/cancels the rest alarm.
                 self.manualClimbing = after.isClimbing
                 self.pushBeat()
+            }
+            // #476: liveAttemptCount can cross AttemptDetector's post-filter
+            // threshold mid-attempt with no phase transition (see
+            // WidgetCountSync's doc comment) — pushing only on `stateChanged`
+            // left the widget's boulder count stuck until the attempt ended.
+            if WidgetCountSync.shouldPush(stateChanged: stateChanged, countBefore: countBefore, countAfter: countAfter) {
                 WidgetBridge.updateLiveWorkout(
-                    active: true, boulders: self.liveAttempts,
+                    active: true, boulders: countAfter,
                     climbing: after.isClimbing,
                     phaseSince: after.isClimbing ? self.climbingSince : self.restStartedAt,
                     restTargetS: self.restTargetS

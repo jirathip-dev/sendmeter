@@ -39,6 +39,7 @@
 		8FAADE897AE47026F67168C8 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 481650BBB5C256BE2759C477 /* Foundation.framework */; };
 		90B66846175A762105ACC18F /* PendingQueueDecodeCompatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A71E5BE016D1DBF7C3FE908 /* PendingQueueDecodeCompatTests.swift */; };
 		985E393749254016699A5A96 /* WorkoutSaveBundleDecodeCompatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */; };
+		989C6A6B38BC951D1EDE0CCD /* WorkoutOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC9553E789D7EA1060A0E6B6 /* WorkoutOwnershipTests.swift */; };
 		9FF1A63A69A1CE36AF5D06D6 /* SendmeterWatchScreenshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = F585400FD5CA4FD502C930ED /* SendmeterWatchScreenshots.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* PendingQueueUserMatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */; };
 		C0A1E5C1D8A14B4EB2B5A001 /* CoalescingDrainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */; };
@@ -178,6 +179,7 @@
 		C3F5AD05DE81A538A6242E98 /* SnapshotHelper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SnapshotHelper.swift; sourceTree = "<group>"; };
 		C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/TagReconciliationTests.swift; sourceTree = "<group>"; };
 		D5F88EE79EE43D995B504A78 /* SendmeterWatchScreenshots.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendmeterWatchScreenshots.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		DC9553E789D7EA1060A0E6B6 /* WorkoutOwnershipTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkoutOwnershipTests.swift; sourceTree = "<group>"; };
 		F585400FD5CA4FD502C930ED /* SendmeterWatchScreenshots.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SendmeterWatchScreenshots.swift; sourceTree = "<group>"; };
 		F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/ACWRTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -297,6 +299,7 @@
 				4A71E5BE016D1DBF7C3FE908 /* PendingQueueDecodeCompatTests.swift */,
 				5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */,
 				8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */,
+				DC9553E789D7EA1060A0E6B6 /* WorkoutOwnershipTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = "<group>";
@@ -663,6 +666,7 @@
 				90B66846175A762105ACC18F /* PendingQueueDecodeCompatTests.swift in Sources */,
 				69ECCBC95C0D80B03512206A /* PendingQueuePolicyTests.swift in Sources */,
 				985E393749254016699A5A96 /* WorkoutSaveBundleDecodeCompatTests.swift in Sources */,
+				989C6A6B38BC951D1EDE0CCD /* WorkoutOwnershipTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1365,15 +1369,15 @@
 			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
 			productName = SendLogWatchCore;
 		};
-		D40300000000000000000002 /* SendLogWatchCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
-			productName = SendLogWatchCore;
-		};
 		665354DA3AF13BA04D7AADA0 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = B5E75921EB0124F7376FBBFD /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
+		};
+		D40300000000000000000002 /* SendLogWatchCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
+			productName = SendLogWatchCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
