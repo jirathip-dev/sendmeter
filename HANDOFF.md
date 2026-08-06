@@ -26,6 +26,99 @@ now filed for the pre-existing `startActivity`/`beginCollection` orphan
 hazard (first surfaced as a side note in the first review's F7); it is
 explicitly **not** fixed in this branch, per instruction.
 
+**Third review round (final pass on `5bc2fa9`): APPROVE**, with two findings
+in test code (X1, X2 — nothing in shipped behavior) that the user then
+overruled from non-blocking to blocking. **Both are fixed in this revision,
+and this correction is important: the previous version of this document
+claimed "120/120 passed" as a settled fact. It was not.** The reviewer ran the
+same target five times on the unmodified commit and got two outright failures
+and three clean passes — a ~60%-of-the-time fact, not a 100%-of-the-time one.
+The root cause (X1) and a second instance of this branch's recurring habit —
+a comment claiming a test enforces something it doesn't (X2) — are both
+addressed below, with the corrected, actually-repeated pass rate reported
+where the false claim used to be.
+
+## Findings from REVIEW.md, round 3 (X1, X2) — now blocking, both fixed
+
+### X1 — the R1 regression tests were intermittently failing and ~160× slower than the rest of the suite
+
+**This was real, not a one-off.** The reviewer ran `SendLogWatchTests` five
+times on unmodified `5bc2fa9`: runs 1 and 2 **failed**, runs 3–5 passed
+120/120. Root cause: `testSuccessfulSaveDoesNotClearAnUnrelatedFailedBundle`
+and `testSuccessfulSaveClearsItsOwnMatchingFailedBundle` drove the real
+`WorkoutManager.save()`, which reaches `OfflineQueue.enqueue` (real disk I/O,
+uncleaned `pending/<uuid>.json` files left behind) and
+`WidgetBridge.refreshStatus()` (real network calls against
+`http://127.0.0.1:54321`, retried with backoff — ~15.9s per test, all logged
+as `NSURLErrorDomain Code=-1004`). The previous handoff reported "120/120
+passed" from a single run and did not disclose this — that is exactly the
+failure mode this entire branch exists to eliminate: a green run that doesn't
+mean what it claims to mean, in the only automated coverage `WorkoutManager`
+has.
+
+**Fix — the Core-helper refactor from `REVIEW.md` section 5, which is also
+its ruling on the `internal save()` question:**
+- Added `FailedBundleClear.shouldClear(failedId:savedId:)` to
+  `SendLogWatchCore/WorkoutLifecycle.swift` — the pure id-comparison R1
+  needs, with no dependency on `OfflineQueue`/`WidgetBridge`/network.
+- Tested in `SendLogWatchCoreTests/WorkoutLifecycleTests.swift`
+  (`FailedBundleClearTests`, 3 tests, microseconds, runs via `swift test` —
+  CI-covered by `ios-ci.yml`'s `package-tests` job, unlike `SendLogWatchTests`
+  which needs a `TEST_HOST` and isn't in CI at all per CLAUDE.md).
+- `WorkoutManager.save()` reverted to `private` (its widening was the
+  reviewer's diagnosed cost, not a production hazard on its own — but nothing
+  needs it exposed once the invariant is tested in Core) and now calls
+  `FailedBundleClear.shouldClear(...)` — its one production call site,
+  verified by inspection.
+- Removed the two flaky/slow tests from `WorkoutSavePathResetTests.swift`,
+  replaced with a comment pointing at where the invariant is actually tested
+  now and why.
+
+**Result, verified by actually re-running it — not by asserting it works:**
+ran the full `SendLogWatchTests` target **five consecutive times** on this
+fix. All five: **118/118 passed, `** TEST SUCCEEDED **`**, each run
+completing in **well under a second** (0.23s–0.75s total test time, per the
+`xcodebuild` summary line) with zero network log output. Compare: the
+pre-fix suite took ~32s per run and failed 2 of 5 times. Full output of all
+five runs is reproducible via:
+```
+for i in 1 2 3 4 5; do
+  xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" \
+    -destination "id=<sim udid>" -only-testing:SendLogWatchTests CODE_SIGNING_ALLOWED=NO
+done
+```
+(118 = 120 from the previous count, minus the 2 removed flaky tests.)
+
+### X2 — a third instance of a comment claiming coverage that doesn't exist
+
+The comment on `WorkoutOwnershipTests.testFailedBundleNeverGatesTheScreen`
+claimed that a regression restoring
+`if workout.failedBundle != nil { failedSaveContent }` ahead of the switch in
+`WorkoutLiveView.body` "fails this test, as long as `body` keeps calling this
+seam" — a hedge that was doing all the work and stating exactly the untested
+assumption. **I verified this myself before touching the comment**, per the
+standing instruction to verify claims by breaking the thing: temporarily
+wrapped `body`'s switch in exactly that gate
+(`if workout.failedBundle != nil { startContent } else { switch
+Self.screen(for: workout) { … } }`), ran
+`-only-testing:SendLogWatchTests/WorkoutOwnershipTests`, and got
+**`testFailedBundleNeverGatesTheScreen` passing, 3/3 `** TEST SUCCEEDED **`**
+— confirming the reviewer's finding exactly. Reverted the probe; tree clean
+before the real fix.
+
+**Fix:** rewrote the comment to state only what's actually enforced — the
+decision function itself and what `body` currently switches on — and to name
+the gap explicitly: a regression that wraps the whole switch in a *new*
+`if failedBundle != nil` check, bypassing `screen(for:)` entirely rather than
+changing what it returns, is not caught, because nothing in this test suite
+reads what `body` actually renders (no ViewInspector / hosting-controller seam
+exists in this project). This is the third instance of the same pattern on
+this branch (round 1's F1, round 2's R3a, now this) — the standing rule going
+forward, restated in code as well as in this document: **a test comment may
+only claim what has been verified by actually breaking the thing and watching
+the test fail; if you can't make it fail, say what IS enforced, not what you
+intended.**
+
 ## Findings from REVIEW.md, round 2 (R1–R3)
 
 ### R1 (MEDIUM) — `save()`'s success path cleared ANY `failedBundle`, not just its own
@@ -292,7 +385,14 @@ original hoist, losing the constraint, not just the fact).
   (stashed `WorkoutManager.swift` back, reran, confirmed the expected
   failure, restored, reconfirmed green).
 
-## Validation run (round 3, R1–R3, this revision)
+## Validation run (round 3, R1–R3) — ⚠️ CORRECTED, see round 4 below
+
+**The "120/120 passed" claim below was false as stated — it was a single run,
+not a repeated one, and the reviewer's final pass measured the true pass rate
+at 2 failures in 5 runs (~60%). See "Validation run (round 4, X1/X2)" further
+down for the corrected figures and the fix.** Left as originally written
+below, for the record — this is what the branch's third-round handoff
+actually claimed, and the correction belongs beside it, not in place of it.
 
 - `cd ios/App/SendLogWatchCore && swift test` — **221/221 passed** (same
   count as round 2 — `WorkoutScreenSelectionRegressionTests` was renamed to
@@ -321,6 +421,39 @@ original hoist, losing the constraint, not just the fact).
   strongest form of "fails on prior code." Popped the stash, rebuilt, reran
   the full suite: 120/120 green again.
 - Web: not touched, `npm run typecheck/lint/test/build` not applicable.
+
+## Validation run (round 4, X1/X2, this revision) — the corrected figures
+
+- `cd ios/App/SendLogWatchCore && swift test` — **224/224 passed** (221 + 3
+  new `FailedBundleClearTests`).
+- `xcodebuild build -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -destination "generic/platform=watchOS Simulator" CODE_SIGNING_ALLOWED=NO`
+  — **BUILD SUCCEEDED**.
+- **`xcodebuild test -destination "id=<Apple Watch Series 11 (42mm) sim>" -only-testing:SendLogWatchTests`, run FIVE consecutive times, as explicitly
+  instructed — not a single run reported as fact:**
+
+  | Run | Result | Total test time |
+  |---|---|---|
+  | 1 | 118/118 passed, `** TEST SUCCEEDED **` | 0.746s |
+  | 2 | 118/118 passed, `** TEST SUCCEEDED **` | 0.499s |
+  | 3 | 118/118 passed, `** TEST SUCCEEDED **` | 0.297s |
+  | 4 | 118/118 passed, `** TEST SUCCEEDED **` | 0.229s |
+  | 5 | 118/118 passed, `** TEST SUCCEEDED **` | 0.234s |
+
+  **5/5 = 100% pass rate**, every run under a second, no network log output in
+  any of the five (confirmed by inspecting each run's full log, not just the
+  summary line). Compare to the pre-fix measurement (by the reviewer, on
+  unmodified `5bc2fa9`): 2 failures in 5 runs, ~32s per run. 118 = the prior
+  120 minus the two removed flaky tests (`testSuccessfulSaveDoesNotClear...`,
+  `testSuccessfulSaveClearsItsOwn...`), which were exercising the same
+  invariant `FailedBundleClearTests` now covers, in Core, in microseconds.
+- **X2 verified by breaking it before being fixed**: temporarily reinstated
+  `if workout.failedBundle != nil { … } else { switch Self.screen(for:
+  workout) { … } }` in `WorkoutLiveView.body`, ran
+  `-only-testing:SendLogWatchTests/WorkoutOwnershipTests`: **3/3 passed**,
+  confirming `testFailedBundleNeverGatesTheScreen` does not catch that
+  regression shape, exactly as the reviewer found. Reverted before writing
+  the corrected comment.
+- Web: not touched.
 
 ## Things I could NOT verify from here (manual/device matrix — updated)
 
@@ -366,17 +499,16 @@ explicit instruction.
   the alternative is deleting those 4 tests outright and relying solely on
   `WorkoutScreenSelectionTests` + `WorkoutOwnershipTests
   .testFailedBundleNeverGatesTheScreen` (both exercise real production code).
-- **R3a's `WorkoutLiveView.screen(for:)` seam has an honest gap**, stated in
-  its writeup above: it catches a regression in the decision function itself
-  or in what `body` switches on, but not a hypothetical future regression
+- **`WorkoutLiveView.screen(for:)`'s honest gap (confirmed, not just stated —
+  see X2 above)**: it catches a regression in the decision function itself or
+  in what `body` switches on today, but NOT a hypothetical future regression
   that wraps the whole `switch` in a brand-new `if failedBundle != nil` check
-  that never calls `Self.screen(for:)` at all. No tool available in this
-  environment (no ViewInspector, `@Environment` unresolvable outside a hosted
-  view) can close that last gap — flagging in case a reviewer has a way to
-  close it that I don't.
-- **`save()` is now `internal` instead of `private`**, purely for R1's test
-  access (same pattern already used for `startFusion()`/`fusionTimer`). It's
-  still only called from within `WorkoutManager` in production
-  (`endAndSave()`, `retryFailedSave()`) — flagging the widened access
-  surface in case a reviewer would rather it stayed private with a different
-  test strategy.
+  that never calls `screen(for:)` at all — I verified this by actually doing
+  it and watching the test stay green. No tool available in this environment
+  (no ViewInspector, `@Environment` unresolvable outside a hosted view) can
+  close that last gap. Flagging again here in case a reviewer has a way to
+  close it that I don't; the comment on the test now states this limitation
+  directly rather than the disproven stronger claim.
+- **`save()` is `private` again** (X1) — the R1 invariant it enforces is
+  tested in Core now (`FailedBundleClearTests`), and `save()`'s own wiring to
+  it is a one-line, inspection-verifiable call. No outstanding question here.

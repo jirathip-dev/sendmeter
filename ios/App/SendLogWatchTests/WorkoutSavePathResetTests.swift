@@ -68,37 +68,16 @@ final class WorkoutSavePathResetTests: XCTestCase {
         XCTAssertEqual(manager.failedBundle?.workout.id, stale.workout.id, "start() must not replace it with something else, either")
     }
 
-    /// Re-review finding R1: `save()`'s success path used to clear
-    /// `failedBundle` unconditionally — reachable now precisely because F1
-    /// unblocked Start: workout N fails `.lost`, the user starts N+1 instead
-    /// of retrying, N+1 saves fine, and the old code silently discarded
-    /// bundleN while telling the user "Saved". CLAUDE.md #264 is explicit
-    /// that unsaved training data is reported, never swallowed —
-    /// `failedBundle` has no reporting path at all, so silently dropping it
-    /// is exactly the failure mode that rule exists to prevent.
-    func testSuccessfulSaveDoesNotClearAnUnrelatedFailedBundle() async {
-        let manager = WorkoutManager()
-        let staleFromWorkoutN = sampleBundle()
-        manager.failedBundle = staleFromWorkoutN
-
-        await manager.save(sampleBundle()) // a DIFFERENT (N+1) bundle, saved successfully
-
-        XCTAssertEqual(
-            manager.failedBundle?.workout.id, staleFromWorkoutN.workout.id,
-            "an unrelated failed bundle must survive a different workout's successful save"
-        )
-    }
-
-    /// The other half of R1: a bundle DOES still clear its OWN failure once
-    /// it saves successfully (e.g. via Retry) — R1 narrows the clear to an
-    /// id match, it doesn't remove it.
-    func testSuccessfulSaveClearsItsOwnMatchingFailedBundle() async {
-        let manager = WorkoutManager()
-        let bundle = sampleBundle()
-        manager.failedBundle = bundle
-
-        await manager.save(bundle) // same bundle, now saved successfully
-
-        XCTAssertNil(manager.failedBundle, "a bundle's own successful (re)save must still clear its failure")
-    }
+    // Re-review finding R1's id-matched `failedBundle` clear used to be
+    // tested here, directly against `save()`. Review finding X1: driving
+    // `save()` from a unit test requires it to reach a real
+    // `OfflineQueue.enqueue` (disk I/O) and `WidgetBridge.refreshStatus()`
+    // (live network) — each of those two tests took ~15.9s, and together
+    // they made this whole target fail intermittently (measured by the
+    // reviewer at ~40% of runs) with no cleanup of the `pending/<uuid>.json`
+    // files they left behind. The comparison itself is pure and is now
+    // tested fast, deterministically, and CI-covered as
+    // `FailedBundleClearTests` in `SendLogWatchCoreTests`. `save()` is
+    // `private` again; its one line wiring `FailedBundleClear.shouldClear`
+    // is verified by inspection, not by reproducing the network path here.
 }

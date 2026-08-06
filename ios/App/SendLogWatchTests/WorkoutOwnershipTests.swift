@@ -63,15 +63,22 @@ final class WorkoutOwnershipTests: XCTestCase {
 
     /// Re-review finding R3a: `WorkoutScreenSelection.screen(isRunning:justSaved:)`
     /// structurally can't take `failedBundle` as input (Core, tested in
-    /// `WorkoutScreenSelectionTests`) — but that alone doesn't prove
-    /// `WorkoutLiveView.body` couldn't reintroduce a `failedBundle` gate of
-    /// its own AHEAD of that call. This goes through `WorkoutLiveView.screen(for:)`
-    /// — the exact function `body` switches on, not a parallel copy of the
-    /// decision — so a future regression that restores
-    /// `if workout.failedBundle != nil { failedSaveContent }` ahead of the
-    /// switch (reinstating review finding F1's scenario B: Start locked out
-    /// for the rest of the app session) fails this test, as long as `body`
-    /// keeps calling this seam to choose its screen.
+    /// `WorkoutScreenSelectionTests`). This test pins that same guarantee
+    /// through `WorkoutLiveView.screen(for:)` — the exact function `body`
+    /// currently switches on, not a parallel copy of the decision — so it
+    /// catches a regression in that function itself, or in what `body`
+    /// switches on today.
+    ///
+    /// **What this does NOT catch (final-pass finding X2, verified by
+    /// actually doing it):** wrapping `body`'s switch in a brand-new
+    /// `if workout.failedBundle != nil { … } else { switch Self.screen(for:
+    /// workout) { … } }` — i.e. a regression that bypasses `screen(for:)`
+    /// entirely instead of changing what it returns — leaves this test
+    /// passing. `screen(for:)` itself would still (correctly) say `.start`;
+    /// nothing here reads what `body` actually renders. There is no
+    /// ViewInspector or hosting-controller seam in this project to assert on
+    /// the rendered `body` directly, so that gap is real and currently open
+    /// — see HANDOFF.md.
     func testFailedBundleNeverGatesTheScreen() {
         let manager = WorkoutManager()
         manager.failedBundle = sampleFailedBundle()

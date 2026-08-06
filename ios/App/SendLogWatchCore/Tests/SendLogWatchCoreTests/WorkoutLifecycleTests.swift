@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import SendLogWatchCore
 
@@ -60,6 +61,30 @@ final class WidgetCountSyncTests: XCTestCase {
     /// for the detector-level proof this really happens).
     func testPushOnCountChangeWithNoStateChange() {
         XCTAssertTrue(WidgetCountSync.shouldPush(stateChanged: false, countBefore: 0, countAfter: 1))
+    }
+}
+
+/// Review finding X1: this used to be proven only by driving the real
+/// `WorkoutManager.save()`, which needs live network + disk I/O to reach its
+/// success path — two tests that each took ~15.9s and made the whole
+/// `SendLogWatchTests` target intermittently fail (~40% of runs measured by
+/// the reviewer). The comparison itself is pure; testing it here is
+/// microseconds and runs in CI (`package-tests`, unlike `SendLogWatchTests`,
+/// which needs a `TEST_HOST` and isn't in `ios-ci.yml` per CLAUDE.md).
+final class FailedBundleClearTests: XCTestCase {
+    func testClearsWhenTheSavedBundleIsTheOneThatFailed() {
+        let id = UUID()
+        XCTAssertTrue(FailedBundleClear.shouldClear(failedId: id, savedId: id))
+    }
+
+    /// The exact regression R1 fixed: an unrelated earlier failure must
+    /// survive a later, different workout's successful save.
+    func testDoesNotClearAnUnrelatedFailedBundle() {
+        XCTAssertFalse(FailedBundleClear.shouldClear(failedId: UUID(), savedId: UUID()))
+    }
+
+    func testNoFailedBundleNeedsNoClearing() {
+        XCTAssertFalse(FailedBundleClear.shouldClear(failedId: nil, savedId: UUID()))
     }
 }
 

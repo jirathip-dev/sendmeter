@@ -520,10 +520,8 @@ final class WorkoutManager: NSObject {
         Task { await save(failedBundle) }
     }
 
-    // Not `private`: SendLogWatchTests exercises the R1 id-matched
-    // failedBundle clear directly against this, the real save path.
     @MainActor
-    func save(_ bundle: WorkoutSaveBundle) async {
+    private func save(_ bundle: WorkoutSaveBundle) async {
         let outcome = await OfflineQueue.shared.enqueue(bundle)
         guard outcome != .lost else {
             failedBundle = bundle
@@ -538,8 +536,10 @@ final class WorkoutManager: NSObject {
         // workout N+1 while N's failed bundle is still sitting there
         // waiting on Retry. Clearing unconditionally silently discarded N's
         // last in-memory copy while telling the user "Saved" — the exact
-        // kind of swallowed data loss CLAUDE.md #264 forbids.
-        if failedBundle?.workout.id == bundle.workout.id {
+        // kind of swallowed data loss CLAUDE.md #264 forbids. The id-match
+        // decision itself lives in Core (`FailedBundleClear`, X1) — this is
+        // its only production call site.
+        if FailedBundleClear.shouldClear(failedId: failedBundle?.workout.id, savedId: bundle.workout.id) {
             failedBundle = nil
         }
         await WidgetBridge.refreshStatus() // fresh ACWR after the save

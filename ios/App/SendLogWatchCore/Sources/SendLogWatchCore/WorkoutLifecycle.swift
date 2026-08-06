@@ -58,3 +58,28 @@ public enum WidgetCountSync {
         stateChanged || countBefore != countAfter
     }
 }
+
+/// Whether a successful save should clear `WorkoutManager.failedBundle`.
+///
+/// Review finding R1: `save()`'s success path used to clear `failedBundle`
+/// unconditionally, on ANY successful save — reachable once F1 correctly
+/// unblocked Start: workout N fails `.lost` (`failedBundle = bundleN`), the
+/// user starts and successfully saves workout N+1 instead of retrying, and
+/// the unconditional clear silently discarded bundleN's last in-memory copy
+/// while rendering "Saved". CLAUDE.md #264 requires unsaved data to be
+/// reported, never swallowed. The fix is an id match — an unrelated failed
+/// bundle must survive a different workout's successful save.
+///
+/// Kept as a pure Core comparison (review finding X1) rather than exercised
+/// only through the real `save()`, which needs live network
+/// (`WidgetBridge.refreshStatus()`) and `OfflineQueue` disk I/O to reach its
+/// success path from a test — that made the two tests that drove it directly
+/// ~160x slower than the rest of the suite and intermittently timing-flaky.
+/// `WorkoutManager.save()` (`private`) is the one production call site;
+/// verify the wiring by inspection there, not by reproducing the network
+/// path in a test here.
+public enum FailedBundleClear {
+    public static func shouldClear(failedId: UUID?, savedId: UUID) -> Bool {
+        failedId == savedId
+    }
+}
