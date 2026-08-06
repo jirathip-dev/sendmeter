@@ -61,6 +61,27 @@ import { describe, expect, it } from "vitest";
 /// as-yet-unnamed-cache case is not, and no text pin can close it — that is
 /// the doc contract on `needsTokenForDisplay` and code review's job, not
 /// this file's.
+///
+/// **Third correction (post cross-wave sweep, finding F-B).** Every
+/// assertion above pins that the poll and both delegate callbacks *decide*
+/// correctly when they run. None of them pinned that the poll *runs at
+/// all*. Deleting `startPolling()` from `bootstrap()` — or moving poll
+/// ownership elsewhere and dropping that call, e.g. as a "dead code,
+/// foreground already refreshes" cleanup — passed every check in this file
+/// with the app on screen: the token expires, no foreground event and no
+/// reachability change ever fires (both require the phone to do something),
+/// and the watch waits forever. That is #472 verbatim, reverted in full,
+/// with a fully green pin. Fixed below: `bootstrap()` must call
+/// `startPolling()`, and `startPolling()`'s body must contain the actual
+/// 20s sleep, not just a call to a function that could itself have been
+/// gutted. Note the scope this still leaves open: this file pins that the
+/// poll *decides* correctly and that it *exists and fires periodically* —
+/// it does not, and does not attempt to, pin that a discovered staleness
+/// successfully *sends* anything (`requestSessionFromPhone`'s body is
+/// unchecked; neutering it, e.g. making it an unconditional no-op, passes
+/// every assertion here). That gap is real and out of this file's stated
+/// scope — deciding, not sending — but worth saying plainly rather than
+/// leaving a reader to assume coverage that doesn't exist.
 
 const REPO = join(import.meta.dirname, "..", "..");
 const AUTH_MANAGER_PATH = join(
@@ -232,6 +253,27 @@ describe("AuthManager routes token-staleness decisions through the clock, not a 
       /func sessionReachabilityDidChange\(_ session: WCSession\)/,
     );
     expect(branchCount(reachabilityBody)).toBe(1); // guard session.isReachable else { return }
+  });
+
+  it("[F-B] bootstrap() actually starts the poll (#472, cross-wave sweep)", () => {
+    // Every other assertion in this file pins that the poll and delegate
+    // callbacks decide correctly *when they run*. This one pins that the
+    // poll runs at all: deleting `startPolling()` from `bootstrap()` (or
+    // moving poll ownership elsewhere and dropping the call, e.g. as a
+    // "dead code" cleanup) passed all ten prior assertions while reverting
+    // #472 in full — no foreground and no reachability event ever fires
+    // while the app just sits on screen, so a token that goes stale mid-
+    // session is never rediscovered.
+    const bootstrapBody = bodyAfter(source, /func bootstrap\(\)/);
+    expect(bootstrapBody).toMatch(/\bstartPolling\(\)/);
+  });
+
+  it("[F-B] startPolling() actually sleeps for the poll interval, not a gutted stand-in (#472, cross-wave sweep)", () => {
+    // Complements the assertion above: calling `startPolling()` proves
+    // nothing if that function's body has been hollowed out. Pin the real
+    // 20s interval is still there.
+    const pollBody = bodyAfter(source, /private func startPolling\(\)/);
+    expect(pollBody).toMatch(/Task\.sleep\(for:\s*\.seconds\(20\)\)/);
   });
 
   it("the display-only property is not named or documented as a decision predicate (#472)", () => {
