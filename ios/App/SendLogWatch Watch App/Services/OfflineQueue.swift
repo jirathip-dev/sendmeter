@@ -19,16 +19,33 @@ actor OfflineQueue {
     private let uploader: WorkoutBundleUploading
     private let clock: QueueClock
     private let baseDir: URL
+    private let sessionRelay: SessionRelayRequesting
+    private let scheduler: DrainScheduling
     private var drainState = CoalescingDrain()
+    /// #472b: consecutive drain PASSES that stopped early (a `.retry` or
+    /// `.needsAuthRelay` break) with nothing in between that fully cleared
+    /// the eligible queue. Feeds `QueueRetrySchedule.delay` — see that type's
+    /// doc comment for why this counter only affects the DELAY and never
+    /// causes retrying to stop.
+    private var consecutiveStalls = 0
+    /// At most one backoff retry in flight at a time — `drain()` is already
+    /// re-triggered independently by enqueue/foreground/relay, and letting
+    /// those pile up additional scheduled timers would just mean several
+    /// fire in a row for no benefit.
+    private var backoffScheduled = false
 
     init(
         uploader: WorkoutBundleUploading = RepoBundleUploader(),
         clock: QueueClock = SystemQueueClock(),
-        baseDir: URL? = nil
+        baseDir: URL? = nil,
+        sessionRelay: SessionRelayRequesting = AuthManagerRelayRequester(),
+        scheduler: DrainScheduling = TaskDrainScheduler()
     ) {
         self.uploader = uploader
         self.clock = clock
         self.baseDir = baseDir ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        self.sessionRelay = sessionRelay
+        self.scheduler = scheduler
     }
 
     private var pendingDir: URL {
@@ -160,12 +177,54 @@ actor OfflineQueue {
     func drain() async {
         guard drainState.request() == .start else { return }
         // request() marks the actor as running before this first suspension.
+        var stalled = false
         repeat {
-            await drainPass()
+            stalled = await drainPass()
         } while drainState.completePass() == .rerun
+        // #472b: only the LAST pass's outcome decides whether to (re)schedule
+        // — a pass that stalls and is then immediately superseded by a
+        // `.rerun` (a fresh enqueue/relay arrived mid-drain) is not the
+        // queue's final word for this `drain()` call.
+        if stalled {
+            scheduleBackoffRetry()
+        } else {
+            consecutiveStalls = 0
+        }
     }
 
-    private func drainPass() async {
+    /// Schedules a follow-up `drain()` after `QueueRetrySchedule`'s backoff
+    /// (#472b) — the fallback for a lost relay answer, not the primary
+    /// recovery path (that's `sessionRelay.requestSessionRelay()`, called
+    /// directly from `drainPass` on `.needsAuthRelay`). Deliberately has no
+    /// give-up state: every stall reschedules, indefinitely — see
+    /// `QueueRetrySchedule`'s doc comment for why a bounded ATTEMPT count
+    /// would recreate the #472 defect this exists to fix.
+    private func scheduleBackoffRetry() {
+        guard !backoffScheduled else { return }
+        consecutiveStalls += 1
+        backoffScheduled = true
+        let delay = QueueRetrySchedule.delay(forConsecutiveStalls: consecutiveStalls)
+        scheduler.scheduleRetry(after: delay, RetryAction { [self] in
+            await self.retryAfterBackoff()
+        })
+    }
+
+    private func retryAfterBackoff() async {
+        backoffScheduled = false
+        await drain()
+    }
+
+    /// Whether a backoff retry is currently armed (#472b F18) — the watch UI
+    /// must not promise "retrying automatically" in a state where nothing
+    /// actually is (e.g. no relayed token yet, so `drainPass` never even
+    /// attempts an upload and never stalls).
+    func isRetryScheduled() -> Bool { backoffScheduled }
+
+    /// Returns whether the pass stalled — stopped early on a `.retry` or
+    /// `.needsAuthRelay` break rather than running to the end of the
+    /// eligible files — so `drain()` knows whether to arm the backoff timer.
+    @discardableResult
+    private func drainPass() async -> Bool {
         resurrectDueStuckRetries() // #475 F12 — give a self-healed bet another chance
         let files = ((try? FileManager.default.contentsOfDirectory(
             at: pendingDir, includingPropertiesForKeys: [.creationDateKey]
@@ -177,6 +236,7 @@ actor OfflineQueue {
                 return l < r
             }
 
+        var stalled = false
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         filesLoop: for file in files {
@@ -205,6 +265,7 @@ actor OfflineQueue {
                 try await uploader.upload(bundle)
                 try? FileManager.default.removeItem(at: file)
                 clearRetryLedger(for: bundle) // a previously-struggling item finally landed
+                recordSuccessfulSync(at: clock.now(), userId: currentUserId) // #472b — the "have we synced lately" signal
             } catch {
                 // #475: a generic "stop on any error" treated a permanent
                 // DB rejection exactly like a network outage, and because
@@ -243,6 +304,17 @@ actor OfflineQueue {
                     // stale-relay storm quarantine — and thereby permanently
                     // abandon — a completely healthy workout. Pure break,
                     // ledger untouched.
+                    //
+                    // #472b — THE core fix this issue was filed for: classifying
+                    // the failure was never enough on its own, since nothing
+                    // then asked the phone for the token that would actually
+                    // unblock the queue. A later drain with the same expired
+                    // token just 401s again. `sessionRelay` already throttles
+                    // on `SessionRelay.shouldRequestRelay`/`lastRequestAt`
+                    // (5s), so this can be called on every stale-token pass
+                    // with no second throttle needed here.
+                    await sessionRelay.requestSessionRelay()
+                    stalled = true
                     break filesLoop
                 case .retry:
                     // #475 F11: likewise, only count this failure toward the
@@ -251,9 +323,19 @@ actor OfflineQueue {
                     // (`UploadFailure()`, everything nil: no network, a
                     // timeout, a dropped connection) reached no server at
                     // all and is equally not evidence about the bundle.
+                    //
+                    // #475 F17: nor does a 5xx that arrives as a non-JSON
+                    // body (`HTTPError`, e.g. a gateway's HTML error page
+                    // during a Supabase incident) — the taxonomy's own doc
+                    // comment already calls 5xx/408/429 transient; the
+                    // ledger must agree. A sustained outage shaped this way
+                    // must not quarantine a healthy workout any more than a
+                    // transport failure or a stale token does.
                     let failure = classification.failure
-                    guard failure.postgrestCode != nil || failure.httpStatus != nil else {
-                        break filesLoop // transport-only: no verdict was reached, ledger untouched
+                    let transientHTTP = failure.httpStatus.map { $0 >= 500 || $0 == 408 || $0 == 429 } ?? false
+                    guard !transientHTTP, failure.postgrestCode != nil || failure.httpStatus != nil else {
+                        stalled = true
+                        break filesLoop // transport-only or an outage body: no verdict was reached, ledger untouched
                     }
                     let previous = readRetryLedger(for: bundle)?.consecutiveFailures ?? 0
                     switch QueueRetryPolicy.afterFailedAttempt(previousConsecutiveFailures: previous) {
@@ -266,6 +348,7 @@ actor OfflineQueue {
                             ),
                             for: bundle
                         )
+                        stalled = true
                         break filesLoop // a real rejection, but not one we recognize — stop, retry next drain
                     case .stuck(let attempts):
                         quarantine(
@@ -285,6 +368,7 @@ actor OfflineQueue {
         _ = pendingCount() // refresh the reported depth (#21)
         _ = quarantinedCount()
         await MainActor.run { WatchBuild.reportQueueStatus() }
+        return stalled
     }
 
     private let quarantineExtension = "quarantine"
@@ -391,5 +475,47 @@ actor OfflineQueue {
 
     private func clearRetryLedger(for bundle: WorkoutSaveBundle) {
         try? FileManager.default.removeItem(at: retryLedgerURL(for: bundle))
+    }
+
+    // MARK: #472b — "have we synced in a while", surfaced honestly
+
+    /// Sits next to (not inside) `pendingDir`: that directory's listing is
+    /// filtered by extension already, but any stray `.json` file dropped
+    /// there would be mis-decoded as a `WorkoutSaveBundle` and reported as a
+    /// permanently-unreadable pending item (see `pendingCount()`'s "unreadable:
+    /// retained and reported" branch) — this marker must never risk that.
+    private var lastSyncURL: URL {
+        baseDir.appendingPathComponent("last-successful-sync.json")
+    }
+
+    /// `userId` is stamped from the account that was actually signed in for
+    /// THIS successful upload (review F20): unlike `pendingCount()`/
+    /// `quarantinedCount()`, which are re-derived per file from each item's
+    /// own `enqueuedUserId` every time they're read, this marker is a single
+    /// global file — with no `userId` of its own it would silently outlive
+    /// the account it describes (account A syncs, the phone switches to
+    /// account B, B reads A's timestamp as if it were current). Read back in
+    /// `lastSuccessfulSyncAt()`, which refuses a mismatch.
+    private func recordSuccessfulSync(at date: Date, userId: UUID?) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(LastSyncMarker(syncedAt: date, userId: userId)) else { return }
+        try? data.write(to: lastSyncURL, options: .atomic)
+    }
+
+    /// When an upload last actually landed FOR THE CURRENTLY SIGNED-IN
+    /// ACCOUNT, for `SyncFreshnessPolicy`. nil means "never" (or "not this
+    /// account's sync") — callers must not default a missing value to the
+    /// current time, or a queue that has never synced under this account
+    /// would read as freshly synced. A stored marker whose `userId` doesn't
+    /// match `WatchSessionStore.shared.userId` right now is exactly that
+    /// case (#472b F20) and is treated the same as no marker at all.
+    func lastSuccessfulSyncAt() -> Date? {
+        guard let data = try? Data(contentsOf: lastSyncURL) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let marker = try? decoder.decode(LastSyncMarker.self, from: data) else { return nil }
+        guard marker.userId == WatchSessionStore.shared.userId else { return nil }
+        return marker.syncedAt
     }
 }

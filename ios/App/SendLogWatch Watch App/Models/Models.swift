@@ -324,3 +324,24 @@ nonisolated struct RetryLedgerEntry: Codable {
     var lastErrorMessage: String?
     var lastAttemptAt: Date
 }
+
+/// #472b: when an upload last actually landed, persisted so it survives
+/// relaunch — an in-memory-only timestamp would read as "never synced" every
+/// time the watch app is killed and relaunched, which is exactly when a
+/// stuck queue has been silent the longest. Feeds `SyncFreshnessPolicy` (in
+/// `SendLogWatchCore`) for the watch's own "have we synced in a while" UI
+/// signal — distinct from `WatchBuildReport`'s quarantine/pending counts,
+/// which describe what the PHONE was last told, not what the watch
+/// currently knows about itself.
+///
+/// `userId` (review F20): unlike `pendingCount()`/`quarantinedCount()`,
+/// which re-derive account-scoping from each on-disk item's own
+/// `enqueuedUserId` on every read, this is a SINGLE global file — without
+/// its own account stamp it would silently describe whichever account last
+/// wrote it, forever, even after the phone switches accounts. `OfflineQueue.
+/// lastSuccessfulSyncAt()` refuses to return a stored value whose `userId`
+/// doesn't match who's signed in now.
+nonisolated struct LastSyncMarker: Codable {
+    var syncedAt: Date
+    var userId: UUID?
+}

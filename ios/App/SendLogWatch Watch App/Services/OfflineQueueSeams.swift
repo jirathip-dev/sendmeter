@@ -70,3 +70,78 @@ enum UploadFailureMapping {
         return UploadFailure()
     }
 }
+
+// MARK: - Issue #472b — injectable seam for `OfflineQueue`'s auth-relay recovery
+
+/// The seam through which a drain, upon classifying `.needsAuthRelay`, asks
+/// the phone for a fresh token. `AuthManager` lives as SwiftUI `@State` on
+/// the app root — there is deliberately no `AuthManager.shared` (see its doc
+/// comment: identity is owned by the view tree) — so `OfflineQueue`, an
+/// actor with no view-tree access, cannot hold a strong reference to it
+/// directly. Matches the `uploader`/`clock`/`baseDir` pattern from #475:
+/// `AuthManagerRelayRequester` is the production path, `OfflineQueueTests`
+/// supplies a recording stub so "a 401 actually asks the phone" is
+/// observable rather than inferred from the classifier alone.
+protocol SessionRelayRequesting: Sendable {
+    func requestSessionRelay() async
+}
+
+/// Resolves against `AuthManager.current` (set once, at `init`, by the one
+/// instance SwiftUI creates for the app's lifetime). Deliberately does NOT
+/// pass `force: true` — `AuthManager.requestSessionFromPhone` already
+/// throttles on `SessionRelay.shouldRequestRelay`/`lastRequestAt`, and a
+/// second throttle here would only add a place for the two to disagree.
+/// `AuthManager.current` being nil (no app instance in this process, e.g. a
+/// unit test) makes this a no-op, not a crash.
+struct AuthManagerRelayRequester: SessionRelayRequesting {
+    func requestSessionRelay() async {
+        await AuthManager.current?.requestSessionFromPhone()
+    }
+}
+
+/// The seam through which `OfflineQueue` schedules a follow-up drain after a
+/// pass stalls (#472b) — a bounded backoff so recovery does not depend
+/// solely on enqueue/foreground/relay events. `TaskDrainScheduler` is the
+/// production path (a real `Task.sleep`); tests inject a scheduler that
+/// captures the scheduled action instead of waiting, so "a failed drain
+/// retries later with no foreground event" is provable without a test
+/// actually sleeping for real minutes.
+///
+/// A retry callback, wrapped in a concrete `Sendable` type rather than
+/// passed as a bare `@Sendable () async -> Void` parameter. This target
+/// builds with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` +
+/// `SWIFT_APPROACHABLE_CONCURRENCY = YES`, which bakes an implicit,
+/// compiler-internal isolation attribute (`nonisolated(nonsending)`, with no
+/// stable source spelling) into a BARE async closure parameter's type here —
+/// but `SendLogWatchTests` (a separate target without those defaults) infers
+/// no such attribute, so a conformance declared there for a protocol
+/// requirement typed with a bare closure parameter fails to match, for a
+/// reason that has nothing to do with this seam's actual design. Wrapping
+/// the closure inside a nominal type fixes its isolation once, at THIS
+/// declaration site, so every conformance — regardless of which target
+/// compiles it — refers to the same already-resolved type.
+struct RetryAction: Sendable {
+    let run: @Sendable () async -> Void
+    init(_ run: @escaping @Sendable () async -> Void) { self.run = run }
+}
+
+protocol DrainScheduling: Sendable {
+    nonisolated func scheduleRetry(after delay: TimeInterval, _ action: RetryAction)
+}
+
+struct TaskDrainScheduler: DrainScheduling {
+    /// Review F21: an earlier version returned early when the sleep's own
+    /// `Task` had been cancelled, without ever running `action`. Nothing
+    /// currently cancels this unstructured `Task`, but `OfflineQueue` only
+    /// clears its "a retry is armed" flag INSIDE `action` — a dropped action
+    /// would disarm the backoff for the rest of the process's lifetime, the
+    /// exact indefinite-parking failure this feature exists to prevent. The
+    /// action always runs, whether or not the sleep completed early — a
+    /// cancelled sleep just means the retry fires sooner, never never.
+    nonisolated func scheduleRetry(after delay: TimeInterval, _ action: RetryAction) {
+        Task {
+            try? await Task.sleep(for: .seconds(delay))
+            await action.run()
+        }
+    }
+}

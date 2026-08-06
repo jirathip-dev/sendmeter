@@ -53,8 +53,20 @@ final class AuthManager: NSObject {
 
     private var now: TimeInterval { Date().timeIntervalSince1970 }
 
+    /// #472b: `OfflineQueue` (an actor with no view-tree access) needs a way
+    /// to ask for a fresh relay when a drain discovers the token it holds is
+    /// stale. There is deliberately no `AuthManager.shared` — SwiftUI owns
+    /// the one instance as `@State` on the app root — so this is a weak
+    /// back-reference, set once below, rather than a second ownership path.
+    /// `nonisolated(unsafe)` matches this file's existing pattern for a
+    /// simple pointer set once at startup and only ever read through an
+    /// `await`ed call into `@MainActor` isolation (see
+    /// `AuthManagerRelayRequester`).
+    nonisolated(unsafe) static weak var current: AuthManager?
+
     override init() {
         super.init()
+        Self.current = self
         // Nothing on the watch may hold a rotating credential — including one
         // left behind in the Keychain by a build that predates #265.
         WatchSessionStore.shared.purgeLegacySupabaseKeychain()

@@ -225,10 +225,12 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(secondLaunchPending, 0)
     }
 
-    /// 401/429 must NOT be quarantined (the taxonomy's conservative
+    /// 401/403 must NOT be quarantined (the taxonomy's conservative
     /// default): a retryable/ambiguous failure stops the pass exactly like
     /// the pre-#475 behavior, so a real outage doesn't burn through the
-    /// rest of the queue out of order.
+    /// rest of the queue out of order. 403 (unlike 429/5xx/408 — see F17,
+    /// below) is a real, SERVER-evaluated ambiguous rejection, so it still
+    /// advances the per-item retry ledger.
     func testRetryableErrorStopsThePassWithoutQuarantiningAnything() async throws {
         let transient = makeBundle(id: UUID())
         let behindIt = makeBundle(id: UUID())
@@ -240,7 +242,7 @@ final class OfflineQueueTests: XCTestCase {
             transient.workout.id: StagedUploadError(
                 stage: .session,
                 underlying: HTTPError(data: Data(), response: HTTPURLResponse(
-                    url: URL(string: "https://example.com")!, statusCode: 429, httpVersion: nil, headerFields: nil
+                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
                 )!)
             ),
         ])
@@ -252,7 +254,7 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertFalse(uploaded.contains(behindIt.workout.id), "a retryable failure must still stop the pass, not skip ahead")
 
         let remaining = try filesOnDisk()
-        XCTAssertTrue(remaining.contains("\(transient.workout.id.uuidString).json"), "429 must stay pending, not be quarantined")
+        XCTAssertTrue(remaining.contains("\(transient.workout.id.uuidString).json"), "403 must stay pending, not be quarantined")
         XCTAssertFalse(remaining.contains("\(transient.workout.id.uuidString).quarantine"))
         // The retry ledger records the one failed attempt, well short of
         // the F3 threshold.
@@ -261,6 +263,72 @@ final class OfflineQueueTests: XCTestCase {
         let pending = await queue.pendingCount()
         XCTAssertEqual(quarantined, 0)
         XCTAssertEqual(pending, 2)
+    }
+
+    // MARK: #475 F17 — a transient status delivered as a non-JSON body must not burn the budget
+
+    /// The exact F17 scenario: a sustained 5xx outage (a gateway's HTML
+    /// error page during a Supabase incident — never decodes as
+    /// `PostgrestError`, so it arrives as an `HTTPError`) must never
+    /// quarantine a healthy workout, no matter how many passes it survives —
+    /// same guarantee as the F11 stale-token/network-outage regressions,
+    /// for the same reason: no server ever evaluated the bundle itself.
+    func testASustained5xxNonJSONOutageNeverQuarantinesAHealthyWorkout() async throws {
+        let healthy = makeBundle(id: UUID(), attempts: [makeHealthyAttempt(workoutId: UUID())])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(healthy, createdAt: now)
+
+        let uploader = ScriptedUploader(failing: [
+            healthy.workout.id: StagedUploadError(
+                stage: .session,
+                underlying: HTTPError(data: "<html>502 Bad Gateway</html>".data(using: .utf8)!, response: HTTPURLResponse(
+                    url: URL(string: "https://example.com")!, statusCode: 502, httpVersion: nil, headerFields: nil
+                )!)
+            ),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        for _ in 0..<(QueueRetryPolicy.maxConsecutiveFailures * 2) {
+            await queue.drain()
+        }
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(healthy.workout.id.uuidString).json"), "must remain pending through any number of 5xx passes")
+        XCTAssertFalse(remaining.contains("\(healthy.workout.id.uuidString).quarantine"), "a non-JSON 5xx body is an outage, not a verdict — must never quarantine")
+        XCTAssertFalse(remaining.contains("\(healthy.workout.id.uuidString).retry"), "must not even accumulate a retry count")
+        let quarantined = await queue.quarantinedCount()
+        XCTAssertEqual(quarantined, 0)
+    }
+
+    /// 408/429 are the same shape as the 5xx case above — the taxonomy's own
+    /// `.retry` doc comment already calls them transient alongside 5xx, so
+    /// the ledger must treat them the same way.
+    func test408And429AlsoNeverQuarantineAHealthyWorkout() async throws {
+        for statusCode in [408, 429] {
+            let healthy = makeBundle(id: UUID(), attempts: [makeHealthyAttempt(workoutId: UUID())])
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            try writeFile(healthy, createdAt: now)
+
+            let uploader = ScriptedUploader(failing: [
+                healthy.workout.id: StagedUploadError(
+                    stage: .session,
+                    underlying: HTTPError(data: Data(), response: HTTPURLResponse(
+                        url: URL(string: "https://example.com")!, statusCode: statusCode, httpVersion: nil, headerFields: nil
+                    )!)
+                ),
+            ])
+            let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+            for _ in 0..<(QueueRetryPolicy.maxConsecutiveFailures * 2) {
+                await queue.drain()
+            }
+
+            let remaining = try filesOnDisk()
+            XCTAssertFalse(remaining.contains("\(healthy.workout.id.uuidString).quarantine"), "status \(statusCode) must never quarantine")
+            XCTAssertFalse(remaining.contains("\(healthy.workout.id.uuidString).retry"), "status \(statusCode) must not accumulate a retry count")
+
+            try FileManager.default.removeItem(at: pendingDir.appendingPathComponent("\(healthy.workout.id.uuidString).json"))
+        }
     }
 
     /// #475 F3: an error the classifier does NOT specifically recognize
@@ -317,7 +385,11 @@ final class OfflineQueueTests: XCTestCase {
 
     /// A success clears any accumulated retry-failure count — a bundle
     /// that struggled for a few passes and then landed must not carry a
-    /// stale ledger toward some future, unrelated failure streak.
+    /// stale ledger toward some future, unrelated failure streak. Uses 403
+    /// (a real, SERVER-evaluated ambiguous rejection), not 500 — after F17,
+    /// a 500 is transient and never writes a ledger entry in the first
+    /// place, which would make this test's setup assert something false
+    /// before even reaching what it's meant to check.
     func testASuccessfulUploadClearsAPreviousRetryLedger() async throws {
         let bundle = makeBundle(id: UUID())
         let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -327,7 +399,7 @@ final class OfflineQueueTests: XCTestCase {
             bundle.workout.id: StagedUploadError(
                 stage: .session,
                 underlying: HTTPError(data: Data(), response: HTTPURLResponse(
-                    url: URL(string: "https://example.com")!, statusCode: 500, httpVersion: nil, headerFields: nil
+                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
                 )!)
             ),
         ])
@@ -550,13 +622,310 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).quarantine"))
         XCTAssertTrue(remaining.contains("\(stuck.workout.id.uuidString).retry"), "a fresh ledger, starting from 1")
     }
+
+    // MARK: #472b — THE core fix: `.needsAuthRelay` must actually ask the phone
+
+    /// The named acceptance criterion: a 401 drain must trigger a relay
+    /// request — not just classify the failure and go quiet. Before this
+    /// fix, `drainPass` recognized `.needsAuthRelay` and did nothing but
+    /// `break`: retrying later with the same expired token just produces
+    /// another 401 forever. This observes the ACTUAL CALL through the
+    /// `sessionRelay` seam, not the classifier (which #475 already pins) —
+    /// per the review correction, asserting only the classification would
+    /// pass even with the pre-fix "recognize and do nothing" code.
+    func testA401DrainTriggersASessionRelayRequest() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(
+                stage: .session,
+                underlying: HTTPError(data: Data(), response: HTTPURLResponse(
+                    url: URL(string: "https://example.com")!, statusCode: 401, httpVersion: nil, headerFields: nil
+                )!)
+            ),
+        ])
+        let relay = RecordingSessionRelay()
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, sessionRelay: relay)
+
+        await queue.drain()
+
+        let requestCount = await relay.requestCount
+        XCTAssertEqual(requestCount, 1, "a 401 must ask the phone for a fresh relay, not just recognize and go quiet")
+    }
+
+    /// Same trigger, for PostgREST's own JWT-rejection code — the shape a
+    /// real 401 actually arrives as in this project's production PostgREST
+    /// (#475 F2).
+    func testAPGRST301DrainTriggersASessionRelayRequest() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let staleToken = PostgrestError(code: "PGRST301", message: "No suitable key or wrong key type")
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(stage: .session, underlying: staleToken),
+        ])
+        let relay = RecordingSessionRelay()
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, sessionRelay: relay)
+
+        await queue.drain()
+
+        let requestCount = await relay.requestCount
+        XCTAssertEqual(requestCount, 1)
+    }
+
+    /// A retryable-but-not-auth failure must NOT ask for a relay — only
+    /// `.needsAuthRelay` should trigger this, or every ordinary outage would
+    /// also spam the phone.
+    func testANonAuthFailureDoesNotTriggerASessionRelayRequest() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(stage: .session, underlying: URLError(.notConnectedToInternet)),
+        ])
+        let relay = RecordingSessionRelay()
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, sessionRelay: relay)
+
+        await queue.drain()
+
+        let requestCount = await relay.requestCount
+        XCTAssertEqual(requestCount, 0)
+    }
+
+    // MARK: #472b — bounded backoff retry with no foreground event
+
+    /// The named acceptance criterion: a failed drain must retry later with
+    /// NO foreground event and no accepted relay — this drives the actual
+    /// PRODUCTION scheduling path (`OfflineQueue.drain()` → `scheduler`),
+    /// not a standalone delay function. The scheduler double captures the
+    /// scheduled action instead of sleeping for real, then the test fires it
+    /// itself to simulate the timer elapsing with nothing else involved.
+    func testAFailedDrainRetriesLaterWithNoForegroundEventAndThenSucceeds() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+
+        // First attempt fails on a transient, ambiguous rejection (still
+        // ledger-eligible, unlike #475 F11/F17's excluded cases — irrelevant
+        // to what's under test here, which is purely "does a retry get
+        // scheduled and fire").
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(
+                stage: .session,
+                underlying: HTTPError(data: Data(), response: HTTPURLResponse(
+                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                )!)
+            ),
+        ])
+        let scheduler = RecordingScheduler()
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, scheduler: scheduler)
+
+        await queue.drain()
+
+        var scheduledCount = scheduler.scheduledCount
+        XCTAssertEqual(scheduledCount, 1, "a stalled drain must schedule exactly one backoff retry")
+
+        // Whatever was wrong resolves itself before the timer fires — no
+        // foreground, no enqueue, no accepted relay touches this queue at
+        // any point from here on.
+        await uploader.stopFailing()
+
+        await scheduler.fireOldest()
+
+        let remaining = try filesOnDisk()
+        XCTAssertFalse(remaining.contains("\(bundle.workout.id.uuidString).json"), "the scheduled retry must have drained and uploaded the item")
+        let uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(bundle.workout.id))
+
+        // A pass that completes cleanly must not leave another retry armed.
+        scheduledCount = scheduler.scheduledCount
+        XCTAssertEqual(scheduledCount, 0, "a successful pass must not schedule a further retry")
+    }
+
+    /// A pass that stalls repeatedly keeps rescheduling — no give-up state.
+    /// Mirrors the F11-style "survives any number of passes" regressions:
+    /// this queue never stops trying just because it has failed before.
+    func testARepeatedlyFailingDrainKeepsSchedulingFurtherRetries() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(stage: .session, underlying: URLError(.notConnectedToInternet)),
+        ])
+        let scheduler = RecordingScheduler()
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, scheduler: scheduler)
+
+        await queue.drain()
+        XCTAssertEqual(scheduler.scheduledCount, 1)
+
+        await scheduler.fireOldest() // still failing — the retry itself calls drain() again
+        XCTAssertEqual(scheduler.scheduledCount, 1, "still failing, but a NEW retry must be armed — never zero")
+
+        await scheduler.fireOldest()
+        XCTAssertEqual(scheduler.scheduledCount, 1, "third stall in a row — still rescheduling, no give-up state")
+    }
+
+    /// A drain that has nothing eligible to upload (an empty queue, or
+    /// everything belongs to a different signed-in account) is not a stall —
+    /// it must not arm the backoff timer.
+    func testAnEmptyDrainDoesNotScheduleARetry() async throws {
+        let scheduler = RecordingScheduler()
+        let queue = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]),
+            clock: FixedClock(Date(timeIntervalSince1970: 1_800_000_000)),
+            baseDir: tempDir,
+            scheduler: scheduler
+        )
+
+        await queue.drain()
+
+        XCTAssertEqual(scheduler.scheduledCount, 0)
+    }
+
+    // MARK: #472b — last successful sync / staleness surfacing
+
+    func testLastSuccessfulSyncIsNilBeforeAnyUploadEverLands() async throws {
+        let queue = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]),
+            clock: FixedClock(Date(timeIntervalSince1970: 1_800_000_000)),
+            baseDir: tempDir
+        )
+        let lastSync = await queue.lastSuccessfulSyncAt()
+        XCTAssertNil(lastSync, "unknown must not read as a fresh sync")
+    }
+
+    /// Recorded on success, off the clock (not the wall clock) so it's
+    /// deterministic, and it must survive a fresh actor instance over the
+    /// same directory (a relaunch) — an in-memory-only timestamp would lose
+    /// exactly the information a long-stalled queue needs to report.
+    func testLastSuccessfulSyncIsRecordedOnSuccessAndSurvivesRelaunch() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let firstLaunch = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir
+        )
+        await firstLaunch.drain()
+        let recordedAtFirstLaunch = await firstLaunch.lastSuccessfulSyncAt()
+        XCTAssertEqual(recordedAtFirstLaunch, now)
+
+        let secondLaunch = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]),
+            clock: FixedClock(now.addingTimeInterval(3600)),
+            baseDir: tempDir
+        )
+        let recordedAfterRelaunch = await secondLaunch.lastSuccessfulSyncAt()
+        XCTAssertEqual(recordedAfterRelaunch, now, "must survive a fresh actor instance over the same directory")
+    }
+
+    /// Review F20: unlike `pendingCount()`/`quarantinedCount()`, which
+    /// re-derive account scoping from each on-disk item's own
+    /// `enqueuedUserId` on every read, the last-sync marker is a SINGLE
+    /// global file — without its own account stamp it would keep reporting
+    /// account A's timestamp forever, even after the phone switches to
+    /// account B and B's own queue has never synced at all. Same failure
+    /// shape as #158/#475 F4, one instance later.
+    func testLastSuccessfulSyncDoesNotLeakAcrossAccounts() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+        await queue.drain()
+        let syncedUnderA = await queue.lastSuccessfulSyncAt()
+        XCTAssertEqual(syncedUnderA, now, "account A sees its own sync")
+
+        let otherAccount = UUID()
+        signIn(as: otherAccount)
+        let syncedUnderB = await queue.lastSuccessfulSyncAt()
+        XCTAssertNil(syncedUnderB, "account B must not see account A's timestamp as if it described B's own queue")
+
+        signIn(as: testUserId)
+        let syncedBackUnderA = await queue.lastSuccessfulSyncAt()
+        XCTAssertEqual(syncedBackUnderA, now, "signing back in as A restores visibility of A's own sync")
+    }
+
+    // MARK: #472b review F18 — "retrying automatically" must reflect a real armed backoff
+
+    func testIsRetryScheduledIsFalseWhenNoDrainHasEverStalled() async throws {
+        let queue = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]),
+            clock: FixedClock(Date(timeIntervalSince1970: 1_800_000_000)),
+            baseDir: tempDir
+        )
+        let armed = await queue.isRetryScheduled()
+        XCTAssertFalse(armed)
+    }
+
+    func testIsRetryScheduledIsTrueAfterAStalledDrain() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(stage: .session, underlying: URLError(.notConnectedToInternet)),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, scheduler: RecordingScheduler())
+
+        await queue.drain()
+
+        let armed = await queue.isRetryScheduled()
+        XCTAssertTrue(armed)
+    }
+
+    /// The exact F18(a) scenario the reviewer reproduced: a signed-out
+    /// watch has a pending item (`pendingCount()` deliberately widens to
+    /// count it, #189), but `shouldDrain` returns `false` for every file
+    /// when nobody is signed in — `drainPass` `continue`s past it rather
+    /// than attempting (and possibly stalling on) it, so NO retry is ever
+    /// armed. The UI must not claim one is.
+    func testIsRetryScheduledStaysFalseWhenSignedOutEvenWithAPendingItem() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        WatchSessionStore.shared.clear() // signed out
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+
+        await queue.drain()
+
+        let armed = await queue.isRetryScheduled()
+        XCTAssertFalse(armed, "signed out — drainPass never attempts the item, so nothing can stall")
+        let pending = await queue.pendingCount()
+        XCTAssertEqual(pending, 1, "the item is still reported pending (#189) — only the retry-armed claim is false")
+    }
+
+    // MARK: #472b review F21 — a dropped scheduler callback must not disarm the backoff forever
+
+    /// Exercises the REAL production `TaskDrainScheduler`, not a test
+    /// double — the only test in this file that does, closing the "never
+    /// exercised end-to-end" gap the review noted. An earlier version
+    /// returned early when its internal sleep `Task` was already
+    /// cancelled, without ever running the action; nothing currently
+    /// cancels this unstructured `Task`, but if anything ever did, that
+    /// early return would have disarmed `OfflineQueue`'s backoff for the
+    /// rest of the process's lifetime. The fixed scheduler always runs the
+    /// action.
+    func testTaskDrainSchedulerActuallyRunsTheAction() async throws {
+        let scheduler = TaskDrainScheduler()
+        let ran = RanFlag()
+
+        scheduler.scheduleRetry(after: 0.01, RetryAction { await ran.markRan() })
+
+        try await Task.sleep(for: .seconds(1))
+        let didRun = await ran.ran
+        XCTAssertTrue(didRun, "the scheduled action must actually run after the delay")
+    }
+}
+
+private actor RanFlag {
+    private(set) var ran = false
+    func markRan() { ran = true }
 }
 
 /// Test double for `WorkoutBundleUploading` — throws a scripted error per
 /// bundle id, otherwise succeeds. An actor so concurrent access from the
 /// queue is safe without extra locking in the test.
 private actor ScriptedUploader: WorkoutBundleUploading {
-    private let failing: [UUID: Error]
+    private var failing: [UUID: Error]
     private(set) var uploadedIds: Set<UUID> = []
 
     init(failing: [UUID: Error]) {
@@ -569,10 +938,66 @@ private actor ScriptedUploader: WorkoutBundleUploading {
         }
         uploadedIds.insert(bundle.workout.id)
     }
+
+    /// Simulates whatever was wrong resolving itself before a scheduled
+    /// retry fires — e.g. connectivity returning, or a server-side fix.
+    func stopFailing() {
+        failing = [:]
+    }
 }
 
 private struct FixedClock: QueueClock {
     let date: Date
     init(_ date: Date) { self.date = date }
     func now() -> Date { date }
+}
+
+/// Test double for `SessionRelayRequesting` — records how many times the
+/// queue actually asked for a relay, so `.needsAuthRelay` triggering the
+/// real recovery call is observable (#472b), not just inferred from the
+/// classifier `UploadErrorClassifierTests` already pins.
+private actor RecordingSessionRelay: SessionRelayRequesting {
+    private(set) var requestCount = 0
+
+    func requestSessionRelay() async {
+        requestCount += 1
+    }
+}
+
+/// Test double for `DrainScheduling` — captures scheduled actions instead of
+/// sleeping for real, so "a failed drain retries later with no foreground
+/// event" is provable by firing the captured action directly rather than
+/// waiting on a real timer (#472b). A lock-backed class, not an actor:
+/// `DrainScheduling.scheduleRetry` is a synchronous, non-async protocol
+/// method (it must return immediately without waiting on the real delay),
+/// so recording must also happen synchronously on that call — hopping
+/// through an actor via an unstructured `Task` would race the very next
+/// line in the test, which reads `scheduledCount` right after `drain()`
+/// returns.
+private final class RecordingScheduler: DrainScheduling, @unchecked Sendable {
+    private let lock = NSLock()
+    private var scheduled: [RetryAction] = []
+
+    var scheduledCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return scheduled.count
+    }
+
+    nonisolated func scheduleRetry(after delay: TimeInterval, _ action: RetryAction) {
+        lock.lock()
+        scheduled.append(action)
+        lock.unlock()
+    }
+
+    /// Fires the oldest still-pending scheduled action, simulating that
+    /// timer elapsing. Removed before firing (not after) so a re-entrant
+    /// schedule made by the action itself is never confused with the one
+    /// being fired.
+    func fireOldest() async {
+        lock.lock()
+        let action = scheduled.isEmpty ? nil : scheduled.removeFirst()
+        lock.unlock()
+        await action?.run()
+    }
 }
