@@ -628,7 +628,7 @@ function HistoryFilterRow({
       <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 5 }}>
         {label}
       </div>
-      <div role="group" aria-label={label} style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+      <div className="chip-scroll" role="group" aria-label={label} style={{ display: "flex", gap: 6, overflowX: "auto" }}>
         <FilterButton active={value === null} onClick={() => onChange(null)}>
           {allLabel}
         </FilterButton>
