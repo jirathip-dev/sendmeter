@@ -151,6 +151,18 @@ final class WorkoutManager: NSObject {
         // first, orphaning a timer the run loop keeps firing.
         guard let generation = startGuard.begin() else { return }
         defer { startGuard.finish() }
+        // Re-review R2: refuse to start over an already-running workout too.
+        // The guard above only rejects a CONCURRENT second call — a later,
+        // sequential call (e.g. some future caller reachable while
+        // `isRunning` is already true) would otherwise reach the reset block
+        // below and nil out `session`/`builder`/`startDate` for the
+        // workout that's actually live, then possibly throw inside
+        // `requestAuthorization()` — orphaning that HKWorkoutSession with no
+        // handle left to end it: `isRunning` stays true, the view keeps
+        // rendering `.live`, and `end()`'s `guard let session ... else {
+        // return nil }` silently does nothing. That's the exact shape of
+        // the bug #476 exists to fix.
+        guard !isRunning else { return }
 
         errorMsg = nil
         // Review finding F1: this manager now outlives any single workout,
@@ -338,7 +350,16 @@ final class WorkoutManager: NSObject {
         let end = rest.addingTimeInterval(Double(restTargetS))
         let interval = end.timeIntervalSinceNow
         guard interval > 0 else { return }
-        restAlarmTask = Task {
+        // Re-review R3b: `scheduleRestAlarm()` itself isn't `@MainActor` (it's
+        // called from `restTargetS`'s `didSet`, a synchronous nonisolated
+        // context that can't call an isolated method directly), so a plain
+        // `Task { … }` here would NOT inherit MainActor isolation the way it
+        // did pre-hoist, when this lived on a SwiftUI View (implicitly
+        // MainActor). `@MainActor in` requests it explicitly instead, same
+        // pattern this file already uses for HealthKit's background delegate
+        // callbacks below — WKInterfaceDevice haptics belong on the main
+        // thread, and `restAlarmTask` must only ever be touched from there.
+        restAlarmTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(interval))
             guard !Task.isCancelled else { return }
             WKInterfaceDevice.current().play(.notification)
@@ -499,8 +520,10 @@ final class WorkoutManager: NSObject {
         Task { await save(failedBundle) }
     }
 
+    // Not `private`: SendLogWatchTests exercises the R1 id-matched
+    // failedBundle clear directly against this, the real save path.
     @MainActor
-    private func save(_ bundle: WorkoutSaveBundle) async {
+    func save(_ bundle: WorkoutSaveBundle) async {
         let outcome = await OfflineQueue.shared.enqueue(bundle)
         guard outcome != .lost else {
             failedBundle = bundle
@@ -509,7 +532,16 @@ final class WorkoutManager: NSObject {
             return
         }
 
-        failedBundle = nil
+        // Re-review R1: only clear THIS bundle's failure. `failedBundle` can
+        // now belong to an EARLIER, unrelated workout — Start being
+        // unblocked (F1) means the user can start and successfully save
+        // workout N+1 while N's failed bundle is still sitting there
+        // waiting on Retry. Clearing unconditionally silently discarded N's
+        // last in-memory copy while telling the user "Saved" — the exact
+        // kind of swallowed data loss CLAUDE.md #264 forbids.
+        if failedBundle?.workout.id == bundle.workout.id {
+            failedBundle = nil
+        }
         await WidgetBridge.refreshStatus() // fresh ACWR after the save
         if outcome == .queued {
             stillQueued = await OfflineQueue.shared.pendingCount() > 0

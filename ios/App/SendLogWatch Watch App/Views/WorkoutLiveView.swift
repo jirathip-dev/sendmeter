@@ -29,7 +29,7 @@ struct WorkoutLiveView: View {
     // make Start permanently unreachable once a save was `.lost`.
     var body: some View {
         Group {
-            switch WorkoutScreenSelection.screen(isRunning: workout.isRunning, justSaved: workout.justSaved) {
+            switch Self.screen(for: workout) {
             case .live: liveContent
             case .saved: savedContent
             case .start: startContent
@@ -41,6 +41,18 @@ struct WorkoutLiveView: View {
         // next to an End button, the title is telling nobody anything.
         .navigationTitle(workout.isRunning ? "" : "Climb")
         .navigationBarBackButtonHidden(workout.isRunning)
+    }
+
+    /// The exact decision `body` renders, as a testable seam (#476 R3a):
+    /// `@Environment` can't be resolved outside a hosted view, so a test
+    /// can't construct a `WorkoutLiveView` and read its `body` directly —
+    /// this takes the manager explicitly instead, and `body` calls nothing
+    /// else to make the choice. `WorkoutOwnershipTests
+    /// .testFailedBundleNeverGatesTheScreen` (SendLogWatchTests) asserts a
+    /// `failedBundle` never changes this result, through this exact
+    /// function — not a parallel copy of it.
+    static func screen(for workout: WorkoutManager) -> WorkoutScreen {
+        WorkoutScreenSelection.screen(isRunning: workout.isRunning, justSaved: workout.justSaved)
     }
 
     /// A failed save from a PREVIOUS workout (#287's last in-memory copy of

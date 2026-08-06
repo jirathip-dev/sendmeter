@@ -1,3 +1,5 @@
+import Foundation
+import SendLogWatchCore
 import XCTest
 @testable import SendLogWatch_Watch_App
 
@@ -56,6 +58,51 @@ final class WorkoutOwnershipTests: XCTestCase {
             typeName.hasPrefix("Environment<"),
             "RootView.workout must be @Environment-sourced (found \(typeName)) — a view-local " +
             "copy here would be destroyed by the exact signedOut NavigationStack swap this guards against"
+        )
+    }
+
+    /// Re-review finding R3a: `WorkoutScreenSelection.screen(isRunning:justSaved:)`
+    /// structurally can't take `failedBundle` as input (Core, tested in
+    /// `WorkoutScreenSelectionTests`) — but that alone doesn't prove
+    /// `WorkoutLiveView.body` couldn't reintroduce a `failedBundle` gate of
+    /// its own AHEAD of that call. This goes through `WorkoutLiveView.screen(for:)`
+    /// — the exact function `body` switches on, not a parallel copy of the
+    /// decision — so a future regression that restores
+    /// `if workout.failedBundle != nil { failedSaveContent }` ahead of the
+    /// switch (reinstating review finding F1's scenario B: Start locked out
+    /// for the rest of the app session) fails this test, as long as `body`
+    /// keeps calling this seam to choose its screen.
+    func testFailedBundleNeverGatesTheScreen() {
+        let manager = WorkoutManager()
+        manager.failedBundle = sampleFailedBundle()
+
+        XCTAssertEqual(
+            WorkoutLiveView.screen(for: manager), .start,
+            "a failed bundle from a previous workout must never block Start"
+        )
+
+        manager.isRunning = true
+        XCTAssertEqual(
+            WorkoutLiveView.screen(for: manager), .live,
+            "a running workout must render live even with a failed bundle present"
+        )
+    }
+
+    private func sampleFailedBundle() -> WorkoutSaveBundle {
+        let workoutId = UUID()
+        let sessionId = UUID()
+        return WorkoutSaveBundle(
+            session: SessionInsert(
+                id: sessionId, date: "2026-08-06", type: "bouldering", typeLabel: "Bouldering",
+                durationMin: 12, rpe: 5.0, note: "", phase: "capacity"
+            ),
+            workout: ClimbWorkoutInsert(
+                id: workoutId, startedAt: Date(), endedAt: Date(),
+                elevationGainM: 1, attemptsDetected: 1, attemptsConfirmed: 1,
+                rpePredicted: 5, rpeConfirmed: 5, meanEffort: 5, attemptsPer10min: 1,
+                sessionId: sessionId
+            ),
+            attempts: []
         )
     }
 }

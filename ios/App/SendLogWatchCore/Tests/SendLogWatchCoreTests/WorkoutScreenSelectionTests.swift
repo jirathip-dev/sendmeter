@@ -26,16 +26,27 @@ final class WorkoutScreenSelectionTests: XCTestCase {
     }
 
     // Note: `failedBundle` deliberately isn't a parameter of `screen(...)` —
-    // see the type's doc comment. `WorkoutLiveViewFailedBundlePlacementTests`
-    // below is the fixture-level proof that this is enforced.
+    // see the type's doc comment. `WorkoutOwnershipTests
+    // .testFailedBundleNeverGatesTheScreen` (SendLogWatchTests, app target)
+    // is the fixture-level proof that this is enforced all the way through
+    // `WorkoutLiveView.body` — it can't live here in Core, since it needs a
+    // real `WorkoutManager`.
 }
 
-/// Review finding F1: proves the fix by comparing the OLD decision shape
-/// (a faithful, minimal copy of `WorkoutLiveView.body` as it stood on commit
+/// Review finding F1, re-review R3a: comparing the OLD decision shape (a
+/// faithful, minimal copy of `WorkoutLiveView.body` as it stood on commit
 /// 85764b3 — `git show 85764b3:"ios/App/SendLogWatch Watch App/Views/WorkoutLiveView.swift"`)
-/// against the NEW one. Kept as a historical regression fixture, not
-/// production code — do not update `oldScreen` to match future changes.
-final class WorkoutScreenSelectionRegressionTests: XCTestCase {
+/// against the NEW one.
+///
+/// **Documentation only — NOT regression coverage.** `oldScreen` below is a
+/// hand-written replica frozen at 85764b3; it doesn't call any production
+/// code, so these tests cannot fail for a reason that reflects current
+/// behavior (they'd only ever fail if `oldScreen` itself were edited, which
+/// it must never be). Do not cite this suite as evidence a fix works — see
+/// `WorkoutScreenSelectionTests` above and `WorkoutOwnershipTests
+/// .testFailedBundleNeverGatesTheScreen` for tests that actually exercise
+/// production code.
+final class WorkoutScreenSelectionHistoricalFixtureTests: XCTestCase {
     private enum OldScreen: Equatable { case failedSave, saved, live, start }
 
     /// `WorkoutLiveView.body` on 85764b3:

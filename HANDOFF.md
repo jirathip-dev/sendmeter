@@ -16,6 +16,133 @@ could cover a running workout N+1 with no End control, and a `.lost`
 document covers the original work plus every finding (F1–F8) from that
 review.
 
+**Second review round: APPROVE, with three non-blocking findings (R1–R3).**
+All eight F1–F8 fixes were independently re-verified and confirmed; F1's
+restructure held up against both original scenarios. R1 and R2 were each
+one-liners that re-created the bug class #476 exists to fix through a new
+route, exposed precisely *because* the F1 fix correctly unblocked Start — so
+they're covered here too, along with R3's two accuracy defects. Issue #480 is
+now filed for the pre-existing `startActivity`/`beginCollection` orphan
+hazard (first surfaced as a side note in the first review's F7); it is
+explicitly **not** fixed in this branch, per instruction.
+
+## Findings from REVIEW.md, round 2 (R1–R3)
+
+### R1 (MEDIUM) — `save()`'s success path cleared ANY `failedBundle`, not just its own
+
+`WorkoutManager.swift`, in `save(_:)`'s success path: `failedBundle = nil` ran
+unconditionally on every successful save. This was unreachable before F1 (a
+failed save blocked Start entirely), but F1 correctly made Start reachable
+again — which means this scenario is now real: workout N fails `.lost`
+(`failedBundle = bundleN`), the user taps **Start** instead of **Retry**,
+climbs workout N+1, N+1 saves successfully, and the old code silently
+discarded `bundleN` while rendering "Saved" — CLAUDE.md #264 is explicit that
+unsaved training data must be reported, never swallowed, and `failedBundle`
+has no separate reporting path at all.
+
+**Fix:** narrowed to an id match, exactly as the review's suggested minimal
+fix:
+```swift
+if failedBundle?.workout.id == bundle.workout.id {
+    failedBundle = nil
+}
+```
+An unrelated failed bundle now survives a different workout's successful
+save; a bundle's own (re)save — e.g. via Retry — still clears it.
+
+**Regression tests**, both against the real `save()` (loosened from `private`
+to internal for this — same pattern as `startFusion()`/`fusionTimer`):
+- `testSuccessfulSaveDoesNotClearAnUnrelatedFailedBundle` — sets a stale
+  `failedBundle`, calls `save()` with a *different* bundle, asserts the stale
+  one survives.
+- `testSuccessfulSaveClearsItsOwnMatchingFailedBundle` — same bundle,
+  asserts it's cleared.
+- **Verified to fail on the pre-R1 commit (`47e52e3`)**: stashed just
+  `WorkoutManager.swift` back to that commit and reran — both new tests
+  **failed to compile** (`'save' is inaccessible due to 'private' protection
+  level`), since `save()` wasn't yet exposed there. Restored and reconfirmed
+  the full suite green.
+
+### R2 (LOW) — `start()` entered while already running could orphan the live session
+
+`WorkoutManager.swift`, `start()`'s reset block: F7's own fix (nil-ing
+`session`/`builder`/`startDate`/`liveSync` unconditionally at the top of
+`start()`) opened a new hole the review owns as a consequence of its own ask.
+If `start()` were ever entered while `isRunning` is already `true` and then
+threw (e.g. `requestAuthorization()` failing), the reset block would nil the
+*live* workout's `session`/`builder`/`startDate` before the throw — orphaning
+that `HKWorkoutSession` with no handle left to end it. `isRunning` stays
+`true`, `WorkoutScreenSelection` keeps returning `.live`, and `end()`'s
+`guard let session, let builder, let startDate else { return nil }` silently
+does nothing. That's the exact shape of the bug #476 exists to fix.
+
+**Fix:** added `guard !isRunning else { return }` immediately after the
+existing double-tap guard (`startGuard.begin()`/`defer { startGuard.finish()
+}`), so it's covered by the same `defer` and refuses re-entry over an
+already-running workout, not just concurrent double-taps.
+
+Not independently regression-tested: reaching this path requires a caller to
+invoke `start()` while `isRunning` is already `true`, which nothing in the
+current UI does (the guard closes a *latent* exposure the F7 fix introduced,
+same as F7 itself was latent) — there's no existing reachable path to drive
+a test through it without fabricating a call site that doesn't otherwise
+exist. The fix is a direct, low-risk one-line addition matching the guard
+pattern already used and tested one line above it (`WorkoutStartGuardTests`
+covers the concurrent-call half of this same guard mechanism).
+
+### R3 (LOW) — two accuracy defects
+
+**(a) A comment cited a test that didn't exist**, and the invariant it
+described had no real coverage. `WorkoutScreenSelectionTests.swift` referenced
+`WorkoutLiveViewFailedBundlePlacementTests`, which was never written anywhere
+in the tree — meaning rule 2 of `WorkoutScreenSelection`'s doc ("a failed
+save can never block Start") was enforced only by *where* `failedSaveBanner`
+happens to sit inside `startContent`, with no test pinning it. A future edit
+re-adding `if workout.failedBundle != nil { failedSaveContent }` ahead of the
+switch in `WorkoutLiveView.body` would reinstate F1's scenario B (Start
+locked out) with every existing test green.
+
+**Fixed with a real seam, not just a comment deletion** — `@Environment`
+can't be resolved outside a hosted view, so a test can't construct a
+`WorkoutLiveView` and read its `body` directly (the same tooling gap noted
+throughout this branch). Added `WorkoutLiveView.screen(for:)`, a `static`
+function taking the manager explicitly:
+```swift
+static func screen(for workout: WorkoutManager) -> WorkoutScreen {
+    WorkoutScreenSelection.screen(isRunning: workout.isRunning, justSaved: workout.justSaved)
+}
+```
+`body` now calls `Self.screen(for: workout)` — this is the exact function it
+switches on, not a parallel copy. `WorkoutOwnershipTests
+.testFailedBundleNeverGatesTheScreen` sets `failedBundle` on a real
+`WorkoutManager` and asserts the result is `.start` (then `.live` once
+`isRunning` flips), through this exact call. **Honest limitation:** this
+catches a regression in the decision function itself or in what `body`
+switches on; it would NOT catch a regression that wraps the whole switch in
+a brand-new, independent `if failedBundle != nil` check that bypasses
+`Self.screen(for:)` entirely — no tool available here (no ViewInspector) can
+close that last gap. Flagged in "things I'm unsure about" below.
+
+Also renamed `WorkoutScreenSelectionRegressionTests` →
+`WorkoutScreenSelectionHistoricalFixtureTests` and rewrote its doc comment to
+say explicitly: **documentation only, not regression coverage** — it exercises
+a hand-copied replica of the pre-fix logic frozen at commit `85764b3`, so it
+cannot fail for a reason that reflects current behavior. Never cite it as
+evidence a fix works.
+
+**(b) Rest-alarm actor isolation.** `WorkoutManager.swift`,
+`scheduleRestAlarm()`: pre-hoist, this lived on a SwiftUI View (implicitly
+MainActor), so its bare `Task { … }` inherited MainActor isolation for free.
+Post-hoist, `scheduleRestAlarm()` itself isn't `@MainActor` (it's called from
+`restTargetS`'s `didSet`, a synchronous nonisolated context that can't call
+an isolated method directly), so the same `Task { … }` no longer reliably ran
+on the main thread — a real regression, not just a style nit, since
+`WKInterfaceDevice` haptics belong on the main thread and `restAlarmTask`
+must only ever be touched from there. **Fix:** `Task { @MainActor in … }`,
+matching the pattern this same file already uses for HealthKit's background
+delegate callbacks (`workoutSession(_:didFailWithError:)`,
+`didCollectDataOf:`).
+
 ## Findings from REVIEW.md and what changed
 
 ### F1 (HIGH) — a save outcome from workout N could render over a running N+1; a `.lost` save could lock Start out forever
@@ -155,28 +282,44 @@ must be read right after `WidgetBridge.refreshStatus()`'s round trip and
 right before showing `justSaved` (it was compressed to two lines in the
 original hoist, losing the constraint, not just the fact).
 
-## Validation run (this revision)
+## Validation run (round 2, F1–F8)
 
-- `cd ios/App/SendLogWatchCore && swift test` — **221/221 passed** (213 from
-  the original round + 8 new: 4 `WorkoutScreenSelectionTests`, 4
-  `WorkoutScreenSelectionRegressionTests`).
+- `swift test`: 221/221. Watch app build: succeeded (caught and fixed one
+  self-inflicted regression: an edit to `WorkoutManager`'s doc comment
+  accidentally deleted the `var failedBundle` declaration itself — caught
+  immediately by the build, restored). `SendLogWatchTests` on simulator:
+  117/117. F1 regression test independently verified to fail on `85764b3`
+  (stashed `WorkoutManager.swift` back, reran, confirmed the expected
+  failure, restored, reconfirmed green).
+
+## Validation run (round 3, R1–R3, this revision)
+
+- `cd ios/App/SendLogWatchCore && swift test` — **221/221 passed** (same
+  count as round 2 — `WorkoutScreenSelectionRegressionTests` was renamed to
+  `WorkoutScreenSelectionHistoricalFixtureTests`, no tests added or removed
+  in Core this round; the new tests are App-target).
 - `xcodebuild build -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -destination "generic/platform=watchOS Simulator" CODE_SIGNING_ALLOWED=NO`
-  — **BUILD SUCCEEDED**. (Caught and fixed one self-inflicted regression
-  along the way: an edit to `WorkoutManager`'s doc comment accidentally
-  deleted the `var failedBundle: WorkoutSaveBundle?` declaration itself —
-  caught immediately by this build, restored, rebuilt clean.)
+  — **BUILD SUCCEEDED**.
 - `xcodebuild test -destination "id=<Apple Watch Series 11 (42mm) sim>" -only-testing:SendLogWatchTests`
-  — **117/117 passed** (115 from the original round + 2 new
-  `WorkoutSavePathResetTests`).
-- **Fail-before-fix, independently reproduced** for the F1 regression test:
-  stashed `WorkoutManager.swift` back to commit `85764b3` (keeping the new
-  test file and everything else), ran
-  `-only-testing:SendLogWatchTests/WorkoutSavePathResetTests`:
-  `testStartClearsPerSaveTransientsFromAPreviousWorkout` **failed** with
-  exactly the expected assertion failures (`justSaved`/`stillQueued`/`ending`
-  all still `true` after `start()`); `testStartSucceedsWithAStaleFailedBundlePresentAndPreservesIt`
-  passed on old code too (expected — see F1's writeup above for why). Popped
-  the stash, reran the full suite: 117/117 green again.
+  — **120/120 passed** (118 + 2 new R1 tests:
+  `testSuccessfulSaveDoesNotClearAnUnrelatedFailedBundle`,
+  `testSuccessfulSaveClearsItsOwnMatchingFailedBundle`; R3a's
+  `testFailedBundleNeverGatesTheScreen` was the 118th, added earlier in this
+  same round). The two `save()`-exercising R1 tests are noticeably slower
+  (~16s each) than the rest of the suite — `WidgetBridge.refreshStatus()`
+  inside `save()`'s success path retries real network calls against
+  `127.0.0.1:54321` with backoff before giving up in this sandboxed host;
+  it fails gracefully (cached data preserved) rather than hanging, but it's
+  not fast. Not a correctness concern, flagging for anyone surprised by the
+  suite taking ~32s total instead of a fraction of a second.
+- **Fail-before-fix, independently reproduced** for the R1 regression tests:
+  stashed `WorkoutManager.swift` back to commit `47e52e3` (the round-2 commit,
+  keeping the new test file), ran
+  `-only-testing:SendLogWatchTests/WorkoutSavePathResetTests`: both new tests
+  **failed to compile** (`'save' is inaccessible due to 'private' protection
+  level` — `save()` wasn't yet exposed on that commit), which is the
+  strongest form of "fails on prior code." Popped the stash, rebuilt, reran
+  the full suite: 120/120 green again.
 - Web: not touched, `npm run typecheck/lint/test/build` not applicable.
 
 ## Things I could NOT verify from here (manual/device matrix — updated)
@@ -196,10 +339,11 @@ down view). Adding, specific to this round:
 ## Things I did NOT touch
 
 Same as the original handoff: `OfflineQueue.swift`, `Repo.swift`,
-`AttemptDetector.swift` untouched; no Part B; no detector-behavior changes;
-the pre-existing `startActivity`/`beginCollection` hazard the review flagged
-in F7 is explicitly left alone per this round's instructions (filed
-separately by the user).
+`AttemptDetector.swift` untouched; no Part B; no detector-behavior changes.
+The pre-existing `startActivity`/`beginCollection` orphan hazard (first noted
+as a side comment on the first review's F7) is explicitly left alone —
+**it's now tracked as issue #480** and is out of scope for this branch by
+explicit instruction.
 
 ## Things I'm unsure about / worth a second look
 
@@ -215,11 +359,24 @@ separately by the user).
 - **The `ending`-reset interaction with an in-flight retry**, described
   above under F1's "known minor gap" — flagging again here in case a
   reviewer wants it closed rather than accepted, though it's cosmetic only.
-- **`WorkoutScreenSelectionRegressionTests`'s historical-fixture pattern** (a
-  hand-copied, comment-cited replica of old buggy logic, compared against
-  the new one) is not something this repo had a precedent for before this
-  branch. If this pattern is unwelcome, the alternative is dropping those 4
-  tests and relying solely on the empirically-verified
-  `WorkoutSavePathResetTests` (which only covers the reset half of F1, not
-  the render-order half) plus code inspection of `WorkoutLiveView.body`
-  being a thin `switch` over `WorkoutScreenSelection.screen(...)`.
+- **`WorkoutScreenSelectionHistoricalFixtureTests`'s pattern** (a hand-copied,
+  comment-cited replica of old buggy logic, compared against the new one) is
+  now explicitly labeled documentation-only per R3, but is still not
+  something this repo had a precedent for before this branch. If unwelcome,
+  the alternative is deleting those 4 tests outright and relying solely on
+  `WorkoutScreenSelectionTests` + `WorkoutOwnershipTests
+  .testFailedBundleNeverGatesTheScreen` (both exercise real production code).
+- **R3a's `WorkoutLiveView.screen(for:)` seam has an honest gap**, stated in
+  its writeup above: it catches a regression in the decision function itself
+  or in what `body` switches on, but not a hypothetical future regression
+  that wraps the whole `switch` in a brand-new `if failedBundle != nil` check
+  that never calls `Self.screen(for:)` at all. No tool available in this
+  environment (no ViewInspector, `@Environment` unresolvable outside a hosted
+  view) can close that last gap — flagging in case a reviewer has a way to
+  close it that I don't.
+- **`save()` is now `internal` instead of `private`**, purely for R1's test
+  access (same pattern already used for `startFusion()`/`fusionTimer`). It's
+  still only called from within `WorkoutManager` in production
+  (`endAndSave()`, `retryFailedSave()`) — flagging the widened access
+  surface in case a reviewer would rather it stayed private with a different
+  test strategy.

@@ -67,4 +67,38 @@ final class WorkoutSavePathResetTests: XCTestCase {
         XCTAssertNotNil(manager.failedBundle, "the previous workout's failed bundle must survive — it's the only in-memory copy of unsaved data (#287)")
         XCTAssertEqual(manager.failedBundle?.workout.id, stale.workout.id, "start() must not replace it with something else, either")
     }
+
+    /// Re-review finding R1: `save()`'s success path used to clear
+    /// `failedBundle` unconditionally — reachable now precisely because F1
+    /// unblocked Start: workout N fails `.lost`, the user starts N+1 instead
+    /// of retrying, N+1 saves fine, and the old code silently discarded
+    /// bundleN while telling the user "Saved". CLAUDE.md #264 is explicit
+    /// that unsaved training data is reported, never swallowed —
+    /// `failedBundle` has no reporting path at all, so silently dropping it
+    /// is exactly the failure mode that rule exists to prevent.
+    func testSuccessfulSaveDoesNotClearAnUnrelatedFailedBundle() async {
+        let manager = WorkoutManager()
+        let staleFromWorkoutN = sampleBundle()
+        manager.failedBundle = staleFromWorkoutN
+
+        await manager.save(sampleBundle()) // a DIFFERENT (N+1) bundle, saved successfully
+
+        XCTAssertEqual(
+            manager.failedBundle?.workout.id, staleFromWorkoutN.workout.id,
+            "an unrelated failed bundle must survive a different workout's successful save"
+        )
+    }
+
+    /// The other half of R1: a bundle DOES still clear its OWN failure once
+    /// it saves successfully (e.g. via Retry) — R1 narrows the clear to an
+    /// id match, it doesn't remove it.
+    func testSuccessfulSaveClearsItsOwnMatchingFailedBundle() async {
+        let manager = WorkoutManager()
+        let bundle = sampleBundle()
+        manager.failedBundle = bundle
+
+        await manager.save(bundle) // same bundle, now saved successfully
+
+        XCTAssertNil(manager.failedBundle, "a bundle's own successful (re)save must still clear its failure")
+    }
 }
