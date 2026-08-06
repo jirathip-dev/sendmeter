@@ -247,6 +247,40 @@ nonisolated struct LiveWorkoutUpsert: Codable {
         case restTargetS = "rest_target_s"
         case updatedAt = "updated_at"
     }
+
+    // #477 review F1: Swift's synthesized `Encodable` uses `encodeIfPresent`
+    // for every `Optional` property, which OMITS the key entirely when the
+    // value is nil. `upsert(row, onConflict: "user_id")` sends this straight
+    // to PostgREST, which only overwrites columns present in the payload —
+    // an omitted `hr` key therefore leaves `live_workouts.hr` at its last
+    // non-nil value FOREVER, not absent. That is the exact "stale reading
+    // survives as if live" bug #477 exists to close, just moved onto the
+    // wire instead of fixed. `hr` must encode an explicit JSON `null` when
+    // absent, so this type needs a hand-written `encode(to:)`.
+    //
+    // Every OTHER optional here deliberately keeps the omit-when-nil
+    // default: `markEnded()` passes nil for `activeKcal`/`elevationGainM`/
+    // `climbingSince`/`restStartedAt`/`restTargetS` specifically so that
+    // final upsert does not stomp those columns with null. This is a
+    // per-field decision, not a blanket switch to explicit nulls — do not
+    // "simplify" the other fields to match `hr` without checking their
+    // callers first.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(userId, forKey: .userId)
+        try container.encode(workoutId, forKey: .workoutId)
+        try container.encode(status, forKey: .status)
+        try container.encode(startedAt, forKey: .startedAt)
+        try container.encode(hr, forKey: .hr) // explicit null, not omitted, when nil
+        try container.encode(attemptCount, forKey: .attemptCount)
+        try container.encodeIfPresent(activeKcal, forKey: .activeKcal)
+        try container.encodeIfPresent(elevationGainM, forKey: .elevationGainM)
+        try container.encode(climbing, forKey: .climbing)
+        try container.encodeIfPresent(climbingSince, forKey: .climbingSince)
+        try container.encodeIfPresent(restStartedAt, forKey: .restStartedAt)
+        try container.encodeIfPresent(restTargetS, forKey: .restTargetS)
+        try container.encode(updatedAt, forKey: .updatedAt)
+    }
 }
 
 /// One confirmed workout = three idempotent upserts, bundled for the offline queue.
