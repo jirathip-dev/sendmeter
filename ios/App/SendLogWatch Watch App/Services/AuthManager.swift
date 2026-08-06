@@ -92,10 +92,10 @@ final class AuthManager: NSObject {
     /// watch needs one. **This is the only place allowed to decide that** —
     /// every trigger that might discover an expired token (poll,
     /// `activationDidCompleteWith`, `sessionReachabilityDidChange`) must
-    /// route through this function rather than consulting the cached
-    /// `needsToken` property first, or it can decline to ask for a token the
-    /// watch actually needs (#472: a decision cached at T does not stay true
-    /// past T — see `SessionRelay.needsToken`).
+    /// route through this function rather than consulting a cached property
+    /// first, or it can decline to ask for a token the watch actually needs
+    /// (#472: a decision cached at T does not stay true past T — see
+    /// `SessionRelay.needsToken`, the only function allowed to answer this).
     @MainActor
     func refreshState() {
         let previous = state
@@ -107,9 +107,17 @@ final class AuthManager: NSObject {
         if SessionRelay.needsToken(for: session, now: now) { requestSessionFromPhone() }
     }
 
-    /// True when the watch cannot make an authenticated request right now:
-    /// signed out entirely, or signed in with an expired token.
-    var needsToken: Bool {
+    /// **Display only — never use this to decide anything (#472).** A
+    /// projection of the cached `state` for `HomeView`'s "waiting for
+    /// iPhone" footnote; SwiftUI's `@Observable` tracking needs it to read
+    /// `state` (a stored, tracked property) rather than recompute from the
+    /// clock, so it can be arbitrarily stale — it is exactly the read that
+    /// caused #472 when three call sites consulted it before deciding
+    /// whether to ask the phone for a token. Any code that needs to *decide*
+    /// whether the watch needs a token must call
+    /// `SessionRelay.needsToken(for:now:)` — see `refreshState()` — never
+    /// this property.
+    var needsTokenForDisplay: Bool {
         switch state {
         case .signedOut: return true
         case let .signedIn(_, tokenFresh): return !tokenFresh
@@ -217,12 +225,21 @@ final class AuthManager: NSObject {
     /// event to retry on.
     ///
     /// Calls `refreshState()` unconditionally on every tick, **not** gated on
-    /// the cached `needsToken` (#472): once a relayed token goes fresh→stale
-    /// with no external event, a guard reading the old cached state would
-    /// stay `false` forever and this poll would never fire the one call that
+    /// a cached decision (#472): once a relayed token goes fresh→stale with
+    /// no external event, a guard reading old cached state would stay
+    /// `false` forever and this poll would never fire the one call that
     /// could discover the expiry. `refreshState()` is a single pure
-    /// `SessionRelay.state` computation, so this is cheap every 20s;
-    /// `requestSessionFromPhone()` already self-throttles on `lastRequestAt`.
+    /// `SessionRelay.state` computation, so this is cheap every 20s.
+    ///
+    /// This is *not* bounded by `requestSessionFromPhone`'s `lastRequestAt`
+    /// throttle — `requestIntervalS` is 5s against a 20s tick, so that
+    /// throttle never engages here; it only coalesces triggers that land
+    /// within the same few seconds (bootstrap, reachability, foreground,
+    /// Retry). While the phone is reachable this loop is deliberately
+    /// unbounded: up to one `sendMessage` every 20s for as long as the token
+    /// stays stale (the issue rejected a bounded backoff as reintroducing
+    /// indefinite parking). While unreachable, `queuedRequest` still caps it
+    /// to one `transferUserInfo` per stale episode.
     private func startPolling() {
         poll?.cancel()
         poll = Task { [weak self] in
@@ -265,7 +282,7 @@ extension AuthManager: WCSessionDelegate {
     /// The phone became reachable — this is the moment to recompute and, if
     /// the token has gone stale, (re)ask; an earlier attempt would have
     /// failed while it slept. Recompute before deciding (#472): reachability
-    /// changing is precisely when a cached `needsToken` is most likely wrong.
+    /// changing is precisely when a cached decision is most likely wrong.
     func sessionReachabilityDidChange(_ session: WCSession) {
         guard session.isReachable else { return }
         Task { @MainActor in

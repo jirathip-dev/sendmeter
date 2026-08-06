@@ -4,23 +4,41 @@ import { describe, expect, it } from "vitest";
 
 /// Structural guard for issue #472: the watch's slow poll and its two
 /// `WCSessionDelegate` callbacks used to decide whether to ask the phone for
-/// a fresh token by reading `needsToken`, a property derived from `state` —
-/// a value set at the *previous* refresh, not recomputed against the clock.
-/// Once a relayed token went stale with no external event to react to
-/// (nothing else ever changes `state`), every one of these three sites read
-/// a permanently-stale "still fresh" answer and never asked again.
+/// a fresh token by reading a property derived from `state` — a value set at
+/// the *previous* refresh, not recomputed against the clock. Once a relayed
+/// token went stale with no external event to react to (nothing else ever
+/// changes `state`), every one of these three sites read a
+/// permanently-stale "still fresh" answer and never asked again.
 ///
 /// `AuthManager.swift` is watch-app-target code the `quality` job never
 /// compiles (only the path-filtered, often-queued `swift` job in
 /// `ios-ci.yml` does), and it isn't unit tested even there — `swift test`
 /// only runs `SendLogWatchCore`'s pure-logic package, and `AuthManager`
 /// itself is not pure logic (WatchConnectivity, timers). So this is a
-/// text-scan pin, the same shape as `nativeAuthInvariants.test.ts`: it can't
-/// be satisfied by a correct pure helper sitting unused beside the old
-/// cached-read guard — only by routing the three production call sites
-/// through it. Verified to fail against the pre-fix source (the poll's
+/// text-scan pin. Verified to fail against the pre-fix source (the poll's
 /// `guard let self, self.needsToken else { return }`, and the two delegate
 /// callbacks' `if self.needsToken { self.requestSessionFromPhone() }`).
+///
+/// **Correction (post-review):** an earlier version of this file called
+/// itself "the same shape as `nativeAuthInvariants.test.ts`". It wasn't.
+/// That file asserts an *absence* of a small, fixed set of API calls across
+/// two whole directories, which is genuinely impossible to satisfy by
+/// refactoring around it — there is nowhere else to put the call. A version
+/// of this file that only inspected four *named* function bodies asserted a
+/// *presence* at named sites instead, which an adversarial reviewer showed
+/// can be refactored around three different ways while every per-site
+/// assertion kept passing: (1) an early `guard needsToken else { return }`
+/// at the top of `refreshState()`, hiding behind the one legitimate
+/// `SessionRelay.needsToken(...)` call already required in that body; (2) a
+/// brand-new fourth decision site elsewhere in the file the per-site checks
+/// never look at; (3) a renamed indirection (`var tokenLooksStale: Bool {
+/// needsToken }`) consumed by the poll instead of the name the poll's own
+/// check forbids. The file-wide test below closes all three at once: after
+/// stripping the one legitimate `SessionRelay.needsToken(...)` call, the
+/// bare identifier `needsToken` may not appear anywhere in the file, under
+/// any name reachable by searching for it — which is why the instance
+/// property was also renamed to `needsTokenForDisplay` (see
+/// `AuthManager.swift`), leaving no legitimate bare `needsToken` at all.
 
 const REPO = join(import.meta.dirname, "..", "..");
 const AUTH_MANAGER_PATH = join(
@@ -85,16 +103,21 @@ describe("AuthManager routes token-staleness decisions through the clock, not a 
     );
   });
 
-  it("refreshState() decides via SessionRelay.needsToken, not the cached instance property", () => {
+  it("refreshState() decides via SessionRelay.needsToken, not a cached read", () => {
     const body = bodyAfter(source, /func refreshState\(\)/);
     expect(body).toMatch(/SessionRelay\.needsToken\(for:\s*session,\s*now:\s*now\)/);
-    expect(body).not.toMatch(/if\s+needsToken\s*\{/);
+    // Strip the one legitimate call *first*, then forbid the bare
+    // identifier outright. `not.toMatch(/if\s+needsToken\s*\{/)` alone is
+    // one Swift keyword wide — a `guard needsToken else { return }`
+    // early-out at the top of this function restores #472 verbatim while
+    // still matching that narrower pattern (demonstrated in review).
+    expect(body.replace(/SessionRelay\.needsToken\([^)]*\)/g, "")).not.toMatch(/\bneedsToken\b/);
   });
 
-  it("the poll recomputes unconditionally instead of gating on cached needsToken", () => {
+  it("the poll recomputes unconditionally instead of gating on a cached read", () => {
     const body = bodyAfter(source, /private func startPolling\(\)/);
     expect(body).toMatch(/self\??\.refreshState\(\)/);
-    expect(body).not.toMatch(/needsToken/);
+    expect(body).not.toMatch(/\bneedsToken\b/);
   });
 
   it("activationDidCompleteWith recomputes before deciding", () => {
@@ -103,7 +126,7 @@ describe("AuthManager routes token-staleness decisions through the clock, not a 
       /activationDidCompleteWith activationState: WCSessionActivationState,\s*error: Error\?\s*\)/,
     );
     expect(body).toMatch(/self\.refreshState\(\)/);
-    expect(body).not.toMatch(/needsToken/);
+    expect(body).not.toMatch(/\bneedsToken\b/);
     expect(body).not.toMatch(/requestSessionFromPhone\(/);
   });
 
@@ -114,7 +137,46 @@ describe("AuthManager routes token-staleness decisions through the clock, not a 
     );
     expect(body).toMatch(/guard session\.isReachable else \{ return \}/);
     expect(body).toMatch(/self\.refreshState\(\)/);
-    expect(body).not.toMatch(/needsToken/);
+    expect(body).not.toMatch(/\bneedsToken\b/);
     expect(body).not.toMatch(/requestSessionFromPhone\(/);
+  });
+
+  it("the bare identifier needsToken appears nowhere in the file outside the one legitimate SessionRelay.needsToken(...) call (#472, post-review)", () => {
+    // This is the assertion that actually closes the hole the per-site
+    // checks above cannot: those only look inside four *named* function
+    // bodies, so (a) a brand-new decision site anywhere else in the file,
+    // or (b) a cached property that re-exposes the same boolean under
+    // another name and gets consumed from inside a checked body, would
+    // pass every check above while reintroducing #472. Demonstrated in
+    // review, both surviving all four checks above:
+    //   (a) `@MainActor func maybeAskOnWorkoutStart() { if needsToken { requestSessionFromPhone() } }`
+    //   (b) `var tokenLooksStale: Bool { needsToken }`, consumed by the
+    //       poll as `guard self?.tokenLooksStale == true else { return }`
+    //       instead of the name the poll's own check forbids.
+    // Stripping the one legitimate `SessionRelay.needsToken(...)` call and
+    // then requiring zero remaining bare occurrences of the identifier
+    // catches both, plus the refreshState() early-out from the test above,
+    // regardless of which function (or none) they sit in. Zero, not "one
+    // for its own declaration", because the instance property was renamed
+    // to `needsTokenForDisplay` — there is no legitimate bare `needsToken`
+    // left in this file at all.
+    const withoutLegitimateCalls = source.replace(/SessionRelay\.needsToken\([^)]*\)/g, "");
+    const bareOccurrences = withoutLegitimateCalls.match(/\bneedsToken\b/g) ?? [];
+    expect(bareOccurrences).toEqual([]);
+  });
+
+  it("the display-only property is not named or documented as a decision predicate (#472)", () => {
+    // F3: the old name (`needsToken`) and doc ("True when the watch cannot
+    // make an authenticated request right now") read as a general-purpose
+    // predicate and invited exactly the misuse #472 was. The rename alone
+    // doesn't prove the doc was fixed too, so pin both — against the *raw*
+    // file, since `source` above has every comment stripped.
+    expect(source).toMatch(/var needsTokenForDisplay: Bool \{/);
+    const raw = readFileSync(AUTH_MANAGER_PATH, "utf8");
+    const declIndex = raw.indexOf("var needsTokenForDisplay: Bool {");
+    expect(declIndex).toBeGreaterThan(-1);
+    const docWindow = raw.slice(Math.max(0, declIndex - 900), declIndex);
+    expect(docWindow).toMatch(/display only/i);
+    expect(docWindow).toMatch(/SessionRelay\.needsToken\(for:now:\)/);
   });
 });
