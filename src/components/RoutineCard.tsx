@@ -15,6 +15,7 @@ import {
   clearRoutineRun,
   loadRoutineRun,
   partialMinutes,
+  resolveRoutineResume,
   shouldLog,
   type RoutineRunState,
 } from "../lib/routineRun";
@@ -102,11 +103,13 @@ export default function RoutineCard({
       .then((list) => {
         if (!alive) return;
         setPresets(list);
-        // Auto-resume an interrupted run if its preset still exists (SL-97);
-        // otherwise default-select the first preset and drop the stale run.
-        const resume = resumeRun && list.some((p) => p.id === resumeRun.presetId);
-        if (resume) {
-          setSelectedId(resumeRun!.presetId);
+        // Auto-resume an interrupted run if its preset still exists AND the
+        // run isn't abandoned (#483: wall-clock elapsed already past the
+        // routine's total means nobody was there to finish it) — otherwise
+        // default-select the first preset and drop the stale run.
+        const resumePresetId = resolveRoutineResume(resumeRun, list, Date.now());
+        if (resumePresetId) {
+          setSelectedId(resumePresetId);
           // Auto-resume is deliberately NOT guarded (#222): a routine that was
           // already in progress must come back, blocked-state or not.
           setRunningState(true);

@@ -33,6 +33,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: a non-hands-free run right after a hands-free run no longer plays stray "done" cues or shows a stale danger banner on segment transitions.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
+- Routine: reopening the Workout tab long after leaving a routine mid-way no longer silently auto-resumes it and logs a fabricated session duration (or fails to log entirely) — an abandoned run is now discarded, and a genuinely completed one is capped at the routine's own length.
 
 ## 1.0 — 2026-08-02
 

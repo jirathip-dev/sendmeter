@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { ROUTINE_TIMER_FONT, heroFontCss } from "../lib/fullscreenLayout";
-import { expandRoutine, routineDurationS } from "../lib/routine";
+import { ROUTINE_PREPARE_S, expandRoutine, routineDurationS } from "../lib/routine";
 import {
   clearRoutineRun,
+  loggedMinutes,
   saveRoutineRun,
   type RoutineRunState,
 } from "../lib/routineRun";
@@ -25,7 +26,8 @@ interface Props {
   /// partial session. Passes the routine seconds elapsed at exit (SL-97).
   onExitEarly: (elapsedS: number) => void;
   /// Fired once when the routine completes (Done) — the owner logs it to
-  /// History (SL-83). Wall-clock minutes actually spent, pauses included.
+  /// History (SL-83). Routine minutes elapsed (pauses excluded, capped at
+  /// the routine's own total — #483: never wall clock since start).
   onFinish?: (durationMin: number) => void;
 }
 
@@ -33,8 +35,6 @@ function fmt(sec: number): string {
   const s = Math.max(0, Math.ceil(sec));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
-
-const PREPARE_S = 5;
 
 /// Immersive guided routine timer (Workout tab). Steps expand to work×reps
 /// with rests between repetitions (SL-83); a short GET READY leads in, and
@@ -49,7 +49,7 @@ export default function RoutineFullscreen({
   onExitEarly,
   onFinish,
 }: Props) {
-  const SEGS = expandRoutine(steps, { prepareS: PREPARE_S });
+  const SEGS = expandRoutine(steps, { prepareS: ROUTINE_PREPARE_S });
   const TOTAL_S = routineDurationS(SEGS);
   // Seed from a resumed run when present (SL-97), else start now.
   const [startedMs] = useState(() => initial?.startedMs ?? Date.now());
@@ -107,13 +107,15 @@ export default function RoutineFullscreen({
   const next = SEGS[segIndex + 1];
   const stepCount = steps.length;
 
-  // Log exactly once on completion — wall-clock minutes, pauses included.
+  // Log exactly once on completion — routine minutes, capped at TOTAL_S so a
+  // run left mounted (or resumed) well past its own total never reports more
+  // than the routine could actually have taken (#483).
   const finishedRef = useRef(false);
   useEffect(() => {
     if (!done || finishedRef.current) return;
     finishedRef.current = true;
     clearRoutineRun();
-    onFinish?.(Math.max(1, Math.round((Date.now() - startedMs) / 60000)));
+    onFinish?.(loggedMinutes(elapsed, TOTAL_S));
     // onFinish is an owner callback read at fire time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [done]);
