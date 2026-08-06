@@ -39,6 +39,28 @@ import { describe, expect, it } from "vitest";
 /// any name reachable by searching for it — which is why the instance
 /// property was also renamed to `needsTokenForDisplay` (see
 /// `AuthManager.swift`), leaving no legitimate bare `needsToken` at all.
+///
+/// **Second correction (post-re-review):** the rename above created a new
+/// identifier, and every check here forbade the OLD one with a trailing
+/// `\b`, which does not match `needsTokenForDisplay` — so the same reviewer
+/// drove all three mutations straight through the pin again by writing them
+/// against the name that now exists (`guard needsTokenForDisplay else {
+/// return }` etc.). Fixed below: `needsTokenForDisplay` may appear exactly
+/// once in this file — its own declaration.
+///
+/// **What this pin's boundary actually is, stated honestly.** It forbids
+/// *this specific* cached read — `state`/`needsTokenForDisplay` — by name,
+/// anywhere in the file, under either identifier. It does **not**, and
+/// cannot, forbid every conceivable future cache: a `guard case
+/// .signedIn(_, true) = self?.state { return }` reads the enum directly
+/// without naming either identifier, and a *new* stored flag (e.g.
+/// `refreshState()` caching its own `SessionRelay.needsToken(...)` result
+/// into a `Bool` the poll then reads) reintroduces the same defect one hop
+/// removed, under a name this file cannot know in advance. The direct-enum
+/// read is closed below (branch-free auth call sites — reviewer's M4); the
+/// as-yet-unnamed-cache case is not, and no text pin can close it — that is
+/// the doc contract on `needsTokenForDisplay` and code review's job, not
+/// this file's.
 
 const REPO = join(import.meta.dirname, "..", "..");
 const AUTH_MANAGER_PATH = join(
@@ -163,6 +185,53 @@ describe("AuthManager routes token-staleness decisions through the clock, not a 
     const withoutLegitimateCalls = source.replace(/SessionRelay\.needsToken\([^)]*\)/g, "");
     const bareOccurrences = withoutLegitimateCalls.match(/\bneedsToken\b/g) ?? [];
     expect(bareOccurrences).toEqual([]);
+  });
+
+  it("needsTokenForDisplay appears exactly once in the file — its own declaration (#472, R1)", () => {
+    // The zero-bare-`needsToken` check above only forbids the OLD name.
+    // `needsTokenForDisplay` (the rename F3 asked for) is `internal`,
+    // reachable from anywhere in this target, and deciding from it is
+    // exactly as wrong as deciding from `needsToken` was — a
+    // `guard needsTokenForDisplay else { return }` early-out at the top of
+    // `refreshState()` is #472 verbatim, and the trailing `\b` in the checks
+    // above does not match this longer identifier, so that mutation passed
+    // every other assertion in this file (demonstrated in re-review). Pin it
+    // the same way the old name was pinned: exactly one bare occurrence in
+    // the whole file, its own declaration — `HomeView.swift`'s call site is
+    // a different file, and every doc-comment mention is already stripped
+    // by `code()`.
+    const occurrences = source.match(/\bneedsTokenForDisplay\b/g) ?? [];
+    expect(occurrences).toHaveLength(1);
+  });
+
+  it("[M4] the poll and both delegate callbacks are branch-free with respect to auth (#472)", () => {
+    // Closes an escape neither the identifier checks above nor R1 can:
+    // reading the cached `WatchAuthState` enum directly —
+    // `if case .signedIn(_, true) = self?.state { return }` — reproduces
+    // #472 without ever writing `needsToken` or `needsTokenForDisplay`
+    // anywhere. These three bodies have exactly one legitimate control-flow
+    // guard each (`Task.isCancelled` for the poll, `session.isReachable` for
+    // reachability, none for activation) and no reason to ever gain
+    // another — any additional `guard`/`if` is, by construction, a new
+    // decision this file exists to prevent. (Deliberately brittle: adding
+    // any other auth-unrelated branch to these three call sites should force
+    // a conscious look at this test, not silently pass.)
+    const branchCount = (body: string) => (body.match(/\b(?:guard|if)\b/g) ?? []).length;
+
+    const pollBody = bodyAfter(source, /private func startPolling\(\)/);
+    expect(branchCount(pollBody)).toBe(1); // guard !Task.isCancelled else { return }
+
+    const activationBody = bodyAfter(
+      source,
+      /activationDidCompleteWith activationState: WCSessionActivationState,\s*error: Error\?\s*\)/,
+    );
+    expect(branchCount(activationBody)).toBe(0);
+
+    const reachabilityBody = bodyAfter(
+      source,
+      /func sessionReachabilityDidChange\(_ session: WCSession\)/,
+    );
+    expect(branchCount(reachabilityBody)).toBe(1); // guard session.isReachable else { return }
   });
 
   it("the display-only property is not named or documented as a decision predicate (#472)", () => {
