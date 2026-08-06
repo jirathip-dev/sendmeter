@@ -153,6 +153,22 @@ final class WorkoutManager: NSObject {
     /// not be silently dropped (that dropped window is what lost data in
     /// #470).
     private var partialFlushDrain = CoalescingDrain()
+    /// #477 re-review R1: bumped in `start()`'s reset block, on the line
+    /// beside `partialFlushDrain = CoalescingDrain()` — deliberately NOT
+    /// `startGuard.generation`. That counter answers "has any `start()` call
+    /// been ACCEPTED since?", and `begin()` increments it before `start()`'s
+    /// `guard !isRunning else { return }` can reject the call — so a start()
+    /// rejected by `!isRunning` (isRunning already true) bumps the generation
+    /// and then runs nothing else: `partialFlushDrain` is NOT replaced, but
+    /// the old generation stamp is no longer current. The completion handler
+    /// in `runPartialFlush()` would then bail on a drain that's still the
+    /// live one, without ever calling `completePass()` — wedging it `running`
+    /// forever with nothing left to un-stick it (durable flushing silently
+    /// dead for the rest of the workout: the exact SL-90/#470 loss this
+    /// mechanism exists to prevent). This counter only ever advances in the
+    /// SAME reset block that replaces the drain, so "my epoch is still
+    /// current" and "my drain is still the live one" can never disagree.
+    private var partialFlushEpoch = 0
     /// The network call currently in flight, if any — `end()` awaits this.
     private var partialFlushTask: Task<Void, Never>?
     /// Set by `end()` before it awaits the in-flight task, so the
@@ -273,10 +289,14 @@ final class WorkoutManager: NSObject {
         // #477: a previous workout's partial-flush bookkeeping must not
         // carry into this one — a leftover `partialFlushSuspended = true`
         // would silently disable durable flushing for the entire next
-        // workout.
+        // workout. This block only runs for an ACCEPTED start (past the
+        // `!isRunning` guard above) — `partialFlushEpoch` is bumped right
+        // here, beside the drain it guards, so the two can never disagree
+        // about whether a given flush's drain is still the live one.
         partialFlushDrain = CoalescingDrain()
         partialFlushTask = nil
         partialFlushSuspended = false
+        partialFlushEpoch &+= 1
 
         do {
             try await requestAuthorization()
@@ -874,14 +894,22 @@ final class WorkoutManager: NSObject {
             }
             return
         }
-        // #477 review F3: stamp this flush with the CURRENT start generation
-        // — this manager is App-scoped and long-lived (#476A), so by the
-        // time this flush's network call resolves, a new `start()` may
-        // already have installed a fresh `partialFlushDrain` for a DIFFERENT
-        // workout. The completion handler below checks this before touching
-        // anything, so a stale handler from workout N can never decide
-        // workout N+1's state.
-        let generation = startGuard.generation
+        // #477 review F3/R1: stamp this flush with the CURRENT
+        // `partialFlushEpoch` — this manager is App-scoped and long-lived
+        // (#476A), so by the time this flush's network call resolves, a new
+        // ACCEPTED `start()` may already have installed a fresh
+        // `partialFlushDrain` for a DIFFERENT workout. Deliberately NOT
+        // `startGuard.generation`: that counter bumps on every `start()`
+        // call `begin()` lets past its concurrency check, INCLUDING one
+        // later rejected by `guard !isRunning else { return }` — a rejected
+        // call runs nothing past that guard, so the drain is NOT replaced,
+        // but `startGuard.generation` has already moved on regardless
+        // (R1 — verified: it silently wedges the drain `running` forever
+        // with no rejected-start test to catch it). `partialFlushEpoch` only
+        // ever advances in the SAME block that replaces the drain, so it can
+        // only ever say "still current" while the drain this flush was
+        // created against is still the live one.
+        let epoch = partialFlushEpoch
         let partial = ClimbWorkoutPartialUpsert(
             id: workoutId,
             startedAt: startDate,
@@ -899,15 +927,21 @@ final class WorkoutManager: NSObject {
         Task { @MainActor [weak self] in
             _ = await task.value
             guard let self else { return }
-            guard self.startGuard.isCurrent(generation) else {
-                // A NEW start() has begun since this flush was created —
-                // start() has already installed a fresh CoalescingDrain and
-                // reset partialFlushTask/partialFlushSuspended for the
-                // workout that's running now. Touching either here would be
-                // this stale closure deciding workout N+1's state (the exact
-                // #476A hazard this manager was hoisted to remove), and
-                // `completePass()` on a drain this handler never
-                // `.request()`-ed against hits its own precondition.
+            guard self.partialFlushEpoch == epoch else {
+                // An ACCEPTED start() has begun since this flush was
+                // created — the SAME reset block that bumps this epoch also
+                // installed a fresh CoalescingDrain and reset
+                // partialFlushTask/partialFlushSuspended for the workout
+                // that's running now, so "the epoch moved" and "the drain
+                // was replaced" can never disagree (unlike
+                // startGuard.generation, which bumps on every start() call
+                // begin() lets through — including one immediately rejected
+                // by `guard !isRunning`, which replaces nothing — see R1).
+                // Touching either here would be this stale closure deciding
+                // workout N+1's state (the exact #476A hazard this manager
+                // was hoisted to remove), and `completePass()` on a drain
+                // this handler never `.request()`-ed against hits its own
+                // precondition.
                 return
             }
             self.partialFlushTask = nil

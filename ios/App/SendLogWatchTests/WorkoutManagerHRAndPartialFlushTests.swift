@@ -387,4 +387,70 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
         let events = await order.waitUntilCount(1)
         XCTAssertEqual(events, ["n-plus-1-flush-ran"])
     }
+
+    /// #477 re-review R1: `start()`'s `guard let generation = startGuard.begin()
+    /// else { return }` runs BEFORE its `guard !isRunning else { return }` —
+    /// `begin()` bumps `startGuard.generation` and only THEN can the call be
+    /// rejected for the workout already being live. A start() REJECTED this
+    /// way (as opposed to workout N+1 being genuinely ACCEPTED, covered by
+    /// `testStalePartialFlushCompletionAfterANewStartDoesNotCorruptTheNextWorkoutsDrain`
+    /// above) runs nothing past that guard — `partialFlushDrain` is NOT
+    /// replaced — but `startGuard.generation` alone would already disagree
+    /// with the flush's stamped generation. Fencing on `startGuard.generation`
+    /// (the pre-R1 shape) would make the completion handler bail WITHOUT
+    /// calling `completePass()`, wedging the still-live drain `running`
+    /// forever: every later `flushPartial()` on the SAME still-running
+    /// workout would silently return `.queued` and do nothing — no crash, no
+    /// error, just durable flushing quietly dead for the rest of the
+    /// workout. `partialFlushEpoch` fixes this by only ever advancing in the
+    /// same block that actually replaces the drain.
+    ///
+    /// No caller reaches this today (`WorkoutLiveView`'s Start button only
+    /// renders when not running), so this simulates it directly: `isRunning`
+    /// is set true by hand (no HealthKit needed), `start()` is then called
+    /// again and must be rejected without disturbing anything, and the
+    /// ORIGINAL still-running workout must still be able to flush afterward.
+    @MainActor
+    func testARejectedStartWithAFlushInFlightDoesNotWedgeDurableFlushingForTheStillRunningWorkout() async {
+        let manager = WorkoutManager()
+        manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+        manager.isRunning = true // workout N is live — no HealthKit needed for this
+
+        let gate = Gate()
+        manager.partialUploader = { _ in await gate.wait() }
+        manager.flushPartial() // workout N's in-flight durability flush (SL-90)
+
+        // Something calls start() again WHILE that flush is in flight. This
+        // MUST be rejected by `guard !isRunning` (not accepted) — the
+        // sequential-call case #476A's reviewer anticipated a future caller
+        // reaching, distinct from WorkoutManagerDoubleStartTests' CONCURRENT
+        // double-tap case.
+        await manager.start()
+        XCTAssertTrue(manager.isRunning, "a rejected start must not disturb the still-running workout")
+        XCTAssertEqual(manager.startDate, Date(timeIntervalSince1970: 1_700_000_000), "a rejected start must not reset the live workout's startDate")
+
+        // Let workout N's original in-flight flush resolve.
+        await gate.release()
+        for _ in 0..<50 { await Task.yield() } // let the completion handler run
+
+        // The load-bearing assertion: workout N (still the SAME, still-live
+        // workout — never replaced) must still be able to flush afterward.
+        // Bounded poll rather than `waitUntilCount` deliberately: a wedged
+        // drain means this event NEVER arrives, and an unbounded continuation
+        // wait would hang the test (and any future regression's CI run)
+        // forever instead of failing fast with a clean assertion.
+        let order = OrderLog()
+        manager.partialUploader = { _ in await order.append("later-flush-ran") }
+        manager.flushPartial()
+        var events: [String] = []
+        for _ in 0..<50 {
+            events = await order.snapshot()
+            if !events.isEmpty { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(
+            events, ["later-flush-ran"],
+            "durable flushing must not be wedged by a start() that was REJECTED (isRunning already true) — only an ACCEPTED start() actually replaces the drain"
+        )
+    }
 }
