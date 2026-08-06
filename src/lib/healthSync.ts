@@ -112,15 +112,27 @@ export async function syncHealthNow(): Promise<void> {
 }
 
 /// Rebuild the whole recent health history from HealthKit (not just today) —
-/// the native side of "Clear & resync". No-op on web; there the DELETE alone
-/// stands and the device backfills on its next background delivery. A failure
-/// here is not fatal to the clear (the rows are already deleted).
-export async function resyncHealthHistory(): Promise<void> {
-  if (!IS_NATIVE) return;
+/// the native side of "Clear & resync". No-op on web (returns `ok: true`);
+/// there the DELETE alone stands and the device backfills on its next
+/// background delivery — that's a deliberate no-op, not a failure. A failure
+/// here is not fatal to the clear: `deleteHealthMetrics` is a HARD delete
+/// (#487, F4), so the rows are already gone by the time this runs regardless
+/// of what it returns. What must NOT happen is reporting success when the
+/// resync itself failed — the caller (AccountSheet's "Clear & resync") used
+/// to swallow this silently and tell the user "cleared · resyncing" either
+/// way, which is exactly the CLAUDE.md #264 pattern (an outcome reported as
+/// success when it isn't) applied to the one irreversible action in the app.
+/// Callers must use `ok` to show an honest "resync failed" state rather than
+/// claiming the rebuild is in progress.
+export async function resyncHealthHistory(): Promise<{ ok: boolean }> {
+  if (!IS_NATIVE) return { ok: true };
   try {
     await SendLogHealth.clearAndResync();
     recordHealthSync("resync");
+    return { ok: true };
   } catch {
-    // plugin unavailable — safe to ignore
+    // plugin call failed (unavailable, HealthKit error, dead session, …) —
+    // not fatal to the already-completed delete, but the caller must say so.
+    return { ok: false };
   }
 }

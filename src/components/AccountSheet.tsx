@@ -145,6 +145,11 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [cleared, setCleared] = useState(false);
+  // #487 (F4): the delete is hard, not soft — by the time this can be true
+  // the rows are already gone, so it never blocks `cleared`. It only changes
+  // what `cleared` says: "resyncing" is a claim about SendLogHealth.
+  // clearAndResync succeeding, and that claim must not be made when it threw.
+  const [resyncFailed, setResyncFailed] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   // #273: the sign-out drains the offline recording queue first, which on a
   // bad connection is the slow part — say which is happening rather than
@@ -285,16 +290,27 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     setError(null);
     try {
       await deleteHealthMetrics();
-      // Rebuild the whole recent history from HealthKit (no-op on web; the
-      // delete stands regardless and the device backfills on next delivery).
-      await resyncHealthHistory();
+      // The delete above is a HARD delete (#487, F4) — from this point on
+      // the rows are gone no matter what happens next, so nothing below may
+      // throw its way into the catch block and report the clear itself as
+      // failed. Rebuild the whole recent history from HealthKit (no-op on
+      // web; the delete stands regardless and the device backfills on next
+      // delivery) — but read whether that resync actually succeeded, so the
+      // toast/banner can say so honestly instead of always claiming
+      // "resyncing".
+      const { ok: resynced } = await resyncHealthHistory();
       // Force the readiness/recovery cards to refetch — the DELETE's own
       // realtime echo doesn't reliably arrive (esp. in the native WebView),
       // which left stale scores on screen after a clear.
       bumpRealtime();
       setConfirmingClear(false);
       setCleared(true);
-      toast("Health data cleared · resyncing");
+      setResyncFailed(!resynced);
+      toast(
+        resynced
+          ? "Health data cleared · resyncing"
+          : "Health data cleared. Resync failed — reopen the app to retry.",
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to clear health data");
     } finally {
@@ -446,10 +462,18 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
           <div>
             {eyebrow("Health data")}
             {cleared ? (
-              <div style={{ fontSize: "var(--t-sm)", color: "var(--success)", lineHeight: 1.5 }}>
-                Health data cleared. Your device will re-sync fresh metrics from
-                Apple Health shortly.
-              </div>
+              resyncFailed ? (
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--warning)", lineHeight: 1.5 }}>
+                  Health data cleared, but the resync failed to start. Reopen
+                  the app (or wait for the next background sync) to rebuild
+                  your history from Apple Health.
+                </div>
+              ) : (
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--success)", lineHeight: 1.5 }}>
+                  Health data cleared. Your device will re-sync fresh metrics from
+                  Apple Health shortly.
+                </div>
+              )
             ) : confirmingClear ? (
               <div>
                 <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>

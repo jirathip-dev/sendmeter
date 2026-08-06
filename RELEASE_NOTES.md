@@ -33,6 +33,9 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: a non-hands-free run right after a hands-free run no longer plays stray "done" cues or shows a stale danger banner on segment transitions.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
+- Readiness (iPhone and watch) no longer counts training you've deleted — a deleted session now drops out of the 28-day load calculation immediately, matching what History shows.
+- "Clear health data & resync" now tells you honestly if the resync failed to start, instead of always saying "resyncing" even when it didn't.
+- Force: a recording that's queued while offline now logs against the day it was actually recorded, not the day it happens to finally upload.
 
 ## 1.0 — 2026-08-02
 

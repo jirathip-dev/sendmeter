@@ -209,10 +209,17 @@ final class HealthSyncManager {
     /// so a backfilled history row gets the load ratio it would have had that
     /// day (not today's) — the load penalty then reflects the real timeline.
     private func acwrSeries(days: Int) async throws -> [String: Double] {
+        // #487 (F1): exclude soft-deleted sessions — without this the load
+        // penalty from training the user deleted (History's soft-delete,
+        // `deleted_at`) kept depressing readiness for the rest of the 28-day
+        // ACWR window. The web's equivalent query (src/lib/repo/sessions.ts
+        // fetchSessions) has always filtered this; native didn't, so the two
+        // surfaces disagreed about what counts.
         let rows: [SessionLoadRow] = try await client
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoffDateString(daysAgo: days + Acwr.lookbackDays))
+            .is("deleted_at", value: nil)
             .execute()
             .value
 
@@ -236,10 +243,12 @@ final class HealthSyncManager {
     }
 
     private func computeAcwr() async throws -> Double? {
+        // #487 (F1): same soft-delete exclusion as acwrSeries above.
         let rows: [SessionLoadRow] = try await client
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoffDateString(daysAgo: Acwr.lookbackDays))
+            .is("deleted_at", value: nil)
             .execute()
             .value
 
