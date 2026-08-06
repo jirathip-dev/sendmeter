@@ -6,6 +6,10 @@ public struct Tunables: Sendable {
     // Fusion
     public var tickHz: Double = 1.0
     public var motionWindowS: Double = 2.0      // RMS window of |userAcceleration| (g)
+    // #477: past this age a held HR reading reads as absent (nil), not stale-but-live —
+    // applied at the single point every consumer (detector sample, rawTrace, phone/Supabase
+    // heartbeat) reads HR from.
+    public var hrStaleAfterS: Double = 30.0
 
     // Baseline altitude (pressure-drift tracking; updated only while resting)
     public var baselineTauS: Double = 60.0

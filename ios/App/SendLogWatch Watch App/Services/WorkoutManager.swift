@@ -100,14 +100,62 @@ final class WorkoutManager: NSObject {
     /// entitlement), but this directly reflects whether the guard let a call
     /// through — a concurrent double-tap must still only ever accept one.
     var acceptedStartCount: Int { startGuard.generation }
-    private var startDate: Date?
+    // Not `private`: SendLogWatchTests drives `performFusionTick(now:)`
+    // directly with a controlled `startDate`/`now` — HealthKit delivery
+    // timing (and thus real HR staleness) isn't controllable from a test
+    // host with no HealthKit entitlement, so this is the seam (#477).
+    var startDate: Date?
     private var rawRelativeAltitude: Double = 0
-    private var rawTrace: [[Double?]] = []
+    // Not `private`: same reason as `startDate` above — tests assert on the
+    // persisted rows directly after age expiry (#477) rather than trusting a
+    // comment that the same value feeds them.
+    var rawTrace: [[Double?]] = []
+    /// The most recently constructed fusion-tick sample, purely for test
+    /// observability (#477) — production code never reads this back.
+    var lastMotionSample: MotionSample?
     // Generated at start so the live_workouts heartbeat and the final
     // climb_workouts row share one id (web correlation).
     private var workoutId = UUID()
     private var liveSync: LiveWorkoutSync?
     private var fusionTick = 0
+    /// Sample-timestamped, monotonic HR — see `HeartRateTimeline`'s doc
+    /// comment (#477). Replaces the old bare `didCollectDataOf` → `heartRate`
+    /// assignment, which held whatever arrived last with no age and no
+    /// protection against an out-of-order callback moving it backwards.
+    private var hrTimeline = HeartRateTimeline()
+    // MARK: Partial-flush ordering (#477)
+    //
+    // `flushPartial()` used to fire an unconstrained `Task.detached` every
+    // ~2 min with no in-flight gate and no sequence number, and `end()`
+    // neither awaited nor cancelled it. A slow partial upsert could then
+    // land AFTER the final row and overwrite it with provisional data
+    // (truncated `raw`, smaller counts, a provisional `ended_at`) — the
+    // CLAUDE.md #295/#296 class of bug: an async closure carrying old state
+    // past an await, still allowed to decide final persisted state.
+    // Cancelling the detached Task doesn't fix this: once its request is on
+    // the wire, cancellation can't stop the server committing it. `end()`
+    // must AWAIT whatever is already in flight instead.
+    /// Coalesces flush requests that arrive while one is already running —
+    /// a skipped flush must run again with the LATEST snapshot afterward,
+    /// not be silently dropped (that dropped window is what lost data in
+    /// #470).
+    private var partialFlushDrain = CoalescingDrain()
+    /// The network call currently in flight, if any — `end()` awaits this.
+    private var partialFlushTask: Task<Void, Never>?
+    /// Set by `end()` before it awaits the in-flight task, so the
+    /// completion handler below treats a coalesced rerun request as
+    /// cancelled rather than starting one more partial upsert after the
+    /// workout has already begun finishing (a rerun that started after would
+    /// race the final row the same way the un-awaited detached Task used to).
+    private var partialFlushSuspended = false
+    /// Not `private`: the production default is `Repo.flushPartialWorkout`
+    /// (the one file this fix must not touch, #475 owns it) — tests inject a
+    /// deferred closure to prove `end()` actually waits for network
+    /// completion, not just a generation-counter compare, since the network
+    /// itself isn't testable here.
+    var partialUploader: (ClimbWorkoutPartialUpsert) async -> Void = { partial in
+        try? await Repo.flushPartialWorkout(partial)
+    }
     /// Double haptic when the rest countdown hits zero (#476 F5: hoisted out
     /// of WorkoutLiveView, same reasoning as the save path — a rest alarm
     /// scheduled while the view was on screen used to be silently cancelled
@@ -196,6 +244,8 @@ final class WorkoutManager: NSObject {
         rawTrace = []
         accelBuffer = []
         heartRate = nil
+        hrTimeline = HeartRateTimeline()
+        lastMotionSample = nil
         activeKcal = 0
         elapsed = 0
         relativeAltitude = 0
@@ -206,6 +256,13 @@ final class WorkoutManager: NSObject {
         restStartedAt = nil
         fusionTick = 0
         workoutId = UUID()
+        // #477: a previous workout's partial-flush bookkeeping must not
+        // carry into this one — a leftover `partialFlushSuspended = true`
+        // would silently disable durable flushing for the entire next
+        // workout.
+        partialFlushDrain = CoalescingDrain()
+        partialFlushTask = nil
+        partialFlushSuspended = false
 
         do {
             try await requestAuthorization()
@@ -402,6 +459,19 @@ final class WorkoutManager: NSObject {
 
     @MainActor
     func end() async -> WorkoutSummary? {
+        // #477: stop any further partial flush from starting, and await
+        // whichever one is already in flight, BEFORE anything else — cancelling
+        // it would not stop a request already on the wire from being committed
+        // by the server after this call's own final write, so awaiting is the
+        // only way to guarantee ordering. This runs unconditionally, ahead of
+        // the session/builder guard below, so it still drains a flush that was
+        // started against a workout whose session has since gone away.
+        partialFlushSuspended = true
+        if let partialFlushTask {
+            _ = await partialFlushTask.value
+        }
+        partialFlushTask = nil
+
         guard let session, let builder, let startDate else { return nil }
         fusionTimer?.invalidate()
         fusionTimer = nil
@@ -581,6 +651,16 @@ final class WorkoutManager: NSObject {
         }
     }
 
+    /// The production entry point for a new HR reading — the HealthKit
+    /// delegate below calls this after extracting `HeartRateSample` from
+    /// `HKStatistics`. Not `private`: constructing a real `HKStatistics`
+    /// off-device isn't possible (no public initializer), so SendLogWatchTests
+    /// drives the monotonic-reject path through this method directly rather
+    /// than through the delegate callback (#477).
+    func acceptHeartRate(_ candidate: HeartRateSample) {
+        hrTimeline.accept(candidate)
+    }
+
     // Not `private`: see the `fusionTimer` comment above.
     func startFusion() {
         // Review finding F3: the issue's own root-cause description is
@@ -592,79 +672,118 @@ final class WorkoutManager: NSObject {
         // remembering to guard it (the repo's #295/#296 pattern).
         fusionTimer?.invalidate()
         fusionTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / tunables.tickHz, repeats: true) { [weak self] _ in
-            guard let self, let startDate = self.startDate else { return }
-            let now = Date()
-            let t = now.timeIntervalSince(startDate)
-            self.elapsed = t
+            self?.performFusionTick(now: Date())
+        }
+    }
 
-            let rms: Double
-            if self.accelBuffer.isEmpty {
-                rms = 0
+    /// Not `private`: SendLogWatchTests calls this directly with a
+    /// controlled `now` (and a manually-set `startDate`) to drive HR
+    /// staleness deterministically — see the `startDate`/`rawTrace`/
+    /// `lastMotionSample` comments above (#477).
+    func performFusionTick(now: Date) {
+        guard let startDate else { return }
+        let t = now.timeIntervalSince(startDate)
+        self.elapsed = t
+
+        let rms: Double
+        if accelBuffer.isEmpty {
+            rms = 0
+        } else {
+            let sumSq = accelBuffer.reduce(0) { $0 + $1.mag * $1.mag }
+            rms = (sumSq / Double(accelBuffer.count)).squareRoot()
+        }
+
+        let alt = rawRelativeAltitude
+        // #477: recomputed every tick from the timestamped timeline rather
+        // than read as whatever `didCollectDataOf` last happened to assign.
+        // A reading that hasn't been refreshed within `hrStaleAfterS` reads
+        // as nil here — and because every consumer below (the detector
+        // sample, `rawTrace`, and `pushBeat`'s phone/Supabase heartbeat)
+        // reads THIS property, the staleness rule can't be applied to one
+        // and missed by another.
+        heartRate = hrTimeline.freshValue(at: now, maxAgeS: tunables.hrStaleAfterS)
+        let sample = MotionSample(t: t, altitude: alt, motionRMS: rms, hr: heartRate)
+        lastMotionSample = sample
+        let before = detector.snapshot
+        let countBefore = liveAttempts
+        detector.ingest(sample, at: now)
+        let after = detector.snapshot
+        let countAfter = detector.liveAttemptCount
+        liveAttempts = countAfter
+        relativeAltitude = after.localHeightM
+        let stateChanged = before.state != after.state
+        if stateChanged {
+            if after.isClimbing {
+                climbingSince = after.phaseStartedAt ?? now
+                restStartedAt = nil
+                cancelRestAlarm()
             } else {
-                let sumSq = self.accelBuffer.reduce(0) { $0 + $1.mag * $1.mag }
-                rms = (sumSq / Double(self.accelBuffer.count)).squareRoot()
+                climbingSince = nil
+                restStartedAt = now
+                scheduleRestAlarm()
             }
+            // Publish the observable phase only after its clock is ready.
+            manualClimbing = after.isClimbing
+            pushBeat()
+        }
+        // #476: liveAttemptCount can cross AttemptDetector's post-filter
+        // threshold mid-attempt with no phase transition (see
+        // WidgetCountSync's doc comment) — pushing only on `stateChanged`
+        // left the widget's boulder count stuck until the attempt ended.
+        if WidgetCountSync.shouldPush(stateChanged: stateChanged, countBefore: countBefore, countAfter: countAfter) {
+            WidgetBridge.updateLiveWorkout(
+                active: true, boulders: countAfter,
+                climbing: after.isClimbing,
+                phaseSince: after.isClimbing ? climbingSince : restStartedAt,
+                restTargetS: restTargetS
+            )
+        }
 
-            let alt = self.rawRelativeAltitude
-            let sample = MotionSample(t: t, altitude: alt, motionRMS: rms, hr: self.heartRate)
-            let before = self.detector.snapshot
-            let countBefore = self.liveAttempts
-            self.detector.ingest(sample, at: now)
-            let after = self.detector.snapshot
-            let countAfter = self.detector.liveAttemptCount
-            self.liveAttempts = countAfter
-            self.relativeAltitude = after.localHeightM
-            let stateChanged = before.state != after.state
-            if stateChanged {
-                if after.isClimbing {
-                    self.climbingSince = after.phaseStartedAt ?? now
-                    self.restStartedAt = nil
-                    self.cancelRestAlarm()
-                } else {
-                    self.climbingSince = nil
-                    self.restStartedAt = now
-                    self.scheduleRestAlarm()
-                }
-                // Publish the observable phase only after its clock is ready.
-                self.manualClimbing = after.isClimbing
-                self.pushBeat()
-            }
-            // #476: liveAttemptCount can cross AttemptDetector's post-filter
-            // threshold mid-attempt with no phase transition (see
-            // WidgetCountSync's doc comment) — pushing only on `stateChanged`
-            // left the widget's boulder count stuck until the attempt ended.
-            if WidgetCountSync.shouldPush(stateChanged: stateChanged, countBefore: countBefore, countAfter: countAfter) {
-                WidgetBridge.updateLiveWorkout(
-                    active: true, boulders: countAfter,
-                    climbing: after.isClimbing,
-                    phaseSince: after.isClimbing ? self.climbingSince : self.restStartedAt,
-                    restTargetS: self.restTargetS
-                )
-            }
+        if tunables.keepRawTrace && fusionTick % tunables.rawTraceStride == 0 {
+            rawTrace.append([t.rounded(), (alt * 100).rounded() / 100, (rms * 1000).rounded() / 1000, heartRate])
+        }
 
-            if self.tunables.keepRawTrace
-                && self.fusionTick % self.tunables.rawTraceStride == 0 {
-                self.rawTrace.append([t.rounded(), (alt * 100).rounded() / 100, (rms * 1000).rounded() / 1000, self.heartRate])
-            }
-
-            // Live heartbeat every 5th tick (~5s) — best-effort, off the timer.
-            self.fusionTick += 1
-            if self.fusionTick % 5 == 0 {
-                self.pushBeat()
-            }
-            // Durable flush every ~2 min (SL-90) — the trace-so-far survives a
-            // crash/dead battery instead of living only in memory until End.
-            if self.fusionTick % 120 == 0 {
-                self.flushPartial()
-            }
+        // Live heartbeat every 5th tick (~5s) — best-effort, off the timer.
+        fusionTick += 1
+        if fusionTick % 5 == 0 {
+            pushBeat()
+        }
+        // Durable flush every ~2 min (SL-90) — the trace-so-far survives a
+        // crash/dead battery instead of living only in memory until End.
+        if fusionTick % 120 == 0 {
+            flushPartial()
         }
     }
 
     /// Merge-upsert the in-progress climb_workouts row with everything known
     /// so far. Best-effort: a failure just waits for the next flush or the
     /// end-of-workout upload (which overwrites this row with final stats).
-    private func flushPartial() {
-        guard let startDate else { return }
+    ///
+    /// Not `private`: SendLogWatchTests calls this directly (with
+    /// `partialUploader` swapped for a deferred fake) to drive the
+    /// coalescing/await behaviour deterministically (#477).
+    func flushPartial() {
+        // `end()` has already claimed ownership of finishing this workout —
+        // a coalesced rerun starting now would race the final row exactly
+        // like the un-awaited detached Task this replaces used to.
+        guard !partialFlushSuspended else { return }
+        switch partialFlushDrain.request() {
+        case .queued:
+            // One is already in flight; it will pick up the LATEST snapshot
+            // (not this moment's) when it finishes — see `runPartialFlush()`.
+            return
+        case .start:
+            runPartialFlush()
+        }
+    }
+
+    private func runPartialFlush() {
+        guard let startDate else {
+            // Nothing to snapshot; resolve the drain so a later legitimate
+            // request isn't wedged behind a request that can never run.
+            _ = partialFlushDrain.completePass()
+            return
+        }
         let partial = ClimbWorkoutPartialUpsert(
             id: workoutId,
             startedAt: startDate,
@@ -674,8 +793,29 @@ final class WorkoutManager: NSObject {
             attemptsConfirmed: liveAttempts,
             raw: tunables.keepRawTrace ? rawTrace : nil
         )
-        Task.detached(priority: .background) {
-            try? await Repo.flushPartialWorkout(partial)
+        let uploader = partialUploader
+        let task = Task.detached(priority: .background) {
+            await uploader(partial)
+        }
+        partialFlushTask = task
+        Task { @MainActor [weak self] in
+            _ = await task.value
+            guard let self else { return }
+            self.partialFlushTask = nil
+            guard !self.partialFlushSuspended else {
+                // `end()` is waiting on (or has already moved past) this
+                // exact task — resolve the drain but never start a rerun;
+                // a rerun starting after `end()` began would be exactly the
+                // race this fix exists to close.
+                _ = self.partialFlushDrain.completePass()
+                return
+            }
+            if self.partialFlushDrain.completePass() == .rerun {
+                // #477: one or more flushes were requested while this one
+                // was in flight — coalesce them into exactly one more run,
+                // built from state as of NOW, not as of the earlier request.
+                self.runPartialFlush()
+            }
         }
     }
 }
@@ -701,19 +841,39 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
 
 extension WorkoutManager: HKLiveWorkoutBuilderDelegate {
     func workoutBuilder(_ workoutBuilder: HKLiveWorkoutBuilder, didCollectDataOf collectedTypes: Set<HKSampleType>) {
+        // #477: gather every candidate synchronously, on this callback's own
+        // thread, THEN hop to MainActor once for the whole batch — collapsing
+        // the old per-type `Task { @MainActor }` reduces how often two
+        // callbacks' follow-up work can land out of order. It does not, by
+        // itself, guarantee it never does (two separate invocations of this
+        // delegate method can still race each other's Tasks) — `acceptHeartRate`
+        // is what actually enforces ordering, via `HeartRateTimeline.accept`.
+        var hrCandidate: HeartRateSample?
+        var kcalCandidate: Double?
         for type in collectedTypes {
             guard let quantityType = type as? HKQuantityType,
                   let stats = workoutBuilder.statistics(for: quantityType) else { continue }
-            Task { @MainActor in
-                switch quantityType {
-                case HKQuantityType(.heartRate):
-                    self.heartRate = stats.mostRecentQuantity()?
-                        .doubleValue(for: .count().unitDivided(by: .minute()))
-                case HKQuantityType(.activeEnergyBurned):
-                    self.activeKcal = stats.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
-                default:
-                    break
+            switch quantityType {
+            case HKQuantityType(.heartRate):
+                // #477: the SAMPLE time HealthKit reports this reading as
+                // covering — not `Date()`, which would measure when this
+                // callback happened to be delivered, not sensor age.
+                if let value = stats.mostRecentQuantity()?.doubleValue(for: .count().unitDivided(by: .minute())),
+                   let sampleAt = stats.mostRecentQuantityDateInterval()?.end {
+                    hrCandidate = HeartRateSample(value: value, sampleAt: sampleAt)
                 }
+            case HKQuantityType(.activeEnergyBurned):
+                kcalCandidate = stats.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
+            default:
+                break
+            }
+        }
+        Task { @MainActor in
+            if let hrCandidate {
+                self.acceptHeartRate(hrCandidate)
+            }
+            if let kcalCandidate {
+                self.activeKcal = kcalCandidate
             }
         }
     }
