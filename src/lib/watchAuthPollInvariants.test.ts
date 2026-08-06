@@ -74,8 +74,35 @@ import { describe, expect, it } from "vitest";
 /// with a fully green pin. Fixed below: `bootstrap()` must call
 /// `startPolling()`, and `startPolling()`'s body must contain the actual
 /// 20s sleep, not just a call to a function that could itself have been
-/// gutted. Note the scope this still leaves open: this file pins that the
-/// poll *decides* correctly and that it *exists and fires periodically* —
+/// gutted.
+///
+/// **Fourth correction (post sweep-review, one level deeper each time).**
+/// The interval assertion above pins the sleep *duration*, not the *loop* —
+/// a poll that fires once is not a poll. Demonstrated: rewrite
+/// `startPolling()` as a one-shot debounce (`Task { sleep 20s; guard
+/// !cancelled; refreshState() }`, no `while`), or keep the `while` but
+/// `break` at the end of its body — both still call `startPolling()` from
+/// `bootstrap()`, still contain `Task.sleep(for: .seconds(20))` and
+/// `refreshState()`, still have exactly one auth-relevant `guard` — and both
+/// passed every assertion above while firing exactly once, 20s after
+/// launch, then never again: the token expires 40 minutes into a workout and
+/// the watch waits forever, same as before. Fixed below: the loop condition
+/// (`while !Task.isCancelled`) must be present and `break` must be absent
+/// from the poll body. Also found one level up: nothing pinned that `init()`
+/// calls `bootstrap()` at all — `bootstrap()` has exactly one call site, and
+/// dropping it (e.g. an incomplete move to a `.task` view modifier) never
+/// starts anything, with the same green pin. Fixed below.
+///
+/// **Where this stops, and why that's not an infinite regress.** Inside this
+/// file the causal chain is now finite and pinned end to end: `init →
+/// bootstrap → startPolling → while-loop + 20s sleep → refreshState →
+/// SessionRelay.needsToken`. The next link *out* is `SendLogWatchApp.swift`
+/// constructing `AuthManager()` at all — a different file, out of this pin's
+/// scope, and not silently droppable the way everything above was: every
+/// view holding `@Environment(AuthManager.self)` would break loudly the
+/// moment that line is removed, so it needs no text pin. The link *in* is
+/// `requestSessionFromPhone`'s body, addressed below: this file pins that
+/// the poll *decides* correctly and that it *exists and actually repeats* —
 /// it does not, and does not attempt to, pin that a discovered staleness
 /// successfully *sends* anything (`requestSessionFromPhone`'s body is
 /// unchecked; neutering it, e.g. making it an unconditional no-op, passes
@@ -268,12 +295,30 @@ describe("AuthManager routes token-staleness decisions through the clock, not a 
     expect(bootstrapBody).toMatch(/\bstartPolling\(\)/);
   });
 
-  it("[F-B] startPolling() actually sleeps for the poll interval, not a gutted stand-in (#472, cross-wave sweep)", () => {
-    // Complements the assertion above: calling `startPolling()` proves
-    // nothing if that function's body has been hollowed out. Pin the real
-    // 20s interval is still there.
+  it("[F-B] init() actually starts bootstrap() — the one hop above the assertion just above (#472, sweep-review)", () => {
+    // Symmetric with the assertion above, one link further up the chain:
+    // `bootstrap()` has exactly one call site. Dropping `Task { @MainActor
+    // in bootstrap() }` from `init()` — e.g. an incomplete move to a `.task`
+    // view modifier that never actually got wired up — never starts
+    // anything, with every other assertion in this file still green.
+    const initBody = bodyAfter(source, /override init\(\)/);
+    expect(initBody).toMatch(/\bbootstrap\(\)/);
+  });
+
+  it("[F-B] startPolling() actually repeats, not a gutted or one-shot stand-in (#472, sweep-review)", () => {
+    // Calling `startPolling()` with the sleep interval present still proves
+    // nothing if the loop that makes it a *poll* is gone. Demonstrated: a
+    // one-shot rewrite (`Task { sleep 20s; guard !cancelled; refreshState()
+    // }`, no `while`) and a `while` loop with `break` at the end of its body
+    // both still call `startPolling()`, still sleep for the real 20s
+    // interval, still call `refreshState()`, still have exactly one
+    // auth-relevant guard (the M4 branch-free check above) — and both fire
+    // exactly once, 20s after launch, then never again. Pin the loop
+    // condition is present and that nothing exits it early.
     const pollBody = bodyAfter(source, /private func startPolling\(\)/);
     expect(pollBody).toMatch(/Task\.sleep\(for:\s*\.seconds\(20\)\)/);
+    expect(pollBody).toMatch(/while !Task\.isCancelled/);
+    expect(pollBody).not.toMatch(/\bbreak\b/);
   });
 
   it("the display-only property is not named or documented as a decision predicate (#472)", () => {
