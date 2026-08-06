@@ -79,9 +79,12 @@ export type WatchSyncStatus =
 /// Verdict on the watch's QUARANTINED uploads (#475 F1), computed in Swift
 /// (`WatchBuildReport.quarantineStatus`) for the same reason as the other
 /// verdicts. Deliberately distinct from `WatchSyncStatus`: a quarantined
-/// item is not "pending" or "backed up" — it is persisted on the watch but
-/// will NEVER sync on its own, which needs to read as a different fact, not
-/// a worse version of the same one.
+/// item is not "pending" or "backed up" — it needs a different fact told
+/// about it. This coarse status only says whether ANYTHING is quarantined;
+/// `quarantinedStuckSyncCount` below carries the breakdown (#475 F13) —
+/// some quarantined items (`.schemaRejection`) truly never sync on their
+/// own, others (`.stuckRetrying`) get one more automatic attempt after a
+/// backoff, and this type alone can't tell you which.
 export type WatchQuarantineStatus =
   | "not-paired"
   | "app-not-installed"
@@ -91,7 +94,7 @@ export type WatchQuarantineStatus =
   | "unknown"
   /// Reported zero quarantined items.
   | "none"
-  /// At least one item will never sync on its own.
+  /// At least one item is off the ordinary drain path.
   | "stuck";
 
 export interface WatchBuildInfo {
@@ -124,13 +127,28 @@ export interface WatchBuildInfo {
   /// The watch's quarantined-upload state (#475 F1). Absent entirely on a
   /// native shell whose compiled-in plugin predates the field.
   quarantineStatus?: WatchQuarantineStatus;
-  /// Items the watch last reported as permanently quarantined. Present only
-  /// once it has actually reported one — absent is "unknown", not zero.
+  /// TOTAL items the watch last reported as quarantined (both
+  /// `QuarantineReason` cases combined). Present only once it has actually
+  /// reported one — absent is "unknown", not zero.
   quarantinedSyncCount?: number;
   /// Epoch SECONDS of that count's report. No "stale" flag — unlike a
-  /// pending count, a quarantined item never resolves itself, so an old
+  /// pending count, a quarantined item does not resolve itself under normal
+  /// operation (see the Swift `WatchBuildReport.quarantineStatus` doc
+  /// comment for the reinstall edge case this doesn't cover), so an old
   /// report can only be a floor on the current count, never an overstatement.
   quarantinedSyncReportedAt?: number;
+  /// Subset of `quarantinedSyncCount` whose reason is `.stuckRetrying`
+  /// (#475 F13) — items that WILL be automatically re-attempted after a
+  /// backoff, as opposed to the `.schemaRejection` remainder
+  /// (`quarantinedSyncCount` minus this), which is proven permanent.
+  /// **Absent** on a native shell whose compiled-in plugin predates this
+  /// field, or a watch build that only ever reports the combined total —
+  /// callers must treat that as "breakdown unknown", not zero, and default
+  /// to the more cautious "assume permanent" framing (see
+  /// `uploadWarningPresentation` in `watchBuild.ts`).
+  quarantinedStuckSyncCount?: number;
+  /// Epoch SECONDS of that subset's report.
+  quarantinedStuckSyncReportedAt?: number;
 }
 
 export interface SendLogAuthBridgePlugin {

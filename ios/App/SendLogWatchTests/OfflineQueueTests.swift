@@ -372,6 +372,184 @@ final class OfflineQueueTests: XCTestCase {
         let quarantinedBackUnderA = await queue.quarantinedCount()
         XCTAssertEqual(quarantinedBackUnderA, 1, "signing back in restores visibility of A's own stuck workout")
     }
+
+    // MARK: #475 F11 — the retry budget must not be burned by outages or stale tokens
+
+    /// Permanent regression for the review's proof: a stale relayed access
+    /// token (`.needsAuthRelay`) is a property of the PASS, not evidence
+    /// about this bundle — the request was never evaluated under a valid
+    /// credential. It must never advance the stuck-retry counter, no matter
+    /// how many drains it survives, or a sustained #472-style stale-relay
+    /// storm permanently abandons a perfectly healthy workout.
+    func testAStaleAuthTokenNeverQuarantinesAHealthyWorkout() async throws {
+        let healthy = makeBundle(id: UUID(), attempts: [makeHealthyAttempt(workoutId: UUID())])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(healthy, createdAt: now)
+
+        let staleToken = PostgrestError(code: "PGRST301", message: "No suitable key or wrong key type")
+        let uploader = ScriptedUploader(failing: [
+            healthy.workout.id: StagedUploadError(stage: .session, underlying: staleToken),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        // Comfortably past the F3 threshold — if the bug were still present
+        // this would already have quarantined it several times over.
+        for _ in 0..<(QueueRetryPolicy.maxConsecutiveFailures * 2) {
+            await queue.drain()
+        }
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(healthy.workout.id.uuidString).json"), "must remain pending, no matter how many stale-token passes it survives")
+        XCTAssertFalse(remaining.contains("\(healthy.workout.id.uuidString).quarantine"), "a stale token is not evidence about the bundle — must never quarantine")
+        XCTAssertFalse(remaining.contains("\(healthy.workout.id.uuidString).retry"), "must not even accumulate a retry count — no verdict was ever reached")
+        let quarantined = await queue.quarantinedCount()
+        XCTAssertEqual(quarantined, 0)
+    }
+
+    /// Permanent regression, the review's second proof: a pure transport
+    /// failure (no network) reaches no server at all and is equally not
+    /// evidence about the bundle — must never quarantine, no matter how
+    /// many outages it survives.
+    func testANetworkOutageNeverQuarantinesAHealthyWorkout() async throws {
+        let healthy = makeBundle(id: UUID(), attempts: [makeHealthyAttempt(workoutId: UUID())])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(healthy, createdAt: now)
+
+        let uploader = ScriptedUploader(failing: [
+            healthy.workout.id: StagedUploadError(
+                stage: .session,
+                underlying: URLError(.notConnectedToInternet)
+            ),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        for _ in 0..<(QueueRetryPolicy.maxConsecutiveFailures * 2) {
+            await queue.drain()
+        }
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(healthy.workout.id.uuidString).json"), "must remain pending through any number of outages")
+        XCTAssertFalse(remaining.contains("\(healthy.workout.id.uuidString).quarantine"), "a transport failure reached no server — must never quarantine")
+        XCTAssertFalse(remaining.contains("\(healthy.workout.id.uuidString).retry"), "must not even accumulate a retry count")
+        let quarantined = await queue.quarantinedCount()
+        XCTAssertEqual(quarantined, 0)
+    }
+
+    /// A REAL, recognized-as-a-rejection-but-not-the-schema-one error (the
+    /// same `climb_workouts_check` example F3's own test uses) still counts
+    /// and still quarantines at the threshold — F11 narrows WHAT counts, it
+    /// does not defeat F3's original guarantee.
+    func testARealButUnrecognizedRejectionStillQuarantinesAtTheThreshold() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(stuck, createdAt: now)
+        let unrecognizedViolation = PostgrestError(
+            code: "23514",
+            message: "new row for relation \"climb_workouts\" violates check constraint \"climb_workouts_check\""
+        )
+        let uploader = ScriptedUploader(failing: [
+            stuck.workout.id: StagedUploadError(stage: .climbWorkout, underlying: unrecognizedViolation),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        for _ in 0..<QueueRetryPolicy.maxConsecutiveFailures {
+            await queue.drain()
+        }
+
+        XCTAssertTrue(try filesOnDisk().contains("\(stuck.workout.id.uuidString).quarantine"))
+    }
+
+    // MARK: #475 F12 — a `.stuckRetrying` bet gets one more chance
+
+    func testStuckRetryingQuarantineIsNotResurrectedBeforeItsBackoffElapses() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(stuck, createdAt: now)
+        let unrecognizedViolation = PostgrestError(
+            code: "23514",
+            message: "new row for relation \"climb_workouts\" violates check constraint \"climb_workouts_check\""
+        )
+        let quarantiningUploader = ScriptedUploader(failing: [
+            stuck.workout.id: StagedUploadError(stage: .climbWorkout, underlying: unrecognizedViolation),
+        ])
+        let firstQueue = OfflineQueue(uploader: quarantiningUploader, clock: FixedClock(now), baseDir: tempDir)
+        for _ in 0..<QueueRetryPolicy.maxConsecutiveFailures {
+            await firstQueue.drain()
+        }
+        XCTAssertTrue(try filesOnDisk().contains("\(stuck.workout.id.uuidString).quarantine"))
+
+        // A NEW instance (simulating relaunch), clock just short of the
+        // backoff, uploader now healthy — must NOT be resurrected yet.
+        let healthyUploader = ScriptedUploader(failing: [:])
+        let tooSoon = now.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS - 1)
+        let secondQueue = OfflineQueue(uploader: healthyUploader, clock: FixedClock(tooSoon), baseDir: tempDir)
+        await secondQueue.drain()
+
+        XCTAssertTrue(try filesOnDisk().contains("\(stuck.workout.id.uuidString).quarantine"), "must stay quarantined before the backoff elapses")
+        let uploaded = await healthyUploader.uploadedIds
+        XCTAssertFalse(uploaded.contains(stuck.workout.id))
+    }
+
+    func testStuckRetryingQuarantineIsResurrectedAfterItsBackoffElapses() async throws {
+        let stuck = makeBundle(id: UUID(), attempts: [makeHealthyAttempt(workoutId: UUID())])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(stuck, createdAt: now)
+        let unrecognizedViolation = PostgrestError(
+            code: "23514",
+            message: "new row for relation \"climb_workouts\" violates check constraint \"climb_workouts_check\""
+        )
+        let quarantiningUploader = ScriptedUploader(failing: [
+            stuck.workout.id: StagedUploadError(stage: .climbWorkout, underlying: unrecognizedViolation),
+        ])
+        let firstQueue = OfflineQueue(uploader: quarantiningUploader, clock: FixedClock(now), baseDir: tempDir)
+        for _ in 0..<QueueRetryPolicy.maxConsecutiveFailures {
+            await firstQueue.drain()
+        }
+        XCTAssertTrue(try filesOnDisk().contains("\(stuck.workout.id.uuidString).quarantine"))
+
+        // Whatever was wrong resolved itself (a server fix, an app update)
+        // — the backoff has elapsed and this launch's uploader succeeds.
+        let healthyUploader = ScriptedUploader(failing: [:])
+        let due = now.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS)
+        let secondQueue = OfflineQueue(uploader: healthyUploader, clock: FixedClock(due), baseDir: tempDir)
+        await secondQueue.drain()
+
+        let remaining = try filesOnDisk()
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).quarantine"), "resurrected, then uploaded successfully — no longer quarantined")
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).json"), "uploaded, not just restored to pending")
+        let uploaded = await healthyUploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(stuck.workout.id), "resurrection must make it eligible in the SAME pass, not just the next one")
+    }
+
+    func testAResurrectedItemThatFailsAgainReEarnsAFreshRetryBudget() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(stuck, createdAt: now)
+        let unrecognizedViolation = PostgrestError(
+            code: "23514",
+            message: "new row for relation \"climb_workouts\" violates check constraint \"climb_workouts_check\""
+        )
+        let stillFailingUploader = ScriptedUploader(failing: [
+            stuck.workout.id: StagedUploadError(stage: .climbWorkout, underlying: unrecognizedViolation),
+        ])
+        let firstQueue = OfflineQueue(uploader: stillFailingUploader, clock: FixedClock(now), baseDir: tempDir)
+        for _ in 0..<QueueRetryPolicy.maxConsecutiveFailures {
+            await firstQueue.drain()
+        }
+        XCTAssertTrue(try filesOnDisk().contains("\(stuck.workout.id.uuidString).quarantine"))
+
+        // Resurrected, but the SAME unrecognized error keeps happening — a
+        // single failed pass must not immediately re-quarantine it; the
+        // budget starts over from zero.
+        let due = now.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS)
+        let secondQueue = OfflineQueue(uploader: stillFailingUploader, clock: FixedClock(due), baseDir: tempDir)
+        await secondQueue.drain()
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(stuck.workout.id.uuidString).json"), "resurrected and pending again, not re-quarantined after one failure")
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).quarantine"))
+        XCTAssertTrue(remaining.contains("\(stuck.workout.id.uuidString).retry"), "a fresh ledger, starting from 1")
+    }
 }
 
 /// Test double for `WorkoutBundleUploading` — throws a scripted error per

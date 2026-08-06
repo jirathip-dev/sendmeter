@@ -265,6 +265,36 @@ final class PendingSyncCacheTests: XCTestCase {
         cache.reset()
         XCTAssertNil(cache.quarantinedTotal)
     }
+
+    // MARK: #475 F13 — the .stuckRetrying subset, tracked separately
+
+    func testStuckSubsetIsNilUntilReported() {
+        let cache = PendingSyncCache()
+        XCTAssertNil(cache.quarantinedStuckTotal)
+        cache.recordQuarantinedStuck(0)
+        XCTAssertEqual(cache.quarantinedStuckTotal, 0)
+    }
+
+    func testStuckSubsetIsIndependentOfTheTotal() {
+        let cache = PendingSyncCache()
+        cache.recordQuarantined(3)
+        cache.recordQuarantinedStuck(1)
+        XCTAssertEqual(cache.quarantinedTotal, 3)
+        XCTAssertEqual(cache.quarantinedStuckTotal, 1)
+    }
+
+    func testNegativeStuckSubsetCountsAreRefused() {
+        let cache = PendingSyncCache()
+        cache.recordQuarantinedStuck(-1)
+        XCTAssertEqual(cache.quarantinedStuckTotal, 0)
+    }
+
+    func testResetAlsoClearsTheStuckSubsetBackToUnknown() {
+        let cache = PendingSyncCache()
+        cache.recordQuarantinedStuck(1)
+        cache.reset()
+        XCTAssertNil(cache.quarantinedStuckTotal)
+    }
 }
 
 /// Issue #475 F1: quarantine is invisible today because nothing reads
@@ -327,6 +357,60 @@ final class QuarantinedSyncStampingTests: XCTestCase {
         XCTAssertEqual(stripped["kg"] as? Double, 12.5)
         XCTAssertNil(stripped[WatchBuildReport.quarantinedSyncKey])
         XCTAssertNil(stripped[WatchBuildReport.pendingSyncKey])
+    }
+
+    // MARK: #475 F13 — the .stuckRetrying subset rides the same channel, separately
+
+    func testStuckSubsetRoundTripsAlongsideTheTotal() {
+        let msg = WatchBuildReport.stamped(
+            ["kind": "liveWorkout", "status": "live"],
+            with: identity,
+            quarantinedSync: 3,
+            quarantinedStuckSync: 1
+        )
+        XCTAssertEqual(WatchBuildReport.quarantinedSync(in: msg), 3)
+        XCTAssertEqual(WatchBuildReport.quarantinedStuckSync(in: msg), 1)
+    }
+
+    func testAZeroStuckSubsetIsReportedRatherThanOmitted() {
+        let msg = WatchBuildReport.stamped(
+            ["kind": "requestSession"], with: identity, quarantinedSync: 2, quarantinedStuckSync: 0
+        )
+        XCTAssertEqual(WatchBuildReport.quarantinedStuckSync(in: msg), 0)
+    }
+
+    func testUnknownStuckSubsetLeavesTheMessageUntouchedAndReadsAsUnknown() {
+        // An older watch build (or one that only ever reports the combined
+        // total) must read as "breakdown unknown", not zero — the two must
+        // not be confused, since the phone treats unknown as the more
+        // cautious "assume permanent" case.
+        let msg = WatchBuildReport.stamped(
+            ["kind": "requestSession"], with: identity, quarantinedSync: 2, quarantinedStuckSync: nil
+        )
+        XCTAssertNil(msg[WatchBuildReport.quarantinedStuckSyncKey])
+        XCTAssertNil(WatchBuildReport.quarantinedStuckSync(in: msg))
+    }
+
+    func testNegativeStuckSubsetCountsAreRefusedOnBothSides() {
+        let msg = WatchBuildReport.stamped(["kind": "liveForce"], with: nil, quarantinedStuckSync: -1)
+        XCTAssertNil(msg[WatchBuildReport.quarantinedStuckSyncKey])
+        XCTAssertNil(WatchBuildReport.quarantinedStuckSync(in: [WatchBuildReport.quarantinedStuckSyncKey: -4]))
+    }
+
+    func testReadsAStuckSubsetThatCameBackAsADouble() {
+        XCTAssertEqual(WatchBuildReport.quarantinedStuckSync(in: [WatchBuildReport.quarantinedStuckSyncKey: 1.0]), 1)
+    }
+
+    func testStrippingRemovesTheStuckSubsetKeyToo() {
+        let stamped = WatchBuildReport.stamped(
+            ["kind": "liveForce", "kg": 12.5],
+            with: identity,
+            quarantinedSync: 3,
+            quarantinedStuckSync: 1
+        )
+        let stripped = WatchBuildReport.stripped(stamped)
+        XCTAssertEqual(stripped.count, 2)
+        XCTAssertNil(stripped[WatchBuildReport.quarantinedStuckSyncKey])
     }
 }
 

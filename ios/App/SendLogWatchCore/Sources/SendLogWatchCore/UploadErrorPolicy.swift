@@ -151,8 +151,29 @@ public enum QueueRetryDecision: Sendable, Equatable {
 /// (`QuarantineReason.stuckRetrying`, not `.schemaRejection`) so it stops
 /// blocking the rest of the queue.
 ///
-/// Because the drain loop stops the WHOLE pass on the first `.retry`/
-/// `.needsAuthRelay` failure (oldest-first), an item's counter only ever
+/// **#475 F11 — the ledger counts EVALUATIONS, not attempts.** `OfflineQueue`
+/// only advances this counter when the server actually returned something
+/// identifiable (a `postgrestCode` or a non-auth `httpStatus`) — i.e. the
+/// request reached PostgREST and got a real, substantive response. A pure
+/// transport failure (`URLError`, no network) or `.needsAuthRelay` (a stale
+/// token — the request was never evaluated under a valid credential) do
+/// NOT touch the ledger; they `break` the pass exactly like `.retry` always
+/// did, with no side effect on this bundle's count. Getting this wrong in
+/// the other direction — counting every failure regardless of cause — was
+/// shipped and caught in review: it let a network outage or a stale relayed
+/// token quarantine (and thereby permanently abandon, since nothing ever
+/// re-attempts a `.schemaRejection` file) a completely healthy workout,
+/// which is strictly worse than the bug this counter exists to fix. So
+/// `maxConsecutiveFailures` is NOT bounded by wall-clock time or by how many
+/// times the app happens to foreground — a bundle that only ever fails on
+/// transport or auth grounds never advances this counter at all, no matter
+/// how many drains that takes. It is bounded by how many times the item is
+/// actually SUBMITTED and REJECTED for a reason this classifier doesn't
+/// recognize, which requires real connectivity and a valid-enough token to
+/// reach PostgREST every single time — inherently rare.
+///
+/// Because the drain loop stops the WHOLE pass on the first `.retry`
+/// failure that DOES count (oldest-first), an item's counter only ever
 /// advances on a pass where THAT item was actually reached and attempted —
 /// every item ahead of it in that same pass necessarily already succeeded
 /// (or the loop would have stopped on one of them first), so this counter
@@ -160,16 +181,38 @@ public enum QueueRetryDecision: Sendable, Equatable {
 /// succeeding in between" by construction; no separate bookkeeping for that
 /// is needed.
 public enum QueueRetryPolicy {
-    /// Chosen to comfortably outlast any real transient outage (a bad
-    /// network stretch, a maintenance window) while still bounding the
-    /// wait: the watch drains on launch/foreground, so this is on the order
-    /// of weeks of normal use, not minutes.
+    /// Counts only consecutive passes where the server actually rejected
+    /// the request for a reason this classifier doesn't recognize (see the
+    /// F11 note above) — not raw failed attempts, which would include
+    /// outages and stale tokens that say nothing about the bundle itself.
     public static let maxConsecutiveFailures = 20
+
+    /// #475 F12: `.stuckRetrying` is a bet, not a proof — unlike
+    /// `.schemaRejection`, the classifier never recognized WHY the upload
+    /// kept failing, so the cause could be a server-side bug since fixed, an
+    /// RLS policy since repaired, or a later app build that resolves it.
+    /// Leaving it quarantined forever contradicts the #287 precedent this
+    /// codebase otherwise follows (retain and re-attempt on a later chance,
+    /// never abandon outright) — so after this long, fixed backoff,
+    /// `OfflineQueue` gives it exactly one more shot: restored to the
+    /// pending rotation with a fresh retry budget. Long enough that it
+    /// doesn't hammer a server that may still be genuinely rejecting it;
+    /// bounded so a workout doesn't wait forever for a chance that a
+    /// shorter poll could have found sooner.
+    public static let stuckRetryBackoffS: TimeInterval = 7 * 24 * 60 * 60
 
     public static func afterFailedAttempt(previousConsecutiveFailures: Int) -> QueueRetryDecision {
         let failures = previousConsecutiveFailures + 1
         return failures >= maxConsecutiveFailures
             ? .stuck(consecutiveFailures: failures)
             : .retryLater(consecutiveFailures: failures)
+    }
+
+    /// Whether a `.stuckRetrying` quarantine dated `quarantinedAt` is due
+    /// for another attempt at `now`. `now`/`quarantinedAt` are both injected
+    /// (never `Date()` read internally) so this is deterministically
+    /// testable.
+    public static func isStuckRetryDue(quarantinedAt: Date, now: Date) -> Bool {
+        now.timeIntervalSince(quarantinedAt) >= stuckRetryBackoffS
     }
 }

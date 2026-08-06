@@ -30,6 +30,7 @@ public final class PendingSyncCache: @unchecked Sendable {
     private let lock = NSLock()
     private var counts: [PendingSyncQueue: Int] = [:]
     private var quarantinedCount: Int?
+    private var quarantinedStuckCount: Int?
 
     public init() {}
 
@@ -51,12 +52,16 @@ public final class PendingSyncCache: @unchecked Sendable {
     }
 
     /// Count of items `OfflineQueue` has quarantined (#475): landed on disk,
-    /// but permanently rejected by a DB constraint, so an ordinary drain will
-    /// never move them. Deliberately kept OUT of `total` — folding a
-    /// quarantined item into the "pending" sum would read to the user as
-    /// "will sync", which the CLAUDE.md #264 rule forbids for anything that
-    /// isn't actually queued to sync. Same honest-states rule as `total`:
-    /// nil until a queue has reported at least once.
+    /// but taken off the drain path — either a proven-permanent DB
+    /// constraint violation, or (#475 F3/F12) an unrecognized error that
+    /// failed too many consecutive passes and is now waiting on a long
+    /// backoff for another attempt (`QuarantineReason`; `quarantinedStuckTotal`
+    /// below is the subset in that second, non-terminal state). Deliberately
+    /// kept OUT of `total` — folding a quarantined item into the "pending"
+    /// sum would read to the user as "will sync", which the CLAUDE.md #264
+    /// rule forbids for anything that isn't actually queued to sync right
+    /// now. Same honest-states rule as `total`: nil until a queue has
+    /// reported at least once.
     public func recordQuarantined(_ count: Int) {
         lock.lock()
         defer { lock.unlock() }
@@ -69,11 +74,31 @@ public final class PendingSyncCache: @unchecked Sendable {
         return quarantinedCount
     }
 
+    /// Subset of `quarantinedTotal` whose `QuarantineReason` is
+    /// `.stuckRetrying` (#475 F13) — items that WILL be automatically
+    /// re-attempted after a backoff, as opposed to the proven-permanent
+    /// `.schemaRejection` remainder (`quarantinedTotal - quarantinedStuckTotal`).
+    /// Reported separately so the phone can tell the user the true,
+    /// different fact about each kind rather than one sentence that is only
+    /// accurate for one of them.
+    public func recordQuarantinedStuck(_ count: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        quarantinedStuckCount = max(0, count)
+    }
+
+    public var quarantinedStuckTotal: Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return quarantinedStuckCount
+    }
+
     /// Test seam — production has one process-wide cache.
     public func reset() {
         lock.lock()
         defer { lock.unlock() }
         counts = [:]
         quarantinedCount = nil
+        quarantinedStuckCount = nil
     }
 }

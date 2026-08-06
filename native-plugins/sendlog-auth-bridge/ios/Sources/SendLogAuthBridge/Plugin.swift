@@ -145,6 +145,51 @@ private enum QuarantinedSyncStore {
     }
 }
 
+/// The watch's last-reported `.stuckRetrying` SUBSET of the quarantine count
+/// (#475 F13), stored the same way and for the same reason as
+/// `QuarantinedSyncStore`. Kept separate because the two `QuarantineReason`
+/// cases need different, non-interchangeable copy on the phone:
+/// `.schemaRejection` (the remainder, `QuarantinedSyncStore.count` minus
+/// this) truly will never sync on its own; `.stuckRetrying` (this store)
+/// gets one more automatic attempt after a backoff. Telling the user the
+/// wrong one of those two facts about their own data is worse than not
+/// splitting them at all.
+private enum QuarantinedStuckSyncStore {
+    private static let countKey = "sendmeter.watchSync.quarantinedStuck"
+    private static let reportedAtKey = "sendmeter.watchSync.quarantinedStuckReportedAt"
+
+    static var count: Int? {
+        guard UserDefaults.standard.object(forKey: countKey) != nil else { return nil }
+        return UserDefaults.standard.integer(forKey: countKey)
+    }
+
+    static var reportedAt: Double? {
+        let t = UserDefaults.standard.double(forKey: reportedAtKey)
+        return t > 0 ? t : nil
+    }
+
+    private static let lock = NSLock()
+    private static var lastWrite: (count: Int, at: Double)?
+
+    @discardableResult
+    static func record(_ count: Int) -> Bool {
+        let now = Date().timeIntervalSince1970
+        lock.lock()
+        let changed = self.count != count
+        if let last = lastWrite, last.count == count, now - last.at < 60 {
+            lock.unlock()
+            return changed
+        }
+        lastWrite = (count, now)
+        lock.unlock()
+
+        let defaults = UserDefaults.standard
+        defaults.set(count, forKey: countKey)
+        defaults.set(now, forKey: reportedAtKey)
+        return changed
+    }
+}
+
 /// Relays the Supabase **access token** to the paired Watch app so it can sign
 /// in without its own login flow (#265 — never the refresh token; see
 /// `setSession`). No token persistence here: supabase-js already owns the
@@ -277,6 +322,15 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
         if let quarantinedReportedAt = QuarantinedSyncStore.reportedAt {
             result["quarantinedSyncReportedAt"] = quarantinedReportedAt
         }
+        // The `.stuckRetrying` subset (#475 F13) — absent entirely on a
+        // watch build that only ever reported the combined total; the JS
+        // side treats that as "breakdown unknown", not zero.
+        if let quarantinedStuck = QuarantinedStuckSyncStore.count {
+            result["quarantinedStuckSyncCount"] = quarantinedStuck
+        }
+        if let quarantinedStuckReportedAt = QuarantinedStuckSyncStore.reportedAt {
+            result["quarantinedStuckSyncReportedAt"] = quarantinedStuckReportedAt
+        }
         call.resolve(result)
     }
 
@@ -367,11 +421,16 @@ extension SendLogAuthBridge: WCSessionDelegate {
         // pending-count change does.
         let quarantinedChanged = WatchBuildReport.quarantinedSync(in: message)
             .map(QuarantinedSyncStore.record) ?? false
+        // #475 F13: and the `.stuckRetrying` subset — a bundle moving
+        // between reasons (the F12 resurrection path) can change this
+        // without changing the total.
+        let quarantinedStuckChanged = WatchBuildReport.quarantinedStuckSync(in: message)
+            .map(QuarantinedStuckSyncStore.record) ?? false
         let kind = message["kind"] as? String
         // Live force arrives around 2 Hz. Refresh diagnostics only for a real
         // build/count transition, or explicit control/status messages where
         // pairing/install state may also have changed.
-        if buildChanged || pendingChanged || quarantinedChanged || kind == "requestSession" || kind == "queueStatus" {
+        if buildChanged || pendingChanged || quarantinedChanged || quarantinedStuckChanged || kind == "requestSession" || kind == "queueStatus" {
             notifyListeners("watchInfoChanged", data: [:])
         }
         guard let kind else { return }

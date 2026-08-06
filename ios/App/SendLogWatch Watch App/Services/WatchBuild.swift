@@ -22,6 +22,11 @@ enum WatchBuild {
     /// trigger a report, or a workout that gets quarantined while the
     /// pending total happens to stay flat would never reach the phone.
     private nonisolated(unsafe) static var lastReportedQuarantinedTotal: Int?
+    /// #475 F13: tracked separately again — a bundle moving between
+    /// `.schemaRejection` and `.stuckRetrying` (the F12 resurrection path)
+    /// can change this subset while the overall quarantined total stays the
+    /// same number, and the phone needs to hear about that too.
+    private nonisolated(unsafe) static var lastReportedQuarantinedStuckTotal: Int?
 
     static func stamp(_ message: [String: Any]) -> [String: Any] {
         // Cached (see `PendingSyncCache`) because this is a synchronous send
@@ -32,7 +37,8 @@ enum WatchBuild {
             message,
             with: identity,
             pendingSync: PendingSyncCache.shared.total,
-            quarantinedSync: PendingSyncCache.shared.quarantinedTotal
+            quarantinedSync: PendingSyncCache.shared.quarantinedTotal,
+            quarantinedStuckSync: PendingSyncCache.shared.quarantinedStuckTotal
         )
     }
 
@@ -46,13 +52,18 @@ enum WatchBuild {
               WCSession.default.activationState == .activated
         else { return }
         let quarantined = PendingSyncCache.shared.quarantinedTotal
+        let quarantinedStuck = PendingSyncCache.shared.quarantinedStuckTotal
         reportLock.lock()
-        guard total != lastReportedQueueTotal || quarantined != lastReportedQuarantinedTotal else {
+        guard total != lastReportedQueueTotal
+            || quarantined != lastReportedQuarantinedTotal
+            || quarantinedStuck != lastReportedQuarantinedStuckTotal
+        else {
             reportLock.unlock()
             return
         }
         lastReportedQueueTotal = total
         lastReportedQuarantinedTotal = quarantined
+        lastReportedQuarantinedStuckTotal = quarantinedStuck
         reportLock.unlock()
         let message = stamp(["kind": "queueStatus"])
         // Guaranteed messages are enqueued synchronously in count order. An

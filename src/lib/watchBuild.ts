@@ -25,10 +25,14 @@ export interface WatchStatusPresentation {
 
 export interface UploadWarningItem {
   /// "watch-quarantined" is distinct from "watch" (#475 F1): a quarantined
-  /// item is not "waiting to upload" — it never will, on its own — and both
-  /// can be present at once (some items still pending, others already given
-  /// up on), so they need separate keys, not a shared "watch" row.
-  source: "watch" | "watch-quarantined" | "phone";
+  /// item is not "waiting to upload" — and "watch-quarantined-retrying"
+  /// (#475 F13) is distinct again from "watch-quarantined": the two
+  /// `QuarantineReason` cases need different, non-interchangeable copy (one
+  /// truly never syncs on its own, the other gets one more automatic
+  /// attempt), so telling the user the wrong one would be actively
+  /// misleading about their own data. All three sources can be present at
+  /// once, so they need separate keys, not a shared row.
+  source: "watch" | "watch-quarantined" | "watch-quarantined-retrying" | "phone";
   text: string;
   detail: string;
   /// Epoch seconds of the watch queue report. A historical count is only as
@@ -186,23 +190,46 @@ export function uploadWarningPresentation(
     });
   }
 
-  // #475 F1: a quarantined item is NEVER phrased as "waiting to upload" —
-  // it is persisted on the watch but will not sync on its own. Independent
-  // of the pending block above: a watch can have both pending items AND
-  // quarantined ones at once, and the user needs told both facts.
+  // #475 F1/F13: a quarantined item is NEVER phrased as "waiting to
+  // upload" — but the two `QuarantineReason` cases also need DIFFERENT
+  // copy from each other: `.schemaRejection` truly never syncs on its own,
+  // `.stuckRetrying` gets one more automatic attempt after a backoff.
+  // Telling the user the wrong one is worse than not splitting them.
+  // Independent of the pending block above: a watch can have pending items
+  // AND both kinds of quarantined ones at once.
   if (watchInfo?.quarantineStatus === "stuck") {
-    const count = watchInfo.quarantinedSyncCount;
-    items.push({
-      source: "watch-quarantined",
-      text:
-        count !== undefined
-          ? `Apple Watch · ${count} workout${count === 1 ? "" : "s"} could not be uploaded and will not retry.`
-          : "Apple Watch has workouts that could not be uploaded and will not retry.",
-      detail: "This data is stuck on the watch. Contact support if this keeps happening.",
-      ...(watchInfo.quarantinedSyncReportedAt !== undefined
-        ? { reportedAt: watchInfo.quarantinedSyncReportedAt }
-        : {}),
-    });
+    const total = watchInfo.quarantinedSyncCount;
+    const stuckRetrying = watchInfo.quarantinedStuckSyncCount;
+    // An older watch build (or plugin) reports only the combined total —
+    // that's "breakdown unknown", not "zero stuck-retrying". Defaulting the
+    // unknown remainder to the cautious "permanent" framing matches this
+    // app's honest-states rule: never silently understate a problem.
+    const permanent = total !== undefined ? Math.max(0, total - (stuckRetrying ?? 0)) : undefined;
+
+    if (permanent === undefined || permanent > 0) {
+      items.push({
+        source: "watch-quarantined",
+        text:
+          permanent !== undefined
+            ? `Apple Watch · ${permanent} workout${permanent === 1 ? "" : "s"} could not be uploaded and will not retry.`
+            : "Apple Watch has workouts that could not be uploaded and will not retry.",
+        detail: "This data is stuck on the watch. Contact support if this keeps happening.",
+        ...(watchInfo.quarantinedSyncReportedAt !== undefined
+          ? { reportedAt: watchInfo.quarantinedSyncReportedAt }
+          : {}),
+      });
+    }
+
+    if (stuckRetrying !== undefined && stuckRetrying > 0) {
+      items.push({
+        source: "watch-quarantined-retrying",
+        text: `Apple Watch · ${stuckRetrying} workout${stuckRetrying === 1 ? "" : "s"} having trouble uploading — retrying automatically.`,
+        detail: "No action needed. This can take a few days to resolve on its own.",
+        ...(watchInfo.quarantinedStuckSyncReportedAt !== undefined
+          ? { reportedAt: watchInfo.quarantinedStuckSyncReportedAt }
+          : {}),
+      });
+    }
   }
 
   if (phonePending !== null && phonePending > 0) {

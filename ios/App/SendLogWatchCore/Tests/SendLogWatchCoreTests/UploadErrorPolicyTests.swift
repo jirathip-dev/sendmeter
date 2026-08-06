@@ -197,4 +197,24 @@ final class QueueRetryPolicyTests: XCTestCase {
         )
         if case .stuck = decision {} else { XCTFail("expected .stuck, got \(decision)") }
     }
+
+    // MARK: #475 F12 — the stuck-retrying backoff
+
+    func testJustBelowTheBackoffIsNotDueYet() {
+        let quarantinedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let now = quarantinedAt.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS - 1)
+        XCTAssertFalse(QueueRetryPolicy.isStuckRetryDue(quarantinedAt: quarantinedAt, now: now))
+    }
+
+    func testExactlyAtTheBackoffIsDue() {
+        let quarantinedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let now = quarantinedAt.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS)
+        XCTAssertTrue(QueueRetryPolicy.isStuckRetryDue(quarantinedAt: quarantinedAt, now: now))
+    }
+
+    func testWellPastTheBackoffIsDue() {
+        let quarantinedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let now = quarantinedAt.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS * 3)
+        XCTAssertTrue(QueueRetryPolicy.isStuckRetryDue(quarantinedAt: quarantinedAt, now: now))
+    }
 }
