@@ -33,6 +33,9 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: a non-hands-free run right after a hands-free run no longer plays stray "done" cues or shows a stale danger banner on segment transitions.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
+- Force: a whole-buffer recording recovered after a sign-out or connection loss can no longer enter your force curve (and the training targets/watch RPE prediction derived from it).
+- Force fullscreen: Disconnect now asks for confirmation while a rep is measuring, armed, or counting down, instead of silently discarding it.
+- Watch: force recordings now queue and retry like workouts and gauge sessions do, so a gym-basement outage no longer loses a rep outright.
 
 ## 1.0 — 2026-08-02
 

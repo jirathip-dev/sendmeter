@@ -50,6 +50,7 @@ export interface ZonedHold {
   source?: "dynamometer" | "manual";
   protocolMode?: TindeqProtocolMode;
   capacityEvidence?: boolean | null;
+  note?: string | null;
 }
 
 /** Historical null/absent protocol modes are Static by contract. */
@@ -84,12 +85,29 @@ export function recordingZone(rec: ZonedHold): ZoneAttribution {
   return { zone: classifyZone(rec.durationMs / 1000), source: "inferred" };
 }
 
+/// #486: whether a recording is a whole-buffer salvage/recovery blob rather
+/// than a deliberate hold. `useTindeq.ts` writes exactly two note strings for
+/// this — "Recovered after sign-out" (unmount salvage) and "Recovered after
+/// connection loss" (`interruptionNote`'s mid-measurement-drop label) — both
+/// generic-fallback saves of whatever was in the live buffer, with `zone:
+/// null`. `recordingZone` then INFERS a zone from raw duration alone, so a
+/// multi-minute blob reads as `endurance` — a maximal-intent capacity effort
+/// it never was. The note is the only signal that survives to tell the two
+/// apart; nothing else about the row does. Prefix match (not equality) so a
+/// future note that elaborates on either string ("Recovered after
+/// connection loss — reconnect timed out") still gets caught.
+export function isRecoveredRecording(rec: Pick<ZonedHold, "note">): boolean {
+  return typeof rec.note === "string" && rec.note.startsWith("Recovered after");
+}
+
 /// Whether a hold is safe to read as evidence of capacity (curve fit,
 /// PR/trend charts, asymmetry and training balance). Warm-up and Prehab are
 /// deliberately submaximal maintenance work, so neither can stand in for a
-/// maximal-intent observation.
+/// maximal-intent observation — and neither can a salvage/recovery blob
+/// (#486): its zone is an inferred guess and its content may be a partial or
+/// overlapping buffer, not a clean maximal pull.
 export function isEffortRecording(rec: ZonedHold): boolean {
-  return !isMaintenanceZone(recordingZone(rec).zone);
+  return !isMaintenanceZone(recordingZone(rec).zone) && !isRecoveredRecording(rec);
 }
 
 /// Whether W′-depletion should be computed for session RPE. Prehab is known

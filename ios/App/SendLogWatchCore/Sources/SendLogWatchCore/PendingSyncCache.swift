@@ -1,14 +1,17 @@
 import Foundation
 
 /// The watch's offline upload queues, as far as the queue-depth report is
-/// concerned (#21). Both are persist-first disk queues drained oldest-first,
-/// and the watch's own Home screen already shows their sum — reporting the
-/// same sum keeps the phone's answer and the watch's answer the same number.
+/// concerned (#21). All three are persist-first disk queues drained
+/// oldest-first, and the watch's own Home screen already shows their sum —
+/// reporting the same sum keeps the phone's answer and the watch's answer the
+/// same number.
 public enum PendingSyncQueue: String, Sendable, CaseIterable {
     /// `OfflineQueue` — climb workouts.
     case workouts
     /// `PendingSessionQueue` — end-of-gauge Tindeq sessions.
     case tindeqSessions
+    /// `PendingRecordingQueue` — individual Tindeq force recordings (#486).
+    case tindeqRecordings
 }
 
 /// Last known depth of each queue, readable **synchronously** (#21).

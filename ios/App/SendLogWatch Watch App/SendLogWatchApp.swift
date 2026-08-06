@@ -23,6 +23,7 @@ struct SendLogWatchApp: App {
                 Task { @MainActor in auth.refreshState() }
                 Task { await OfflineQueue.shared.drain() }
                 Task { await PendingSessionQueue.shared.drain() }
+                Task { await PendingRecordingQueue.shared.drain() }
                 Task { await WatchBuild.refreshAndReportQueueStatus() }
                 // Keep the complications/Smart-Stack readiness + ACWR fresh.
                 Task { await WidgetBridge.refreshStatus() }

@@ -18,6 +18,7 @@ import SwiftUI
 struct HomeView: View {
     @Binding var selection: WatchHomePage
     @State private var showGaugeSessionLoss = false
+    @State private var showRecordingLoss = false
 
     var body: some View {
         TabView(selection: $selection) {
@@ -32,11 +33,19 @@ struct HomeView: View {
             if GaugeSessionLossNotice.consume() {
                 showGaugeSessionLoss = true
             }
+            if RecordingLossNotice.consume() {
+                showRecordingLoss = true
+            }
         }
         .alert("Force session not saved", isPresented: $showGaugeSessionLoss) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Your force recordings may appear ungrouped in History. Create a session for them on your phone.")
+        }
+        .alert("A force rep was lost", isPresented: $showRecordingLoss) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("A recording couldn't be saved to your watch or uploaded. It's gone — the rest of your session is unaffected.")
         }
     }
 }
@@ -86,7 +95,8 @@ private struct ActionsView: View {
         .task {
             async let workouts = OfflineQueue.shared.pendingCount()
             async let sessions = PendingSessionQueue.shared.pendingCount()
-            pendingUploads = await workouts + sessions
+            async let recordings = PendingRecordingQueue.shared.pendingCount()
+            pendingUploads = await workouts + sessions + recordings
         }
     }
 }
