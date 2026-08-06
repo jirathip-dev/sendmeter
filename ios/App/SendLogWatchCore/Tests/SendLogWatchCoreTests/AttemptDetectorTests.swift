@@ -788,4 +788,135 @@ final class AttemptDetectorTests: XCTestCase {
         let attempts = d.finalize()
         XCTAssertEqual(attempts.count, 0, "merged block (explicit short + non-explicit phantom) must still fail the auto post-filters")
     }
+
+    // MARK: #473 F-A — AttemptEndResolver.endReason direct coverage
+    //
+    // A cross-wave adversarial sweep (composing this branch with #477, which
+    // nils `sample.hr` after a HealthKit gap) found that zero tests anywhere
+    // in this suite referenced `hrQuietFallback` or `hasHRSupport` — the
+    // existing single `hr: nil` case drives an EXPLICIT `endManualAttempt`,
+    // never the assisted self-close path these branches gate. These call the
+    // pure resolver directly so each branch is pinned independently of the
+    // state-machine wiring the tests above exercise indirectly.
+
+    func testEndReasonReturnedToFloorWinsWhenEstablished() {
+        let reason = AttemptEndResolver.endReason(
+            establishedAltitudeAscent: true, returnedToFloor: true,
+            hasHRSupport: false, quiet: false,
+            durationS: 20, maxDurationS: 300, unestablishedMaxS: 60, establishedDriftMaxS: 90,
+            isManual: false
+        )
+        XCTAssertEqual(reason, .returnedToFloor)
+    }
+
+    func testEndReasonHRQuietFallbackFiresForBothAutoAndManual() {
+        for isManual in [false, true] {
+            let reason = AttemptEndResolver.endReason(
+                establishedAltitudeAscent: false, returnedToFloor: false,
+                hasHRSupport: true, quiet: true,
+                durationS: 20, maxDurationS: 300, unestablishedMaxS: 60, establishedDriftMaxS: 90,
+                isManual: isManual
+            )
+            XCTAssertEqual(reason, .hrQuietFallback, "isManual=\(isManual)")
+        }
+    }
+
+    /// #473 F-A, at the resolver level: a MANUAL attempt that is quiet but
+    /// has NO HR support (e.g. #477's staleness nil) still closes — via
+    /// `manualQuietFallback` — instead of the only remaining exit being
+    /// `maxAttemptS` (300s).
+    func testEndReasonManualQuietFallbackDoesNotNeedHR() {
+        let reason = AttemptEndResolver.endReason(
+            establishedAltitudeAscent: false, returnedToFloor: false,
+            hasHRSupport: false, quiet: true,
+            durationS: 50, maxDurationS: 300, unestablishedMaxS: 60, establishedDriftMaxS: 90,
+            isManual: true
+        )
+        XCTAssertEqual(reason, .manualQuietFallback)
+    }
+
+    /// The AUTO path must NOT gain this escape hatch — an undetected auto
+    /// phantom with no HR support has no evidence it's a real attempt, so
+    /// quiet alone must not close it. It falls through unchanged to
+    /// `unestablishedCap`/`maxAttemptS`, same as before F-A.
+    func testEndReasonAutoGetsNoQuietFallbackWithoutHRSupport() {
+        let reason = AttemptEndResolver.endReason(
+            establishedAltitudeAscent: false, returnedToFloor: false,
+            hasHRSupport: false, quiet: true,
+            durationS: 50, maxDurationS: 300, unestablishedMaxS: 60, establishedDriftMaxS: 90,
+            isManual: false
+        )
+        XCTAssertNil(reason, "auto must not gain a quiet-only close")
+    }
+
+    /// F-A explicitly must NOT reintroduce a duration cap for manual (that
+    /// was R1) — not-quiet manual attempts stay open all the way to the
+    /// shipped `maxAttemptS` hard cap, same as `testManualAttemptStillCloses
+    /// AtMaxAttemptSHardCap` proves at the state-machine level.
+    func testEndReasonManualNotQuietStillBoundedOnlyByHardCap() {
+        let reason = AttemptEndResolver.endReason(
+            establishedAltitudeAscent: false, returnedToFloor: false,
+            hasHRSupport: false, quiet: false,
+            durationS: 301, maxDurationS: 300, unestablishedMaxS: 60, establishedDriftMaxS: 90,
+            isManual: true
+        )
+        XCTAssertEqual(reason, .hardCap)
+    }
+
+    // MARK: #473 F-A — manual self-close without HR (production path)
+
+    /// The sweep's own measured scenario: a manual traverse with NO HR from
+    /// the first tick (the reachable case it names: the sensor is already
+    /// gapping — or the watch is loose — for the whole traverse), 40s of
+    /// motion, then the climber stands still. Pre-F-A this ran toward
+    /// `maxAttemptS` (300s, measured at "STILL OPEN at 260s" in the sweep);
+    /// post-F-A it self-closes shortly after going quiet, matching the
+    /// sweep's own "hr present" control (~50s).
+    func testManualTraverseWithNoHRSelfClosesViaQuietAlone() {
+        let d = AttemptDetector(tunables: .default)
+        var i = 0
+        for _ in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: nil), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        d.beginManualAttempt(at: start.addingTimeInterval(Double(i)))
+        XCTAssertTrue(d.isManualAttemptOpen)
+        // 40s of motion, no HR at all.
+        for _ in 0..<40 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.10, hr: nil), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        XCTAssertTrue(d.isManualAttemptOpen)
+        // Climber stands still — quiet for quietTicks (10) and stays quiet.
+        for _ in 0..<20 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.01, hr: nil), at: start.addingTimeInterval(Double(i)))
+            i += 1
+            if d.snapshot.state == .resting { break }
+        }
+        XCTAssertEqual(d.snapshot.state, .resting, "manual attempt with no HR never self-closed — headed toward maxAttemptS")
+        let attempts = d.finalize()
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertEqual(attempts[0].source, .manual)
+        XCTAssertLessThan(attempts[0].durationS, 100, "must close shortly after going quiet, nowhere near maxAttemptS (300s)")
+        XCTAssertFalse(attempts[0].hitCap, "a genuine end signal, not a duration cap")
+    }
+
+    /// A manual attempt must still be able to run indefinitely (bounded only
+    /// by `maxAttemptS`) while genuinely active with no HR — the new
+    /// quiet-only fallback must not fire just because HR is absent; it needs
+    /// actual stillness too.
+    func testManualTraverseWithNoHRStaysOpenWhileActive() {
+        let d = AttemptDetector(tunables: .default)
+        var i = 0
+        for _ in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: nil), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        d.beginManualAttempt(at: start.addingTimeInterval(Double(i)))
+        for _ in 0..<100 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.10, hr: nil), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        XCTAssertTrue(d.isManualAttemptOpen, "an actively-moving manual attempt with no HR must not be truncated")
+    }
 }

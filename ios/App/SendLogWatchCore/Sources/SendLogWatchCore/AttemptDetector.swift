@@ -11,13 +11,16 @@ public enum AttemptEndResolver {
     public enum EndReason: Equatable, Sendable {
         case returnedToFloor
         case hrQuietFallback
+        /// #473 F-A: a manual attempt's own stillness-based close, requiring
+        /// no HR corroboration — see the `isManual && quiet` branch below.
+        case manualQuietFallback
         case unestablishedCap
         case establishedDriftCap
         case hardCap
 
         public var isCap: Bool {
             switch self {
-            case .returnedToFloor, .hrQuietFallback: return false
+            case .returnedToFloor, .hrQuietFallback, .manualQuietFallback: return false
             case .unestablishedCap, .establishedDriftCap, .hardCap: return true
             }
         }
@@ -52,6 +55,23 @@ public enum AttemptEndResolver {
             return nil
         }
         if hasHRSupport && quiet { return .hrQuietFallback }
+        // #473 F-A (cross-wave sweep, composed with #477): #477 nils
+        // `sample.hr` after a HealthKit gap (no fresh sample within
+        // `hrStaleAfterS`), and R1 correctly exempted `.manual` from the
+        // duration caps. Composed, a FLAT manual attempt with no HR from its
+        // first tick had `hasHRSupport` false for its entire life, so
+        // `hrQuietFallback` above could never fire — its only remaining exit
+        // was `maxAttemptS` (300s), reintroducing #473's own symptom (a
+        // multi-minute banked attempt) through a different door, on exactly
+        // the workflow RELEASE_NOTES now tells users to use for a flat
+        // traverse. A manual attempt is explicitly opened by the user, so
+        // sustained stillness alone (`quiet`, no HR corroboration required)
+        // is an unambiguous "I'm done" signal — unlike an UNDETECTED auto
+        // phantom, there's no false-positive-open to protect against here.
+        // This is a genuine end signal, not a duration bound: it does NOT
+        // reintroduce a cap (R1's constraint) — `durationS` plays no role,
+        // only the same trailing-quiet-ticks trigger `hrQuietFallback` uses.
+        if isManual && quiet { return .manualQuietFallback }
         // #473: a floor-level attempt that never establishes altitude and
         // never gets HR+quiet support (e.g. HR unavailable) used to fall
         // through all the way to maxDurationS. Bound it separately — but
