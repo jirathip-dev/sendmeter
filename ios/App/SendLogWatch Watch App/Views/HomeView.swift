@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SwiftUI
 
 /// The watch home: two swipeable pages (#278). Page 1 is status — what shape
@@ -45,6 +46,7 @@ struct HomeView: View {
 private struct ActionsView: View {
     @Environment(AuthManager.self) private var auth
     @State private var pendingUploads = 0
+    @State private var syncFreshness: SyncFreshness = .current
 
     var body: some View {
         List {
@@ -75,6 +77,18 @@ private struct ActionsView: View {
                 .foregroundStyle(.orange)
             }
 
+            // #472b: a different signal from the two above — items are
+            // waiting AND the queue hasn't landed anything in a while, which
+            // `auth.needsToken` alone wouldn't catch (a queue can stall on a
+            // real outage or an unrecognized rejection with a perfectly
+            // fresh token). Same honest-states rule as everywhere else here:
+            // never having synced reads as stale, not as quiet/healthy.
+            if case let .stale(lastSuccessfulSyncAt) = syncFreshness, !ScreenshotFixtures.enabled {
+                Label(staleSyncMessage(lastSuccessfulSyncAt), systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
+
             // No Sign Out here, and none anywhere else on the watch (#278).
             // The watch has no session of its own to end — it mirrors the
             // phone's — and the old button called supabase-swift's
@@ -86,7 +100,22 @@ private struct ActionsView: View {
         .task {
             async let workouts = OfflineQueue.shared.pendingCount()
             async let sessions = PendingSessionQueue.shared.pendingCount()
-            pendingUploads = await workouts + sessions
+            async let lastSync = OfflineQueue.shared.lastSuccessfulSyncAt()
+            let (workoutCount, sessionCount, syncedAt) = await (workouts, sessions, lastSync)
+            pendingUploads = workoutCount + sessionCount
+            syncFreshness = SyncFreshnessPolicy.evaluate(
+                lastSuccessfulSyncAt: syncedAt,
+                hasPending: pendingUploads > 0,
+                now: Date()
+            )
         }
+    }
+
+    private func staleSyncMessage(_ lastSuccessfulSyncAt: Date?) -> String {
+        guard let lastSuccessfulSyncAt else {
+            return "Nothing has synced yet — retrying automatically"
+        }
+        let minutes = max(0, Int(Date().timeIntervalSince(lastSuccessfulSyncAt) / 60))
+        return "Last synced \(minutes)m ago — retrying automatically"
     }
 }

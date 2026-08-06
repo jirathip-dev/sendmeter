@@ -324,3 +324,15 @@ nonisolated struct RetryLedgerEntry: Codable {
     var lastErrorMessage: String?
     var lastAttemptAt: Date
 }
+
+/// #472b: when an upload last actually landed, persisted so it survives
+/// relaunch — an in-memory-only timestamp would read as "never synced" every
+/// time the watch app is killed and relaunched, which is exactly when a
+/// stuck queue has been silent the longest. Feeds `SyncFreshnessPolicy` (in
+/// `SendLogWatchCore`) for the watch's own "have we synced in a while" UI
+/// signal — distinct from `WatchBuildReport`'s quarantine/pending counts,
+/// which describe what the PHONE was last told, not what the watch
+/// currently knows about itself.
+nonisolated struct LastSyncMarker: Codable {
+    var syncedAt: Date
+}
