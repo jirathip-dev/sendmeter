@@ -36,6 +36,14 @@ function closeAttempt(
   climbingSince: string,
   at: string,
 ): PhoneAttempt[] {
+  // #475 F10: the watch's AttemptDetector now DROPS a same-tick boulder
+  // entirely (a same-tick Play/Stop is "not a climb" — see
+  // AttemptDetector.processedAttempts()'s duration guard) rather than
+  // clamping it like this. Deliberately not unified here: the phone's timer
+  // is a manual fullscreen stopwatch with an explicit Boulder/Stop tap,
+  // not a same-tick sensor race, so a 1s clamp is the right floor for it —
+  // flagged only so the two devices' same-tick behavior is a known
+  // divergence, not a discovered one.
   const durationS = Math.max(
     1,
     (new Date(at).getTime() - new Date(climbingSince).getTime()) / 1000,

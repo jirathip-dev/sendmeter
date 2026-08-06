@@ -238,17 +238,54 @@ enum Repo {
     /// replays after partial success are safe. The workout row MERGES on
     /// conflict (not ignore) — the SL-90 periodic flush may have written a
     /// partial row under the same id, and the final stats must land over it.
+    ///
+    /// Order is FK-mandated — `climb_attempts.workout_id` and
+    /// `climb_workouts.session_id` are both non-null references, so
+    /// sessions → climb_workouts → climb_attempts is the only legal
+    /// sequence (verified against
+    /// `supabase/migrations/20260711120000_watch_workouts.sql`; see the
+    /// #475 correction comment). NEVER reorder these three calls.
+    ///
+    /// Each stage is tagged with `StagedUploadError` on failure so
+    /// `OfflineQueue` can report which of the three actually landed (#475) —
+    /// this only labels the failure, it changes no request or its order.
     static func uploadBundle(_ bundle: WorkoutSaveBundle) async throws {
-        try await client.from("sessions")
-            .upsert(bundle.session, onConflict: "id", ignoreDuplicates: true)
-            .execute()
-        try await client.from("climb_workouts")
-            .upsert(bundle.workout, onConflict: "id")
-            .execute()
-        if !bundle.attempts.isEmpty {
-            try await client.from("climb_attempts")
-                .upsert(bundle.attempts, onConflict: "id", ignoreDuplicates: true)
+        do {
+            try await client.from("sessions")
+                .upsert(bundle.session, onConflict: "id", ignoreDuplicates: true)
                 .execute()
+        } catch {
+            throw StagedUploadError(stage: .session, underlying: error)
+        }
+        do {
+            try await client.from("climb_workouts")
+                .upsert(bundle.workout, onConflict: "id")
+                .execute()
+        } catch {
+            throw StagedUploadError(stage: .climbWorkout, underlying: error)
+        }
+        if !bundle.attempts.isEmpty {
+            do {
+                try await client.from("climb_attempts")
+                    .upsert(bundle.attempts, onConflict: "id", ignoreDuplicates: true)
+                    .execute()
+            } catch {
+                throw StagedUploadError(stage: .climbAttempts, underlying: error)
+            }
         }
     }
+}
+
+/// Which of `uploadBundle`'s three upserts threw, plus the original error —
+/// issue #475's quarantine record needs the failing stage; `underlying` is
+/// still the exact error `UploadFailure` classification reads (PostgrestError
+/// / HTTPError / anything else `Repo`'s Supabase client can throw).
+///
+/// `underlying: Error` isn't itself `Sendable`, but every concrete type
+/// supabase-swift's client actually throws here (`PostgrestError`,
+/// `HTTPError`, `URLError`) already is — `@unchecked` avoids an existential
+/// upcast fight for a guarantee the underlying library already provides.
+struct StagedUploadError: Error, @unchecked Sendable {
+    let stage: UploadStage
+    let underlying: Error
 }

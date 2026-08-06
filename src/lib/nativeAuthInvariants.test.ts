@@ -159,14 +159,29 @@ describe("watch diagnostics events stay transition-driven (#368)", () => {
   it("does not refresh watch-info consumers for every live force beat", () => {
     expect(bridge!.code).toMatch(/let buildChanged =/);
     expect(bridge!.code).toMatch(/let pendingChanged =/);
+    // #475 F1: quarantine rides the same transition-driven trigger — a
+    // quarantine-only change (pending count unchanged) must still refresh
+    // watch-info consumers, so it belongs in the same OR-chain, not a
+    // separate always-refresh path.
+    expect(bridge!.code).toMatch(/let quarantinedChanged =/);
+    // #475 F13: same for the .stuckRetrying subset — it can change (the F12
+    // resurrection path) without the total changing.
+    expect(bridge!.code).toMatch(/let quarantinedStuckChanged =/);
     expect(bridge!.code).toMatch(
-      /if buildChanged \|\| pendingChanged \|\| kind == "requestSession" \|\| kind == "queueStatus"/,
+      /if buildChanged \|\| pendingChanged \|\| quarantinedChanged \|\| quarantinedStuckChanged \|\| kind == "requestSession" \|\| kind == "queueStatus"/,
     );
   });
 
   it("records build and queue transitions through change-returning stores", () => {
     expect(bridge!.code).toMatch(/static func record\(_ identity: BuildIdentity\) -> Bool/);
     expect(bridge!.code).toMatch(/static func record\(_ count: Int\) -> Bool/);
+    // #475 F1/F13: the quarantine stores follow the identical
+    // change-returning shape as WatchSyncStore, so the same generic
+    // assertion already covers them — this pins that FOUR stores exist
+    // total (build + pending + quarantined + quarantined-stuck), not just two.
+    expect(
+      [...bridge!.code.matchAll(/static func record\(_ count: Int\) -> Bool/g)].length,
+    ).toBeGreaterThanOrEqual(3);
   });
 
   it("re-reads watch info after listener registration resolves", () => {

@@ -14,5 +14,6 @@ export type {
   SendLogAuthBridgePlugin,
   WatchBuildInfo,
   WatchBuildStatus,
+  WatchQuarantineStatus,
   WatchSyncStatus,
 } from "./definitions";

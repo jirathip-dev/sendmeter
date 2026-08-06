@@ -4,6 +4,7 @@ import {
   watchStatusPresentation,
   type WatchBuildInfo,
   type WatchBuildStatus,
+  type WatchQuarantineStatus,
   type WatchSyncStatus,
 } from "./watchBuild";
 
@@ -170,5 +171,112 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
     expect(combined?.items[1]?.text).toBe(
       "This iPhone · 2 Force recordings waiting to upload.",
     );
+  });
+
+  // #475 F1: quarantine was invisible everywhere before this — the count
+  // was written to a cache slot nothing read. These pin the distinct,
+  // non-"waiting to upload" presentation.
+  function quarantined(
+    status: WatchQuarantineStatus,
+    over: Partial<WatchBuildInfo> = {},
+  ): WatchBuildInfo {
+    return info("match", { watchDisplay: "1.4.0 (57)", quarantineStatus: status, ...over });
+  }
+
+  it("stays quiet while quarantine is none or not yet reported", () => {
+    expect(
+      uploadWarningPresentation(quarantined("none", { quarantinedSyncCount: 0 }), 0),
+    ).toBeNull();
+    expect(uploadWarningPresentation(quarantined("not-reported"), 0)).toBeNull();
+  });
+
+  it("never phrases a quarantined item as waiting to upload", () => {
+    const warning = uploadWarningPresentation(
+      quarantined("stuck", { quarantinedSyncCount: 2, quarantinedSyncReportedAt: 1_779_500_000 }),
+      0,
+    );
+    expect(warning?.items).toEqual([
+      expect.objectContaining({
+        source: "watch-quarantined",
+        text: "Apple Watch · 2 workouts could not be uploaded and will not retry.",
+        reportedAt: 1_779_500_000,
+      }),
+    ]);
+    expect(warning?.items[0]?.text).not.toMatch(/waiting to upload/);
+    // The generic fallback title, not "Uploads waiting" — nothing here is
+    // waiting for anything.
+    expect(warning?.title).toBe("Check Apple Watch uploads");
+  });
+
+  it("shows both a pending item and a quarantined item at once, distinctly", () => {
+    const warning = uploadWarningPresentation(
+      info("match", {
+        watchDisplay: "1.4.0 (57)",
+        syncStatus: "pending",
+        pendingSyncCount: 1,
+        quarantineStatus: "stuck",
+        quarantinedSyncCount: 1,
+      }),
+      0,
+    );
+    expect(warning?.items.map((item) => item.source)).toEqual(["watch", "watch-quarantined"]);
+    expect(warning?.items[0]?.text).toContain("waiting to upload");
+    expect(warning?.items[1]?.text).toContain("could not be uploaded and will not retry");
+  });
+
+  // #475 F13: the two QuarantineReason cases need different, true copy —
+  // conflating them told a "will not retry" user something false when the
+  // only thing wrong was gym wifi (or the reverse).
+  it("shows only the retrying item when every quarantined workout is still auto-retrying", () => {
+    const warning = uploadWarningPresentation(
+      quarantined("stuck", { quarantinedSyncCount: 2, quarantinedStuckSyncCount: 2 }),
+      0,
+    );
+    expect(warning?.items).toEqual([
+      expect.objectContaining({
+        source: "watch-quarantined-retrying",
+        text: "Apple Watch · 2 workouts having trouble uploading — retrying automatically.",
+      }),
+    ]);
+    expect(warning?.items[0]?.text).not.toMatch(/will not retry/);
+    expect(warning?.items[0]?.detail).toContain("No action needed");
+  });
+
+  it("splits into both a permanent item and a retrying item when the counts differ", () => {
+    const warning = uploadWarningPresentation(
+      quarantined("stuck", {
+        quarantinedSyncCount: 3,
+        quarantinedStuckSyncCount: 1,
+        quarantinedStuckSyncReportedAt: 1_779_600_000,
+      }),
+      0,
+    );
+    expect(warning?.items.map((item) => item.source)).toEqual([
+      "watch-quarantined",
+      "watch-quarantined-retrying",
+    ]);
+    // 3 total, 1 retrying -> 2 permanent, not 3.
+    expect(warning?.items[0]?.text).toBe(
+      "Apple Watch · 2 workouts could not be uploaded and will not retry.",
+    );
+    expect(warning?.items[1]?.text).toBe(
+      "Apple Watch · 1 workout having trouble uploading — retrying automatically.",
+    );
+    expect(warning?.items[1]?.reportedAt).toBe(1_779_600_000);
+  });
+
+  it("defaults an unknown breakdown to the cautious permanent framing, not silently to retrying", () => {
+    // An older watch build / plugin reports only the combined total — the
+    // subset is genuinely unknown, which must not read as "0 retrying".
+    const warning = uploadWarningPresentation(
+      quarantined("stuck", { quarantinedSyncCount: 4, quarantinedStuckSyncCount: undefined }),
+      0,
+    );
+    expect(warning?.items).toEqual([
+      expect.objectContaining({
+        source: "watch-quarantined",
+        text: "Apple Watch · 4 workouts could not be uploaded and will not retry.",
+      }),
+    ]);
   });
 });

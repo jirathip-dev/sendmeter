@@ -34,6 +34,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
 - Watch: fixed the live workout mirror silently freezing partway through a long session — the watch now notices its sign-in has gone stale and asks the phone for a fresh one instead of waiting on an app foreground or reachability change that may never come.
+- Watch: a same-tick Play/Stop (or ending a workout without tapping Stop) no longer logs a zero-length boulder attempt, and a single upload the server permanently rejects (or one that keeps failing for an unrecognized reason) no longer blocks every other watch workout behind it in the offline queue. History now shows a distinct notice on the phone when a watch workout could not be uploaded and will not retry, instead of going silent.
 
 ## 1.0 — 2026-08-02
 

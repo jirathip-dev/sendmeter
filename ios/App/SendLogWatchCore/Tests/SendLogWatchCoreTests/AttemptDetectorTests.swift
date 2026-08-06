@@ -323,6 +323,84 @@ final class AttemptDetectorTests: XCTestCase {
         XCTAssertEqual(attempts.filter { $0.source == .manual }.count, 1)
     }
 
+    // MARK: #475 — zero-duration invariant at the single emit boundary
+
+    /// Ingests `count` resting ticks and returns "now" for the caller to open
+    /// a manual attempt against a non-empty buffer without any tick elapsing
+    /// before the close.
+    @discardableResult
+    private func nonEmptyBuffer(_ d: AttemptDetector, count: Int = 5) -> Date {
+        for i in 0..<count {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        return start.addingTimeInterval(Double(count))
+    }
+
+    /// The named acceptance case: `beginManualAttempt` + `endManualAttempt`
+    /// with no intervening `ingest` on a non-empty buffer. Pre-#475 this
+    /// reached the caller as one attempt with `durationS == 0.0` — verified
+    /// failing before the `processedAttempts()` guard was added.
+    func testSameTickManualStopOnNonEmptyBufferRecordsNothing() {
+        let d = AttemptDetector(tunables: .default)
+        let now = nonEmptyBuffer(d)
+        d.beginManualAttempt(at: now)
+        d.endManualAttempt(at: now)
+        XCTAssertEqual(d.liveAttemptCount, 0)
+        XCTAssertEqual(d.finalize().count, 0)
+    }
+
+    /// `durationS > 0` as a property over all four paths that can emit an
+    /// attempt (manual stop, current stop, finalize() flush, assisted
+    /// close) — not a case test on just one of them. Opus's review measured
+    /// a third path rev 1 missed: Play, then End the Workout without ever
+    /// tapping Stop routes through `finalize()`'s direct flush of the open
+    /// manual phase, which had no duration guard of its own. Pre-#475, the
+    /// `.manualStop`, `.currentStop` and `.finalizeFlush` branches below
+    /// each produced a `durationS == 0.0` attempt and failed the assertion;
+    /// `.assistedClose` cannot go below `assistedManualMinS` (12s) by
+    /// construction and is included to prove the guard doesn't reject a
+    /// legitimate attempt.
+    func testPositiveDurationInvariantHoldsAcrossAllFourEmissionPaths() {
+        enum Closer: String, CaseIterable {
+            case manualStop, currentStop, finalizeFlush, assistedClose
+        }
+        for closer in Closer.allCases {
+            let d = AttemptDetector(tunables: .default)
+            let now = nonEmptyBuffer(d)
+            d.beginManualAttempt(at: now)
+            let attempts: [Attempt]
+            switch closer {
+            case .manualStop:
+                d.endManualAttempt(at: now)
+                attempts = d.finalize()
+            case .currentStop:
+                d.endCurrentAttempt(at: now)
+                attempts = d.finalize()
+            case .finalizeFlush:
+                // Play, then End Workout without tapping Stop.
+                attempts = d.finalize()
+            case .assistedClose:
+                for i in 5..<25 {
+                    d.ingest(
+                        MotionSample(t: Double(i), altitude: Double(i - 5) * 0.1, motionRMS: 0.15, hr: 130),
+                        at: start.addingTimeInterval(Double(i))
+                    )
+                }
+                for i in 25..<38 {
+                    d.ingest(
+                        MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 100),
+                        at: start.addingTimeInterval(Double(i))
+                    )
+                }
+                XCTAssertFalse(d.isManualAttemptOpen, "\(closer) should have auto-closed via the assisted path")
+                attempts = d.finalize()
+            }
+            for a in attempts {
+                XCTAssertGreaterThan(a.durationS, 0, "\(closer) emitted a non-positive-duration attempt")
+            }
+        }
+    }
+
     func testPredictRPEBounds() {
         let rpe = AttemptDetector.predictRPE(attempts: [], avgHR: nil, durationS: 3600, tunables: .default)
         XCTAssertGreaterThanOrEqual(rpe, 1)

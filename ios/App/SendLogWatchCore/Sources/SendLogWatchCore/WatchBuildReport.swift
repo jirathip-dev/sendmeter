@@ -85,6 +85,35 @@ public enum WatchSyncStatus: String, Sendable, Equatable {
     case backedUp = "backed-up"
 }
 
+/// What the account sheet should say about the watch's quarantined uploads
+/// (#475 F1) — bundles a permanent DB rejection or a bounded run of failed
+/// retries took OFF the ORDINARY drain path. Deliberately not a case of
+/// `WatchSyncStatus`: a quarantined item is not "pending" or "backed up" —
+/// it needs a different fact told about it, and (#475 F12/F13) not even the
+/// SAME fact for every quarantined item: `.schemaRejection` truly will
+/// never sync on its own, but `.stuckRetrying` gets one more automatic
+/// attempt after a long backoff. This coarse status only says whether
+/// anything is quarantined at all; `quarantinedStuckSync`
+/// (`WatchBuildReport.quarantinedStuckSyncKey`) carries the breakdown for
+/// callers that need to say which. Same honest-states rule: a watch that
+/// never reported a count is distinct from one that reported zero.
+public enum WatchQuarantineStatus: String, Sendable, Equatable {
+    /// No watch paired, or a device that can't have one (iPad).
+    case notPaired = "not-paired"
+    /// Watch paired, Sendmeter not installed on it.
+    case appNotInstalled = "app-not-installed"
+    /// Watch app installed but has never reported a quarantine count to this
+    /// phone install — nothing is known, which is NOT the same as none.
+    case notReported = "not-reported"
+    /// WCSession hasn't activated yet — "can't tell", not "fine".
+    case unknown
+    /// Reported zero quarantined items: nothing is off the drain path.
+    case none
+    /// At least one item is off the ordinary drain path — see
+    /// `quarantinedStuckSync` for whether any of it will actually retry.
+    case stuck
+}
+
 /// Pairing facts as WatchConnectivity reports them on the phone. `paired` /
 /// `appInstalled` are only meaningful once the session has activated, which
 /// is why activation is carried alongside them rather than collapsed away.
@@ -113,16 +142,35 @@ public enum WatchBuildReport {
     /// same telemetry channel as the build, so a stuck queue is visible from
     /// the phone without picking the watch up.
     public static let pendingSyncKey = "watch_pending_sync"
+    /// Count of items the watch has quarantined (#475 F1) — off the drain
+    /// path, on the SAME channel and the SAME honest-states rules as
+    /// `pendingSyncKey`, but deliberately a separate key: folding this into
+    /// `pendingSyncKey` would tell the user a quarantined item is "waiting
+    /// to upload", which the CLAUDE.md #264 rule forbids for anything that
+    /// isn't actually queued to sync right now. This is the TOTAL across
+    /// both `QuarantineReason` cases.
+    public static let quarantinedSyncKey = "watch_quarantined_sync"
+    /// Subset of `quarantinedSyncKey` whose reason is `.stuckRetrying`
+    /// (#475 F13) — items that WILL be automatically re-attempted after a
+    /// backoff (`QueueRetryPolicy.stuckRetryBackoffS`), as opposed to the
+    /// `.schemaRejection` remainder (`quarantinedSyncKey` minus this key),
+    /// which is proven permanent. Reported separately because the two cases
+    /// need different, non-interchangeable copy on the phone — telling a
+    /// user their data "will not retry" when it actually will (or the
+    /// reverse) is worse than saying nothing distinguishing at all.
+    public static let quarantinedStuckSyncKey = "watch_quarantined_stuck_sync"
 
     /// Adds the report fields to an outgoing watch→phone message. Anything
     /// unknown is simply left off — reporting is observability, so it must
-    /// never be able to break the message it rides on, and the two facts are
+    /// never be able to break the message it rides on, and the facts are
     /// independent (a build with no queue reading still identifies the
     /// sender). A negative count is treated as no reading at all.
     public static func stamped(
         _ message: [String: Any],
         with identity: BuildIdentity?,
-        pendingSync: Int? = nil
+        pendingSync: Int? = nil,
+        quarantinedSync: Int? = nil,
+        quarantinedStuckSync: Int? = nil
     ) -> [String: Any] {
         var out = message
         if let identity {
@@ -131,6 +179,12 @@ public enum WatchBuildReport {
         }
         if let pendingSync, pendingSync >= 0 {
             out[pendingSyncKey] = pendingSync
+        }
+        if let quarantinedSync, quarantinedSync >= 0 {
+            out[quarantinedSyncKey] = quarantinedSync
+        }
+        if let quarantinedStuckSync, quarantinedStuckSync >= 0 {
+            out[quarantinedStuckSyncKey] = quarantinedStuckSync
         }
         return out
     }
@@ -143,22 +197,44 @@ public enum WatchBuildReport {
         )
     }
 
-    /// Pulls the reported queue depth back out on the phone side. nil when the
-    /// message carries no reading (an older watch build, or a watch that has
-    /// not counted its queues yet) — "we don't know" must stay distinguishable
-    /// from "the queue is empty". WatchConnectivity round-trips the number as
-    /// whatever `NSNumber` fits it, hence the widening reads.
-    public static func pendingSync(in message: [String: Any]) -> Int? {
+    /// Reads a non-negative count from `key`, widening `Double` (WatchConnectivity
+    /// round-trips numbers as whatever `NSNumber` fits them) and refusing a
+    /// negative value the same way `stamped` refuses to write one.
+    private static func nonNegativeCount(_ key: String, in message: [String: Any]) -> Int? {
         let raw: Int?
-        if let i = message[pendingSyncKey] as? Int {
+        if let i = message[key] as? Int {
             raw = i
-        } else if let n = message[pendingSyncKey] as? Double {
+        } else if let n = message[key] as? Double {
             raw = Int(n)
         } else {
             raw = nil
         }
         guard let raw, raw >= 0 else { return nil }
         return raw
+    }
+
+    /// Pulls the reported queue depth back out on the phone side. nil when the
+    /// message carries no reading (an older watch build, or a watch that has
+    /// not counted its queues yet) — "we don't know" must stay distinguishable
+    /// from "the queue is empty".
+    public static func pendingSync(in message: [String: Any]) -> Int? {
+        nonNegativeCount(pendingSyncKey, in: message)
+    }
+
+    /// Pulls the reported quarantine count back out on the phone side, on the
+    /// same "unknown vs zero" terms as `pendingSync`.
+    public static func quarantinedSync(in message: [String: Any]) -> Int? {
+        nonNegativeCount(quarantinedSyncKey, in: message)
+    }
+
+    /// Pulls the reported `.stuckRetrying` SUBSET back out on the phone
+    /// side, same terms. Absent on an older watch build that reports only
+    /// the combined total — callers should treat that as "breakdown
+    /// unknown", not zero (see `watchBuild.ts`'s presentation logic, which
+    /// defaults an unknown breakdown to the more cautious "permanent"
+    /// framing rather than silently downgrading to "retrying").
+    public static func quarantinedStuckSync(in message: [String: Any]) -> Int? {
+        nonNegativeCount(quarantinedStuckSyncKey, in: message)
     }
 
     /// Drops the report fields before the payload is forwarded to the WebView —
@@ -168,6 +244,8 @@ public enum WatchBuildReport {
         out.removeValue(forKey: versionKey)
         out.removeValue(forKey: buildKey)
         out.removeValue(forKey: pendingSyncKey)
+        out.removeValue(forKey: quarantinedSyncKey)
+        out.removeValue(forKey: quarantinedStuckSyncKey)
         return out
     }
 
@@ -218,5 +296,31 @@ public enum WatchBuildReport {
     public static func isPendingSyncStale(reportedAt: Double?, now: Double) -> Bool {
         guard let reportedAt, reportedAt > 0 else { return false }
         return now - reportedAt > pendingSyncStaleAfterS
+    }
+
+    /// #475 F1: no staleness concept here (unlike `syncStatus`) — a
+    /// quarantined item does not resolve itself the way a pending upload
+    /// drains on its own; nothing on the watch removes a `.quarantine` file
+    /// except the F12 backoff resurrection (`.stuckRetrying` only, and even
+    /// then it re-quarantines rather than vanishing unless the retry
+    /// actually succeeds), so the count is monotonically non-decreasing
+    /// between reports UNDER NORMAL OPERATION. "Stale" would wrongly imply
+    /// it might have improved on its own, which it structurally can't.
+    /// **Known hole (#475 F14), not fixed here:** deleting and reinstalling
+    /// the watch app wipes its Documents directory, so the TRUE count drops
+    /// to zero, but the phone keeps showing its last nonzero report until
+    /// the watch sends a new one — a reinstalled watch reads as still stuck
+    /// for a while. Worth a real fix if `.stuckRetrying` grows a purge path
+    /// beyond F12's backoff.
+    public static func quarantineStatus(
+        quarantinedSync: Int?,
+        pairing: WatchPairing
+    ) -> WatchQuarantineStatus {
+        guard pairing.supported else { return .notPaired }
+        guard pairing.activated else { return .unknown }
+        guard pairing.paired else { return .notPaired }
+        guard pairing.appInstalled else { return .appNotInstalled }
+        guard let quarantinedSync, quarantinedSync >= 0 else { return .notReported }
+        return quarantinedSync == 0 ? .none : .stuck
     }
 }
