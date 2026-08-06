@@ -8,7 +8,7 @@ import {
   updateRoutinePreset,
 } from "../lib/repo";
 import { today } from "../lib/dates";
-import { expandRoutine, routineDurationS } from "../lib/routine";
+import { ROUTINE_PREPARE_S, expandRoutine, routineDurationS } from "../lib/routine";
 import { restoreAt } from "../lib/restoreAt";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
 import {
@@ -17,6 +17,7 @@ import {
   partialMinutes,
   resolveRoutineResume,
   shouldLog,
+  type RoutineLogOutcome,
   type RoutineRunState,
 } from "../lib/routineRun";
 import type { PhaseId, RoutinePreset, RoutineStep } from "../types";
@@ -41,7 +42,11 @@ const EXAMPLE_ROUTINE: Omit<RoutinePreset, "id"> = {
 };
 
 function fmtTotal(steps: RoutineStep[]): string {
-  const total = routineDurationS(expandRoutine(steps));
+  // Must expand with the same prepareS as RoutineFullscreen / routineRun's
+  // resume math (routine.ts's ROUTINE_PREPARE_S doc comment) — omitting it
+  // here made the card advertise "9m" for a routine the timer runs as
+  // "9m05s" (#483 review F7).
+  const total = routineDurationS(expandRoutine(steps, { prepareS: ROUTINE_PREPARE_S }));
   const m = Math.floor(total / 60);
   const s = total % 60;
   return s === 0 ? `${m}m` : `${m}m${s}s`;
@@ -103,21 +108,37 @@ export default function RoutineCard({
       .then((list) => {
         if (!alive) return;
         setPresets(list);
-        // Auto-resume an interrupted run if its preset still exists AND the
-        // run isn't abandoned (#483: wall-clock elapsed already past the
-        // routine's total means nobody was there to finish it) — otherwise
-        // default-select the first preset and drop the stale run.
-        const resumePresetId = resolveRoutineResume(resumeRun, list, Date.now());
-        if (resumePresetId) {
-          setSelectedId(resumePresetId);
-          // Auto-resume is deliberately NOT guarded (#222): a routine that was
-          // already in progress must come back, blocked-state or not.
-          setRunningState(true);
-        } else {
-          setSelectedId(list[0]?.id ?? null);
-          if (resumeRun) {
+        // Decide what to do with a persisted run (#483): resume it if it's
+        // genuinely still in progress; otherwise resolveRoutineResume has
+        // already classified it as completed/partial/discarded using the
+        // lastSeenMs heartbeat (F1/F3/F5) rather than raw wall clock, which
+        // is what let an abandoned run silently discard a genuinely-finished
+        // one, or resume-then-instantly-finish with a fabricated duration.
+        const outcome = resolveRoutineResume(resumeRun, list, Date.now());
+        switch (outcome.kind) {
+          case "resume":
+            setSelectedId(outcome.presetId);
+            // Auto-resume is deliberately NOT guarded (#222): a routine that
+            // was already in progress must come back, blocked-state or not.
+            setRunningState(true);
+            break;
+          case "none":
+            setSelectedId(list[0]?.id ?? null);
+            if (resumeRun) {
+              clearRoutineRun();
+              setResumeRun(null);
+            }
+            break;
+          default: {
+            // "completed" | "partial" | "discarded" — never resume the UI
+            // here: the wall clock across the gap that produced this
+            // classification isn't trusted, only what the heartbeat
+            // confirmed (already baked into outcome.durationMin).
+            setSelectedId(list[0]?.id ?? null);
             clearRoutineRun();
             setResumeRun(null);
+            const presetName = list.find((p) => p.id === outcome.presetId)?.name ?? "Routine";
+            applyLogOutcome(outcome, presetName);
           }
         }
       })
@@ -167,6 +188,28 @@ export default function RoutineCard({
         automatic: true,
       });
       setError(e instanceof Error ? e.message : "Failed to log routine");
+    }
+  }
+
+  /// Applies a RoutineLogOutcome (#483 review F1/F3/F5) — shared by the
+  /// mount-time resume decision (resolveRoutineResume) and RoutineFullscreen's
+  /// onStaleFinish, so both a stale-persisted-record read and a live
+  /// suspended-then-resumed WebView are handled identically. A "discarded"
+  /// outcome MUST stay visible — a run the user actually did, however
+  /// briefly, disappearing with no toast is the exact silent-loss bug this
+  /// fix exists to stop (#483 review, F1's "today's silent discard is the
+  /// worst of the three options").
+  function applyLogOutcome(outcome: RoutineLogOutcome, presetName: string) {
+    switch (outcome.kind) {
+      case "completed":
+        void logRoutine(outcome.durationMin, `${presetName} (auto-logged)`);
+        return;
+      case "partial":
+        void logRoutine(outcome.durationMin, `${presetName} (partial, interrupted)`, true);
+        return;
+      case "discarded":
+        toast("Interrupted routine discarded — too short to log", "info");
+        return;
     }
   }
 
@@ -547,6 +590,14 @@ export default function RoutineCard({
             // ACWR and shows in History. RPE defaults; edit in History.
             setResumeRun(null);
             void logRoutine(durationMin, selected.name);
+          }}
+          onStaleFinish={(outcome) => {
+            // `done` flipped after a long, unobserved gap (#483 review F3) —
+            // nobody was there to see it finish, so close immediately rather
+            // than lingering on a "Complete" screen with no one to tap Done.
+            setResumeRun(null);
+            setRunningState(false);
+            applyLogOutcome(outcome, selected.name);
           }}
         />
       )}

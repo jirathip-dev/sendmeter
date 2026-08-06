@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  classifyElapsed,
   clearRoutineRun,
   elapsedS,
   isAbandoned,
   loadRoutineRun,
   loggedMinutes,
   partialMinutes,
+  realElapsedS,
   resolveRoutineResume,
   saveRoutineRun,
   shouldLog,
@@ -19,6 +21,9 @@ const base: RoutineRunState = {
   skippedS: 0,
   pausedAtMs: null,
   pausedTotalMs: 0,
+  // "Just seen at start" — a sensible default for tests that aren't
+  // exercising staleness/heartbeat behavior specifically.
+  lastSeenMs: 1_000_000,
 };
 
 describe("elapsedS", () => {
@@ -45,6 +50,25 @@ describe("elapsedS", () => {
     // paused at 20s, resumed after a 10s pause, then 5s more → 25s
     const s = { ...base, pausedTotalMs: 10_000 };
     expect(elapsedS(s, 1_000_000 + 35_000)).toBe(25);
+  });
+});
+
+describe("realElapsedS", () => {
+  /// #483 review F4: RoutineFullscreen fast-forwards `elapsed` (and thus
+  /// position/done) by `skippedS` on purpose so Skip can reach the end
+  /// sooner — but a LOGGED duration must reflect real seconds spent, not
+  /// fast-forwarded ones. realElapsedS is elapsedS's real-time counterpart:
+  /// same formula, no `+ skippedS` term.
+  it("excludes skipped seconds unlike elapsedS", () => {
+    const s = { ...base, skippedS: 500 };
+    const nowMs = base.startedMs + 30_000;
+    expect(elapsedS(s, nowMs)).toBe(530); // position: real 30s + 500 skipped
+    expect(realElapsedS(s, nowMs)).toBe(30); // duration to log: real 30s only
+  });
+
+  it("still freezes while paused and subtracts pause time, same as elapsedS", () => {
+    const s = { ...base, pausedAtMs: base.startedMs + 20_000, pausedTotalMs: 5_000, skippedS: 100 };
+    expect(realElapsedS(s, base.startedMs + 999_000)).toBe(15); // (20s - 5s paused)
   });
 });
 
@@ -80,6 +104,19 @@ describe("partialMinutes", () => {
     expect(partialMinutes(0)).toBe(1);
     expect(partialMinutes(-30)).toBe(1);
   });
+
+  /// #483 review F6: the function's own comment claims the clamp "must hold
+  /// no matter what elapsed value a caller passes in", and the test above is
+  /// named "never past it" — but before this fix, `Math.min(600,
+  /// Math.max(1, Math.round(NaN / 60)))` is `NaN` (Math.max/min propagate a
+  /// NaN argument), which is neither 1..600 nor anything insertSession could
+  /// safely receive. This test fails on the pre-F6 implementation with
+  /// `expected NaN to be 1` — a real assertion, not a missing symbol.
+  it("never returns NaN, even for a non-finite elapsed", () => {
+    expect(partialMinutes(NaN)).toBe(1);
+    expect(partialMinutes(Infinity)).toBe(600);
+    expect(partialMinutes(-Infinity)).toBe(1);
+  });
 });
 
 describe("loggedMinutes", () => {
@@ -113,15 +150,11 @@ describe("loggedMinutes", () => {
 });
 
 /// #483: refusing an abandoned run, without dropping a genuinely in-progress
-/// or paused one.
+/// or paused one. `isAbandoned` alone is necessary but not sufficient — see
+/// `resolveRoutineResume` below for how the review's F1/F5 findings against
+/// this predicate on its own are actually closed.
 describe("isAbandoned", () => {
-  const run: RoutineRunState = {
-    presetId: "p1",
-    startedMs: 1_000_000,
-    skippedS: 0,
-    pausedAtMs: null,
-    pausedTotalMs: 0,
-  };
+  const run: RoutineRunState = { ...base };
   const totalS = 9 * 60; // 9-minute preset, matching the issue's example
 
   it("is not abandoned while genuinely in progress", () => {
@@ -144,23 +177,35 @@ describe("isAbandoned", () => {
   });
 });
 
-/// #483: the actual RoutineCard mount decision. Before this fix, the mount
-/// effect's condition was `resumeRun && list.some((p) => p.id === resumeRun.presetId)`
-/// — no elapsed/total check at all, reproduced below (byte-for-byte, as the
-/// old inline expression) to prove it would resume an abandoned run. That
-/// unconditional resume is exactly what fed a stale `startedMs` into
-/// RoutineFullscreen, made `done` true on the very first render, and fired
-/// `onFinish` with no user present.
+describe("classifyElapsed", () => {
+  const totalS = 9 * 60; // 540s
+
+  it("counts elapsed at (or within margin of) the total as completed", () => {
+    expect(classifyElapsed(540, totalS)).toEqual({ kind: "completed", durationMin: 9 });
+    expect(classifyElapsed(533, totalS)).toEqual({ kind: "completed", durationMin: 9 }); // within the 10s margin
+  });
+
+  it("counts a shorter, still-substantial elapsed as partial", () => {
+    expect(classifyElapsed(120, totalS)).toEqual({ kind: "partial", durationMin: 2 });
+  });
+
+  it("discards anything under the shouldLog bar", () => {
+    expect(classifyElapsed(30, totalS)).toEqual({ kind: "discarded" });
+    expect(classifyElapsed(0, totalS)).toEqual({ kind: "discarded" });
+  });
+});
+
+/// #483 review: the actual RoutineCard mount decision. Before this fix, the
+/// mount effect's condition was `resumeRun && list.some((p) => p.id ===
+/// resumeRun.presetId)` — no elapsed/total check at all, reproduced below
+/// (byte-for-byte, as the old inline expression) to prove it would resume an
+/// abandoned run. That unconditional resume is exactly what fed a stale
+/// `startedMs` into RoutineFullscreen, made `done` true on the very first
+/// render, and fired `onFinish` with no user present.
 describe("resolveRoutineResume", () => {
-  const steps: RoutineStep[] = [{ label: "Warm up", s: 9 * 60 }]; // 9-minute preset
+  const steps: RoutineStep[] = [{ label: "Warm up", s: 9 * 60 }]; // 9-minute preset, TOTAL_S = 540
   const presets = [{ id: "p1", steps }];
-  const run: RoutineRunState = {
-    presetId: "p1",
-    startedMs: 1_000_000,
-    skippedS: 0,
-    pausedAtMs: null,
-    pausedTotalMs: 0,
-  };
+  const totalS = 9 * 60;
 
   /// Pre-#483 RoutineCard.tsx:107, reproduced verbatim as a local predicate.
   function preFixWouldResume(r: RoutineRunState | null, list: { id: string }[]): boolean {
@@ -168,33 +213,94 @@ describe("resolveRoutineResume", () => {
   }
 
   it("no run persisted → nothing to resume", () => {
-    expect(resolveRoutineResume(null, presets, run.startedMs)).toBeNull();
+    expect(resolveRoutineResume(null, presets, base.startedMs)).toEqual({ kind: "none" });
   });
 
-  it("preset was deleted → discarded, not resumed (unchanged behavior)", () => {
-    expect(resolveRoutineResume(run, [], run.startedMs)).toBeNull();
+  it("preset was deleted → discarded silently, not resumed (unchanged behavior)", () => {
+    expect(resolveRoutineResume(base, [], base.startedMs)).toEqual({ kind: "none" });
   });
 
   it("genuinely in-progress run resumes", () => {
-    const nowMs = run.startedMs + 2 * 60 * 1000; // 2 minutes into a 9-minute preset
+    const run: RoutineRunState = { ...base, lastSeenMs: base.startedMs + 119_000 };
+    const nowMs = base.startedMs + 2 * 60 * 1000; // 2 minutes into a 9-minute preset, heartbeat 1s old
     expect(preFixWouldResume(run, presets)).toBe(true); // old code also resumed here — fine
-    expect(resolveRoutineResume(run, presets, nowMs)).toBe("p1");
+    expect(resolveRoutineResume(run, presets, nowMs)).toEqual({ kind: "resume", presetId: "p1" });
   });
 
   it("a paused run resumes even read back hours later (must not regress)", () => {
-    const paused: RoutineRunState = { ...run, pausedAtMs: run.startedMs + 60_000 };
-    const nowMs = run.startedMs + 5 * 60 * 60 * 1000; // read back 5h later
-    expect(resolveRoutineResume(paused, presets, nowMs)).toBe("p1");
+    const paused: RoutineRunState = { ...base, pausedAtMs: base.startedMs + 60_000 };
+    const nowMs = base.startedMs + 5 * 60 * 60 * 1000; // read back 5h later
+    expect(resolveRoutineResume(paused, presets, nowMs)).toEqual({ kind: "resume", presetId: "p1" });
   });
 
-  it("an abandoned run (reopened 2h after a 9-minute preset) is discarded, not resumed", () => {
-    const nowMs = run.startedMs + 2 * 60 * 60 * 1000;
-    // The bug: the old inline condition has no time check at all, so it
-    // would have resumed this run unconditionally — which is exactly what
-    // let a stale `startedMs` reach RoutineFullscreen already `done`.
+  /// #483 review F1 (HIGH): a genuinely COMPLETED routine, reclaimed right at
+  /// the end, must not be silently discarded — the pre-review fix's
+  /// `isAbandoned` predicate could not tell this apart from "abandoned at
+  /// minute 2", both reading `elapsed >= totalS`. Reproduces the reviewer's
+  /// own numbers: reclaimed 1s before the 540s total (last heartbeat ~537s
+  /// in), reopened 30s later.
+  it("a run present through (near) the end, reopened shortly after, logs as completed — not discarded (F1)", () => {
+    const run: RoutineRunState = { ...base, lastSeenMs: base.startedMs + 537_000 };
+    const nowMs = base.startedMs + 575_000; // reclaimed near t=539s, reopened 30s later
+    // Pre-review-round fix: isAbandoned(run, totalS, nowMs) is true, and the
+    // implementer's fix discarded unconditionally here — nothing logged.
+    expect(isAbandoned(run, totalS, nowMs)).toBe(true);
+    expect(resolveRoutineResume(run, presets, nowMs)).toEqual({
+      kind: "completed",
+      durationMin: 9,
+      presetId: "p1",
+    });
+  });
+
+  /// #483 review F5 (MED): a run truly abandoned partway through must not
+  /// resume just because wall clock hasn't technically crossed the total yet
+  /// — reopening at totalS-1s previously resumed and would log the routine's
+  /// full nominal duration one tick later. Reproduces the reviewer's exact
+  /// scenario: abandoned at minute 2 (last heartbeat there), reopened at
+  /// totalS - 1s.
+  it("a run abandoned partway through, reopened just under the total, is NOT resumed — logs the real partial instead (F5)", () => {
+    const run: RoutineRunState = { ...base, lastSeenMs: base.startedMs + 120_000 };
+    const nowMs = base.startedMs + (totalS - 1) * 1000; // 8:59 after start
+    // The pre-review-round fix's isAbandoned check alone says "still in
+    // progress" here (elapsed < totalS) — this is exactly the residual bug
+    // F5 named: it would have resumed, then logged 9 minutes one tick later.
+    expect(isAbandoned(run, totalS, nowMs)).toBe(false);
+    const outcome = resolveRoutineResume(run, presets, nowMs);
+    expect(outcome.kind).not.toBe("resume");
+    expect(outcome).toEqual({ kind: "partial", durationMin: 2, presetId: "p1" });
+  });
+
+  it("a run barely touched before going stale is discarded, not resumed or logged (visibly, by the caller)", () => {
+    const run: RoutineRunState = { ...base, lastSeenMs: base.startedMs + 5_000 };
+    const nowMs = base.startedMs + 2 * 60 * 60 * 1000; // 2h later, only 5s ever confirmed
+    expect(resolveRoutineResume(run, presets, nowMs)).toEqual({ kind: "discarded", presetId: "p1" });
+  });
+
+  it("an abandoned run (reopened 2h after a 9-minute preset, no heartbeat since minute 2) logs the confirmed partial, not the full total", () => {
+    const run: RoutineRunState = { ...base, lastSeenMs: base.startedMs + 120_000 };
+    const nowMs = base.startedMs + 2 * 60 * 60 * 1000;
+    // The bug: the pre-#483 inline condition has no time check at all, so it
+    // would have resumed this run unconditionally.
     expect(preFixWouldResume(run, presets)).toBe(true);
-    // The fix: resolveRoutineResume additionally rejects it as abandoned.
-    expect(resolveRoutineResume(run, presets, nowMs)).toBeNull();
+    expect(resolveRoutineResume(run, presets, nowMs)).toEqual({
+      kind: "partial",
+      durationMin: 2,
+      presetId: "p1",
+    });
+  });
+
+  /// #483 review F4: Skip must not inflate what a stale/abandoned run logs.
+  it("a heartbeat's skippedS is not credited when logging a stale run's partial (F4)", () => {
+    // Real time seen: 30s. Skip fast-forwarded position by 400s at that same
+    // instant (so elapsedS would read 430s — past the "partial" cutoff —
+    // while realElapsedS correctly reads 30s).
+    const run: RoutineRunState = { ...base, skippedS: 400, lastSeenMs: base.startedMs + 30_000 };
+    const nowMs = base.startedMs + 2 * 60 * 60 * 1000;
+    const outcome = resolveRoutineResume(run, presets, nowMs);
+    // If skippedS were (wrongly) credited, elapsedS(run, lastSeenMs) = 430s,
+    // which clears the completed-margin (530s) only barely-not, but clears
+    // "partial" heavily inflated vs. the true 30s actually spent.
+    expect(outcome).toEqual({ kind: "discarded", presetId: "p1" });
   });
 });
 
@@ -214,6 +320,7 @@ function fakeStorage() {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 /// The auto-resume path RoutineCard runs on mount (SL-97). #222 added a guard
@@ -228,6 +335,7 @@ describe("routine run persistence (auto-resume)", () => {
       skippedS: 12,
       pausedAtMs: 1_020_000,
       pausedTotalMs: 5_000,
+      lastSeenMs: 1_015_000,
     };
     saveRoutineRun(run);
     expect(loadRoutineRun()).toEqual(run);
@@ -239,7 +347,24 @@ describe("routine run persistence (auto-resume)", () => {
     expect(loadRoutineRun()).toBeNull();
   });
 
-  it("defaults the optional clock fields so a partial record still resumes", () => {
+  /// #483 review F1/F3/F5: a record written before `lastSeenMs` existed has
+  /// no heartbeat history — defaulting it to something ancient (e.g.
+  /// `startedMs`) would misclassify a genuinely in-progress legacy run as
+  /// stale on the one reload that crosses the deploy introducing this field.
+  /// loadRoutineRun defaults it to "just seen now" instead.
+  it("defaults a missing lastSeenMs to now, not to startedMs or another stale value", () => {
+    vi.useFakeTimers();
+    const fixedNow = 1_500_000;
+    vi.setSystemTime(fixedNow);
+    const { storage, map } = fakeStorage();
+    vi.stubGlobal("localStorage", storage);
+    map.set("sendmeter:routine-run", JSON.stringify({ presetId: "p1", startedMs: 1_000_000 }));
+    expect(loadRoutineRun()).toEqual({ ...base, lastSeenMs: fixedNow });
+  });
+
+  it("defaults the other optional clock fields so a partial record still resumes", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(base.startedMs); // so the lastSeenMs default matches `base` exactly
     const { storage, map } = fakeStorage();
     vi.stubGlobal("localStorage", storage);
     map.set("sendmeter:routine-run", JSON.stringify({ presetId: "p1", startedMs: 1_000_000 }));
@@ -280,7 +405,7 @@ describe("routine run persistence (auto-resume)", () => {
     expect(loadRoutineRun()).toBeNull();
   });
 
-  it("a resumed run's elapsed time still drives the ≥60s partial-log decision", () => {
+  it("a resumed run's elapsed time still drives the ≥60s partial-log threshold", () => {
     const { storage } = fakeStorage();
     vi.stubGlobal("localStorage", storage);
     saveRoutineRun({ ...base, pausedTotalMs: 5_000 });

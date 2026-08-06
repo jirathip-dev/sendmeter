@@ -3,9 +3,13 @@ import { createPortal } from "react-dom";
 import { ROUTINE_TIMER_FONT, heroFontCss } from "../lib/fullscreenLayout";
 import { ROUTINE_PREPARE_S, expandRoutine, routineDurationS } from "../lib/routine";
 import {
+  HEARTBEAT_MS,
+  STALE_GAP_S,
+  classifyElapsed,
   clearRoutineRun,
   loggedMinutes,
   saveRoutineRun,
+  type RoutineLogOutcome,
   type RoutineRunState,
 } from "../lib/routineRun";
 import type { RoutineStep } from "../types";
@@ -26,9 +30,18 @@ interface Props {
   /// partial session. Passes the routine seconds elapsed at exit (SL-97).
   onExitEarly: (elapsedS: number) => void;
   /// Fired once when the routine completes (Done) — the owner logs it to
-  /// History (SL-83). Routine minutes elapsed (pauses excluded, capped at
-  /// the routine's own total — #483: never wall clock since start).
+  /// History (SL-83). Routine minutes elapsed (pauses AND skips excluded,
+  /// capped at the routine's own total — #483: never wall clock since start,
+  /// and never fast-forwarded time — see F4 in the #483 review).
   onFinish?: (durationMin: number) => void;
+  /// Fired INSTEAD of onFinish when `done` flips true after a long,
+  /// unobserved gap — the interval resumed (JS execution was suspended, not
+  /// reloaded, so RoutineCard's mount-time resume/abandonment check never
+  /// ran) and nobody was present to see it actually finish (#483 review F3).
+  /// The owner classifies via the same completed/partial/discarded logic as
+  /// the mount-time resume decision and should always close the fullscreen —
+  /// there's nobody there to see "All done" or tap the manual Done button.
+  onStaleFinish?: (outcome: RoutineLogOutcome) => void;
 }
 
 function fmt(sec: number): string {
@@ -48,6 +61,7 @@ export default function RoutineFullscreen({
   onClose,
   onExitEarly,
   onFinish,
+  onStaleFinish,
 }: Props) {
   const SEGS = expandRoutine(steps, { prepareS: ROUTINE_PREPARE_S });
   const TOTAL_S = routineDurationS(SEGS);
@@ -72,24 +86,54 @@ export default function RoutineFullscreen({
   const paused = pausedAtMs !== null;
   const elapsed =
     ((pausedAtMs ?? now) - startedMs - pausedTotalMs) / 1000 + skippedS;
+  // Real seconds actually spent — `elapsed` above includes skippedS on
+  // purpose (it drives segment position / the done flag below, and Skip must
+  // be able to fast-forward to completion); a LOGGED duration must not
+  // inherit that fast-forwarded credit (#483 review F4).
+  const realElapsed = ((pausedAtMs ?? now) - startedMs - pausedTotalMs) / 1000;
   const done = elapsed >= TOTAL_S;
 
-  // Persist the running clock (SL-97) so a refresh / relaunch resumes it. Only
-  // while genuinely in progress — the finish + close paths clear the key.
+  // Last confirmed-on-screen-and-ticking instant (#483 review F1/F3/F5) —
+  // seeded from a resumed run's own heartbeat, else "just started".
+  const lastSeenRef = useRef(initial?.lastSeenMs ?? startedMs);
+
+  // Persist the running clock (SL-97) so a refresh / relaunch resumes it, and
+  // stamp the current heartbeat into the same record. Only while genuinely in
+  // progress — the finish + close paths clear the key. Fires immediately on
+  // structural changes (pause/resume, skip); cheap and infrequent.
   useEffect(() => {
     if (done) return;
-    saveRoutineRun({ presetId, startedMs, skippedS, pausedAtMs, pausedTotalMs });
+    saveRoutineRun({
+      presetId,
+      startedMs,
+      skippedS,
+      pausedAtMs,
+      pausedTotalMs,
+      lastSeenMs: lastSeenRef.current,
+    });
   }, [done, presetId, startedMs, skippedS, pausedAtMs, pausedTotalMs]);
+
+  // Heartbeat (#483 review F1/F3/F5): advances lastSeenMs and re-persists
+  // every ~HEARTBEAT_MS while genuinely ticking (not paused, not done) —
+  // throttled off the existing 250ms tick via a ref rather than its own
+  // interval, so a live run doesn't hit localStorage 4x/second.
+  useEffect(() => {
+    if (done || paused) return;
+    if (now - lastSeenRef.current < HEARTBEAT_MS) return;
+    lastSeenRef.current = now;
+    saveRoutineRun({ presetId, startedMs, skippedS, pausedAtMs, pausedTotalMs, lastSeenMs: now });
+  }, [now, done, paused, presetId, startedMs, skippedS, pausedAtMs, pausedTotalMs]);
 
   // X button: log a partial session if it ran long enough (owner decides),
   // else just close. The Done button (post-completion) uses onClose directly —
-  // onFinish already logged the full session.
+  // onFinish already logged the full session. Uses realElapsed, not elapsed,
+  // so a run exited early after some Skips isn't over-credited (#483 F4).
   function handleClose() {
     clearRoutineRun();
     if (done) {
       onClose();
     } else {
-      onExitEarly(elapsed);
+      onExitEarly(realElapsed);
     }
   }
 
@@ -107,16 +151,29 @@ export default function RoutineFullscreen({
   const next = SEGS[segIndex + 1];
   const stepCount = steps.length;
 
-  // Log exactly once on completion — routine minutes, capped at TOTAL_S so a
-  // run left mounted (or resumed) well past its own total never reports more
-  // than the routine could actually have taken (#483).
+  // Log exactly once on completion — real routine minutes (skip-exclusive,
+  // #483 F4), capped at TOTAL_S so a run left mounted (or resumed) well past
+  // its own total never reports more than the routine could actually have
+  // taken (#483). If `done` flipped after a long, unobserved gap since the
+  // last heartbeat, the interval just resumed after a suspend (not a
+  // reload — RoutineCard's mount-time check never ran for this run) and
+  // nobody was present to see it finish (#483 review F3): fall back to
+  // whatever the heartbeat last confirmed, classified the same way the
+  // mount-time resume decision would.
   const finishedRef = useRef(false);
   useEffect(() => {
     if (!done || finishedRef.current) return;
     finishedRef.current = true;
     clearRoutineRun();
-    onFinish?.(loggedMinutes(elapsed, TOTAL_S));
-    // onFinish is an owner callback read at fire time.
+    const gapS = (now - lastSeenRef.current) / 1000;
+    if (gapS <= STALE_GAP_S) {
+      onFinish?.(loggedMinutes(realElapsed, TOTAL_S));
+    } else {
+      const seenRealElapsed = (lastSeenRef.current - startedMs - pausedTotalMs) / 1000;
+      onStaleFinish?.(classifyElapsed(seenRealElapsed, TOTAL_S));
+    }
+    // Reads `now`/`realElapsed`/etc. from the same render `done` flipped in —
+    // deliberately keyed on [done] only, not each of its inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [done]);
 
