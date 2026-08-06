@@ -36,8 +36,15 @@ function defaultStorage(): NoticeStorage | null {
 }
 
 /// Which code path lost the recording. A closed set, because it lands in a
-/// monitoring message.
-export type LostRecordingSource = "salvage-on-unmount" | "save-failed";
+/// monitoring message. #484 F3 added `"upload-rejected"`: a recording that
+/// DID have a durable home, was attempted, and was permanently rejected by
+/// the server during a drain — a different cause from the other two (which
+/// both mean "no store would take it"), and one the user-facing notice must
+/// not phrase as a storage problem.
+export type LostRecordingSource =
+  | "salvage-on-unmount"
+  | "save-failed"
+  | "upload-rejected";
 
 export interface LostRecordingNotice {
   /// Recordings lost since the notice was last shown — accumulated, so a
@@ -45,25 +52,35 @@ export interface LostRecordingNotice {
   count: number;
   /// ISO timestamp of the most recent loss.
   lastAt: string;
+  /// Which `LostRecordingSource`s contributed, deduped. Absent on a notice
+  /// written before this field existed (or by a legacy caller) — a reader
+  /// must treat that as the original, storage-only cause this module used to
+  /// report exclusively, never as "unknown".
+  reasons?: LostRecordingSource[];
 }
 
 function isNotice(v: unknown): v is LostRecordingNotice {
   if (!v || typeof v !== "object") return false;
   const n = v as Record<string, unknown>;
-  return (
-    typeof n.count === "number" &&
-    Number.isFinite(n.count) &&
-    n.count > 0 &&
-    typeof n.lastAt === "string"
-  );
+  if (
+    typeof n.count !== "number" ||
+    !Number.isFinite(n.count) ||
+    n.count <= 0 ||
+    typeof n.lastAt !== "string"
+  ) {
+    return false;
+  }
+  return n.reasons === undefined || Array.isArray(n.reasons);
 }
 
-/// Add `count` losses to the pending notice. Returns whether the record
-/// actually landed — a store that refuses this too leaves the user with no
-/// signal at all, which is exactly what the caller reports to monitoring.
-/// Never throws: it runs on paths (an unmount cleanup) that must not fail.
+/// Add `count` losses (from `source`) to the pending notice. Returns whether
+/// the record actually landed — a store that refuses this too leaves the
+/// user with no signal at all, which is exactly what the caller reports to
+/// monitoring. Never throws: it runs on paths (an unmount cleanup) that must
+/// not fail.
 export function noteLostRecordings(
   count: number,
+  source: LostRecordingSource,
   storage: NoticeStorage | null = defaultStorage(),
   now: () => string = () => new Date().toISOString(),
 ): boolean {
@@ -71,10 +88,15 @@ export function noteLostRecordings(
   try {
     const raw = storage.getItem(STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
-    const prev = isNotice(parsed) ? parsed.count : 0;
+    const prevCount = isNotice(parsed) ? parsed.count : 0;
+    const prevReasons = isNotice(parsed) && parsed.reasons ? parsed.reasons : [];
     storage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ count: prev + count, lastAt: now() }),
+      JSON.stringify({
+        count: prevCount + count,
+        lastAt: now(),
+        reasons: [...new Set([...prevReasons, source])],
+      }),
     );
     return true;
   } catch {
@@ -122,7 +144,7 @@ export function reportPersistFailure(
   if (!result.persisted) {
     detail.lost = 1;
     // Kept even when it is `true`: "the user was told" is half the finding.
-    detail.noticeStored = noteLostRecordings(1, storage, now);
+    detail.noticeStored = noteLostRecordings(1, source, storage, now);
   }
   // Still worth having in a dev console, where Sentry is deliberately inert.
   console.warn(

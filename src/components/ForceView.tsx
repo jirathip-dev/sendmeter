@@ -171,15 +171,15 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
   const [setupGuideSensor, setSetupGuideSensor] = useState(true);
   // #106: a rep whose insert fails (dead auth session, dropped connection)
-  // gets queued instead of dropped — App.tsx drains it once a session comes
-  // back. Tracks whether the PREVIOUS attempt (of either kind) failed, so the
-  // toast below fires once per outage rather than once per queue-empty check —
-  // a queue that's still non-empty from an earlier outage must not swallow the
-  // notice for a brand-new one.
+  // gets queued instead of dropped — App.tsx drains it (mount, foreground,
+  // and periodically — #484 F2). Tracks whether the PREVIOUS attempt (of
+  // either kind) failed, so the toast below fires once per outage rather
+  // than once per queue-empty check — a queue that's still non-empty from an
+  // earlier outage must not swallow the notice for a brand-new one.
   const outageRef = useRef(false);
   // #269: the queue's ambient depth. Not an interrupt — see pendingUploads.ts
   // for why a per-failure toast is the wrong shape.
-  const pendingUploads = usePendingUploads();
+  const pendingUploads = usePendingUploads(userId);
   // #264: reps that the insert AND both stores refused. Their samples exist
   // nowhere but this array, so the banner below says exactly that and offers a
   // real retry while the view is still mounted. Never told "will sync

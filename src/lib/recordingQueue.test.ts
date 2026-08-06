@@ -317,6 +317,55 @@ describe("drainQueue", () => {
     expect(insert).toHaveBeenCalledTimes(2);
   });
 
+  // #484 F3 — PROVED. Before this fix, `drainQueue` had no `quarantined`
+  // bucket at all and ANY non-duplicate failure (including this one) set the
+  // single `broken` flag that parks every later entry — "b" and "c" would
+  // both come back in `remaining`, `insert` would be called exactly twice,
+  // and the healthy "c" would never even be attempted. A permanently-rejected
+  // "a" (a real database CHECK-constraint violation — this exact payload will
+  // NEVER succeed) must not have that power.
+  it("quarantines a permanently-rejected entry and keeps draining the healthy ones behind it (#484 F3)", async () => {
+    const queue = [
+      { id: "a", queuedAt: "t", userId: "user-1", input: rec("a") },
+      { id: "b", queuedAt: "t", userId: "user-1", input: rec("b") },
+      { id: "c", queuedAt: "t", userId: "user-1", input: rec("c") },
+    ];
+    const insert = vi
+      .fn()
+      .mockRejectedValueOnce({
+        code: "23514",
+        message: 'new row for relation "tindeq_recordings" violates check constraint "tindeq_recordings_duration_check"',
+      })
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({});
+    const result = await drainQueue(queue, "user-1", insert);
+    expect(result.quarantined.map((p) => p.id)).toEqual(["a"]);
+    expect(result.succeeded.map((p) => p.id)).toEqual(["b", "c"]);
+    expect(result.remaining).toEqual([]);
+    expect(insert).toHaveBeenCalledTimes(3);
+  });
+
+  // #484 F3 / #475 F11 — the cautionary case named in the issue: a transient
+  // failure (offline, 5xx, a stale/expired auth token) must default to
+  // RETRY, never quarantine, however many entries follow it.
+  it.each([
+    ["auth (PGRST301 — JWT expired)", { code: "PGRST301", message: "JWT expired" }],
+    ["network (fetch failure, no code at all)", new TypeError("Failed to fetch")],
+    ["an unrecognized 5xx with no matching code", { status: 503, message: "Service Unavailable" }],
+  ])("does NOT quarantine a transient failure: %s", async (_label, error) => {
+    const queue = [
+      { id: "a", queuedAt: "t", userId: "user-1", input: rec("a") },
+      { id: "b", queuedAt: "t", userId: "user-1", input: rec("b") },
+    ];
+    const insert = vi.fn().mockRejectedValueOnce(error);
+    const result = await drainQueue(queue, "user-1", insert);
+    expect(result.quarantined).toEqual([]);
+    // Still the pre-existing "stop the pass" behavior for a transient
+    // failure — both come back queued for the next drain.
+    expect(result.remaining.map((p) => p.id)).toEqual(["a", "b"]);
+    expect(insert).toHaveBeenCalledTimes(1);
+  });
+
   it("treats a 23505 (duplicate key) failure as success and keeps draining", async () => {
     const queue = [
       { id: "a", queuedAt: "t", userId: "user-1", input: rec("a") },
@@ -405,6 +454,37 @@ describe("drainPendingRecordingsQueue without IndexedDB", () => {
     expect(await drain).toBe(1);
     // "a" succeeded and is gone; "b" (queued mid-drain) must survive.
     expect(loadQueue(storage).map((p) => p.id)).toEqual(["b"]);
+  });
+
+  // #484 F3 end to end through the production entry point (not just
+  // `drainQueue` in isolation): the permanently-rejected entry must actually
+  // be removed from the queue (or it would be re-attempted forever, which is
+  // its own kind of "stuck"), must NOT count toward the "recovered" number a
+  // caller would toast, and its loss must be reported (#264) rather than
+  // silently vanish.
+  it("removes a quarantined entry from the queue, excludes it from the recovered count, and reports the loss (#484 F3)", async () => {
+    const storage = fakeStorage();
+    let queue = enqueueRecording([], rec("bad"), "user-1");
+    queue = enqueueRecording(queue, rec("good"), "user-1");
+    saveQueue(queue, storage);
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const insert = vi
+      .fn()
+      .mockRejectedValueOnce({
+        code: "23514",
+        message: "violates check constraint",
+      })
+      .mockResolvedValueOnce({});
+    const recovered = await drainPendingRecordingsQueue("user-1", insert, noDb, storage);
+
+    expect(recovered).toBe(1); // only "good" — a quarantine is not a recovery
+    expect(loadQueue(storage)).toEqual([]); // both are gone: one landed, one never will
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("upload-rejected"),
+      expect.objectContaining({ lost: 1 }),
+    );
+    warn.mockRestore();
   });
 
   it("guards against a second concurrent drain double-inserting", async () => {
@@ -695,7 +775,7 @@ describe("pendingRecordingsCount", () => {
     const storage = fakeStorage();
     saveQueue(queueOf("salvaged"), storage);
     const { loader } = fakeDb(queueOf("queued-1", "queued-2"));
-    expect(await pendingRecordingsCount(loader, storage)).toBe(3);
+    expect(await pendingRecordingsCount("user-1", loader, storage)).toBe(3);
   });
 
   it("counts an entry mid-migration (in both stores) once", async () => {
@@ -705,17 +785,37 @@ describe("pendingRecordingsCount", () => {
     const { loader } = fakeDb(lane);
     // Showing 2 here would make a stalled migration look like a growing
     // backlog.
-    expect(await pendingRecordingsCount(loader, storage)).toBe(1);
+    expect(await pendingRecordingsCount("user-1", loader, storage)).toBe(1);
   });
 
   it("falls back to the lane alone when IndexedDB is unavailable", async () => {
     const storage = fakeStorage();
     saveQueue(queueOf("a", "b"), storage);
-    expect(await pendingRecordingsCount(noDb, storage)).toBe(2);
+    expect(await pendingRecordingsCount("user-1", noDb, storage)).toBe(2);
   });
 
   it("is 0, not an error, with nothing queued anywhere", async () => {
-    expect(await pendingRecordingsCount(noDb, fakeStorage())).toBe(0);
+    expect(await pendingRecordingsCount("user-1", noDb, fakeStorage())).toBe(0);
+  });
+
+  // #484 F5: PROVED — this used to sum `keys()` across both stores with no
+  // regard for whose recordings they were, so account B saw account A's
+  // stranded entries in its own count (and the UI told them it would sync).
+  it("does NOT count another account's stranded entries (#484 F5)", async () => {
+    const storage = fakeStorage();
+    saveQueue(queueOf("mine"), storage); // queueOf stamps "user-1"
+    const theirs = enqueueRecording([], rec("theirs"), "user-2", () => "2026-07-01T00:00:00.000Z");
+    const { loader } = fakeDb(theirs);
+    expect(await pendingRecordingsCount("user-1", loader, storage)).toBe(1);
+    // The other account sees exactly its own, not zero and not both.
+    expect(await pendingRecordingsCount("user-2", loader, storage)).toBe(1);
+  });
+
+  it("still counts unknown-user (null) legacy entries for anyone, matching drainQueue's attempt rule", async () => {
+    const storage = fakeStorage();
+    const legacy = enqueueRecording([], rec("legacy"), null, () => "2026-07-01T00:00:00.000Z");
+    const { loader } = fakeDb(legacy);
+    expect(await pendingRecordingsCount("user-1", loader, storage)).toBe(1);
   });
 });
 
@@ -776,7 +876,7 @@ describe("clearRecordingQueue", () => {
 
     expect(await clearRecordingQueue(loader, storage)).toBe(2);
     expect(await db.getAll()).toEqual([]);
-    expect(await pendingRecordingsCount(loader, storage)).toBe(0);
+    expect(await pendingRecordingsCount("user-1", loader, storage)).toBe(0);
   });
 });
 
@@ -800,11 +900,11 @@ describe("the two stores end to end (real IndexedDB)", () => {
     const loader = await realLoader();
     await persistRecordingDurable(rec("id-1"), "user-1", loader, storage);
     await persistRecordingDurable(rec("id-2"), "user-1", loader, storage);
-    expect(await pendingRecordingsCount(loader, storage)).toBe(2);
+    expect(await pendingRecordingsCount("user-1", loader, storage)).toBe(2);
 
     const insert = vi.fn().mockResolvedValue({});
     expect(await drainPendingRecordingsQueue("user-1", insert, loader, storage)).toBe(2);
-    expect(await pendingRecordingsCount(loader, storage)).toBe(0);
+    expect(await pendingRecordingsCount("user-1", loader, storage)).toBe(0);
   });
 
   it("migrates a pre-#269 localStorage queue on first run", async () => {

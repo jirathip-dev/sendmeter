@@ -10,12 +10,16 @@ import { pendingRecordingsCount } from "../lib/recordingQueue";
 /// pending count; diagnostic surfaces can use `pendingUploadsLine` when they
 /// need to distinguish unknown from empty.
 ///
-/// Re-reads on three signals, because the queue changes from places this
+/// #484 F5: scoped to `userId` — see `pendingRecordingsCount` for why an
+/// unscoped count is a real bug, not just a cosmetic one (it gets read back
+/// as "will sync").
+///
+/// Re-reads on four signals, because the queue changes from places this
 /// component can't see: the module-level notification (something queued or
 /// drained in this tab), app foreground (a drain may have run while
-/// backgrounded, and on native the WebView can be suspended mid-drain), and
-/// mount.
-export function usePendingUploads(): number | null {
+/// backgrounded, and on native the WebView can be suspended mid-drain), a
+/// change of account, and mount.
+export function usePendingUploads(userId: string): number | null {
   const [count, setCount] = useState<number | null>(null);
 
   useEffect(() => {
@@ -23,7 +27,7 @@ export function usePendingUploads(): number | null {
     function refresh() {
       // setState only ever inside the async callback — never synchronously in
       // an effect body (react-compiler lint).
-      void pendingRecordingsCount().then((n) => {
+      void pendingRecordingsCount(userId).then((n) => {
         if (alive) setCount(n);
       });
     }
@@ -50,7 +54,7 @@ export function usePendingUploads(): number | null {
       unsubscribe();
       void sub.then((h) => h.remove());
     };
-  }, []);
+  }, [userId]);
 
   return count;
 }

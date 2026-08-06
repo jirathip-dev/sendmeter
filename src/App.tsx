@@ -37,6 +37,7 @@ import { useRealtimeBump } from "./hooks/useRealtimeVersion";
 import type { HealthSyncSource } from "./lib/healthSync";
 import { insertRecording, restoreSession } from "./lib/repo";
 import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
+import { scheduleQueueDrain } from "./lib/drainSchedule";
 import { takeLostRecordingsNotice } from "./lib/lostRecordings";
 import type { SignOut } from "./lib/signOut";
 import SplashScreen from "./components/SplashScreen";
@@ -137,7 +138,7 @@ function AuthedApp({
   // session, dropped connection) while we were signed out — AuthedApp only
   // renders once `session` exists, so a fresh mount here IS "auth just
   // succeeded" (login or a session restore). drainPendingRecordingsQueue
-  // guards its own re-entrancy, so a duplicate mount can't double-insert.
+  // guards its own re-entrancy, so an overlapping trigger can't double-insert.
   // #269: this is also where the two stores reconcile — the drain first moves
   // anything in the synchronous localStorage lane (a salvage-on-unmount, or a
   // pre-#269 queue left behind by an older build) into the IndexedDB main
@@ -146,15 +147,48 @@ function AuthedApp({
   // No manual list refresh needed on success — `tindeq_recordings` is a
   // WATCHED_TABLES table, so each recovered insert bumps the realtime
   // version and ForceView's own fetch effect picks it up.
+  //
+  // #484 F2: mount used to be the ONLY trigger — a user who went offline
+  // mid-session, got signal back, and never reloaded the tab had a queue that
+  // would never drain again, while ForceView's own copy told them it would.
+  // `scheduleQueueDrain` (see drainSchedule.ts for the tested scheduling
+  // logic) also drains on foreground/visibility AND on a plain interval — the
+  // interval matters because that exact scenario never fires a
+  // foreground/visibility event (the tab was never backgrounded).
   useEffect(() => {
     let cancelled = false;
-    void drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
-      if (!cancelled && n > 0) {
-        toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
-      }
+    function runDrain() {
+      void drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
+        if (!cancelled && n > 0) {
+          toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
+        }
+      });
+    }
+    const cancel = scheduleQueueDrain(runDrain, {
+      onForeground(cb) {
+        const onVisible = () => {
+          if (document.visibilityState === "visible") cb();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        let nativeSub: ReturnType<typeof CapacitorApp.addListener> | null = null;
+        if (Capacitor.isNativePlatform()) {
+          nativeSub = CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+            if (isActive) cb();
+          });
+        }
+        return () => {
+          document.removeEventListener("visibilitychange", onVisible);
+          if (nativeSub) void nativeSub.then((h) => h.remove());
+        };
+      },
+      setInterval(cb, ms) {
+        const id = window.setInterval(cb, ms);
+        return () => window.clearInterval(id);
+      },
     });
     return () => {
       cancelled = true;
+      cancel();
     };
   }, [userId, toast]);
 
@@ -164,12 +198,24 @@ function AuthedApp({
   // this is where the user finally hears about it. Mount covers sign-in and a
   // cold launch, appStateChange covers a loss that happened while the app was
   // backgrounded. `take` clears the record, so it shows exactly once.
+  //
+  // #484 F3 added a second, unrelated cause of loss under the same notice —
+  // a recording that WAS durably queued but was permanently rejected by the
+  // server on upload. That is not a storage problem, so it must not share
+  // the "device storage was full" copy: `notice.reasons` (absent on a notice
+  // written before that field existed — treat that as the original,
+  // storage-only cause) says which actually happened.
   useEffect(() => {
     function surface() {
       const notice = takeLostRecordingsNotice();
       if (!notice) return;
+      const reasons = notice.reasons ?? ["save-failed"];
+      const rejectedOnly = reasons.every((r) => r === "upload-rejected");
+      const label = `${notice.count} recording${notice.count === 1 ? "" : "s"}`;
       toast(
-        `${notice.count} recording${notice.count === 1 ? "" : "s"} couldn't be saved — device storage was full`,
+        rejectedOnly
+          ? `${label} were rejected by the server and won't be retried`
+          : `${label} couldn't be saved — device storage was full`,
         "error",
       );
     }

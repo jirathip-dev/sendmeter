@@ -145,7 +145,13 @@ export async function signOutUser(
 ): Promise<SignOutOutcome> {
   const drain = deps.drain ?? drainPendingRecordingsQueue;
   const insert = deps.insert ?? insertRecording;
-  const count = deps.count ?? (() => pendingRecordingsCount());
+  // #484 F5: scoped to the signing-out account — with no known user id (the
+  // drain above is skipped for the same reason) there is no "mine" to count,
+  // so the remainder prompt reports 0 rather than another account's stranded
+  // entries.
+  const count =
+    deps.count ??
+    (() => (opts.userId ? pendingRecordingsCount(opts.userId) : Promise.resolve(0)));
   const mark = deps.mark ?? markUserSignOut;
   const signOut = deps.signOut ?? (() => supabase.auth.signOut());
   const report = deps.report ?? captureDataLoss;

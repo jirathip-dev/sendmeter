@@ -78,7 +78,7 @@ export default function HistoryView({
   const toast = useToast();
   const uploadWarning = uploadWarningPresentation(
     useWatchInfo(),
-    usePendingUploads(),
+    usePendingUploads(userId),
   );
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   // Lazy render (SL-86): mount the timeline in pages.

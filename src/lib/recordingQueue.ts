@@ -12,6 +12,8 @@ import {
   type RecordingDb,
   type RecordingDbLoader,
 } from "./recordingDb";
+import { classifyHandledFailure } from "./monitoring";
+import { reportPersistFailure } from "./lostRecordings";
 
 // #106: a tindeq_recordings insert that failed because the auth session had
 // died (e.g. refresh-token-family revocation — see CLAUDE.md) or the network
@@ -346,20 +348,31 @@ export async function absorbSyncLane(
   return lane.length;
 }
 
-/// How many recordings are waiting to upload, across BOTH stores. Ids, not
-/// payloads — `keys()` is a getAllKeys, so this doesn't deserialize the
-/// samples. De-duplicated because the interrupted-migration window (committed
+/// How many recordings are waiting to upload FOR `userId`, across BOTH
+/// stores. De-duplicated because the interrupted-migration window (committed
 /// to IndexedDB, not yet cleared from the lane) legitimately has an entry in
 /// both, and showing it twice would make a stall look worse than it is.
+///
+/// #484 F5: scoped to `userId` (plus unattributed legacy entries, `userId:
+/// null` — the same "attemptable by anyone" rule `drainQueue` already
+/// applies), because an unscoped count let account B see — and be told they'd
+/// sync — recordings stranded under account A that a drain for B would never
+/// touch. This reads the full IndexedDB records (not `keys()`'s getAllKeys)
+/// to see each entry's `userId`; there is no secondary index to filter on
+/// without one, and a stranded queue is expected to be tiny (the eviction
+/// backstop in MAX_IDB_QUEUE_BYTES's comment is for a queue idle for weeks),
+/// so the correctness this buys is worth the extra deserialization.
 export async function pendingRecordingsCount(
+  userId: string,
   loadDb: RecordingDbLoader = openRecordingDb,
   storage: QueueStorage | null = defaultStorage(),
 ): Promise<number> {
-  const ids = new Set(loadQueue(storage).map((p) => p.id));
+  const mine = (p: PendingRecording) => p.userId === null || p.userId === userId;
+  const ids = new Set(loadQueue(storage).filter(mine).map((p) => p.id));
   const db = await loadDb().catch(() => null);
   if (db) {
-    const keys = await db.keys().catch(() => [] as string[]);
-    for (const k of keys) ids.add(k);
+    const all = await db.getAll().catch(() => [] as PendingRecording[]);
+    for (const p of all) if (mine(p)) ids.add(p.id);
   }
   return ids.size;
 }
@@ -409,6 +422,11 @@ export interface DrainResult {
   succeeded: PendingRecording[];
   /// Still-pending entries, in their original relative order.
   remaining: PendingRecording[];
+  /// #484 F3: entries the SERVER permanently rejected — retrying the exact
+  /// same payload would fail the exact same way forever. Removed from the
+  /// queue by the caller and reported via `reportPersistFailure` (#264), not
+  /// left in `remaining`.
+  quarantined: PendingRecording[];
 }
 
 function isDuplicateKeyError(e: unknown): boolean {
@@ -420,17 +438,41 @@ function isDuplicateKeyError(e: unknown): boolean {
   );
 }
 
+/// #484 F3: is this failure a definitive, content-based rejection — the
+/// payload itself violates a database constraint (SQLSTATE 23xxx: a CHECK,
+/// NOT NULL or foreign-key violation) — as opposed to the environment being
+/// temporarily broken? Only that narrow class is safe to treat as permanent.
+///
+/// This is deliberately conservative, mirroring the watch-side precedent at
+/// #475 and its correction at #475 F11: that PR's first fix counted EVERY
+/// failure (including pure transport failures and stale-auth responses)
+/// toward a retry budget, so a healthy workout could be permanently
+/// quarantined by nothing more than bad wifi or a stale token — strictly
+/// worse than the "one bad entry blocks the queue" bug it fixed, because
+/// blocking recovers when connectivity returns and a wrong quarantine does
+/// not. `classifyHandledFailure` already draws this line for Sentry
+/// reporting (`monitoring.ts`) and is reused here rather than duplicated:
+/// "auth", "network", "permission" and "unknown" all mean "no verdict was
+/// reached about THIS payload" and must default to retry.
+function isPermanentUploadFailure(e: unknown): boolean {
+  return classifyHandledFailure(e) === "constraint";
+}
+
 /// Try inserting each queued recording IN ORDER for `userId`, via the
-/// injected `insert` (so this stays supabase-free and unit-testable). Stops
-/// attempting further entries after the first non-duplicate failure — if the
-/// session is still broken the rest would fail the same way, and retrying
-/// out of order would just reshuffle History for no benefit; they're left
-/// queued for the next drain. A 23505 (unique-constraint) failure is treated
-/// as SUCCESS — it means an earlier attempt (this one's own client-generated
-/// id was already used by a prior insert that landed but whose response the
-/// client never saw) actually committed, and this is just a redundant
-/// retry. Entries queued under a DIFFERENT user id are never attempted (and
-/// never dropped) by this pass.
+/// injected `insert` (so this stays supabase-free and unit-testable).
+///
+/// #484 F3: a permanently-rejected entry (see `isPermanentUploadFailure`) is
+/// quarantined and skipped — draining CONTINUES past it, because the reason
+/// it failed says nothing about any other entry's payload. Only a
+/// non-permanent (transient) failure stops the pass: if the session/network
+/// is broken, every remaining entry would fail the same way, and attempting
+/// them anyway just reshuffles History for no benefit — they're left queued
+/// for the next drain instead. A 23505 (unique-constraint) failure is
+/// treated as SUCCESS — it means an earlier attempt (this one's own
+/// client-generated id was already used by a prior insert that landed but
+/// whose response the client never saw) actually committed, and this is
+/// just a redundant retry. Entries queued under a DIFFERENT user id are
+/// never attempted (and never dropped) by this pass.
 export async function drainQueue(
   queue: PendingRecording[],
   userId: string,
@@ -438,13 +480,14 @@ export async function drainQueue(
 ): Promise<DrainResult> {
   const succeeded: PendingRecording[] = [];
   const remaining: PendingRecording[] = [];
-  let broken = false;
+  const quarantined: PendingRecording[] = [];
+  let blocked = false;
   for (const item of queue) {
     if (item.userId !== null && item.userId !== userId) {
       remaining.push(item);
       continue;
     }
-    if (broken) {
+    if (blocked) {
       remaining.push(item);
       continue;
     }
@@ -456,11 +499,15 @@ export async function drainQueue(
         succeeded.push(item);
         continue;
       }
+      if (isPermanentUploadFailure(e)) {
+        quarantined.push(item);
+        continue;
+      }
       remaining.push(item);
-      broken = true;
+      blocked = true;
     }
   }
-  return { succeeded, remaining };
+  return { succeeded, remaining, quarantined };
 }
 
 // In-flight guard: two near-simultaneous mounts in the SAME tab (e.g. a
@@ -495,19 +542,32 @@ export async function drainPendingRecordingsQueue(
     const queue = [...main, ...lane.filter((p) => !mainIds.has(p.id))].sort(byQueuedAt);
     if (queue.length === 0) return 0;
 
-    const { succeeded } = await drainQueue(queue, userId, insert);
-    if (succeeded.length === 0) return 0;
-    const succeededIds = new Set(succeeded.map((p) => p.id));
+    const { succeeded, quarantined } = await drainQueue(queue, userId, insert);
+    if (succeeded.length === 0 && quarantined.length === 0) return 0;
+    // Both succeeded AND quarantined entries are done with the queue —
+    // one landed, the other never will — so both are removed the same way.
+    const removedIds = new Set([...succeeded, ...quarantined].map((p) => p.id));
     // Deleting by id is inherently race-safe on the main store — unlike the
     // lane's read-modify-write below, it can't clobber an entry that arrived
     // mid-drain (the drain awaits one insert at a time, so a salvage really can
     // land in between).
-    if (db) await db.delete([...succeededIds]).catch(() => {});
+    if (db) await db.delete([...removedIds]).catch(() => {});
     const currentLane = loadQueue(storage);
-    if (currentLane.some((p) => succeededIds.has(p.id))) {
+    if (currentLane.some((p) => removedIds.has(p.id))) {
       saveQueue(
-        currentLane.filter((p) => !succeededIds.has(p.id)),
+        currentLane.filter((p) => !removedIds.has(p.id)),
         storage,
+      );
+    }
+    // #484 F3: a quarantined entry is gone from the queue for good — the
+    // server permanently rejected this exact payload — so its loss must be
+    // reported, never swallowed (#264), through the single existing
+    // reporting path every other lost recording already uses.
+    for (const item of quarantined) {
+      reportPersistFailure(
+        "upload-rejected",
+        { persisted: false, evicted: 0 },
+        item.input.samples.length,
       );
     }
     notifyPendingUploadsChanged();
