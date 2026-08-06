@@ -87,17 +87,24 @@ final class AuthManager: NSObject {
         startPolling()
     }
 
-    /// Recomputes `state` from the stored session against the clock. Called
-    /// after every relay, on foreground, and from the poll — an access token
-    /// goes stale by the passage of time alone, with no event to react to.
+    /// Recomputes `state` from the stored session against the clock, and asks
+    /// the phone for a fresh relay if the clock-derived decision says the
+    /// watch needs one. **This is the only place allowed to decide that** —
+    /// every trigger that might discover an expired token (poll,
+    /// `activationDidCompleteWith`, `sessionReachabilityDidChange`) must
+    /// route through this function rather than consulting the cached
+    /// `needsToken` property first, or it can decline to ask for a token the
+    /// watch actually needs (#472: a decision cached at T does not stay true
+    /// past T — see `SessionRelay.needsToken`).
     @MainActor
     func refreshState() {
         let previous = state
-        state = SessionRelay.state(for: WatchSessionStore.shared.current, now: now)
+        let session = WatchSessionStore.shared.current
+        state = SessionRelay.state(for: session, now: now)
         if state != previous {
             Self.log.info("auth state \(String(describing: previous)) → \(String(describing: self.state))")
         }
-        if needsToken { requestSessionFromPhone() }
+        if SessionRelay.needsToken(for: session, now: now) { requestSessionFromPhone() }
     }
 
     /// True when the watch cannot make an authenticated request right now:
@@ -203,11 +210,19 @@ final class AuthManager: NSObject {
         syncTimeout?.cancel()
     }
 
-    /// Slow poll, only while the watch needs a token. watchOS suspends the app
-    /// (and this task with it) when it isn't on screen, so this costs nothing
-    /// in the background; its job is the case where the user is *looking* at
-    /// the watch, the phone is in a pocket nearby, and nothing else would fire
-    /// an event to retry on.
+    /// Slow poll while the app is on screen — watchOS suspends the app (and
+    /// this task with it) when it isn't, so this costs nothing in the
+    /// background; its job is the case where the user is *looking* at the
+    /// watch, the phone is in a pocket nearby, and nothing else would fire an
+    /// event to retry on.
+    ///
+    /// Calls `refreshState()` unconditionally on every tick, **not** gated on
+    /// the cached `needsToken` (#472): once a relayed token goes fresh→stale
+    /// with no external event, a guard reading the old cached state would
+    /// stay `false` forever and this poll would never fire the one call that
+    /// could discover the expiry. `refreshState()` is a single pure
+    /// `SessionRelay.state` computation, so this is cheap every 20s;
+    /// `requestSessionFromPhone()` already self-throttles on `lastRequestAt`.
     private func startPolling() {
         poll?.cancel()
         poll = Task { [weak self] in
@@ -215,8 +230,7 @@ final class AuthManager: NSObject {
                 try? await Task.sleep(for: .seconds(20))
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    guard let self, self.needsToken else { return }
-                    self.refreshState()
+                    self?.refreshState()
                 }
             }
         }
@@ -229,8 +243,10 @@ extension AuthManager: WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
     ) {
+        // Recompute before deciding (#472) — `refreshState()` asks the phone
+        // itself if the clock-derived state says the token is stale.
         Task { @MainActor in
-            if self.needsToken { self.requestSessionFromPhone() }
+            self.refreshState()
         }
     }
 
@@ -246,12 +262,14 @@ extension AuthManager: WCSessionDelegate {
         Task { @MainActor in self.apply(userInfo) }
     }
 
-    /// The phone became reachable — if we still need a token this is the
-    /// moment to (re)ask; an earlier attempt would have failed while it slept.
+    /// The phone became reachable — this is the moment to recompute and, if
+    /// the token has gone stale, (re)ask; an earlier attempt would have
+    /// failed while it slept. Recompute before deciding (#472): reachability
+    /// changing is precisely when a cached `needsToken` is most likely wrong.
     func sessionReachabilityDidChange(_ session: WCSession) {
         guard session.isReachable else { return }
         Task { @MainActor in
-            if self.needsToken { self.requestSessionFromPhone() }
+            self.refreshState()
         }
     }
 }

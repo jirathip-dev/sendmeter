@@ -243,6 +243,42 @@ final class WatchAuthStateTests: XCTestCase {
     }
 }
 
+/// #472: a decision computed from a session+clock at time T must not be
+/// trusted after time has passed — it has to be recomputed. `AuthManager`
+/// used to cache exactly this decision (as `state`, read via `needsToken`)
+/// and reuse it at three call sites instead of recomputing it, so a token
+/// that went stale with no external event to react to was never discovered.
+final class SessionRelayStalenessTests: XCTestCase {
+    private func session(expiresAt: TimeInterval) -> RelayedSession {
+        RelayedSession(accessToken: jwt(), userId: userA, expiresAt: expiresAt)
+    }
+
+    func testAStateComputedAtTDisagreesWithTheSameSessionsStateLater() {
+        // The session expires between the two reads. Anything that cached the
+        // first result and kept using it would be wrong for every moment
+        // after `expiresAt`.
+        let s = session(expiresAt: 1_000)
+        let computedAtT = SessionRelay.state(for: s, now: 500)
+        let computedLater = SessionRelay.state(for: s, now: 50_000)
+        XCTAssertEqual(computedAtT, .signedIn(userId: userA, tokenFresh: true))
+        XCTAssertEqual(computedLater, .signedIn(userId: userA, tokenFresh: false))
+        XCTAssertNotEqual(
+            computedAtT, computedLater,
+            "a decision cached at T does not stay valid at T+delta"
+        )
+    }
+
+    func testNeedsTokenTracksTheSameStalenessAsState() {
+        let s = session(expiresAt: 1_000)
+        XCTAssertFalse(SessionRelay.needsToken(for: s, now: 500))
+        XCTAssertTrue(SessionRelay.needsToken(for: s, now: 50_000))
+    }
+
+    func testNeedsTokenIsTrueWhenSignedOut() {
+        XCTAssertTrue(SessionRelay.needsToken(for: nil, now: 1_000))
+    }
+}
+
 final class RelayRequestThrottleTests: XCTestCase {
     func testFirstAskAlwaysGoesOut() {
         XCTAssertTrue(SessionRelay.shouldRequestRelay(now: 1_000, lastRequestAt: nil))
