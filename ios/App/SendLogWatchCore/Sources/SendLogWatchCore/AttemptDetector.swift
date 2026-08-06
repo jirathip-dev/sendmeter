@@ -238,6 +238,18 @@ public final class AttemptDetector {
 
         return merged.compactMap { a in
             let duration = Double(a.endTick - a.startTick) / t.tickHz
+            // #475: the DB's `climb_attempts.duration_s > 0` check rejects a
+            // zero-duration attempt outright, and a rejected upload poisons
+            // the offline queue (nothing about it is retryable). A same-tick
+            // Begin/End on manual — or a manual phase flushed by finalize()
+            // with no elapsed ticks — reaches here with `duration == 0`, and
+            // manual attempts are otherwise exempt from every other filter
+            // below. Enforce the invariant once, unconditionally, at this
+            // single emit boundary — every emission path (manual stop,
+            // current stop, finalize() flush, assisted auto-close) funnels
+            // through it, so a call-site guard can't be bypassed by a path
+            // nobody thought to add one to.
+            guard duration > 0 else { return nil }
             let gain = max(0, a.maxAlt - a.baselineAtStart)
             // Manual attempts are exempt from the auto duration/motion filters
             // because the user explicitly logged them (e.g. a traverse).

@@ -262,3 +262,22 @@ nonisolated struct WorkoutSaveBundle: Codable {
     /// on-disk files); see `shouldDrain`.
     var enqueuedUserId: UUID? = nil
 }
+
+/// A bundle `OfflineQueue.drainPass` gave up retrying (#475) — `uploadBundle`
+/// rejected it with a specific, permanent DB error (today: only the
+/// `climb_attempts.duration_s > 0` check violation), so no amount of
+/// retrying will ever land it. Written once, atomically, in place of the
+/// original `<uuid>.json` file it replaces — the original `bundle` is
+/// preserved verbatim inside it (never lost, never silently dropped, per
+/// CLAUDE.md #264/#273) alongside which of the three upserts failed and why,
+/// for truthful reporting and for a possible future repair pass (#287
+/// precedent). Never read back into a normal drain pass; only user sign-out
+/// may delete it.
+nonisolated struct QuarantinedUpload: Codable {
+    var bundle: WorkoutSaveBundle
+    var stage: UploadStage?
+    var httpStatus: Int?
+    var postgrestCode: String?
+    var errorMessage: String?
+    var quarantinedAt: Date
+}

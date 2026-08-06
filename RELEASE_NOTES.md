@@ -33,6 +33,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: a non-hands-free run right after a hands-free run no longer plays stray "done" cues or shows a stale danger banner on segment transitions.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
+- Watch: a same-tick Play/Stop (or ending a workout without tapping Stop) no longer logs a zero-length boulder attempt, and a single upload the server permanently rejects no longer blocks every other watch workout behind it in the offline queue.
 
 ## 1.0 — 2026-08-02
 

@@ -6,14 +6,33 @@ import Supabase
 /// serialized to Documents/pending/<uuid>.json, then uploaded and deleted on
 /// success. Drained serially (oldest first) on launch / foreground. Replays
 /// are safe because uploads are idempotent upserts on client UUIDs.
+///
+/// `uploader`/`clock`/`baseDir` are the #475 injectable seam:
+/// `OfflineQueue.shared` uses the real Supabase-backed uploader, the wall
+/// clock, and the app's real Documents directory; tests construct their own
+/// instance with a scripted uploader and a scratch directory so the real
+/// `drainPass` control flow — not a reimplementation of it — is what gets
+/// exercised.
 actor OfflineQueue {
     static let shared = OfflineQueue()
 
+    private let uploader: WorkoutBundleUploading
+    private let clock: QueueClock
+    private let baseDir: URL
     private var drainState = CoalescingDrain()
 
+    init(
+        uploader: WorkoutBundleUploading = RepoBundleUploader(),
+        clock: QueueClock = SystemQueueClock(),
+        baseDir: URL? = nil
+    ) {
+        self.uploader = uploader
+        self.clock = clock
+        self.baseDir = baseDir ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
     private var pendingDir: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let dir = docs.appendingPathComponent("pending", isDirectory: true)
+        let dir = baseDir.appendingPathComponent("pending", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -26,6 +45,9 @@ actor OfflineQueue {
     /// false with `currentUserId == nil`. `drain()`'s own guard is untouched
     /// (it still never uploads a mismatched or signed-out item) — widening
     /// this count is display-only.
+    ///
+    /// Quarantined items (#475) live alongside these under a different
+    /// extension, so they're never counted here — see `quarantinedCount()`.
     func pendingCount() -> Int {
         let currentUserId = WatchSessionStore.shared.userId
         let decoder = JSONDecoder()
@@ -46,6 +68,20 @@ actor OfflineQueue {
         return count
     }
 
+    /// Count of items `drainPass` has permanently given up on (#475) — a
+    /// specific DB constraint rejected them, so no retry will ever land
+    /// them. Reported through a cache slot separate from `total` (never
+    /// "pending", never "will sync" — CLAUDE.md #264). Unlike
+    /// `pendingCount()` this is NOT account-scoped: a quarantined item is
+    /// stuck regardless of who's signed in, so hiding it behind an account
+    /// switch would be less honest, not more.
+    func quarantinedCount() -> Int {
+        let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
+            .filter { $0.pathExtension == quarantineExtension } ?? []
+        PendingSyncCache.shared.recordQuarantined(files.count)
+        return files.count
+    }
+
     /// Persist the bundle and return as soon as it's on disk — the upload runs
     /// in the background (the queue retries until it lands). If persistence
     /// fails, keep the in-memory bundle alive long enough to attempt the
@@ -63,7 +99,7 @@ actor OfflineQueue {
             return .queued
         case .uploadDirect:
             do {
-                try await Repo.uploadBundle(bundle)
+                try await uploader.upload(bundle)
                 return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: true)
             } catch {
                 return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: false)
@@ -109,7 +145,7 @@ actor OfflineQueue {
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        for file in files {
+        filesLoop: for file in files {
             guard
                 let data = try? Data(contentsOf: file),
                 let bundle = try? decoder.decode(WorkoutSaveBundle.self, from: data)
@@ -132,13 +168,73 @@ actor OfflineQueue {
                 continue
             }
             do {
-                try await Repo.uploadBundle(bundle)
+                try await uploader.upload(bundle)
                 try? FileManager.default.removeItem(at: file)
             } catch {
-                break // no network (or auth) — stop, retry next drain
+                // #475: a generic "stop on any error" treated a permanent
+                // DB rejection exactly like a network outage, and because
+                // the queue drains oldest-first, the poisoned file was
+                // retried first on every pass forever — blocking every
+                // healthy item behind it. Classify before deciding: only
+                // the one named check-constraint violation quarantines and
+                // continues; everything else (including 401, which needs a
+                // relay rather than a retry) still stops the pass so a real
+                // outage doesn't burn through the rest of the queue
+                // out of order.
+                let classification = UploadFailureMapping.classify(error)
+                switch classification.outcome {
+                case .quarantine:
+                    quarantine(
+                        bundle: bundle,
+                        originalFile: file,
+                        stage: classification.stage,
+                        failure: classification.failure
+                    )
+                    continue filesLoop
+                case .retry, .needsAuthRelay:
+                    break filesLoop // no network (or auth) — stop, retry next drain
+                }
             }
         }
         _ = pendingCount() // refresh the reported depth (#21)
+        _ = quarantinedCount()
         await MainActor.run { WatchBuild.reportQueueStatus() }
+    }
+
+    private let quarantineExtension = "quarantine"
+
+    /// Replaces the original pending file with a `QuarantinedUpload` record
+    /// carrying the original bundle plus the failing stage/error (#475). The
+    /// original bytes are preserved verbatim inside the new file, not lost —
+    /// this is a rename-with-metadata, not a delete. If the durable write
+    /// itself fails, the original `<uuid>.json` is left exactly where it
+    /// was: it keeps retrying (and keeps failing the same way) rather than
+    /// risking the data on an unconfirmed write (#264).
+    private func quarantine(
+        bundle: WorkoutSaveBundle,
+        originalFile: URL,
+        stage: UploadStage?,
+        failure: UploadFailure
+    ) {
+        let record = QuarantinedUpload(
+            bundle: bundle,
+            stage: stage,
+            httpStatus: failure.httpStatus,
+            postgrestCode: failure.postgrestCode,
+            errorMessage: failure.message,
+            quarantinedAt: clock.now()
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let quarantineURL = pendingDir
+            .appendingPathComponent(bundle.workout.id.uuidString)
+            .appendingPathExtension(quarantineExtension)
+        do {
+            let data = try encoder.encode(record)
+            try data.write(to: quarantineURL, options: .atomic)
+            try? FileManager.default.removeItem(at: originalFile)
+        } catch {
+            // Left in place; see the doc comment above.
+        }
     }
 }

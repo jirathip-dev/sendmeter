@@ -232,4 +232,37 @@ final class PendingSyncCacheTests: XCTestCase {
         cache.reset()
         XCTAssertNil(cache.total)
     }
+
+    // MARK: #475 — quarantined count is tracked separately from `total`
+
+    func testQuarantinedCountIsNilUntilReported() {
+        let cache = PendingSyncCache()
+        XCTAssertNil(cache.quarantinedTotal)
+        cache.recordQuarantined(0)
+        XCTAssertEqual(cache.quarantinedTotal, 0)
+    }
+
+    func testQuarantinedCountDoesNotFoldIntoTheSyncingTotal() {
+        // A quarantined item is not "pending" — it will never leave via a
+        // normal drain, so it must not inflate the number that reads as
+        // "will sync" to the user.
+        let cache = PendingSyncCache()
+        cache.record(2, for: .workouts)
+        cache.recordQuarantined(3)
+        XCTAssertEqual(cache.total, 2)
+        XCTAssertEqual(cache.quarantinedTotal, 3)
+    }
+
+    func testNegativeQuarantinedCountsAreRefused() {
+        let cache = PendingSyncCache()
+        cache.recordQuarantined(-1)
+        XCTAssertEqual(cache.quarantinedTotal, 0)
+    }
+
+    func testResetAlsoClearsQuarantinedBackToUnknown() {
+        let cache = PendingSyncCache()
+        cache.recordQuarantined(2)
+        cache.reset()
+        XCTAssertNil(cache.quarantinedTotal)
+    }
 }

@@ -41,7 +41,9 @@
 		985E393749254016699A5A96 /* WorkoutSaveBundleDecodeCompatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */; };
 		9FF1A63A69A1CE36AF5D06D6 /* SendmeterWatchScreenshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = F585400FD5CA4FD502C930ED /* SendmeterWatchScreenshots.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* PendingQueueUserMatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */; };
+		B236F6402A44ADB22E10CF75 /* OfflineQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B28F88178C2F1F022EEC67 /* OfflineQueueTests.swift */; };
 		C0A1E5C1D8A14B4EB2B5A001 /* CoalescingDrainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */; };
+		C8E485D14D7390D7AA6E98A0 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 665354DA3AF13BA04D7AADA0 /* Supabase */; };
 		CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
 		D1C2B3A4F5E6708192A3B4C5 /* ACWRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */; };
 		D40300000000000000000001 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = D40300000000000000000002 /* SendLogWatchCore */; };
@@ -149,6 +151,7 @@
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "SendLogWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		32A305250A36E690BA4EB57B /* SendmeterWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SendmeterWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		34B28F88178C2F1F022EEC67 /* OfflineQueueTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OfflineQueueTests.swift; sourceTree = "<group>"; };
 		481650BBB5C256BE2759C477 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		4A71E5BE016D1DBF7C3FE908 /* PendingQueueDecodeCompatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PendingQueueDecodeCompatTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/PendingQueueDecodeCompatTests.swift; sourceTree = "<group>"; };
 		4CCE65502100282783D5231B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -259,6 +262,7 @@
 			files = (
 				CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */,
 				5EC0A005B005C005D005E005 /* SendLogWatchCore in Frameworks */,
+				C8E485D14D7390D7AA6E98A0 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -297,6 +301,7 @@
 				4A71E5BE016D1DBF7C3FE908 /* PendingQueueDecodeCompatTests.swift */,
 				5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */,
 				8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */,
+				34B28F88178C2F1F022EEC67 /* OfflineQueueTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = "<group>";
@@ -474,6 +479,7 @@
 			name = SendLogWatchTests;
 			packageProductDependencies = (
 				5EC0A004B004C004D004E004 /* SendLogWatchCore */,
+				665354DA3AF13BA04D7AADA0 /* Supabase */,
 			);
 			productName = SendLogWatchTests;
 			productReference = 9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */;
@@ -663,6 +669,7 @@
 				90B66846175A762105ACC18F /* PendingQueueDecodeCompatTests.swift in Sources */,
 				69ECCBC95C0D80B03512206A /* PendingQueuePolicyTests.swift in Sources */,
 				985E393749254016699A5A96 /* WorkoutSaveBundleDecodeCompatTests.swift in Sources */,
+				B236F6402A44ADB22E10CF75 /* OfflineQueueTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1365,15 +1372,15 @@
 			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
 			productName = SendLogWatchCore;
 		};
-		D40300000000000000000002 /* SendLogWatchCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
-			productName = SendLogWatchCore;
-		};
 		665354DA3AF13BA04D7AADA0 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = B5E75921EB0124F7376FBBFD /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
+		};
+		D40300000000000000000002 /* SendLogWatchCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
+			productName = SendLogWatchCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
