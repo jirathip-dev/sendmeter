@@ -13,6 +13,13 @@ import SendLogWatchCore
 /// watch is waiting for, whether the phone answered, and a way to ask again.
 struct WaitingForPhoneView: View {
     @Environment(AuthManager.self) private var auth
+    // #476 review finding F2: this screen used to surface no workout
+    // affordance at all — a running HKWorkoutSession, fusion timer, and
+    // pushBeat() kept going with no End control and no indication anything
+    // was running, until the phone re-relayed. The data already survived a
+    // signedOut relay (WorkoutManager is App-scoped, above this switch); this
+    // makes that survival actually reachable from here too.
+    @Environment(WorkoutManager.self) private var workout
     @State private var pendingUploads = 0
 
     var body: some View {
@@ -20,6 +27,10 @@ struct WaitingForPhoneView: View {
             VStack(spacing: 10) {
                 Text("SENDMETER")
                     .font(.headline)
+
+                if workout.isRunning {
+                    workoutRunningBanner
+                }
 
                 // A workout/session can be saved locally while signed out
                 // (offline-first: OfflineQueue/PendingSessionQueue persist
@@ -87,5 +98,28 @@ struct WaitingForPhoneView: View {
         auth.lastRelayAt == nil
             ? "Waiting for your iPhone to send a sign-in."
             : "Your iPhone's last sign-in has expired. Asking it for a new one."
+    }
+
+    /// #476 review finding F2: an End control reachable from the one screen
+    /// that has no `NavigationStack` to push `WorkoutLiveView` onto — calls
+    /// straight into the App-scoped manager's save path, same as the live
+    /// screen's toolbar button.
+    @ViewBuilder
+    private var workoutRunningBanner: some View {
+        VStack(spacing: 6) {
+            Label("Workout running", systemImage: "figure.climbing")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text("\(workout.liveAttempts) boulder\(workout.liveAttempts == 1 ? "" : "s") so far")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Button(workout.ending ? "Ending…" : "End Workout") {
+                workout.endAndSave()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(workout.ending)
+        }
+        .padding(.bottom, 4)
     }
 }

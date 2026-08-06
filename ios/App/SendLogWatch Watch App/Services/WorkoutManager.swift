@@ -30,6 +30,7 @@ final class WorkoutManager: NSObject {
         didSet {
             UserDefaults.standard.set(restTargetS, forKey: "restTargetS")
             pushBeat() // phone mirror should see the new target promptly
+            scheduleRestAlarm() // a no-op while climbing (guards on restStartedAt)
         }
     }
     var errorMsg: String?
@@ -53,11 +54,23 @@ final class WorkoutManager: NSObject {
     /// Brief "Saved ✓" confirmation after auto-save-on-stop.
     var justSaved = false
     /// Whether the just-saved bundle is still sitting in the offline queue
-    /// (issue #189).
+    /// (issue #189) — checked right before showing `justSaved`, so
+    /// `WidgetBridge.refreshStatus()`'s own network round trip below gives
+    /// `drain()` a real chance to finish uploading first when signed in.
+    /// Signed-out stays queued deterministically (`drain()` no-ops
+    /// immediately), so this reliably distinguishes "still uploading" from
+    /// "stuck until sign-in" without touching `drain()`/`shouldDrain`.
     var stillQueued = false
     /// Kept in memory after both persistence and direct upload fail (#287),
     /// so Retry can replay the same idempotent bundle instead of pretending
-    /// the workout was saved.
+    /// the workout was saved. **Deliberately NOT reset by `start()`**
+    /// (review finding F1): discarding it there would silently throw away
+    /// the last copy of an unsaved workout a second time. It also must
+    /// never gate the UI — `WorkoutLiveView` surfaces it as a banner inside
+    /// `startContent`, not as a competing exclusive screen, so a failed save
+    /// from workout N can never block starting workout N+1. See
+    /// `WorkoutScreenSelection` (SendLogWatchCore) for the render-order
+    /// rules this depends on.
     var failedBundle: WorkoutSaveBundle?
 
     private static func loadRestTarget() -> Int {
@@ -95,6 +108,15 @@ final class WorkoutManager: NSObject {
     private var workoutId = UUID()
     private var liveSync: LiveWorkoutSync?
     private var fusionTick = 0
+    /// Double haptic when the rest countdown hits zero (#476 F5: hoisted out
+    /// of WorkoutLiveView, same reasoning as the save path — a rest alarm
+    /// scheduled while the view was on screen used to be silently cancelled
+    /// by any navigation away from it (`.onDisappear`), which was harmless
+    /// pre-hoist (the whole workout died with the view) but became a real
+    /// dropped-haptic regression once the workout started surviving
+    /// navigation. Scheduling it here, tied to `restStartedAt` transitions
+    /// directly, means it survives navigation exactly like everything else.
+    private var restAlarmTask: Task<Void, Never>?
 
     init(tunables: Tunables = .default) {
         self.tunables = tunables
@@ -131,6 +153,24 @@ final class WorkoutManager: NSObject {
         defer { startGuard.finish() }
 
         errorMsg = nil
+        // Review finding F1: this manager now outlives any single workout,
+        // so the previous workout's save-path fields must be explicitly
+        // decided here, not left to carry into the new one's render.
+        // `ending`/`justSaved`/`stillQueued` are per-save transients with
+        // nothing to lose — clear them. `failedBundle` is deliberately left
+        // untouched; see its doc comment above for why.
+        ending = false
+        justSaved = false
+        stillQueued = false
+        // Review finding F7: defensive — every path that sets these also
+        // runs `end()`, which nils them, so this isn't reachable today, but
+        // it closes the same "long-lived manager" exposure as the fields
+        // above at no cost.
+        session = nil
+        builder = nil
+        startDate = nil
+        liveSync = nil
+        cancelRestAlarm() // review finding F5: no stale alarm from a previous rest
         // Warm the phase in the background so save-on-stop needs no network.
         // Stamped with this start's generation: once hoisted, this manager
         // outlives any single workout, so a slow fetch from a PREVIOUS start
@@ -179,6 +219,7 @@ final class WorkoutManager: NSObject {
             // Phone-workout logic: a workout begins RESTING — the countdown
             // runs until the first boulder starts.
             self.restStartedAt = start
+            scheduleRestAlarm()
 
             startAltimeter()
             startMotion()
@@ -206,10 +247,12 @@ final class WorkoutManager: NSObject {
             detector.endCurrentAttempt(at: now)
             climbingSince = nil
             restStartedAt = now
+            scheduleRestAlarm()
         } else {
             detector.beginManualAttempt(at: now)
             climbingSince = now
             restStartedAt = nil
+            cancelRestAlarm()
         }
         manualClimbing = detector.snapshot.isClimbing
         relativeAltitude = detector.snapshot.localHeightM
@@ -283,6 +326,32 @@ final class WorkoutManager: NSObject {
         }
     }
 
+    // MARK: Rest alarm (#476 F5: hoisted out of WorkoutLiveView)
+
+    /// Double haptic when the rest countdown hits zero — cuts through gym
+    /// noise, same as the old manual RestTimer. Idempotent: always cancels
+    /// any existing alarm first, so it's safe to call on every
+    /// `restStartedAt`/`restTargetS` change without double-scheduling.
+    private func scheduleRestAlarm() {
+        cancelRestAlarm()
+        guard let rest = restStartedAt else { return }
+        let end = rest.addingTimeInterval(Double(restTargetS))
+        let interval = end.timeIntervalSinceNow
+        guard interval > 0 else { return }
+        restAlarmTask = Task {
+            try? await Task.sleep(for: .seconds(interval))
+            guard !Task.isCancelled else { return }
+            WKInterfaceDevice.current().play(.notification)
+            try? await Task.sleep(for: .seconds(0.6))
+            WKInterfaceDevice.current().play(.notification)
+        }
+    }
+
+    private func cancelRestAlarm() {
+        restAlarmTask?.cancel()
+        restAlarmTask = nil
+    }
+
     /// Refit the ridge RPE model in the background if it's stale. Fitting at
     /// start (not end) keeps end() instant and offline-safe.
     private func refitRPEModelIfStale() {
@@ -315,6 +384,7 @@ final class WorkoutManager: NSObject {
         guard let session, let builder, let startDate else { return nil }
         fusionTimer?.invalidate()
         fusionTimer = nil
+        cancelRestAlarm() // no more rest to alarm for once the workout is ending
         altimeter.stopRelativeAltitudeUpdates()
         motion.stopDeviceMotionUpdates()
         // Close the phone's WC mirror immediately (Supabase markEnded follows).
@@ -481,6 +551,14 @@ final class WorkoutManager: NSObject {
 
     // Not `private`: see the `fusionTimer` comment above.
     func startFusion() {
+        // Review finding F3: the issue's own root-cause description is
+        // "startFusion overwrites fusionTimer without invalidating it" — the
+        // original fix only guarded `start()`, the one caller, but this
+        // function is `internal` and callable from anywhere in the module.
+        // Invalidating here makes the invariant local to the function that
+        // owns `fusionTimer`, rather than depending on every future caller
+        // remembering to guard it (the repo's #295/#296 pattern).
+        fusionTimer?.invalidate()
         fusionTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / tunables.tickHz, repeats: true) { [weak self] _ in
             guard let self, let startDate = self.startDate else { return }
             let now = Date()
@@ -509,12 +587,13 @@ final class WorkoutManager: NSObject {
                 if after.isClimbing {
                     self.climbingSince = after.phaseStartedAt ?? now
                     self.restStartedAt = nil
+                    self.cancelRestAlarm()
                 } else {
                     self.climbingSince = nil
                     self.restStartedAt = now
+                    self.scheduleRestAlarm()
                 }
-                // Publish the observable phase only after its clock is ready;
-                // WorkoutLiveView's onChange schedules/cancels the rest alarm.
+                // Publish the observable phase only after its clock is ready.
                 self.manualClimbing = after.isClimbing
                 self.pushBeat()
             }

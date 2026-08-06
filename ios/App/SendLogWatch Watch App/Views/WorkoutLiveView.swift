@@ -1,6 +1,5 @@
 import SendLogWatchCore
 import SwiftUI
-import WatchKit
 
 struct WorkoutLiveView: View {
     // App-scoped (#476) — see SendLogWatchApp's doc comment. This view can be
@@ -10,7 +9,6 @@ struct WorkoutLiveView: View {
     // private @State means a freshly (re)created instance picks up the real
     // state instead of starting blank.
     @Environment(WorkoutManager.self) private var workout
-    @State private var restAlarmTask: Task<Void, Never>?
     /// True in the always-on dimmed state. watchOS dims hard on its own, and a
     /// saturated colour block left at full value on top of that is a burn-in
     /// and battery liability — the palette has a reduced variant for it (#243).
@@ -18,16 +16,23 @@ struct WorkoutLiveView: View {
 
     private let restTargets = [60, 120, 180, 300]
 
+    // #476 review finding F1: `WorkoutScreenSelection` (SendLogWatchCore) is
+    // the single, unit-tested source of this decision — this is a thin
+    // pass-through, not a second copy of the logic. It fixes two bugs the
+    // old inline `if failedBundle != nil { … } else if justSaved { … } else
+    // if isRunning { … }` order had: (1) a running workout's render could be
+    // covered by a PREVIOUS workout's save outcome (no End control reachable
+    // — the exact bug #476 exists to fix), because `isRunning` was checked
+    // last, and (2) `failedBundle` doesn't participate in this decision at
+    // all any more — it's surfaced as a banner inside `startContent` (see
+    // below) instead of gating a competing exclusive screen, which used to
+    // make Start permanently unreachable once a save was `.lost`.
     var body: some View {
         Group {
-            if workout.failedBundle != nil {
-                failedSaveContent
-            } else if workout.justSaved {
-                savedContent
-            } else if workout.isRunning {
-                liveContent
-            } else {
-                startContent
+            switch WorkoutScreenSelection.screen(isRunning: workout.isRunning, justSaved: workout.justSaved) {
+            case .live: liveContent
+            case .saved: savedContent
+            case .start: startContent
             }
         }
         // No title while running. watchOS floats the nav bar OVER the content
@@ -38,23 +43,27 @@ struct WorkoutLiveView: View {
         .navigationBarBackButtonHidden(workout.isRunning)
     }
 
+    /// A failed save from a PREVIOUS workout (#287's last in-memory copy of
+    /// one that couldn't be persisted) — deliberately a banner inside
+    /// `startContent`, not its own exclusive screen: an exclusive screen
+    /// blocked Start for the rest of the app session whenever a save was
+    /// `.lost` (#476 review finding F1, scenario B), with no way to clear it
+    /// short of a successful retry.
     @ViewBuilder
-    private var failedSaveContent: some View {
-        VStack(spacing: 8) {
+    private var failedSaveBanner: some View {
+        VStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 30))
+                .font(.system(size: 20))
                 .foregroundStyle(.red)
-            Text("Workout not saved").font(.headline)
-            Text("Keep this screen open and retry.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            Text("Last workout not saved").font(.footnote.weight(.semibold))
             Button(workout.ending ? "Retrying…" : "Retry Save") {
                 workout.retryFailedSave()
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
             .disabled(workout.ending)
         }
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder
@@ -74,6 +83,12 @@ struct WorkoutLiveView: View {
     @ViewBuilder
     private var startContent: some View {
         VStack(spacing: 10) {
+            // #476 review finding F1: a failed save from a previous workout
+            // is additive here, never blocking — see `failedSaveBanner`'s
+            // doc comment.
+            if workout.failedBundle != nil {
+                failedSaveBanner
+            }
             Text("Tracks heart rate, wrist motion and altitude to count your boulders automatically.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -109,11 +124,6 @@ struct WorkoutLiveView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(workout.ending ? "…" : "End") {
-                    // The rest alarm is view-local timer state (#476: no data
-                    // loss in dropping a haptic if the view goes away before
-                    // it fires), so it's cancelled here rather than hoisted
-                    // along with the save path itself.
-                    cancelRestAlarm()
                     workout.endAndSave()
                 }
                 .font(.system(size: 12, weight: .semibold))
@@ -128,15 +138,6 @@ struct WorkoutLiveView: View {
                 .disabled(workout.ending)
             }
         }
-        .onAppear { scheduleRestAlarm() }
-        .onChange(of: workout.manualClimbing) { _, climbing in
-            if climbing {
-                cancelRestAlarm()
-            } else {
-                scheduleRestAlarm()
-            }
-        }
-        .onDisappear { cancelRestAlarm() }
     }
 
     private func color(_ rgb: PhaseRGB) -> Color {
@@ -312,8 +313,9 @@ struct WorkoutLiveView: View {
                     ForEach(restTargets, id: \.self) { t in
                         let selected = workout.restTargetS == t
                         Button("\(t / 60)m") {
+                            // Reschedules the rest alarm itself (#476 F5:
+                            // hoisted into WorkoutManager's `restTargetS.didSet`).
                             workout.restTargetS = t
-                            scheduleRestAlarm()
                         }
                         .font(.system(size: 11, weight: selected ? .bold : .regular))
                         .buttonStyle(.bordered)
@@ -323,28 +325,6 @@ struct WorkoutLiveView: View {
                 }
             }
         }
-    }
-
-    /// Double haptic when the rest countdown hits zero — cuts through gym
-    /// noise, same as the old manual RestTimer.
-    private func scheduleRestAlarm() {
-        cancelRestAlarm()
-        guard let rest = workout.restStartedAt else { return }
-        let end = rest.addingTimeInterval(Double(workout.restTargetS))
-        let interval = end.timeIntervalSinceNow
-        guard interval > 0 else { return }
-        restAlarmTask = Task {
-            try? await Task.sleep(for: .seconds(interval))
-            guard !Task.isCancelled else { return }
-            WKInterfaceDevice.current().play(.notification)
-            try? await Task.sleep(for: .seconds(0.6))
-            WKInterfaceDevice.current().play(.notification)
-        }
-    }
-
-    private func cancelRestAlarm() {
-        restAlarmTask?.cancel()
-        restAlarmTask = nil
     }
 
     private func timeString(_ t: TimeInterval) -> String {

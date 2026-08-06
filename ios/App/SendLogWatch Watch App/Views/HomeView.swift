@@ -18,16 +18,33 @@ import SwiftUI
 /// arriving on the wrong page silently does nothing.
 struct HomeView: View {
     @Binding var selection: WatchHomePage
+    // #476 review finding F4: `sendmeter://status` sends the user to page 1
+    // (`StatusView`), but the "workout running" hint used to live only in
+    // `ActionsView` (page 2) — a status complication tap mid-workout landed
+    // on a page that said nothing about it, reachable only by a blind swipe.
+    // A banner ABOVE the pager, outside the `TabView`, is visible on
+    // whichever page is selected.
+    @Environment(WorkoutManager.self) private var workout
     @State private var showGaugeSessionLoss = false
 
     var body: some View {
-        TabView(selection: $selection) {
-            StatusView()
-                .tag(WatchHomePage.status)
-            ActionsView()
-                .tag(WatchHomePage.actions)
+        VStack(spacing: 2) {
+            if workout.isRunning {
+                Label("Workout running — tap Climb Workout to end it", systemImage: "figure.climbing")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 2)
+            }
+            TabView(selection: $selection) {
+                StatusView()
+                    .tag(WatchHomePage.status)
+                ActionsView()
+                    .tag(WatchHomePage.actions)
+            }
+            .tabViewStyle(.page)
         }
-        .tabViewStyle(.page)
         .navigationTitle("Sendmeter")
         .onAppear {
             if GaugeSessionLossNotice.consume() {
@@ -45,7 +62,6 @@ struct HomeView: View {
 /// Page 2 — the things you can start from the wrist.
 private struct ActionsView: View {
     @Environment(AuthManager.self) private var auth
-    @Environment(WorkoutManager.self) private var workout
     @State private var pendingUploads = 0
 
     var body: some View {
@@ -58,15 +74,9 @@ private struct ActionsView: View {
                 Label("Climb Workout", systemImage: "figure.climbing")
             }
 
-            // #476: the workout survives a Force/status complication tap now
-            // (hoisted to App scope), but this link is still the only way
-            // back to it from Home — say so, since nothing on the Force/
-            // status screens themselves hints a workout is running behind them.
-            if workout.isRunning {
-                Label("Workout running — tap Climb Workout to end it", systemImage: "figure.climbing")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-            }
+            // The "workout running" hint lives in HomeView now, above the
+            // pager (#476 review finding F4) — it needs to be visible on
+            // whichever page a status/force deep link lands on, not just here.
 
             if pendingUploads > 0 {
                 Label("\(pendingUploads) pending upload\(pendingUploads == 1 ? "" : "s")", systemImage: "icloud.and.arrow.up")
