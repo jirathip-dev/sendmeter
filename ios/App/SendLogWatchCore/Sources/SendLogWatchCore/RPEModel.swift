@@ -110,7 +110,22 @@ public nonisolated enum RPEQuantization {
 }
 
 public nonisolated enum RPEModelStore {
-    private static let key = "rpeModel.v1"
+    // #473/#478: bumped from "rpeModel.v1" — every model fitted before this
+    // fix trained on #473's corrupt features (a 27s boulder recorded as
+    // 1034s, 5 boulders recorded as 1, `attempts_confirmed` systematically
+    // under-counted). Bumping the key makes `load()` read nil once on
+    // upgrade, so `refitRPEModelIfStale` treats it as unconditionally stale
+    // and refits from scratch on the next workout start — an old-key model
+    // is simply never read again, "clearing" it without needing a migration.
+    // Historical-row policy (decided, not backfilled): existing
+    // `climb_workouts`/`climb_attempts` rows from before this fix keep their
+    // recorded (sometimes phantom) durations/counts — see RELEASE_NOTES.md.
+    // Any future refit still trains on that history, but the corrupt SHAPE
+    // this bug produced (near-permanent CLIMBING, 1 merged attempt) should
+    // become rare going forward, and each refit requires
+    // rpeMinTrainingSamples confirmed workouts, diluting old outliers as new
+    // (correct) ones accumulate.
+    private static let key = "rpeModel.v2"
 
     public static func load() -> RPEModel? {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }

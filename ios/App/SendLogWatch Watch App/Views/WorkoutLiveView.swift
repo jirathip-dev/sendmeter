@@ -198,11 +198,18 @@ struct WorkoutLiveView: View {
             }
         }
         .onAppear { scheduleRestAlarm() }
-        .onChange(of: workout.manualClimbing) { _, climbing in
-            if climbing {
-                cancelRestAlarm()
-            } else {
+        // #473: keyed to restStartedAt itself, not to the manualClimbing
+        // flag transitioning — a flag transition doesn't identify WHICH
+        // rest period it is, so a spurious close→reopen→close cycle (the
+        // phantom this issue is about) rescheduled the alarm from a moving
+        // target on every flip and it could reschedule forever without ever
+        // firing. restStartedAt only changes when a genuinely new rest
+        // period begins (or clears to nil when climbing starts).
+        .onChange(of: workout.restStartedAt) { _, rest in
+            if rest != nil {
                 scheduleRestAlarm()
+            } else {
+                cancelRestAlarm()
             }
         }
         .onDisappear { cancelRestAlarm() }

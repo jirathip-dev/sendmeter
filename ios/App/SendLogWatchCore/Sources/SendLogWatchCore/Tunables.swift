@@ -18,8 +18,19 @@ public struct Tunables: Sendable {
     public var startMotionTicks: Int = 5
     public var startAltitudeSupportM: Double = 0.45
     public var startStrongAltitudeM: Double = 1.0
+    // #473: HR contributes at most +1 (was +1 for this AND +1 more past
+    // startStrongHRRiseBPM=25, so a decaying post-climb HR alone could hit
+    // startConfidenceRequired=2 with zero altitude evidence — the phantom
+    // re-open). Strong altitude still contributes +2; motion stays the hard
+    // candidate gate below.
     public var startHRRiseBPM: Double = 12.0
-    public var startStrongHRRiseBPM: Double = 25.0
+    // #473: sustained motion promoted to a first-class +1, STRICTER than the
+    // startMotionTicks/startMotionWindowS candidate gate (12 of the trailing
+    // 15 ticks vs. 5 of 8), so a zero-altitude traverse can still reach
+    // startConfidenceRequired via HR(+1) + sustained-motion(+1) while a
+    // post-boulder walk-off — active but brief, HR now capped at +1 — cannot.
+    public var startMotionSustainedWindowS: Double = 15.0
+    public var startMotionSustainedTicks: Int = 12
     public var startConfidenceRequired: Int = 2 // low altitude + HR, or strong altitude
 
     // Attempt end
@@ -30,6 +41,16 @@ public struct Tunables: Sendable {
     public var establishedAltitudeGainM: Double = 0.4
     public var assistedManualMinS: Double = 12.0
     public var maxAttemptS: Double = 300.0
+    // #473: a floor-level (never-established) attempt gets a realistic close
+    // path instead of falling through to maxAttemptS's 300s hard cap.
+    public var unestablishedMaxS: Double = 60.0
+    // #473: an attempt that DID establish altitude but never returns within
+    // endReturnM of its startline (real barometric drift over a long hold)
+    // otherwise "ignores quiet" forever, per AttemptEndResolver — bound it
+    // once it's been quiet for this long, distinct from and tighter than
+    // maxAttemptS. Must stay comfortably above any legitimate quiet pause
+    // mid-climb (see testQuietPauseWhileElevatedDoesNotClose, ~29s).
+    public var establishedDriftMaxS: Double = 90.0
 
     // Post-processing
     public var mergeGapS: Double = 15.0
