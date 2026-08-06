@@ -241,6 +241,25 @@ final class WatchAuthStateTests: XCTestCase {
         )
         XCTAssertNil(SessionRelay.state(for: nil, now: 1_000).userId)
     }
+
+    /// #472's structural pin: a `state` snapshot taken at T goes stale by the
+    /// clock alone, with no relay or other event to invalidate it. A caller
+    /// that decides from a cached `state` (or a `needsToken` read off it)
+    /// instead of calling `SessionRelay.state(for:now:)` again at the moment
+    /// of decision will keep acting on the T snapshot forever — which is
+    /// exactly the bug: the watch's 20s poll, WC activation and reachability
+    /// handlers must each recompute here, not trust what they read earlier.
+    func testStateAtTDisagreesWithStateAtLaterTWhenTheTokenExpiresInBetween() {
+        let stored = session(expiresAt: 1_200)
+        let atT = SessionRelay.state(for: stored, now: 1_000)
+        let atTPlusDelta = SessionRelay.state(for: stored, now: 50_000)
+        XCTAssertEqual(atT, .signedIn(userId: userA, tokenFresh: true))
+        XCTAssertEqual(atTPlusDelta, .signedIn(userId: userA, tokenFresh: false))
+        XCTAssertNotEqual(
+            atT, atTPlusDelta,
+            "the same stored session must decode differently once the clock has moved past exp"
+        )
+    }
 }
 
 final class RelayRequestThrottleTests: XCTestCase {

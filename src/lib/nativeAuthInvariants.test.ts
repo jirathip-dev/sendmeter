@@ -153,6 +153,55 @@ describe("useAuth detaches every listener it attaches (#266)", () => {
   });
 });
 
+describe("watch auth decisions recompute state from the clock (#472)", () => {
+  // `needsToken` is a projection of the *last computed* `state`; only
+  // `refreshState()` recomputes `state` against the clock. A call site that
+  // decides from `needsToken` directly — a `guard ... needsToken ... else`
+  // gate, or an `if needsToken { ... }` — instead of calling `refreshState()`
+  // unconditionally acts on a snapshot that can never self-correct: once
+  // `state` says `tokenFresh: true`, nothing but a relay or another
+  // `refreshState()` call ever revisits it, so an expired token is never
+  // discovered. This asserts the watch's three non-`refreshState()`-internal
+  // triggers (poll, WC activation, WC reachability) each recompute
+  // unconditionally instead of gating on the stale read.
+  const [authManager] = sources(WATCH_APP).filter((s) =>
+    s.path.endsWith("Services/AuthManager.swift"),
+  );
+
+  it("finds the file it is supposed to guard", () => {
+    expect(authManager).toBeDefined();
+  });
+
+  const sites: { name: string; pattern: RegExp }[] = [
+    { name: "startPolling", pattern: /private func startPolling\(\)[\s\S]*?\n {4}\}\n\}/ },
+    {
+      name: "activationDidCompleteWith",
+      pattern: /func session\(\s*_ session: WCSession,\s*activationDidCompleteWith[\s\S]*?\n {4}\}/,
+    },
+    {
+      name: "sessionReachabilityDidChange",
+      pattern: /func sessionReachabilityDidChange\(_ session: WCSession\) \{[\s\S]*?\n {4}\}/,
+    },
+  ];
+
+  for (const { name, pattern } of sites) {
+    it(`${name} calls refreshState() unconditionally, not a needsToken gate`, () => {
+      const body = pattern.exec(authManager!.code)?.[0];
+      expect(body, `${name} not found in AuthManager.swift`).toBeDefined();
+      expect(body).toMatch(/refreshState\(\)/);
+      expect(body).not.toMatch(/needsToken/);
+    });
+  }
+
+  it("needsToken is read to decide in exactly one place: refreshState() itself", () => {
+    // The definition site (`var needsToken: Bool {`) plus refreshState's own
+    // `if needsToken { requestSessionFromPhone() }` — two occurrences. A third
+    // is a new stale-read call site.
+    const occurrences = authManager!.code.match(/\bneedsToken\b/g) ?? [];
+    expect(occurrences.length).toBe(2);
+  });
+});
+
 describe("watch diagnostics events stay transition-driven (#368)", () => {
   const [bridge] = sources(AUTH_BRIDGE);
 

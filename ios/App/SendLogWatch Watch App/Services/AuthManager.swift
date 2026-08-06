@@ -203,11 +203,19 @@ final class AuthManager: NSObject {
         syncTimeout?.cancel()
     }
 
-    /// Slow poll, only while the watch needs a token. watchOS suspends the app
-    /// (and this task with it) when it isn't on screen, so this costs nothing
-    /// in the background; its job is the case where the user is *looking* at
-    /// the watch, the phone is in a pocket nearby, and nothing else would fire
-    /// an event to retry on.
+    /// Slow poll while the app is on screen. watchOS suspends the app (and
+    /// this task with it) when it isn't, so this costs nothing in the
+    /// background; its job is the case where the user is *looking* at the
+    /// watch, the phone is in a pocket nearby, and nothing else would fire an
+    /// event to retry on.
+    ///
+    /// Every tick calls `refreshState()` unconditionally rather than gating on
+    /// `needsToken` first: `needsToken` only reflects the *last computed*
+    /// `state`, and `refreshState()` is the sole place that recomputes it
+    /// against the clock. Gating on the stale read is exactly how a token that
+    /// went stale mid-poll never got discovered — `refreshState()` itself is
+    /// cheap (a pure `SessionRelay.state` call) and self-gates the network ask
+    /// behind the fresh `needsToken`.
     private func startPolling() {
         poll?.cancel()
         poll = Task { [weak self] in
@@ -215,8 +223,7 @@ final class AuthManager: NSObject {
                 try? await Task.sleep(for: .seconds(20))
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    guard let self, self.needsToken else { return }
-                    self.refreshState()
+                    self?.refreshState()
                 }
             }
         }
@@ -229,9 +236,10 @@ extension AuthManager: WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
     ) {
-        Task { @MainActor in
-            if self.needsToken { self.requestSessionFromPhone() }
-        }
+        // Recompute from the clock rather than trust cached `state` — see
+        // `startPolling`'s doc comment for why a `needsToken` gate here can
+        // read stale.
+        Task { @MainActor in self.refreshState() }
     }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
@@ -250,8 +258,9 @@ extension AuthManager: WCSessionDelegate {
     /// moment to (re)ask; an earlier attempt would have failed while it slept.
     func sessionReachabilityDidChange(_ session: WCSession) {
         guard session.isReachable else { return }
-        Task { @MainActor in
-            if self.needsToken { self.requestSessionFromPhone() }
-        }
+        // Recompute from the clock rather than trust cached `state` — see
+        // `startPolling`'s doc comment for why a `needsToken` gate here can
+        // read stale.
+        Task { @MainActor in self.refreshState() }
     }
 }
