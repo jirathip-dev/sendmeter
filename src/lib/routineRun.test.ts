@@ -302,6 +302,18 @@ describe("resolveRoutineResume", () => {
     // "partial" heavily inflated vs. the true 30s actually spent.
     expect(outcome).toEqual({ kind: "discarded", presetId: "p1" });
   });
+
+  /// #483 re-review N3: a record from before `lastSeenMs` existed — as
+  /// loadRoutineRun would produce for a pre-deploy dangling record, defaulting
+  /// the missing field to `startedMs` (never `Date.now()`) — must not
+  /// classify a truly-abandoned legacy run as "completed". Reproduces the
+  /// reviewer's exact numbers: a 9-minute preset abandoned 2h before this
+  /// deploy, with no heartbeat history at all.
+  it("a legacy record with no heartbeat history (lastSeenMs defaulted to startedMs) does not fabricate a completed session", () => {
+    const legacy: RoutineRunState = { ...base, lastSeenMs: base.startedMs }; // loadRoutineRun's default for a pre-#483-heartbeat record
+    const nowMs = base.startedMs + 2 * 60 * 60 * 1000; // 2h later, at deploy time
+    expect(resolveRoutineResume(legacy, presets, nowMs)).toEqual({ kind: "discarded", presetId: "p1" });
+  });
 });
 
 /// In-memory stand-in for localStorage — these tests run in node (no jsdom),
@@ -347,24 +359,26 @@ describe("routine run persistence (auto-resume)", () => {
     expect(loadRoutineRun()).toBeNull();
   });
 
-  /// #483 review F1/F3/F5: a record written before `lastSeenMs` existed has
-  /// no heartbeat history — defaulting it to something ancient (e.g.
-  /// `startedMs`) would misclassify a genuinely in-progress legacy run as
-  /// stale on the one reload that crosses the deploy introducing this field.
-  /// loadRoutineRun defaults it to "just seen now" instead.
-  it("defaults a missing lastSeenMs to now, not to startedMs or another stale value", () => {
-    vi.useFakeTimers();
-    const fixedNow = 1_500_000;
-    vi.setSystemTime(fixedNow);
+  /// #483 re-review N3: a record written before `lastSeenMs` existed has no
+  /// heartbeat history at all — defaulting it to `Date.now()` ("just seen")
+  /// sounds safe but is backwards: for a legacy record that was actually
+  /// abandoned hours before this deploy, it makes the staleness gate read as
+  /// fresh, so the huge stale wall-clock elapsed gets trusted and
+  /// classifyElapsed reports "completed" — a fabricated full-length session,
+  /// once, on the very deploy transition this field exists to prevent (the
+  /// review verified this numerically: a 2h-abandoned 9-minute legacy record
+  /// classified as `{kind:"completed", durationMin:9}`). Defaulting to
+  /// `startedMs` instead is the honest "no evidence beyond the start", which
+  /// this test proves by keeping `loadRoutineRun` itself pure (no `Date.now`
+  /// stubbing needed at all any more).
+  it("defaults a missing lastSeenMs to startedMs, not to now", () => {
     const { storage, map } = fakeStorage();
     vi.stubGlobal("localStorage", storage);
     map.set("sendmeter:routine-run", JSON.stringify({ presetId: "p1", startedMs: 1_000_000 }));
-    expect(loadRoutineRun()).toEqual({ ...base, lastSeenMs: fixedNow });
+    expect(loadRoutineRun()).toEqual(base); // base.lastSeenMs === base.startedMs
   });
 
   it("defaults the other optional clock fields so a partial record still resumes", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(base.startedMs); // so the lastSeenMs default matches `base` exactly
     const { storage, map } = fakeStorage();
     vi.stubGlobal("localStorage", storage);
     map.set("sendmeter:routine-run", JSON.stringify({ presetId: "p1", startedMs: 1_000_000 }));

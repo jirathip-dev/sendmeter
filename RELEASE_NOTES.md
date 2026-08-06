@@ -33,7 +33,9 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: a non-hands-free run right after a hands-free run no longer plays stray "done" cues or shows a stale danger banner on segment transitions.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
-- Routine: reopening the Workout tab long after leaving a routine mid-way no longer silently auto-resumes it and logs a fabricated session duration. A routine you actually finished is now logged as completed even if the app was closed right at the end; one you genuinely abandoned partway logs only the real time you spent (with a toast either way, never silently); and Skip no longer inflates the logged duration to the routine's full nominal length.
+- Routine: reopening the Workout tab long after leaving a routine mid-way no longer silently auto-resumes it and logs a fabricated session duration. A routine you actually finished is now logged as completed even if the screen locked right at the end; one you genuinely abandoned partway logs only the real time you spent (with a toast either way, never silently); and Skip no longer inflates the logged duration to the routine's full nominal length.
+- Routine: the screen no longer auto-locks while a guided routine is running, so leaving the phone alone mid-routine no longer under-logs (or fails to log) how long it actually took.
+- Routine: preset totals in the Workout tab now include the routine's lead-in countdown to match the running timer, so a listed total may read a few seconds longer than before (e.g. "9m" → "9m5s").
 
 ## 1.0 — 2026-08-02
 

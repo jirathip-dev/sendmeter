@@ -187,11 +187,21 @@ export function loadRoutineRun(): RoutineRunState | null {
         pausedAtMs: typeof p.pausedAtMs === "number" ? p.pausedAtMs : null,
         pausedTotalMs: typeof p.pausedTotalMs === "number" ? p.pausedTotalMs : 0,
         // A record written before this field existed (or otherwise missing
-        // it) has no heartbeat history to distrust — default to "just seen"
-        // rather than "ancient", so a genuinely in-progress legacy run isn't
-        // misclassified as stale on the one reload that crosses the deploy
-        // that introduced this field (#483 review F1/F3/F5).
-        lastSeenMs: typeof p.lastSeenMs === "number" ? p.lastSeenMs : Date.now(),
+        // it) has no heartbeat history at all — the honest statement is "no
+        // evidence beyond the start", so default to `startedMs`, not
+        // `Date.now()` (#483 re-review N3). Defaulting to "just seen" instead
+        // sounds safe but is backwards: for a legacy record that was actually
+        // abandoned hours ago, it makes `gapS` read as fresh, so the stale
+        // wall clock gets trusted and `classifyElapsed` sees a huge
+        // `realElapsedS` and returns `completed` — a fabricated full-length
+        // session, once, on the very deploy transition this field exists to
+        // prevent. Defaulting to `startedMs` instead yields `discarded` or a
+        // real `partial` in that case, and for a genuinely in-progress legacy
+        // record it's a one-shot, self-healing "discarded, visibly" (the next
+        // heartbeat this field ever gets is a real one). This also keeps this
+        // function pure — no `Date.now()` call — which is otherwise only
+        // legal here because its one caller is a `useState` lazy initializer.
+        lastSeenMs: typeof p.lastSeenMs === "number" ? p.lastSeenMs : p.startedMs,
       };
     }
     return null;

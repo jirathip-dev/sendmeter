@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { ROUTINE_TIMER_FONT, heroFontCss } from "../lib/fullscreenLayout";
+import { useWakeLock } from "../hooks/useWakeLock";
 import { ROUTINE_PREPARE_S, expandRoutine, routineDurationS } from "../lib/routine";
 import {
   HEARTBEAT_MS,
@@ -41,7 +42,14 @@ interface Props {
   /// The owner classifies via the same completed/partial/discarded logic as
   /// the mount-time resume decision and should always close the fullscreen —
   /// there's nobody there to see "All done" or tap the manual Done button.
-  onStaleFinish?: (outcome: RoutineLogOutcome) => void;
+  /// Required, not optional (#483 re-review N2): an owner that forgets to
+  /// wire this loses the run silently — `finishedRef` is already set and
+  /// `clearRoutineRun()` already ran by the time it would fire, so a no-op
+  /// here means nothing is logged and no toast appears. TypeScript alone
+  /// can't catch a missing optional prop; making it required at least means
+  /// omitting it is a visible diff, and routineResumeInvariants.test.ts pins
+  /// the call site itself.
+  onStaleFinish: (outcome: RoutineLogOutcome) => void;
 }
 
 function fmt(sec: number): string {
@@ -82,6 +90,18 @@ export default function RoutineFullscreen({
     const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
   }, []);
+
+  // Keep the screen awake for the whole life of this component (#483
+  // re-review N1): without this, an ordinary iOS auto-lock suspends the
+  // WebView mid-routine, the lastSeenMs heartbeat freezes at the lock
+  // instant, and a routine the user actually COMPLETED classifies as a
+  // 1-2 minute partial (or is discarded outright) purely as a function of
+  // the auto-lock timeout — worse than the bug this fix replaced. Same
+  // treatment ForceView already gives its own fullscreen timer
+  // (`useWakeLock` at ForceView.tsx). Unconditionally active while mounted;
+  // the hook's own cleanup releases it on unmount (onClose/onExitEarly/
+  // onFinish→Done/onStaleFinish all unmount this component via `running`).
+  useWakeLock(true);
 
   const paused = pausedAtMs !== null;
   const elapsed =
@@ -170,7 +190,7 @@ export default function RoutineFullscreen({
       onFinish?.(loggedMinutes(realElapsed, TOTAL_S));
     } else {
       const seenRealElapsed = (lastSeenRef.current - startedMs - pausedTotalMs) / 1000;
-      onStaleFinish?.(classifyElapsed(seenRealElapsed, TOTAL_S));
+      onStaleFinish(classifyElapsed(seenRealElapsed, TOTAL_S));
     }
     // Reads `now`/`realElapsed`/etc. from the same render `done` flipped in —
     // deliberately keyed on [done] only, not each of its inputs.

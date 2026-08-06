@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   deleteRoutinePreset,
   deleteSession,
@@ -72,6 +72,18 @@ export default function RoutineCard({
 }) {
   const toast = useToast();
   const bumpRealtime = useRealtimeBump();
+  // #483 re-review closure-capture note: the mount effect's `.then` can now
+  // log a session (an interrupted/completed run resolved via
+  // resolveRoutineResume), reading `currentPhase` — a prop captured at mount
+  // inside a `[]`-deps effect. It happens to be safe today only because
+  // App.tsx gates the tabs behind a loading screen until currentPhase is
+  // already set, an invariant that lives two files away and nothing pins.
+  // Reading it via a ref removes the dependency entirely, matching
+  // ForceView's recordingsRef pattern for the #295/#296 defect class.
+  const currentPhaseRef = useRef(currentPhase);
+  useEffect(() => {
+    currentPhaseRef.current = currentPhase;
+  }, [currentPhase]);
   const [presets, setPresets] = useState<RoutinePreset[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -124,9 +136,16 @@ export default function RoutineCard({
             break;
           case "none":
             setSelectedId(list[0]?.id ?? null);
+            // resolveRoutineResume also returns "none" when a persisted run's
+            // own preset was deleted — a real, previously-confirmed run being
+            // discarded, not "there was nothing here". #483 re-review N5: the
+            // "never discard silently" rule this fix names elsewhere must
+            // hold here too, so this gets the same visible toast as
+            // classifyElapsed's "discarded" (applyLogOutcome), not silence.
             if (resumeRun) {
               clearRoutineRun();
               setResumeRun(null);
+              toast("Interrupted routine's preset was deleted — nothing logged", "info");
             }
             break;
           default: {
@@ -156,7 +175,10 @@ export default function RoutineCard({
 
   /// Log a routine as a session (feeds ACWR + History). `undo` adds an Undo
   /// action to the toast — used for partial auto-saves on early exit (SL-97)
-  /// since the user didn't explicitly choose to save.
+  /// since the user didn't explicitly choose to save. Reads `currentPhase`
+  /// via a ref (#483 re-review), not the captured prop — this can now fire
+  /// from the mount effect's `.then` (an interrupted/completed run logged on
+  /// resume), and a ref can't go stale the way a closed-over prop can.
   async function logRoutine(durationMin: number, note: string, undo = false) {
     try {
       const s = await insertSession({
@@ -165,7 +187,7 @@ export default function RoutineCard({
         duration: durationMin,
         rpe: 4,
         note,
-        phase: currentPhase,
+        phase: currentPhaseRef.current,
       });
       bumpRealtime();
       toast(

@@ -73,14 +73,53 @@ describe("#483 routine resume/finish invariants", () => {
     expect(body).toMatch(/toast\(/);
   });
 
+  /// #483 re-review N5: "never discard silently" was asserted as an
+  /// invariant but the `{kind:"none"}` case (a persisted run whose preset was
+  /// deleted — a real, previously-confirmed run, not "there was nothing
+  /// here") still cleared with no toast. The rule now has to hold there too.
+  it("the none-outcome branch also toasts when it actually discards a run (#483 re-review N5)", () => {
+    const i = card.indexOf('case "none"');
+    expect(i).toBeGreaterThan(-1);
+    const body = card.slice(i, i + 400);
+    expect(body).toMatch(/toast\(/);
+  });
+
   it("RoutineFullscreen gates its finish handling on a heartbeat/gap check, not unconditional onFinish (#483 review F3)", () => {
     // Pre-review-round `RoutineFullscreen` fired onFinish unconditionally
     // whenever `done` flipped true, with no notion of whether anyone was
     // actually present — including across a suspended (not remounted)
     // WebView, which never re-runs RoutineCard's mount-time check at all.
     expect(fullscreen).toMatch(/STALE_GAP_S/);
-    expect(fullscreen).toMatch(/onStaleFinish\?\.\(/);
+    expect(fullscreen).toMatch(/onStaleFinish\(/);
     expect(fullscreen).toMatch(/classifyElapsed\(/);
+  });
+
+  /// #483 re-review N2: `onStaleFinish` being an optional prop meant deleting
+  /// the whole call site out of RoutineCard — F3's entire suspended-WebView
+  /// remedy — left `tsc`/tests fully green: `finishedRef` is already set and
+  /// `clearRoutineRun()` already ran by the time the (missing) callback would
+  /// fire, so the record is destroyed with nothing logged and no toast. Pin
+  /// the call site itself, not just that RoutineFullscreen offers the prop.
+  it("RoutineCard actually wires onStaleFinish, not just RoutineFullscreen offering it (#483 re-review N2)", () => {
+    expect(card).toMatch(/onStaleFinish=\{/);
+  });
+
+  it("onStaleFinish is a required prop, not optional (#483 re-review N2)", () => {
+    // TypeScript can't catch a missing *optional* prop at all; requiring it
+    // at least turns an omission into a type error at the call site.
+    expect(fullscreen).toMatch(/onStaleFinish:\s*\(outcome/);
+    expect(fullscreen).not.toMatch(/onStaleFinish\?:/);
+  });
+
+  /// #483 re-review N1: a guided routine is exactly the workflow where the
+  /// user puts the phone down — without a wake lock, an ordinary iOS
+  /// auto-lock suspends the WebView mid-routine, freezing the lastSeenMs
+  /// heartbeat at the lock instant, so even a routine the user actually
+  /// completed logs as a 1-2 minute partial or nothing at all. ForceView
+  /// already holds a wake lock for its own fullscreen timer for the same
+  /// reason.
+  it("RoutineFullscreen holds a wake lock while mounted (#483 re-review N1)", () => {
+    expect(fullscreen).toMatch(/useWakeLock\(/);
   });
 
   it("the completed-routine duration excludes Skip's fast-forwarded time (#483 review F4)", () => {
