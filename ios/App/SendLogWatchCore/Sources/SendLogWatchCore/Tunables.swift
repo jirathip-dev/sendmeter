@@ -23,14 +23,13 @@ public struct Tunables: Sendable {
     // startConfidenceRequired=2 with zero altitude evidence — the phantom
     // re-open). Strong altitude still contributes +2; motion stays the hard
     // candidate gate below.
+    // #473: a sustained-motion second confidence point (paired with the HR
+    // rise, to restore zero-altitude "traverse" detection) was tried and
+    // reverted — measured to open on ordinary walking between boulders with
+    // an elevated HR, which shipped code correctly rejected. See
+    // AttemptDetector.shouldStartAttempt. HR-only traverse detection is
+    // retired as a result; log one with the Boulder/Stop button instead.
     public var startHRRiseBPM: Double = 12.0
-    // #473: sustained motion promoted to a first-class +1, STRICTER than the
-    // startMotionTicks/startMotionWindowS candidate gate (12 of the trailing
-    // 15 ticks vs. 5 of 8), so a zero-altitude traverse can still reach
-    // startConfidenceRequired via HR(+1) + sustained-motion(+1) while a
-    // post-boulder walk-off — active but brief, HR now capped at +1 — cannot.
-    public var startMotionSustainedWindowS: Double = 15.0
-    public var startMotionSustainedTicks: Int = 12
     public var startConfidenceRequired: Int = 2 // low altitude + HR, or strong altitude
 
     // Attempt end
@@ -45,11 +44,12 @@ public struct Tunables: Sendable {
     // path instead of falling through to maxAttemptS's 300s hard cap.
     public var unestablishedMaxS: Double = 60.0
     // #473: an attempt that DID establish altitude but never returns within
-    // endReturnM of its startline (real barometric drift over a long hold)
-    // otherwise "ignores quiet" forever, per AttemptEndResolver — bound it
-    // once it's been quiet for this long, distinct from and tighter than
-    // maxAttemptS. Must stay comfortably above any legitimate quiet pause
-    // mid-climb (see testQuietPauseWhileElevatedDoesNotClose, ~29s).
+    // endReturnM of its startline (real barometric drift over a long hold —
+    // whether the climber is standing still or has already walked on) used
+    // to run to the full maxAttemptS. Pure duration bound, deliberately not
+    // gated on quiet (a walking climber never goes quiet). Must stay
+    // comfortably above any legitimate quiet pause mid-climb (see
+    // testQuietPauseWhileElevatedDoesNotClose, ~29s).
     public var establishedDriftMaxS: Double = 90.0
 
     // Post-processing

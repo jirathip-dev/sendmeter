@@ -145,17 +145,43 @@ enum Repo {
         return rows.first
     }
 
+    /// #473/#478: rows started before `rpeTrainingCutoff` carry #473's
+    /// corrupt detector output (near-permanent CLIMBING misread as one
+    /// multi-minute attempt, boulder counts under-counted) baked into
+    /// `mean_effort`/`attempts_per_10min` — training on them just relearns
+    /// the bug under the fresh `rpeModel.v2` storage key. Excluding them is
+    /// the actual fix for the historical-row policy: bumping the storage key
+    /// alone (#478) only stops READING an old model, it does nothing to stop
+    /// the next refit from re-fitting on the same corrupt rows. With this
+    /// filter, `RPEModelFitter.fit` returns `nil` (below
+    /// `rpeMinTrainingSamples`) until enough POST-fix confirmed workouts
+    /// exist, and `WorkoutManager.end()`'s existing fallback
+    /// (`AttemptDetector.predictRPE`'s hand formula) is used meanwhile —
+    /// deliberately worse-than-nothing is not on the table; "no model yet"
+    /// is the honest state.
     static func fetchLabeledWorkouts() async throws -> [LabeledWorkoutRow] {
         try await client
             .from("climb_workouts")
             .select("avg_hr, mean_effort, attempts_per_10min, rpe_confirmed")
             .not("rpe_confirmed", operator: .is, value: "null")
             .not("mean_effort", operator: .is, value: "null")
+            .gte("started_at", value: rpeTrainingCutoff)
             .order("started_at", ascending: false)
             .limit(200)
             .execute()
             .value
     }
+
+    /// Earliest `started_at` eligible to train the on-device RPE model — see
+    /// `fetchLabeledWorkouts`. This is this fix's expected ship date; if the
+    /// PR merges later than that, bump it to match (an earlier cutoff than
+    /// the actual ship date lets pre-fix rows back in).
+    private static let rpeTrainingCutoff: String = {
+        var c = DateComponents()
+        c.year = 2026; c.month = 8; c.day = 7
+        let date = Calendar.gregorianLocal.date(from: c)!
+        return ISO8601DateFormatter().string(from: date)
+    }()
 
     static func makeSaveBundle(
         summary: WorkoutSummary,

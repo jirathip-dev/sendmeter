@@ -207,34 +207,27 @@ final class AttemptDetectorTests: XCTestCase {
         XCTAssertEqual(d.snapshot.state, .autoClimbing)
     }
 
-    /// #473 changed this test's trace (it is EXPECTED to change, per the
-    /// issue's correction comment — capping HR at +1 alone deletes HR-only
-    /// detection). A zero-altitude traverse now needs HR-rise(+1) AND
-    /// sustained motion (+1, ~12-of-15 trailing ticks, stricter than the
-    /// 5-of-8 candidate gate) to reach startConfidenceRequired. The original
-    /// 12-tick active segment isn't long enough: confidence only trips once
-    /// the sustained-motion window has accumulated enough active ticks
-    /// (empirically the last tick of a same-length active run), leaving no
-    /// active ticks inside the resulting attempt window to pass
-    /// minActiveMotionTicks. A realistic-length traverse (35s of active
-    /// motion) leaves a real climbing window after confidence trips, same as
-    /// a real gym traverse would.
+    /// #473: HR-only ("traverse") auto detection is DELIBERATELY RETIRED as
+    /// part of this fix, per the issue correction comment's own sanctioned
+    /// fallback. A sustained-motion second confidence point was tried to
+    /// restore it (paired with the HR rise) and reverted after adversarial
+    /// review measured it independently: the same trace this test used to
+    /// assert (35s of active motion, HR +30, flat altitude) is
+    /// indistinguishable from ordinary walking between boulders with an
+    /// elevated HR — a probe the reviewer built (60s at 0.10g, HR +15, flat
+    /// altitude, from a seated rest) opened an attempt that shipped code
+    /// correctly rejected. `testWalkingNoiseRejected`'s fixture couldn't
+    /// catch this because its HR is flat from tick 0, so `restingHR` equals
+    /// it and the rise is never real — a structurally blind guard, not
+    /// evidence the mechanism was safe. Kept, not deleted, with the
+    /// assertion flipped to what this trace now correctly does: nothing.
+    /// Flat/low-altitude traverses are logged with the Boulder/Stop button.
     func testHROnlyAttemptClosesWithQuietFallback() {
-        let d = AttemptDetector(tunables: .default)
-        for i in 0..<30 {
-            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
-        }
-        for i in 30..<65 {
-            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.13, hr: 110), at: start.addingTimeInterval(Double(i)))
-        }
-        XCTAssertEqual(d.snapshot.state, .autoClimbing)
-        for i in 65..<80 {
-            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 110), at: start.addingTimeInterval(Double(i)))
-        }
-        XCTAssertEqual(d.snapshot.state, .resting)
-        let attempts = d.finalize()
-        XCTAssertEqual(attempts.count, 1)
-        XCTAssertEqual(attempts[0].source, .auto)
+        var trace: [(Double, Double, Double?)] = []
+        trace += Array(repeating: (0.0, 0.02, 80.0), count: 30)
+        for _ in 0..<35 { trace.append((0.0, 0.13, 110.0)) }
+        trace += Array(repeating: (0.0, 0.02, 110.0), count: 15)
+        XCTAssertEqual(run(trace).count, 0)
     }
 
     func testSnapshotLocalHeightTracksDescentAndClampsAtZero() {
@@ -480,13 +473,15 @@ final class AttemptDetectorTests: XCTestCase {
         XCTAssertFalse(final[0].hitCap)
     }
 
-    /// #473: Stop-then-Play must open and STAY manual — the auto-disarm the
-    /// hostile-tick fix relies on must never block the user's own Play tap,
-    /// or the fix for a dead Stop button creates a dead Play button. (Passes
-    /// on pre-#473 code too, since no disarm existed to block anything —
-    /// kept as an acceptance criterion per the issue's stated requirement,
-    /// not because it's a regression.)
-    func testStopThenPlayBypassesDisarmAndStaysManual() {
+    /// #473 Scope: Stop-then-Play must open and STAY manual. Kept as an
+    /// acceptance criterion per the issue's stated requirement even though no
+    /// code change proves strictly necessary for it (manual open/close was
+    /// always a separate code path from auto detection — see
+    /// `beginManualAttempt`/`endManualAttempt`, never gated on any auto
+    /// state). Real test power despite that: a future change that makes
+    /// `beginManualAttempt` consult auto state (e.g. a reopen guard) would
+    /// fail this immediately.
+    func testStopThenPlayOpensAndStaysManual() {
         let d = AttemptDetector(tunables: .default)
         var i = 0
         for _ in 0..<30 {
@@ -498,14 +493,13 @@ final class AttemptDetectorTests: XCTestCase {
             i += 1
         }
         let now = start.addingTimeInterval(Double(i))
-        d.endCurrentAttempt(at: now) // Stop, with walk-off motion still fresh
+        d.endCurrentAttempt(at: now) // Stop
         XCTAssertEqual(d.snapshot.state, .resting)
 
         d.beginManualAttempt(at: now) // Play, immediately after Stop
-        XCTAssertTrue(d.isManualAttemptOpen, "manual Play must bypass the post-close disarm")
+        XCTAssertTrue(d.isManualAttemptOpen, "manual Play must open immediately after Stop")
 
-        // Stays manual across further ticks — including hostile-looking
-        // motion+HR that would otherwise be blocked for auto.
+        // Stays manual across further ticks.
         for _ in 0..<10 {
             d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.10, hr: 170), at: start.addingTimeInterval(Double(i)))
             XCTAssertTrue(d.isManualAttemptOpen, "manual attempt closed on its own while open")
@@ -563,9 +557,14 @@ final class AttemptDetectorTests: XCTestCase {
 
     /// A floor-level (never-established) attempt must close near
     /// `unestablishedMaxS` (60s), not fall through to `maxAttemptS` (300s).
+    /// Since HR-only auto detection is retired (F1), an auto attempt can no
+    /// longer open without altitude evidence that already exceeds
+    /// `establishedAltitudeGainM` (`startAltitudeSupportM` = 0.45m >
+    /// `establishedAltitudeGainM` = 0.4m by construction), so a genuinely
+    /// unestablished attempt is only reachable via a forgotten manual Stop —
+    /// the assisted-close path runs through the same `AttemptEndResolver`.
     /// This trace never gives the HR+quiet fallback a chance to fire either
-    /// (motion sits at 0.06g — above `quietMotionG` so never "quiet", below
-    /// `startMotionG` so it stops re-triggering the candidate gate), so on
+    /// (motion sits at 0.06g — above `quietMotionG` so never "quiet"), so on
     /// pre-#473 code (no `unestablishedMaxS`) this closes at exactly
     /// `maxAttemptS` — reasoned rather than run, since the tunable this test
     /// exercises did not exist pre-fix and the file can't compile against
@@ -577,16 +576,12 @@ final class AttemptDetectorTests: XCTestCase {
             d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
             i += 1
         }
-        // HR-rise + sustained-motion opens it (same shape as the restored
-        // traverse test), flat altitude throughout.
-        for _ in 0..<35 {
-            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.13, hr: 110), at: start.addingTimeInterval(Double(i)))
-            i += 1
-        }
-        XCTAssertEqual(d.snapshot.state, .autoClimbing)
+        d.beginManualAttempt(at: start.addingTimeInterval(Double(i))) // forgotten Stop
+        XCTAssertTrue(d.isManualAttemptOpen)
         // Never establishes (flat altitude), never goes quiet (0.06g is
         // above quietMotionG), HR support never lapses (constant 110) — the
-        // only exit left is the floor-level cap.
+        // only exit left, once assistedManualMinS has elapsed, is the
+        // floor-level cap.
         for _ in 0..<200 {
             d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.06, hr: 110), at: start.addingTimeInterval(Double(i)))
             i += 1
@@ -595,6 +590,7 @@ final class AttemptDetectorTests: XCTestCase {
         XCTAssertEqual(d.snapshot.state, .resting, "never closed at all")
         let attempts = d.finalize()
         XCTAssertEqual(attempts.count, 1)
+        XCTAssertEqual(attempts[0].source, .manual)
         XCTAssertGreaterThan(attempts[0].durationS, 60, "must run at least to unestablishedMaxS")
         XCTAssertLessThanOrEqual(attempts[0].durationS, 66, "exact ceiling — must not run anywhere near maxAttemptS (300s)")
         XCTAssertTrue(attempts[0].hitCap)
@@ -636,5 +632,107 @@ final class AttemptDetectorTests: XCTestCase {
         XCTAssertLessThanOrEqual(attempts[0].durationS, 96, "exact ceiling — must not run anywhere near maxAttemptS (300s)")
         XCTAssertTrue(attempts[0].hitCap)
         XCTAssertGreaterThan(attempts[0].elevationGainM, 1.0)
+    }
+
+    /// #473/F4 (review correction): the established-drift bound must fire
+    /// even while the climber is actively moving (still working the wall, or
+    /// has already walked on), not only when fully quiet — a walking climber
+    /// never satisfies `hasGoneQuiet`, so a quiet-gated bound never fires for
+    /// exactly this case. Measured pre-F4-fix: this trace ran to 301s (the
+    /// maxAttemptS hard cap), not the drift cap. Same trace as
+    /// `testEstablishedDriftAttemptClosesNearDriftCap` except motion stays
+    /// active (0.10g) instead of going quiet.
+    func testEstablishedDriftAttemptClosesNearDriftCapWhileActive() {
+        let d = AttemptDetector(tunables: .default)
+        var i = 0
+        for _ in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        for k in 0..<20 { // establishes ~1.5m
+            d.ingest(MotionSample(t: Double(i), altitude: Double(k) * 0.08, motionRMS: 0.13, hr: 110), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        XCTAssertEqual(d.snapshot.state, .autoClimbing)
+        // Never returns within endReturnM of the startline (drifted floor),
+        // but ACTIVE motion throughout — never goes quiet.
+        for _ in 0..<200 {
+            d.ingest(MotionSample(t: Double(i), altitude: 1.5, motionRMS: 0.10, hr: 110), at: start.addingTimeInterval(Double(i)))
+            i += 1
+            if d.snapshot.state == .resting { break }
+        }
+        XCTAssertEqual(d.snapshot.state, .resting, "never closed at all")
+        let attempts = d.finalize()
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertGreaterThan(attempts[0].durationS, 90, "must run at least to establishedDriftMaxS")
+        XCTAssertLessThanOrEqual(attempts[0].durationS, 96, "exact ceiling — must not run anywhere near maxAttemptS (300s)")
+        XCTAssertTrue(attempts[0].hitCap)
+    }
+
+    // MARK: #473/F3 — merge explicitlyEnded semantics (AND, not OR)
+
+    /// The correction comment's own stated requirement: "a confirmed short
+    /// fragment must not exempt a merged phantom spanning minutes."
+    /// Fragment A is an explicit Stop on a short auto attempt (would fail
+    /// minAttemptS/minActiveMotionTicks on its own, but is individually
+    /// exempt — see testExplicitStopOfShortAutoAttemptRecordsExactly
+    /// OnePositiveDurationAttempt). Fragment B opens again within
+    /// mergeGapS and closes on ITS OWN via returnedToFloor (non-explicit).
+    /// Merging them combines the two RawAttempts into one; with the correct
+    /// AND semantics the merged block is NOT exempt (B wasn't explicit) and
+    /// must still fail the auto post-filters as a combined block. Flipping
+    /// the merge's `&&` to `||` (the exact leak this test targets) makes the
+    /// merged block inherit A's exemption and pass with count == 1 instead
+    /// of 0 — this is the review's own reproduction (mutation M7).
+    func testExplicitFragmentMergedWithPhantomLosesExemption() {
+        let d = AttemptDetector(tunables: .default)
+        var i = 0
+        for _ in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        // Fragment A: explicit — stopped the instant it opens, so it uses
+        // the minimum active ticks the candidate gate needs (a strong
+        // altitude jump; ~5-6 ticks).
+        var guardCount = 0
+        while !d.snapshot.isClimbing {
+            d.ingest(MotionSample(t: Double(i), altitude: 1.2, motionRMS: 0.12, hr: 100), at: start.addingTimeInterval(Double(i)))
+            i += 1
+            guardCount += 1
+            if guardCount > 20 { return XCTFail("fragment A never opened") }
+        }
+        d.endCurrentAttempt(at: start.addingTimeInterval(Double(i)))
+        XCTAssertEqual(d.snapshot.state, .resting)
+
+        // Small gap (2 ticks) — short enough that fragment B's own
+        // candidate-gate window still reaches back into A's still-recent
+        // active ticks, so B needs almost none of its own new active ticks
+        // to clear the gate. Combined active-tick count across the merged
+        // span therefore stays low — this is what actually fails
+        // minActiveMotionTicks below, not duration (two independently-gated
+        // auto opens plus any real gap virtually always clears minAttemptS
+        // on its own, so duration can't be the differentiator here).
+        for _ in 0..<2 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 90), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+
+        // Fragment B: non-explicit — opens (near-)immediately by borrowing
+        // A's tail active ticks, closes on its own via returnedToFloor.
+        guardCount = 0
+        while !d.snapshot.isClimbing {
+            d.ingest(MotionSample(t: Double(i), altitude: 1.2, motionRMS: 0.12, hr: 100), at: start.addingTimeInterval(Double(i)))
+            i += 1
+            guardCount += 1
+            if guardCount > 20 { return XCTFail("fragment B never opened") }
+        }
+        for _ in 0..<3 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 100), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        XCTAssertEqual(d.snapshot.state, .resting, "fragment B should have closed on its own via returnedToFloor")
+
+        let attempts = d.finalize()
+        XCTAssertEqual(attempts.count, 0, "merged block (explicit short + non-explicit phantom) must still fail the auto post-filters")
     }
 }

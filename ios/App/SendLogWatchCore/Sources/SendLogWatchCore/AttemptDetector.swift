@@ -38,10 +38,13 @@ public enum AttemptEndResolver {
             if returnedToFloor { return .returnedToFloor }
             // #473: real barometric drift over a long hold means the climber
             // can genuinely be back on the ground without ever reading within
-            // endReturnM of the stale startline. Quiet motion for this long
-            // while established is only explained by that, not by a mid-climb
-            // rest (those are bounded well under establishedDriftMaxS).
-            if quiet && durationS > establishedDriftMaxS { return .establishedDriftCap }
+            // endReturnM of the stale startline — whether they're standing
+            // still or have already walked on to the next problem. This is a
+            // pure duration bound, deliberately NOT gated on `quiet`
+            // (F4: a walking climber never goes quiet, so a quiet-gated
+            // version never fires for exactly the walking-drift case it
+            // needs to cover) — same shape as `unestablishedMaxS` below.
+            if durationS > establishedDriftMaxS { return .establishedDriftCap }
             return nil
         }
         if hasHRSupport && quiet { return .hrQuietFallback }
@@ -90,12 +93,6 @@ public final class AttemptDetector {
     private var ticks: [MotionSample] = []
     private var rawAttempts: [RawAttempt] = []
     private var workoutStart: Date?
-    /// #473: after ANY attempt closes, auto detection stays disarmed until
-    /// the trailing motion window it just closed on has fully cleared (no
-    /// active ticks), so residual walk-off motion can't qualify a new auto
-    /// start on the very next tick. `beginManualAttempt` never consults this
-    /// — manual Play always bypasses it.
-    private var disarmed = false
 
     public init(tunables: Tunables) {
         self.t = tunables
@@ -153,16 +150,7 @@ public final class AttemptDetector {
                 restingHR = restingHR.map { $0 + (hr - $0) * (dt / t.baselineTauS) } ?? hr
             }
 
-            // #473: re-arm only once the trailing motion window this tick
-            // would gate on is fully quiet — walk-off motion right after a
-            // close keeps auto disarmed no matter how confident the score.
-            if disarmed {
-                if activeMotionTicks(at: i, windowS: t.startMotionWindowS) == 0 {
-                    disarmed = false
-                }
-            }
-
-            if !disarmed, shouldStartAttempt(at: i) {
+            if shouldStartAttempt(at: i) {
                 let startTick = riseStartTick(from: i)
                 let floor = localFloor(at: i) ?? baseline!
                 phase = .climbing(
@@ -194,7 +182,6 @@ public final class AttemptDetector {
                     explicitlyEnded: false, hitCap: reason.isCap
                 ))
                 phase = .rest
-                disarmed = true
             }
 
         case .manual(let startTick, let startDate, let baselineAtStart, var maxAlt):
@@ -218,7 +205,6 @@ public final class AttemptDetector {
                     explicitlyEnded: false, hitCap: reason.isCap
                 ))
                 phase = .rest
-                disarmed = true
             }
         }
     }
@@ -228,9 +214,6 @@ public final class AttemptDetector {
     public func beginManualAttempt(at date: Date) {
         if case .manual = phase { return }
         if workoutStart == nil { workoutStart = date }
-        // #473: Play always bypasses the post-close motion disarm — a dead
-        // Stop button must not be traded for a dead Play button.
-        disarmed = false
         if case .climbing(let s, let sd, let b, let m) = phase {
             rawAttempts.append(RawAttempt(
                 startTick: s, endTick: max(s, ticks.count - 1), startDate: sd,
@@ -257,7 +240,6 @@ public final class AttemptDetector {
             explicitlyEnded: true, hitCap: false
         ))
         phase = .rest
-        disarmed = true
     }
 
     /// Close whichever attempt is visible. Its original provenance is kept.
@@ -271,7 +253,6 @@ public final class AttemptDetector {
                 explicitlyEnded: true, hitCap: false
             ))
             phase = .rest
-            disarmed = true
         case .manual:
             endManualAttempt(at: date)
         case .rest:
@@ -344,7 +325,17 @@ public final class AttemptDetector {
                     // #473: a confirmed short fragment must not exempt a
                     // merged phantom spanning minutes — only carry the
                     // exemption through if EVERY merged fragment was itself
-                    // an explicit close. `hitCap` is diagnostic only (not a
+                    // an explicit close (AND, not OR). See
+                    // testExplicitFragmentMergedWithPhantomLosesExemption for
+                    // the case this guards. The residual this buys: an
+                    // explicitly-stopped fragment merged with a LATER
+                    // non-explicit auto open (< mergeGapS away) also loses
+                    // the exemption in the other direction — a real Stop can
+                    // end up filtered if what follows it doesn't independently
+                    // pass minAttemptS/minActiveMotionTicks. Narrower and
+                    // safer than the leak AND prevents: it only bites a
+                    // rapid, borderline re-open right after a Stop, not an
+                    // ordinary session. `hitCap` is diagnostic only (not a
                     // filter gate), so it just reflects how the merged
                     // attempt's final fragment ended.
                     explicitlyEnded: last.explicitlyEnded && a.explicitlyEnded,
@@ -417,21 +408,19 @@ public final class AttemptDetector {
         var confidence = 0
         if gain >= t.startAltitudeSupportM { confidence += 1 }
         if gain >= t.startStrongAltitudeM { confidence += 1 }
-        // #473: HR contributes at most +1 — see Tunables.startHRRiseBPM.
-        if let hr = sample.hr, let restingHR, hr - restingHR >= t.startHRRiseBPM {
-            confidence += 1
-            // #473: sustained motion is a second point ONLY alongside a real
-            // HR rise — this is specifically the zero-altitude traverse's own
-            // two-point combo (restores what capping HR alone deletes), not
-            // a freestanding candidate. Pairing it with the (much weaker)
-            // altitude-support point instead would let ordinary
-            // walking-around-the-gym motion plus a borderline altitude blip
-            // fake the same total — see testWalkingNoiseRejected, which
-            // regressed under that version of this change.
-            if activeMotionTicks(at: i, windowS: t.startMotionSustainedWindowS) >= t.startMotionSustainedTicks {
-                confidence += 1
-            }
-        }
+        // #473: HR contributes at most +1 (was +1 for this AND +1 more past
+        // the old startStrongHRRiseBPM, so a decaying post-climb HR alone
+        // could reach startConfidenceRequired with zero altitude evidence —
+        // the phantom re-open). A sustained-motion second point was tried to
+        // restore HR-only (flat, zero-altitude) "traverse" detection and
+        // reverted: measured against a walking probe (60s at 0.10g, HR +15,
+        // flat altitude — ordinary walking between boulders with HR still
+        // elevated), it opened an attempt shipped code correctly rejected,
+        // because sustained motion at gym walking cadence is not
+        // distinguishable from sustained motion at traverse cadence with
+        // this sensor set. HR-only traverse detection is retired; log one
+        // with the Boulder/Stop button instead.
+        if let hr = sample.hr, let restingHR, hr - restingHR >= t.startHRRiseBPM { confidence += 1 }
         return confidence >= t.startConfidenceRequired
     }
 
