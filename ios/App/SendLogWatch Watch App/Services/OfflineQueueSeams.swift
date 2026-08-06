@@ -36,12 +36,28 @@ struct SystemQueueClock: QueueClock {
 /// path always throws one); a test stub or a genuinely unstaged failure
 /// (e.g. a transport error before any stage-specific call) reports `stage:
 /// nil` rather than guessing.
+///
+/// Also computes the one piece of LOCAL evidence the classifier needs
+/// (#475 F5) — whether `bundle` itself still carries a non-positive-duration
+/// attempt — rather than trusting the server's error message. This is the
+/// only place that evidence can be computed: `UploadErrorClassifier` lives
+/// in `SendLogWatchCore` and has no reason to know `ClimbAttemptInsert`'s
+/// shape, and computing it here keeps the classifier itself Foundation/
+/// Supabase-free and testable on Linux.
 enum UploadFailureMapping {
-    static func classify(_ error: Error) -> (stage: UploadStage?, outcome: UploadErrorOutcome, failure: UploadFailure) {
+    static func classify(
+        _ error: Error,
+        bundle: WorkoutSaveBundle
+    ) -> (stage: UploadStage?, outcome: UploadErrorOutcome, failure: UploadFailure) {
         let staged = error as? StagedUploadError
         let underlying = staged?.underlying ?? error
         let failure = uploadFailure(from: underlying)
-        return (staged?.stage, UploadErrorClassifier.classify(failure), failure)
+        let outcome = UploadErrorClassifier.classify(
+            failure,
+            stage: staged?.stage,
+            bundleHasNonPositiveDurationAttempt: bundle.attempts.contains { $0.durationS <= 0 }
+        )
+        return (staged?.stage, outcome, failure)
     }
 
     private static func uploadFailure(from error: Error) -> UploadFailure {

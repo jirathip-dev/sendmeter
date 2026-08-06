@@ -266,3 +266,114 @@ final class PendingSyncCacheTests: XCTestCase {
         XCTAssertNil(cache.quarantinedTotal)
     }
 }
+
+/// Issue #475 F1: quarantine is invisible today because nothing reads
+/// `PendingSyncCache.quarantinedTotal` anywhere in the app. These pin the
+/// wire contract and verdict that fix that — same channel, same
+/// honest-states rules as the #21 pending-sync report above, but a
+/// distinct key and a distinct verdict type, since "quarantined" must never
+/// be presented as "will sync".
+final class QuarantinedSyncStampingTests: XCTestCase {
+    private let identity = BuildIdentity(version: "1.4.0", build: "57")
+
+    func testRoundTripsThroughAMessageAlongsidePendingSync() {
+        let msg = WatchBuildReport.stamped(
+            ["kind": "liveWorkout", "status": "live"],
+            with: identity,
+            pendingSync: 3,
+            quarantinedSync: 1
+        )
+        XCTAssertEqual(WatchBuildReport.pendingSync(in: msg), 3)
+        XCTAssertEqual(WatchBuildReport.quarantinedSync(in: msg), 1)
+        XCTAssertEqual(WatchBuildReport.identity(in: msg), identity)
+    }
+
+    func testAZeroQuarantinedCountIsReportedRatherThanOmitted() {
+        // Zero is a fact worth sending: it's what distinguishes "checked,
+        // nothing stuck" from "never checked".
+        let msg = WatchBuildReport.stamped(["kind": "requestSession"], with: identity, quarantinedSync: 0)
+        XCTAssertEqual(WatchBuildReport.quarantinedSync(in: msg), 0)
+    }
+
+    func testUnknownQuarantinedCountLeavesTheMessageUntouched() {
+        let msg = WatchBuildReport.stamped(["kind": "requestSession"], with: nil, quarantinedSync: nil)
+        XCTAssertEqual(msg.count, 1)
+        XCTAssertNil(WatchBuildReport.quarantinedSync(in: msg))
+    }
+
+    func testNegativeQuarantinedCountsAreRefusedOnBothSides() {
+        let msg = WatchBuildReport.stamped(["kind": "liveForce"], with: nil, quarantinedSync: -1)
+        XCTAssertNil(msg[WatchBuildReport.quarantinedSyncKey])
+        XCTAssertNil(WatchBuildReport.quarantinedSync(in: [WatchBuildReport.quarantinedSyncKey: -4]))
+    }
+
+    func testReadsAQuarantinedCountThatCameBackAsADouble() {
+        XCTAssertEqual(WatchBuildReport.quarantinedSync(in: [WatchBuildReport.quarantinedSyncKey: 2.0]), 2)
+    }
+
+    func testUnstampedMessageYieldsNoQuarantinedCount() {
+        XCTAssertNil(WatchBuildReport.quarantinedSync(in: ["kind": "liveForce", "kg": 12.5]))
+    }
+
+    func testStrippingRemovesTheQuarantineKeyToo() {
+        let stamped = WatchBuildReport.stamped(
+            ["kind": "liveForce", "kg": 12.5],
+            with: identity,
+            pendingSync: 3,
+            quarantinedSync: 1
+        )
+        let stripped = WatchBuildReport.stripped(stamped)
+        XCTAssertEqual(stripped.count, 2)
+        XCTAssertEqual(stripped["kg"] as? Double, 12.5)
+        XCTAssertNil(stripped[WatchBuildReport.quarantinedSyncKey])
+        XCTAssertNil(stripped[WatchBuildReport.pendingSyncKey])
+    }
+}
+
+final class WatchQuarantineStatusTests: XCTestCase {
+    func testNoneIsNotTheSameAsNeverReported() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 0, pairing: pairing()), .none
+        )
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: nil, pairing: pairing()), .notReported
+        )
+    }
+
+    func testAnyPositiveCountReadsAsStuck() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 1, pairing: pairing()), .stuck
+        )
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 42, pairing: pairing()), .stuck
+        )
+    }
+
+    func testPairingProblemsBeatAnyStoredCount() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 3, pairing: pairing(paired: false)),
+            .notPaired
+        )
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 0, pairing: pairing(supported: false)),
+            .notPaired
+        )
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 3, pairing: pairing(appInstalled: false)),
+            .appNotInstalled
+        )
+    }
+
+    func testPreActivationIsUnknownRatherThanNone() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 0, pairing: pairing(activated: false)),
+            .unknown
+        )
+    }
+
+    func testNegativeCountIsTreatedAsNoReading() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: -1, pairing: pairing()), .notReported
+        )
+    }
+}

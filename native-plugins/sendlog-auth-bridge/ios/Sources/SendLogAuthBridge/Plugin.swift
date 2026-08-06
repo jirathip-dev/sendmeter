@@ -102,6 +102,49 @@ private enum WatchSyncStore {
     }
 }
 
+/// The watch's last-reported QUARANTINE count (#475 F1) — items a permanent
+/// DB rejection or a bounded run of failed retries took off the drain path
+/// entirely. Same storage shape and throttle as `WatchSyncStore`, but
+/// deliberately a separate store/key: a quarantined item is NOT "pending" —
+/// folding the two counts together would make a permanently-stuck workout
+/// read as "waiting to upload", which the app's own #264 rule forbids for
+/// anything that will never sync on its own.
+private enum QuarantinedSyncStore {
+    private static let countKey = "sendmeter.watchSync.quarantined"
+    private static let reportedAtKey = "sendmeter.watchSync.quarantinedReportedAt"
+
+    static var count: Int? {
+        guard UserDefaults.standard.object(forKey: countKey) != nil else { return nil }
+        return UserDefaults.standard.integer(forKey: countKey)
+    }
+
+    static var reportedAt: Double? {
+        let t = UserDefaults.standard.double(forKey: reportedAtKey)
+        return t > 0 ? t : nil
+    }
+
+    private static let lock = NSLock()
+    private static var lastWrite: (count: Int, at: Double)?
+
+    @discardableResult
+    static func record(_ count: Int) -> Bool {
+        let now = Date().timeIntervalSince1970
+        lock.lock()
+        let changed = self.count != count
+        if let last = lastWrite, last.count == count, now - last.at < 60 {
+            lock.unlock()
+            return changed
+        }
+        lastWrite = (count, now)
+        lock.unlock()
+
+        let defaults = UserDefaults.standard
+        defaults.set(count, forKey: countKey)
+        defaults.set(now, forKey: reportedAtKey)
+        return changed
+    }
+}
+
 /// Relays the Supabase **access token** to the paired Watch app so it can sign
 /// in without its own login flow (#265 — never the refresh token; see
 /// `setSession`). No token persistence here: supabase-js already owns the
@@ -221,6 +264,19 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
         if let pendingReportedAt {
             result["pendingSyncReportedAt"] = pendingReportedAt
         }
+        // The watch's quarantine count (#475 F1) — same read-only terms as
+        // the pending depth above, on its own key so it can never be
+        // presented as "waiting to upload".
+        let quarantined = QuarantinedSyncStore.count
+        result["quarantineStatus"] = WatchBuildReport.quarantineStatus(
+            quarantinedSync: quarantined, pairing: pairing
+        ).rawValue
+        if let quarantined {
+            result["quarantinedSyncCount"] = quarantined
+        }
+        if let quarantinedReportedAt = QuarantinedSyncStore.reportedAt {
+            result["quarantinedSyncReportedAt"] = quarantinedReportedAt
+        }
         call.resolve(result)
     }
 
@@ -306,11 +362,16 @@ extension SendLogAuthBridge: WCSessionDelegate {
         // so any message the watch sends refreshes the answer.
         let pendingChanged = WatchBuildReport.pendingSync(in: message)
             .map(WatchSyncStore.record) ?? false
+        // #475 F1: and its quarantine count, on the same terms again — a
+        // workout that gets quarantined must reach the phone the same way a
+        // pending-count change does.
+        let quarantinedChanged = WatchBuildReport.quarantinedSync(in: message)
+            .map(QuarantinedSyncStore.record) ?? false
         let kind = message["kind"] as? String
         // Live force arrives around 2 Hz. Refresh diagnostics only for a real
         // build/count transition, or explicit control/status messages where
         // pairing/install state may also have changed.
-        if buildChanged || pendingChanged || kind == "requestSession" || kind == "queueStatus" {
+        if buildChanged || pendingChanged || quarantinedChanged || kind == "requestSession" || kind == "queueStatus" {
             notifyListeners("watchInfoChanged", data: [:])
         }
         guard let kind else { return }

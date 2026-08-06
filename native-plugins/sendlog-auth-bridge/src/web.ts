@@ -12,6 +12,7 @@ export class SendLogAuthBridgeWeb extends WebPlugin implements SendLogAuthBridge
     return {
       status: "not-paired",
       syncStatus: "not-paired",
+      quarantineStatus: "not-paired",
       supported: false,
       activated: false,
       paired: false,

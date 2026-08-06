@@ -69,17 +69,36 @@ actor OfflineQueue {
     }
 
     /// Count of items `drainPass` has permanently given up on (#475) — a
-    /// specific DB constraint rejected them, so no retry will ever land
-    /// them. Reported through a cache slot separate from `total` (never
-    /// "pending", never "will sync" — CLAUDE.md #264). Unlike
-    /// `pendingCount()` this is NOT account-scoped: a quarantined item is
-    /// stuck regardless of who's signed in, so hiding it behind an account
-    /// switch would be less honest, not more.
+    /// specific DB constraint rejected them, or they failed enough
+    /// consecutive passes to be treated as stuck (F3), so no ordinary retry
+    /// will land them. Reported through a cache slot separate from `total`
+    /// (never "pending", never "will sync" — CLAUDE.md #264) and, since
+    /// #475 F1, surfaced to the phone over the same #21/#228 channel as
+    /// `pendingCount()` — see `WatchBuild.stamp`.
+    ///
+    /// Account-scoped the SAME way as `pendingCount()` (#475 F4, reversing
+    /// the original PR's "stuck is stuck regardless of who's signed in"
+    /// call — review found that once this count is actually surfaced,
+    /// unscoped it re-opens #158: Account A's stuck workout would show up
+    /// as "could not be uploaded" on Account B's phone, for data B can't see
+    /// or act on). An unreadable/undecodable `.quarantine` file is retained
+    /// and counted, same policy as an unreadable pending file.
     func quarantinedCount() -> Int {
+        let currentUserId = WatchSessionStore.shared.userId
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
         let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension == quarantineExtension } ?? []
-        PendingSyncCache.shared.recordQuarantined(files.count)
-        return files.count
+        let count = files.filter { file in
+            guard
+                let data = try? Data(contentsOf: file),
+                let record = try? decoder.decode(QuarantinedUpload.self, from: data)
+            else { return true } // unreadable: retained and reported, same as pendingCount()
+            return shouldDrain(itemUserId: record.bundle.enqueuedUserId, currentUserId: currentUserId)
+                || currentUserId == nil
+        }.count
+        PendingSyncCache.shared.recordQuarantined(count)
+        return count
     }
 
     /// Persist the bundle and return as soon as it's on disk — the upload runs
@@ -170,29 +189,62 @@ actor OfflineQueue {
             do {
                 try await uploader.upload(bundle)
                 try? FileManager.default.removeItem(at: file)
+                clearRetryLedger(for: bundle) // a previously-struggling item finally landed
             } catch {
                 // #475: a generic "stop on any error" treated a permanent
                 // DB rejection exactly like a network outage, and because
                 // the queue drains oldest-first, the poisoned file was
                 // retried first on every pass forever — blocking every
                 // healthy item behind it. Classify before deciding: only
-                // the one named check-constraint violation quarantines and
-                // continues; everything else (including 401, which needs a
-                // relay rather than a retry) still stops the pass so a real
-                // outage doesn't burn through the rest of the queue
-                // out of order.
-                let classification = UploadFailureMapping.classify(error)
+                // the one specific check-constraint violation this bundle
+                // actually exhibits (#475 F5) quarantines immediately;
+                // everything else (including 401/PGRST301/302, which needs
+                // a relay rather than a retry) stops the pass so a real
+                // outage doesn't burn through the rest of the queue out of
+                // order — UNLESS this exact item has now failed
+                // `QueueRetryPolicy.maxConsecutiveFailures` passes in a row
+                // with no success in between, in which case it is quarantined
+                // too (reason `.stuckRetrying`, #475 F3) rather than left to
+                // block the queue forever on an error this classifier
+                // doesn't specifically recognize.
+                let classification = UploadFailureMapping.classify(error, bundle: bundle)
                 switch classification.outcome {
                 case .quarantine:
                     quarantine(
                         bundle: bundle,
                         originalFile: file,
+                        reason: .schemaRejection,
                         stage: classification.stage,
-                        failure: classification.failure
+                        failure: classification.failure,
+                        attemptCount: nil
                     )
+                    clearRetryLedger(for: bundle)
                     continue filesLoop
                 case .retry, .needsAuthRelay:
-                    break filesLoop // no network (or auth) — stop, retry next drain
+                    let previous = readRetryLedger(for: bundle)?.consecutiveFailures ?? 0
+                    switch QueueRetryPolicy.afterFailedAttempt(previousConsecutiveFailures: previous) {
+                    case .retryLater(let attempts):
+                        writeRetryLedger(
+                            RetryLedgerEntry(
+                                consecutiveFailures: attempts,
+                                lastErrorMessage: classification.failure.message,
+                                lastAttemptAt: clock.now()
+                            ),
+                            for: bundle
+                        )
+                        break filesLoop // no network (or auth) — stop, retry next drain
+                    case .stuck(let attempts):
+                        quarantine(
+                            bundle: bundle,
+                            originalFile: file,
+                            reason: .stuckRetrying,
+                            stage: classification.stage,
+                            failure: classification.failure,
+                            attemptCount: attempts
+                        )
+                        clearRetryLedger(for: bundle)
+                        continue filesLoop
+                    }
                 }
             }
         }
@@ -202,26 +254,31 @@ actor OfflineQueue {
     }
 
     private let quarantineExtension = "quarantine"
+    private let retryLedgerExtension = "retry"
 
     /// Replaces the original pending file with a `QuarantinedUpload` record
-    /// carrying the original bundle plus the failing stage/error (#475). The
-    /// original bytes are preserved verbatim inside the new file, not lost —
-    /// this is a rename-with-metadata, not a delete. If the durable write
-    /// itself fails, the original `<uuid>.json` is left exactly where it
-    /// was: it keeps retrying (and keeps failing the same way) rather than
-    /// risking the data on an unconfirmed write (#264).
+    /// carrying the original bundle plus the failing stage/error/reason
+    /// (#475). The original bytes are preserved verbatim inside the new
+    /// file, not lost — this is a rename-with-metadata, not a delete. If the
+    /// durable write itself fails, the original `<uuid>.json` is left
+    /// exactly where it was: it keeps retrying (and keeps failing the same
+    /// way) rather than risking the data on an unconfirmed write (#264).
     private func quarantine(
         bundle: WorkoutSaveBundle,
         originalFile: URL,
+        reason: QuarantineReason,
         stage: UploadStage?,
-        failure: UploadFailure
+        failure: UploadFailure,
+        attemptCount: Int?
     ) {
         let record = QuarantinedUpload(
             bundle: bundle,
+            reason: reason,
             stage: stage,
             httpStatus: failure.httpStatus,
             postgrestCode: failure.postgrestCode,
             errorMessage: failure.message,
+            attemptCount: attemptCount,
             quarantinedAt: clock.now()
         )
         let encoder = JSONEncoder()
@@ -236,5 +293,31 @@ actor OfflineQueue {
         } catch {
             // Left in place; see the doc comment above.
         }
+    }
+
+    // MARK: #475 F3 — per-item retry ledger
+
+    private func retryLedgerURL(for bundle: WorkoutSaveBundle) -> URL {
+        pendingDir
+            .appendingPathComponent(bundle.workout.id.uuidString)
+            .appendingPathExtension(retryLedgerExtension)
+    }
+
+    private func readRetryLedger(for bundle: WorkoutSaveBundle) -> RetryLedgerEntry? {
+        guard let data = try? Data(contentsOf: retryLedgerURL(for: bundle)) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(RetryLedgerEntry.self, from: data)
+    }
+
+    private func writeRetryLedger(_ entry: RetryLedgerEntry, for bundle: WorkoutSaveBundle) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(entry) else { return }
+        try? data.write(to: retryLedgerURL(for: bundle), options: .atomic)
+    }
+
+    private func clearRetryLedger(for bundle: WorkoutSaveBundle) {
+        try? FileManager.default.removeItem(at: retryLedgerURL(for: bundle))
     }
 }

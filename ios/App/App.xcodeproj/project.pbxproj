@@ -41,9 +41,9 @@
 		985E393749254016699A5A96 /* WorkoutSaveBundleDecodeCompatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */; };
 		9FF1A63A69A1CE36AF5D06D6 /* SendmeterWatchScreenshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = F585400FD5CA4FD502C930ED /* SendmeterWatchScreenshots.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* PendingQueueUserMatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */; };
+		AE0CF1ABF3486B235A340F07 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 4E2077BFF2DA0642AEEEC447 /* Supabase */; };
 		B236F6402A44ADB22E10CF75 /* OfflineQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B28F88178C2F1F022EEC67 /* OfflineQueueTests.swift */; };
 		C0A1E5C1D8A14B4EB2B5A001 /* CoalescingDrainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */; };
-		C8E485D14D7390D7AA6E98A0 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 665354DA3AF13BA04D7AADA0 /* Supabase */; };
 		CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
 		D1C2B3A4F5E6708192A3B4C5 /* ACWRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */; };
 		D40300000000000000000001 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = D40300000000000000000002 /* SendLogWatchCore */; };
@@ -262,7 +262,7 @@
 			files = (
 				CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */,
 				5EC0A005B005C005D005E005 /* SendLogWatchCore in Frameworks */,
-				C8E485D14D7390D7AA6E98A0 /* Supabase in Frameworks */,
+				AE0CF1ABF3486B235A340F07 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -479,7 +479,7 @@
 			name = SendLogWatchTests;
 			packageProductDependencies = (
 				5EC0A004B004C004D004E004 /* SendLogWatchCore */,
-				665354DA3AF13BA04D7AADA0 /* Supabase */,
+				4E2077BFF2DA0642AEEEC447 /* Supabase */,
 			);
 			productName = SendLogWatchTests;
 			productReference = 9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */;
@@ -1361,6 +1361,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */;
 			productName = "CapApp-SPM";
+		};
+		4E2077BFF2DA0642AEEEC447 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B5E75921EB0124F7376FBBFD /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
 		};
 		5EC0A002B002C002D002E002 /* SendLogWatchCore */ = {
 			isa = XCSwiftPackageProductDependency;

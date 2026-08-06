@@ -1,9 +1,14 @@
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
-import type { WatchBuildInfo, WatchBuildStatus, WatchSyncStatus } from "sendlog-auth-bridge";
+import type {
+  WatchBuildInfo,
+  WatchBuildStatus,
+  WatchQuarantineStatus,
+  WatchSyncStatus,
+} from "sendlog-auth-bridge";
 import type { PluginListenerHandle } from "@capacitor/core";
 
-export type { WatchBuildInfo, WatchBuildStatus, WatchSyncStatus };
+export type { WatchBuildInfo, WatchBuildStatus, WatchQuarantineStatus, WatchSyncStatus };
 
 export type WatchStatusTone = "positive" | "muted" | "warning";
 
@@ -19,7 +24,11 @@ export interface WatchStatusPresentation {
 }
 
 export interface UploadWarningItem {
-  source: "watch" | "phone";
+  /// "watch-quarantined" is distinct from "watch" (#475 F1): a quarantined
+  /// item is not "waiting to upload" — it never will, on its own — and both
+  /// can be present at once (some items still pending, others already given
+  /// up on), so they need separate keys, not a shared "watch" row.
+  source: "watch" | "watch-quarantined" | "phone";
   text: string;
   detail: string;
   /// Epoch seconds of the watch queue report. A historical count is only as
@@ -173,6 +182,25 @@ export function uploadWarningPresentation(
       detail: "Open Sendmeter on the watch to retry.",
       ...(watchInfo.pendingSyncReportedAt !== undefined
         ? { reportedAt: watchInfo.pendingSyncReportedAt }
+        : {}),
+    });
+  }
+
+  // #475 F1: a quarantined item is NEVER phrased as "waiting to upload" —
+  // it is persisted on the watch but will not sync on its own. Independent
+  // of the pending block above: a watch can have both pending items AND
+  // quarantined ones at once, and the user needs told both facts.
+  if (watchInfo?.quarantineStatus === "stuck") {
+    const count = watchInfo.quarantinedSyncCount;
+    items.push({
+      source: "watch-quarantined",
+      text:
+        count !== undefined
+          ? `Apple Watch · ${count} workout${count === 1 ? "" : "s"} could not be uploaded and will not retry.`
+          : "Apple Watch has workouts that could not be uploaded and will not retry.",
+      detail: "This data is stuck on the watch. Contact support if this keeps happening.",
+      ...(watchInfo.quarantinedSyncReportedAt !== undefined
+        ? { reportedAt: watchInfo.quarantinedSyncReportedAt }
         : {}),
     });
   }

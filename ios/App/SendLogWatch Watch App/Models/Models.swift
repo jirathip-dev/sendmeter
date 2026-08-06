@@ -263,21 +263,64 @@ nonisolated struct WorkoutSaveBundle: Codable {
     var enqueuedUserId: UUID? = nil
 }
 
-/// A bundle `OfflineQueue.drainPass` gave up retrying (#475) — `uploadBundle`
-/// rejected it with a specific, permanent DB error (today: only the
-/// `climb_attempts.duration_s > 0` check violation), so no amount of
-/// retrying will ever land it. Written once, atomically, in place of the
-/// original `<uuid>.json` file it replaces — the original `bundle` is
-/// preserved verbatim inside it (never lost, never silently dropped, per
-/// CLAUDE.md #264/#273) alongside which of the three upserts failed and why,
-/// for truthful reporting and for a possible future repair pass (#287
-/// precedent). Never read back into a normal drain pass; only user sign-out
-/// may delete it.
+/// Why a bundle was quarantined (#475 F3) — kept distinct because the two
+/// cases carry different confidence: one is a proven-permanent DB rejection,
+/// the other is a bet that a bundle failing this many times in a row is not
+/// coming back.
+nonisolated enum QuarantineReason: String, Codable {
+    /// `UploadErrorClassifier` positively identified the bundle as violating
+    /// the one check constraint this PR set out to catch — quarantined on
+    /// the very first attempt.
+    case schemaRejection
+    /// The bundle failed `QueueRetryPolicy.maxConsecutiveFailures` consecutive
+    /// drain passes without the classifier ever recognizing why. Not
+    /// provably permanent — but bounded, so an unrecognized permanent error
+    /// (a different check constraint, a persistently invalid account, …)
+    /// can't park the rest of the queue behind it forever either.
+    case stuckRetrying
+}
+
+/// A bundle `OfflineQueue.drainPass` gave up retrying (#475) — either
+/// `uploadBundle` rejected it with a specific, permanent DB error (today:
+/// only the `climb_attempts.duration_s > 0` check violation), or it failed
+/// too many consecutive drain passes for an unrecognized reason (`reason`
+/// distinguishes the two — see `QuarantineReason`). Written once, atomically,
+/// in place of the original `<uuid>.json` file it replaces — the original
+/// `bundle` is preserved verbatim inside it (never lost, never silently
+/// dropped, per CLAUDE.md #264/#273) alongside which of the three upserts
+/// failed and why, for truthful reporting and for a possible future repair
+/// pass (#287 precedent).
+///
+/// Never read back into a normal drain pass; only user sign-out may delete
+/// it (#273) — and today NOTHING does even that (the watch has no sign-out
+/// queue purge equivalent to the web's `discardQueueOnUserSignOut`), so a
+/// `.quarantine` file is effectively permanent on-device storage. Quarantine
+/// is expected to be rare, but `bundle.workout.raw` is the 1Hz debug trace
+/// (hundreds of KB for a long workout when `keepRawTrace` is on), so this is
+/// unbounded growth in the pathological case, not a fixed-size record (#475
+/// F8) — a future build could reasonably prune `raw` before quarantining,
+/// or add a purge path, without losing the fields that matter for support.
 nonisolated struct QuarantinedUpload: Codable {
     var bundle: WorkoutSaveBundle
+    var reason: QuarantineReason
     var stage: UploadStage?
     var httpStatus: Int?
     var postgrestCode: String?
     var errorMessage: String?
+    /// Set only for `reason == .stuckRetrying` — how many consecutive
+    /// passes it failed before being given up on, for auditability.
+    var attemptCount: Int?
     var quarantinedAt: Date
+}
+
+/// #475 F3's per-item retry counter, persisted on disk (`<uuid>.retry`)
+/// alongside the pending bundle so it survives relaunch — an in-memory
+/// counter would reset every time the watch app is killed, which is exactly
+/// when a stuck item has the most passes to accumulate against.
+nonisolated struct RetryLedgerEntry: Codable {
+    var consecutiveFailures: Int
+    /// Human-readable context for the most recent failure, kept only for
+    /// on-device debugging — never part of the classification decision.
+    var lastErrorMessage: String?
+    var lastAttemptAt: Date
 }

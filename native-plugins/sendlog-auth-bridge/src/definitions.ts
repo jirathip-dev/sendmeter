@@ -76,6 +76,24 @@ export type WatchSyncStatus =
   /// Enough queued that the watch probably isn't draining at all.
   | "backed-up";
 
+/// Verdict on the watch's QUARANTINED uploads (#475 F1), computed in Swift
+/// (`WatchBuildReport.quarantineStatus`) for the same reason as the other
+/// verdicts. Deliberately distinct from `WatchSyncStatus`: a quarantined
+/// item is not "pending" or "backed up" — it is persisted on the watch but
+/// will NEVER sync on its own, which needs to read as a different fact, not
+/// a worse version of the same one.
+export type WatchQuarantineStatus =
+  | "not-paired"
+  | "app-not-installed"
+  /// Installed, but no quarantine count has ever arrived — nothing known.
+  | "not-reported"
+  /// WCSession hasn't activated yet.
+  | "unknown"
+  /// Reported zero quarantined items.
+  | "none"
+  /// At least one item will never sync on its own.
+  | "stuck";
+
 export interface WatchBuildInfo {
   status: WatchBuildStatus;
   supported: boolean;
@@ -102,6 +120,17 @@ export interface WatchBuildInfo {
   pendingSyncReportedAt?: number;
   /// The count is old enough (>24h) that the queue may have drained since.
   pendingSyncStale?: boolean;
+
+  /// The watch's quarantined-upload state (#475 F1). Absent entirely on a
+  /// native shell whose compiled-in plugin predates the field.
+  quarantineStatus?: WatchQuarantineStatus;
+  /// Items the watch last reported as permanently quarantined. Present only
+  /// once it has actually reported one — absent is "unknown", not zero.
+  quarantinedSyncCount?: number;
+  /// Epoch SECONDS of that count's report. No "stale" flag — unlike a
+  /// pending count, a quarantined item never resolves itself, so an old
+  /// report can only be a floor on the current count, never an overstatement.
+  quarantinedSyncReportedAt?: number;
 }
 
 export interface SendLogAuthBridgePlugin {

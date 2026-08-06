@@ -17,6 +17,11 @@ enum WatchBuild {
     static let identity = BuildIdentity(infoDictionary: Bundle.main.infoDictionary)
     private static let reportLock = NSLock()
     private nonisolated(unsafe) static var lastReportedQueueTotal: Int?
+    /// #475 F1: tracked separately from `lastReportedQueueTotal` — a change
+    /// in ONLY the quarantine count (nothing pending changed) must still
+    /// trigger a report, or a workout that gets quarantined while the
+    /// pending total happens to stay flat would never reach the phone.
+    private nonisolated(unsafe) static var lastReportedQuarantinedTotal: Int?
 
     static func stamp(_ message: [String: Any]) -> [String: Any] {
         // Cached (see `PendingSyncCache`) because this is a synchronous send
@@ -26,7 +31,8 @@ enum WatchBuild {
         WatchBuildReport.stamped(
             message,
             with: identity,
-            pendingSync: PendingSyncCache.shared.total
+            pendingSync: PendingSyncCache.shared.total,
+            quarantinedSync: PendingSyncCache.shared.quarantinedTotal
         )
     }
 
@@ -39,12 +45,14 @@ enum WatchBuild {
               WCSession.isSupported(),
               WCSession.default.activationState == .activated
         else { return }
+        let quarantined = PendingSyncCache.shared.quarantinedTotal
         reportLock.lock()
-        guard total != lastReportedQueueTotal else {
+        guard total != lastReportedQueueTotal || quarantined != lastReportedQuarantinedTotal else {
             reportLock.unlock()
             return
         }
         lastReportedQueueTotal = total
+        lastReportedQuarantinedTotal = quarantined
         reportLock.unlock()
         let message = stamp(["kind": "queueStatus"])
         // Guaranteed messages are enqueued synchronously in count order. An
@@ -56,12 +64,17 @@ enum WatchBuild {
         }
     }
 
-    /// Count both actors first so a fresh install reports an honest zero
-    /// rather than leaving `PendingSyncCache` unknown.
+    /// Count all three actors' relevant totals first so a fresh install
+    /// reports an honest zero rather than leaving `PendingSyncCache`
+    /// unknown — quarantine included (#475 F1), since this runs
+    /// independently of (and concurrently with) `OfflineQueue.shared.drain()`
+    /// at launch (see `SendLogWatchApp.swift`) and can't assume a drain
+    /// pass has already populated it.
     static func refreshAndReportQueueStatus() async {
         async let workouts = OfflineQueue.shared.pendingCount()
+        async let quarantined = OfflineQueue.shared.quarantinedCount()
         async let sessions = PendingSessionQueue.shared.pendingCount()
-        _ = await (workouts, sessions)
+        _ = await (workouts, quarantined, sessions)
         await MainActor.run { reportQueueStatus() }
     }
 }
