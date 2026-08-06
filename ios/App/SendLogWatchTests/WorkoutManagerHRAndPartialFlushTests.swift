@@ -104,6 +104,57 @@ final class WorkoutManagerHeartRateStalenessTests: XCTestCase {
     }
 }
 
+/// #477 review F4: a real HR quantity with no `mostRecentQuantityDateInterval()`
+/// used to be silently discarded with no diagnostic at all. The real
+/// `HKStatistics`-to-candidate extraction inside the HealthKit delegate is
+/// unreachable off-device (no public `HKStatistics` initializer, no
+/// entitlement in this host) — `reportHRMissingDateIntervalOnce()` is the
+/// manager's own production method the delegate calls on that branch, and
+/// `os_log`/`Logger` output isn't independently observable from a unit test,
+/// so `hrMissingDateIntervalLogged` (the flag that actually makes "once" real)
+/// is what's asserted on here.
+@MainActor
+final class WorkoutManagerHRMissingDateIntervalTests: XCTestCase {
+    func testReportingIsFalseUntilFirstReported() {
+        let manager = WorkoutManager()
+        XCTAssertFalse(manager.hrMissingDateIntervalLogged)
+    }
+
+    func testFirstReportFlipsTheOneShotFlag() {
+        let manager = WorkoutManager()
+        manager.reportHRMissingDateIntervalOnce()
+        XCTAssertTrue(manager.hrMissingDateIntervalLogged)
+    }
+
+    /// A missing date interval must not affect HR itself — the direction
+    /// stays "absent" (never trusted), same as any other unaccepted sample.
+    func testReportingDoesNotAcceptOrAlterTheCurrentHeartRate() {
+        var tunables = Tunables.default
+        tunables.hrStaleAfterS = 30
+        let manager = WorkoutManager(tunables: tunables)
+        manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+        manager.acceptHeartRate(HeartRateSample(value: 150, sampleAt: manager.startDate!))
+        manager.performFusionTick(now: manager.startDate!.addingTimeInterval(1))
+        XCTAssertEqual(manager.heartRate, 150)
+
+        manager.reportHRMissingDateIntervalOnce()
+
+        manager.performFusionTick(now: manager.startDate!.addingTimeInterval(2))
+        XCTAssertEqual(manager.heartRate, 150, "reporting a missing-interval reading must not disturb an already-accepted fresh reading")
+    }
+
+    /// `start()` must reset the flag, or a real occurrence in workout N
+    /// silently suppresses the diagnostic for every later workout too.
+    func testStartResetsTheOneShotFlagForANewWorkout() async {
+        let manager = WorkoutManager()
+        manager.reportHRMissingDateIntervalOnce()
+        XCTAssertTrue(manager.hrMissingDateIntervalLogged)
+
+        await manager.start() // fails at HK auth in this host, but the reset block runs unconditionally first
+        XCTAssertFalse(manager.hrMissingDateIntervalLogged, "a new workout must get its own one-shot report, not inherit the previous workout's")
+    }
+}
+
 /// Actor-serialized event log for asserting cross-task ordering
 /// deterministically (continuation-based — no sleeps, no polling, per this
 /// work stream's flake policy).
@@ -158,9 +209,19 @@ private actor Gate {
 /// must AWAIT the in-flight partial. Proven via completion ORDER under a
 /// deferred fake uploader, not a generation-counter compare, since the real
 /// network isn't testable here.
+///
+/// Both tests below drive `stopRecordingAndAwaitInFlightPartial()` directly
+/// rather than `end()` — `end()` can only reach that call after a guard
+/// requiring a real `HKWorkoutSession`/`HKLiveWorkoutBuilder`/`startDate`,
+/// and the first two cannot be constructed off-device (no HealthKit
+/// entitlement in this test host). `end()`'s own body is a single
+/// unconditional delegation to this method (`let endDate = await
+/// stopRecordingAndAwaitInFlightPartial()`), so proving the method's
+/// property proves `end()`'s by construction — there is no second code path
+/// that could apply the ordering differently.
 final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
     @MainActor
-    func testEndAwaitsTheInFlightPartialBeforeReturning() async {
+    func testStopRecordingAwaitsTheInFlightPartialBeforeReturning() async {
         let manager = WorkoutManager()
         manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
         let order = OrderLog()
@@ -174,20 +235,63 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
 
         manager.flushPartial() // starts the in-flight upload, blocked on the gate
 
-        async let summary: WorkoutSummary? = manager.end()
+        async let endDate: Date = manager.stopRecordingAndAwaitInFlightPartial()
         // Wait until the upload has demonstrably started — this is the
-        // point at which unfixed code (no await in end()) would already
-        // have raced ahead and returned.
+        // point at which unfixed code (no await before returning) would
+        // already have raced ahead and returned.
         _ = await order.waitUntilCount(1)
         await gate.release()
-        _ = await summary
-        await order.append("end-returned")
+        _ = await endDate
+        await order.append("stopRecording-returned")
 
         let events = await order.snapshot()
         XCTAssertEqual(
-            events, ["partial-start", "partial-committed", "end-returned"],
-            "end() must not return until the in-flight partial has actually completed"
+            events, ["partial-start", "partial-committed", "stopRecording-returned"],
+            "stopRecordingAndAwaitInFlightPartial() must not return until the in-flight partial has actually completed"
         )
+    }
+
+    /// #477 review F2: a `Timer` on the main run loop is not paused by a
+    /// suspended MainActor `async` function — so if teardown ran AFTER the
+    /// await (the original #477 fix's mistake), `fusionTimer` would still be
+    /// live and able to fire for as long as the partial upload takes.
+    /// Reproduces exactly the shape the reviewer's probe found
+    /// (`rowsBefore=0 rowsAfter=2`): drives a bounded number of scheduling
+    /// turns — not wall-clock time — to give the in-flight call every
+    /// reasonable chance to reach ITS OWN internal await before checking
+    /// whether teardown already ran.
+    @MainActor
+    func testStopRecordingInvalidatesTheTimerBeforeAwaitingTheInFlightPartial() async {
+        let manager = WorkoutManager()
+        manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+        manager.startFusion()
+        XCTAssertNotNil(manager.fusionTimer, "startFusion() should have created a live timer")
+
+        let gate = Gate()
+        manager.partialUploader = { _ in await gate.wait() }
+        manager.flushPartial() // starts the in-flight upload, blocked on the gate
+
+        async let endDate: Date = manager.stopRecordingAndAwaitInFlightPartial()
+
+        // Bounded scheduling-turn loop, not a sleep: on fixed code, teardown
+        // is entirely synchronous ahead of the one await in
+        // `stopRecordingAndAwaitInFlightPartial()`, so it needs at most a
+        // couple of turns once the child task is scheduled at all. On
+        // broken code (await-then-teardown), the call is fully parked on
+        // `gate.wait()` and never reaches teardown until the gate is
+        // released below — `fusionTimer` stays non-nil through every
+        // iteration and this loop exhausts without ever seeing it cleared.
+        for _ in 0..<50 where manager.fusionTimer != nil {
+            await Task.yield()
+        }
+
+        XCTAssertNil(
+            manager.fusionTimer,
+            "fusionTimer must be invalidated BEFORE awaiting the in-flight partial, or the run loop keeps firing it while the upload is stalled"
+        )
+
+        await gate.release()
+        _ = await endDate
     }
 
     /// #477 finding 5: a skipped flush (one requested while another is
@@ -228,5 +332,59 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
             starts.last, "start:3",
             "the coalesced rerun must snapshot state as of when it actually runs (3), not the moment of an earlier skipped request (2)"
         )
+    }
+
+    /// #477 review F3: the flush completion handler used to be unfenced —
+    /// if it ran after a NEW `start()` had already installed a fresh
+    /// `CoalescingDrain` for the workout that's running now, it would call
+    /// `completePass()` on a drain it never `.request()`-ed against, which
+    /// hits `CoalescingDrain`'s own `precondition(running, …)` and aborts
+    /// the process. `start()` always bumps `startGuard`'s generation and
+    /// resets `startDate`/partial-flush bookkeeping regardless of whether
+    /// `requestAuthorization()` later succeeds (review finding F7 in this
+    /// same file), which is exactly what this test host can drive without a
+    /// HealthKit entitlement.
+    ///
+    /// Reaching the final assertion at all — without the process crashing —
+    /// is most of the proof; the assertion itself additionally confirms the
+    /// NEW workout's own flushing still works normally afterward, i.e. the
+    /// stale handler didn't leave anything wedged.
+    @MainActor
+    func testStalePartialFlushCompletionAfterANewStartDoesNotCorruptTheNextWorkoutsDrain() async {
+        let manager = WorkoutManager()
+
+        // Get workout N running (without HealthKit): start() resets
+        // startDate to nil unconditionally before HK setup even attempts,
+        // then always fails at requestAuthorization() in this host — set
+        // startDate manually afterward to simulate a workout that DID get
+        // going at whatever generation start() just stamped.
+        await manager.start()
+        manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+        let workoutNGeneration = manager.acceptedStartCount
+
+        let gate = Gate()
+        manager.partialUploader = { _ in await gate.wait() }
+        manager.flushPartial() // captures workoutNGeneration
+
+        // Workout N ends and workout N+1 begins WHILE that flush is still
+        // in flight — same reset block (#477) installs a fresh drain/task/
+        // suspended state for N+1.
+        await manager.start()
+        manager.startDate = Date(timeIntervalSince1970: 1_700_001_000)
+        XCTAssertEqual(manager.acceptedStartCount, workoutNGeneration + 1, "start() must have bumped the generation")
+
+        // Let workout N's flush finally resolve — its completion handler
+        // runs strictly after N+1 has already replaced the drain it was
+        // tied to.
+        await gate.release()
+        for _ in 0..<50 { await Task.yield() } // let the completion handler run
+
+        // N+1's OWN flushing must still work normally — proves the stale
+        // handler didn't leave partialFlushDrain/partialFlushTask wedged.
+        let order = OrderLog()
+        manager.partialUploader = { _ in await order.append("n-plus-1-flush-ran") }
+        manager.flushPartial()
+        let events = await order.waitUntilCount(1)
+        XCTAssertEqual(events, ["n-plus-1-flush-ran"])
     }
 }

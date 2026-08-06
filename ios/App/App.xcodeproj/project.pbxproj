@@ -49,6 +49,7 @@
 		D1C2B3A4F5E6708192A3B4C5 /* ACWRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */; };
 		D40300000000000000000001 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = D40300000000000000000002 /* SendLogWatchCore */; };
 		E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */; };
+		EB05C175BAF2B4E46E99D985 /* LiveWorkoutUpsertEncodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 292748AE85C4E0E860B2AEC0 /* LiveWorkoutUpsertEncodingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -149,6 +150,7 @@
 /* Begin PBXFileReference section */
 		16352DB60DA7C8E5216936B4 /* SendmeterScreenshots.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendmeterScreenshots.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/AttemptDetectorTests.swift; sourceTree = "<group>"; };
+		292748AE85C4E0E860B2AEC0 /* LiveWorkoutUpsertEncodingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveWorkoutUpsertEncodingTests.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "SendLogWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		32A305250A36E690BA4EB57B /* SendmeterWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SendmeterWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -306,6 +308,7 @@
 				DC9553E789D7EA1060A0E6B6 /* WorkoutOwnershipTests.swift */,
 				490FAD79B3C3A24471273BC4 /* WorkoutSavePathResetTests.swift */,
 				8BECD0BEC22EF922A971D9A6 /* WorkoutManagerHRAndPartialFlushTests.swift */,
+				292748AE85C4E0E860B2AEC0 /* LiveWorkoutUpsertEncodingTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = "<group>";
@@ -675,6 +678,7 @@
 				989C6A6B38BC951D1EDE0CCD /* WorkoutOwnershipTests.swift in Sources */,
 				6EC0081A61C390F6B2558CF9 /* WorkoutSavePathResetTests.swift in Sources */,
 				75ED3D98D03A48F801BCCFD9 /* WorkoutManagerHRAndPartialFlushTests.swift in Sources */,
+				EB05C175BAF2B4E46E99D985 /* LiveWorkoutUpsertEncodingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

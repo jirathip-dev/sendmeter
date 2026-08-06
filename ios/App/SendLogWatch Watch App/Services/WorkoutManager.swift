@@ -2,6 +2,7 @@ import CoreMotion
 import Foundation
 import HealthKit
 import Observation
+import os
 import SendLogWatchCore
 import WatchConnectivity
 import WatchKit
@@ -123,6 +124,18 @@ final class WorkoutManager: NSObject {
     /// assignment, which held whatever arrived last with no age and no
     /// protection against an out-of-order callback moving it backwards.
     private var hrTimeline = HeartRateTimeline()
+    private static let log = Logger(subsystem: "com.jirathip.sendlog.watchkitapp", category: "workout")
+    /// #477 review F4: a real HR quantity with no `mostRecentQuantityDateInterval()`
+    /// can't be timestamped, so it's discarded (can't check monotonicity/
+    /// staleness on a reading with no time) — see the delegate below. That
+    /// IS real data loss, not a benign gap, so it's worth a one-shot Console
+    /// breadcrumb per workout rather than total silence. Not `errorMsg`:
+    /// that's user-facing and would alarm the user over what may be a
+    /// one-tick HealthKit quirk. Not `private`: `os_log`/`Logger` output
+    /// isn't observable from a unit test, so this flag — the thing that
+    /// actually makes the "once" behavior real — is what SendLogWatchTests
+    /// asserts on instead.
+    var hrMissingDateIntervalLogged = false
     // MARK: Partial-flush ordering (#477)
     //
     // `flushPartial()` used to fire an unconstrained `Task.detached` every
@@ -246,6 +259,7 @@ final class WorkoutManager: NSObject {
         heartRate = nil
         hrTimeline = HeartRateTimeline()
         lastMotionSample = nil
+        hrMissingDateIntervalLogged = false
         activeKcal = 0
         elapsed = 0
         relativeAltitude = 0
@@ -387,6 +401,15 @@ final class WorkoutManager: NSObject {
                 "rest_target_s": rt,
                 "updated_at": Date().timeIntervalSince1970,
             ]
+            // #477 review F1: omitting the key here (rather than sending
+            // NSNull()) is deliberately left as-is — `messageToLive` on the
+            // phone reads `msg.hr ?? null` in JS, where an absent key is
+            // already `undefined`, and `undefined ?? null` is `null`. This
+            // wire format already has no analog of the LiveWorkoutUpsert bug
+            // above. NSNull() is not documented as a valid WCSession
+            // property-list value and risks an invalid-argument crash on
+            // send — not worth it to make two already-correct paths look
+            // more symmetric.
             if let hr { msg["hr"] = hr }
             msg["active_kcal"] = kcal
             if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
@@ -459,38 +482,28 @@ final class WorkoutManager: NSObject {
 
     @MainActor
     func end() async -> WorkoutSummary? {
-        // #477: stop any further partial flush from starting, and await
-        // whichever one is already in flight, BEFORE anything else — cancelling
-        // it would not stop a request already on the wire from being committed
-        // by the server after this call's own final write, so awaiting is the
-        // only way to guarantee ordering. This runs unconditionally, ahead of
-        // the session/builder guard below, so it still drains a flush that was
-        // started against a workout whose session has since gone away.
+        // #477: stop any further partial flush from starting, unconditionally
+        // and before anything else — even in the defensive case where there's
+        // no active session below, a leftover in-flight partial must not go
+        // on assuming it can still start a coalesced rerun.
         partialFlushSuspended = true
-        if let partialFlushTask {
-            _ = await partialFlushTask.value
-        }
-        partialFlushTask = nil
 
         guard let session, let builder, let startDate else { return nil }
-        fusionTimer?.invalidate()
-        fusionTimer = nil
-        cancelRestAlarm() // no more rest to alarm for once the workout is ending
-        altimeter.stopRelativeAltitudeUpdates()
-        motion.stopDeviceMotionUpdates()
-        // Close the phone's WC mirror immediately (Supabase markEnded follows).
-        let wc = WCSession.default
-        if wc.activationState == .activated, wc.isReachable {
-            wc.sendMessage(
-                WatchBuild.stamp(
-                    ["kind": "liveWorkout", "status": "ended",
-                     "updated_at": Date().timeIntervalSince1970]
-                ),
-                replyHandler: nil, errorHandler: nil
-            )
-        }
 
-        let endDate = Date()
+        // #477 review F2: stop the workout FIRST, and only then await the
+        // in-flight partial — extracted into its own method (not inlined
+        // here) specifically so this ordering is independently testable.
+        // Constructing a real HKWorkoutSession/HKLiveWorkoutBuilder is
+        // impossible off-device, so `end()` itself can never be driven past
+        // the guard above in this test host; `stopRecordingAndAwaitInFlightPartial()`
+        // needs neither, so SendLogWatchTests calls it directly. See its doc
+        // comment for why the ordering matters: a Timer on the main run loop
+        // is NOT paused by a suspended MainActor async function, so awaiting
+        // first (the original #477 fix) kept the workout fully live —
+        // rawTrace growing, elapsed advancing, detector ticking, the phone
+        // mirror still told "live" — for as long as the partial upload took.
+        let endDate = await stopRecordingAndAwaitInFlightPartial()
+
         session.end()
         do {
             try await builder.endCollection(at: endDate)
@@ -552,6 +565,64 @@ final class WorkoutManager: NSObject {
             predictedRPE: predictedRPE,
             rawTrace: rawTrace
         )
+    }
+
+    /// Stops everything that would otherwise keep recording, THEN awaits
+    /// whatever partial flush is already in flight. Order matters (#477
+    /// review F2): a `Timer` on the main run loop is not paused by a
+    /// suspended MainActor `async` function — the main thread just returns
+    /// to the run loop while this is parked, so if the await ran first,
+    /// `fusionTimer` would keep firing, `rawTrace` would keep growing,
+    /// `detector.ingest` would keep running, and `pushBeat()` would keep
+    /// telling the phone the workout is "live", all for as long as the
+    /// partial upload takes. Tearing down first closes that regardless of
+    /// how long the await takes.
+    ///
+    /// Not `private`: `end()` can only reach this after a guard that needs a
+    /// real `HKWorkoutSession`/`HKLiveWorkoutBuilder`, which this test host
+    /// cannot construct (no HealthKit entitlement) — so `end()` itself can
+    /// never be driven past that guard here. This method needs neither;
+    /// SendLogWatchTests calls it directly to prove the ordering.
+    func stopRecordingAndAwaitInFlightPartial() async -> Date {
+        fusionTimer?.invalidate()
+        fusionTimer = nil
+        cancelRestAlarm() // no more rest to alarm for once the workout is ending
+        altimeter.stopRelativeAltitudeUpdates()
+        motion.stopDeviceMotionUpdates()
+        // Close the phone's WC mirror immediately (Supabase markEnded follows).
+        let wc = WCSession.default
+        if wc.activationState == .activated, wc.isReachable {
+            wc.sendMessage(
+                WatchBuild.stamp(
+                    ["kind": "liveWorkout", "status": "ended",
+                     "updated_at": Date().timeIntervalSince1970]
+                ),
+                replyHandler: nil, errorHandler: nil
+            )
+        }
+        // Stamped now — before the network wait below, not after it, so a
+        // slow partial can no longer inflate the saved duration.
+        let endDate = Date()
+
+        // #477: cancelling a detached Task after its request is already on
+        // the wire can't stop the server committing it, so this must AWAIT,
+        // not cancel. Deliberately UNBOUNDED: supabase-swift does not retry
+        // POSTs (`PostgrestBuilder.retryableMethods` excludes `.post`) and
+        // times a single request out at 60s on its own
+        // (`HTTPRequest`'s per-request timeout) — that third-party default
+        // is the real bound on how long this can park, not something this
+        // function imposes. A shorter, self-imposed timeout here would
+        // reopen the exact bug #477 closes: an abandoned-but-still-in-flight
+        // partial could still land on the server after the final row this
+        // method's caller is about to write, with nothing left holding it
+        // back. The workout itself is already fully torn down above by the
+        // time this suspends, so the only user-visible cost of the 60s is
+        // the End button staying disabled that long, not stale/growing data.
+        if let partialFlushTask {
+            _ = await partialFlushTask.value
+        }
+        partialFlushTask = nil
+        return endDate
     }
 
     // MARK: Save path (#476: hoisted out of WorkoutLiveView, see the state
@@ -659,6 +730,15 @@ final class WorkoutManager: NSObject {
     /// than through the delegate callback (#477).
     func acceptHeartRate(_ candidate: HeartRateSample) {
         hrTimeline.accept(candidate)
+    }
+
+    /// Not `private`: SendLogWatchTests calls this directly to prove it only
+    /// logs once per workout (#477 review F4) — Console/os_log output isn't
+    /// otherwise observable from a unit test.
+    func reportHRMissingDateIntervalOnce() {
+        guard !hrMissingDateIntervalLogged else { return }
+        hrMissingDateIntervalLogged = true
+        Self.log.warning("HR quantity delivered with no mostRecentQuantityDateInterval() — reading discarded, not trusted (#477)")
     }
 
     // Not `private`: see the `fusionTimer` comment above.
@@ -779,11 +859,29 @@ final class WorkoutManager: NSObject {
 
     private func runPartialFlush() {
         guard let startDate else {
-            // Nothing to snapshot; resolve the drain so a later legitimate
-            // request isn't wedged behind a request that can never run.
-            _ = partialFlushDrain.completePass()
+            // Nothing to snapshot. #477 review F3: `completePass()`'s return
+            // value must not be discarded here — if something else was
+            // requested (`.rerun`) while this "pass" was `running` with no
+            // `startDate` to act on, dropping it wedges the drain `running`
+            // forever with nothing left to un-stick it, and every later
+            // `flushPartial()` call silently returns `.queued` and does
+            // nothing for the rest of the workout. Not reachable today (the
+            // only production caller already guards `startDate` before
+            // calling `flushPartial()`), but loop rather than leave a latent
+            // "durable flushing silently dead" trap.
+            if partialFlushDrain.completePass() == .rerun {
+                runPartialFlush()
+            }
             return
         }
+        // #477 review F3: stamp this flush with the CURRENT start generation
+        // — this manager is App-scoped and long-lived (#476A), so by the
+        // time this flush's network call resolves, a new `start()` may
+        // already have installed a fresh `partialFlushDrain` for a DIFFERENT
+        // workout. The completion handler below checks this before touching
+        // anything, so a stale handler from workout N can never decide
+        // workout N+1's state.
+        let generation = startGuard.generation
         let partial = ClimbWorkoutPartialUpsert(
             id: workoutId,
             startedAt: startDate,
@@ -801,6 +899,17 @@ final class WorkoutManager: NSObject {
         Task { @MainActor [weak self] in
             _ = await task.value
             guard let self else { return }
+            guard self.startGuard.isCurrent(generation) else {
+                // A NEW start() has begun since this flush was created —
+                // start() has already installed a fresh CoalescingDrain and
+                // reset partialFlushTask/partialFlushSuspended for the
+                // workout that's running now. Touching either here would be
+                // this stale closure deciding workout N+1's state (the exact
+                // #476A hazard this manager was hoisted to remove), and
+                // `completePass()` on a drain this handler never
+                // `.request()`-ed against hits its own precondition.
+                return
+            }
             self.partialFlushTask = nil
             guard !self.partialFlushSuspended else {
                 // `end()` is waiting on (or has already moved past) this
@@ -850,6 +959,7 @@ extension WorkoutManager: HKLiveWorkoutBuilderDelegate {
         // is what actually enforces ordering, via `HeartRateTimeline.accept`.
         var hrCandidate: HeartRateSample?
         var kcalCandidate: Double?
+        var hrMissingDateInterval = false
         for type in collectedTypes {
             guard let quantityType = type as? HKQuantityType,
                   let stats = workoutBuilder.statistics(for: quantityType) else { continue }
@@ -858,9 +968,19 @@ extension WorkoutManager: HKLiveWorkoutBuilderDelegate {
                 // #477: the SAMPLE time HealthKit reports this reading as
                 // covering — not `Date()`, which would measure when this
                 // callback happened to be delivered, not sensor age.
-                if let value = stats.mostRecentQuantity()?.doubleValue(for: .count().unitDivided(by: .minute())),
-                   let sampleAt = stats.mostRecentQuantityDateInterval()?.end {
-                    hrCandidate = HeartRateSample(value: value, sampleAt: sampleAt)
+                if let value = stats.mostRecentQuantity()?.doubleValue(for: .count().unitDivided(by: .minute())) {
+                    if let sampleAt = stats.mostRecentQuantityDateInterval()?.end {
+                        hrCandidate = HeartRateSample(value: value, sampleAt: sampleAt)
+                    } else {
+                        // #477 review F4: a real quantity with no interval to
+                        // stamp it — can't accept it (nothing to check
+                        // monotonicity/staleness against), so this stays
+                        // "absent" like a genuine sensor gap, not "trust it
+                        // anyway". See `hrMissingDateIntervalLogged`'s doc
+                        // comment for why this is reported rather than fully
+                        // silent.
+                        hrMissingDateInterval = true
+                    }
                 }
             case HKQuantityType(.activeEnergyBurned):
                 kcalCandidate = stats.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
@@ -871,6 +991,9 @@ extension WorkoutManager: HKLiveWorkoutBuilderDelegate {
         Task { @MainActor in
             if let hrCandidate {
                 self.acceptHeartRate(hrCandidate)
+            }
+            if hrMissingDateInterval {
+                self.reportHRMissingDateIntervalOnce()
             }
             if let kcalCandidate {
                 self.activeKcal = kcalCandidate

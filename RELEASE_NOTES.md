@@ -34,7 +34,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
 - Watch: a running Climb Workout no longer gets silently orphaned by tapping a Force or status complication, or by the app losing its connection to your iPhone mid-workout — the workout, its boulder count, and an unsaved workout waiting to retry now survive, and the workout stays reachable to end.
-- Watch: a heart-rate sensor gap or bad wrist contact during a Climb Workout no longer silently holds the last reading forever — auto boulder detection, the HR chart, and your live heart rate on the phone now correctly show it as unavailable instead of a stuck stale number, and ending a workout right after a slow background sync can no longer leave the saved session with a truncated, out-of-date summary.
+- Watch: a heart-rate sensor gap or bad wrist contact during a Climb Workout no longer silently holds the last reading forever — auto boulder detection, the HR chart, and your live heart rate on the phone now correctly show it as unavailable instead of a stuck stale number, and ending a workout while a background sync is still catching up can no longer inflate its saved duration or leave the saved session with a truncated, out-of-date summary.
 
 ## 1.0 — 2026-08-02
 
