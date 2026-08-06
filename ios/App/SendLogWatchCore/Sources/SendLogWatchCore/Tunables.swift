@@ -18,8 +18,18 @@ public struct Tunables: Sendable {
     public var startMotionTicks: Int = 5
     public var startAltitudeSupportM: Double = 0.45
     public var startStrongAltitudeM: Double = 1.0
+    // #473: HR contributes at most +1 (was +1 for this AND +1 more past
+    // startStrongHRRiseBPM=25, so a decaying post-climb HR alone could hit
+    // startConfidenceRequired=2 with zero altitude evidence — the phantom
+    // re-open). Strong altitude still contributes +2; motion stays the hard
+    // candidate gate below.
+    // #473: a sustained-motion second confidence point (paired with the HR
+    // rise, to restore zero-altitude "traverse" detection) was tried and
+    // reverted — measured to open on ordinary walking between boulders with
+    // an elevated HR, which shipped code correctly rejected. See
+    // AttemptDetector.shouldStartAttempt. HR-only traverse detection is
+    // retired as a result; log one with the Boulder/Stop button instead.
     public var startHRRiseBPM: Double = 12.0
-    public var startStrongHRRiseBPM: Double = 25.0
     public var startConfidenceRequired: Int = 2 // low altitude + HR, or strong altitude
 
     // Attempt end
@@ -30,6 +40,23 @@ public struct Tunables: Sendable {
     public var establishedAltitudeGainM: Double = 0.4
     public var assistedManualMinS: Double = 12.0
     public var maxAttemptS: Double = 300.0
+    // #473: a floor-level (never-established) AUTO attempt gets a realistic
+    // close path instead of falling through to maxAttemptS's 300s hard cap.
+    // #473 R1: AUTO only — see AttemptEndResolver.endReason's `isManual`
+    // guard. These bound a MIS-detection; a manual (Boulder-button) attempt
+    // is by definition not one, and stays on maxAttemptS like shipped code.
+    // Currently unreachable for auto too (kept as a defensive bound, not
+    // dead-deleted) — see the comment at its use site in AttemptDetector.
+    public var unestablishedMaxS: Double = 60.0
+    // #473: an attempt that DID establish altitude but never returns within
+    // endReturnM of its startline (real barometric drift over a long hold —
+    // whether the climber is standing still or has already walked on) used
+    // to run to the full maxAttemptS. Pure duration bound, deliberately not
+    // gated on quiet (a walking climber never goes quiet). Must stay
+    // comfortably above any legitimate quiet pause mid-climb (see
+    // testQuietPauseWhileElevatedDoesNotClose, ~29s).
+    // #473 R1: AUTO only, same reasoning as unestablishedMaxS above.
+    public var establishedDriftMaxS: Double = 90.0
 
     // Post-processing
     public var mergeGapS: Double = 15.0

@@ -4,17 +4,87 @@ import Foundation
 /// An established altitude ascent closes on return regardless of floor-level
 /// motion; an HR-only attempt has no return signal, so quiet is its fallback.
 public enum AttemptEndResolver {
-    public static func shouldEnd(
+    /// Why an attempt closed. The three `*Cap` cases are a duration bound
+    /// firing rather than a genuine end signal — #473: hitting one always
+    /// means detection was wrong about something, so callers can report it
+    /// instead of it reading as an ordinary close.
+    public enum EndReason: Equatable, Sendable {
+        case returnedToFloor
+        case hrQuietFallback
+        /// #473 F-A: a manual attempt's own stillness-based close, requiring
+        /// no HR corroboration — see the `isManual && quiet` branch below.
+        case manualQuietFallback
+        case unestablishedCap
+        case establishedDriftCap
+        case hardCap
+
+        public var isCap: Bool {
+            switch self {
+            case .returnedToFloor, .hrQuietFallback, .manualQuietFallback: return false
+            case .unestablishedCap, .establishedDriftCap, .hardCap: return true
+            }
+        }
+    }
+
+    public static func endReason(
         establishedAltitudeAscent: Bool,
         returnedToFloor: Bool,
         hasHRSupport: Bool,
         quiet: Bool,
         durationS: Double,
-        maxDurationS: Double
-    ) -> Bool {
-        if durationS > maxDurationS { return true }
-        if establishedAltitudeAscent { return returnedToFloor }
-        return hasHRSupport && quiet
+        maxDurationS: Double,
+        unestablishedMaxS: Double,
+        establishedDriftMaxS: Double,
+        isManual: Bool
+    ) -> EndReason? {
+        if durationS > maxDurationS { return .hardCap }
+        if establishedAltitudeAscent {
+            if returnedToFloor { return .returnedToFloor }
+            // #473 R1: `unestablishedMaxS`/`establishedDriftMaxS` exist to
+            // bound a MIS-detection — an auto attempt the detector opened on
+            // a signal that turned out not to be a real close-ended climb.
+            // A manual (Boulder-button) attempt is by definition not a
+            // mis-detection: the user is telling the detector this IS a real
+            // attempt, so it stays on the shipped `maxAttemptS` bound (300s)
+            // instead of being cut off mid-traverse on a stopwatch — see the
+            // R1 review finding (a 61-90s truncation is exactly the "button
+            // doesn't match reality" complaint this issue exists to fix,
+            // from the other side, and RELEASE_NOTES directs flat/HR-only
+            // traverses to this exact button).
+            if !isManual && durationS > establishedDriftMaxS { return .establishedDriftCap }
+            return nil
+        }
+        if hasHRSupport && quiet { return .hrQuietFallback }
+        // #473 F-A (cross-wave sweep, composed with #477): #477 nils
+        // `sample.hr` after a HealthKit gap (no fresh sample within
+        // `hrStaleAfterS`), and R1 correctly exempted `.manual` from the
+        // duration caps. Composed, a FLAT manual attempt with no HR from its
+        // first tick had `hasHRSupport` false for its entire life, so
+        // `hrQuietFallback` above could never fire — its only remaining exit
+        // was `maxAttemptS` (300s), reintroducing #473's own symptom (a
+        // multi-minute banked attempt) through a different door, on exactly
+        // the workflow RELEASE_NOTES now tells users to use for a flat
+        // traverse. A manual attempt is explicitly opened by the user, so
+        // sustained stillness alone (`quiet`, no HR corroboration required)
+        // is an unambiguous "I'm done" signal — unlike an UNDETECTED auto
+        // phantom, there's no false-positive-open to protect against here.
+        // This is a genuine end signal, not a duration bound: it does NOT
+        // reintroduce a cap (R1's constraint) — `durationS` plays no role,
+        // only the same trailing-quiet-ticks trigger `hrQuietFallback` uses.
+        if isManual && quiet { return .manualQuietFallback }
+        // #473: a floor-level attempt that never establishes altitude and
+        // never gets HR+quiet support (e.g. HR unavailable) used to fall
+        // through all the way to maxDurationS. Bound it separately — but
+        // only for auto (see the R1 comment above `establishedDriftCap`).
+        // NOTE: currently unreachable for `.auto` too — every auto-opened
+        // attempt is established from its very first tick, because
+        // `startAltitudeSupportM` (0.45m) already exceeds
+        // `establishedAltitudeGainM` (0.4m), and HR-only auto opening was
+        // retired in F1. Kept (not deleted) as a defensive bound in case the
+        // confidence formula changes again — see the AttemptDetector-level
+        // comment on `unestablishedMaxS` in Tunables.swift.
+        if !isManual && durationS > unestablishedMaxS { return .unestablishedCap }
+        return nil
     }
 }
 
@@ -29,10 +99,23 @@ public final class AttemptDetector {
         case manual(startTick: Int, startDate: Date, baselineAtStart: Double, maxAlt: Double)
     }
 
-    private typealias RawAttempt = (
-        startTick: Int, endTick: Int, startDate: Date,
-        baselineAtStart: Double, maxAlt: Double, source: AttemptSource
-    )
+    private struct RawAttempt {
+        var startTick: Int
+        var endTick: Int
+        var startDate: Date
+        var baselineAtStart: Double
+        var maxAlt: Double
+        var source: AttemptSource
+        /// #473: set only by an explicit user Stop (endCurrentAttempt /
+        /// endManualAttempt), independent of `source` — an auto-detected
+        /// attempt the user explicitly stopped is still `source == .auto`
+        /// but must skip the auto post-filters below. Never set by an
+        /// automatic close, an assisted-manual close, or a finalize() flush.
+        var explicitlyEnded: Bool
+        /// #473: this fragment closed via one of AttemptEndResolver's cap
+        /// reasons rather than a genuine end signal.
+        var hitCap: Bool
+    }
 
     private let t: Tunables
     private var phase: Phase = .rest
@@ -115,15 +198,22 @@ public final class AttemptDetector {
             phase = .climbing(startTick: startTick, startDate: startDate, baselineAtStart: baselineAtStart, maxAlt: maxAlt)
 
             let duration = Double(i - startTick) / t.tickHz
-            if AttemptEndResolver.shouldEnd(
+            if let reason = AttemptEndResolver.endReason(
                 establishedAltitudeAscent: maxAlt - baselineAtStart >= t.establishedAltitudeGainM,
                 returnedToFloor: hasReturnedToGround(at: i, baseline: baselineAtStart),
                 hasHRSupport: hasHRSupport(from: startTick, through: i),
                 quiet: hasGoneQuiet(at: i),
                 durationS: duration,
-                maxDurationS: t.maxAttemptS
+                maxDurationS: t.maxAttemptS,
+                unestablishedMaxS: t.unestablishedMaxS,
+                establishedDriftMaxS: t.establishedDriftMaxS,
+                isManual: false
             ) {
-                rawAttempts.append((startTick, i, startDate, baselineAtStart, maxAlt, .auto))
+                rawAttempts.append(RawAttempt(
+                    startTick: startTick, endTick: i, startDate: startDate,
+                    baselineAtStart: baselineAtStart, maxAlt: maxAlt, source: .auto,
+                    explicitlyEnded: false, hitCap: reason.isCap
+                ))
                 phase = .rest
             }
 
@@ -132,15 +222,22 @@ public final class AttemptDetector {
             phase = .manual(startTick: startTick, startDate: startDate, baselineAtStart: baselineAtStart, maxAlt: maxAlt)
             let duration = Double(i - startTick) / t.tickHz
             if duration >= t.assistedManualMinS,
-               AttemptEndResolver.shouldEnd(
+               let reason = AttemptEndResolver.endReason(
                    establishedAltitudeAscent: maxAlt - baselineAtStart >= t.establishedAltitudeGainM,
                    returnedToFloor: hasReturnedToGround(at: i, baseline: baselineAtStart),
                    hasHRSupport: hasHRSupport(from: startTick, through: i),
                    quiet: hasGoneQuiet(at: i),
                    durationS: duration,
-                   maxDurationS: t.maxAttemptS
+                   maxDurationS: t.maxAttemptS,
+                   unestablishedMaxS: t.unestablishedMaxS,
+                   establishedDriftMaxS: t.establishedDriftMaxS,
+                   isManual: true
                ) {
-                rawAttempts.append((startTick, i, startDate, baselineAtStart, maxAlt, .manual))
+                rawAttempts.append(RawAttempt(
+                    startTick: startTick, endTick: i, startDate: startDate,
+                    baselineAtStart: baselineAtStart, maxAlt: maxAlt, source: .manual,
+                    explicitlyEnded: false, hitCap: reason.isCap
+                ))
                 phase = .rest
             }
         }
@@ -152,7 +249,11 @@ public final class AttemptDetector {
         if case .manual = phase { return }
         if workoutStart == nil { workoutStart = date }
         if case .climbing(let s, let sd, let b, let m) = phase {
-            rawAttempts.append((s, max(s, ticks.count - 1), sd, b, m, .auto))
+            rawAttempts.append(RawAttempt(
+                startTick: s, endTick: max(s, ticks.count - 1), startDate: sd,
+                baselineAtStart: b, maxAlt: m, source: .auto,
+                explicitlyEnded: false, hitCap: false
+            ))
         }
         let i = max(0, ticks.count - 1)
         let base = localFloor(at: i) ?? baseline ?? ticks.last?.altitude ?? 0
@@ -167,7 +268,11 @@ public final class AttemptDetector {
             phase = .rest
             return
         }
-        rawAttempts.append((s, ticks.count - 1, sd, b, m, .manual))
+        rawAttempts.append(RawAttempt(
+            startTick: s, endTick: ticks.count - 1, startDate: sd,
+            baselineAtStart: b, maxAlt: m, source: .manual,
+            explicitlyEnded: true, hitCap: false
+        ))
         phase = .rest
     }
 
@@ -176,7 +281,11 @@ public final class AttemptDetector {
     public func endCurrentAttempt(at date: Date) {
         switch phase {
         case .climbing(let s, let sd, let b, let m):
-            rawAttempts.append((s, max(s, ticks.count - 1), sd, b, m, .auto))
+            rawAttempts.append(RawAttempt(
+                startTick: s, endTick: max(s, ticks.count - 1), startDate: sd,
+                baselineAtStart: b, maxAlt: m, source: .auto,
+                explicitlyEnded: true, hitCap: false
+            ))
             phase = .rest
         case .manual:
             endManualAttempt(at: date)
@@ -186,13 +295,22 @@ public final class AttemptDetector {
     }
 
     public func finalize() -> [Attempt] {
-        // Flush an open attempt (auto or manual)
+        // Flush an open attempt (auto or manual) — ending the workout
+        // without ever tapping Stop, so this is not an explicit close.
         switch phase {
         case .climbing(let s, let sd, let b, let m):
-            rawAttempts.append((s, ticks.count - 1, sd, b, m, .auto))
+            rawAttempts.append(RawAttempt(
+                startTick: s, endTick: ticks.count - 1, startDate: sd,
+                baselineAtStart: b, maxAlt: m, source: .auto,
+                explicitlyEnded: false, hitCap: false
+            ))
         case .manual(let s, let sd, let b, let m):
             if !ticks.isEmpty {
-                rawAttempts.append((s, ticks.count - 1, sd, b, m, .manual))
+                rawAttempts.append(RawAttempt(
+                    startTick: s, endTick: ticks.count - 1, startDate: sd,
+                    baselineAtStart: b, maxAlt: m, source: .manual,
+                    explicitlyEnded: false, hitCap: false
+                ))
             }
         case .rest:
             break
@@ -208,9 +326,17 @@ public final class AttemptDetector {
         var open = rawAttempts
         switch phase {
         case .climbing(let s, let sd, let b, let m):
-            open.append((s, ticks.count - 1, sd, b, m, .auto))
+            open.append(RawAttempt(
+                startTick: s, endTick: ticks.count - 1, startDate: sd,
+                baselineAtStart: b, maxAlt: m, source: .auto,
+                explicitlyEnded: false, hitCap: false
+            ))
         case .manual(let s, let sd, let b, let m):
-            open.append((s, ticks.count - 1, sd, b, m, .manual))
+            open.append(RawAttempt(
+                startTick: s, endTick: ticks.count - 1, startDate: sd,
+                baselineAtStart: b, maxAlt: m, source: .manual,
+                explicitlyEnded: false, hitCap: false
+            ))
         case .rest:
             break
         }
@@ -225,11 +351,29 @@ public final class AttemptDetector {
             if let last = merged.last,
                last.source == a.source,
                Double(a.startTick - last.endTick) / t.tickHz < t.mergeGapS {
-                merged[merged.count - 1] = (
-                    last.startTick, a.endTick, last.startDate,
-                    min(last.baselineAtStart, a.baselineAtStart),
-                    max(last.maxAlt, a.maxAlt),
-                    last.source
+                merged[merged.count - 1] = RawAttempt(
+                    startTick: last.startTick, endTick: a.endTick, startDate: last.startDate,
+                    baselineAtStart: min(last.baselineAtStart, a.baselineAtStart),
+                    maxAlt: max(last.maxAlt, a.maxAlt),
+                    source: last.source,
+                    // #473: a confirmed short fragment must not exempt a
+                    // merged phantom spanning minutes — only carry the
+                    // exemption through if EVERY merged fragment was itself
+                    // an explicit close (AND, not OR). See
+                    // testExplicitFragmentMergedWithPhantomLosesExemption for
+                    // the case this guards. The residual this buys: an
+                    // explicitly-stopped fragment merged with a LATER
+                    // non-explicit auto open (< mergeGapS away) also loses
+                    // the exemption in the other direction — a real Stop can
+                    // end up filtered if what follows it doesn't independently
+                    // pass minAttemptS/minActiveMotionTicks. Narrower and
+                    // safer than the leak AND prevents: it only bites a
+                    // rapid, borderline re-open right after a Stop, not an
+                    // ordinary session. `hitCap` is diagnostic only (not a
+                    // filter gate), so it just reflects how the merged
+                    // attempt's final fragment ended.
+                    explicitlyEnded: last.explicitlyEnded && a.explicitlyEnded,
+                    hitCap: a.hitCap
                 )
             } else {
                 merged.append(a)
@@ -253,7 +397,10 @@ public final class AttemptDetector {
             let gain = max(0, a.maxAlt - a.baselineAtStart)
             // Manual attempts are exempt from the auto duration/motion filters
             // because the user explicitly logged them (e.g. a traverse).
-            if a.source == .auto {
+            // #473: so is an auto attempt the user explicitly stopped — Stop
+            // must always record, not fall through the same filters that
+            // exist to catch UNDETECTED phantoms.
+            if a.source == .auto && !a.explicitlyEnded {
                 guard duration >= t.minAttemptS else { return nil }
                 let activeTicks = ticks[a.startTick...a.endTick]
                     .filter { $0.motionRMS >= t.startMotionG }.count
@@ -277,7 +424,8 @@ public final class AttemptDetector {
                 peakHR: peakHR,
                 motionIntensity: motionIntensity,
                 effortScore: effortScore(durationS: duration, gainM: gain, peakHR: peakHR),
-                source: a.source
+                source: a.source,
+                hitCap: a.hitCap
             )
         }
     }
@@ -286,18 +434,35 @@ public final class AttemptDetector {
 
     private func shouldStartAttempt(at i: Int) -> Bool {
         let sample = ticks[i]
-        let motionStart = max(0, i - Int(t.startMotionWindowS * t.tickHz) + 1)
-        let active = ticks[motionStart...i].filter { $0.motionRMS >= t.startMotionG }.count
-        guard active >= t.startMotionTicks else { return false }
+        // Hard candidate gate: motion must be active recently, full stop.
+        guard activeMotionTicks(at: i, windowS: t.startMotionWindowS) >= t.startMotionTicks else { return false }
 
         guard let floor = localFloor(at: i) else { return false }
         let gain = sample.altitude - floor
         var confidence = 0
         if gain >= t.startAltitudeSupportM { confidence += 1 }
         if gain >= t.startStrongAltitudeM { confidence += 1 }
+        // #473: HR contributes at most +1 (was +1 for this AND +1 more past
+        // the old startStrongHRRiseBPM, so a decaying post-climb HR alone
+        // could reach startConfidenceRequired with zero altitude evidence —
+        // the phantom re-open). A sustained-motion second point was tried to
+        // restore HR-only (flat, zero-altitude) "traverse" detection and
+        // reverted: measured against a walking probe (60s at 0.10g, HR +15,
+        // flat altitude — ordinary walking between boulders with HR still
+        // elevated), it opened an attempt shipped code correctly rejected,
+        // because sustained motion at gym walking cadence is not
+        // distinguishable from sustained motion at traverse cadence with
+        // this sensor set. HR-only traverse detection is retired; log one
+        // with the Boulder/Stop button instead.
         if let hr = sample.hr, let restingHR, hr - restingHR >= t.startHRRiseBPM { confidence += 1 }
-        if let hr = sample.hr, let restingHR, hr - restingHR >= t.startStrongHRRiseBPM { confidence += 1 }
         return confidence >= t.startConfidenceRequired
+    }
+
+    /// Count of ticks with `motionRMS >= startMotionG` in the trailing
+    /// `windowS` seconds ending at (and including) tick `i`.
+    private func activeMotionTicks(at i: Int, windowS: Double) -> Int {
+        let start = max(0, i - Int(windowS * t.tickHz) + 1)
+        return ticks[start...i].filter { $0.motionRMS >= t.startMotionG }.count
     }
 
     private func localFloor(at i: Int) -> Double? {
