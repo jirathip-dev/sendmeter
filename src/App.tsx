@@ -37,7 +37,7 @@ import { useRealtimeBump } from "./hooks/useRealtimeVersion";
 import type { HealthSyncSource } from "./lib/healthSync";
 import { insertRecording, restoreSession } from "./lib/repo";
 import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
-import { scheduleQueueDrain } from "./lib/drainSchedule";
+import { browserDrainHandles, scheduleQueueDrain } from "./lib/drainSchedule";
 import { takeLostRecordingsNotice } from "./lib/lostRecordings";
 import type { SignOut } from "./lib/signOut";
 import SplashScreen from "./components/SplashScreen";
@@ -157,35 +157,28 @@ function AuthedApp({
   // foreground/visibility event (the tab was never backgrounded).
   useEffect(() => {
     let cancelled = false;
-    function runDrain() {
-      void drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
+    // Returns whether the pass made progress (recovered ≥1 recording) —
+    // `scheduleQueueDrain`'s backoff (#484 F6) resets on progress and climbs
+    // on a run that finds nothing to do.
+    function runDrain(): Promise<boolean> {
+      return drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
         if (!cancelled && n > 0) {
           toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
         }
+        return n > 0;
       });
     }
-    const cancel = scheduleQueueDrain(runDrain, {
-      onForeground(cb) {
-        const onVisible = () => {
-          if (document.visibilityState === "visible") cb();
-        };
-        document.addEventListener("visibilitychange", onVisible);
-        let nativeSub: ReturnType<typeof CapacitorApp.addListener> | null = null;
-        if (Capacitor.isNativePlatform()) {
-          nativeSub = CapacitorApp.addListener("appStateChange", ({ isActive }) => {
-            if (isActive) cb();
-          });
-        }
-        return () => {
-          document.removeEventListener("visibilitychange", onVisible);
-          if (nativeSub) void nativeSub.then((h) => h.remove());
-        };
-      },
-      setInterval(cb, ms) {
-        const id = window.setInterval(cb, ms);
-        return () => window.clearInterval(id);
-      },
-    });
+    // #484 F4: the real DOM/Capacitor wiring lives in `browserDrainHandles`
+    // (drainSchedule.ts), unit-tested there against fake `document`/`window`/
+    // Capacitor objects — not reimplemented here, so there's exactly one
+    // adapter to get right or get wrong.
+    const cancel = scheduleQueueDrain(
+      runDrain,
+      browserDrainHandles(document, window, {
+        isNativePlatform: () => Capacitor.isNativePlatform(),
+        addListener: (type, cb) => CapacitorApp.addListener(type, cb),
+      }),
+    );
     return () => {
       cancelled = true;
       cancel();
@@ -193,31 +186,25 @@ function AuthedApp({
   }, [userId, toast]);
 
   // #264: the other side of the queue — recordings that could not even be
-  // queued. The path that loses one (useTindeq's salvage-on-unmount cleanup)
-  // has no UI it can reach, so it parks a durable one-shot notice instead;
-  // this is where the user finally hears about it. Mount covers sign-in and a
-  // cold launch, appStateChange covers a loss that happened while the app was
-  // backgrounded. `take` clears the record, so it shows exactly once.
+  // queued (both stores refused the write outright). The path that loses one
+  // (useTindeq's salvage-on-unmount cleanup) has no UI it can reach, so it
+  // parks a durable one-shot notice instead; this is where the user finally
+  // hears about it. Mount covers sign-in and a cold launch, appStateChange
+  // covers a loss that happened while the app was backgrounded. `take`
+  // clears the record, so it shows exactly once.
   //
-  // #484 F3 added a second, unrelated cause of loss under the same notice —
-  // a recording that WAS durably queued but was permanently rejected by the
-  // server on upload. That is not a storage problem, so it must not share
-  // the "device storage was full" copy: `notice.reasons` (absent on a notice
-  // written before that field existed — treat that as the original,
-  // storage-only cause) says which actually happened.
+  // #484: a server-rejected upload does NOT go through this notice — see the
+  // policy block above `drainQueue` in recordingQueue.ts. It is retained
+  // (never deleted on a server response), so there is nothing lost to report
+  // here; a stuck upload surfaces instead through the ambient
+  // `pendingRecordingsBreakdown`/`uploadWarningPresentation` states, same as
+  // any other still-on-device queue depth.
   useEffect(() => {
     function surface() {
       const notice = takeLostRecordingsNotice();
       if (!notice) return;
-      const reasons = notice.reasons ?? ["save-failed"];
-      const rejectedOnly = reasons.every((r) => r === "upload-rejected");
       const label = `${notice.count} recording${notice.count === 1 ? "" : "s"}`;
-      toast(
-        rejectedOnly
-          ? `${label} were rejected by the server and won't be retried`
-          : `${label} couldn't be saved — device storage was full`,
-        "error",
-      );
+      toast(`${label} couldn't be saved — device storage was full`, "error");
     }
     // Deferred, not called inline: a toast is a setState, and this effect must
     // not write state synchronously in its body (react-compiler lint).

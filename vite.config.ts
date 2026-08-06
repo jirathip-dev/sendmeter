@@ -11,6 +11,18 @@ export default defineConfig({
   // forward it — inline it. Resolution order lives in a pure, tested helper.
   define: {
     "import.meta.env.VITE_DEPLOY_ENV": JSON.stringify(resolveDeployEnv(process.env)),
+    // #484: a signal that changes on every `vite build`, used to gate a
+    // stuck-upload retry on "a deploy happened" rather than wall-clock time —
+    // see `appVersion.ts#currentAppVersion` and the policy block in
+    // `recordingQueue.ts`. `VERCEL_GIT_COMMIT_SHA` is what Vercel sets for
+    // both the staging preview and production builds (exactly the deploys
+    // that can carry a migration, per CLAUDE.md's release flow); the
+    // timestamp fallback still changes on every OTHER invocation of
+    // `vite build`, including fastlane's (which runs `npm run build` before
+    // `cap sync` — the same bundle ships to the native/watch app).
+    "import.meta.env.VITE_BUILD_ID": JSON.stringify(
+      process.env.VERCEL_GIT_COMMIT_SHA ?? new Date().toISOString(),
+    ),
   },
   plugins: [
     react(),

@@ -7,9 +7,11 @@ import {
   drainQueue,
   enqueueRecording,
   loadQueue,
+  pendingRecordingsBreakdown,
   pendingRecordingsCount,
   persistRecording,
   persistRecordingDurable,
+  retryStuckRecordings,
   saveQueue,
   type PendingRecording,
 } from "./recordingQueue";
@@ -121,6 +123,12 @@ function fakeDb(
       map.clear();
       return Promise.resolve();
     },
+    getAllForUser: (userId) =>
+      Promise.resolve(
+        [...map.values()]
+          .filter((p) => p.userId === null || p.userId === userId)
+          .sort(byQueuedAt),
+      ),
   };
   return { db, map, loader: (): Promise<RecordingDb | null> => Promise.resolve(db) };
 }
@@ -317,14 +325,14 @@ describe("drainQueue", () => {
     expect(insert).toHaveBeenCalledTimes(2);
   });
 
-  // #484 F3 — PROVED. Before this fix, `drainQueue` had no `quarantined`
-  // bucket at all and ANY non-duplicate failure (including this one) set the
-  // single `broken` flag that parks every later entry — "b" and "c" would
-  // both come back in `remaining`, `insert` would be called exactly twice,
-  // and the healthy "c" would never even be attempted. A permanently-rejected
-  // "a" (a real database CHECK-constraint violation — this exact payload will
-  // NEVER succeed) must not have that power.
-  it("quarantines a permanently-rejected entry and keeps draining the healthy ones behind it (#484 F3)", async () => {
+  // #484 — a constraint rejection keeps draining the healthy entries behind
+  // it (the issue's headline defect), but does NOT quarantine on the first
+  // sighting. Before this fix, `drainQueue` had no such bucket at all and ANY
+  // non-duplicate failure set the single `broken` flag that parks every later
+  // entry — "b" and "c" would both come back in `remaining`, `insert` would
+  // be called exactly twice, and the healthy "c" would never even be
+  // attempted.
+  it("does not block healthy entries behind a constraint-rejected one, and does not quarantine on the first rejection", async () => {
     const queue = [
       { id: "a", queuedAt: "t", userId: "user-1", input: rec("a") },
       { id: "b", queuedAt: "t", userId: "user-1", input: rec("b") },
@@ -338,16 +346,103 @@ describe("drainQueue", () => {
       })
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({});
-    const result = await drainQueue(queue, "user-1", insert);
-    expect(result.quarantined.map((p) => p.id)).toEqual(["a"]);
+    const result = await drainQueue(queue, "user-1", insert, () => "t2", () => "build-1");
+    expect(result.stuck).toEqual([]);
     expect(result.succeeded.map((p) => p.id)).toEqual(["b", "c"]);
-    expect(result.remaining).toEqual([]);
+    // "a" is retained and still eligible for the next drain — not deleted,
+    // not left out of the result entirely — carrying diagnosis detail.
+    expect(result.remaining).toEqual([
+      {
+        id: "a",
+        queuedAt: "t",
+        userId: "user-1",
+        input: rec("a"),
+        rejection: {
+          code: "23514",
+          message: 'new row for relation "tindeq_recordings" violates check constraint "tindeq_recordings_duration_check"',
+          firstVersion: "build-1",
+          firstAt: "t2",
+          lastVersion: "build-1",
+          lastAt: "t2",
+          stuck: false,
+        },
+      },
+    ]);
     expect(insert).toHaveBeenCalledTimes(3);
+  });
+
+  // #484 — the F1 finding: this repo's CHECK constraints are value
+  // allow-lists that migrations WIDEN (the zone check, twice), and a web
+  // deploy can go live slightly ahead of its own migration. A rejection
+  // under the SAME build that first saw it must not be trusted as permanent —
+  // only surviving a build change earns that.
+  it("stays retryable across repeated rejections under the SAME app build", async () => {
+    const queue = [{ id: "a", queuedAt: "t", userId: "user-1", input: rec("a") }];
+    const insert = vi.fn().mockRejectedValue({ code: "23514", message: "violates check constraint" });
+    let result = await drainQueue(queue, "user-1", insert, () => "t2", () => "build-1");
+    expect(result.stuck).toEqual([]);
+    expect(result.remaining[0]?.rejection?.stuck).toBe(false);
+
+    // A second pass, same build, same entry (now carrying its own rejection
+    // stamp) — still not stuck.
+    result = await drainQueue(result.remaining, "user-1", insert, () => "t3", () => "build-1");
+    expect(result.stuck).toEqual([]);
+    expect(result.remaining[0]?.rejection).toMatchObject({
+      firstVersion: "build-1",
+      lastVersion: "build-1",
+      lastAt: "t3",
+      stuck: false,
+    });
+  });
+
+  // #484 — PROVED: this is the property F1 exists for. A rejection that
+  // survives an app-version change (a deploy that could plausibly have
+  // carried the migration fix) is what finally latches `stuck` — retained on
+  // device, excluded from further automatic attempts, never deleted.
+  it("latches stuck only once a rejection survives an app-version change", async () => {
+    const queue = [{ id: "a", queuedAt: "t", userId: "user-1", input: rec("a") }];
+    const insert = vi.fn().mockRejectedValue({ code: "23514", message: "violates check constraint" });
+    const first = await drainQueue(queue, "user-1", insert, () => "t2", () => "build-1");
+    expect(first.remaining[0]?.rejection?.stuck).toBe(false);
+
+    // A NEW build, same payload, same rejection.
+    const second = await drainQueue(first.remaining, "user-1", insert, () => "t3", () => "build-2");
+    expect(second.remaining).toEqual([]);
+    expect(second.stuck.map((p) => p.id)).toEqual(["a"]);
+    expect(second.stuck[0]?.rejection).toMatchObject({
+      firstVersion: "build-1", // preserved — the window this measures
+      lastVersion: "build-2",
+      stuck: true,
+    });
+  });
+
+  it("never auto-attempts an already-stuck entry again", async () => {
+    const stuckEntry: PendingRecording = {
+      id: "a",
+      queuedAt: "t",
+      userId: "user-1",
+      input: rec("a"),
+      rejection: {
+        code: "23514",
+        message: "violates check constraint",
+        firstVersion: "build-1",
+        firstAt: "t1",
+        lastVersion: "build-2",
+        lastAt: "t2",
+        stuck: true,
+      },
+    };
+    const insert = vi.fn().mockResolvedValue({});
+    const result = await drainQueue([stuckEntry], "user-1", insert);
+    expect(insert).not.toHaveBeenCalled();
+    expect(result.succeeded).toEqual([]);
+    expect(result.remaining).toEqual([]);
+    expect(result.stuck).toEqual([stuckEntry]);
   });
 
   // #484 F3 / #475 F11 — the cautionary case named in the issue: a transient
   // failure (offline, 5xx, a stale/expired auth token) must default to
-  // RETRY, never quarantine, however many entries follow it.
+  // RETRY, never stuck/quarantine, however many entries follow it.
   it.each([
     ["auth (PGRST301 — JWT expired)", { code: "PGRST301", message: "JWT expired" }],
     ["network (fetch failure, no code at all)", new TypeError("Failed to fetch")],
@@ -359,10 +454,11 @@ describe("drainQueue", () => {
     ];
     const insert = vi.fn().mockRejectedValueOnce(error);
     const result = await drainQueue(queue, "user-1", insert);
-    expect(result.quarantined).toEqual([]);
+    expect(result.stuck).toEqual([]);
     // Still the pre-existing "stop the pass" behavior for a transient
-    // failure — both come back queued for the next drain.
-    expect(result.remaining.map((p) => p.id)).toEqual(["a", "b"]);
+    // failure — both come back queued for the next drain, UNCHANGED (no
+    // rejection stamp — a transient failure isn't a content verdict).
+    expect(result.remaining).toEqual(queue);
     expect(insert).toHaveBeenCalledTimes(1);
   });
 
@@ -456,13 +552,12 @@ describe("drainPendingRecordingsQueue without IndexedDB", () => {
     expect(loadQueue(storage).map((p) => p.id)).toEqual(["b"]);
   });
 
-  // #484 F3 end to end through the production entry point (not just
-  // `drainQueue` in isolation): the permanently-rejected entry must actually
-  // be removed from the queue (or it would be re-attempted forever, which is
-  // its own kind of "stuck"), must NOT count toward the "recovered" number a
-  // caller would toast, and its loss must be reported (#264) rather than
-  // silently vanish.
-  it("removes a quarantined entry from the queue, excludes it from the recovered count, and reports the loss (#484 F3)", async () => {
+  // #484 F1 end to end through the production entry point (not just
+  // `drainQueue` in isolation): a constraint-rejected entry must NOT be
+  // deleted — it stays queued, excluded from the "recovered" count a caller
+  // would toast, but still readable on the next drain, carrying the
+  // rejection it just picked up.
+  it("retains a constraint-rejected entry in the queue instead of deleting it, and excludes it from the recovered count", async () => {
     const storage = fakeStorage();
     let queue = enqueueRecording([], rec("bad"), "user-1");
     queue = enqueueRecording(queue, rec("good"), "user-1");
@@ -478,13 +573,55 @@ describe("drainPendingRecordingsQueue without IndexedDB", () => {
       .mockResolvedValueOnce({});
     const recovered = await drainPendingRecordingsQueue("user-1", insert, noDb, storage);
 
-    expect(recovered).toBe(1); // only "good" — a quarantine is not a recovery
-    expect(loadQueue(storage)).toEqual([]); // both are gone: one landed, one never will
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("upload-rejected"),
-      expect.objectContaining({ lost: 1 }),
-    );
+    expect(recovered).toBe(1); // only "good" — a fresh rejection is not a recovery
+    // "bad" is still here — not deleted on the first (or any) server response —
+    // now carrying a rejection stamp for the next drain to see.
+    expect(loadQueue(storage).map((p) => p.id)).toEqual(["bad"]);
+    expect(loadQueue(storage)[0]?.rejection).toMatchObject({ code: "23514", stuck: false });
+    // #264 is for recordings that have no durable home. This one does — it's
+    // sitting right there in the queue — so nothing is reported as lost.
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  // The other half: once a rejection survives an app-version change, the
+  // entry moves to `stuck` — still retained, but no longer auto-attempted —
+  // and a subsequent drain must not even try inserting it again.
+  it("stops auto-attempting an entry once its rejection survives an app-version change, without ever deleting it", async () => {
+    const storage = fakeStorage();
+    saveQueue(enqueueRecording([], rec("bad"), "user-1"), storage);
+    const rejected = { code: "23514", message: "violates check constraint" };
+
+    const insert1 = vi.fn().mockRejectedValue(rejected);
+    await drainPendingRecordingsQueue(
+      "user-1",
+      insert1,
+      noDb,
+      storage,
+      () => "t1",
+      () => "build-1",
+    );
+    expect(loadQueue(storage)[0]?.rejection?.stuck).toBe(false);
+
+    const insert2 = vi.fn().mockRejectedValue(rejected);
+    const recovered = await drainPendingRecordingsQueue(
+      "user-1",
+      insert2,
+      noDb,
+      storage,
+      () => "t2",
+      () => "build-2", // a deploy happened between the two drains
+    );
+    expect(recovered).toBe(0);
+    expect(insert2).toHaveBeenCalledTimes(1); // one more attempt, THEN it latches
+    expect(loadQueue(storage).map((p) => p.id)).toEqual(["bad"]); // still retained
+    expect(loadQueue(storage)[0]?.rejection?.stuck).toBe(true);
+
+    // A third drain must not even try — it's stuck.
+    const insert3 = vi.fn();
+    await drainPendingRecordingsQueue("user-1", insert3, noDb, storage);
+    expect(insert3).not.toHaveBeenCalled();
+    expect(loadQueue(storage).map((p) => p.id)).toEqual(["bad"]); // still not deleted
   });
 
   it("guards against a second concurrent drain double-inserting", async () => {
@@ -822,13 +959,17 @@ describe("pendingRecordingsCount", () => {
 describe("clearRecordingQueue", () => {
   // The mechanics only. WHEN this is allowed to run — user-initiated sign-out
   // and nothing else — is `signOut.ts`'s job and lives in `signOut.test.ts`.
+  // Exercised scoped to an account (the normal sign-out shape) unless a test
+  // says otherwise — see the "scoping (#484 F3)" block below for the
+  // `userId: null` (account-deletion) shape and the property scoping exists
+  // to protect.
 
-  it("empties BOTH stores, not just the main one", async () => {
+  it("empties BOTH stores for the account, not just the main one", async () => {
     const storage = fakeStorage();
     const { loader, map } = fakeDb(queueOf("idb-1", "idb-2"));
     saveQueue(queueOf("lane-1"), storage);
 
-    expect(await clearRecordingQueue(loader, storage)).toBe(3);
+    expect(await clearRecordingQueue("user-1", loader, storage)).toBe(3);
     expect([...map.keys()]).toEqual([]);
     expect(loadQueue(storage)).toEqual([]);
   });
@@ -838,32 +979,34 @@ describe("clearRecordingQueue", () => {
     const lane = queueOf("legacy-1");
     saveQueue(lane, storage);
     const { loader } = fakeDb(lane);
-    expect(await clearRecordingQueue(loader, storage)).toBe(1);
+    expect(await clearRecordingQueue("user-1", loader, storage)).toBe(1);
   });
 
   it("still clears the lane when IndexedDB isn't there at all", async () => {
     const storage = fakeStorage();
     saveQueue(queueOf("lane-1", "lane-2"), storage);
-    expect(await clearRecordingQueue(noDb, storage)).toBe(2);
+    expect(await clearRecordingQueue("user-1", noDb, storage)).toBe(2);
     expect(loadQueue(storage)).toEqual([]);
   });
 
   it("reports what it actually removed, not what it was asked to", async () => {
-    // A store that refuses the clear must not be counted as emptied — the
+    // A store that refuses the delete must not be counted as emptied — the
     // sign-out path reports the gap rather than assuming success.
     const storage = fakeStorage();
     const { db } = fakeDb(queueOf("idb-1", "idb-2"));
-    const refusing: RecordingDb = { ...db, clear: () => Promise.reject(quotaError()) };
+    const refusing: RecordingDb = { ...db, delete: () => Promise.reject(quotaError()) };
     saveQueue(queueOf("lane-1"), storage);
 
-    expect(await clearRecordingQueue(() => Promise.resolve(refusing), storage)).toBe(1);
+    expect(await clearRecordingQueue("user-1", () => Promise.resolve(refusing), storage)).toBe(
+      1,
+    );
     expect(loadQueue(storage)).toEqual([]);
   });
 
   it("is a no-op on an empty queue", async () => {
     const storage = fakeStorage();
     const { loader } = fakeDb();
-    expect(await clearRecordingQueue(loader, storage)).toBe(0);
+    expect(await clearRecordingQueue("user-1", loader, storage)).toBe(0);
   });
 
   it("empties a real IndexedDB store", async () => {
@@ -874,9 +1017,152 @@ describe("clearRecordingQueue", () => {
     await persistRecordingDurable(rec("id-1"), "user-1", loader, storage);
     await persistRecordingDurable(rec("id-2"), "user-1", loader, storage);
 
-    expect(await clearRecordingQueue(loader, storage)).toBe(2);
+    expect(await clearRecordingQueue("user-1", loader, storage)).toBe(2);
     expect(await db.getAll()).toEqual([]);
     expect(await pendingRecordingsCount("user-1", loader, storage)).toBe(0);
+  });
+
+  // #484 F3 — PROVED. Before this fix, `clearRecordingQueue` had no `userId`
+  // parameter at all and always wiped the WHOLE store, so a sign-out
+  // remainder prompt showing account A's own N (already scoped, #484 F5)
+  // would delete N plus every other account's stranded entries on "Delete
+  // and sign out" — silently, with no notice, no toast, no monitoring event
+  // (`signOut.ts`'s incomplete-discard report only fires when `discarded <
+  // remaining`, which a bigger-than-asked-for delete never trips).
+  describe("scoping to an account", () => {
+    it("does not touch another account's stranded entries when scoped", async () => {
+      const storage = fakeStorage();
+      const mine = queueOf("mine-1"); // queueOf stamps "user-1"
+      const theirs = enqueueRecording([], rec("theirs-1"), "user-2", () => "t");
+      const { loader, map } = fakeDb([...mine, ...theirs]);
+      saveQueue(queueOf("mine-lane"), storage);
+
+      expect(await clearRecordingQueue("user-1", loader, storage)).toBe(2); // mine-1 + mine-lane
+      expect([...map.keys()]).toEqual(["theirs-1"]); // untouched — the whole point
+      expect(loadQueue(storage)).toEqual([]);
+    });
+
+    it("still clears unattributed legacy (userId: null) entries when scoped, matching the count", async () => {
+      const storage = fakeStorage();
+      const legacy = enqueueRecording([], rec("legacy"), null, () => "t");
+      const { loader, map } = fakeDb(legacy);
+      expect(await clearRecordingQueue("user-1", loader, storage)).toBe(1);
+      expect([...map.keys()]).toEqual([]);
+    });
+
+    it("userId: null clears EVERYTHING, unscoped — the deliberate account-deletion shape", async () => {
+      const storage = fakeStorage();
+      const mine = queueOf("mine-1");
+      const theirs = enqueueRecording([], rec("theirs-1"), "user-2", () => "t");
+      const { loader, map } = fakeDb([...mine, ...theirs]);
+
+      expect(await clearRecordingQueue(null, loader, storage)).toBe(2);
+      expect([...map.keys()]).toEqual([]);
+    });
+  });
+});
+
+describe("pendingRecordingsBreakdown (#484)", () => {
+  it("splits pending vs stuck, and pendingRecordingsCount is their sum", async () => {
+    const stuckEntry: PendingRecording = {
+      id: "stuck-1",
+      queuedAt: "t",
+      userId: "user-1",
+      input: rec("stuck-1"),
+      rejection: {
+        code: "23514",
+        message: "violates check constraint",
+        firstVersion: "build-1",
+        firstAt: "t1",
+        lastVersion: "build-2",
+        lastAt: "t2",
+        stuck: true,
+      },
+    };
+    const { loader } = fakeDb([...queueOf("pending-1", "pending-2"), stuckEntry]);
+    const storage = fakeStorage();
+
+    expect(await pendingRecordingsBreakdown("user-1", loader, storage)).toEqual({
+      pending: 2,
+      stuck: 1,
+    });
+    expect(await pendingRecordingsCount("user-1", loader, storage)).toBe(3);
+  });
+
+  it("is all-zero with nothing queued", async () => {
+    expect(await pendingRecordingsBreakdown("user-1", noDb, fakeStorage())).toEqual({
+      pending: 0,
+      stuck: 0,
+    });
+  });
+});
+
+describe("retryStuckRecordings (#484 — the explicit-user-action re-attempt path)", () => {
+  function stuckEntry(id: string, userId: string | null): PendingRecording {
+    return {
+      id,
+      queuedAt: "t",
+      userId,
+      input: rec(id),
+      rejection: {
+        code: "23514",
+        message: "violates check constraint",
+        firstVersion: "build-1",
+        firstAt: "t1",
+        lastVersion: "build-2",
+        lastAt: "t2",
+        stuck: true,
+      },
+    };
+  }
+
+  it("clears the rejection (not just the stuck flag) so the next drain treats it as fresh", async () => {
+    const { loader, map } = fakeDb([stuckEntry("a", "user-1")]);
+    const storage = fakeStorage();
+
+    expect(await retryStuckRecordings("user-1", loader, storage)).toBe(1);
+    expect(map.get("a")).toEqual({
+      id: "a",
+      queuedAt: "t",
+      userId: "user-1",
+      input: rec("a"),
+    });
+    expect(await pendingRecordingsBreakdown("user-1", loader, storage)).toEqual({
+      pending: 1,
+      stuck: 0,
+    });
+  });
+
+  it("does not touch another account's stuck entries", async () => {
+    const { loader, map } = fakeDb([stuckEntry("mine", "user-1"), stuckEntry("theirs", "user-2")]);
+    const storage = fakeStorage();
+
+    expect(await retryStuckRecordings("user-1", loader, storage)).toBe(1);
+    expect(map.get("theirs")?.rejection?.stuck).toBe(true); // untouched
+  });
+
+  it("clears a stuck entry sitting in the sync lane too", async () => {
+    const storage = fakeStorage();
+    saveQueue([stuckEntry("lane-1", "user-1")], storage);
+    const { loader } = fakeDb();
+
+    expect(await retryStuckRecordings("user-1", loader, storage)).toBe(1);
+    expect(loadQueue(storage)[0]?.rejection).toBeUndefined();
+  });
+
+  it("is a no-op when nothing is stuck", async () => {
+    const { loader } = fakeDb(queueOf("pending-1"));
+    expect(await retryStuckRecordings("user-1", loader, fakeStorage())).toBe(0);
+  });
+
+  it("makes the entry attemptable again on the next drain", async () => {
+    const storage = fakeStorage();
+    const { loader } = fakeDb([stuckEntry("a", "user-1")]);
+    await retryStuckRecordings("user-1", loader, storage);
+
+    const insert = vi.fn().mockResolvedValue({});
+    expect(await drainPendingRecordingsQueue("user-1", insert, loader, storage)).toBe(1);
+    expect(insert).toHaveBeenCalledTimes(1);
   });
 });
 

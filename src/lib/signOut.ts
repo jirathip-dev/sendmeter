@@ -129,13 +129,21 @@ async function withDeadline<T>(
 /// (#265) cannot set that marker — it signs the app out with no user action at
 /// all — so it falls straight through here having discarded nothing.
 ///
+/// `userId` is threaded straight to `clearRecordingQueue` — #484 F3: it must
+/// be the SAME id the remainder count (`pendingRecordingsCount`) was scoped
+/// to, or "Delete N and sign out" understates what a scoped count names but
+/// an unscoped delete actually destroys. `null` (the account-deletion path,
+/// `queue: "discard"`) keeps the deliberate unscoped behavior — see
+/// `clearRecordingQueue`'s doc comment.
+///
 /// Exported so the refusal is directly testable; not for general use.
 export async function discardQueueOnUserSignOut(
+  userId: string | null,
   deps: Pick<SignOutDeps, "clear" | "userSignOutPending" | "report"> = {},
 ): Promise<number> {
   const pending = deps.userSignOutPending ?? isUserSignOutPending;
   if (!pending()) return 0;
-  return (deps.clear ?? (() => clearRecordingQueue()))();
+  return (deps.clear ?? (() => clearRecordingQueue(userId)))();
 }
 
 /// End the session. See the module comment; this is the only implementation.
@@ -195,7 +203,7 @@ export async function signOutUser(
     // Before `signOut()`, not after: the user asked for this and it must
     // happen even if the network call fails. It is a local delete, so there is
     // no token to race.
-    discarded = await discardQueueOnUserSignOut(deps);
+    discarded = await discardQueueOnUserSignOut(opts.userId, deps);
     if (policy === "drain" && discarded < remaining) {
       // The user asked for these to be gone and some of them are not. Silent
       // is the one thing this must not be.

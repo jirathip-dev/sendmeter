@@ -2370,7 +2370,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           the queue is empty (or not yet read) — this is the one place silence
           is honest, because the recordings list right above it is the positive
           signal that saving works. */}
-      {pendingUploads !== null && pendingUploads > 0 && (
+      {pendingUploads !== null && pendingUploads.pending > 0 && (
         <div
           style={{
             display: "flex",
@@ -2379,7 +2379,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             marginTop: 10,
             fontSize: "var(--t-xs)",
             color:
-              pendingUploads >= PENDING_BACKED_UP ? "var(--warning)" : "var(--ink-muted)",
+              pendingUploads.pending >= PENDING_BACKED_UP
+                ? "var(--warning)"
+                : "var(--ink-muted)",
           }}
         >
           <span
@@ -2389,14 +2391,53 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               height: 6,
               borderRadius: "50%",
               background:
-                pendingUploads >= PENDING_BACKED_UP ? "var(--warning)" : "var(--ink-faint)",
+                pendingUploads.pending >= PENDING_BACKED_UP
+                  ? "var(--warning)"
+                  : "var(--ink-faint)",
               flexShrink: 0,
             }}
           />
           <span>
-            {pendingUploads} recording{pendingUploads === 1 ? "" : "s"} waiting to
-            upload — saved on this device, {pendingUploads === 1 ? "it" : "they"} will
-            sync when the connection is back.
+            {pendingUploads.pending} recording{pendingUploads.pending === 1 ? "" : "s"}{" "}
+            waiting to upload — saved on this device,{" "}
+            {pendingUploads.pending === 1 ? "it" : "they"} will sync when the connection
+            is back.
+          </span>
+        </div>
+      )}
+
+      {/* #484: a recording the server keeps rejecting is retained (never
+          deleted on a server response — see the policy block above
+          `drainQueue`), but a drain has stopped auto-attempting it. Informational
+          only here (this tab is a muted ambient line); History's banner is
+          where the "explicit user action" re-attempt path (Retry) lives — see
+          `uploadWarningPresentation`. */}
+      {pendingUploads !== null && pendingUploads.stuck > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginTop: 10,
+            fontSize: "var(--t-xs)",
+            color: "var(--warning)",
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "var(--warning)",
+              flexShrink: 0,
+            }}
+          />
+          <span>
+            {pendingUploads.stuck} recording{pendingUploads.stuck === 1 ? "" : "s"} stuck
+            — the server keeps rejecting {pendingUploads.stuck === 1 ? "it" : "them"} and{" "}
+            {pendingUploads.stuck === 1 ? "it" : "they"} won't retry automatically. Retry
+            from the History tab.
           </span>
         </div>
       )}

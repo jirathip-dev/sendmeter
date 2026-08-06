@@ -65,15 +65,15 @@ describe("noteLostRecordings / takeLostRecordingsNotice", () => {
     });
   });
 
-  it("dedupes reasons across multiple causes contributing to the same unseen notice (#484 F3)", () => {
+  it("dedupes reasons across multiple causes contributing to the same unseen notice", () => {
     const storage = fakeStorage();
     noteLostRecordings(1, "save-failed", storage, () => "2026-07-27T10:00:00.000Z");
-    noteLostRecordings(1, "upload-rejected", storage, () => "2026-07-27T10:01:00.000Z");
-    noteLostRecordings(1, "upload-rejected", storage, () => "2026-07-27T10:02:00.000Z");
+    noteLostRecordings(1, "salvage-on-unmount", storage, () => "2026-07-27T10:01:00.000Z");
+    noteLostRecordings(1, "salvage-on-unmount", storage, () => "2026-07-27T10:02:00.000Z");
     expect(takeLostRecordingsNotice(storage)).toEqual({
       count: 3,
       lastAt: "2026-07-27T10:02:00.000Z",
-      reasons: ["save-failed", "upload-rejected"],
+      reasons: ["save-failed", "salvage-on-unmount"],
     });
   });
 
@@ -157,22 +157,5 @@ describe("reportPersistFailure (#264)", () => {
     expect(warn.mock.calls[0]?.[1]).toMatchObject({ evicted: 2, samples: 1200 });
     // No user notice: the rep they just pulled is safely queued.
     expect(takeLostRecordingsNotice(storage)).toBeNull();
-  });
-
-  it("reports a permanently server-rejected upload (#484 F3) through the SAME single path, tagged distinctly from a storage loss", () => {
-    const storage = fakeStorage();
-    reportPersistFailure(
-      "upload-rejected",
-      { persisted: false, evicted: 0 },
-      1200,
-      storage,
-      at,
-    );
-    expect(takeLostRecordingsNotice(storage)).toEqual({
-      count: 1,
-      lastAt: at(),
-      reasons: ["upload-rejected"],
-    });
-    expect(warn).toHaveBeenCalledOnce();
   });
 });

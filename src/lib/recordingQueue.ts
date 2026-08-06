@@ -4,6 +4,7 @@ import {
   byQueuedAt,
   isPendingRecording,
   type PendingRecording,
+  type PendingRecordingRejection,
 } from "./pendingRecording";
 import { notifyPendingUploadsChanged } from "./pendingUploads";
 import {
@@ -13,7 +14,7 @@ import {
   type RecordingDbLoader,
 } from "./recordingDb";
 import { classifyHandledFailure } from "./monitoring";
-import { reportPersistFailure } from "./lostRecordings";
+import { currentAppVersion } from "./appVersion";
 
 // #106: a tindeq_recordings insert that failed because the auth session had
 // died (e.g. refresh-token-family revocation — see CLAUDE.md) or the network
@@ -348,38 +349,79 @@ export async function absorbSyncLane(
   return lane.length;
 }
 
-/// How many recordings are waiting to upload FOR `userId`, across BOTH
-/// stores. De-duplicated because the interrupted-migration window (committed
-/// to IndexedDB, not yet cleared from the lane) legitimately has an entry in
-/// both, and showing it twice would make a stall look worse than it is.
+/// Every recording queued for `userId` (plus unattributed legacy entries,
+/// `userId: null` — the same "attemptable by anyone" rule `drainQueue`
+/// already applies), across BOTH stores. De-duplicated because the
+/// interrupted-migration window (committed to IndexedDB, not yet cleared
+/// from the lane) legitimately has an entry in both.
 ///
-/// #484 F5: scoped to `userId` (plus unattributed legacy entries, `userId:
-/// null` — the same "attemptable by anyone" rule `drainQueue` already
-/// applies), because an unscoped count let account B see — and be told they'd
-/// sync — recordings stranded under account A that a drain for B would never
-/// touch. This reads the full IndexedDB records (not `keys()`'s getAllKeys)
-/// to see each entry's `userId`; there is no secondary index to filter on
-/// without one, and a stranded queue is expected to be tiny (the eviction
-/// backstop in MAX_IDB_QUEUE_BYTES's comment is for a queue idle for weeks),
-/// so the correctness this buys is worth the extra deserialization.
+/// #484 F5: uses `RecordingDb.getAllForUser`, which goes through the `userId`
+/// index for the common case rather than deserializing every OTHER account's
+/// stranded queue just to filter it out locally — see that method's doc
+/// comment. The single reader both `pendingRecordingsCount` and
+/// `pendingRecordingsBreakdown` build on, so there is exactly one place that
+/// combines the two stores.
+async function pendingRecordingsForUser(
+  userId: string,
+  loadDb: RecordingDbLoader,
+  storage: QueueStorage | null,
+): Promise<PendingRecording[]> {
+  const mine = (p: PendingRecording) => p.userId === null || p.userId === userId;
+  const byId = new Map<string, PendingRecording>();
+  for (const p of loadQueue(storage).filter(mine)) byId.set(p.id, p);
+  const db = await loadDb().catch(() => null);
+  if (db) {
+    const rows = await db.getAllForUser(userId).catch(() => [] as PendingRecording[]);
+    for (const p of rows) byId.set(p.id, p);
+  }
+  return [...byId.values()];
+}
+
+/// How many recordings are waiting to upload for `userId` — TOTAL, including
+/// any that are `rejection.stuck` (#484): they are still on the device,
+/// still unsynced, and a sign-out remainder prompt (`signOut.ts`) must count
+/// them or its "N recordings not uploaded" understates what a "Delete" choice
+/// there will actually remove. Callers that need the pending/stuck split for
+/// display use `pendingRecordingsBreakdown` instead.
 export async function pendingRecordingsCount(
   userId: string,
   loadDb: RecordingDbLoader = openRecordingDb,
   storage: QueueStorage | null = defaultStorage(),
 ): Promise<number> {
-  const mine = (p: PendingRecording) => p.userId === null || p.userId === userId;
-  const ids = new Set(loadQueue(storage).filter(mine).map((p) => p.id));
-  const db = await loadDb().catch(() => null);
-  if (db) {
-    const all = await db.getAll().catch(() => [] as PendingRecording[]);
-    for (const p of all) if (mine(p)) ids.add(p.id);
-  }
-  return ids.size;
+  return (await pendingRecordingsForUser(userId, loadDb, storage)).length;
 }
 
-/// Remove EVERY queued recording from BOTH stores — the "#273" section of the
+/// The same total as `pendingRecordingsCount`, split into what's still being
+/// actively retried (`pending`) versus what a drain has stopped attempting
+/// automatically (`stuck` — see the policy block above `drainQueue`). For the
+/// ambient UI: `pendingUploadsLine`/`uploadWarningPresentation` render these
+/// as two distinct, honestly-labeled states rather than one number that goes
+/// silent about data that will never sync on its own (#475 F1's "the #264
+/// rule inverted" — a count with zero readers).
+export async function pendingRecordingsBreakdown(
+  userId: string,
+  loadDb: RecordingDbLoader = openRecordingDb,
+  storage: QueueStorage | null = defaultStorage(),
+): Promise<{ pending: number; stuck: number }> {
+  const all = await pendingRecordingsForUser(userId, loadDb, storage);
+  const stuck = all.filter((p) => p.rejection?.stuck === true).length;
+  return { pending: all.length - stuck, stuck };
+}
+
+/// Remove queued recordings from BOTH stores — the "#273" section of the
 /// policy block above is the decision this carries out, and is where to look
 /// before calling it.
+///
+/// `userId: null` clears EVERYTHING, unscoped — the shape `deleteAccount()`
+/// wants: the account being deleted has no server-side rows left to upload
+/// into, and account deletion is nuclear enough that clearing this device's
+/// whole local queue (rather than trying to attribute leftovers) is the
+/// existing, deliberate behavior, preserved as-is. A real `userId` (the
+/// normal sign-out path) scopes to that account plus unattributed legacy
+/// entries, the same "mine" rule `pendingRecordingsCount` uses — #484 F3:
+/// before this, the delete was always unscoped while the sign-out prompt's
+/// count became scoped, so "Delete N and sign out" could silently destroy
+/// another account's stranded recordings along with the N it named.
 ///
 /// DO NOT CALL THIS DIRECTLY. `discardQueueOnUserSignOut` in `signOut.ts` is
 /// the only caller, because it is the only place that first checks the
@@ -395,38 +437,107 @@ export async function pendingRecordingsCount(
 /// same reason `pendingRecordingsCount` is: an interrupted absorb legitimately
 /// leaves the same entry in both.
 export async function clearRecordingQueue(
+  userId: string | null,
   loadDb: RecordingDbLoader = openRecordingDb,
   storage: QueueStorage | null = defaultStorage(),
 ): Promise<number> {
+  const mine = (p: PendingRecording) =>
+    userId === null || p.userId === null || p.userId === userId;
   const removed = new Set<string>();
   const db = await loadDb().catch(() => null);
   if (db) {
-    // Read the ids first (only for the count) and clear in one transaction —
-    // `delete(await keys())` would leave behind anything written in between.
-    const keys = await db.keys().catch(() => [] as string[]);
-    const cleared = await db.clear().then(
-      () => true,
-      () => false,
-    );
-    if (cleared) for (const k of keys) removed.add(k);
+    if (userId === null) {
+      // Unscoped: clear() in one transaction, same as before scoping existed.
+      const keys = await db.keys().catch(() => [] as string[]);
+      const cleared = await db.clear().then(
+        () => true,
+        () => false,
+      );
+      if (cleared) for (const k of keys) removed.add(k);
+    } else {
+      // Scoped: only `userId`'s (plus unattributed) ids, deleted by id —
+      // `getAllForUser` already applies the same "mine" rule.
+      const rows = await db.getAllForUser(userId).catch(() => [] as PendingRecording[]);
+      const ids = rows.map((p) => p.id);
+      if (ids.length > 0) {
+        const ok = await db.delete(ids).then(
+          () => true,
+          () => false,
+        );
+        if (ok) for (const id of ids) removed.add(id);
+      }
+    }
   }
   const lane = loadQueue(storage);
-  if (lane.length > 0 && saveQueue([], storage)) {
-    for (const p of lane) removed.add(p.id);
+  const laneMine = lane.filter(mine);
+  if (laneMine.length > 0) {
+    const remaining = userId === null ? [] : lane.filter((p) => !mine(p));
+    if (saveQueue(remaining, storage)) {
+      for (const p of laneMine) removed.add(p.id);
+    }
   }
   notifyPendingUploadsChanged();
   return removed.size;
 }
 
+/// #484: the one way a `rejection.stuck` entry is attempted again outside of
+/// the app-version-change window that produced it — the "explicit user
+/// action" leg of the policy block above `drainQueue`. Clears `rejection`
+/// entirely (not just `stuck`), so the next drain treats it as a fresh
+/// attempt with a fresh latch: if it fails again under the CURRENT build,
+/// that starts a new first-rejection window rather than instantly re-tripping
+/// `stuck` against a `firstVersion` this retry never saw.
+export async function retryStuckRecordings(
+  userId: string,
+  loadDb: RecordingDbLoader = openRecordingDb,
+  storage: QueueStorage | null = defaultStorage(),
+): Promise<number> {
+  const stuckMine = (p: PendingRecording) =>
+    p.rejection?.stuck === true && (p.userId === null || p.userId === userId);
+  const clear = (p: PendingRecording): PendingRecording => ({
+    id: p.id,
+    queuedAt: p.queuedAt,
+    userId: p.userId,
+    input: p.input,
+  });
+  let cleared = 0;
+  const db = await loadDb().catch(() => null);
+  if (db) {
+    const rows = await db.getAllForUser(userId).catch(() => [] as PendingRecording[]);
+    const stuck = rows.filter(stuckMine);
+    if (stuck.length > 0) {
+      const ok = await db.put(stuck.map(clear)).then(
+        () => true,
+        () => false,
+      );
+      if (ok) cleared += stuck.length;
+    }
+  }
+  const lane = loadQueue(storage);
+  const stuckLane = lane.filter(stuckMine);
+  if (stuckLane.length > 0) {
+    const ids = new Set(stuckLane.map((p) => p.id));
+    if (saveQueue(lane.map((p) => (ids.has(p.id) ? clear(p) : p)), storage)) {
+      cleared += stuckLane.length;
+    }
+  }
+  if (cleared > 0) notifyPendingUploadsChanged();
+  return cleared;
+}
+
 export interface DrainResult {
   succeeded: PendingRecording[];
-  /// Still-pending entries, in their original relative order.
+  /// Still being actively retried, in their original relative order — either
+  /// untouched, or carrying an UPDATED `rejection` stamp from a fresh
+  /// constraint rejection this pass that has not (yet) survived an
+  /// app-version change.
   remaining: PendingRecording[];
-  /// #484 F3: entries the SERVER permanently rejected — retrying the exact
-  /// same payload would fail the exact same way forever. Removed from the
-  /// queue by the caller and reported via `reportPersistFailure` (#264), not
-  /// left in `remaining`.
-  quarantined: PendingRecording[];
+  /// #484: entries whose `rejection.stuck` is true after this pass — either
+  /// already stuck coming in (never attempted this pass, per the policy
+  /// block below) or freshly latched by THIS pass's rejection. Retained by
+  /// the caller, not deleted, and excluded from automatic retry until
+  /// `retryStuckRecordings` clears them.
+  stuck: PendingRecording[];
 }
 
 function isDuplicateKeyError(e: unknown): boolean {
@@ -438,53 +549,129 @@ function isDuplicateKeyError(e: unknown): boolean {
   );
 }
 
-/// #484 F3: is this failure a definitive, content-based rejection — the
-/// payload itself violates a database constraint (SQLSTATE 23xxx: a CHECK,
-/// NOT NULL or foreign-key violation) — as opposed to the environment being
-/// temporarily broken? Only that narrow class is safe to treat as permanent.
+/// Is this failure a content-based rejection — the payload itself violates a
+/// database constraint (SQLSTATE 23xxx: a CHECK, NOT NULL or foreign-key
+/// violation) — as opposed to the environment being temporarily broken?
 ///
-/// This is deliberately conservative, mirroring the watch-side precedent at
-/// #475 and its correction at #475 F11: that PR's first fix counted EVERY
-/// failure (including pure transport failures and stale-auth responses)
-/// toward a retry budget, so a healthy workout could be permanently
-/// quarantined by nothing more than bad wifi or a stale token — strictly
-/// worse than the "one bad entry blocks the queue" bug it fixed, because
-/// blocking recovers when connectivity returns and a wrong quarantine does
-/// not. `classifyHandledFailure` already draws this line for Sentry
-/// reporting (`monitoring.ts`) and is reused here rather than duplicated:
-/// "auth", "network", "permission" and "unknown" all mean "no verdict was
-/// reached about THIS payload" and must default to retry.
-function isPermanentUploadFailure(e: unknown): boolean {
+/// `classifyHandledFailure` already draws this line for Sentry reporting
+/// (`monitoring.ts`) and is reused here rather than duplicated: "auth",
+/// "network", "permission" and "unknown" all mean "no verdict was reached
+/// about THIS payload" and must default to retry, exactly like every other
+/// transient failure — mirroring the watch-side precedent at #475 and its
+/// correction at #475 F11 (a healthy workout must never be blocked by
+/// nothing more than bad wifi or a stale token).
+///
+/// #484: unlike the watch, a constraint code here is NOT treated as an
+/// immediate, final verdict either — see the policy block above `drainQueue`
+/// for why (this repo's CHECK constraints are value allow-lists that
+/// migrations widen, and a web deploy can go live slightly ahead of its own
+/// migration). This only says "the payload, not the environment" so the
+/// caller can decide whether it's SEEN this before.
+function isConstraintFailure(e: unknown): boolean {
   return classifyHandledFailure(e) === "constraint";
+}
+
+/// Best-effort diagnosis detail from a constraint-rejection error — never
+/// matched on to decide anything, only stored on `rejection` so a human can
+/// tell what's stuck and why. Truncated: this rides in IndexedDB
+/// indefinitely, not a one-shot event.
+function failureDetail(e: unknown): { code: string; message: string } {
+  if (e && typeof e === "object") {
+    const err = e as { code?: unknown; message?: unknown; status?: unknown };
+    const code =
+      typeof err.code === "string"
+        ? err.code
+        : typeof err.status === "number"
+          ? String(err.status)
+          : "unknown";
+    const message = typeof err.message === "string" ? err.message : String(e);
+    return { code, message: message.slice(0, 300) };
+  }
+  return { code: "unknown", message: String(e).slice(0, 300) };
+}
+
+/// Fold one more constraint rejection into `prev` (absent on the first
+/// sighting). `stuck` latches true the moment a rejection is seen under a
+/// build DIFFERENT from `firstVersion` — i.e. this exact payload survived a
+/// deploy that could plausibly have carried a schema fix and was rejected
+/// again anyway. It never un-latches on its own; `retryStuckRecordings` is
+/// the only way back (see its doc comment for why that also resets
+/// `firstVersion` rather than just clearing `stuck`).
+function nextRejection(
+  prev: PendingRecordingRejection | undefined,
+  e: unknown,
+  appVersion: string,
+  at: string,
+): PendingRecordingRejection {
+  const { code, message } = failureDetail(e);
+  if (!prev) {
+    return { code, message, firstVersion: appVersion, firstAt: at, lastVersion: appVersion, lastAt: at, stuck: false };
+  }
+  return {
+    code,
+    message,
+    firstVersion: prev.firstVersion,
+    firstAt: prev.firstAt,
+    lastVersion: appVersion,
+    lastAt: at,
+    stuck: prev.stuck || prev.firstVersion !== appVersion,
+  };
 }
 
 /// Try inserting each queued recording IN ORDER for `userId`, via the
 /// injected `insert` (so this stays supabase-free and unit-testable).
 ///
-/// #484 F3: a permanently-rejected entry (see `isPermanentUploadFailure`) is
-/// quarantined and skipped — draining CONTINUES past it, because the reason
-/// it failed says nothing about any other entry's payload. Only a
-/// non-permanent (transient) failure stops the pass: if the session/network
-/// is broken, every remaining entry would fail the same way, and attempting
-/// them anyway just reshuffles History for no benefit — they're left queued
-/// for the next drain instead. A 23505 (unique-constraint) failure is
-/// treated as SUCCESS — it means an earlier attempt (this one's own
-/// client-generated id was already used by a prior insert that landed but
-/// whose response the client never saw) actually committed, and this is
-/// just a redundant retry. Entries queued under a DIFFERENT user id are
-/// never attempted (and never dropped) by this pass.
+/// #484 — THE QUARANTINE POLICY. A permanently-shaped rejection (a database
+/// CHECK/NOT NULL/foreign-key violation — see `isConstraintFailure`) does NOT
+/// delete the entry, on the first sighting or ever: this repo's own history
+/// is why. Its CHECK constraints are value allow-lists that migrations
+/// WIDEN — `tindeq_recordings_zone_check` twice already — and CLAUDE.md's
+/// release flow fires the Vercel production deploy on the merge itself while
+/// the migration workflow is still separately running, so a client can be
+/// briefly ahead of its own schema. A recording rejected in that window would
+/// have inserted cleanly minutes later; deleting it on the first 23xxx
+/// destroys real training data over a race, not a bad payload. (Mirrors the
+/// watch-side precedent too: #475 F12 demanded exactly this — retain and
+/// re-attempt — after F11 forced the same "don't punish transient failures"
+/// correction this file already applies to auth/network above.)
+///
+/// So: a constraint rejection keeps the entry in `remaining` (auto-retried
+/// next drain, same as any other queued entry) UNLESS it has already been
+/// rejected once before under a DIFFERENT app build (`nextRejection`'s
+/// `stuck` latch) — that survives a full deploy cycle without being fixed,
+/// which is the signal this repo actually has for "probably not a schema
+/// race". Only then does it move to `stuck`: retained on device, excluded
+/// from automatic attempts, visible to the user as its own state (never
+/// silent — see `pendingRecordingsBreakdown`), and recoverable only via
+/// `retryStuckRecordings`.
+///
+/// A constraint rejection does NOT set the "stop the pass" `blocked` flag —
+/// unlike a transient failure, it says nothing about any OTHER entry's
+/// payload, so draining continues past it (the issue's headline defect: one
+/// bad entry must not block the healthy ones behind it). A 23505
+/// (unique-constraint) failure is treated as SUCCESS — an earlier attempt
+/// (this one's own client-generated id) already landed and this is a
+/// redundant retry. Entries queued under a DIFFERENT user id, and entries
+/// already `stuck`, are never attempted (or dropped) by this pass.
 export async function drainQueue(
   queue: PendingRecording[],
   userId: string,
   insert: (input: NewTindeqRecording & { id: string }) => Promise<unknown>,
+  now: () => string = () => new Date().toISOString(),
+  appVersion: () => string = currentAppVersion,
 ): Promise<DrainResult> {
   const succeeded: PendingRecording[] = [];
   const remaining: PendingRecording[] = [];
-  const quarantined: PendingRecording[] = [];
+  const stuck: PendingRecording[] = [];
   let blocked = false;
   for (const item of queue) {
     if (item.userId !== null && item.userId !== userId) {
       remaining.push(item);
+      continue;
+    }
+    if (item.rejection?.stuck) {
+      // Confirmed stuck by an earlier pass — never auto-retried.
+      stuck.push(item);
       continue;
     }
     if (blocked) {
@@ -499,15 +686,17 @@ export async function drainQueue(
         succeeded.push(item);
         continue;
       }
-      if (isPermanentUploadFailure(e)) {
-        quarantined.push(item);
-        continue;
+      if (isConstraintFailure(e)) {
+        const rejection = nextRejection(item.rejection, e, appVersion(), now());
+        const updated: PendingRecording = { ...item, rejection };
+        (rejection.stuck ? stuck : remaining).push(updated);
+        continue; // per-payload, not systemic — keep draining past it
       }
       remaining.push(item);
       blocked = true;
     }
   }
-  return { succeeded, remaining, quarantined };
+  return { succeeded, remaining, stuck };
 }
 
 // In-flight guard: two near-simultaneous mounts in the SAME tab (e.g. a
@@ -529,6 +718,8 @@ export async function drainPendingRecordingsQueue(
   insert: (input: NewTindeqRecording & { id: string }) => Promise<unknown>,
   loadDb: RecordingDbLoader = openRecordingDb,
   storage: QueueStorage | null = defaultStorage(),
+  now: () => string = () => new Date().toISOString(),
+  appVersion: () => string = currentAppVersion,
 ): Promise<number> {
   if (draining) return 0;
   draining = true;
@@ -539,37 +730,55 @@ export async function drainPendingRecordingsQueue(
     const lane = loadQueue(storage);
     // An interrupted absorb leaves the same entry in both stores; attempt it once.
     const mainIds = new Set(main.map((p) => p.id));
-    const queue = [...main, ...lane.filter((p) => !mainIds.has(p.id))].sort(byQueuedAt);
+    const laneOnly = lane.filter((p) => !mainIds.has(p.id));
+    const queue = [...main, ...laneOnly].sort(byQueuedAt);
     if (queue.length === 0) return 0;
 
-    const { succeeded, quarantined } = await drainQueue(queue, userId, insert);
-    if (succeeded.length === 0 && quarantined.length === 0) return 0;
-    // Both succeeded AND quarantined entries are done with the queue —
-    // one landed, the other never will — so both are removed the same way.
-    const removedIds = new Set([...succeeded, ...quarantined].map((p) => p.id));
+    const { succeeded, remaining, stuck } = await drainQueue(
+      queue,
+      userId,
+      insert,
+      now,
+      appVersion,
+    );
+    // #484: `remaining`/`stuck` entries whose object reference differs from
+    // what went IN carry an updated `rejection` stamp this pass produced —
+    // by identity, since `drainQueue` only allocates a new object when it has
+    // something new to say. Everything else (a different-user skip, an
+    // already-stuck passthrough) comes back unchanged and needs no rewrite.
+    const originalById = new Map(queue.map((p) => [p.id, p]));
+    const changed = [...remaining, ...stuck].filter((p) => p !== originalById.get(p.id));
+
+    if (succeeded.length === 0 && changed.length === 0) return 0;
+
+    const removedIds = new Set(succeeded.map((p) => p.id));
     // Deleting by id is inherently race-safe on the main store — unlike the
     // lane's read-modify-write below, it can't clobber an entry that arrived
     // mid-drain (the drain awaits one insert at a time, so a salvage really can
     // land in between).
-    if (db) await db.delete([...removedIds]).catch(() => {});
+    if (db && removedIds.size > 0) await db.delete([...removedIds]).catch(() => {});
+    // A changed entry (a fresh/updated rejection stamp this pass produced) is
+    // RETAINED, never removed — persisted back into IndexedDB when it's there
+    // (this also finishes migrating a lane-only entry that just picked up its
+    // first stamp), else rewritten in place below, since the lane is the only
+    // store when there's no IndexedDB at all.
+    if (db && changed.length > 0) await db.put(changed).catch(() => {});
+
     const currentLane = loadQueue(storage);
-    if (currentLane.some((p) => removedIds.has(p.id))) {
-      saveQueue(
-        currentLane.filter((p) => !removedIds.has(p.id)),
-        storage,
-      );
+    const changedById = new Map(changed.map((p) => [p.id, p]));
+    // A changed entry leaves the lane once IndexedDB holds it; with no
+    // IndexedDB, it stays in the lane but gets rewritten in place.
+    const goneFromLane = db ? new Set([...removedIds, ...changedById.keys()]) : removedIds;
+    const nextLane = currentLane
+      .filter((p) => !goneFromLane.has(p.id))
+      .map((p) => (db ? p : (changedById.get(p.id) ?? p)));
+    if (
+      nextLane.length !== currentLane.length ||
+      nextLane.some((p, i) => p !== currentLane[i])
+    ) {
+      saveQueue(nextLane, storage);
     }
-    // #484 F3: a quarantined entry is gone from the queue for good — the
-    // server permanently rejected this exact payload — so its loss must be
-    // reported, never swallowed (#264), through the single existing
-    // reporting path every other lost recording already uses.
-    for (const item of quarantined) {
-      reportPersistFailure(
-        "upload-rejected",
-        { persisted: false, evicted: 0 },
-        item.input.samples.length,
-      );
-    }
+
     notifyPendingUploadsChanged();
     return succeeded.length;
   } finally {

@@ -36,15 +36,13 @@ function defaultStorage(): NoticeStorage | null {
 }
 
 /// Which code path lost the recording. A closed set, because it lands in a
-/// monitoring message. #484 F3 added `"upload-rejected"`: a recording that
-/// DID have a durable home, was attempted, and was permanently rejected by
-/// the server during a drain — a different cause from the other two (which
-/// both mean "no store would take it"), and one the user-facing notice must
-/// not phrase as a storage problem.
-export type LostRecordingSource =
-  | "salvage-on-unmount"
-  | "save-failed"
-  | "upload-rejected";
+/// monitoring message — both members mean "no store would take it" (the
+/// salvage-on-unmount cleanup and the mounted ForceView path, respectively).
+/// #484: a server-rejected upload is deliberately NOT a member — the queue
+/// retains a recording the server rejects (see the policy block above
+/// `drainQueue` in recordingQueue.ts), so nothing is lost there to report
+/// through this module.
+export type LostRecordingSource = "salvage-on-unmount" | "save-failed";
 
 export interface LostRecordingNotice {
   /// Recordings lost since the notice was last shown — accumulated, so a
