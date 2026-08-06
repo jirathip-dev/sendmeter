@@ -55,3 +55,8 @@ fastlane/screenshots.html
 .env*
 # ...but keep the committed template the Fastfile points at.
 !fastlane/.env.example
+
+# Agent process artifacts (never committed)
+HANDOFF.md
+BRIEF.md
+REVIEW.md
