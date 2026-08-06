@@ -406,38 +406,6 @@ final class AttemptDetectorTests: XCTestCase {
                 XCTAssertGreaterThan(a.durationS, 0, "\(closer) emitted a non-positive-duration attempt")
             }
         }
-    /// Issue #476: `liveAttemptCount` re-applies the post-filter (minimum
-    /// duration + minimum active-motion ticks) on every read, so it can
-    /// cross from 0 to 1 mid-climb with the phase staying `.autoClimbing`
-    /// throughout — no resting/climbing transition to key a widget push off
-    /// of. `WorkoutManager.startFusion()` used to push
-    /// `WidgetBridge.updateLiveWorkout` only when `snapshot.state` changed,
-    /// which this proves is not sufficient.
-    func testLiveAttemptCountCanChangeWithoutStateTransition() {
-        let d = AttemptDetector(tunables: .default)
-        for i in 0..<30 {
-            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
-        }
-        var stateAt37: AttemptDetectorSnapshot.State?
-        var stateAt38: AttemptDetectorSnapshot.State?
-        var countAt37 = -1
-        var countAt38 = -1
-        for i in 30..<40 {
-            d.ingest(MotionSample(t: Double(i), altitude: Double(i - 30) * 0.08, motionRMS: 0.13, hr: 110), at: start.addingTimeInterval(Double(i)))
-            if i == 37 {
-                stateAt37 = d.snapshot.state
-                countAt37 = d.liveAttemptCount
-            }
-            if i == 38 {
-                stateAt38 = d.snapshot.state
-                countAt38 = d.liveAttemptCount
-            }
-        }
-        XCTAssertEqual(stateAt37, .autoClimbing)
-        XCTAssertEqual(stateAt38, .autoClimbing)
-        XCTAssertEqual(stateAt37, stateAt38, "no phase transition happens between these two ticks")
-        XCTAssertEqual(countAt37, 0, "duration hasn't crossed minAttemptS yet")
-        XCTAssertEqual(countAt38, 1, "count crosses the post-filter threshold with no state change")
     }
 
     func testPredictRPEBounds() {
@@ -950,5 +918,39 @@ final class AttemptDetectorTests: XCTestCase {
             i += 1
         }
         XCTAssertTrue(d.isManualAttemptOpen, "an actively-moving manual attempt with no HR must not be truncated")
+    }
+
+    /// Issue #476: `liveAttemptCount` re-applies the post-filter (minimum
+    /// duration + minimum active-motion ticks) on every read, so it can
+    /// cross from 0 to 1 mid-climb with the phase staying `.autoClimbing`
+    /// throughout — no resting/climbing transition to key a widget push off
+    /// of. `WorkoutManager.startFusion()` used to push
+    /// `WidgetBridge.updateLiveWorkout` only when `snapshot.state` changed,
+    /// which this proves is not sufficient.
+    func testLiveAttemptCountCanChangeWithoutStateTransition() {
+        let d = AttemptDetector(tunables: .default)
+        for i in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+        }
+        var stateAt37: AttemptDetectorSnapshot.State?
+        var stateAt38: AttemptDetectorSnapshot.State?
+        var countAt37 = -1
+        var countAt38 = -1
+        for i in 30..<40 {
+            d.ingest(MotionSample(t: Double(i), altitude: Double(i - 30) * 0.08, motionRMS: 0.13, hr: 110), at: start.addingTimeInterval(Double(i)))
+            if i == 37 {
+                stateAt37 = d.snapshot.state
+                countAt37 = d.liveAttemptCount
+            }
+            if i == 38 {
+                stateAt38 = d.snapshot.state
+                countAt38 = d.liveAttemptCount
+            }
+        }
+        XCTAssertEqual(stateAt37, .autoClimbing)
+        XCTAssertEqual(stateAt38, .autoClimbing)
+        XCTAssertEqual(stateAt37, stateAt38, "no phase transition happens between these two ticks")
+        XCTAssertEqual(countAt37, 0, "duration hasn't crossed minAttemptS yet")
+        XCTAssertEqual(countAt38, 1, "count crosses the post-filter threshold with no state change")
     }
 }
