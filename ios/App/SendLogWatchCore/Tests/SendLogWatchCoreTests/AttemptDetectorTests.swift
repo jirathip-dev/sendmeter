@@ -555,44 +555,97 @@ final class AttemptDetectorTests: XCTestCase {
 
     // MARK: #473 — realistic close paths for attempts that never self-close
 
-    /// A floor-level (never-established) attempt must close near
-    /// `unestablishedMaxS` (60s), not fall through to `maxAttemptS` (300s).
-    /// Since HR-only auto detection is retired (F1), an auto attempt can no
-    /// longer open without altitude evidence that already exceeds
-    /// `establishedAltitudeGainM` (`startAltitudeSupportM` = 0.45m >
-    /// `establishedAltitudeGainM` = 0.4m by construction), so a genuinely
-    /// unestablished attempt is only reachable via a forgotten manual Stop —
-    /// the assisted-close path runs through the same `AttemptEndResolver`.
-    /// This trace never gives the HR+quiet fallback a chance to fire either
-    /// (motion sits at 0.06g — above `quietMotionG` so never "quiet"), so on
-    /// pre-#473 code (no `unestablishedMaxS`) this closes at exactly
-    /// `maxAttemptS` — reasoned rather than run, since the tunable this test
-    /// exercises did not exist pre-fix and the file can't compile against
-    /// both at once.
-    func testUnestablishedAttemptClosesNearFloorLevelCap() {
+    // MARK: #473 R1 — the mis-detection caps must not truncate a manual attempt
+
+    /// R1 review finding: `unestablishedMaxS`/`establishedDriftMaxS` exist to
+    /// bound a MIS-detection — an auto attempt opened on a signal that turned
+    /// out not to be real. A manual (Boulder-button) attempt is by definition
+    /// not a mis-detection and must stay on the shipped `maxAttemptS` bound
+    /// (300s), not get cut off mid-traverse on a stopwatch. Verified failing
+    /// on the pre-R1 commit: this exact flat/active manual traverse closed at
+    /// 61s (`unestablishedCap`) — precisely the workflow `RELEASE_NOTES.md`
+    /// recommends for a retired auto traverse, which is what made this a
+    /// blocking finding rather than a tolerable tradeoff.
+    func testManualFlatTraverseIsNotTruncatedByTheFloorLevelCap() {
         let d = AttemptDetector(tunables: .default)
         var i = 0
         for _ in 0..<30 {
             d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
             i += 1
         }
-        d.beginManualAttempt(at: start.addingTimeInterval(Double(i))) // forgotten Stop
+        d.beginManualAttempt(at: start.addingTimeInterval(Double(i)))
         XCTAssertTrue(d.isManualAttemptOpen)
-        // Never establishes (flat altitude), never goes quiet (0.06g is
-        // above quietMotionG), HR support never lapses (constant 110) — the
-        // only exit left, once assistedManualMinS has elapsed, is the
-        // floor-level cap.
-        for _ in 0..<200 {
-            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.06, hr: 110), at: start.addingTimeInterval(Double(i)))
+        // Flat altitude, ACTIVE (not quiet) motion, elevated HR — the exact
+        // shape that hit unestablishedMaxS (60s) pre-R1. Feed well past that.
+        for _ in 0..<100 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.10, hr: 110), at: start.addingTimeInterval(Double(i)))
             i += 1
-            if d.snapshot.state == .resting { break }
         }
-        XCTAssertEqual(d.snapshot.state, .resting, "never closed at all")
+        XCTAssertTrue(d.isManualAttemptOpen, "manual traverse was truncated by the auto floor-level cap")
+        d.endManualAttempt(at: start.addingTimeInterval(Double(i)))
         let attempts = d.finalize()
         XCTAssertEqual(attempts.count, 1)
         XCTAssertEqual(attempts[0].source, .manual)
-        XCTAssertGreaterThan(attempts[0].durationS, 60, "must run at least to unestablishedMaxS")
-        XCTAssertLessThanOrEqual(attempts[0].durationS, 66, "exact ceiling — must not run anywhere near maxAttemptS (300s)")
+        XCTAssertGreaterThanOrEqual(attempts[0].durationS, 100)
+        XCTAssertFalse(attempts[0].hitCap)
+    }
+
+    /// Same R1 finding, established-altitude-drift side — NEW in R1 (round
+    /// 1's quiet-gated drift cap never fired for an actively-moving manual
+    /// attempt, so this specific truncation existed for exactly one commit,
+    /// caught before merge). Verified failing on that commit: closed at 91s.
+    func testManualEstablishedDriftIsNotTruncatedByTheDriftCap() {
+        let d = AttemptDetector(tunables: .default)
+        var i = 0
+        for _ in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        d.beginManualAttempt(at: start.addingTimeInterval(Double(i)))
+        for k in 0..<20 { // establishes ~1.5m
+            d.ingest(MotionSample(t: Double(i), altitude: Double(k) * 0.08, motionRMS: 0.13, hr: 110), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        XCTAssertTrue(d.isManualAttemptOpen)
+        // Never returns within endReturnM of the startline (drifted floor);
+        // active motion throughout, well past establishedDriftMaxS (90s).
+        for _ in 0..<100 {
+            d.ingest(MotionSample(t: Double(i), altitude: 1.5, motionRMS: 0.10, hr: 110), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        XCTAssertTrue(d.isManualAttemptOpen, "manual attempt was truncated by the auto established-drift cap")
+        d.endManualAttempt(at: start.addingTimeInterval(Double(i)))
+        let attempts = d.finalize()
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertEqual(attempts[0].source, .manual)
+        XCTAssertGreaterThanOrEqual(attempts[0].durationS, 100)
+        XCTAssertFalse(attempts[0].hitCap)
+    }
+
+    /// R1's informational point, confirmed rather than just reasoned about:
+    /// exempting manual from the two tighter caps revives `maxAttemptS`/
+    /// `.hardCap` as a REACHABLE path — a manual attempt that never closes on
+    /// any other signal still eventually closes, at the shipped 300s bound,
+    /// rather than running forever.
+    func testManualAttemptStillClosesAtMaxAttemptSHardCap() {
+        let d = AttemptDetector(tunables: .default)
+        var i = 0
+        for _ in 0..<30 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.02, hr: 80), at: start.addingTimeInterval(Double(i)))
+            i += 1
+        }
+        d.beginManualAttempt(at: start.addingTimeInterval(Double(i)))
+        for _ in 0..<350 {
+            d.ingest(MotionSample(t: Double(i), altitude: 0, motionRMS: 0.10, hr: 110), at: start.addingTimeInterval(Double(i)))
+            i += 1
+            if d.snapshot.state == .resting { break }
+        }
+        XCTAssertEqual(d.snapshot.state, .resting, "manual attempt must still close eventually, at maxAttemptS")
+        let attempts = d.finalize()
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertEqual(attempts[0].source, .manual)
+        XCTAssertGreaterThan(attempts[0].durationS, 300)
+        XCTAssertLessThanOrEqual(attempts[0].durationS, 302)
         XCTAssertTrue(attempts[0].hitCap)
     }
 

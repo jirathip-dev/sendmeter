@@ -31,27 +31,39 @@ public enum AttemptEndResolver {
         durationS: Double,
         maxDurationS: Double,
         unestablishedMaxS: Double,
-        establishedDriftMaxS: Double
+        establishedDriftMaxS: Double,
+        isManual: Bool
     ) -> EndReason? {
         if durationS > maxDurationS { return .hardCap }
         if establishedAltitudeAscent {
             if returnedToFloor { return .returnedToFloor }
-            // #473: real barometric drift over a long hold means the climber
-            // can genuinely be back on the ground without ever reading within
-            // endReturnM of the stale startline — whether they're standing
-            // still or have already walked on to the next problem. This is a
-            // pure duration bound, deliberately NOT gated on `quiet`
-            // (F4: a walking climber never goes quiet, so a quiet-gated
-            // version never fires for exactly the walking-drift case it
-            // needs to cover) — same shape as `unestablishedMaxS` below.
-            if durationS > establishedDriftMaxS { return .establishedDriftCap }
+            // #473 R1: `unestablishedMaxS`/`establishedDriftMaxS` exist to
+            // bound a MIS-detection — an auto attempt the detector opened on
+            // a signal that turned out not to be a real close-ended climb.
+            // A manual (Boulder-button) attempt is by definition not a
+            // mis-detection: the user is telling the detector this IS a real
+            // attempt, so it stays on the shipped `maxAttemptS` bound (300s)
+            // instead of being cut off mid-traverse on a stopwatch — see the
+            // R1 review finding (a 61-90s truncation is exactly the "button
+            // doesn't match reality" complaint this issue exists to fix,
+            // from the other side, and RELEASE_NOTES directs flat/HR-only
+            // traverses to this exact button).
+            if !isManual && durationS > establishedDriftMaxS { return .establishedDriftCap }
             return nil
         }
         if hasHRSupport && quiet { return .hrQuietFallback }
         // #473: a floor-level attempt that never establishes altitude and
         // never gets HR+quiet support (e.g. HR unavailable) used to fall
-        // through all the way to maxDurationS. Bound it separately.
-        if durationS > unestablishedMaxS { return .unestablishedCap }
+        // through all the way to maxDurationS. Bound it separately — but
+        // only for auto (see the R1 comment above `establishedDriftCap`).
+        // NOTE: currently unreachable for `.auto` too — every auto-opened
+        // attempt is established from its very first tick, because
+        // `startAltitudeSupportM` (0.45m) already exceeds
+        // `establishedAltitudeGainM` (0.4m), and HR-only auto opening was
+        // retired in F1. Kept (not deleted) as a defensive bound in case the
+        // confidence formula changes again — see the AttemptDetector-level
+        // comment on `unestablishedMaxS` in Tunables.swift.
+        if !isManual && durationS > unestablishedMaxS { return .unestablishedCap }
         return nil
     }
 }
@@ -174,7 +186,8 @@ public final class AttemptDetector {
                 durationS: duration,
                 maxDurationS: t.maxAttemptS,
                 unestablishedMaxS: t.unestablishedMaxS,
-                establishedDriftMaxS: t.establishedDriftMaxS
+                establishedDriftMaxS: t.establishedDriftMaxS,
+                isManual: false
             ) {
                 rawAttempts.append(RawAttempt(
                     startTick: startTick, endTick: i, startDate: startDate,
@@ -197,7 +210,8 @@ public final class AttemptDetector {
                    durationS: duration,
                    maxDurationS: t.maxAttemptS,
                    unestablishedMaxS: t.unestablishedMaxS,
-                   establishedDriftMaxS: t.establishedDriftMaxS
+                   establishedDriftMaxS: t.establishedDriftMaxS,
+                   isManual: true
                ) {
                 rawAttempts.append(RawAttempt(
                     startTick: startTick, endTick: i, startDate: startDate,

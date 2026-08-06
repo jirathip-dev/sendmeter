@@ -40,8 +40,13 @@ public struct Tunables: Sendable {
     public var establishedAltitudeGainM: Double = 0.4
     public var assistedManualMinS: Double = 12.0
     public var maxAttemptS: Double = 300.0
-    // #473: a floor-level (never-established) attempt gets a realistic close
-    // path instead of falling through to maxAttemptS's 300s hard cap.
+    // #473: a floor-level (never-established) AUTO attempt gets a realistic
+    // close path instead of falling through to maxAttemptS's 300s hard cap.
+    // #473 R1: AUTO only — see AttemptEndResolver.endReason's `isManual`
+    // guard. These bound a MIS-detection; a manual (Boulder-button) attempt
+    // is by definition not one, and stays on maxAttemptS like shipped code.
+    // Currently unreachable for auto too (kept as a defensive bound, not
+    // dead-deleted) — see the comment at its use site in AttemptDetector.
     public var unestablishedMaxS: Double = 60.0
     // #473: an attempt that DID establish altitude but never returns within
     // endReturnM of its startline (real barometric drift over a long hold —
@@ -50,6 +55,7 @@ public struct Tunables: Sendable {
     // gated on quiet (a walking climber never goes quiet). Must stay
     // comfortably above any legitimate quiet pause mid-climb (see
     // testQuietPauseWhileElevatedDoesNotClose, ~29s).
+    // #473 R1: AUTO only, same reasoning as unestablishedMaxS above.
     public var establishedDriftMaxS: Double = 90.0
 
     // Post-processing
