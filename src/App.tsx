@@ -37,6 +37,7 @@ import { useRealtimeBump } from "./hooks/useRealtimeVersion";
 import type { HealthSyncSource } from "./lib/healthSync";
 import { insertRecording, restoreSession } from "./lib/repo";
 import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
+import { browserDrainHandles, scheduleQueueDrain } from "./lib/drainSchedule";
 import { takeLostRecordingsNotice } from "./lib/lostRecordings";
 import type { SignOut } from "./lib/signOut";
 import SplashScreen from "./components/SplashScreen";
@@ -137,7 +138,7 @@ function AuthedApp({
   // session, dropped connection) while we were signed out — AuthedApp only
   // renders once `session` exists, so a fresh mount here IS "auth just
   // succeeded" (login or a session restore). drainPendingRecordingsQueue
-  // guards its own re-entrancy, so a duplicate mount can't double-insert.
+  // guards its own re-entrancy, so an overlapping trigger can't double-insert.
   // #269: this is also where the two stores reconcile — the drain first moves
   // anything in the synchronous localStorage lane (a salvage-on-unmount, or a
   // pre-#269 queue left behind by an older build) into the IndexedDB main
@@ -146,32 +147,64 @@ function AuthedApp({
   // No manual list refresh needed on success — `tindeq_recordings` is a
   // WATCHED_TABLES table, so each recovered insert bumps the realtime
   // version and ForceView's own fetch effect picks it up.
+  //
+  // #484 F2: mount used to be the ONLY trigger — a user who went offline
+  // mid-session, got signal back, and never reloaded the tab had a queue that
+  // would never drain again, while ForceView's own copy told them it would.
+  // `scheduleQueueDrain` (see drainSchedule.ts for the tested scheduling
+  // logic) also drains on foreground/visibility AND on a plain interval — the
+  // interval matters because that exact scenario never fires a
+  // foreground/visibility event (the tab was never backgrounded).
   useEffect(() => {
     let cancelled = false;
-    void drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
-      if (!cancelled && n > 0) {
-        toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
-      }
-    });
+    // Returns whether the pass made progress (recovered ≥1 recording) —
+    // `scheduleQueueDrain`'s backoff (#484 F6) resets on progress and climbs
+    // on a run that finds nothing to do.
+    function runDrain(): Promise<boolean> {
+      return drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
+        if (!cancelled && n > 0) {
+          toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
+        }
+        return n > 0;
+      });
+    }
+    // #484 F4: the real DOM/Capacitor wiring lives in `browserDrainHandles`
+    // (drainSchedule.ts), unit-tested there against fake `document`/`window`/
+    // Capacitor objects — not reimplemented here, so there's exactly one
+    // adapter to get right or get wrong.
+    const cancel = scheduleQueueDrain(
+      runDrain,
+      browserDrainHandles(document, window, {
+        isNativePlatform: () => Capacitor.isNativePlatform(),
+        addListener: (type, cb) => CapacitorApp.addListener(type, cb),
+      }),
+    );
     return () => {
       cancelled = true;
+      cancel();
     };
   }, [userId, toast]);
 
   // #264: the other side of the queue — recordings that could not even be
-  // queued. The path that loses one (useTindeq's salvage-on-unmount cleanup)
-  // has no UI it can reach, so it parks a durable one-shot notice instead;
-  // this is where the user finally hears about it. Mount covers sign-in and a
-  // cold launch, appStateChange covers a loss that happened while the app was
-  // backgrounded. `take` clears the record, so it shows exactly once.
+  // queued (both stores refused the write outright). The path that loses one
+  // (useTindeq's salvage-on-unmount cleanup) has no UI it can reach, so it
+  // parks a durable one-shot notice instead; this is where the user finally
+  // hears about it. Mount covers sign-in and a cold launch, appStateChange
+  // covers a loss that happened while the app was backgrounded. `take`
+  // clears the record, so it shows exactly once.
+  //
+  // #484: a server-rejected upload does NOT go through this notice — see the
+  // policy block above `drainQueue` in recordingQueue.ts. It is retained
+  // (never deleted on a server response), so there is nothing lost to report
+  // here; a stuck upload surfaces instead through the ambient
+  // `pendingRecordingsBreakdown`/`uploadWarningPresentation` states, same as
+  // any other still-on-device queue depth.
   useEffect(() => {
     function surface() {
       const notice = takeLostRecordingsNotice();
       if (!notice) return;
-      toast(
-        `${notice.count} recording${notice.count === 1 ? "" : "s"} couldn't be saved — device storage was full`,
-        "error",
-      );
+      const label = `${notice.count} recording${notice.count === 1 ? "" : "s"}`;
+      toast(`${label} couldn't be saved — device storage was full`, "error");
     }
     // Deferred, not called inline: a toast is a setState, and this effect must
     // not write state synchronously in its body (react-compiler lint).

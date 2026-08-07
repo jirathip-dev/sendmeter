@@ -43,29 +43,46 @@ afterEach(() => {
 describe("noteLostRecordings / takeLostRecordingsNotice", () => {
   it("records a loss and hands it back exactly once", () => {
     const storage = fakeStorage();
-    expect(noteLostRecordings(1, storage, at)).toBe(true);
-    expect(takeLostRecordingsNotice(storage)).toEqual({ count: 1, lastAt: at() });
+    expect(noteLostRecordings(1, "save-failed", storage, at)).toBe(true);
+    expect(takeLostRecordingsNotice(storage)).toEqual({
+      count: 1,
+      lastAt: at(),
+      reasons: ["save-failed"],
+    });
     // Cleared on read — the user is told once, not on every foreground.
     expect(takeLostRecordingsNotice(storage)).toBeNull();
   });
 
   it("accumulates, so a protocol that loses every rep reports one real number", () => {
     const storage = fakeStorage();
-    noteLostRecordings(1, storage, () => "2026-07-27T10:00:00.000Z");
-    noteLostRecordings(1, storage, () => "2026-07-27T10:01:00.000Z");
-    noteLostRecordings(1, storage, () => "2026-07-27T10:02:00.000Z");
+    noteLostRecordings(1, "save-failed", storage, () => "2026-07-27T10:00:00.000Z");
+    noteLostRecordings(1, "save-failed", storage, () => "2026-07-27T10:01:00.000Z");
+    noteLostRecordings(1, "save-failed", storage, () => "2026-07-27T10:02:00.000Z");
     expect(takeLostRecordingsNotice(storage)).toEqual({
       count: 3,
       lastAt: "2026-07-27T10:02:00.000Z",
+      reasons: ["save-failed"],
+    });
+  });
+
+  it("dedupes reasons across multiple causes contributing to the same unseen notice", () => {
+    const storage = fakeStorage();
+    noteLostRecordings(1, "save-failed", storage, () => "2026-07-27T10:00:00.000Z");
+    noteLostRecordings(1, "salvage-on-unmount", storage, () => "2026-07-27T10:01:00.000Z");
+    noteLostRecordings(1, "salvage-on-unmount", storage, () => "2026-07-27T10:02:00.000Z");
+    expect(takeLostRecordingsNotice(storage)).toEqual({
+      count: 3,
+      lastAt: "2026-07-27T10:02:00.000Z",
+      reasons: ["save-failed", "salvage-on-unmount"],
     });
   });
 
   it("reports false (rather than throwing) when the notice itself won't write", () => {
-    expect(noteLostRecordings(1, throwingStorage(), at)).toBe(false);
+    expect(noteLostRecordings(1, "save-failed", throwingStorage(), at)).toBe(false);
   });
 
   it("treats absent/disabled storage as nothing to say", () => {
-    expect(noteLostRecordings(1, null, at)).toBe(false);
+    expect(noteLostRecordings(1, "save-failed", null, at)).toBe(false);
     expect(takeLostRecordingsNotice(null)).toBeNull();
     expect(takeLostRecordingsNotice(fakeStorage())).toBeNull();
   });
@@ -75,8 +92,12 @@ describe("noteLostRecordings / takeLostRecordingsNotice", () => {
     storage.setItem("sendmeter:lost-recordings", "{not json");
     expect(takeLostRecordingsNotice(storage)).toBeNull();
     // …and starts a fresh count rather than inheriting the garbage.
-    noteLostRecordings(1, storage, at);
-    expect(takeLostRecordingsNotice(storage)).toEqual({ count: 1, lastAt: at() });
+    noteLostRecordings(1, "save-failed", storage, at);
+    expect(takeLostRecordingsNotice(storage)).toEqual({
+      count: 1,
+      lastAt: at(),
+      reasons: ["save-failed"],
+    });
   });
 });
 
@@ -103,7 +124,11 @@ describe("reportPersistFailure (#264)", () => {
       storage,
       at,
     );
-    expect(takeLostRecordingsNotice(storage)).toEqual({ count: 1, lastAt: at() });
+    expect(takeLostRecordingsNotice(storage)).toEqual({
+      count: 1,
+      lastAt: at(),
+      reasons: ["salvage-on-unmount"],
+    });
     expect(warn).toHaveBeenCalledOnce();
   });
 

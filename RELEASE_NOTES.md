@@ -39,6 +39,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Readiness (iPhone and watch) no longer counts training you've deleted in newly computed scores — a deleted session drops out of today's readiness immediately. Your stored history for the days before still reflects the deleted training until you run "Clear health data & resync" to rebuild it.
 - "Clear health data & resync" now tells you honestly if the resync failed to rebuild your history, instead of always saying "resyncing" even when it didn't.
 - Force: a recording that's queued while offline now logs against the day it was actually recorded, not the day it happens to finally upload.
+- The offline recording queue now retries automatically when the app comes back to the foreground, when your connection returns, and periodically in the background (backing off if nothing's moving), instead of only once right after sign-in — a session that went offline and never got reloaded now still syncs. A recording the server keeps rejecting no longer blocks every recording queued after it and is never deleted — it's kept and retried until it's confirmed stuck, at which point Force and History show it as its own "stuck, not retrying" state with a Retry action, rather than losing it silently. The pending-upload count shown in Force and History no longer includes recordings stranded under a different account, and signing out with unsynced recordings left over now only offers to delete the recordings it actually counted, never another account's.
 
 ## 1.0 — 2026-08-02
 

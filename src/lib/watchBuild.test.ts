@@ -93,22 +93,29 @@ function sync(status: WatchSyncStatus, over: Partial<WatchBuildInfo> = {}): Watc
   return info("match", { watchDisplay: "1.4.0 (57)", syncStatus: status, ...over });
 }
 
+function phone(
+  pending: number | null,
+  stuck: number | null = 0,
+): { pending: number | null; stuck: number | null } {
+  return { pending, stuck };
+}
+
 describe("uploadWarningPresentation (#369 History banner)", () => {
   it("stays quiet while both queues are empty or not read yet", () => {
     expect(
       uploadWarningPresentation(
         sync("empty", { pendingSyncCount: 0, pendingSyncStale: false }),
-        0,
+        phone(0),
       ),
     ).toBeNull();
-    expect(uploadWarningPresentation(null, null)).toBeNull();
-    expect(uploadWarningPresentation(sync("not-reported"), 0)).toBeNull();
+    expect(uploadWarningPresentation(null, phone(null, null))).toBeNull();
+    expect(uploadWarningPresentation(sync("not-reported"), phone(0))).toBeNull();
   });
 
   it("shows current pending watch items and disappears after a live zero report", () => {
     const pending = uploadWarningPresentation(
       sync("pending", { pendingSyncCount: 2, pendingSyncStale: false }),
-      0,
+      phone(0),
     );
     expect(pending?.items).toEqual([
       expect.objectContaining({
@@ -119,7 +126,7 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
     expect(
       uploadWarningPresentation(
         sync("empty", { pendingSyncCount: 0, pendingSyncStale: false }),
-        0,
+        phone(0),
       ),
     ).toBeNull();
   });
@@ -131,7 +138,7 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
         pendingSyncStale: true,
         pendingSyncReportedAt: 1_779_000_000,
       }),
-      0,
+      phone(0),
     );
     expect(warning?.items[0]).toMatchObject({
       text: "Apple Watch last reported 7 items waiting to upload.",
@@ -147,7 +154,7 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
         pendingSyncStale: true,
         pendingSyncReportedAt: 1_779_000_000,
       }),
-      0,
+      phone(0),
     );
     expect(warning?.title).toBe("Check Apple Watch uploads");
     expect(warning?.items[0]?.text).toBe(
@@ -157,18 +164,49 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
   });
 
   it("includes only non-empty iPhone uploads and combines both devices", () => {
-    const phoneOnly = uploadWarningPresentation(null, 1);
+    const phoneOnly = uploadWarningPresentation(null, phone(1));
     expect(phoneOnly?.items[0]?.text).toBe(
       "This iPhone · 1 Force recording waiting to upload.",
     );
 
     const combined = uploadWarningPresentation(
       sync("pending", { pendingSyncCount: 3 }),
-      2,
+      phone(2),
     );
     expect(combined?.items.map((item) => item.source)).toEqual(["watch", "phone"]);
     expect(combined?.items[1]?.text).toBe(
       "This iPhone · 2 Force recordings waiting to upload.",
     );
+  });
+
+  // #484 — the #475 F1 lesson: a stuck count must have a reader of its own.
+  describe("a stuck iPhone queue (#484)", () => {
+    it("renders its own item, distinct from a pending one, with 'Uploads waiting' as the title", () => {
+      const warning = uploadWarningPresentation(null, { pending: 0, stuck: 1 });
+      expect(warning?.items).toEqual([
+        expect.objectContaining({
+          source: "phone-stuck",
+          text: "This iPhone · 1 Force recording stuck — the server keeps rejecting it and it won't retry automatically.",
+        }),
+      ]);
+      expect(warning?.title).toBe("Uploads waiting");
+    });
+
+    it("renders alongside a pending item rather than replacing it", () => {
+      const warning = uploadWarningPresentation(null, { pending: 2, stuck: 1 });
+      expect(warning?.items.map((i) => i.source)).toEqual(["phone-stuck", "phone"]);
+    });
+
+    it("pluralizes correctly at more than one stuck recording", () => {
+      const warning = uploadWarningPresentation(null, { pending: 0, stuck: 3 });
+      expect(warning?.items[0]?.text).toBe(
+        "This iPhone · 3 Force recordings stuck — the server keeps rejecting them and they won't retry automatically.",
+      );
+    });
+
+    it("stays quiet when stuck is 0 or not yet known", () => {
+      expect(uploadWarningPresentation(null, { pending: 0, stuck: 0 })).toBeNull();
+      expect(uploadWarningPresentation(null, { pending: 0, stuck: null })).toBeNull();
+    });
   });
 });

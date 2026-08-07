@@ -96,8 +96,8 @@ async function harness(
       return insert(input);
     },
     drain: (userId, ins) => drainPendingRecordingsQueue(userId, ins, loader, storage),
-    count: () => pendingRecordingsCount(loader, storage),
-    clear: () => clearRecordingQueue(loader, storage),
+    count: () => pendingRecordingsCount(USER, loader, storage),
+    clear: () => clearRecordingQueue(USER, loader, storage),
     signOut,
     report,
   };
@@ -160,7 +160,7 @@ describe("signOutUser — a user-initiated sign-out that fully drains", () => {
     await persistRecordingDurable(rec("idb-2"), USER, h.loader, h.storage);
     // …and one that only ever reached the synchronous salvage lane.
     expect(persistRecording(rec("lane-1"), USER, h.storage).persisted).toBe(true);
-    expect(await pendingRecordingsCount(h.loader, h.storage)).toBe(3);
+    expect(await pendingRecordingsCount(USER, h.loader, h.storage)).toBe(3);
 
     const onRemainder = vi.fn<() => QueueRemainderChoice>(() => "keep");
     const outcome = await signOutUser({ userId: USER, onRemainder }, h.deps);
@@ -243,7 +243,7 @@ describe("signOutUser — an undrainable remainder", () => {
     expect(await h.queue()).toEqual({ main: ["idb-1", "lane-1"], lane: [] });
     // No mark either — an abandoned sign-out must not leave a marker lying
     // around that a revocation minutes later could be absolved by.
-    expect(await discardQueueOnUserSignOut(h.deps)).toBe(0);
+    expect(await discardQueueOnUserSignOut(USER, h.deps)).toBe(0);
     expect(await h.queue()).toEqual({ main: ["idb-1", "lane-1"], lane: [] });
   });
 
@@ -308,7 +308,7 @@ describe("a forced sign-out never discards anything", () => {
     // user-initiated one with the mark forgotten.
     expect(recordAuthStateChange("SIGNED_OUT", { storage: null })).toBe("revoked");
 
-    expect(await discardQueueOnUserSignOut(h.deps)).toBe(0);
+    expect(await discardQueueOnUserSignOut(USER, h.deps)).toBe(0);
     expect(await h.queue()).toEqual({ main: ["idb-1"], lane: ["lane-1"] });
   });
 
@@ -319,7 +319,7 @@ describe("a forced sign-out never discards anything", () => {
     markUserSignOut();
     now += 60_000; // the mark's TTL is 15 s
 
-    expect(await discardQueueOnUserSignOut(h.deps)).toBe(0);
+    expect(await discardQueueOnUserSignOut(USER, h.deps)).toBe(0);
     expect(await h.queue()).toEqual({ main: ["idb-1"], lane: [] });
   });
 
@@ -330,7 +330,7 @@ describe("a forced sign-out never discards anything", () => {
     await persistRecordingDurable(rec("idb-1"), USER, h.loader, h.storage);
 
     markUserSignOut();
-    expect(await discardQueueOnUserSignOut(h.deps)).toBe(1);
+    expect(await discardQueueOnUserSignOut(USER, h.deps)).toBe(1);
     expect(await h.queue()).toEqual({ main: [], lane: [] });
   });
 });

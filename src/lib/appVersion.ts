@@ -34,3 +34,16 @@ export async function loadBuildTag(): Promise<string | null> {
 export function setBuildTagForTest(tag: string | null): void {
   cachedTag = tag;
 }
+
+/// #484: a version signal for gating a stuck recording's retry on "a deploy
+/// happened", not wall-clock time — see the policy block in
+/// `recordingQueue.ts`. Deliberately NOT `buildTag()`: that's native-only and
+/// requires an async load this synchronous call site can't perform. Backed
+/// instead by `VITE_BUILD_ID`, inlined at `vite build` time
+/// (`vite.config.ts`) — it changes on every build, on web AND native (the
+/// native shell ships the same web bundle via `cap sync`), with no async
+/// dependency. Falls back to a fixed string only if a caller somehow imports
+/// this in a context vite never processed `import.meta.env` for.
+export function currentAppVersion(): string {
+  return import.meta.env.VITE_BUILD_ID ?? "dev";
+}

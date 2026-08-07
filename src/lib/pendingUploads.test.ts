@@ -17,17 +17,19 @@ describe("pendingUploadsLine (#269 — the honest-states rule)", () => {
   });
 
   it("says an empty queue is empty rather than rendering nothing", () => {
-    const line = pendingUploadsLine(0);
+    const line = pendingUploadsLine({ pending: 0, stuck: 0 });
     expect(line.text).toMatch(/empty, everything synced/);
     expect(line.tone).toBe("muted");
   });
 
   it("counts a single pending recording in the singular", () => {
-    expect(pendingUploadsLine(1).text).toBe("This device · 1 recording pending sync");
+    expect(pendingUploadsLine({ pending: 1, stuck: 0 }).text).toBe(
+      "This device · 1 recording pending sync",
+    );
   });
 
   it("stays muted for a backlog that's just waiting on signal", () => {
-    const line = pendingUploadsLine(PENDING_BACKED_UP - 1);
+    const line = pendingUploadsLine({ pending: PENDING_BACKED_UP - 1, stuck: 0 });
     expect(line.text).toBe(
       `This device · ${PENDING_BACKED_UP - 1} recordings pending sync`,
     );
@@ -37,8 +39,10 @@ describe("pendingUploadsLine (#269 — the honest-states rule)", () => {
   });
 
   it("warns once the backlog is deep enough to mean it isn't draining", () => {
-    expect(pendingUploadsLine(PENDING_BACKED_UP).tone).toBe("warning");
-    expect(pendingUploadsLine(PENDING_BACKED_UP + 20).tone).toBe("warning");
+    expect(pendingUploadsLine({ pending: PENDING_BACKED_UP, stuck: 0 }).tone).toBe("warning");
+    expect(pendingUploadsLine({ pending: PENDING_BACKED_UP + 20, stuck: 0 }).tone).toBe(
+      "warning",
+    );
   });
 
   it("uses the same threshold the watch uses for its own queue", () => {
@@ -46,6 +50,29 @@ describe("pendingUploadsLine (#269 — the honest-states rule)", () => {
     // next to each other in the account sheet and must not disagree about what
     // "a lot" means.
     expect(PENDING_BACKED_UP).toBe(5);
+  });
+
+  // #484 — the #475 F1 lesson applied here: a stuck count must have a reader,
+  // never fold silently into "pending" or vanish.
+  describe("a stuck count (#484)", () => {
+    it("renders on its own, warning, when nothing else is pending", () => {
+      const line = pendingUploadsLine({ pending: 0, stuck: 1 });
+      expect(line.text).toBe("This device · 1 recording stuck, not retrying");
+      expect(line.tone).toBe("warning");
+    });
+
+    it("renders alongside a pending count rather than replacing it", () => {
+      const line = pendingUploadsLine({ pending: 2, stuck: 3 });
+      expect(line.text).toBe(
+        "This device · 2 pending sync, 3 recordings stuck, not retrying",
+      );
+      expect(line.tone).toBe("warning");
+    });
+
+    it("warns even below the backed-up threshold — stuck is never routine", () => {
+      const line = pendingUploadsLine({ pending: 0, stuck: 1 });
+      expect(line.tone).toBe("warning");
+    });
   });
 });
 
