@@ -2,7 +2,8 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-/// Structural guard over code CI cannot otherwise check (issues #265, #266).
+/// Structural guard over code CI cannot otherwise check (issues #196, #265,
+/// #488, #502).
 ///
 /// Two facts make this file worth its oddness — a TypeScript test reading
 /// Swift:
@@ -16,171 +17,102 @@ import { describe, expect, it } from "vitest";
 ///    by inspection, and still regressed into a production session revocation
 ///    (#265). A rule nothing checks is a comment.
 ///
-/// So this asserts the *absence* of the credential and of every SDK call that
-/// could rotate one, in the two components that consume the phone's session.
-/// It is deliberately a crude text scan.
+/// **How the invariant is enforced since #502: the compiler first, this file
+/// second.** Before #502 this file tried to make the accessor *detectable* by
+/// text scan, and lost three consecutive review rounds (#488): round 0's
+/// fixed substrings fell to a one-hop alias; round 1's bare-`.auth` ban fell
+/// to a comment stripper that deleted string contents (an ordinary URL-bearing
+/// log line hid a real accessor); round 2's hand-rolled tokenizer fixed that
+/// and created four new defects, two of them regressions; round 3 fixed those
+/// and still shipped with three known residual holes (raw-string `\#(…)`
+/// interpolation, bare regex literals each holding one quote, a
+/// dot/identifier split across a newline). Hand-rolled lexing of Swift to
+/// keep an accessor detectable is a losing arms race, and its failure mode is
+/// silent.
 ///
-/// **Correction (post-audit, #488 round 1).** This file used to end the
-/// paragraph above with "it cannot be satisfied by refactoring around it,
-/// only by not doing the thing." That was false, and false in exactly the
-/// shape #196 itself failed in: `ROTATING_CALLS` matched fixed dotted chains
-/// like `.auth.session` written on one call, so
-/// ```swift
-/// let authClient = SupabaseService.data.auth   // no ".auth.session" substring
-/// let stale = authClient.session                // no ".auth." substring either
-/// ```
-/// reached the exact #196 accessor one hop removed while every pattern below
-/// stayed green — the alias is a different string, so a scan for fixed
-/// substrings didn't see it. `watchAuthPollInvariants.test.ts` hit the same
-/// class of gap (a per-site/per-pattern scan reachable by indirection) and
-/// closed it by forbidding the bare identifier everywhere in its file, not a
-/// dotted chain naming one call site. Round 1's fix was the equivalent move:
-/// forbid the bare `.auth` property access outright, direct or aliased.
+/// #502 ends the race by making the accessor *unreachable by construction*:
+/// each native target has a façade — `SupabaseService` on the watch,
+/// `HealthConfig` in the health plugin — holding its `SupabaseClient` in a
+/// `private` property and exposing exactly one member,
+/// `from(_:) -> PostgrestQueryBuilder`, a type with no member path back to
+/// the client or to `.auth`. Outside those two files, a refreshing accessor
+/// — named, aliased, optional-chained, written inside a raw-string
+/// interpolation, or split across newlines — is not something a scan must
+/// find; it is a compile error. All three of round 3's residual holes were
+/// re-verified as compile errors under the façade (see the #502 mutation
+/// probes in that PR).
 ///
-/// **Second correction (post-review round 2, #488).** Round 1's new
-/// docstring claimed it was "closing the rename/new-file/indirection escapes
-/// the per-pattern checks below cannot" — the exact meta-defect #488 is
-/// about, repeated in the very sentence describing the fix for it. An
-/// adversarial reviewer defeated it two ways:
+/// The compiler's guarantee rests on three premises, each pinned below by an
+/// assertion small enough to read whole and (for the first two) run on RAW
+/// file text — no lexer, so nothing to silently desync; the worst failure is
+/// a LOUD false positive on a comment, fixed by rewording the comment, never
+/// by weakening the pin:
 ///
-/// - The comment stripper (`swiftCode`/`swiftCodeForAccessorScan` below,
-///   `stripComments`/`stripComments`+strings in round 1) used to be
-///   `line.replace(/\/\/.*$/, "")` — "delete everything after the first `//`
-///   on a line", which also deletes whatever follows a `//` **inside a
-///   string literal**. A URL is a `//`-bearing string, and this codebase
-///   already has several inside the two guarded directories (e.g.
-///   `SupabaseService.swift`'s `URL(string: "http://127.0.0.1:54321")`) — one
-///   debug-log line with a URL in it was enough to hide a real
-///   `client.auth.session` on the same line from every assertion in this
-///   file, old and new. Fixed with a real (if small) tokenizer: `tokenize()`
-///   below walks `//` and `/* … */` comments and `"…"`/`"""…"""`/`#"…"#`
-///   string literals as distinct segments instead of truncating a line.
-/// - The broadened bare-`.auth` scan itself false-positived on legitimate
-///   Swift that has nothing to do with `AuthClient`: `case .auth:` in an
-///   unrelated enum switch, `forKey: .auth` in a `CodingKeys` decode, a block
-///   comment, a triple-quoted string, and — worst of all — a *third* Keychain
-///   purge-key literal (the pin going red because someone added *more*
-///   correct code was exactly backwards). The consequence is the one that
-///   kills pins: the only way to satisfy a false positive is to rename or
-///   remove the unrelated code, so the next engineer deletes the pin instead.
-///   Fixed by (a) stripping string-literal *contents* too before this
-///   specific scan (`swiftCodeForAccessorScan`, used only here — the other
-///   checks in this file need to read real string content, e.g. the
-///   `"refreshToken"` dictionary key below, so they keep using
-///   comment-only-stripped `swiftCode`), and (b) matching **member access**
-///   (`AUTH_PROPERTY_ACCESS`: `.auth` immediately preceded by an identifier
-///   character, `)`, `]`, or a keypath `\`) instead of any bare `.auth`
-///   token — `case .auth:` / `forKey: .auth` / `return .auth` are all
-///   *implicit member syntax* referencing an unrelated enum case, always
-///   preceded by whitespace or punctuation, never by a receiver.
+/// 1. **The client properties really are `private`** — and every
+///    `SupabaseClient`-typed declaration inside a façade sits on a `private`
+///    line, so the façade cannot quietly grow a `static let leaked:
+///    SupabaseClient` for outside code to dot off.
+/// 2. **There is no other client to reach.** The identifier `SupabaseClient`
+///    appears nowhere in either guarded directory outside the two façade
+///    files (raw text, so a construction hidden inside a string, comment
+///    trick, or regex literal is still seen), and `AuthClient` /
+///    `GoTrueClient` — directly constructible, and a self-built one has no
+///    `.auth` member access for any scan to see — appear in no *code*
+///    anywhere in either directory (code-only view, because comments
+///    legitimately discuss `AuthClient`).
+/// 3. **The SDK is importable only inside the guarded directories** — the
+///    #488 allow-list over all six separately-importable supabase-swift
+///    products (`Supabase`, `Auth`, `PostgREST`, `Realtime`, `Storage`,
+///    `Functions`), kept unchanged below.
 ///
-/// Also closed: the scan only ever covered two hardcoded directories, so an
-/// accessor helper placed in a third one (e.g. `sendlog-health-core`, already
-/// a real dependency of the health plugin) and called with no `.auth` at the
-/// call site was invisible. `describe("every Supabase-importing Swift file
-/// lives inside a scanned directory …")` below closes that: it asserts the
-/// full set of Swift files under `ios/` + `native-plugins/` that `import
-/// Supabase` against a short allow-list (the two scanned directories plus one
-/// test target that ships nothing), so opening a reachability hole in any
-/// other directory goes red immediately instead of silently.
+/// The pre-#502 accessor scans (ROTATING_CALLS / the `.auth` member-access
+/// scan, tokenizer-based) are KEPT as tripwires, no longer as the line of
+/// defence. They are the only automated check on the two façade files
+/// themselves — the compiler cannot police code that legitimately holds the
+/// client — and post-#502 there is no legitimate `.auth` member access
+/// anywhere in either directory, so any future match is dead code or an
+/// attack, never a false positive to engineer around.
 ///
-/// **Third correction (post-review round 3, #488).** Round 2's tokenizer
-/// itself created four new defects in one commit — two of them regressions
-/// against round 1 — while fixing what it was asked to fix:
+/// **What this arrangement does NOT cover, stated precisely (three earlier
+/// versions of this docstring overclaimed; this list is the contract):**
 ///
-/// - **G1 (regression).** `tokenize()` treated Swift string interpolation
-///   (`\(…)`) as opaque string content, so `swiftCodeForAccessorScan`
-///   blanked it along with everything else — hiding
-///   `Logger().debug("token=\(client.auth.session)")`, the exact realistic
-///   line the Second Correction above names as the reason this file exists
-///   in this shape. Round 1 (plain comment-stripping, strings untouched) saw
-///   this line; round 2 didn't. Fixed: a string form with an
-///   `interpolationPrefix` re-enters `\(…)` as real code (tracking paren
-///   depth, skipping nested string literals wholesale so their parens don't
-///   confuse the count) instead of blanking it.
-/// - **G2 (regression).** `AUTH_PROPERTY_ACCESS`'s receiver class
-///   (`[\w)\]\\]`) didn't include `?`/`!`, so `client?.auth` and
-///   `client!.auth` — ordinary optional-chaining/force-unwrap, not evasion —
-///   were missed. Round 1's bare `/\.auth\b/` caught both. Fixed: widened to
-///   `[\w)\]\\?!}>]` (also picking up `{ … }.auth` and `Foo<Bar>.auth` for
-///   free) — verified this doesn't reopen `case .auth:`/`forKey: .auth`,
-///   since both are preceded by whitespace either way.
-/// - **G3 (new, silent).** A tokenizer that can't find a string's or block
-///   comment's closing delimiter (an extended raw string `##"…"##` the old
-///   single-`#` form didn't recognize; an escaped `\"""` inside a multi-line
-///   string) used to blank the ENTIRE REST OF THE FILE as one giant string
-///   segment — no error, no offender, just silently fewer real matches. That
-///   is the worst failure mode this file can have: a miss that reads as a
-///   pass. Fixed two ways: (a) raw strings now match any hash count
-///   generically, and `"""` scanning is escape-aware (`\"""` correctly
-///   escapes just the first quote), which removes the two known desync
-///   triggers; (b) more importantly, every comment/string form in
-///   `tokenize()` now **throws** if it reaches EOF without its terminator,
-///   converting every desync mode — including ones not specifically handled
-///   by (a) — from "silently green" to "fails with a file and index". A
-///   final self-check (the reconstructed segments must equal the input
-///   exactly) catches any other way the tokenizer could drop text. Swept all
-///   135 Swift files under `ios/` + `native-plugins/` against the new
-///   tokenizer: zero desyncs today — this is entirely about future input.
-/// - **G4.** The import allow-list (`describe("every Supabase-importing
-///   Swift file …")` below) matched only `import Supabase`, but
-///   supabase-swift ships `AuthClient` in the separately importable `Auth`
-///   product (`PostgREST`/`Realtime`/`Storage`/`Functions` too) — a file
-///   could `import Auth`, hold an `AuthClient`, and never write the word
-///   "Supabase", reopening the exact reachability hole that assertion exists
-///   to close. Fixed: the regex now matches any of the six product names.
-/// - **G5 (new, low severity).** Swift permits nested `/* … */`; the old
-///   scanner closed at the first `*/`, so a historical note like `/* Outer
-///   /* inner */ … client.auth.session … */` had its tail read as code — a
-///   false positive (loud, not silent, but still wrong). Fixed: block
-///   comments now track nesting depth.
+/// - **The two façade files are trusted code.** Inside them the compiler
+///   enforces nothing about `.auth`, and the tokenized tripwires retain the
+///   round-3 residuals: `\#(…)` raw-string interpolation is blanked as
+///   opaque string content; a Swift bare regex literal containing a quote
+///   character can desync string detection (regex literals are not
+///   tokenized); `client.\n    auth` split across a newline contains no
+///   `.auth` substring. A hostile or careless edit *within the façades*
+///   could therefore hide an accessor from every assertion here. The guard
+///   is review of façade diffs — which is why the façades stay small and
+///   single-purpose.
+/// - **Type laundering that never names a banned identifier in scannable
+///   code** — e.g. a typealias for `SupabaseClient` itself hidden inside
+///   tokenizer-evading text, then used to construct a fresh client. The
+///   raw-text identifier grep (premise 2) sees strings, comments and regex
+///   literals alike, so the alias *target* must be written in a shape no
+///   formatter produces to get past it — but "must be written weirdly" is
+///   an obstacle, not an impossibility. Review's job.
+/// - **Hand-rolled HTTP.** A `URLSession` POST to `/auth/v1/token` with the
+///   committed anon key involves no SDK type; neither the compiler barrier
+///   nor anything in this file sees it. The operative backstop is #265's,
+///   not this file's: there is no refresh token on the device or the wire to
+///   spend, so a hand-rolled call would need credentials the native side
+///   does not hold.
+/// - **A rotating accessor added to the SDK under a name with no "auth" in
+///   it.** A grep cannot know a name it has never seen; same answer as the
+///   precedent (`watchAuthPollInvariants.test.ts`) gives for its equivalent
+///   gap: code review.
 ///
-/// The pattern across all three rounds is the same: **an overclaim in this
-/// very docstring, found by the next round's adversarial review.** G6 named
-/// it directly — the round-2 residual list below was honest about the three
-/// things it listed, but silently missing G1–G3, which were more realistic
-/// than any of them. This round's list is written from the actual round-3
-/// findings, not from what the code was intended to cover.
-///
-/// **What this still does not cover, stated plainly rather than reused as
-/// another overclaim:**
-/// - **A member-access dot broken across whitespace this scan doesn't
-///   tolerate**, e.g. `client.\n    auth` (dot at end of line) or `client\n
-///   .auth` (leading-dot continuation) or a stray `client .auth`. All three
-///   are valid Swift. The first two contain no `.auth` substring at all
-///   (there's a newline between the dot and the name) — closing them needs a
-///   real parser, not a bigger regex. The third (a literal space before the
-///   dot) IS something the tokenizer could now normalize before matching
-///   (round 2's docstring claimed otherwise — that stopped being true the
-///   moment a tokenizer existed, per round-3 review G7). The reason it's
-///   still open is a **cost decision, not an impossibility**: tolerating
-///   whitespace before the dot would make `case .auth:` / `forKey: .auth` /
-///   `return .auth` match again (a keyword or label ends in a word character
-///   too), reopening the false-positive class G2/round-2 closed, for a
-///   formatting shape SwiftFormat/Xcode's defaults never produce. Not worth
-///   the added tokenizer complexity for that trade.
-/// - **Raw-string interpolation (`\#(…)`, `\##(…)`, …).** `#"…"#`-style raw
-///   strings interpolate with a hash-prefixed escape, not `\(…)` — the
-///   `interpolationPrefix` mechanism that closes G1 for ordinary and
-///   triple-quoted strings isn't wired up for raw strings. Raw strings are
-///   unused in the two guarded directories today (verified); a future one
-///   containing an interpolated accessor would be blanked as opaque string
-///   content, unseen by the accessor scan.
-/// - **Reflection/KVC-style access** (`value(forKeyPath:)`) — not realistic
-///   against a non-`@objc` Swift type here, and not checked.
-/// - **A rotating-credential accessor added under a name with no "auth" in
-///   it at all.** This file greps for a name; it cannot know about a future
-///   name it has never seen. That is code review's job, same as the
-///   precedent (`watchAuthPollInvariants.test.ts`) states for its own
-///   equivalent gap.
-///
-/// **On the pin's complexity itself:** round 3's review assessed ~90 lines of
-/// hand-rolled Swift/TS lexing producing four defects in its first round as
-/// on the wrong trajectory, and recommended a structural follow-up — making
-/// the accessor unreachable by construction (a private `SupabaseClient`
-/// behind a small façade per target, collapsing this file's job to two
-/// greps) — rather than a fourth round of tokenizer patches. That is tracked
-/// as a separate issue, not attempted here.
+/// Housekeeping notes on the tokenizer (still used for the tripwires and the
+/// non-auth pins at the bottom of this file): the round-3
+/// "segments-reconstruct-the-source" self-check was REMOVED as decorative —
+/// it compared segment text only, never segment labels, and every branch
+/// slices contiguous ranges, so it could not fail; keeping it would be
+/// another overclaim. `TokenizeDesyncError` — the part that actually works —
+/// stays: every comment/string form throws with a location if its terminator
+/// is missing, so a desync fails loudly instead of blanking the rest of a
+/// file (#488 G3).
 
 const REPO = join(import.meta.dirname, "..", "..");
 
@@ -197,6 +129,13 @@ const NATIVE_PLUGINS_ROOT = join(REPO, "native-plugins");
 // they're allowed to `import Supabase` (e.g. to build fixtures) without
 // living inside one of the two scanned directories above.
 const TEST_TARGETS_EXEMPT_FROM_SCAN = [join(REPO, "ios", "App", "SendLogWatchTests")];
+
+/// The two files allowed to hold a `SupabaseClient` (#502). Everything the
+/// compiler-enforcement story rests on is asserted against exactly these.
+const FACADES = [
+  { dir: WATCH_APP, file: join(WATCH_APP, "Services", "SupabaseService.swift") },
+  { dir: HEALTH_PLUGIN, file: join(HEALTH_PLUGIN, "HealthConfig.swift") },
+];
 
 // Directories that hold build output, not source — walking into them is both
 // slow (hundreds of MB once a local `swift build`/`swift test` has run) and
@@ -312,10 +251,11 @@ function rawStringHashCountAt(src: string, i: number): number {
 /// raw strings. String interpolation is re-entered as code where
 /// `interpolationPrefix` says to (#488 G1); every comment/string form throws
 /// rather than silently swallowing the rest of the file if its terminator is
-/// missing (#488 G3). A final self-check confirms the segments reconstruct
-/// the input exactly. Not a full lexer for either language — good enough for
-/// ordinary application source, not text built specifically to evade a scan
-/// (see the module doc comment for the residual this still doesn't cover).
+/// missing (#488 G3). Not a full lexer for either language — good enough for
+/// ordinary application source, not text built specifically to evade a scan.
+/// Since #502 nothing that matters rests solely on it: it feeds the façade
+/// tripwires and the non-auth pins, while the compiler and the raw-text
+/// greps carry the reachability invariant (see the module doc comment).
 function tokenize(src: string, stringForms: StringForm[], sourceLabel = "<input>"): Segment[] {
   const segments: Segment[] = [];
   let i = 0;
@@ -399,10 +339,8 @@ function tokenize(src: string, stringForms: StringForm[], sourceLabel = "<input>
     segments.push({ text: src.slice(i, j), kind: "code" });
     i = j;
   }
-  const reconstructed = segments.map((s) => s.text).join("");
-  if (reconstructed !== src) {
-    throw new TokenizeDesyncError("(segments don't reconstruct the source — this is a tokenizer bug, not an input problem)", sourceLabel, 0);
-  }
+  // (The round-3 "segments reconstruct the source" self-check that used to
+  // live here was removed as decorative — see the module doc comment.)
   return segments;
 }
 
@@ -434,11 +372,11 @@ function swiftCode(path: string): string {
 }
 
 /// Comments AND string-literal contents both stripped — for the
-/// AuthClient-reachability scans only. A string's content (a URL, a Keychain
-/// key name, a doc line quoted in a log message) must never be mistaken for
-/// real code touching `.auth`. String INTERPOLATION is the exception —
-/// `tokenize()` re-enters `\(…)` as code, so an accessor written inside a
-/// string interpolation stays visible here (#488 G1).
+/// AuthClient-reachability tripwires only. A string's content (a URL, a
+/// Keychain key name, a doc line quoted in a log message) must never be
+/// mistaken for real code touching `.auth`. String INTERPOLATION is the
+/// exception — `tokenize()` re-enters `\(…)` as code, so an accessor written
+/// inside a string interpolation stays visible here (#488 G1).
 function swiftCodeForAccessorScan(path: string): string {
   return tokenize(readFileSync(path, "utf8"), SWIFT_STRINGS, path)
     .map((s) => (s.kind === "code" ? s.text : blank(s.text)))
@@ -483,6 +421,84 @@ function offenseAt(path: string, text: string, index: number): string {
   return `${path}:${line}: ${lineText}`;
 }
 
+// The full source line containing `index` — for line-scoped checks like
+// "this declaration must be on a `private` line".
+function lineAt(text: string, index: number): string {
+  const lineStart = text.lastIndexOf("\n", index) + 1;
+  const lineEndIdx = text.indexOf("\n", index);
+  return text.slice(lineStart, lineEndIdx === -1 ? text.length : lineEndIdx);
+}
+
+describe("the refreshing accessor is unreachable by construction (#502)", () => {
+  // These three assertions are the premises the compiler-enforcement story
+  // rests on (module doc comment, premises 1–2). The first two run on RAW
+  // file text on purpose: with no lexer there is nothing to desync, so an
+  // identifier hidden inside a string, a comment trick, or a regex literal
+  // is still seen. The trade is a possible LOUD false positive on a future
+  // comment that spells out `SupabaseClient` in a non-façade file — the fix
+  // for that is rewording the comment, never weakening this pin.
+
+  it("each façade holds its client in a `private static let` — the compiler seals every member path to `.auth` from outside the façade file", () => {
+    for (const { file } of FACADES) {
+      const raw = readFileSync(file, "utf8");
+      expect(raw, file.slice(REPO.length + 1)).toMatch(
+        /\bprivate static let client: SupabaseClient\b/,
+      );
+    }
+  });
+
+  it("no file outside the façades even names `SupabaseClient` (raw text — nothing can hide an occurrence)", () => {
+    // This is what makes the `private` above sufficient: with the type
+    // unnameable elsewhere in the guarded directories, there is no second
+    // client to construct, no typealias to launder one through, and nothing
+    // to dot `.auth` off. (`SupabaseClientOptions` doesn't match — `\b`
+    // requires the identifier to end after "Client".)
+    const facadeFiles = new Set(FACADES.map((f) => f.file));
+    const offenders = [WATCH_APP, HEALTH_PLUGIN].flatMap((dir) =>
+      swiftFiles(dir)
+        .filter((path) => !facadeFiles.has(path))
+        .flatMap((path) => {
+          const raw = readFileSync(path, "utf8");
+          return [...raw.matchAll(/\bSupabaseClient\b/g)].map((m) =>
+            offenseAt(path.slice(REPO.length + 1), raw, m.index),
+          );
+        }),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("every SupabaseClient-typed declaration inside a façade is on a `private` line", () => {
+    // Guards the façades' own surface: a `static let leaked: SupabaseClient`
+    // or `static func client() -> SupabaseClient` would hand the whole
+    // target the client back and silently void the compiler argument. A
+    // declaration split across lines puts the type annotation on a line
+    // without `private`, which fails here loudly — the false-positive
+    // direction, never the silent one.
+    for (const { file } of FACADES) {
+      const raw = readFileSync(file, "utf8");
+      const offenders = [...raw.matchAll(/(?::|->)\s*SupabaseClient\b/g)]
+        .filter((m) => !/\bprivate\b/.test(lineAt(raw, m.index)))
+        .map((m) => offenseAt(file.slice(REPO.length + 1), raw, m.index));
+      expect(offenders).toEqual([]);
+    }
+  });
+
+  it("never names AuthClient/GoTrueClient in code, anywhere in either directory", () => {
+    // `import Supabase` re-exports the Auth product, so `AuthClient` is
+    // directly constructible — and a self-built AuthClient contains no
+    // `.auth` member access for the tripwires below to see. Runs on the
+    // code-only view (not raw text) because comments legitimately discuss
+    // `AuthClient` (e.g. WatchSessionStore's docs).
+    const offenders = accessorScanSources(WATCH_APP, HEALTH_PLUGIN).flatMap(
+      ({ path, scanText }) =>
+        [...scanText.matchAll(/\b(?:AuthClient|GoTrueClient)\b/g)].map((m) =>
+          offenseAt(path, scanText, m.index),
+        ),
+    );
+    expect(offenders).toEqual([]);
+  });
+});
+
 /// Every supabase-swift call that can mint, rotate or spend a refresh token.
 /// `auth.session` (as opposed to `currentSession`) refreshes when the stored
 /// access token has expired — the discovery that produced #196 — and
@@ -498,18 +514,22 @@ const ROTATING_CALLS = [
 ];
 
 // `.auth` preceded by an identifier character, `)`, `]`, `?`/`!` (optional
-// chaining/force-unwrap — `client?.auth`, `client!.auth` are ordinary
-// idiomatic Swift, #488 G2), `}`/`>` (`{ … }.auth`, `Foo<Bar>.auth`), or a
-// keypath backslash — i.e. real member access — NOT preceded by whitespace
-// or punctuation, which is how implicit-member syntax referencing an
-// unrelated enum case always looks (`case .auth:`, `forKey: .auth`, `return
-// .auth`; a keyword/label ends in a word character too, which is what makes
-// this narrowing sound — widening the receiver class further doesn't touch
-// it, only tolerating whitespace before the dot would). See the module doc
-// comment for what this deliberately still doesn't catch.
+// chaining/force-unwrap — `client?.auth`, `client!.auth`, #488 G2), `}`/`>`
+// (`{ … }.auth`, `Foo<Bar>.auth`), or a keypath backslash — i.e. real member
+// access — NOT preceded by whitespace or punctuation, which is how
+// implicit-member syntax referencing an unrelated enum case always looks
+// (`case .auth:`, `forKey: .auth`, `return .auth`).
 const AUTH_PROPERTY_ACCESS = /[\w)\]\\?!}>]\.auth\b/g;
 
 describe("no session-consuming native client may hold or spend a refresh token (#265)", () => {
+  // Since #502 these scans are tripwires layered under the compiler, not the
+  // enforcement itself (module doc comment). They matter most for the two
+  // façade files, which legitimately hold the client and are the one place
+  // the compiler cannot police. They keep running over BOTH whole
+  // directories because post-#502 there is no legitimate `.auth` member
+  // access anywhere in them — a match is never a false positive to engineer
+  // around, and the wide net also covers a façade leak the #502 checks above
+  // failed to anticipate.
   const consumers = accessorScanSources(WATCH_APP, HEALTH_PLUGIN);
 
   it("finds the sources it is supposed to be guarding", () => {
@@ -534,30 +554,28 @@ describe("no session-consuming native client may hold or spend a refresh token (
     });
   }
 
-  it("never touches AuthClient at all — no `.auth` property access, direct or aliased (#196, #488)", () => {
-    // Round 1 forbade bare `.auth` anywhere in the two guarded directories.
-    // Round 2 (see the module doc comment) narrowed the match to real member
-    // access and moved the string/comment stripping to a proper tokenizer —
-    // `consumers` above is already comment-AND-string-stripped
-    // (`swiftCodeForAccessorScan`), so there's nothing left to strip here.
-    // There is currently zero legitimate use of `.auth` as member access
-    // anywhere in either consumer: both clients are built with an
-    // `accessToken` closure and never construct or reach an `AuthClient`
-    // (see `SupabaseService.swift` / `HealthConfig.swift`).
+  it("never touches AuthClient at all — no `.auth` property access, direct or aliased (#196, #488, #502)", () => {
+    // `consumers` is comment-AND-string-stripped (`swiftCodeForAccessorScan`).
+    // There is zero legitimate use of `.auth` as member access anywhere in
+    // either directory: both clients are built with an `accessToken` closure,
+    // never construct or reach an AuthClient, and since #502 sit `private`
+    // behind their façades.
     const offenders = consumers.flatMap(({ path, scanText }) =>
       [...scanText.matchAll(AUTH_PROPERTY_ACCESS)].map((m) => offenseAt(path, scanText, m.index)),
     );
     expect(offenders).toEqual([]);
   });
 
-  it("configures every Supabase client with a non-refreshing accessToken provider", () => {
-    // The seam that makes the above structural rather than incidental: a
-    // client built with an `accessToken` provider never consults an
+  it("configures each façade's client with a non-refreshing accessToken provider", () => {
+    // The seam that makes "no AuthClient" structural rather than incidental:
+    // a client built with an `accessToken` provider never consults an
     // AuthClient, so there is no session for the SDK to recover or renew.
-    const clients = consumers.filter((s) => /SupabaseClient\s*\(/.test(s.scanText));
-    expect(clients.length).toBeGreaterThan(0);
-    for (const client of clients) {
-      expect(client.scanText, client.path).toMatch(/accessToken:\s*\{/);
+    // Scoped to the façades because the #502 checks above pin them as the
+    // only two client-construction sites.
+    for (const { file } of FACADES) {
+      expect(swiftCodeForAccessorScan(file), file.slice(REPO.length + 1)).toMatch(
+        /accessToken:\s*\{/,
+      );
     }
   });
 });

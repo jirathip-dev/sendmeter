@@ -3,7 +3,9 @@ import SendLogWatchCore
 import Supabase
 
 enum Repo {
-    private static var client: SupabaseClient { SupabaseService.data }
+    // All network access goes through the `SupabaseService` façade — this
+    // target has no reachable Supabase client, only per-table query builders
+    // (#502).
 
     // MARK: Tindeq recordings (identical shape to the web app's inserts)
 
@@ -41,7 +43,7 @@ enum Repo {
     /// retry that lands after the original insert already succeeded is a
     /// no-op rather than a duplicate row.
     static func insertTindeqRecording(_ row: TindeqRecordingInsert) async throws {
-        try await client.from("tindeq_recordings")
+        try await SupabaseService.from("tindeq_recordings")
             .upsert(row, onConflict: "id", ignoreDuplicates: true)
             .execute()
     }
@@ -59,7 +61,7 @@ enum Repo {
     /// watch never fits a curve (that needs the raw sample streams, which it
     /// doesn't keep); it only reads the two numbers back.
     static func fetchRecentTindeqTags() async throws -> [TindeqTagInfo] {
-        async let recordingsTask: [TindeqTagRow] = client
+        async let recordingsTask: [TindeqTagRow] = SupabaseService
             .from("tindeq_recordings")
             .select("tag")
             .neq("tag", value: "")
@@ -89,7 +91,7 @@ enum Repo {
     /// curve params). Small by construction — one row per tag the user has
     /// ever hidden or fitted a curve for.
     static func fetchTagRegistry() async throws -> [TagRegistryRow] {
-        try await client
+        try await SupabaseService
             .from("tindeq_tags")
             .select("name, hidden, cf_kg, w_prime_kgs")
             .execute()
@@ -124,7 +126,7 @@ enum Repo {
             groupId: pending.groupId,
             workoutSource: nil
         )
-        try await client.from("sessions")
+        try await SupabaseService.from("sessions")
             .upsert(session, onConflict: "id", ignoreDuplicates: true)
             .execute()
     }
@@ -132,7 +134,7 @@ enum Repo {
     // MARK: Confirmed workout → sessions + climb_workouts + climb_attempts
 
     static func fetchCurrentPhase() async throws -> String {
-        let rows: [UserSettingsRow] = try await client
+        let rows: [UserSettingsRow] = try await SupabaseService
             .from("user_settings")
             .select("current_phase")
             .execute()
@@ -142,7 +144,7 @@ enum Repo {
 
     static func fetchSessionLoads(sinceDays: Int) async throws -> [SessionLoadRow] {
         let cutoff = Calendar.gregorianLocal.date(byAdding: .day, value: -sinceDays, to: Date())!
-        return try await client
+        return try await SupabaseService
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoff.localDateString)
@@ -160,7 +162,7 @@ enum Repo {
     /// Latest computed readiness row, written by the iPhone app. The watch
     /// only displays it — it no longer reads HealthKit or computes readiness.
     static func fetchLatestHealthMetric() async throws -> HealthMetricRow? {
-        let rows: [HealthMetricRow] = try await client
+        let rows: [HealthMetricRow] = try await SupabaseService
             .from("health_metrics")
             .select("date, readiness, zone")
             .order("date", ascending: false)
@@ -185,7 +187,7 @@ enum Repo {
     /// deliberately worse-than-nothing is not on the table; "no model yet"
     /// is the honest state.
     static func fetchLabeledWorkouts() async throws -> [LabeledWorkoutRow] {
-        try await client
+        try await SupabaseService
             .from("climb_workouts")
             .select("avg_hr, mean_effort, attempts_per_10min, rpe_confirmed")
             .not("rpe_confirmed", operator: .is, value: "null")
@@ -280,7 +282,7 @@ enum Repo {
 
     /// Best-effort mid-workout flush (SL-90) — merge-upserts the partial row.
     static func flushPartialWorkout(_ p: ClimbWorkoutPartialUpsert) async throws {
-        try await client.from("climb_workouts")
+        try await SupabaseService.from("climb_workouts")
             .upsert(p, onConflict: "id")
             .execute()
     }
@@ -302,14 +304,14 @@ enum Repo {
     /// this only labels the failure, it changes no request or its order.
     static func uploadBundle(_ bundle: WorkoutSaveBundle) async throws {
         do {
-            try await client.from("sessions")
+            try await SupabaseService.from("sessions")
                 .upsert(bundle.session, onConflict: "id", ignoreDuplicates: true)
                 .execute()
         } catch {
             throw StagedUploadError(stage: .session, underlying: error)
         }
         do {
-            try await client.from("climb_workouts")
+            try await SupabaseService.from("climb_workouts")
                 .upsert(bundle.workout, onConflict: "id")
                 .execute()
         } catch {
@@ -317,7 +319,7 @@ enum Repo {
         }
         if !bundle.attempts.isEmpty {
             do {
-                try await client.from("climb_attempts")
+                try await SupabaseService.from("climb_attempts")
                     .upsert(bundle.attempts, onConflict: "id", ignoreDuplicates: true)
                     .execute()
             } catch {

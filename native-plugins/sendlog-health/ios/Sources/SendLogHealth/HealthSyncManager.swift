@@ -82,7 +82,6 @@ struct HealthResyncFoundNoDataError: Error, LocalizedError {
 final class HealthSyncManager {
     static let shared = HealthSyncManager()
 
-    private let client = HealthConfig.data
     private let reader = HealthKitReader()
     private let tunables = RecoveryTunables.default
     private var observerStarted = false
@@ -136,7 +135,7 @@ final class HealthSyncManager {
             // drift this policy exists to fix. Unknown state defaults to
             // "not yet locked", matching pre-#109 (always-overwrite)
             // behavior.
-            let existing: [ExistingReadinessRow] = (try? await client
+            let existing: [ExistingReadinessRow] = (try? await HealthConfig
                 .from("health_metrics")
                 .select("date, readiness")
                 .eq("date", value: today)
@@ -173,7 +172,7 @@ final class HealthSyncManager {
             row.computedAt = Date()
         }
 
-        try await client
+        try await HealthConfig
             .from("health_metrics")
             .upsert(row, onConflict: "user_id,date")
             .execute()
@@ -186,7 +185,7 @@ final class HealthSyncManager {
     /// user action (the "Clear & resync" setting) — always authoritative,
     /// doesn't consult `ReadinessWritePolicy`.
     func clearAndResync(historyDays: Int = 90) async throws {
-        try await client
+        try await HealthConfig
             .from("health_metrics")
             .delete()
             .gte("date", value: "2000-01-01")
@@ -222,7 +221,7 @@ final class HealthSyncManager {
         // HealthResyncFoundNoDataError's doc comment for why this can't be
         // narrowed further (denied vs. genuinely empty) via public API.
         guard !rows.isEmpty else { throw HealthResyncFoundNoDataError() }
-        try await client
+        try await HealthConfig
             .from("health_metrics")
             .upsert(rows, onConflict: "user_id,date")
             .execute()
@@ -239,7 +238,7 @@ final class HealthSyncManager {
         // ACWR window. The web's equivalent query (src/lib/repo/sessions.ts
         // fetchSessions) has always filtered this; native didn't, so the two
         // surfaces disagreed about what counts.
-        let rows: [SessionLoadRow] = try await client
+        let rows: [SessionLoadRow] = try await HealthConfig
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoffDateString(daysAgo: days + Acwr.lookbackDays))
@@ -268,7 +267,7 @@ final class HealthSyncManager {
 
     private func computeAcwr() async throws -> Double? {
         // #487 (F1): same soft-delete exclusion as acwrSeries above.
-        let rows: [SessionLoadRow] = try await client
+        let rows: [SessionLoadRow] = try await HealthConfig
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoffDateString(daysAgo: Acwr.lookbackDays))

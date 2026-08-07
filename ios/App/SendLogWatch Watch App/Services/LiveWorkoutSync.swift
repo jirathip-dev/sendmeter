@@ -86,7 +86,7 @@ actor LiveWorkoutSync {
     }
 
     private func upsert(_ row: LiveWorkoutUpsert) async {
-        try? await SupabaseService.data
+        try? await SupabaseService
             .from("live_workouts")
             .upsert(row, onConflict: "user_id")
             .execute()
