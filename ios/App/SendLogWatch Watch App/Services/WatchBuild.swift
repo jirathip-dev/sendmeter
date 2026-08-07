@@ -56,12 +56,13 @@ enum WatchBuild {
         }
     }
 
-    /// Count both actors first so a fresh install reports an honest zero
+    /// Count all three actors first so a fresh install reports an honest zero
     /// rather than leaving `PendingSyncCache` unknown.
     static func refreshAndReportQueueStatus() async {
         async let workouts = OfflineQueue.shared.pendingCount()
         async let sessions = PendingSessionQueue.shared.pendingCount()
-        _ = await (workouts, sessions)
+        async let recordings = PendingRecordingQueue.shared.pendingCount()
+        _ = await (workouts, sessions, recordings)
         await MainActor.run { reportQueueStatus() }
     }
 }

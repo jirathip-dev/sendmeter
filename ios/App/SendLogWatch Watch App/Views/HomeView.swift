@@ -15,9 +15,45 @@ import SwiftUI
 /// the TabView — a destination declared inside a paged TabView is only
 /// registered while its page is realized, which is exactly how a deep link
 /// arriving on the wrong page silently does nothing.
+/// #486 review F6: `GaugeSessionLossNotice` and `RecordingLossNotice` are
+/// both destructive one-shot `UserDefaults` flags, and — far from an
+/// exotic edge case — the SAME event can set both: a BLE drop mid-hold can
+/// both lose the in-flight rep (`RecordingLossNotice`) AND, since
+/// `logSessionNow()` always runs right after, fail to log the gauge session
+/// that was grouping it (`GaugeSessionLossNotice`). Two independently
+/// chained `.alert` modifiers on one view race to present; whichever loses
+/// has ALREADY had its `consume()` called (destructive, before the race even
+/// starts), so that notice is gone for good — precisely the #264 "reported,
+/// never swallowed" failure the notices exist to prevent. `LossNotice` below
+/// queues whatever `onAppear` consumed and a single `.alert` presents them
+/// one at a time, advancing on dismiss.
+private enum LossNotice {
+    case gaugeSession
+    case recording
+
+    var title: String {
+        switch self {
+        case .gaugeSession: return "Force session not saved"
+        case .recording: return "A force rep was lost"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .gaugeSession:
+            return "Your force recordings may appear ungrouped in History. Create a session for them on your phone."
+        case .recording:
+            return "A recording couldn't be saved to your watch or uploaded. It's gone — the rest of your session is unaffected."
+        }
+    }
+}
+
 struct HomeView: View {
     @Binding var selection: WatchHomePage
-    @State private var showGaugeSessionLoss = false
+    @State private var lossQueue: [LossNotice] = []
+    @State private var showLossAlert = false
+
+    private var activeLossNotice: LossNotice? { lossQueue.first }
 
     var body: some View {
         TabView(selection: $selection) {
@@ -29,14 +65,28 @@ struct HomeView: View {
         .tabViewStyle(.page)
         .navigationTitle("Sendmeter")
         .onAppear {
-            if GaugeSessionLossNotice.consume() {
-                showGaugeSessionLoss = true
-            }
+            var notices: [LossNotice] = []
+            if GaugeSessionLossNotice.consume() { notices.append(.gaugeSession) }
+            if RecordingLossNotice.consume() { notices.append(.recording) }
+            guard !notices.isEmpty else { return }
+            lossQueue = notices
+            showLossAlert = true
         }
-        .alert("Force session not saved", isPresented: $showGaugeSessionLoss) {
-            Button("OK", role: .cancel) {}
+        .alert(activeLossNotice?.title ?? "", isPresented: $showLossAlert) {
+            Button("OK", role: .cancel) {
+                if !lossQueue.isEmpty { lossQueue.removeFirst() }
+                guard !lossQueue.isEmpty else { return }
+                // Deferred a tick: SwiftUI is still processing this alert's
+                // own dismiss (which also writes `showLossAlert = false`) —
+                // flipping it back to true in the same pass is exactly the
+                // "two alerts racing" shape this fix exists to avoid, just
+                // sequential instead of concurrent. One tick later, the
+                // dismiss has fully settled and the SAME `.alert` (now
+                // reading the next `activeLossNotice`) presents cleanly.
+                DispatchQueue.main.async { showLossAlert = true }
+            }
         } message: {
-            Text("Your force recordings may appear ungrouped in History. Create a session for them on your phone.")
+            Text(activeLossNotice?.message ?? "")
         }
     }
 }
@@ -86,7 +136,8 @@ private struct ActionsView: View {
         .task {
             async let workouts = OfflineQueue.shared.pendingCount()
             async let sessions = PendingSessionQueue.shared.pendingCount()
-            pendingUploads = await workouts + sessions
+            async let recordings = PendingRecordingQueue.shared.pendingCount()
+            pendingUploads = await workouts + sessions + recordings
         }
     }
 }

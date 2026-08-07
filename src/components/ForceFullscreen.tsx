@@ -28,7 +28,7 @@ import {
   reverseActionTargetBand,
   type ReverseActionSegment,
 } from "../lib/reverseAction";
-import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
+import { disconnectNeedsConfirm, prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
 import { DEFAULT_HANDS_FREE_FORCE_CONFIG } from "../lib/handsFreeForce";
 import { adaptiveStaticHolds, type AdaptiveStaticState } from "../lib/adaptiveStaticProtocol";
 import {
@@ -46,6 +46,7 @@ import PresetPlanChart from "./PresetPlanChart";
 import type { GaugeTarget } from "./ForceCurveCard";
 import ReverseActionWorkDisplay from "./ReverseActionWorkDisplay";
 import ProtocolBadge from "./ProtocolBadge";
+import ConfirmDialog from "./ConfirmDialog";
 import {
   prescriptionForSegment,
   targetHoldSegment,
@@ -355,6 +356,20 @@ export default function ForceFullscreen({
   // false once the fire effect actually resets `prepStartedMs` (the same
   // effect pass that calls onStart), closing the gap.
   const counting = prepStartedMs !== null;
+
+  // #486: Disconnect used to fire tindeq.disconnect() unconditionally, live
+  // through measuring/armed/counting exactly when Tare and "How to set up"
+  // are hidden for being unsafe there — one mistimed tap silently discarded
+  // a max-effort rep with no salvage (disconnect() is the deliberate
+  // user-initiated path, not the unexpected-drop path that salvages).
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  function handleDisconnectTap() {
+    if (disconnectNeedsConfirm({ measuring, armed, counting })) {
+      setConfirmDisconnect(true);
+    } else {
+      tindeq.disconnect();
+    }
+  }
 
   useEffect(() => {
     if (prepStartedMs === null) return;
@@ -729,13 +744,26 @@ export default function ForceFullscreen({
             </button>
           )}
           <button
-            onClick={tindeq.disconnect}
+            onClick={handleDisconnectTap}
             className="glass-pill"
             style={{ padding: "7px 13px", fontSize: "var(--t-2xs)", "--pill-tint": "var(--danger)" } as CSSProperties}
           >
             Disconnect
           </button>
         </div>
+
+        {confirmDisconnect && (
+          <ConfirmDialog
+            title="Disconnect now?"
+            body="You're mid-hold — disconnecting now loses this rep with no way to recover it."
+            confirmLabel="Disconnect"
+            onConfirm={() => {
+              setConfirmDisconnect(false);
+              tindeq.disconnect();
+            }}
+            onClose={() => setConfirmDisconnect(false)}
+          />
+        )}
 
         {reverseWorking && band && protocol && (
           <>

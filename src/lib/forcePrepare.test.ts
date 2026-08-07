@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { PREPARE_S, prepRemainingS, startsWithCountdown } from "./forcePrepare";
+import {
+  disconnectNeedsConfirm,
+  PREPARE_S,
+  prepRemainingS,
+  startsWithCountdown,
+} from "./forcePrepare";
 import type { TindeqPreset } from "../types";
 
 /// #312 — "Force 5s get-ready countdown does nothing (free hold only)".
@@ -114,5 +119,23 @@ describe("the free-hold countdown end to end, in pure-logic terms", () => {
 
   it("a guided run with the checkbox on skips the local countdown entirely — it starts immediately, its own timeline supplies GET READY", () => {
     expect(startsWithCountdown(preset(), true)).toBe(false);
+  });
+});
+
+describe("disconnectNeedsConfirm (#486)", () => {
+  it("requires confirmation while measuring — the max-effort-rep case the bug report describes", () => {
+    expect(disconnectNeedsConfirm({ measuring: true, armed: false, counting: false })).toBe(true);
+  });
+
+  it("requires confirmation while armed (hands-free, waiting for the pull to cross threshold)", () => {
+    expect(disconnectNeedsConfirm({ measuring: false, armed: true, counting: false })).toBe(true);
+  });
+
+  it("requires confirmation during the free-hold get-ready countdown", () => {
+    expect(disconnectNeedsConfirm({ measuring: false, armed: false, counting: true })).toBe(true);
+  });
+
+  it("does NOT require confirmation at idle — matches Tare/setup-guide staying enabled there", () => {
+    expect(disconnectNeedsConfirm({ measuring: false, armed: false, counting: false })).toBe(false);
   });
 });

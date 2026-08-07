@@ -150,6 +150,13 @@ nonisolated struct ClimbAttemptInsert: Codable {
 }
 
 nonisolated struct TindeqRecordingInsert: Codable {
+    /// Client-minted (#486) so a queued upload's retry is an idempotent
+    /// UPSERT rather than a bare INSERT — without this, a drain that
+    /// re-attempts after a response was lost (network flaked mid-round-trip,
+    /// the server actually got it) would duplicate the recording. The column
+    /// still defaults to `gen_random_uuid()`, matching the web app's
+    /// `insertRecording` (#106): `id` is set here, not left to the default.
+    var id: UUID
     var durationMs: Int
     var peakKg: Double
     var avgKg: Double
@@ -161,13 +168,32 @@ nonisolated struct TindeqRecordingInsert: Codable {
     var samples: [[Double]]
 
     enum CodingKeys: String, CodingKey {
-        case note, samples, tag, side
+        case id, note, samples, tag, side
         case durationMs = "duration_ms"
         case peakKg = "peak_kg"
         case avgKg = "avg_kg"
         case sampleCount = "sample_count"
         case groupId = "group_id"
     }
+}
+
+/// A Tindeq force recording queued for upload by `PendingRecordingQueue`
+/// (#486): "Stop" used to await the network insert directly, right when the
+/// user has just finished a max-effort rep — watchOS can suspend the app and
+/// freeze the in-flight request at exactly that moment, and unlike a saved
+/// workout or gauge session there was NO on-disk fallback at all, so the rep
+/// was gone. Mirrors `WorkoutSaveBundle`: the row to insert plus the account
+/// stamp `shouldDrain` checks (#158).
+nonisolated struct PendingTindeqRecording: Codable {
+    var row: TindeqRecordingInsert
+    /// Which account was signed in when this recording was persisted to disk
+    /// (issue #158) — stamped by `PendingRecordingQueue.persist`, checked by
+    /// `drain()` so a recording queued under one account can't silently
+    /// upload under whichever account happens to be signed in when the queue
+    /// next drains. `nil` only for items written before this field existed
+    /// (there are none pre-#486, but the pattern is kept identical to the
+    /// other two queues); see `shouldDrain`.
+    var enqueuedUserId: UUID? = nil
 }
 
 nonisolated struct TindeqTagRow: Codable {

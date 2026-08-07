@@ -43,3 +43,22 @@ export function prepRemainingS(
   if (startedMs === null) return null;
   return Math.max(0, totalS - (nowMs - startedMs) / 1000);
 }
+
+/// #486: whether tapping Disconnect must be gated behind a confirmation
+/// instead of firing immediately. Tare and "How to set up" are already
+/// hidden outright while `measuring || armed || counting` — Disconnect used
+/// to be the one control in that top bar left live through all three, so one
+/// mistimed tap mid-max-effort-rep silently discarded the recording (no
+/// salvage: `disconnect()` in useTindeq.ts is the deliberate user path, not
+/// the unexpected-drop path that triggers interruption salvage). Same three
+/// booleans as the Tare/setup-guide gate, kept as an explicit predicate
+/// (rather than inlined at the call site) so the rule is independently
+/// testable without rendering ForceFullscreen — see this file's header
+/// comment for why that component can't be rendered in a test here.
+export function disconnectNeedsConfirm(params: {
+  measuring: boolean;
+  armed: boolean;
+  counting: boolean;
+}): boolean {
+  return params.measuring || params.armed || params.counting;
+}

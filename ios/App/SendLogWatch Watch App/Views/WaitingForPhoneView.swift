@@ -79,7 +79,8 @@ struct WaitingForPhoneView: View {
         .task {
             async let workouts = OfflineQueue.shared.pendingCount()
             async let sessions = PendingSessionQueue.shared.pendingCount()
-            pendingUploads = await workouts + sessions
+            async let recordings = PendingRecordingQueue.shared.pendingCount()
+            pendingUploads = await workouts + sessions + recordings
         }
     }
 

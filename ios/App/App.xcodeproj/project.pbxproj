@@ -29,6 +29,7 @@
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		5490195E129283E634DCAE9D /* PendingRecordingQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 848519A474E03C8D6AFCD78A /* PendingRecordingQueueTests.swift */; };
 		5EC0A003B003C003D003E003 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5EC0A002B002C002D002E002 /* SendLogWatchCore */; };
 		5EC0A005B005C005D005E005 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5EC0A004B004C004D004E004 /* SendLogWatchCore */; };
 		607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */; };
@@ -46,6 +47,7 @@
 		D1C2B3A4F5E6708192A3B4C5 /* ACWRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */; };
 		D40300000000000000000001 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = D40300000000000000000002 /* SendLogWatchCore */; };
 		E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */; };
+		F8B8C2EA8A9031A0772138D7 /* PendingTindeqRecordingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF74268D6C6442674242637A /* PendingTindeqRecordingTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -166,6 +168,7 @@
 		5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/PendingQueueUserMatchTests.swift; sourceTree = "<group>"; };
 		5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PendingQueuePolicyTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/PendingQueuePolicyTests.swift; sourceTree = "<group>"; };
 		6CA278E81C6E14A40B4C9C69 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		848519A474E03C8D6AFCD78A /* PendingRecordingQueueTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PendingRecordingQueueTests.swift; sourceTree = "<group>"; };
 		8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkoutSaveBundleDecodeCompatTests.swift; sourceTree = "<group>"; };
 		906892CDB6C18118BDF95638 /* RPEDepletionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/RPEDepletionTests.swift; sourceTree = "<group>"; };
 		929803D573A0FA4074230787 /* DateExtensionsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/DateExtensionsTests.swift; sourceTree = "<group>"; };
@@ -178,6 +181,7 @@
 		C3F5AD05DE81A538A6242E98 /* SnapshotHelper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SnapshotHelper.swift; sourceTree = "<group>"; };
 		C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/TagReconciliationTests.swift; sourceTree = "<group>"; };
 		D5F88EE79EE43D995B504A78 /* SendmeterWatchScreenshots.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendmeterWatchScreenshots.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		DF74268D6C6442674242637A /* PendingTindeqRecordingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PendingTindeqRecordingTests.swift; sourceTree = "<group>"; };
 		F585400FD5CA4FD502C930ED /* SendmeterWatchScreenshots.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SendmeterWatchScreenshots.swift; sourceTree = "<group>"; };
 		F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/ACWRTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -297,6 +301,8 @@
 				4A71E5BE016D1DBF7C3FE908 /* PendingQueueDecodeCompatTests.swift */,
 				5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */,
 				8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */,
+				DF74268D6C6442674242637A /* PendingTindeqRecordingTests.swift */,
+				848519A474E03C8D6AFCD78A /* PendingRecordingQueueTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = "<group>";
@@ -663,6 +669,8 @@
 				90B66846175A762105ACC18F /* PendingQueueDecodeCompatTests.swift in Sources */,
 				69ECCBC95C0D80B03512206A /* PendingQueuePolicyTests.swift in Sources */,
 				985E393749254016699A5A96 /* WorkoutSaveBundleDecodeCompatTests.swift in Sources */,
+				F8B8C2EA8A9031A0772138D7 /* PendingTindeqRecordingTests.swift in Sources */,
+				5490195E129283E634DCAE9D /* PendingRecordingQueueTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1365,15 +1373,15 @@
 			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
 			productName = SendLogWatchCore;
 		};
-		D40300000000000000000002 /* SendLogWatchCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
-			productName = SendLogWatchCore;
-		};
 		665354DA3AF13BA04D7AADA0 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = B5E75921EB0124F7376FBBFD /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
+		};
+		D40300000000000000000002 /* SendLogWatchCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
+			productName = SendLogWatchCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
