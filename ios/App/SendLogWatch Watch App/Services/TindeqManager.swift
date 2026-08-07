@@ -4,6 +4,18 @@ import Observation
 import SendLogWatchCore
 import WatchConnectivity
 
+protocol TindeqRecordingQueueing: Sendable {
+    func enqueue(_ pending: PendingTindeqRecording) async -> QueuePersistOutcome
+}
+
+extension PendingRecordingQueue: TindeqRecordingQueueing {}
+
+protocol TindeqSessionQueueing: Sendable {
+    func enqueue(_ pending: PendingTindeqSession) async -> QueuePersistOutcome
+}
+
+extension PendingSessionQueue: TindeqSessionQueueing {}
+
 /// CoreBluetooth central for the Tindeq Progressor. Mirrors the web app's
 /// useTindeq hook: same statuses, 30 min recording cap, t rounded to ms int,
 /// kg to 2 dp, identical summary — recordings look the same in the web UI.
@@ -20,6 +32,10 @@ final class TindeqManager: NSObject {
     var currentKg: Double = 0
     var peakKg: Double = 0
     var elapsedMs: Double = 0
+    private(set) var handsFreeState = idleHandsFreeForce()
+    private(set) var handsFreeRequested = false
+    private(set) var saving = false
+    private(set) var savedMsg: String?
 
     // Gauge session grouping (SL-58 #5): every rep saved during one connect
     // shares a group_id, minted lazily on the first save. Lives on the manager
@@ -52,6 +68,19 @@ final class TindeqManager: NSObject {
     private var measuring = false
     private var t0us: UInt32?
     private var samples: [(t: Double, kg: Double)] = []
+    private var repClaims = HandsFreeForceRepClaims()
+    private var saveOperationsInFlight = 0
+    private var finishAfterSaves = false
+    private var savedMsgGeneration = 0
+    private var armTimeoutTimer: Timer?
+    private var armedStreamStartedAtUs: UInt32?
+    private let armTimeoutSeconds: TimeInterval
+    private let recordingQueue: any TindeqRecordingQueueing
+    private let sessionQueue: any TindeqSessionQueueing
+    /// Test seam: production writes through CoreBluetooth; watch target tests
+    /// inject this observer so the real command ordering is inspectable.
+    private let commandWriter: ((Tindeq.Cmd) -> Void)?
+    private var fakeTransportConnected: Bool
     // Live-force beat backfill watermark (issue #148): the last `t` a beat
     // successfully sent, so the next beat only ships what's new instead of a
     // fixed trailing window that leaves a permanent gap when WC reachability
@@ -63,6 +92,26 @@ final class TindeqManager: NSObject {
     // Distinguishes an app-initiated disconnect from a real BLE drop, so only
     // the latter triggers the finish-on-disconnect prompt.
     private var intentionalDisconnect = false
+
+    init(
+        recordingQueue: any TindeqRecordingQueueing = PendingRecordingQueue.shared,
+        sessionQueue: any TindeqSessionQueueing = PendingSessionQueue.shared,
+        armTimeoutSeconds: TimeInterval = 10 * 60,
+        commandWriter: ((Tindeq.Cmd) -> Void)? = nil
+    ) {
+        self.recordingQueue = recordingQueue
+        self.sessionQueue = sessionQueue
+        self.armTimeoutSeconds = armTimeoutSeconds
+        self.commandWriter = commandWriter
+        self.fakeTransportConnected = commandWriter != nil
+        super.init()
+        // A command writer is a complete fake transport for unit tests.
+        if commandWriter != nil { status = .connected }
+    }
+
+    private var transportConnected: Bool {
+        peripheral != nil || fakeTransportConnected
+    }
 
     // MARK: Session
 
@@ -117,6 +166,16 @@ final class TindeqManager: NSObject {
     /// direct-upload fallback both fail, the manager records a one-shot Home
     /// notice because this path may run after the Force UI has disappeared.
     func logSessionNow() {
+        cancelHandsFree()
+        if saveOperationsInFlight > 0 {
+            finishAfterSaves = true
+            return
+        }
+        logSessionAfterPendingSaves()
+    }
+
+    private func logSessionAfterPendingSaves() {
+        finishAfterSaves = false
         guard let groupId = sessionId, sessionCount > 0 else {
             clearSession()
             return
@@ -129,7 +188,7 @@ final class TindeqManager: NSObject {
         )
         clearSession()
         Task {
-            let outcome = await PendingSessionQueue.shared.enqueue(pending)
+            let outcome = await sessionQueue.enqueue(pending)
             guard outcome == .lost else { return }
             await MainActor.run {
                 self.errorMsg = "Force session couldn't be saved"
@@ -151,8 +210,10 @@ final class TindeqManager: NSObject {
     }
 
     func disconnect() {
+        cancelHandsFree()
         stopUITimer()
         measuring = false
+        repClaims.discard()
         if let p = peripheral {
             // Flag only when a delegate callback will follow, so it can't go
             // stale and mask a later real drop.
@@ -160,6 +221,7 @@ final class TindeqManager: NSObject {
             central?.cancelPeripheralConnection(p)
         }
         peripheral = nil
+        fakeTransportConnected = false
         controlChar = nil
         status = .idle
         pushForceBeat()
@@ -170,14 +232,11 @@ final class TindeqManager: NSObject {
     }
 
     func start() {
-        samples.removeAll()
-        t0us = nil
-        lastBeatT = nil
-        needsBackfill = true
-        currentKg = 0
-        peakKg = 0
-        elapsedMs = 0
-        errorMsg = nil
+        guard status == .connected, !handsFreeRequested, !saving else { return }
+        savedMsgGeneration += 1
+        savedMsg = nil
+        resetRecordingBuffer()
+        guard repClaims.begin(tag: trimmedLiveTag, side: liveSide) != nil else { return }
         write(.startWeight)
         measuring = true
         status = .measuring
@@ -185,12 +244,74 @@ final class TindeqManager: NSObject {
         pushForceBeat()
     }
 
-    func stop() -> StoppedRecording? {
+    /// Starts the Progressor's weight stream while leaving `measuring` false.
+    /// `handleNotification` feeds these samples to the Core state machine but
+    /// does not append them to `samples`; the claimed Start transition resets
+    /// the buffer/t0 and only then promotes the stream to a recording.
+    func armHandsFree() {
+        guard status == .connected, !handsFreeRequested, !saving, !trimmedLiveTag.isEmpty else { return }
+        savedMsgGeneration += 1
+        savedMsg = nil
+        handsFreeRequested = true
+        handsFreeState = armedHandsFreeForce() // synchronous control claim
+        armedStreamStartedAtUs = nil
+        repClaims.discard()
+        resetRecordingBuffer()
+        write(.startWeight)
+        scheduleArmTimeout()
+        pushForceBeat() // armed intentionally mirrors as "connected"
+    }
+
+    /// Cancels an armed wait or prevents a post-save re-arm. It never discards
+    /// an active recording; the measuring screen owns Stop & Save.
+    func cancelHandsFree() {
+        let wasArmedStream: Bool
+        switch handsFreeState {
+        case .armed, .waitingForSlack, .recording: wasArmedStream = !measuring
+        case .idle, .stopping: wasArmedStream = false
+        }
+        handsFreeRequested = false
+        handsFreeState = idleHandsFreeForce()
+        armedStreamStartedAtUs = nil
+        armTimeoutTimer?.invalidate()
+        armTimeoutTimer = nil
+        if wasArmedStream {
+            write(.stop)
+            resetRecordingBuffer()
+            pushForceBeat()
+        }
+    }
+
+    /// Stop and persistence share one synchronous claim. Both an automatic
+    /// release and the Stop & Save button enter here; only the first can take
+    /// `repClaims.active`, and that happens before the Task/await below.
+    func stopAndSave(endMs: Double? = nil) {
+        guard let claim = repClaims.claimStop() else { return }
+        // Only release detection supplies its below-threshold start time;
+        // button and 30-minute-cap stops use the nil default.
+        let afterRelease = endMs != nil
+        if handsFreeRequested { handsFreeState = .stopping }
+        guard let summary = stopTransport(endMs: endMs) else {
+            if handsFreeRequested, transportConnected {
+                rearmHandsFreeAfterSave(afterRelease: afterRelease)
+            }
+            return
+        }
+        persistRecording(
+            summary,
+            claim: claim,
+            note: "",
+            rearmHandsFree: handsFreeRequested,
+            rearmAfterRelease: afterRelease
+        )
+    }
+
+    private func stopTransport(endMs: Double? = nil) -> StoppedRecording? {
         measuring = false
         stopUITimer()
         write(.stop)
-        status = peripheral != nil ? .connected : .idle
-        guard let summary = makeSummary() else { return nil }
+        status = transportConnected ? .connected : .idle
+        guard let summary = makeSummary(endMs: endMs) else { return nil }
         currentKg = 0
         peakKg = summary.peakKg
         elapsedMs = Double(summary.durationMs)
@@ -198,13 +319,14 @@ final class TindeqManager: NSObject {
         return summary
     }
 
-    /// Rounding/derivation shared by `stop()` and the disconnect-salvage path
+    /// Rounding/derivation shared by `stopTransport()` and the disconnect-salvage path
     /// (issue #151) so a recovered rep looks identical to a manually-stopped
     /// one: t rounded to ms int, kg to 2 dp, duration/peak/avg from the same
     /// samples.
-    private func makeSummary() -> StoppedRecording? {
-        guard !samples.isEmpty else { return nil }
-        let rounded = samples.map { (t: ($0.t).rounded(), kg: ($0.kg * 100).rounded() / 100) }
+    private func makeSummary(endMs: Double? = nil) -> StoppedRecording? {
+        let included = endMs.map { end in samples.filter { $0.t <= end } } ?? samples
+        guard !included.isEmpty else { return nil }
+        let rounded = included.map { (t: ($0.t).rounded(), kg: ($0.kg * 100).rounded() / 100) }
         let kgs = rounded.map(\.kg)
         return StoppedRecording(
             durationMs: Int(rounded.last!.t),
@@ -224,6 +346,7 @@ final class TindeqManager: NSObject {
     // MARK: Internals
 
     private func write(_ cmd: Tindeq.Cmd) {
+        commandWriter?(cmd)
         guard let p = peripheral, let c = controlChar else { return }
         p.writeValue(Data([cmd.rawValue]), for: c, type: .withResponse)
     }
@@ -250,7 +373,15 @@ final class TindeqManager: NSObject {
             self.beatTick += 1
             if self.beatTick % 5 == 0 { self.pushForceBeat() }
             if TindeqRecordingLimit.shouldStop(elapsedMs: last.t), self.measuring {
-                _ = self.stop()
+                if self.handsFreeRequested {
+                    self.stopAndSave()
+                } else {
+                    // Preserve the pre-existing manual cap behavior: it stops
+                    // the stream and returns to setup without inventing a
+                    // save action the user did not tap.
+                    self.repClaims.discard()
+                    _ = self.stopTransport()
+                }
             }
         }
     }
@@ -315,19 +446,212 @@ final class TindeqManager: NSObject {
         uiTimer = nil
     }
 
-    private func handleNotification(_ data: Data) {
+    private var trimmedLiveTag: String {
+        liveTag.trimmingCharacters(in: .whitespaces)
+    }
+
+    private var isWaitingForHandsFreePull: Bool {
+        switch handsFreeState {
+        case .armed, .waitingForSlack: return true
+        case .idle, .recording, .stopping: return false
+        }
+    }
+
+    private func resetRecordingBuffer() {
+        samples.removeAll()
+        t0us = nil
+        lastBeatT = nil
+        needsBackfill = true
+        currentKg = 0
+        peakKg = 0
+        elapsedMs = 0
+        errorMsg = nil
+    }
+
+    private func scheduleArmTimeout() {
+        armTimeoutTimer?.invalidate()
+        guard armTimeoutSeconds > 0 else { return }
+        // Unlike the UI timer, the Progressor's ~80 Hz weight notifications
+        // remain live for the whole armed wait. Bound that radio/CPU duty to
+        // ten idle minutes instead of silently streaming until disconnect.
+        armTimeoutTimer = Timer.scheduledTimer(withTimeInterval: armTimeoutSeconds, repeats: false) { [weak self] _ in
+            guard let self, self.handsFreeRequested, self.isWaitingForHandsFreePull else { return }
+            self.cancelHandsFree()
+            self.savedMsg = "Hands-free disarmed after 10 min idle"
+            self.scheduleSavedMsgDismiss()
+        }
+    }
+
+    private func beginArmedRecording(with first: TindeqFrame.WeightSample) {
+        armTimeoutTimer?.invalidate()
+        armTimeoutTimer = nil
+        resetRecordingBuffer()
+        guard !trimmedLiveTag.isEmpty else {
+            cancelHandsFree()
+            savedMsg = "Pick an exercise to start"
+            scheduleSavedMsgDismiss()
+            return
+        }
+        guard repClaims.begin(tag: trimmedLiveTag, side: liveSide) != nil else {
+            cancelHandsFree()
+            return
+        }
+        t0us = first.us
+        samples.append((t: 0, kg: Double(first.kg)))
+        measuring = true
+        status = .measuring
+        startUITimer()
+        pushForceBeat()
+    }
+
+    private func rearmHandsFreeAfterSave(afterRelease: Bool) {
+        guard handsFreeRequested, transportConnected, status == .connected, !finishAfterSaves else {
+            handsFreeState = idleHandsFreeForce()
+            return
+        }
+        // Automatic release has already proved 1.5 s <= stopKg, so requiring
+        // another slack sample after the stop/save/restart dark window can
+        // silently miss a fast next rep. Manual/cap stops have no such proof
+        // and must still gate the same continuous load before re-arming.
+        handsFreeState = afterRelease ? armedHandsFreeForce() : rearmedHandsFreeForce()
+        armedStreamStartedAtUs = nil
+        resetRecordingBuffer()
+        write(.startWeight)
+        scheduleArmTimeout()
+        pushForceBeat()
+    }
+
+    private func clearHandsFreeAfterTransportLoss() {
+        handsFreeRequested = false
+        handsFreeState = idleHandsFreeForce()
+        armedStreamStartedAtUs = nil
+        armTimeoutTimer?.invalidate()
+        armTimeoutTimer = nil
+    }
+
+    private func persistRecording(
+        _ summary: StoppedRecording,
+        claim: HandsFreeForceRepClaim,
+        note: String,
+        rearmHandsFree: Bool,
+        rearmAfterRelease: Bool = false,
+        lostSavedMessage: String = "Rep not saved — try pulling again",
+        lostErrorMessage: String? = nil,
+        rememberSelection: Bool = true
+    ) {
+        // Session id + immutable label/id snapshot are claimed before Task.
+        let groupId = ensureSession()
+        let row = Repo.makeTindeqRecordingRow(
+            summary,
+            id: claim.id,
+            note: note,
+            tag: claim.tag,
+            side: claim.side,
+            groupId: groupId
+        )
+        saveOperationsInFlight += 1
+        saving = true
+        savedMsg = "Saving…"
+        Task { @MainActor in
+            let outcome = await recordingQueue.enqueue(PendingTindeqRecording(row: row))
+            if outcome == .lost {
+                savedMsg = lostSavedMessage
+                if let lostErrorMessage { errorMsg = lostErrorMessage }
+                RecordingLossNotice.record()
+            } else {
+                let tagLabel = claim.tag.isEmpty ? "" : " · \(claim.tag)"
+                savedMsg = String(format: "Saved · %.1f kg%@", summary.peakKg, tagLabel)
+                sessionCount += 1
+                recordRepDepletion(
+                    peakKg: summary.peakKg,
+                    durationMs: summary.durationMs,
+                    tag: claim.tag
+                )
+                if rememberSelection {
+                    UserDefaults.standard.set(claim.tag, forKey: "lastTindeqTag")
+                    UserDefaults.standard.set(claim.side, forKey: "lastTindeqSide")
+                }
+            }
+            saveOperationsInFlight -= 1
+            saving = saveOperationsInFlight > 0
+            scheduleSavedMsgDismiss()
+
+            if finishAfterSaves, saveOperationsInFlight == 0 {
+                logSessionAfterPendingSaves()
+            } else if rearmHandsFree {
+                rearmHandsFreeAfterSave(afterRelease: rearmAfterRelease)
+            }
+        }
+    }
+
+    private func scheduleSavedMsgDismiss() {
+        savedMsgGeneration += 1
+        let generation = savedMsgGeneration
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            if generation == savedMsgGeneration { savedMsg = nil }
+        }
+    }
+
+    func handleNotification(_ data: Data) {
         switch parseTindeqNotification(data) {
         case .weight(let incoming):
-            guard measuring else { return }
-            for s in incoming {
-                if t0us == nil { t0us = s.us }
-                let t = Double(s.us &- (t0us ?? 0)) / 1000.0
-                samples.append((t: t, kg: Double(s.kg)))
+            // THE BLOCKER path sits alongside — and before — the original
+            // manual guard. Armed samples reach Core but never the buffer.
+            if !measuring, handsFreeRequested, isWaitingForHandsFreePull {
+                handleArmedSamples(incoming)
+                return
             }
+            guard measuring else { return } // idle noise stays out of manual recordings
+            handleMeasuringSamples(incoming)
         case .lowBattery:
             lowBattery = true
         case .response, .unknown:
             break
+        }
+    }
+
+    private func handleArmedSamples(_ incoming: [TindeqFrame.WeightSample]) {
+        for (index, sample) in incoming.enumerated() {
+            if armedStreamStartedAtUs == nil { armedStreamStartedAtUs = sample.us }
+            let armedMs = Double(sample.us &- (armedStreamStartedAtUs ?? sample.us)) / 1000
+            if armTimeoutSeconds > 0, armedMs >= armTimeoutSeconds * 1000 {
+                cancelHandsFree()
+                savedMsg = "Hands-free disarmed after 10 min idle"
+                scheduleSavedMsgDismiss()
+                return
+            }
+            let stepped = stepHandsFreeForce(
+                handsFreeState,
+                atMs: Double(sample.us) / 1000,
+                kg: Double(sample.kg)
+            )
+            handsFreeState = stepped.state
+            guard stepped.action == .start else { continue }
+            beginArmedRecording(with: sample)
+            // A BLE notification can batch several samples. Once this sample
+            // claims Start, capture only the later samples from the same frame.
+            if measuring, index + 1 < incoming.count {
+                handleMeasuringSamples(Array(incoming.dropFirst(index + 1)))
+            }
+            return
+        }
+    }
+
+    private func handleMeasuringSamples(_ incoming: [TindeqFrame.WeightSample]) {
+        for sample in incoming {
+            if t0us == nil { t0us = sample.us }
+            let t = Double(sample.us &- (t0us ?? 0)) / 1000
+            samples.append((t: t, kg: Double(sample.kg)))
+            guard handsFreeRequested, case .recording(let belowSinceMs) = handsFreeState else {
+                continue // unchanged manual buffering path
+            }
+            let stepped = stepHandsFreeForce(handsFreeState, atMs: t, kg: Double(sample.kg))
+            handsFreeState = stepped.state // claim before stop/save Task
+            if stepped.action == .stop {
+                stopAndSave(endMs: belowSinceMs)
+                return
+            }
         }
     }
 }
@@ -340,9 +664,11 @@ extension TindeqManager: CBCentralManagerDelegate {
         case .poweredOn:
             if status == .scanning { startScanIfPoweredOn() }
         case .unsupported, .unauthorized:
+            clearHandsFreeAfterTransportLoss()
             status = .unsupported
             errorMsg = "Bluetooth unavailable"
         case .poweredOff:
+            clearHandsFreeAfterTransportLoss()
             status = .idle
             errorMsg = "Bluetooth is off"
         default:
@@ -373,6 +699,7 @@ extension TindeqManager: CBCentralManagerDelegate {
         error: Error?
     ) {
         self.peripheral = nil
+        clearHandsFreeAfterTransportLoss()
         status = .idle
         errorMsg = error?.localizedDescription ?? "Connection failed"
     }
@@ -382,14 +709,23 @@ extension TindeqManager: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
+        handleTransportDisconnect(error: error)
+    }
+
+    /// Shared by the CoreBluetooth delegate and watch target tests. Keeping
+    /// the salvage/auto-log flow behind this seam lets tests exercise the
+    /// actual manager logic without constructing an Apple-owned CBPeripheral.
+    func handleTransportDisconnect(error: Error?, wasIntentionalOverride: Bool? = nil) {
         // Keep samples so an interrupted recording can still be saved.
         stopUITimer()
         let wasMeasuring = measuring
         measuring = false
+        clearHandsFreeAfterTransportLoss()
         self.peripheral = nil
+        fakeTransportConnected = false
         controlChar = nil
         status = .idle
-        let wasIntentional = intentionalDisconnect
+        let wasIntentional = wasIntentionalOverride ?? intentionalDisconnect
         intentionalDisconnect = false
         if error != nil { errorMsg = "Device disconnected" }
         // Finish-on-disconnect: an unplanned drop mid-session with saved reps
@@ -404,11 +740,14 @@ extension TindeqManager: CBCentralManagerDelegate {
         ), let summary = makeSummary() {
             salvageInterruptedRecording(summary)
         } else if !wasIntentional, sessionId != nil, sessionCount > 0 {
+            repClaims.discard()
             // #280: the drop used to raise the finish prompt at the root. It
             // now logs the session itself at the predicted RPE — the user may
             // be nowhere near the watch when the Progressor dies, and a
             // prompt nobody sees orphans the session.
             logSessionNow()
+        } else {
+            repClaims.discard()
         }
         pushForceBeat()
     }
@@ -419,46 +758,40 @@ extension TindeqManager: CBCentralManagerDelegate {
     /// reads identically in History. Claims `samples` immediately so a late
     /// duplicate delegate callback can't double-save, then queues on the
     /// existing per-connect session group (minting one if this is the first
-    /// rep of the connect) just like `ForceGaugeView.saveStop()` — #486:
+    /// rep of the connect) through the same manager-owned save path — #486:
     /// persist-first + idempotent upsert, so a BLE drop that ALSO coincides
     /// with no network doesn't lose the rep on top of the connection. Does
     /// NOT show any discard/save prompt — since #280 the salvaged rep is
     /// folded into the session's depletion and the session logs itself,
     /// exactly as a manual Finish would.
-    private func salvageInterruptedRecording(_ summary: StoppedRecording) {
+    func salvageInterruptedRecording(_ summary: StoppedRecording) {
+        guard let claim = repClaims.claimStop() else {
+            // This invariant currently follows from `measuring`: every real
+            // recording begins a claim first. If later cleanup breaks it, a
+            // recovered hold must still be reported and prior saved reps must
+            // still be logged instead of disappearing behind a silent return.
+            RecordingLossNotice.record()
+            logSessionNow()
+            // `logSessionNow()` may disarm an armed stream, whose buffer reset
+            // clears errorMsg. Set this after cleanup so the loud report stays.
+            errorMsg = "Interrupted force rep was not saved — recovery state was missing."
+            return
+        }
         currentKg = 0
         peakKg = summary.peakKg
         elapsedMs = Double(summary.durationMs)
         samples.removeAll()
-        let groupId = ensureSession()
-        let tag = liveTag
-        let side = liveSide
-        let row = Repo.makeTindeqRecordingRow(
+        persistRecording(
             summary,
-            id: UUID(),
+            claim: claim,
             note: "Recovered after connection loss",
-            tag: tag,
-            side: side,
-            groupId: groupId
+            rearmHandsFree: false,
+            lostSavedMessage: "Recovered rep was not saved",
+            lostErrorMessage: "Rep not saved — couldn't write to the watch.",
+            rememberSelection: false
         )
-        Task { @MainActor in
-            let outcome = await PendingRecordingQueue.shared.enqueue(PendingTindeqRecording(row: row))
-            if outcome == .lost {
-                // Both disk persistence and the in-memory direct-upload
-                // fallback failed — there is no underlying network error to
-                // route through `ErrorText.friendly` here (unlike a bare
-                // insert, `enqueue` never throws); say so plainly instead.
-                errorMsg = "Rep not saved — couldn't write to the watch."
-                RecordingLossNotice.record()
-                if sessionCount == 0 { clearSession() }
-            } else {
-                sessionCount += 1
-                recordRepDepletion(peakKg: summary.peakKg, durationMs: summary.durationMs, tag: tag)
-            }
-            // Log whatever the session ended up with — including the reps
-            // salvaged before the drop when this one was truly lost (#280).
-            logSessionNow()
-        }
+        // Defer session logging until this save is durable or honestly lost.
+        logSessionNow()
     }
 }
 

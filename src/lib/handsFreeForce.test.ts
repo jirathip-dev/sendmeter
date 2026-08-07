@@ -3,6 +3,7 @@ import {
   armedHandsFreeForce,
   handsFreeForceAtInactiveStatus,
   idleHandsFreeForce,
+  rearmedHandsFreeForce,
   stepHandsFreeForce,
   type HandsFreeForceConfig,
   type HandsFreeForceState,
@@ -40,6 +41,23 @@ describe("hands-free Force control (#400)", () => {
     ({ state } = step(state, 700, 2.2));
     expect(step(state, 1_299, 2.2).action).toBeNull();
     expect(step(state, 1_300, 2.2)).toEqual({
+      state: { phase: "recording", belowSinceMs: null },
+      action: "start",
+    });
+  });
+
+  it("requires slack before a post-save re-arm can recognize another pull", () => {
+    let state = rearmedHandsFreeForce();
+    ({ state } = step(state, 0, 35));
+    expect(step(state, 10_000, 35)).toEqual({
+      state: { phase: "waitingForSlack" },
+      action: null,
+    });
+
+    ({ state } = step(state, 10_100, 0.5));
+    expect(state).toEqual({ phase: "armed", aboveSinceMs: null });
+    ({ state } = step(state, 10_200, 3));
+    expect(step(state, 10_800, 3)).toEqual({
       state: { phase: "recording", belowSinceMs: null },
       action: "start",
     });
