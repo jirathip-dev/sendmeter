@@ -96,4 +96,33 @@ final class HandsFreeForceTests: XCTestCase {
         )
     }
 
+    func testTwoNearSimultaneousStopClaimsSaveExactlyOnce() async {
+        let harness = await MainActor.run { ClaimBeforeAwaitHarness() }
+        await MainActor.run { harness.begin() }
+
+        let first = Task { @MainActor in await harness.stopAndSave() }
+        let second = Task { @MainActor in await harness.stopAndSave() }
+        await first.value
+        await second.value
+
+        let savedCount = await MainActor.run { harness.savedCount }
+        XCTAssertEqual(savedCount, 1)
+    }
+}
+
+@MainActor
+private final class ClaimBeforeAwaitHarness {
+    private var claims = HandsFreeForceRepClaims()
+    private(set) var savedCount = 0
+
+    func begin() {
+        XCTAssertNotNil(claims.begin(tag: "Half crimp", side: "left"))
+    }
+
+    func stopAndSave() async {
+        // Direct Core coverage for Linux CI: consume synchronously, then await.
+        guard claims.claimStop() != nil else { return }
+        await Task.yield()
+        savedCount += 1
+    }
 }

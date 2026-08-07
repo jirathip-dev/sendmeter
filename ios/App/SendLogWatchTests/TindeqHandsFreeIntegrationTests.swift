@@ -49,7 +49,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertFalse(first.samples.contains { $0[1] == 50 }, "armed samples must never leak into the rep")
         XCTAssertTrue(manager.predictedRPE.fromCurve)
         XCTAssertGreaterThan(manager.predictedRPE.load ?? 0, 0)
-        XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
+        XCTAssertEqual(manager.handsFreeState, .armed(aboveSinceMs: nil))
         XCTAssertEqual(commands, [.startWeight, .stop, .startWeight])
 
         // Turn hands-free off and prove the pre-existing manual path still
@@ -165,10 +165,12 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         try await waitUntil { manager.sessionCount == 1 && !manager.saving }
         let rowsAfterRace = await recordings.count()
         XCTAssertEqual(rowsAfterRace, 1)
-        XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
+        XCTAssertEqual(manager.handsFreeState, .armed(aboveSinceMs: nil))
 
-        // A real unload followed by another stable pull starts rep 2.
-        feed(manager, [(0.5, 2_400_000), (3, 2_500_000), (3, 3_100_000), (35, 3_200_000)])
+        // Auto-release already proved 1.5 s of slack. Even if the next
+        // delivered sample is a fresh pull after the save/restart dark window,
+        // the complete 600 ms stability window must start rep 2.
+        feed(manager, [(3, 2_500_000), (3, 3_100_000), (35, 3_200_000)])
         XCTAssertEqual(manager.status, .measuring)
 
         // The climber taps while still hanging. Persistence can resolve before
@@ -218,6 +220,8 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
             sessionQueue: sessions,
             commandWriter: { _ in }
         )
+        manager.liveTag = "Open hand"
+        manager.armHandsFree()
         let groupId = manager.ensureSession()
         manager.sessionCount = 1
 

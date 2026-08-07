@@ -287,12 +287,23 @@ final class TindeqManager: NSObject {
     /// `repClaims.active`, and that happens before the Task/await below.
     func stopAndSave(endMs: Double? = nil) {
         guard let claim = repClaims.claimStop() else { return }
+        // Only release detection supplies its below-threshold start time;
+        // button and 30-minute-cap stops use the nil default.
+        let afterRelease = endMs != nil
         if handsFreeRequested { handsFreeState = .stopping }
         guard let summary = stopTransport(endMs: endMs) else {
-            if handsFreeRequested, transportConnected { rearmHandsFreeAfterSave() }
+            if handsFreeRequested, transportConnected {
+                rearmHandsFreeAfterSave(afterRelease: afterRelease)
+            }
             return
         }
-        persistRecording(summary, claim: claim, note: "", rearmHandsFree: handsFreeRequested)
+        persistRecording(
+            summary,
+            claim: claim,
+            note: "",
+            rearmHandsFree: handsFreeRequested,
+            rearmAfterRelease: afterRelease
+        )
     }
 
     private func stopTransport(endMs: Double? = nil) -> StoppedRecording? {
@@ -493,15 +504,16 @@ final class TindeqManager: NSObject {
         pushForceBeat()
     }
 
-    private func rearmHandsFreeAfterSave() {
+    private func rearmHandsFreeAfterSave(afterRelease: Bool) {
         guard handsFreeRequested, transportConnected, status == .connected, !finishAfterSaves else {
             handsFreeState = idleHandsFreeForce()
             return
         }
-        // A manual Stop & Save can land while the climber is still loaded.
-        // Require one <= stopKg sample before this stream can recognize a new
-        // pull, so the same continuous hang cannot fabricate another rep.
-        handsFreeState = rearmedHandsFreeForce()
+        // Automatic release has already proved 1.5 s <= stopKg, so requiring
+        // another slack sample after the stop/save/restart dark window can
+        // silently miss a fast next rep. Manual/cap stops have no such proof
+        // and must still gate the same continuous load before re-arming.
+        handsFreeState = afterRelease ? armedHandsFreeForce() : rearmedHandsFreeForce()
         armedStreamStartedAtUs = nil
         resetRecordingBuffer()
         write(.startWeight)
@@ -522,6 +534,7 @@ final class TindeqManager: NSObject {
         claim: HandsFreeForceRepClaim,
         note: String,
         rearmHandsFree: Bool,
+        rearmAfterRelease: Bool = false,
         lostSavedMessage: String = "Rep not saved — try pulling again",
         lostErrorMessage: String? = nil,
         rememberSelection: Bool = true
@@ -566,7 +579,7 @@ final class TindeqManager: NSObject {
             if finishAfterSaves, saveOperationsInFlight == 0 {
                 logSessionAfterPendingSaves()
             } else if rearmHandsFree {
-                rearmHandsFreeAfterSave()
+                rearmHandsFreeAfterSave(afterRelease: rearmAfterRelease)
             }
         }
     }
@@ -757,9 +770,11 @@ extension TindeqManager: CBCentralManagerDelegate {
             // recording begins a claim first. If later cleanup breaks it, a
             // recovered hold must still be reported and prior saved reps must
             // still be logged instead of disappearing behind a silent return.
-            errorMsg = "Interrupted force rep was not saved — recovery state was missing."
             RecordingLossNotice.record()
             logSessionNow()
+            // `logSessionNow()` may disarm an armed stream, whose buffer reset
+            // clears errorMsg. Set this after cleanup so the loud report stays.
+            errorMsg = "Interrupted force rep was not saved — recovery state was missing."
             return
         }
         currentKg = 0
