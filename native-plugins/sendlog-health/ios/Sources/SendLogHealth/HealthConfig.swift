@@ -9,11 +9,15 @@ import Supabase
 /// src/lib/supabase.ts and the watch's SupabaseConfig.plist — safe to embed;
 /// RLS is the security boundary.
 ///
-/// NOTHING ELSE may live in this file (#502): Swift's `private` is
-/// file-scoped, so any neighbouring type here could reach the client. The
-/// pin in `src/lib/nativeAuthInvariants.test.ts` holds this file's whole
-/// declaration surface to an allow-list — `HealthSessionStore` moved to its
-/// own file for exactly that reason.
+/// NOTHING ELSE may live in this file (#502): the pin in
+/// `src/lib/nativeAuthInvariants.test.ts` holds this file's whole
+/// declaration surface to a two-line allow-list, which only works because
+/// the façade is all there is — `HealthSessionStore` moved to its own file
+/// so its members wouldn't read as offenders there. (`private` on a type
+/// member is NOT file-scoped — a neighbouring type here could not reach
+/// the client; compiler-verified in the #502 reviews. What does share it
+/// is an `extension HealthConfig` in this file, and any non-private
+/// `extension` line is flagged.)
 enum HealthConfig {
     // Simulator-only: localhost is meaningless on a physical device, so
     // Debug-on-device deliberately stays on the hosted project (test there

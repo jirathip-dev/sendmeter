@@ -46,30 +46,57 @@ import { describe, expect, it } from "vitest";
 /// now an allow-list over the façades' whole declaration surface rather
 /// than a hunt for one type annotation.
 ///
-/// The compiler's guarantee rests on three premises. Each is pinned below,
-/// and the pins are built so their failure modes point the right way: the
-/// load-bearing assertions are NEGATIVE offender hunts over RAW file text —
-/// no lexer, so nothing to silently desync, and the worst failure is a LOUD
-/// false positive on a comment that gets reworded, never a silent pass. The
-/// one POSITIVE match is line-anchored, because the #502 review (F2)
-/// demonstrated that a whole-file positive match is satisfiable by a comment
-/// quoting the expected phrase while the real declaration says something
-/// else — and even that positive is only a label: were it ever fooled, the
-/// allow-list below would still flag the real, non-private declaration.
+/// **The COMPILER is the guarantee. This file is a secondary net** — over
+/// the two façade files (where the compiler enforces nothing, because they
+/// hold the client legitimately) plus an identifier tripwire everywhere
+/// else. Nothing below seals anything on its own; the pins exist so that
+/// breaking a premise of the compiler argument is loud instead of silent,
+/// and they are certified only against the mutations that were actually
+/// run (listed per pin below and in HANDOFF.md), not against every
+/// spelling Swift permits.
+///
+/// This file has now failed FIVE rounds the same way (#488 rounds 0–3,
+/// #502 review R2-F1), every time because incidental text — a comment, a
+/// string literal, a URL — was allowed to participate in a decision about
+/// a DECLARATION: substrings fell to an alias; a comment stripper cut a
+/// line at a `//` inside a string; a hand-rolled tokenizer minted new
+/// defects; a whole-file positive match was satisfied by a comment; a
+/// `\bprivate\b` word-search over the raw line was disarmed by a trailing
+/// `// TODO: make private` comment. The standing rule for every matcher
+/// here: **incidental text may TRIP a check (a loud false positive, fixed
+/// by rewording), but must never be able to SATISFY one.** Write the
+/// mutation before the matcher.
+///
+/// The premises, and what pins them:
 ///
 /// 1. **Each façade file's declaration surface is exactly its allow-list.**
-///    Every line that declares anything reachable from outside the file —
-///    any `static` member (annotated, inferred, `var`, `func`, or
-///    split-modifier spelling), any neighbour/nested type, `extension`,
-///    `typealias`, or column-0 global — must be `private` or appear
-///    verbatim in `FACADES[].allowedLines`. The #502 review (F1) defeated
-///    the previous annotation-hunting pin with `static let shared = client`
-///    — type inferred, no `: SupabaseClient` text anywhere — re-opening
-///    `auth.session` with a clean compile and green pins; this scan does
-///    not look for the type at all. Each façade file contains nothing but
-///    the façade enum, because Swift's `private` is FILE-scoped: a
-///    neighbour type in the same file could reach the client legally
-///    (which is why `HealthSessionStore` lives in its own file).
+///    Any line carrying a declaration keyword (`static`, `class`,
+///    `struct`, `actor`, `enum`, `protocol`, `extension`, `typealias`) and
+///    any column-0 code line must BEGIN with `private` (position-anchored
+///    on the trimmed line — R2-F1's fix; column-0 lines get no private
+///    escape at all) or appear verbatim in `FACADES[].allowedLines`.
+///    Mutation-tested spellings that go red with file:line: inferred-type
+///    `static let shared = client` bare (review F1's shape), the same with
+///    a trailing "…not private…" comment and with a `"private"` string
+///    literal on the line (R2-F1's shapes), a computed `static var` with a
+///    trailing comment, a nested `enum Inner` and its member, a
+///    split-modifier `static` on its own line, a same-file
+///    `extension SupabaseService`, and a column-0 global. The legal
+///    `static private let` spelling reads as an offender — loud direction,
+///    reorder the modifiers. Spellings beyond these are NOT certified;
+///    a new declaration shape belongs in a claim only after a mutation
+///    shows it red. The line-anchored positive match for
+///    `private static let client: SupabaseClient` is a label on the same
+///    fact, not a second enforcement.
+///    Each façade file contains nothing but the façade enum — NOT because
+///    `private` is file-scoped (it is not: a neighbour type in the same
+///    file cannot reach the client, compiler-verified in both #502 review
+///    rounds), but because this pin holds the file's WHOLE surface to a
+///    two-line allow-list, which is only possible if the façade is all
+///    there is (`HealthSessionStore` moved out so its members wouldn't
+///    read as offenders). The same-file shape that genuinely shares the
+///    client is an `extension` of the façade type, and any non-private
+///    `extension` line is an offender here.
 /// 2. **There is no other client to reach.** The identifier
 ///    `SupabaseClient` appears nowhere in either guarded directory outside
 ///    the two façade files (raw text — a construction hidden inside a
@@ -95,24 +122,29 @@ import { describe, expect, it } from "vitest";
 /// in either directory, so any future match is dead code or an attack,
 /// never a false positive to engineer around.
 ///
-/// **What this arrangement does NOT cover, stated precisely (four earlier
+/// **What this arrangement does NOT cover, stated precisely (five earlier
 /// versions of this docstring overclaimed; every claim below is matched to
 /// a mutation that was actually run — see HANDOFF.md for the outputs):**
 ///
 /// - **The BODIES of the façades' members are trusted code.** The surface
-///   allow-list pins what the façades DECLARE, so a leaking declaration in
-///   any spelling goes red — but what an allowed or private member's body
-///   does is guarded only by the tokenized tripwires, which retain their
-///   known evasions there: `\#(…)` raw-string interpolation is blanked as
-///   opaque string content; a bare regex literal holding a quote can
-///   desync string pairing; `client.\n    auth` split across a newline has
-///   no `.auth` substring. An adversarial edit inside `makeClient()` (or
-///   the health façade's init closure) could hide `client.auth.…` from
-///   every automated check in this file. The guard is review of façade
-///   diffs — two small files whose only job is this invariant. Outside the
-///   façade files those same shapes are compile errors for the client path
-///   (mutation-verified in both #502 rounds) and raw-text-visible for the
-///   identifier pins.
+///   allow-list pins what the façades DECLARE (in the mutation-tested
+///   spellings enumerated in premise 1 — not "any spelling") — but what an
+///   allowed or private member's body does is guarded only by the
+///   tokenized tripwires, which retain their known evasions there:
+///   `\#(…)` raw-string interpolation is blanked as opaque string content;
+///   a bare regex literal holding a quote can desync string pairing;
+///   `client.\n    auth` split across a newline has no `.auth` substring.
+///   An adversarial edit inside `makeClient()` (or the health façade's
+///   init closure) could hide `client.auth.…` from every automated check
+///   in this file. The guard is review of façade diffs — two small files
+///   whose only job is this invariant. Outside the façade files those same
+///   shapes are compile errors for the client path (mutation-verified in
+///   both #502 rounds) and raw-text-visible for the identifier pins.
+/// - **Declaration spellings outside the tested set.** These are
+///   line-based raw-text checks; a spelling that puts a declaration on
+///   lines the matchers misread may pass silently — R2-F1 was exactly
+///   that, discovered by the reviewer, not by this list. The pin certifies
+///   the tested set; novelty is review's job.
 /// - **Name-free access.** These pins hunt identifiers on non-comment
 ///   lines. An accessor reached without its name ever appearing on one — a
 ///   future SDK API that returns an `AuthClient` under another name, or a
@@ -518,7 +550,7 @@ describe("the refreshing accessor is unreachable by construction (#502)", () => 
     expect(offenders).toEqual([]);
   });
 
-  it("each façade's declaration surface is exactly its allow-list — every other declaring line must be `private` (#502 review F1/F2)", () => {
+  it("each façade's declaration surface is exactly its allow-list — every other declaring line must BEGIN with `private` (#502 review F1/F2, R2-F1)", () => {
     // The pre-review pin hunted the type annotation `: SupabaseClient`, so a
     // façade edit `static let shared = client` — type INFERRED — re-exported
     // the client with a clean compile and green pins (review F1). This scan
@@ -529,17 +561,25 @@ describe("the refreshing accessor is unreachable by construction (#502)", () => 
     // - any line containing a declaration keyword that can widen the
     //   surface (`static` catches every enum member incl. split-modifier
     //   spellings; `class`/`struct`/`actor`/`enum`/`protocol`/`extension`/
-    //   `typealias` catch neighbour types, nested types, and aliases —
-    //   Swift's `private` is FILE-scoped, so a neighbour type in this file
-    //   could reach the client, which is why each façade file contains
-    //   nothing but the façade);
+    //   `typealias` catch nested types, aliases, and — the one same-file
+    //   shape that really does share the `private` client — an
+    //   `extension` of the façade type);
     // - any column-0 code line (file-scope `let leaked = client` or
     //   `func leak()` declares a reachable global without any keyword the
-    //   first trigger sees).
+    //   first trigger sees). Column-0 lines get NO private escape at all.
     // `//`-comment lines are skipped — real code cannot live on one; body
     // lines (indented `let`/`var` locals) carry none of the trigger words.
     // Enum stored instance properties are a compile error and a no-case
     // enum has no instances, so instance members don't need a trigger.
+    //
+    // The private test is POSITION-ANCHORED to the start of the trimmed
+    // line, not a word-search over the raw line: review R2-F1 disarmed the
+    // previous `\bprivate\b` test with a trailing `// TODO: make private`
+    // comment (and with a `"private"` string literal) — incidental text
+    // must never be able to SATISFY a check about a declaration. Swift
+    // puts the access modifier first in every spelling used here; the
+    // legal-but-unused `static private let` reads as an offender and gets
+    // its modifiers reordered — the loud direction.
     const SURFACE_TRIGGER = /\b(?:static|class|struct|actor|enum|protocol|extension|typealias)\b/;
     for (const { file, allowedLines } of FACADES) {
       const raw = readFileSync(file, "utf8");
@@ -548,7 +588,7 @@ describe("the refreshing accessor is unreachable by construction (#502)", () => 
         if (trimmed === "" || trimmed.startsWith("//")) return [];
         if (allowedLines.has(trimmed)) return [];
         const topLevelCode = /^\S/.test(line) && !/^(?:import\s|\}|#)/.test(line);
-        const declares = SURFACE_TRIGGER.test(line) && !/\bprivate\b/.test(line);
+        const declares = SURFACE_TRIGGER.test(line) && !/^private\s/.test(trimmed);
         if (!topLevelCode && !declares) return [];
         return [`${file.slice(REPO.length + 1)}:${i + 1}: ${trimmed}`];
       });

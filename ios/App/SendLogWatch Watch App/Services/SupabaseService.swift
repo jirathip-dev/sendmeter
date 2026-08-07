@@ -32,9 +32,12 @@ enum SupabaseService {
     /// it; the compiler enforces what #196's convention and #488's scans
     /// could not. The residual trusted surface is THIS FILE, which the
     /// (much smaller) text pin still scans — and NOTHING ELSE may live in
-    /// this file, because Swift's `private` is file-scoped: a neighbouring
-    /// type here could reach the client. The pin holds this file's whole
-    /// declaration surface to an allow-list.
+    /// this file: the pin holds the file's whole declaration surface to a
+    /// two-line allow-list, which only works if the façade is all there
+    /// is. (`private` on a type member is NOT file-scoped — a neighbouring
+    /// type here could not reach the client; compiler-verified in the #502
+    /// reviews. What does share it is an `extension SupabaseService` in
+    /// this file, and any non-private `extension` line is flagged.)
     ///
     /// The watch is handed a short-lived access token, keeps it in
     /// `WatchSessionStore`, and sends it as a bearer token. There is no

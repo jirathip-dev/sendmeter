@@ -15,12 +15,14 @@ import Supabase
 /// Reads must be synchronous: `HealthConfig`'s `accessToken` provider runs on
 /// every request, including on a background HealthKit wake.
 ///
-/// Lives in its own file on purpose (#502): `HealthConfig.swift` holds the
-/// `private` Supabase client, and Swift's `private` is file-scoped — any type
-/// sharing that file could reach the client, so the façade file contains the
-/// façade and nothing else, and the pin in
-/// `src/lib/nativeAuthInvariants.test.ts` holds its whole surface to an
-/// allow-list.
+/// Lives in its own file on purpose (#502): the pin in
+/// `src/lib/nativeAuthInvariants.test.ts` holds `HealthConfig.swift`'s whole
+/// declaration surface to a two-line allow-list — the façade and nothing
+/// else — and this class's members would all read as offenders there. The
+/// move also shrinks the trusted file review must read. (Its old spot was
+/// safe compiler-wise: `private` on a type member is not file-scoped, so
+/// this class never could reach the client — the #502 reviews verified
+/// that with compile probes.)
 final class HealthSessionStore: @unchecked Sendable {
     static let shared = HealthSessionStore()
 
