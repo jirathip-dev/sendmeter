@@ -269,11 +269,26 @@ function openOnce(factory: IDBFactory | null): Promise<RecordingDb | null> {
 /// caller's job is then to use the localStorage lane instead.
 ///
 /// Pass an explicit `factory` to bypass the module-level memo (tests).
+///
+/// #485 F9: `cached` memoizes the PROMISE, not the resolved value, so a plain
+/// `cached ??= openOnce(...)` would keep re-returning a promise that already
+/// resolved to `null` forever — a single transient blocked-open (another tab
+/// mid version-change, a slow disk) permanently downgrades the whole session
+/// to the localStorage lane, which #269 sized as a ~1.5 MB emergency lane,
+/// not a main store. So a `null` resolution clears `cached` itself (same
+/// self-healing shape `onversionchange`/`onclose` already use below for a
+/// db that opened fine and then went bad), and the NEXT call gets to try
+/// again instead of being stuck behind one bad attempt.
 export function openRecordingDb(
   factory?: IDBFactory | null,
 ): Promise<RecordingDb | null> {
   if (factory !== undefined) return openOnce(factory);
-  cached ??= openOnce(defaultFactory());
+  if (!cached) {
+    cached = openOnce(defaultFactory()).then((db) => {
+      if (!db) cached = null;
+      return db;
+    });
+  }
   return cached;
 }
 

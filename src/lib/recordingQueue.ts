@@ -412,16 +412,21 @@ export async function pendingRecordingsBreakdown(
 /// policy block above is the decision this carries out, and is where to look
 /// before calling it.
 ///
-/// `userId: null` clears EVERYTHING, unscoped — the shape `deleteAccount()`
-/// wants: the account being deleted has no server-side rows left to upload
-/// into, and account deletion is nuclear enough that clearing this device's
-/// whole local queue (rather than trying to attribute leftovers) is the
-/// existing, deliberate behavior, preserved as-is. A real `userId` (the
-/// normal sign-out path) scopes to that account plus unattributed legacy
-/// entries, the same "mine" rule `pendingRecordingsCount` uses — #484 F3:
-/// before this, the delete was always unscoped while the sign-out prompt's
-/// count became scoped, so "Delete N and sign out" could silently destroy
-/// another account's stranded recordings along with the N it named.
+/// `userId: null` clears EVERYTHING, unscoped. This used to be what
+/// `deleteAccount()` reached for on the theory that account deletion is
+/// nuclear enough to justify clearing the whole device queue — #492: that
+/// reasoning does not survive a shared or handed-down device, where the
+/// account being deleted is not the only one with recordings queued on it.
+/// `deleteAccount()` now passes the deleting user's own id, so this
+/// unscoped form is reached only when there is genuinely no signed-in user
+/// to attribute the clear to. A real `userId` (the normal sign-out path, and
+/// now the normal account-deletion path too) scopes to that account plus
+/// unattributed legacy entries, the same "mine" rule `pendingRecordingsCount`
+/// uses — #484 F3: before that, the delete was always unscoped while the
+/// sign-out prompt's count became scoped, so "Delete N and sign out" could
+/// silently destroy another account's stranded recordings along with the N
+/// it named. #492 is the same class of bug on the account-deletion path,
+/// one caller later.
 ///
 /// DO NOT CALL THIS DIRECTLY. `discardQueueOnUserSignOut` in `signOut.ts` is
 /// the only caller, because it is the only place that first checks the

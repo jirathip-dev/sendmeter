@@ -42,11 +42,25 @@ export async function updateSettings(s: UserSettings): Promise<void> {
 /// Deletes the auth user; every table cascades from auth.users, so all data
 /// goes with it. Required by App Store guideline 5.1.1(v).
 export async function deleteAccount(): Promise<void> {
+  // #492: capture the signed-in user's id BEFORE the delete RPC runs (and
+  // before signing out). This is what the discard below is scoped to —
+  // `supabase.auth.getUser()` after the RPC would be validating a JWT for a
+  // user row that no longer exists, and `null` here is what caused this
+  // account's deletion to wipe every OTHER account's queued recordings on
+  // the same device too (`clearRecordingQueue(null)` is an unscoped-wipe
+  // sentinel, not "this user"). `getSession()` is a local read — no extra
+  // round trip, same source `useAuth.ts`'s sign-out wrapper uses.
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const userId = session?.user.id ?? null;
   unwrap(await supabase.rpc("delete_account"));
   // Through the shared sign-out (#273), which marks the SIGNED_OUT as expected
   // rather than an incident (#202) — that used to be a second hand-rolled copy
   // of the pair. `discard` rather than `drain`: the rows this queue would
   // upload into no longer exist, so there is nothing to attempt and nothing to
-  // ask the user to keep.
-  await signOutUser({ userId: null, queue: "discard" });
+  // ask the user to keep. `userId` (not `null`) scopes the discard to just
+  // this account, the same "mine" rule `discardQueueOnUserSignOut` already
+  // applies on a normal sign-out — see its doc comment and `clearRecordingQueue`'s.
+  await signOutUser({ userId, queue: "discard" });
 }

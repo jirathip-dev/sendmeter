@@ -24,18 +24,45 @@ import { pendingRecordingsBreakdown } from "../lib/recordingQueue";
 /// drained in this tab), app foreground (a drain may have run while
 /// backgrounded, and on native the WebView can be suspended mid-drain), a
 /// change of account, and mount.
+/// A `refresh()` that only ever applies the LATEST in-flight read to
+/// `onValue` — #485 F6: `refresh` fires once per signal (mount, the
+/// module-level notification, foreground) with no sequencing between them,
+/// so a slow earlier call resolving AFTER a faster later one used to
+/// overwrite the fresh value with a stale one. `active` additionally covers
+/// a caller that has since unmounted, same as `subscribeToWatchInfo`'s
+/// `active` flag in `useWatchInfo.ts` (the same shape, extracted here so the
+/// ordering property is directly testable without a React renderer, which
+/// this repo has none of for hooks).
+export function makeSequencedRefresher<T>(
+  load: () => Promise<T>,
+  onValue: (v: T) => void,
+): { refresh: () => void; stop: () => void } {
+  let active = true;
+  let latestRequest = 0;
+  return {
+    refresh: () => {
+      if (!active) return;
+      const request = ++latestRequest;
+      // setState only ever inside the async callback — never synchronously in
+      // an effect body (react-compiler lint).
+      void load().then((v) => {
+        if (active && request === latestRequest) onValue(v);
+      });
+    },
+    stop: () => {
+      active = false;
+    },
+  };
+}
+
 export function usePendingUploads(userId: string): PendingUploadsBreakdown | null {
   const [breakdown, setBreakdown] = useState<PendingUploadsBreakdown | null>(null);
 
   useEffect(() => {
-    let alive = true;
-    function refresh() {
-      // setState only ever inside the async callback — never synchronously in
-      // an effect body (react-compiler lint).
-      void pendingRecordingsBreakdown(userId).then((b) => {
-        if (alive) setBreakdown(b);
-      });
-    }
+    const { refresh, stop } = makeSequencedRefresher(
+      () => pendingRecordingsBreakdown(userId),
+      setBreakdown,
+    );
     refresh();
     const unsubscribe = subscribePendingUploads(refresh);
     if (!Capacitor.isNativePlatform()) {
@@ -46,7 +73,7 @@ export function usePendingUploads(userId: string): PendingUploadsBreakdown | nul
       };
       document.addEventListener("visibilitychange", onVisible);
       return () => {
-        alive = false;
+        stop();
         unsubscribe();
         document.removeEventListener("visibilitychange", onVisible);
       };
@@ -55,7 +82,7 @@ export function usePendingUploads(userId: string): PendingUploadsBreakdown | nul
       if (isActive) refresh();
     });
     return () => {
-      alive = false;
+      stop();
       unsubscribe();
       void sub.then((h) => h.remove());
     };

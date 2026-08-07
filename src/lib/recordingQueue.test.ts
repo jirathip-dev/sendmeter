@@ -1106,7 +1106,7 @@ describe("clearRecordingQueue", () => {
       expect([...map.keys()]).toEqual([]);
     });
 
-    it("userId: null clears EVERYTHING, unscoped — the deliberate account-deletion shape", async () => {
+    it("userId: null clears EVERYTHING, unscoped — the no-known-user fallback shape", async () => {
       const storage = fakeStorage();
       const mine = queueOf("mine-1");
       const theirs = enqueueRecording([], rec("theirs-1"), "user-2", () => "t");
