@@ -111,9 +111,14 @@ above):
 **Error monitoring** (issues #227 and #382) covers uncaught JavaScript
 exceptions, React render errors, unhandled promise rejections, and a narrow set
 of handled session/workout failures after recovery is exhausted, processed by **Sentry**
-(`sentry.io`, Functional Software, Inc.), a **third-party processor** (Open-
-Meteo, covered by the Location row above, is another). `src/lib/monitoring.ts`
-is the only place Sentry is configured.
+(`sentry.io`, Functional Software, Inc.), one of **three** third-party
+processors the app sends anything to: Open-Meteo (weather lookups, covered by
+the Location row above), and Google Fonts (`fonts.googleapis.com` /
+`fonts.gstatic.com`, requested on every launch to load the app's typeface —
+receives the device's IP and user-agent, no account data). `src/lib/monitoring.ts`
+is the only place Sentry is configured. (Sign in with Apple makes Apple a
+fourth party on that login path; #496 tracks this checklist's separate false
+claim that Sign in with Apple isn't offered — not fixed here.)
 
 The bounded auth-diagnostics ring remains on-device in Preferences and is not
 uploaded or included in the App Privacy collected-data answers.
@@ -162,9 +167,11 @@ error monitoring only.
 > is stored on the user's own account row (see privacy policy) and never used for
 > advertising.
 > Crash/error diagnostics are processed by Sentry (sentry.io). Reports carry the
-> account's anonymous user id, the error and its stack trace — health data,
-> email and request contents are stripped before the report is sent, and there
-> is no analytics, advertising, or tracking SDK in the app.
+> account's anonymous user id, the error and its stack trace, plus basic
+> device/OS/app-version context and recent in-app activity (taps, in-app
+> navigation, and request URLs) — health data, email and request contents are
+> stripped before the report is sent, and there is no analytics, advertising,
+> or tracking SDK in the app.
 > Location is used only to fetch weather; coordinates are rounded to ~1km
 > before being sent to Open-Meteo, never stored or linked to the account.
 
