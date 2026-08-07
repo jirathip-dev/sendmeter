@@ -45,17 +45,31 @@ struct SystemQueueClock: QueueClock {
 /// shape, and computing it here keeps the classifier itself Foundation/
 /// Supabase-free and testable on Linux.
 enum UploadFailureMapping {
-    static func classify(
-        _ error: Error,
-        bundle: WorkoutSaveBundle
-    ) -> (stage: UploadStage?, outcome: UploadErrorOutcome, failure: UploadFailure) {
+    static func classify(_ error: Error, bundle: WorkoutSaveBundle) -> UploadClassification {
+        classify(error, hasNonPositiveDurationAttempt: bundle.attempts.contains { $0.durationS <= 0 })
+    }
+
+    /// #491: the variant for queue items with no known-permanent rejection
+    /// shape (gauge sessions, force recordings). The classifier's
+    /// `.quarantine` verdict additionally requires the `.climbAttempts`
+    /// stage plus the local zero-duration evidence — neither of which these
+    /// uploads can ever present — so items classified through here can only
+    /// leave the drain rotation via the bounded `.stuckRetrying` backstop,
+    /// never a first-attempt schema quarantine. That is deliberate, not a
+    /// gap: quarantining on the FIRST rejection is reserved for the one
+    /// failure shape that is positively proven permanent (#475 F12).
+    static func classify(_ error: Error) -> UploadClassification {
+        classify(error, hasNonPositiveDurationAttempt: false)
+    }
+
+    private static func classify(_ error: Error, hasNonPositiveDurationAttempt: Bool) -> UploadClassification {
         let staged = error as? StagedUploadError
         let underlying = staged?.underlying ?? error
         let failure = uploadFailure(from: underlying)
         let outcome = UploadErrorClassifier.classify(
             failure,
             stage: staged?.stage,
-            bundleHasNonPositiveDurationAttempt: bundle.attempts.contains { $0.durationS <= 0 }
+            bundleHasNonPositiveDurationAttempt: hasNonPositiveDurationAttempt
         )
         return (staged?.stage, outcome, failure)
     }

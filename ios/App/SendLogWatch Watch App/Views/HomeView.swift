@@ -28,9 +28,25 @@ import SwiftUI
 /// never swallowed" failure the notices exist to prevent. `LossNotice` below
 /// queues whatever `onAppear` consumed and a single `.alert` presents them
 /// one at a time, advancing on dismiss.
-private enum LossNotice {
+enum LossNotice {
     case gaugeSession
     case recording
+
+    /// #495 R4: `onAppear` used to ASSIGN the freshly consumed notices over
+    /// `lossQueue` — if an earlier notice was still waiting (its alert was
+    /// dismissed by navigation before anyone tapped OK), the assignment
+    /// silently dropped it: the durable flag had already been consumed, so
+    /// the loss was never presented anywhere. Same shape as the round-1
+    /// finding on #486 (a consumed-but-never-presented notice), one step
+    /// later in the pipeline. Merge instead: whatever is still waiting stays
+    /// at the front, newly consumed kinds append behind it. A kind already
+    /// waiting is not duplicated — the backing flags are one-shot booleans,
+    /// so any number of losses of one kind collapse to a single notice
+    /// anyway, and presenting it twice would claim two events we cannot
+    /// actually distinguish.
+    static func merged(existing: [LossNotice], consumed: [LossNotice]) -> [LossNotice] {
+        existing + consumed.filter { !existing.contains($0) }
+    }
 
     var title: String {
         switch self {
@@ -87,12 +103,18 @@ struct HomeView: View {
         }
         .navigationTitle("Sendmeter")
         .onAppear {
-            var notices: [LossNotice] = []
-            if GaugeSessionLossNotice.consume() { notices.append(.gaugeSession) }
-            if RecordingLossNotice.consume() { notices.append(.recording) }
-            guard !notices.isEmpty else { return }
-            lossQueue = notices
-            showLossAlert = true
+            var consumed: [LossNotice] = []
+            if GaugeSessionLossNotice.consume() { consumed.append(.gaugeSession) }
+            if RecordingLossNotice.consume() { consumed.append(.recording) }
+            // #495 R4: MERGE onto whatever is still waiting (see
+            // `LossNotice.merged`) — assigning here dropped an un-presented
+            // notice — and re-present whenever the queue is non-empty, even
+            // if nothing new was consumed this time: a navigation-dismissed
+            // alert left `showLossAlert` false with its notice still queued,
+            // which the old `guard !notices.isEmpty` return left stuck
+            // forever.
+            lossQueue = LossNotice.merged(existing: lossQueue, consumed: consumed)
+            if !lossQueue.isEmpty { showLossAlert = true }
         }
         .alert(activeLossNotice?.title ?? "", isPresented: $showLossAlert) {
             Button("OK", role: .cancel) {

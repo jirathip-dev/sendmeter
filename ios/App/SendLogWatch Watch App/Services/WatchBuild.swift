@@ -75,25 +75,32 @@ enum WatchBuild {
         }
     }
 
-    /// Count every queue's relevant total first so a fresh install reports
-    /// an honest zero rather than leaving `PendingSyncCache` unknown —
-    /// quarantine included (#475 F1), since this runs independently of (and
-    /// concurrently with) `OfflineQueue.shared.drain()` at launch (see
+    /// Every queue whose depth the phone should hear about (#491). A new
+    /// queue MUST be added here (and get its own `PendingSyncQueue` case) —
+    /// two structural guards replace the old "all four `async let`s must
+    /// stay in the tuple" comment, which was load-bearing exactly once and
+    /// then nearly lost in a merge: `PendingSyncCache` now refuses to report
+    /// a total until EVERY `PendingSyncQueue` case has published (a dropped
+    /// source reads as "not reported", never as an empty queue), and
+    /// `WatchQueueReportingTests` pins that this registry covers every case.
+    static let reportingQueues: [any QueueDepthReporting] = [
+        OfflineQueue.shared,
+        PendingSessionQueue.shared,
+        PendingRecordingQueue.shared,
+    ]
+
+    /// Count every queue's totals first so a fresh install reports an honest
+    /// zero rather than leaving `PendingSyncCache` unknown — quarantine
+    /// included (#475 F1), since this runs independently of (and
+    /// concurrently with) the per-queue `drain()`s at launch (see
     /// `SendLogWatchApp.swift`) and can't assume a drain pass has already
     /// populated it.
-    ///
-    /// All four `async let`s must stay in the tuple below. `PendingSyncCache`
-    /// sums over whatever reported, so a dropped one reads as zero rather
-    /// than as an error — it under-reports queue depth SILENTLY. This exact
-    /// hunk conflicted when the #475 (quarantine) and #486
-    /// (PendingRecordingQueue) waves were composed; taking either side alone
-    /// loses a queue.
     static func refreshAndReportQueueStatus() async {
-        async let workouts = OfflineQueue.shared.pendingCount()
-        async let quarantined = OfflineQueue.shared.quarantinedCount()
-        async let sessions = PendingSessionQueue.shared.pendingCount()
-        async let recordings = PendingRecordingQueue.shared.pendingCount()
-        _ = await (workouts, quarantined, sessions, recordings)
+        await withTaskGroup(of: Void.self) { group in
+            for queue in reportingQueues {
+                group.addTask { await queue.refreshReportedCounts() }
+            }
+        }
         await MainActor.run { reportQueueStatus() }
     }
 }

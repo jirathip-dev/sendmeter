@@ -23,6 +23,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Watch: an upload the server permanently rejects no longer blocks every queued force recording or gauge session behind it forever — after enough real rejections it is set aside (kept on the watch, retried again later) so the rest of the queue syncs; network outages and expired sign-ins still just wait and recover. A watch alert about a lost force rep can also no longer be silently skipped when another alert was already waiting.
 - Linking loose Force recordings to a session (the "link to this session" nudge, and History's "Assign to session") is now all-or-nothing — a failure partway through no longer leaves recordings regrouped without the session actually reflecting them.
 - Account: "Clear health data & resync" no longer shows a permanent "resync failed" warning for an account with no Health history to rebuild in the first place — it now says plainly that there was nothing to clear, instead of either claiming a resync it can't confirm or sending you to a "run it again" remedy that won't help. The success message on web now correctly says to open the iPhone app to resync instead of claiming this device will do it.
 - Restore the Tare button in the Force fullscreen gauge so a non-zero load-cell baseline can be zeroed again.

@@ -6,12 +6,17 @@ import Supabase
 
 /// #486 review F9: `PendingRecordingQueue` shipped with only Codable/id-
 /// passthrough coverage — nothing exercised `enqueue`, `drain`, `drainPass`
-/// ordering, the #158 account guard, or the `.lost` path, and the HANDOFF's
-/// claim that no injectable seam exists was true of this branch's base but
-/// false of the merged world (PR #482 ships exactly this shape for
-/// `OfflineQueue`). These exercise the REAL `drainPass`/`enqueue` control
-/// flow through the `uploader`/`baseDir` seam added alongside them, not a
-/// reimplementation of it.
+/// ordering, the #158 account guard, or the `.lost` path. These exercise the
+/// REAL control flow (since #491, `UploadQueueEngine`'s) through the
+/// `uploader`/`baseDir`/`fileIO` seams, not a reimplementation of it.
+///
+/// #491 additions: this queue now carries #475's retry ledger + quarantine
+/// (it used to `break` on ANY error, so one permanently-rejected recording
+/// parked the largest-payload queue forever), with the F11 exemption —
+/// transport and auth failures never advance the ledger — and the F12
+/// guarantee that a quarantined recording is retained and re-attempted.
+/// #495 R3: the eviction path (where both real #486 re-review defects lived,
+/// untested) gets behavioral coverage via the scripted `QueueFileIO` seam.
 final class PendingRecordingQueueTests: XCTestCase {
     private let testUserId = UUID()
     private var tempDir: URL!
@@ -68,15 +73,45 @@ final class PendingRecordingQueueTests: XCTestCase {
             .map(\.lastPathComponent)
     }
 
+    private func makeQueue(
+        uploader: ScriptedUploader,
+        clock: QueueClock = SystemQueueClock(),
+        sessionRelay: SessionRelayRequesting = NoopSessionRelay(),
+        fileIO: QueueFileIO = RealQueueFileIO(),
+        evictionReporter: EvictionReporting = CountingEvictionReporter()
+    ) -> PendingRecordingQueue {
+        PendingRecordingQueue(
+            uploader: uploader,
+            baseDir: tempDir,
+            clock: clock,
+            sessionRelay: sessionRelay,
+            scheduler: DiscardingScheduler(), // no real 15s timers leaking out of a test
+            fileIO: fileIO,
+            evictionReporter: evictionReporter
+        )
+    }
+
+    /// A server-evaluated rejection the classifier does not recognize as the
+    /// one proven-permanent shape — the exact "permanently-rejected force
+    /// recording" #491 is about. (Same SQLSTATE the workouts queue's schema
+    /// check uses, but with no `.climbAttempts` stage and no zero-duration
+    /// evidence it can only ever count toward the `.stuckRetrying` budget.)
+    private let permanentRejection = PostgrestError(
+        code: "23514",
+        message: "new row for relation \"tindeq_recordings\" violates check constraint \"tindeq_recordings_check\""
+    )
+
     // MARK: - enqueue: persistence is synchronous and observable before any drain runs
 
     func testEnqueuePersistsToDiskBeforeReturning() async throws {
         let id = UUID()
-        let queue = PendingRecordingQueue(uploader: ScriptedUploader(failing: [:]), baseDir: tempDir)
+        // persist() runs synchronously inside enqueue, before the background
+        // drain Task is even spawned — but that drain CAN win the race to
+        // delete the file before the assertion below, so uploads fail on
+        // transport to keep it on disk deterministically.
+        let queue = makeQueue(uploader: ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet)))
         let outcome = await queue.enqueue(makePending(id: id, enqueuedUserId: nil))
         XCTAssertEqual(outcome, .queued)
-        // persist() runs synchronously inside enqueue, before the background
-        // drain Task is even spawned — no race to win here.
         XCTAssertTrue(try filesOnDisk().contains("\(id.uuidString).json"))
     }
 
@@ -86,7 +121,7 @@ final class PendingRecordingQueueTests: XCTestCase {
         let id = UUID()
         try writeFile(makePending(id: id, enqueuedUserId: testUserId), createdAt: Date())
         let uploader = ScriptedUploader(failing: [:])
-        let queue = PendingRecordingQueue(uploader: uploader, baseDir: tempDir)
+        let queue = makeQueue(uploader: uploader)
 
         await queue.drain()
 
@@ -97,37 +132,6 @@ final class PendingRecordingQueueTests: XCTestCase {
         XCTAssertEqual(pending, 0)
     }
 
-    // MARK: - drain ordering + the documented head-of-line gap (issue #491)
-
-    /// #486 review F7 (deferred to #491, NOT fixed here): unlike a
-    /// post-#482 `OfflineQueue`, this queue has no quarantine — any failure
-    /// `break`s the whole pass, oldest-first, so a permanently-failing item
-    /// at the head blocks a healthy item behind it. This test PINS that
-    /// documented current behavior (so a future accidental "fix" that
-    /// silently changes it is caught) rather than asserting it as desirable.
-    func testOldestFirstOrderingAndTheDocumentedHeadOfLineGap() async throws {
-        let poisoned = UUID()
-        let healthy = UUID()
-        let base = Date(timeIntervalSince1970: 1_800_000_000)
-        try writeFile(makePending(id: poisoned, enqueuedUserId: testUserId), createdAt: base)
-        try writeFile(makePending(id: healthy, enqueuedUserId: testUserId), createdAt: base.addingTimeInterval(1))
-
-        let uploader = ScriptedUploader(failing: [poisoned: PostgrestError(code: "23514", message: "check violation")])
-        let queue = PendingRecordingQueue(uploader: uploader, baseDir: tempDir)
-
-        await queue.drain()
-
-        let uploaded = await uploader.uploadedIds
-        XCTAssertFalse(uploaded.contains(poisoned), "the oldest (failing) item is attempted first")
-        XCTAssertFalse(uploaded.contains(healthy), "#491: with no quarantine, the failing head blocks everything behind it")
-        // Both files remain — nothing is deleted on a failed attempt.
-        XCTAssertTrue(try filesOnDisk().contains("\(poisoned.uuidString).json"))
-        XCTAssertTrue(try filesOnDisk().contains("\(healthy.uuidString).json"))
-    }
-
-    /// The inverse ordering case: when the oldest item succeeds, the pass
-    /// continues on to the next one in the same drain — proving this isn't
-    /// a "stop after one item" limit, only a "stop on failure" one.
     func testMultipleHealthyItemsAllUploadInOnePass() async throws {
         let first = UUID()
         let second = UUID()
@@ -136,13 +140,155 @@ final class PendingRecordingQueueTests: XCTestCase {
         try writeFile(makePending(id: second, enqueuedUserId: testUserId), createdAt: base.addingTimeInterval(1))
 
         let uploader = ScriptedUploader(failing: [:])
-        let queue = PendingRecordingQueue(uploader: uploader, baseDir: tempDir)
+        let queue = makeQueue(uploader: uploader)
         await queue.drain()
 
         let uploaded = await uploader.uploadedIds
         XCTAssertTrue(uploaded.contains(first))
         XCTAssertTrue(uploaded.contains(second))
         XCTAssertEqual(try filesOnDisk().count, 0)
+    }
+
+    // MARK: - #491: the head-of-line gap is CLOSED — the #475 ledger applies here now
+
+    /// Replaces the pre-#491 pin of the documented gap (#486 review F7):
+    /// this used to assert that a permanently-failing head item blocks the
+    /// healthy item behind it FOREVER. With the ledger, a server-evaluated
+    /// rejection is bounded: below the threshold the pass still stops
+    /// (deliberately — oldest-first order is preserved through outages), and
+    /// on the threshold-reaching pass the poisoned recording is quarantined
+    /// as `.stuckRetrying` and the healthy one uploads in that SAME pass.
+    func testAServerRejectedRecordingEventuallyQuarantinesAndFreesTheQueueBehindIt() async throws {
+        let poisoned = UUID()
+        let healthy = UUID()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(makePending(id: poisoned, enqueuedUserId: testUserId), createdAt: now)
+        try writeFile(makePending(id: healthy, enqueuedUserId: testUserId), createdAt: now.addingTimeInterval(1))
+
+        let uploader = ScriptedUploader(failing: [poisoned: permanentRejection])
+        let queue = makeQueue(uploader: uploader, clock: FixedClock(now))
+
+        for _ in 0..<(QueueRetryPolicy.maxConsecutiveFailures - 1) {
+            await queue.drain()
+        }
+        var uploaded = await uploader.uploadedIds
+        XCTAssertFalse(uploaded.contains(healthy), "below the threshold the pass still stops oldest-first")
+        XCTAssertTrue(try filesOnDisk().contains("\(poisoned.uuidString).json"), "still pending short of the threshold")
+        XCTAssertTrue(try filesOnDisk().contains("\(poisoned.uuidString).retry"), "a server verdict must be accumulating in the ledger")
+
+        // The threshold-reaching pass.
+        await queue.drain()
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(poisoned.uuidString).quarantine"), "quarantined once the budget is spent")
+        XCTAssertFalse(remaining.contains("\(poisoned.uuidString).json"))
+        XCTAssertFalse(remaining.contains("\(poisoned.uuidString).retry"), "the ledger folds into the quarantine record")
+        uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(healthy), "the healthy recording is freed the same pass")
+        let quarantined = await queue.quarantinedCount()
+        XCTAssertEqual(quarantined, 1)
+    }
+
+    /// #475 F12 (constraint: retained and re-attemptable, never deleted): a
+    /// `.stuckRetrying` quarantine is a bet — after the long backoff the
+    /// recording is restored to the pending rotation with a fresh budget,
+    /// and uploads normally once whatever was wrong has healed.
+    func testAQuarantinedRecordingIsRetainedAndResurrectedAfterTheBackoff() async throws {
+        let poisoned = UUID()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(makePending(id: poisoned, enqueuedUserId: testUserId), createdAt: now)
+        let rejectingUploader = ScriptedUploader(failing: [poisoned: permanentRejection])
+        let rejectingQueue = makeQueue(uploader: rejectingUploader, clock: FixedClock(now))
+        for _ in 0..<QueueRetryPolicy.maxConsecutiveFailures {
+            await rejectingQueue.drain()
+        }
+        XCTAssertTrue(try filesOnDisk().contains("\(poisoned.uuidString).quarantine"), "retained on disk, never deleted")
+
+        // A relaunch after the backoff, with the server-side cause healed.
+        let healedUploader = ScriptedUploader(failing: [:])
+        let laterQueue = makeQueue(
+            uploader: healedUploader,
+            clock: FixedClock(now.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS + 1))
+        )
+        await laterQueue.drain()
+
+        let uploaded = await healedUploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(poisoned), "resurrected and uploaded in the same pass")
+        XCTAssertFalse(try filesOnDisk().contains("\(poisoned.uuidString).quarantine"))
+        XCTAssertFalse(try filesOnDisk().contains("\(poisoned.uuidString).json"))
+    }
+
+    // MARK: - #491 / #475 F11: only a server verdict advances the ledger
+
+    /// A pure transport failure (no network, a timeout) reached no server at
+    /// all — no matter how many passes it survives, the recording must stay
+    /// pending with NO ledger and NO quarantine: parking recovers when
+    /// connectivity returns; quarantine would not.
+    func testANetworkOutageNeverQuarantinesARecording() async throws {
+        let id = UUID()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(makePending(id: id, enqueuedUserId: testUserId), createdAt: now)
+        let uploader = ScriptedUploader(failing: [id: URLError(.notConnectedToInternet)])
+        let queue = makeQueue(uploader: uploader, clock: FixedClock(now))
+
+        for _ in 0..<(QueueRetryPolicy.maxConsecutiveFailures * 2) {
+            await queue.drain()
+        }
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(id.uuidString).json"), "must remain pending through any number of outage passes")
+        XCTAssertFalse(remaining.contains("\(id.uuidString).retry"), "an outage must not even accumulate a retry count")
+        XCTAssertFalse(remaining.contains("\(id.uuidString).quarantine"))
+    }
+
+    /// A 5xx delivered as a non-JSON body (#475 F17 — a gateway's error page
+    /// during a Supabase incident) is an outage, not a verdict.
+    func testA5xxOutageNeverQuarantinesARecording() async throws {
+        let id = UUID()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(makePending(id: id, enqueuedUserId: testUserId), createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            id: HTTPError(data: "<html>502 Bad Gateway</html>".data(using: .utf8)!, response: HTTPURLResponse(
+                url: URL(string: "https://example.com")!, statusCode: 502, httpVersion: nil, headerFields: nil
+            )!),
+        ])
+        let queue = makeQueue(uploader: uploader, clock: FixedClock(now))
+
+        for _ in 0..<(QueueRetryPolicy.maxConsecutiveFailures * 2) {
+            await queue.drain()
+        }
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(id.uuidString).json"))
+        XCTAssertFalse(remaining.contains("\(id.uuidString).retry"))
+        XCTAssertFalse(remaining.contains("\(id.uuidString).quarantine"))
+    }
+
+    /// A stale relayed token means the request was never evaluated under a
+    /// valid credential (#475 F11) — ledger untouched — AND the queue must
+    /// actually ask the phone for a fresh relay (#472b), which the pre-#491
+    /// copy of this queue never did: it recognized nothing and just broke
+    /// the pass, leaving recovery to the next foreground.
+    func testAStaleTokenNeverQuarantinesARecordingAndAsksThePhoneForARelay() async throws {
+        let id = UUID()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(makePending(id: id, enqueuedUserId: testUserId), createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            id: PostgrestError(code: "PGRST301", message: "No suitable key or wrong key type"),
+        ])
+        let relay = RecordingSessionRelay()
+        let queue = makeQueue(uploader: uploader, clock: FixedClock(now), sessionRelay: relay)
+
+        for _ in 0..<(QueueRetryPolicy.maxConsecutiveFailures * 2) {
+            await queue.drain()
+        }
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(id.uuidString).json"))
+        XCTAssertFalse(remaining.contains("\(id.uuidString).retry"), "a stale token is not evidence about the recording")
+        XCTAssertFalse(remaining.contains("\(id.uuidString).quarantine"))
+        let requestCount = await relay.requestCount
+        XCTAssertEqual(requestCount, QueueRetryPolicy.maxConsecutiveFailures * 2, "every stale-token pass must ask the phone (the seam throttles, not the queue)")
     }
 
     // MARK: - issue #158: an item queued under a different account never drains
@@ -154,12 +300,12 @@ final class PendingRecordingQueueTests: XCTestCase {
         let base = Date(timeIntervalSince1970: 1_800_000_000)
         // The mismatched item is OLDEST — if the guard used `break` instead
         // of `continue`, it would silently block the matching item behind it
-        // exactly like a real failure would (see the ordering test above).
+        // exactly like a real failure would.
         try writeFile(makePending(id: mismatched, enqueuedUserId: otherAccount), createdAt: base)
         try writeFile(makePending(id: matching, enqueuedUserId: testUserId), createdAt: base.addingTimeInterval(1))
 
         let uploader = ScriptedUploader(failing: [:])
-        let queue = PendingRecordingQueue(uploader: uploader, baseDir: tempDir)
+        let queue = makeQueue(uploader: uploader)
         await queue.drain()
 
         let uploaded = await uploader.uploadedIds
@@ -179,7 +325,7 @@ final class PendingRecordingQueueTests: XCTestCase {
         let otherAccount = UUID()
         try writeFile(makePending(id: UUID(), enqueuedUserId: otherAccount), createdAt: Date())
         try writeFile(makePending(id: UUID(), enqueuedUserId: nil), createdAt: Date())
-        let queue = PendingRecordingQueue(uploader: ScriptedUploader(failing: [:]), baseDir: tempDir)
+        let queue = makeQueue(uploader: ScriptedUploader(failing: [:]))
 
         let count = await queue.pendingCount()
         XCTAssertEqual(count, 1)
@@ -193,7 +339,7 @@ final class PendingRecordingQueueTests: XCTestCase {
         WatchSessionStore.shared.clear()
         let someAccount = UUID()
         try writeFile(makePending(id: UUID(), enqueuedUserId: someAccount), createdAt: Date())
-        let queue = PendingRecordingQueue(uploader: ScriptedUploader(failing: [:]), baseDir: tempDir)
+        let queue = makeQueue(uploader: ScriptedUploader(failing: [:]))
 
         let count = await queue.pendingCount()
         XCTAssertEqual(count, 1)
@@ -208,7 +354,7 @@ final class PendingRecordingQueueTests: XCTestCase {
         try Data().write(to: pendingDir)
         let id = UUID()
         let uploader = ScriptedUploader(failing: [:])
-        let queue = PendingRecordingQueue(uploader: uploader, baseDir: tempDir)
+        let queue = makeQueue(uploader: uploader)
 
         let outcome = await queue.enqueue(makePending(id: id, enqueuedUserId: nil))
 
@@ -221,7 +367,7 @@ final class PendingRecordingQueueTests: XCTestCase {
         try Data().write(to: pendingDir)
         let id = UUID()
         let uploader = ScriptedUploader(failing: [id: PostgrestError(code: "PGRST301", message: "stale token")])
-        let queue = PendingRecordingQueue(uploader: uploader, baseDir: tempDir)
+        let queue = makeQueue(uploader: uploader)
 
         let outcome = await queue.enqueue(makePending(id: id, enqueuedUserId: nil))
 
@@ -229,6 +375,131 @@ final class PendingRecordingQueueTests: XCTestCase {
         // to tell "durably queued" from "genuinely gone" apart from this
         // return value alone.
         XCTAssertEqual(outcome, .lost)
+    }
+
+    // MARK: - #495 R3: the eviction path, exercised behaviorally
+
+    /// The core #486 F5 policy through the real actor: a refused write
+    /// evicts the OLDEST other queued recordings, one per retry, until the
+    /// new one fits — and the destroyed recordings are reported (#264), not
+    /// passed off as housekeeping.
+    func testARefusedWriteEvictsOldestFirstUntilTheNewRecordingFitsAndReportsTheLoss() async throws {
+        let oldest = UUID()
+        let middle = UUID()
+        let newest = UUID()
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(makePending(id: oldest, enqueuedUserId: testUserId), createdAt: base)
+        try writeFile(makePending(id: middle, enqueuedUserId: testUserId), createdAt: base.addingTimeInterval(1))
+        try writeFile(makePending(id: newest, enqueuedUserId: testUserId), createdAt: base.addingTimeInterval(2))
+
+        let fileIO = ScriptedFileIO(refuseWrites: 2)
+        let reporter = CountingEvictionReporter()
+        // Uploads fail on transport so the post-enqueue background drain
+        // can't race the on-disk assertions below.
+        let uploader = ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet))
+        let queue = makeQueue(uploader: uploader, fileIO: fileIO, evictionReporter: reporter)
+
+        let incoming = UUID()
+        let outcome = await queue.enqueue(makePending(id: incoming, enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .queued, "the new recording wins once eviction has made room")
+        XCTAssertEqual(fileIO.removedFileNames, ["\(oldest.uuidString).json", "\(middle.uuidString).json"], "evicts strictly oldest-first, one per refused attempt")
+        let remaining = try filesOnDisk()
+        XCTAssertFalse(remaining.contains("\(oldest.uuidString).json"))
+        XCTAssertFalse(remaining.contains("\(middle.uuidString).json"))
+        XCTAssertTrue(remaining.contains("\(newest.uuidString).json"), "a newer recording than necessary is never evicted")
+        XCTAssertTrue(remaining.contains("\(incoming.uuidString).json"))
+        XCTAssertEqual(reporter.count, 1, "the evictions are one real loss event, reported exactly once")
+    }
+
+    /// The default reporter wiring: an eviction must land in the SAME
+    /// durable one-shot notice the `.lost` path uses, so Home presents it on
+    /// next appearance (#486 re-review R2 / CLAUDE.md #264).
+    func testEvictionRecordsTheDurableRecordingLossNotice() async throws {
+        _ = RecordingLossNotice.consume() // start from a clean flag
+        defer { _ = RecordingLossNotice.consume() } // never leak state to other tests
+        let oldest = UUID()
+        try writeFile(makePending(id: oldest, enqueuedUserId: testUserId), createdAt: Date())
+        let queue = PendingRecordingQueue(
+            uploader: ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet)),
+            baseDir: tempDir,
+            scheduler: DiscardingScheduler(),
+            fileIO: ScriptedFileIO(refuseWrites: 1)
+            // evictionReporter deliberately defaulted: this test pins the
+            // production wiring, not a stub.
+        )
+
+        _ = await queue.enqueue(makePending(id: UUID(), enqueuedUserId: testUserId))
+
+        XCTAssertTrue(RecordingLossNotice.consume(), "an evicted recording is a real loss and must set the durable notice")
+    }
+
+    /// #491: recordings now carry per-item `.retry` ledgers, so evicting a
+    /// recording must take its ledger with it — an orphaned ledger would sit
+    /// on disk forever (and would be misread as history if the same UUID
+    /// could ever recur).
+    func testEvictionAlsoRemovesTheEvictedRecordingsRetryLedger() async throws {
+        let oldest = UUID()
+        try writeFile(makePending(id: oldest, enqueuedUserId: testUserId), createdAt: Date())
+        let ledgerURL = pendingDir.appendingPathComponent("\(oldest.uuidString).retry")
+        try Data("{\"consecutiveFailures\":3,\"lastAttemptAt\":\"2026-08-06T00:00:00Z\"}".utf8).write(to: ledgerURL)
+
+        let queue = makeQueue(
+            uploader: ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet)),
+            fileIO: ScriptedFileIO(refuseWrites: 1)
+        )
+        let outcome = await queue.enqueue(makePending(id: UUID(), enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .queued)
+        let remaining = try filesOnDisk()
+        XCTAssertFalse(remaining.contains("\(oldest.uuidString).json"))
+        XCTAssertFalse(remaining.contains("\(oldest.uuidString).retry"), "the evicted recording's ledger must not be orphaned")
+    }
+
+    /// The refusal that persists after evicting EVERYTHING: the loop is
+    /// bounded (write attempts = other files + 1), the caller falls back to
+    /// the direct upload, and the destroyed queue is still reported — a
+    /// refusal at the end does not un-lose the files evicted on the way.
+    func testARefusalThatPersistsAfterEvictingEverythingFallsBackToDirectUpload() async throws {
+        let first = UUID()
+        let second = UUID()
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(makePending(id: first, enqueuedUserId: testUserId), createdAt: base)
+        try writeFile(makePending(id: second, enqueuedUserId: testUserId), createdAt: base.addingTimeInterval(1))
+
+        let fileIO = ScriptedFileIO(refuseAllWrites: true)
+        let reporter = CountingEvictionReporter()
+        let uploader = ScriptedUploader(failing: [:]) // direct upload succeeds
+        let queue = makeQueue(uploader: uploader, fileIO: fileIO, evictionReporter: reporter)
+
+        let incoming = UUID()
+        let outcome = await queue.enqueue(makePending(id: incoming, enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .uploadedDirect)
+        let uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(incoming))
+        XCTAssertEqual(fileIO.writeCalls, 3, "bounded: one attempt per possible eviction plus the first — never a spin")
+        XCTAssertEqual(reporter.count, 1, "the two evicted recordings are still a reported loss")
+        XCTAssertEqual(try filesOnDisk(), [], "everything evictable was destroyed and the new item never landed on disk")
+    }
+
+    /// #273: only user sign-out may delete a quarantined item — eviction
+    /// must never select a `.quarantine` file, even when it is the only
+    /// other file present and the write can therefore never be satisfied.
+    func testEvictionNeverTouchesQuarantineFiles() async throws {
+        try FileManager.default.createDirectory(at: pendingDir, withIntermediateDirectories: true)
+        let quarantined = pendingDir.appendingPathComponent("\(UUID().uuidString).quarantine")
+        try Data("preserved".utf8).write(to: quarantined)
+
+        let fileIO = ScriptedFileIO(refuseAllWrites: true)
+        let uploader = ScriptedUploader(failing: [:])
+        let queue = makeQueue(uploader: uploader, fileIO: fileIO)
+
+        let outcome = await queue.enqueue(makePending(id: UUID(), enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .uploadedDirect, "nothing evictable — straight to the direct-upload fallback")
+        XCTAssertTrue(fileIO.removedFileNames.isEmpty, "a quarantine file must never be selected for eviction")
+        XCTAssertTrue(try filesOnDisk().contains(quarantined.lastPathComponent))
     }
 
     // MARK: - #486 re-review R1: eviction must terminate even when removal itself fails
@@ -239,6 +510,8 @@ final class PendingRecordingQueueTests: XCTestCase {
     /// `removeItem`, the same way a real permissions/disk-pressure failure
     /// would). Before the fix this spun for 200,001 iterations / 59.6s with
     /// no exit; `enqueue` must now return well within the test timeout.
+    /// Kept on the REAL filesystem (default `RealQueueFileIO`) deliberately —
+    /// the scripted-IO twin of this case lives in `EvictingWriteTests`.
     func testWriteFailureWithAnUnremovableOlderFileTerminatesRatherThanHanging() async throws {
         let stuck = UUID()
         try writeFile(makePending(id: stuck, enqueuedUserId: testUserId), createdAt: Date())
@@ -252,7 +525,7 @@ final class PendingRecordingQueueTests: XCTestCase {
         }
 
         let id = UUID()
-        let queue = PendingRecordingQueue(uploader: ScriptedUploader(failing: [:]), baseDir: tempDir)
+        let queue = makeQueue(uploader: ScriptedUploader(failing: [:]))
 
         let expectation = expectation(description: "enqueue returns instead of hanging")
         Task {
@@ -271,16 +544,106 @@ final class PendingRecordingQueueTests: XCTestCase {
 
 private actor ScriptedUploader: TindeqRecordingUploading {
     private var failing: [UUID: Error]
+    private let failAllWith: Error?
     private(set) var uploadedIds: Set<UUID> = []
 
     init(failing: [UUID: Error]) {
         self.failing = failing
+        self.failAllWith = nil
+    }
+
+    init(failingAllWith error: Error) {
+        self.failing = [:]
+        self.failAllWith = error
     }
 
     func upload(_ row: TindeqRecordingInsert) async throws {
-        if let error = failing[row.id] {
-            throw error
-        }
+        if let failAllWith { throw failAllWith }
+        if let error = failing[row.id] { throw error }
         uploadedIds.insert(row.id)
+    }
+}
+
+private struct FixedClock: QueueClock {
+    let date: Date
+    init(_ date: Date) { self.date = date }
+    func now() -> Date { date }
+}
+
+private actor RecordingSessionRelay: SessionRelayRequesting {
+    private(set) var requestCount = 0
+    func requestSessionRelay() async { requestCount += 1 }
+}
+
+private struct NoopSessionRelay: SessionRelayRequesting {
+    func requestSessionRelay() async {}
+}
+
+/// Swallows backoff scheduling — these tests drive `drain()` directly and
+/// must not leak real 15s `Task.sleep` timers past the test's lifetime.
+private struct DiscardingScheduler: DrainScheduling {
+    nonisolated func scheduleRetry(after delay: TimeInterval, _ action: RetryAction) {}
+}
+
+/// Records evictions synchronously — `EvictionReporting.recordEviction` is
+/// called from inside the actor's synchronous persist path.
+private final class CountingEvictionReporter: EvictionReporting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _count = 0
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _count
+    }
+
+    func recordEviction() {
+        lock.lock()
+        _count += 1
+        lock.unlock()
+    }
+}
+
+/// #495 R3: scripts REFUSED writes (a full disk is not reproducible on the
+/// test host's real filesystem) while performing real removals, so the
+/// eviction loop's interplay with actual files stays honest.
+private final class ScriptedFileIO: QueueFileIO, @unchecked Sendable {
+    private let lock = NSLock()
+    private var refuseWritesRemaining: Int
+    private let refuseAllWrites: Bool
+    private var _writeCalls = 0
+    private var _removedFileNames: [String] = []
+
+    init(refuseWrites: Int = 0, refuseAllWrites: Bool = false) {
+        self.refuseWritesRemaining = refuseWrites
+        self.refuseAllWrites = refuseAllWrites
+    }
+
+    var writeCalls: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _writeCalls
+    }
+
+    var removedFileNames: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return _removedFileNames
+    }
+
+    func write(_ data: Data, to url: URL) throws {
+        lock.lock()
+        _writeCalls += 1
+        let refuse = refuseAllWrites || refuseWritesRemaining > 0
+        if refuseWritesRemaining > 0 { refuseWritesRemaining -= 1 }
+        lock.unlock()
+        if refuse { throw CocoaError(.fileWriteOutOfSpace) }
+        try data.write(to: url, options: .atomic)
+    }
+
+    func removeItem(at url: URL) throws {
+        try FileManager.default.removeItem(at: url)
+        lock.lock()
+        _removedFileNames.append(url.lastPathComponent)
+        lock.unlock()
     }
 }
