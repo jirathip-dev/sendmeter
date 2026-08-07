@@ -120,4 +120,40 @@ final class RPEModelTests: XCTestCase {
     func testAutoTrackedHandlesNaN() {
         XCTAssertEqual(RPEQuantization.autoTracked(.nan), 1.0, accuracy: 1e-9)
     }
+
+    // MARK: - RPEModelStore (#473/#478: version bump clears the pre-fix model)
+
+    private static let legacyKey = "rpeModel.v1"
+    private static let currentKey = "rpeModel.v2"
+
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: Self.legacyKey)
+        UserDefaults.standard.removeObject(forKey: Self.currentKey)
+        super.tearDown()
+    }
+
+    func testStoreRoundTripsUnderTheCurrentKey() {
+        guard let model = RPEModelFitter.fit(rows: synthRows(count: 20), lambda: 1.0, minSamples: 10) else {
+            return XCTFail("fit returned nil")
+        }
+        RPEModelStore.save(model)
+        XCTAssertNotNil(UserDefaults.standard.data(forKey: Self.currentKey), "save() must write under the current (v2) key")
+        let loaded = RPEModelStore.load()
+        XCTAssertEqual(loaded?.sampleCount, 20)
+    }
+
+    /// #473/#478: a model fitted by a pre-fix build sits under the OLD key
+    /// ("rpeModel.v1") — it trained on this issue's corrupt features (a 27s
+    /// boulder recorded as 1034s, 5 boulders recorded as 1). The version
+    /// bump must make `load()` blind to it, so `refitRPEModelIfStale` (which
+    /// treats `load() == nil` as unconditionally stale) refits from scratch
+    /// on the next workout start rather than keep predicting from it.
+    func testStoreIsBlindToALegacyV1Model() {
+        guard let legacy = RPEModelFitter.fit(rows: synthRows(count: 20), lambda: 1.0, minSamples: 10) else {
+            return XCTFail("fit returned nil")
+        }
+        let data = try! JSONEncoder().encode(legacy)
+        UserDefaults.standard.set(data, forKey: Self.legacyKey)
+        XCTAssertNil(RPEModelStore.load(), "a model written under the pre-#473 key must not be read back")
+    }
 }

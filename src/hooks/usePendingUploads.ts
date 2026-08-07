@@ -1,30 +1,39 @@
 import { useEffect, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as CapacitorApp } from "@capacitor/app";
-import { subscribePendingUploads } from "../lib/pendingUploads";
-import { pendingRecordingsCount } from "../lib/recordingQueue";
+import { subscribePendingUploads, type PendingUploadsBreakdown } from "../lib/pendingUploads";
+import { pendingRecordingsBreakdown } from "../lib/recordingQueue";
 
 /// #269: the offline recording queue's depth, for the ambient indicators.
 /// `null` until the first read completes — callers must not treat it as an
 /// empty queue. History intentionally stays quiet until there is an actionable
-/// pending count; diagnostic surfaces can use `pendingUploadsLine` when they
-/// need to distinguish unknown from empty.
+/// pending/stuck count; diagnostic surfaces can use `pendingUploadsLine` when
+/// they need to distinguish unknown from empty.
 ///
-/// Re-reads on three signals, because the queue changes from places this
+/// #484: split into `{pending, stuck}` (see `pendingRecordingsBreakdown`) so
+/// a recording the server keeps rejecting renders as its own honest state
+/// rather than either counting as "will sync" or going silent — #475 F1 on
+/// the watch was a BLOCKER for a quarantine count with no reader anywhere.
+///
+/// #484 F5: scoped to `userId` — see `pendingRecordingsCount` for why an
+/// unscoped count is a real bug, not just a cosmetic one (it gets read back
+/// as "will sync").
+///
+/// Re-reads on four signals, because the queue changes from places this
 /// component can't see: the module-level notification (something queued or
 /// drained in this tab), app foreground (a drain may have run while
-/// backgrounded, and on native the WebView can be suspended mid-drain), and
-/// mount.
-export function usePendingUploads(): number | null {
-  const [count, setCount] = useState<number | null>(null);
+/// backgrounded, and on native the WebView can be suspended mid-drain), a
+/// change of account, and mount.
+export function usePendingUploads(userId: string): PendingUploadsBreakdown | null {
+  const [breakdown, setBreakdown] = useState<PendingUploadsBreakdown | null>(null);
 
   useEffect(() => {
     let alive = true;
     function refresh() {
       // setState only ever inside the async callback — never synchronously in
       // an effect body (react-compiler lint).
-      void pendingRecordingsCount().then((n) => {
-        if (alive) setCount(n);
+      void pendingRecordingsBreakdown(userId).then((b) => {
+        if (alive) setBreakdown(b);
       });
     }
     refresh();
@@ -50,7 +59,7 @@ export function usePendingUploads(): number | null {
       unsubscribe();
       void sub.then((h) => h.remove());
     };
-  }, []);
+  }, [userId]);
 
-  return count;
+  return breakdown;
 }

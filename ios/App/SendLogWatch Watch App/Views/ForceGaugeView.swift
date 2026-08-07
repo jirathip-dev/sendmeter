@@ -480,9 +480,13 @@ struct ForceGaugeView: View {
             .disabled(saving)
     }
 
-    // Stop always saves — with the tag/side set before the rep. A failure keeps
-    // the rep recoverable by pulling again, and surfaces a friendly message
-    // instead of a DB error.
+    // Stop always saves — with the tag/side set before the rep. #486:
+    // persist-first + idempotent upsert (`PendingRecordingQueue`/`Repo`), same
+    // pattern as the workout and gauge-session queues — a gym-basement outage
+    // no longer loses the rep, only delays its upload. Only a genuine `.lost`
+    // (disk AND the in-memory direct-upload fallback both failed) surfaces a
+    // message and is reported via `RecordingLossNotice` (CLAUDE.md #264: a
+    // non-persisted outcome is never phrased as "queued" or "will sync").
     private func saveStop() {
         guard let rec = tindeq.stop() else { return }
         saving = true
@@ -493,29 +497,29 @@ struct ForceGaugeView: View {
         let groupId = tindeq.ensureSession()
         let savedTag = tag.trimmingCharacters(in: .whitespaces)
         let savedSide = side
+        let recordingId = UUID()
+        let row = Repo.makeTindeqRecordingRow(
+            rec, id: recordingId, note: "", tag: savedTag, side: savedSide, groupId: groupId
+        )
         Task {
-            do {
-                try await Repo.insertTindeqRecording(
-                    rec,
-                    note: "",
-                    tag: savedTag,
-                    side: savedSide,
-                    groupId: groupId
-                )
+            let outcome = await PendingRecordingQueue.shared.enqueue(PendingTindeqRecording(row: row))
+            if outcome == .lost {
+                savedMsg = "Rep not saved — try pulling again"
+                RecordingLossNotice.record()
+            } else {
                 let tagLabel = savedTag.isEmpty ? "" : " · \(savedTag)"
                 savedMsg = String(format: "Saved · %.1f kg%@", rec.peakKg, tagLabel)
                 tindeq.sessionCount += 1
                 // Fold this rep into the session's W' depletion (#280) — only
-                // once it's actually persisted, so the prediction describes
-                // the reps the session will really contain.
+                // once it's durably persisted (queued or uploaded), so the
+                // prediction describes the reps the session will really
+                // contain.
                 tindeq.recordRepDepletion(
                     peakKg: rec.peakKg, durationMs: rec.durationMs, tag: savedTag
                 )
                 // Remember for next launch (SL-75: instant, correct defaults).
                 UserDefaults.standard.set(savedTag, forKey: LAST_TAG_KEY)
                 UserDefaults.standard.set(savedSide, forKey: LAST_SIDE_KEY)
-            } catch {
-                savedMsg = ErrorText.friendly(error)
             }
             saving = false
             scheduleSavedMsgDismiss()

@@ -12,11 +12,13 @@ import {
   deleteRecording,
   fetchHiddenTags,
   fetchRecordings,
+  insertRecording,
   insertTindeqSession,
   recalcTindeqSessionDuration,
   restoreRecording,
   updateRecordingGroup,
 } from "../lib/repo";
+import { drainPendingRecordingsQueue, retryStuckRecordings } from "../lib/recordingQueue";
 import { dominantZone, zoneSets } from "../lib/zoneHistory";
 import {
   historyFilterOptions,
@@ -76,10 +78,34 @@ export default function HistoryView({
   const [live] = useLiveWorkout(userId);
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
-  const uploadWarning = uploadWarningPresentation(
-    useWatchInfo(),
-    usePendingUploads(),
-  );
+  const pendingUploads = usePendingUploads(userId);
+  const uploadWarning = uploadWarningPresentation(useWatchInfo(), {
+    pending: pendingUploads?.pending ?? null,
+    stuck: pendingUploads?.stuck ?? null,
+  });
+  // #484: the explicit-user-action re-attempt path for a "phone-stuck" item
+  // (see `retryStuckRecordings`'s doc comment) — the only automatic
+  // re-attempt a stuck recording gets is surviving an app-version change, so
+  // this button is the sole way back short of that.
+  const [retryingStuck, setRetryingStuck] = useState(false);
+  async function handleRetryStuck() {
+    if (retryingStuck) return;
+    setRetryingStuck(true);
+    try {
+      const cleared = await retryStuckRecordings(userId);
+      if (cleared === 0) return;
+      const recovered = await drainPendingRecordingsQueue(userId, insertRecording);
+      toast(
+        recovered > 0
+          ? `Retried — ${recovered} recording${recovered === 1 ? "" : "s"} uploaded`
+          : "Retrying — still waiting on the server",
+      );
+    } catch {
+      toast("Couldn't retry — try again", "error");
+    } finally {
+      setRetryingStuck(false);
+    }
+  }
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   // Lazy render (SL-86): mount the timeline in pages.
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -394,6 +420,16 @@ export default function HistoryView({
                   ? ` Last report: ${new Date(item.reportedAt * 1000).toLocaleString()}.`
                   : ""}
               </div>
+              {item.source === "phone-stuck" && (
+                <button
+                  className="btn-ghost"
+                  style={{ marginTop: 6 }}
+                  disabled={retryingStuck}
+                  onClick={() => void handleRetryStuck()}
+                >
+                  {retryingStuck ? "Retrying…" : "Retry now"}
+                </button>
+              )}
             </div>
           ))}
         </div>

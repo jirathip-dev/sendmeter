@@ -10,11 +10,14 @@
 		08E029468E4B11DA95A5D9A6 /* SnapshotHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F5AD05DE81A538A6242E98 /* SnapshotHelper.swift */; };
 		12574DD8CDB9DC854DF1002A /* TindeqProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EC9F5B488A0339C14A6B73A /* TindeqProtocolTests.swift */; };
 		1BF20E03909FE5E21FAE141B /* TindeqRecordingLimitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C7C9314801ADDD0DB38472 /* TindeqRecordingLimitTests.swift */; };
+		2CE274CA9BDCEEA0F3E4BB1A /* WorkoutOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EFD293FEBD07813BA2231FA /* WorkoutOwnershipTests.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		2FEC1DFCEBB8AE841B0DD4E3 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 4CCE65502100282783D5231B /* PrivacyInfo.xcprivacy */; };
 		328AD2C63004617A00E07518 /* SendLogWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		357C5FB63BBA35E5A26C3E3C /* LiveWorkoutUpsertEncodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D25FA550666EBB825642076A /* LiveWorkoutUpsertEncodingTests.swift */; };
 		37845A5B0C017FA359DFDF8E /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
 		3A856EED4D66D4946E91DCAA /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 481650BBB5C256BE2759C477 /* Foundation.framework */; };
+		3D2E258EE085F4CDEEDE765F /* PendingRecordingQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A753F3846B503B8E1997ACA /* PendingRecordingQueueTests.swift */; };
 		40B1A8847484519ACCBC6BAE /* SendmeterWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 32A305250A36E690BA4EB57B /* SendmeterWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		4544E159901794DC3E085205 /* LiveActivityIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56044BF7621E26700DF3ACBC /* LiveActivityIntents.swift */; };
 		4663826F0A95D4D7C303497D /* RPEDepletionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 906892CDB6C18118BDF95638 /* RPEDepletionTests.swift */; };
@@ -32,15 +35,20 @@
 		5EC0A003B003C003D003E003 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5EC0A002B002C002D002E002 /* SendLogWatchCore */; };
 		5EC0A005B005C005D005E005 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5EC0A004B004C004D004E004 /* SendLogWatchCore */; };
 		607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */; };
+		6352C4B663C906E80F5F0280 /* PendingTindeqRecordingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CAA7BB196064905A0427D09 /* PendingTindeqRecordingTests.swift */; };
 		69ECCBC95C0D80B03512206A /* PendingQueuePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */; };
 		703E0DDDB01CECCD44C5799A /* TagReconciliationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */; };
+		82F4391EF9C94876CD04F862 /* WorkoutSavePathResetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B8CA96E0F5FACEF50EEC31 /* WorkoutSavePathResetTests.swift */; };
 		84A773B1BB150F1AB8E722B3 /* SendLogWatchWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4ED1337E0BF37CC3D16491E5 /* SendLogWatchWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8A3D018FE2A1AB61C5EAE9E9 /* SendmeterScreenshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D95DA1B62F5F8F343BEAE8 /* SendmeterScreenshots.swift */; };
+		8C689CE212585B48F88546A1 /* WorkoutManagerHRAndPartialFlushTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69A14D2D59189F40FB1DB1F5 /* WorkoutManagerHRAndPartialFlushTests.swift */; };
 		8FAADE897AE47026F67168C8 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 481650BBB5C256BE2759C477 /* Foundation.framework */; };
 		90B66846175A762105ACC18F /* PendingQueueDecodeCompatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A71E5BE016D1DBF7C3FE908 /* PendingQueueDecodeCompatTests.swift */; };
 		985E393749254016699A5A96 /* WorkoutSaveBundleDecodeCompatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */; };
 		9FF1A63A69A1CE36AF5D06D6 /* SendmeterWatchScreenshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = F585400FD5CA4FD502C930ED /* SendmeterWatchScreenshots.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* PendingQueueUserMatchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */; };
+		AE0CF1ABF3486B235A340F07 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 4E2077BFF2DA0642AEEEC447 /* Supabase */; };
+		B236F6402A44ADB22E10CF75 /* OfflineQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B28F88178C2F1F022EEC67 /* OfflineQueueTests.swift */; };
 		C0A1E5C1D8A14B4EB2B5A001 /* CoalescingDrainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */; };
 		CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
 		D1C2B3A4F5E6708192A3B4C5 /* ACWRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */; };
@@ -149,8 +157,11 @@
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "SendLogWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		32A305250A36E690BA4EB57B /* SendmeterWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SendmeterWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		34B28F88178C2F1F022EEC67 /* OfflineQueueTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OfflineQueueTests.swift; sourceTree = "<group>"; };
+		3EFD293FEBD07813BA2231FA /* WorkoutOwnershipTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkoutOwnershipTests.swift; sourceTree = "<group>"; };
 		481650BBB5C256BE2759C477 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		4A71E5BE016D1DBF7C3FE908 /* PendingQueueDecodeCompatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PendingQueueDecodeCompatTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/PendingQueueDecodeCompatTests.swift; sourceTree = "<group>"; };
+		4CAA7BB196064905A0427D09 /* PendingTindeqRecordingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PendingTindeqRecordingTests.swift; sourceTree = "<group>"; };
 		4CCE65502100282783D5231B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		4ED1337E0BF37CC3D16491E5 /* SendLogWatchWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SendLogWatchWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
@@ -163,8 +174,11 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/RPEModelTests.swift; sourceTree = "<group>"; };
 		56044BF7621E26700DF3ACBC /* LiveActivityIntents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveActivityIntents.swift; sourceTree = "<group>"; };
+		58B8CA96E0F5FACEF50EEC31 /* WorkoutSavePathResetTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkoutSavePathResetTests.swift; sourceTree = "<group>"; };
+		5A753F3846B503B8E1997ACA /* PendingRecordingQueueTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PendingRecordingQueueTests.swift; sourceTree = "<group>"; };
 		5C4B3A2918706F5E4D3C2B1A /* PendingQueueUserMatchTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/PendingQueueUserMatchTests.swift; sourceTree = "<group>"; };
 		5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PendingQueuePolicyTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/PendingQueuePolicyTests.swift; sourceTree = "<group>"; };
+		69A14D2D59189F40FB1DB1F5 /* WorkoutManagerHRAndPartialFlushTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkoutManagerHRAndPartialFlushTests.swift; sourceTree = "<group>"; };
 		6CA278E81C6E14A40B4C9C69 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkoutSaveBundleDecodeCompatTests.swift; sourceTree = "<group>"; };
 		906892CDB6C18118BDF95638 /* RPEDepletionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/RPEDepletionTests.swift; sourceTree = "<group>"; };
@@ -177,6 +191,7 @@
 		C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/CoalescingDrainTests.swift; sourceTree = "<group>"; };
 		C3F5AD05DE81A538A6242E98 /* SnapshotHelper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SnapshotHelper.swift; sourceTree = "<group>"; };
 		C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/TagReconciliationTests.swift; sourceTree = "<group>"; };
+		D25FA550666EBB825642076A /* LiveWorkoutUpsertEncodingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveWorkoutUpsertEncodingTests.swift; sourceTree = "<group>"; };
 		D5F88EE79EE43D995B504A78 /* SendmeterWatchScreenshots.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendmeterWatchScreenshots.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F585400FD5CA4FD502C930ED /* SendmeterWatchScreenshots.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SendmeterWatchScreenshots.swift; sourceTree = "<group>"; };
 		F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/ACWRTests.swift; sourceTree = "<group>"; };
@@ -259,6 +274,7 @@
 			files = (
 				CBB4AD95D3BAB579DA581273 /* Foundation.framework in Frameworks */,
 				5EC0A005B005C005D005E005 /* SendLogWatchCore in Frameworks */,
+				AE0CF1ABF3486B235A340F07 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -297,9 +313,16 @@
 				4A71E5BE016D1DBF7C3FE908 /* PendingQueueDecodeCompatTests.swift */,
 				5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */,
 				8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */,
+				34B28F88178C2F1F022EEC67 /* OfflineQueueTests.swift */,
+				3EFD293FEBD07813BA2231FA /* WorkoutOwnershipTests.swift */,
+				58B8CA96E0F5FACEF50EEC31 /* WorkoutSavePathResetTests.swift */,
+				D25FA550666EBB825642076A /* LiveWorkoutUpsertEncodingTests.swift */,
+				69A14D2D59189F40FB1DB1F5 /* WorkoutManagerHRAndPartialFlushTests.swift */,
+				5A753F3846B503B8E1997ACA /* PendingRecordingQueueTests.swift */,
+				4CAA7BB196064905A0427D09 /* PendingTindeqRecordingTests.swift */,
 			);
 			path = SendLogWatchTests;
-			sourceTree = "<group>";
+			sourceTree = SOURCE_ROOT;
 		};
 		242019BE420E46728687BB67 /* iOS */ = {
 			isa = PBXGroup;
@@ -474,6 +497,7 @@
 			name = SendLogWatchTests;
 			packageProductDependencies = (
 				5EC0A004B004C004D004E004 /* SendLogWatchCore */,
+				4E2077BFF2DA0642AEEEC447 /* Supabase */,
 			);
 			productName = SendLogWatchTests;
 			productReference = 9FCA288E59184D0B2FCD2E0D /* SendLogWatchTests.xctest */;
@@ -663,6 +687,13 @@
 				90B66846175A762105ACC18F /* PendingQueueDecodeCompatTests.swift in Sources */,
 				69ECCBC95C0D80B03512206A /* PendingQueuePolicyTests.swift in Sources */,
 				985E393749254016699A5A96 /* WorkoutSaveBundleDecodeCompatTests.swift in Sources */,
+				B236F6402A44ADB22E10CF75 /* OfflineQueueTests.swift in Sources */,
+				2CE274CA9BDCEEA0F3E4BB1A /* WorkoutOwnershipTests.swift in Sources */,
+				82F4391EF9C94876CD04F862 /* WorkoutSavePathResetTests.swift in Sources */,
+				357C5FB63BBA35E5A26C3E3C /* LiveWorkoutUpsertEncodingTests.swift in Sources */,
+				8C689CE212585B48F88546A1 /* WorkoutManagerHRAndPartialFlushTests.swift in Sources */,
+				3D2E258EE085F4CDEEDE765F /* PendingRecordingQueueTests.swift in Sources */,
+				6352C4B663C906E80F5F0280 /* PendingTindeqRecordingTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1355,6 +1386,11 @@
 			package = D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */;
 			productName = "CapApp-SPM";
 		};
+		4E2077BFF2DA0642AEEEC447 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B5E75921EB0124F7376FBBFD /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
 		5EC0A002B002C002D002E002 /* SendLogWatchCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
@@ -1365,15 +1401,15 @@
 			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
 			productName = SendLogWatchCore;
 		};
-		D40300000000000000000002 /* SendLogWatchCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
-			productName = SendLogWatchCore;
-		};
 		665354DA3AF13BA04D7AADA0 /* Supabase */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = B5E75921EB0124F7376FBBFD /* XCRemoteSwiftPackageReference "supabase-swift" */;
 			productName = Supabase;
+		};
+		D40300000000000000000002 /* SendLogWatchCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5EC0A001B001C001D001E001 /* XCLocalSwiftPackageReference "SendLogWatchCore" */;
+			productName = SendLogWatchCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

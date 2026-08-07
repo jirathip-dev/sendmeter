@@ -7,6 +7,13 @@ struct SendLogWatchApp: App {
     // the active gauge session survives navigating away from the Force screen
     // (SL-58 #5). The disconnect-mid-session prompt is presented from RootView.
     @State private var tindeq = TindeqManager()
+    // #476: was `@State` inside WorkoutLiveView, a navigationDestination — it
+    // died whenever that view was popped (a Force/status complication deep
+    // link) or the NavigationStack was swapped out from under it (a
+    // signedOut auth relay mid-workout), silently orphaning a live
+    // HKWorkoutSession with no reachable End control. Hoisted to App scope,
+    // matching `tindeq` above — the asymmetry between the two was the bug.
+    @State private var workout = WorkoutManager()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -14,6 +21,7 @@ struct SendLogWatchApp: App {
             RootView()
                 .environment(auth)
                 .environment(tindeq)
+                .environment(workout)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -23,6 +31,7 @@ struct SendLogWatchApp: App {
                 Task { @MainActor in auth.refreshState() }
                 Task { await OfflineQueue.shared.drain() }
                 Task { await PendingSessionQueue.shared.drain() }
+                Task { await PendingRecordingQueue.shared.drain() }
                 Task { await WatchBuild.refreshAndReportQueueStatus() }
                 // Keep the complications/Smart-Stack readiness + ACWR fresh.
                 Task { await WidgetBridge.refreshStatus() }

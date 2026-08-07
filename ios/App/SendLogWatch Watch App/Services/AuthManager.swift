@@ -53,8 +53,20 @@ final class AuthManager: NSObject {
 
     private var now: TimeInterval { Date().timeIntervalSince1970 }
 
+    /// #472b: `OfflineQueue` (an actor with no view-tree access) needs a way
+    /// to ask for a fresh relay when a drain discovers the token it holds is
+    /// stale. There is deliberately no `AuthManager.shared` — SwiftUI owns
+    /// the one instance as `@State` on the app root — so this is a weak
+    /// back-reference, set once below, rather than a second ownership path.
+    /// `nonisolated(unsafe)` matches this file's existing pattern for a
+    /// simple pointer set once at startup and only ever read through an
+    /// `await`ed call into `@MainActor` isolation (see
+    /// `AuthManagerRelayRequester`).
+    nonisolated(unsafe) static weak var current: AuthManager?
+
     override init() {
         super.init()
+        Self.current = self
         // Nothing on the watch may hold a rotating credential — including one
         // left behind in the Keychain by a build that predates #265.
         WatchSessionStore.shared.purgeLegacySupabaseKeychain()
@@ -87,22 +99,37 @@ final class AuthManager: NSObject {
         startPolling()
     }
 
-    /// Recomputes `state` from the stored session against the clock. Called
-    /// after every relay, on foreground, and from the poll — an access token
-    /// goes stale by the passage of time alone, with no event to react to.
+    /// Recomputes `state` from the stored session against the clock, and asks
+    /// the phone for a fresh relay if the clock-derived decision says the
+    /// watch needs one. **This is the only place allowed to decide that** —
+    /// every trigger that might discover an expired token (poll,
+    /// `activationDidCompleteWith`, `sessionReachabilityDidChange`) must
+    /// route through this function rather than consulting a cached property
+    /// first, or it can decline to ask for a token the watch actually needs
+    /// (#472: a decision cached at T does not stay true past T — see
+    /// `SessionRelay.needsToken`, the only function allowed to answer this).
     @MainActor
     func refreshState() {
         let previous = state
-        state = SessionRelay.state(for: WatchSessionStore.shared.current, now: now)
+        let session = WatchSessionStore.shared.current
+        state = SessionRelay.state(for: session, now: now)
         if state != previous {
             Self.log.info("auth state \(String(describing: previous)) → \(String(describing: self.state))")
         }
-        if needsToken { requestSessionFromPhone() }
+        if SessionRelay.needsToken(for: session, now: now) { requestSessionFromPhone() }
     }
 
-    /// True when the watch cannot make an authenticated request right now:
-    /// signed out entirely, or signed in with an expired token.
-    var needsToken: Bool {
+    /// **Display only — never use this to decide anything (#472).** A
+    /// projection of the cached `state` for `HomeView`'s "waiting for
+    /// iPhone" footnote; SwiftUI's `@Observable` tracking needs it to read
+    /// `state` (a stored, tracked property) rather than recompute from the
+    /// clock, so it can be arbitrarily stale — it is exactly the read that
+    /// caused #472 when three call sites consulted it before deciding
+    /// whether to ask the phone for a token. Any code that needs to *decide*
+    /// whether the watch needs a token must call
+    /// `SessionRelay.needsToken(for:now:)` — see `refreshState()` — never
+    /// this property.
+    var needsTokenForDisplay: Bool {
         switch state {
         case .signedOut: return true
         case let .signedIn(_, tokenFresh): return !tokenFresh
@@ -170,7 +197,8 @@ final class AuthManager: NSObject {
             Task {
                 async let workouts: Void = OfflineQueue.shared.drain()
                 async let sessions: Void = PendingSessionQueue.shared.drain()
-                _ = await (workouts, sessions)
+                async let recordings: Void = PendingRecordingQueue.shared.drain()
+                _ = await (workouts, sessions, recordings)
                 await WatchBuild.refreshAndReportQueueStatus()
             }
         case .signedOut:
@@ -203,11 +231,28 @@ final class AuthManager: NSObject {
         syncTimeout?.cancel()
     }
 
-    /// Slow poll, only while the watch needs a token. watchOS suspends the app
-    /// (and this task with it) when it isn't on screen, so this costs nothing
-    /// in the background; its job is the case where the user is *looking* at
-    /// the watch, the phone is in a pocket nearby, and nothing else would fire
-    /// an event to retry on.
+    /// Slow poll while the app is on screen — watchOS suspends the app (and
+    /// this task with it) when it isn't, so this costs nothing in the
+    /// background; its job is the case where the user is *looking* at the
+    /// watch, the phone is in a pocket nearby, and nothing else would fire an
+    /// event to retry on.
+    ///
+    /// Calls `refreshState()` unconditionally on every tick, **not** gated on
+    /// a cached decision (#472): once a relayed token goes fresh→stale with
+    /// no external event, a guard reading old cached state would stay
+    /// `false` forever and this poll would never fire the one call that
+    /// could discover the expiry. `refreshState()` is a single pure
+    /// `SessionRelay.state` computation, so this is cheap every 20s.
+    ///
+    /// This is *not* bounded by `requestSessionFromPhone`'s `lastRequestAt`
+    /// throttle — `requestIntervalS` is 5s against a 20s tick, so that
+    /// throttle never engages here; it only coalesces triggers that land
+    /// within the same few seconds (bootstrap, reachability, foreground,
+    /// Retry). While the phone is reachable this loop is deliberately
+    /// unbounded: up to one `sendMessage` every 20s for as long as the token
+    /// stays stale (the issue rejected a bounded backoff as reintroducing
+    /// indefinite parking). While unreachable, `queuedRequest` still caps it
+    /// to one `transferUserInfo` per stale episode.
     private func startPolling() {
         poll?.cancel()
         poll = Task { [weak self] in
@@ -215,8 +260,7 @@ final class AuthManager: NSObject {
                 try? await Task.sleep(for: .seconds(20))
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    guard let self, self.needsToken else { return }
-                    self.refreshState()
+                    self?.refreshState()
                 }
             }
         }
@@ -229,8 +273,10 @@ extension AuthManager: WCSessionDelegate {
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
     ) {
+        // Recompute before deciding (#472) — `refreshState()` asks the phone
+        // itself if the clock-derived state says the token is stale.
         Task { @MainActor in
-            if self.needsToken { self.requestSessionFromPhone() }
+            self.refreshState()
         }
     }
 
@@ -246,12 +292,14 @@ extension AuthManager: WCSessionDelegate {
         Task { @MainActor in self.apply(userInfo) }
     }
 
-    /// The phone became reachable — if we still need a token this is the
-    /// moment to (re)ask; an earlier attempt would have failed while it slept.
+    /// The phone became reachable — this is the moment to recompute and, if
+    /// the token has gone stale, (re)ask; an earlier attempt would have
+    /// failed while it slept. Recompute before deciding (#472): reachability
+    /// changing is precisely when a cached decision is most likely wrong.
     func sessionReachabilityDidChange(_ session: WCSession) {
         guard session.isReachable else { return }
         Task { @MainActor in
-            if self.needsToken { self.requestSessionFromPhone() }
+            self.refreshState()
         }
     }
 }

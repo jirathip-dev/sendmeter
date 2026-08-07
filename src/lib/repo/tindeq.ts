@@ -10,6 +10,7 @@ import type {
 } from "../../types";
 import type { RecordedZone } from "../force-curve";
 import { localDayRange } from "../dates";
+import { computeGroupDurationMin } from "../duration";
 import {
   legacyPresetRow,
   preCapacityPresetRow,
@@ -225,6 +226,10 @@ export async function insertRecording(
         // Only set when the caller minted one for retry-idempotency (#106) —
         // omitted, the column's own gen_random_uuid() default applies.
         ...(rec.id ? { id: rec.id } : {}),
+        // #487 (F2): only set when the offline queue's drain supplied the
+        // original capture time — omitted, the column's own `default now()`
+        // applies, which is correct for a normal (non-queued) save.
+        ...(rec.recordedAt ? { recorded_at: rec.recordedAt } : {}),
         duration_ms: rec.durationMs,
         peak_kg: rec.peakKg,
         avg_kg: rec.avgKg,
@@ -553,11 +558,13 @@ export async function recalcTindeqSessionDuration(
   groupId: string,
 ): Promise<number | null> {
   const recs = await fetchRecordingsByGroup(groupId);
-  if (recs.length === 0) return null;
-  const starts = recs.map((r) => Date.parse(r.recordedAt));
-  const ends = recs.map((r) => Date.parse(r.recordedAt) + r.durationMs);
-  const spanMs = Math.max(...ends) - Math.min(...starts);
-  const durationMin = Math.max(1, Math.round(spanMs / 60000));
+  // #487 (F3): clamp to the DB's 1..600 `duration_min` bound (see
+  // src/lib/duration.ts) — an unclamped span used to reach the write below
+  // and fail the check constraint *after* the caller had already re-grouped
+  // the recordings onto this session, leaving the user with regrouped
+  // recordings and no session.
+  const durationMin = computeGroupDurationMin(recs);
+  if (durationMin === null) return null;
   unwrap(
     await supabase
       .from("sessions")

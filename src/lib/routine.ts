@@ -1,5 +1,11 @@
 import type { RoutineStep } from "../types";
 
+/// Lead-in "get ready" seconds before a guided routine starts (SL-83). Shared
+/// by RoutineFullscreen (the running timeline) and routineRun's resume/
+/// abandonment math (#483) — both must expand the same total from the same
+/// steps, or a resumed run's total disagrees with the live one.
+export const ROUTINE_PREPARE_S = 5;
+
 /// Expanded, flat runtime segments for a guided routine (SL-83): each step
 /// can repeat ×reps with a rest between repetitions — the runner and the
 /// progress bar both walk this list, mirroring the Force protocol timeline.

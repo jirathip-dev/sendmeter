@@ -1,4 +1,5 @@
 import type { TindeqRecordingMeta } from "../types";
+import { computeGroupDurationMin } from "./duration";
 
 export interface EndGaugeSessionArgs {
   groupId: string;
@@ -43,14 +44,13 @@ export async function endGaugeSession(
   ].join(" · ");
   // Total time = the recordings' actual span (first rep start → last rep end),
   // not the raw wall-clock, so idle time before/after reps doesn't inflate it.
-  // Falls back to the wall-clock estimate if the recordings aren't loaded yet.
-  const spanMs = recs.length
-    ? Math.max(...recs.map((r) => Date.parse(r.recordedAt) + r.durationMs)) -
-      Math.min(...recs.map((r) => Date.parse(r.recordedAt)))
-    : 0;
-  const durationMin = recs.length
-    ? Math.max(1, Math.round(spanMs / 60000))
-    : wallClockMin;
+  // Falls back to the wall-clock estimate if the recordings aren't loaded
+  // yet. #487 (F3): computeGroupDurationMin clamps to the DB's 1..600
+  // duration_min bound (src/lib/duration.ts) — insertTindeqSession also
+  // clamps at the write itself, so this couldn't reach the DB out of range,
+  // but computing it pre-clamped here keeps the two duration paths
+  // (recalcTindeqSessionDuration is the other) sharing one implementation.
+  const durationMin = computeGroupDurationMin(recs) ?? wallClockMin;
 
   return args.onLogSession({
     durationMin,

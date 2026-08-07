@@ -7,6 +7,36 @@ import type { NewTindeqRecording } from "../types";
 // unchanged, which is what makes the sync lane drainable into the main store
 // and the localStorage→IndexedDB migration a straight copy.
 
+/// #484: what a drain knows about a recording the server has REPEATEDLY
+/// rejected with a database-constraint error (SQLSTATE 23xxx) — never a
+/// deletion trigger, a diagnosis record. See the policy block above
+/// `drainQueue` in `recordingQueue.ts` for why this exists instead of a
+/// delete-on-first-rejection: this repo's CHECK constraints are value
+/// allow-lists that migrations widen, and a web deploy can go live slightly
+/// ahead of its own migration (CLAUDE.md's release flow), so a rejection
+/// minutes before the schema catches up must not be mistaken for a
+/// permanently bad payload.
+export interface PendingRecordingRejection {
+  /// SQLSTATE (or the closest identifier available) from the most recent
+  /// rejection — diagnosis only, never matched on to decide anything.
+  code: string;
+  /// The server's error message, truncated. Also diagnosis only.
+  message: string;
+  /// `currentAppVersion()` at the FIRST rejection.
+  firstVersion: string;
+  firstAt: string; // ISO
+  /// `currentAppVersion()` / time at the MOST RECENT rejection.
+  lastVersion: string;
+  lastAt: string;
+  /// True once a rejection has been observed under a build DIFFERENT from
+  /// `firstVersion` — i.e. this exact payload survived a deploy that could
+  /// plausibly have carried a schema fix and was rejected again anyway. Only
+  /// then does `drainQueue` stop auto-attempting it; the entry stays on
+  /// device either way. `retryStuckRecordings` is the way back — an explicit
+  /// user action, not automatic, once this is true.
+  stuck: boolean;
+}
+
 /// A recording queued for retry. `input.id` is a client-generated uuid,
 /// supplied to insertRecording as the row's primary key — a retry of an
 /// insert that actually landed server-side (but whose response the client
@@ -24,6 +54,10 @@ export interface PendingRecording {
   /// cheap to get right).
   userId: string | null;
   input: NewTindeqRecording & { id: string };
+  /// #484: present once the server has rejected this exact payload with a
+  /// constraint error at least once. Absent means "never rejected on content
+  /// grounds" — the common case.
+  rejection?: PendingRecordingRejection;
 }
 
 /// Structural check applied to everything read back out of EITHER store — a

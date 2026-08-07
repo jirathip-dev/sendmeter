@@ -13,6 +13,11 @@ interface ImportMetaEnv {
   // bundle built by this config. Optional here so `monitoring.ts` keeps its
   // `?? MODE` backstop for anything that compiles the module another way.
   readonly VITE_DEPLOY_ENV?: string;
+  // #484: a value that changes on every `vite build` — see
+  // `appVersion.ts#currentAppVersion`. Always present in a bundle built by
+  // this config (same "inlined via define" story as VITE_DEPLOY_ENV above);
+  // optional here for the same reason.
+  readonly VITE_BUILD_ID?: string;
 }
 
 interface ImportMeta {

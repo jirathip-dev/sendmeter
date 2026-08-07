@@ -43,6 +43,10 @@ function entry(id: string, queuedAt: string): PendingRecording {
   return { id, queuedAt, userId: "user-1", input: input(id) };
 }
 
+function entryFor(id: string, queuedAt: string, userId: string | null): PendingRecording {
+  return { id, queuedAt, userId, input: input(id) };
+}
+
 /// A fresh, isolated database per test — `openRecordingDb` bypasses its
 /// module-level memo when handed a factory explicitly.
 async function freshDb(): Promise<RecordingDb> {
@@ -163,6 +167,50 @@ describe("RecordingDb round-trip", () => {
       db.put([entry("good", "2026-07-01T00:00:00.000Z"), bad]),
     ).rejects.toBeTruthy();
     expect(await db.keys()).toEqual([]);
+  });
+});
+
+describe("getAllForUser (#484 F5)", () => {
+  it("returns only the given user's entries via the index, ignoring another account's", async () => {
+    const db = await freshDb();
+    await db.put([
+      entryFor("mine-1", "2026-07-01T00:00:00.000Z", "user-1"),
+      entryFor("theirs-1", "2026-07-02T00:00:00.000Z", "user-2"),
+      entryFor("mine-2", "2026-07-03T00:00:00.000Z", "user-1"),
+    ]);
+    expect((await db.getAllForUser("user-1")).map((p) => p.id)).toEqual([
+      "mine-1",
+      "mine-2",
+    ]);
+  });
+
+  it("still includes unattributed legacy (userId: null) entries, matching drainQueue's attempt rule", async () => {
+    const db = await freshDb();
+    await db.put([
+      entryFor("mine-1", "2026-07-01T00:00:00.000Z", "user-1"),
+      entryFor("legacy-1", "2026-07-02T00:00:00.000Z", null),
+      entryFor("theirs-1", "2026-07-03T00:00:00.000Z", "user-2"),
+    ]);
+    expect((await db.getAllForUser("user-1")).map((p) => p.id)).toEqual([
+      "mine-1",
+      "legacy-1",
+    ]);
+  });
+
+  it("returns oldest first, matching getAll", async () => {
+    const db = await freshDb();
+    await db.put([
+      entryFor("z", "2026-07-01T00:00:00.000Z", "user-1"),
+      entryFor("a", "2026-07-03T00:00:00.000Z", "user-1"),
+      entryFor("m", "2026-07-02T00:00:00.000Z", "user-1"),
+    ]);
+    expect((await db.getAllForUser("user-1")).map((p) => p.id)).toEqual(["z", "m", "a"]);
+  });
+
+  it("is empty for a user with nothing queued, even when another account has entries", async () => {
+    const db = await freshDb();
+    await db.put([entryFor("theirs-1", "2026-07-01T00:00:00.000Z", "user-2")]);
+    expect(await db.getAllForUser("user-1")).toEqual([]);
   });
 });
 

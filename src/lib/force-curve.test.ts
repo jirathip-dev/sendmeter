@@ -229,6 +229,85 @@ describe("Prehab is excluded from curve candidacy (#325)", () => {
   });
 });
 
+describe("A salvage/recovery blob is excluded from curve candidacy (#486)", () => {
+  const now = Date.parse("2026-07-20T00:00:00Z");
+  const daysAgo = (d: number) => new Date(now - d * 86_400_000).toISOString();
+
+  it("a whole-buffer recovery blob never reaches pickCurveRecordings, even as the longest effort", () => {
+    // Five clean reps: short power holds plus one real 12s strength hold —
+    // the honest evidence this tag/side actually has.
+    const cleanReps = [
+      { id: "c0", durationMs: 7_000, avgKg: 28, recordedAt: daysAgo(5), zone: "power-endurance" as const, tag: "FDP", side: "left" as const, source: "dynamometer" as const, peakKg: 30 },
+      { id: "c1", durationMs: 7_000, avgKg: 27, recordedAt: daysAgo(4), zone: "power-endurance" as const, tag: "FDP", side: "left" as const, source: "dynamometer" as const, peakKg: 29 },
+      { id: "c2", durationMs: 12_000, avgKg: 25, recordedAt: daysAgo(3), zone: "strength" as const, tag: "FDP", side: "left" as const, source: "dynamometer" as const, peakKg: 27 },
+    ];
+    // A mid-protocol drop's whole-buffer salvage: the shape useTindeq.ts's
+    // salvage-on-unmount / interruption-recovery paths actually save — 8
+    // reps × 7s @30kg plus 60s rests between them collapse into ONE recording
+    // spanning several minutes, `zone: null` (never classified), and the
+    // note the recovery path stamps on it.
+    const salvageBlob = {
+      id: "salvage",
+      durationMs: (8 * 7 + 7 * 60) * 1000, // ~8m 56s — the longest "effort" in the pool
+      avgKg: 30,
+      recordedAt: daysAgo(1),
+      zone: null,
+      tag: "FDP",
+      side: "left" as const,
+      source: "dynamometer" as const,
+      peakKg: 32,
+      note: "Recovered after connection loss",
+    };
+    const curveCandidates = curveCandidateRecordings(
+      [...cleanReps, salvageBlob],
+      "FDP",
+      "left",
+    );
+    // The filter itself must drop it...
+    expect(curveCandidates.some((r) => r.id === "salvage")).toBe(false);
+    // ...so it can never win pickCurveRecordings' "keep the longest efforts
+    // regardless of load" guarantee either.
+    const picked = pickCurveRecordings(curveCandidates, now);
+    expect(picked.some((r) => r.id === "salvage")).toBe(false);
+  });
+
+  it("the sign-out salvage note is caught too", () => {
+    const salvageBlob = {
+      id: "salvage2",
+      durationMs: 300_000,
+      avgKg: 20,
+      recordedAt: daysAgo(1),
+      zone: null,
+      tag: "FDP",
+      side: "left" as const,
+      source: "dynamometer" as const,
+      peakKg: 22,
+      note: "Recovered after sign-out",
+    };
+    expect(
+      curveCandidateRecordings([salvageBlob], "FDP", "left").length,
+    ).toBe(0);
+  });
+
+  it("an ordinary recording with an unrelated note is unaffected", () => {
+    const ordinary = {
+      id: "ord",
+      durationMs: 30_000,
+      avgKg: 20,
+      recordedAt: daysAgo(1),
+      zone: "endurance" as const,
+      tag: "FDP",
+      side: "left" as const,
+      source: "dynamometer" as const,
+      peakKg: 22,
+      note: "felt strong today",
+    };
+    expect(
+      curveCandidateRecordings([ordinary], "FDP", "left").map((r) => r.id),
+    ).toEqual(["ord"]);
+  });
+});
+
 describe("computeForceCurve — multi-point fit (SL-80b)", () => {
   it("regresses over the top efforts per window, not just the envelope", () => {
     // Two flat 60s holds: a 20kg best and a 10kg repeat. Envelope-only fit

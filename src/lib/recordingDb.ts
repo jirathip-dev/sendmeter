@@ -21,8 +21,13 @@ import {
 // we had before.
 
 const DB_NAME = "sendmeter";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "pending-recordings";
+/// #484 F5: lets `getAllForUser` fetch one account's own entries without
+/// deserializing every OTHER account's stranded queue. Added in the v1→v2
+/// upgrade below, on the EXISTING store — `onupgradeneeded` never re-creates
+/// it, so this never touches stored data.
+const USER_ID_INDEX = "userId";
 
 /// An `open` that neither succeeds nor errors is a real failure mode (a
 /// blocked version change; historically, private-mode WebKit). Without a
@@ -53,6 +58,14 @@ export interface RecordingDb {
   /// behind anything written between the two. Rejects if the transaction
   /// aborts, so a caller can tell "removed" from "asked to remove".
   clear(): Promise<void>;
+  /// #484 F5: every entry attributed to `userId`, PLUS unattributed legacy
+  /// entries (`userId === null` — #189: still counted, matching `drainQueue`'s
+  /// attempt rule). Uses the `userId` index for the attributed subset, so the
+  /// common single-account case never deserializes another account's
+  /// stranded queue; only falls through to a full `getAll()` when the store
+  /// holds more keys than the index matched (i.e. there IS an unattributed or
+  /// other-account residue to go looking for).
+  getAllForUser(userId: string): Promise<PendingRecording[]>;
 }
 
 export type RecordingDbLoader = () => Promise<RecordingDb | null>;
@@ -147,6 +160,38 @@ function wrap(db: IDBDatabase): RecordingDb {
     clear() {
       return writeTx(db, (store) => [store.clear()]);
     },
+    async getAllForUser(userId) {
+      // `getAll` accepts a plain key directly (shorthand for a range
+      // matching only that key) — deliberately not `IDBKeyRange.only(...)`,
+      // which is a separate global this module would otherwise depend on
+      // (present in every real browser, but not in Node/vitest without an
+      // explicit polyfill import).
+      const indexed: unknown[] = await requestValue(
+        db.transaction(STORE, "readonly").objectStore(STORE).index(USER_ID_INDEX).getAll(userId),
+      );
+      const attributed = indexed.filter(isPendingRecording);
+      // Cheap (getAllKeys, no deserialize) existence check: if the store
+      // holds no more keys than the index just matched, there is nothing
+      // unattributed or belonging to another account to go find.
+      const totalKeys: IDBValidKey[] = await requestValue(
+        db.transaction(STORE, "readonly").objectStore(STORE).getAllKeys(),
+      );
+      if (totalKeys.length <= attributed.length) {
+        return attributed.sort(byQueuedAt);
+      }
+      // A `userId: null` field is not a valid IndexedDB key, so the index
+      // silently omits those records — this full scan is the only way to
+      // find them, and it only runs when the cheap check above says there's
+      // something beyond this user's own attributed rows.
+      const allRows: unknown[] = await requestValue(
+        db.transaction(STORE, "readonly").objectStore(STORE).getAll(),
+      );
+      const seen = new Set(attributed.map((p) => p.id));
+      const legacy = allRows
+        .filter(isPendingRecording)
+        .filter((p) => p.userId === null && !seen.has(p.id));
+      return [...attributed, ...legacy].sort(byQueuedAt);
+    },
   };
 }
 
@@ -176,10 +221,19 @@ function openOnce(factory: IDBFactory | null): Promise<RecordingDb | null> {
     const timer = setTimeout(() => settle(null), OPEN_TIMEOUT_MS);
     req.onupgradeneeded = () => {
       const d = req.result;
+      let store: IDBObjectStore;
       if (!d.objectStoreNames.contains(STORE)) {
         // keyPath `id`, no autoIncrement: re-putting an entry the migration
         // already copied overwrites it instead of adding a second copy.
-        d.createObjectStore(STORE, { keyPath: "id" });
+        store = d.createObjectStore(STORE, { keyPath: "id" });
+      } else {
+        // v1 → v2 (#484 F5): the store already exists — grab it off the
+        // versionchange transaction rather than re-creating it, which would
+        // wipe every queued recording.
+        store = req.transaction!.objectStore(STORE);
+      }
+      if (!store.indexNames.contains(USER_ID_INDEX)) {
+        store.createIndex(USER_ID_INDEX, "userId");
       }
     };
     req.onsuccess = () => {

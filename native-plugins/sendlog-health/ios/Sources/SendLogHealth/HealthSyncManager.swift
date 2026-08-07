@@ -55,6 +55,26 @@ private struct ExistingReadinessRow: Codable {
     var readiness: Int?
 }
 
+/// #487 (F4, review finding 1): thrown when `clearAndResync` writes zero rows
+/// after already hard-deleting every existing one. HealthKit does not throw
+/// on denied READ authorization — `authorizationStatus(for:)` only reflects
+/// share/write authorization; for read-only types (everything this app
+/// requests) it is documented to stay `.notDetermined` regardless of what the
+/// user chose, specifically so an app can't infer denial from behavior. That
+/// makes "zero rows back" genuinely ambiguous between "access denied" and
+/// "no HealthKit data in this window" — this type does not (cannot, via
+/// public API) tell those apart. What it does do is stop the dangerous
+/// silent case: before this, an empty rebuild after a destructive delete
+/// returned normally and `resyncHealthHistory()` reported `{ok: true}`. Now
+/// it throws, `Plugin.swift` rejects the call, and `resyncHealthHistory()`
+/// reports `{ok: false}` — the safe-direction trade is a false "failed" in
+/// the rare true-no-data case, never a false "succeeded" after data loss.
+struct HealthResyncFoundNoDataError: Error, LocalizedError {
+    var errorDescription: String? {
+        "Resync found no Health data to rebuild from — Health access may be denied, or your history is genuinely empty for this window."
+    }
+}
+
 /// Orchestrates iPhone-side readiness: read HealthKit → ACWR from the user's
 /// sessions → RecoveryEngine → upsert health_metrics. The iPhone is the sole
 /// writer (the watch only reads the score back for display), so there's no
@@ -197,7 +217,11 @@ final class HealthSyncManager {
                 computedAt: Date()
             ))
         }
-        guard !rows.isEmpty else { return }
+        // #487 (F4, review finding 1): a rebuild that writes nothing back
+        // after the hard delete above must NOT resolve as success — see
+        // HealthResyncFoundNoDataError's doc comment for why this can't be
+        // narrowed further (denied vs. genuinely empty) via public API.
+        guard !rows.isEmpty else { throw HealthResyncFoundNoDataError() }
         try await client
             .from("health_metrics")
             .upsert(rows, onConflict: "user_id,date")
@@ -209,10 +233,17 @@ final class HealthSyncManager {
     /// so a backfilled history row gets the load ratio it would have had that
     /// day (not today's) — the load penalty then reflects the real timeline.
     private func acwrSeries(days: Int) async throws -> [String: Double] {
+        // #487 (F1): exclude soft-deleted sessions — without this the load
+        // penalty from training the user deleted (History's soft-delete,
+        // `deleted_at`) kept depressing readiness for the rest of the 28-day
+        // ACWR window. The web's equivalent query (src/lib/repo/sessions.ts
+        // fetchSessions) has always filtered this; native didn't, so the two
+        // surfaces disagreed about what counts.
         let rows: [SessionLoadRow] = try await client
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoffDateString(daysAgo: days + Acwr.lookbackDays))
+            .is("deleted_at", value: nil)
             .execute()
             .value
 
@@ -236,10 +267,12 @@ final class HealthSyncManager {
     }
 
     private func computeAcwr() async throws -> Double? {
+        // #487 (F1): same soft-delete exclusion as acwrSeries above.
         let rows: [SessionLoadRow] = try await client
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoffDateString(daysAgo: Acwr.lookbackDays))
+            .is("deleted_at", value: nil)
             .execute()
             .value
 
