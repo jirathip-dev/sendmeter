@@ -252,7 +252,6 @@ export function uploadWarningPresentation(
     }
   }
 
-  if (phonePending !== null && phonePending > 0) {
   if (phoneUploads.stuck !== null && phoneUploads.stuck > 0) {
     const n = phoneUploads.stuck;
     items.push({
