@@ -333,16 +333,16 @@ describe("computeForceCurve — display uncertainty and coverage", () => {
   // #488/#489: these bootstrapSamples values used to be 120/200/500 — each
   // iteration reruns fitCapabilityRegression's 25×101 grid search, so this
   // one describe block alone used to burn (120+200+500)=820 grid searches
-  // every `npm test` run, real CPU cost that (under machine load) contended
-  // with unrelated tests elsewhere in the suite for scheduling and pushed
-  // them past their timeout — that's the actual mechanism behind the
-  // `curveCandidateRecordings`-only tests above flaking on a tree that never
-  // touches this file (see the #489 root-cause note above `bootstrapSamples`
-  // in force-curve.ts). None of these three assertions is about a SPECIFIC
-  // sample count — they're testing reproducibility, band bounds and the
-  // preprocess-once invariant, all of which hold at any iteration count ≥
-  // the default — so they're pinned at the new default (40) instead of
-  // inflating the suite's CPU footprint for no assertion value.
+  // every `npm test` run, real CPU cost that (under machine load) can
+  // contend with unrelated tests elsewhere in the suite for scheduling.
+  // None of these three assertions is about a SPECIFIC sample count —
+  // they're testing reproducibility, band bounds and the preprocess-once
+  // invariant, all of which hold at any positive iteration count — so
+  // they're cut to 40 here, a TEST-ONLY override (the production default in
+  // force-curve.ts is unchanged, still 200 — see the comment above
+  // `iterations` there for why cutting the production default was tried and
+  // reverted). This is pure suite-cost reduction with no loss of assertion
+  // value and no production behavior change.
   it("produces a reproducible recording-level bootstrap band", () => {
     const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
     const a = computeForceCurve(efforts, { bootstrapSamples: 40 })!;
@@ -370,12 +370,20 @@ describe("computeForceCurve — display uncertainty and coverage", () => {
     expect(diagnostics.meanMaxEvaluations).toBe(efforts.length * CURVE_WINDOWS_S.length);
   });
 
-  // #488/#489 root-cause fix: `computeForceCurve`'s default `bootstrapSamples`
-  // dropped from 200 to 40 (force-curve.ts, see the comment above `iterations`
-  // there for the full rationale), and `fitCapabilityRegression`'s grid search
-  // (capabilityModel.ts) was rewritten to do the same 2525-candidate search
-  // without redundant per-data-point work. Two separate claims, two separate
-  // tests:
+  // #488/#489: `fitCapabilityRegression`'s grid search (capabilityModel.ts)
+  // was rewritten to do the same 2525-candidate search without redundant
+  // per-data-point work — the production `bootstrapSamples` default stayed
+  // at 200 (see the comment above `iterations` in force-curve.ts for why: an
+  // earlier version of this fix cut it to 40, and an adversarial review
+  // measured that as both unnecessary for #489 — the three test-only
+  // overrides above already account for the suite cost — and a real loss of
+  // display-band estimator quality). So this fix has NO observable
+  // production output difference from before it (verified against the
+  // pre-rewrite `fitCapabilityRegression` bit-for-bit, including degenerate
+  // inputs, in a scratch copy outside the repo — see HANDOFF.md). This test
+  // is a structural regression pin, not a "proves the fix changed something"
+  // test — it already held before this fix too, and is expected to keep
+  // holding after it:
   it("persists the same cf/wPrime/capabilityFit/points regardless of bootstrapSamples — only confidenceBand precision is sample-count-dependent", () => {
     // These are what `tindeq_tags.cf_kg`/`w_prime_kgs` store and the watch
     // reads back for RPE prediction (#280) — computed once, before the
@@ -391,7 +399,11 @@ describe("computeForceCurve — display uncertainty and coverage", () => {
     // used 200 and 500 here and timed out at the default 5s under real
     // machine load (2 of 5 `npm test` runs while validating this fix) —
     // proof by self-inflicted example that "assert a bigger number" is not
-    // the same as "prove the invariant."
+    // the same as "prove the invariant." 1 and 5 are both below the 20-draw
+    // floor in the suppression guard below (`Math.max(20, iterations *
+    // 0.2)`), so neither ever produces a confidenceBand at all — which is
+    // exactly why comparing them here (via `persisted`, which excludes
+    // confidenceBand) is safe and not a vacuous no-op.
     const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
     const persisted = (m: ReturnType<typeof computeForceCurve>) =>
       m && { cf: m.cf, wPrime: m.wPrime, capabilityFit: m.capabilityFit, points: m.points, maxF: m.maxF };
@@ -402,27 +414,6 @@ describe("computeForceCurve — display uncertainty and coverage", () => {
     expect(withNewDefault).toEqual(withNoBootstrap);
     expect(withOne).toEqual(withNoBootstrap);
     expect(withFive).toEqual(withNoBootstrap);
-  });
-
-  it("the default bootstrap sample count is smaller than the old 200 — confidenceBand differs from an explicit 200-sample call", () => {
-    // This is the one assertion in this file that actually exercises the
-    // #488/#489 fix rather than just re-confirming pre-existing behavior: on
-    // pre-fix code the default IS 200, so `computeForceCurve(efforts)` and
-    // `computeForceCurve(efforts, { bootstrapSamples: 200 })` draw the exact
-    // same sequence from the seeded LCG and produce an identical
-    // confidenceBand — this assertion would fail on pre-fix code (verified
-    // in a scratch copy outside the repo, see HANDOFF.md). Post-fix the
-    // default is 40, a strictly shorter prefix of the same deterministic LCG
-    // sequence, so the two bands differ. This is the ONLY output difference
-    // the fix makes (see the test above) and it is exactly the intended one:
-    // less bootstrap resampling, same persisted numbers, an approximate
-    // display band that's a little coarser.
-    const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
-    const withDefault = computeForceCurve(efforts)!;
-    const withOldDefault = computeForceCurve(efforts, { bootstrapSamples: 200 })!;
-    expect(withDefault.confidenceBand).not.toEqual(withOldDefault.confidenceBand);
-    // still a usable band, just built from fewer resamples
-    expect(withDefault.confidenceBand!.length).toBeGreaterThanOrEqual(3);
   });
 
   it("flags one long recording as weak coverage despite its many rolling windows", () => {
