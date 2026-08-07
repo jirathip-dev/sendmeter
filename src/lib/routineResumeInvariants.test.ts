@@ -117,9 +117,14 @@ describe("#483 routine resume/finish invariants", () => {
   /// heartbeat at the lock instant, so even a routine the user actually
   /// completed logs as a 1-2 minute partial or nothing at all. ForceView
   /// already holds a wake lock for its own fullscreen timer for the same
-  /// reason.
-  it("RoutineFullscreen holds a wake lock while mounted (#483 re-review N1)", () => {
-    expect(fullscreen).toMatch(/useWakeLock\(/);
+  /// reason. Pins the ARGUMENT, not just the call (#483 polish F-C):
+  /// `useWakeLock(false)` — the remedy silently disabled — left `tsc` clean
+  /// and every test passing under the bare `/useWakeLock\(/` version of this
+  /// check, since that regex is satisfied by any call regardless of what's
+  /// actually passed.
+  it("RoutineFullscreen's wake lock is actually active while running, not disabled (#483 re-review N1 / polish F-C)", () => {
+    expect(fullscreen).toMatch(/useWakeLock\(\s*!done\s*&&\s*!paused\s*\)/);
+    expect(fullscreen).not.toMatch(/useWakeLock\(\s*(true|false)\s*\)/);
   });
 
   it("the completed-routine duration excludes Skip's fast-forwarded time (#483 review F4)", () => {

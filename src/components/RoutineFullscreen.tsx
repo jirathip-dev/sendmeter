@@ -91,18 +91,6 @@ export default function RoutineFullscreen({
     return () => clearInterval(t);
   }, []);
 
-  // Keep the screen awake for the whole life of this component (#483
-  // re-review N1): without this, an ordinary iOS auto-lock suspends the
-  // WebView mid-routine, the lastSeenMs heartbeat freezes at the lock
-  // instant, and a routine the user actually COMPLETED classifies as a
-  // 1-2 minute partial (or is discarded outright) purely as a function of
-  // the auto-lock timeout — worse than the bug this fix replaced. Same
-  // treatment ForceView already gives its own fullscreen timer
-  // (`useWakeLock` at ForceView.tsx). Unconditionally active while mounted;
-  // the hook's own cleanup releases it on unmount (onClose/onExitEarly/
-  // onFinish→Done/onStaleFinish all unmount this component via `running`).
-  useWakeLock(true);
-
   const paused = pausedAtMs !== null;
   const elapsed =
     ((pausedAtMs ?? now) - startedMs - pausedTotalMs) / 1000 + skippedS;
@@ -112,6 +100,21 @@ export default function RoutineFullscreen({
   // inherit that fast-forwarded credit (#483 review F4).
   const realElapsed = ((pausedAtMs ?? now) - startedMs - pausedTotalMs) / 1000;
   const done = elapsed >= TOTAL_S;
+
+  // Keep the screen awake while the routine is actually running (#483
+  // re-review N1, gated per F-B): without this, an ordinary iOS auto-lock
+  // suspends the WebView mid-routine, the lastSeenMs heartbeat freezes at the
+  // lock instant, and a routine the user actually COMPLETED classifies as a
+  // 1-2 minute partial (or is discarded outright) purely as a function of
+  // the auto-lock timeout — worse than the bug this fix replaced. Same
+  // treatment ForceView already gives its own fullscreen timer, and same
+  // conditional shape: not while paused (an indefinite, deliberate pause
+  // shouldn't force the screen on) and not once `done` (the "All done"
+  // screen, waiting on a manual Done tap, has nothing left to measure). The
+  // hook's own cleanup releases the lock on unmount regardless
+  // (onClose/onExitEarly/onFinish→Done/onStaleFinish all unmount this
+  // component via `running`).
+  useWakeLock(!done && !paused);
 
   // Last confirmed-on-screen-and-ticking instant (#483 review F1/F3/F5) —
   // seeded from a resumed run's own heartbeat, else "just started".

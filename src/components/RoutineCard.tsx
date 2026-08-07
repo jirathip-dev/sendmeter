@@ -230,7 +230,13 @@ export default function RoutineCard({
         void logRoutine(outcome.durationMin, `${presetName} (partial, interrupted)`, true);
         return;
       case "discarded":
-        toast("Interrupted routine discarded — too short to log", "info");
+        // #483 polish F-A: NOT "too short to log" — a run classified
+        // "discarded" here didn't necessarily run for a short *wall-clock*
+        // time; it's that too little of it was ever confirmed (heartbeat
+        // froze early, or a legacy record has no heartbeat history at all).
+        // "Too short" tells the user something false about a 9-minute
+        // routine whose heartbeat happened to freeze at 40s.
+        toast("Routine interrupted — too little of it was confirmed to log", "info");
         return;
     }
   }
