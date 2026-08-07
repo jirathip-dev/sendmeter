@@ -762,16 +762,38 @@ export async function drainPendingRecordingsQueue(
     // (this also finishes migrating a lane-only entry that just picked up its
     // first stamp), else rewritten in place below, since the lane is the only
     // store when there's no IndexedDB at all.
-    if (db && changed.length > 0) await db.put(changed).catch(() => {});
+    //
+    // R2-F1: `stored` is CONFIRMED, not assumed — a lane-only entry is there
+    // precisely BECAUSE `absorbSyncLane`'s own `db.put` already failed once,
+    // so this retry's failure is correlated, not independent. Removing it
+    // from the lane on the mere attempt (the pre-fix `.catch(() => {})`
+    // shape) would erase the only copy that exists the moment the SAME
+    // refusal recurs — this file's own `retryStuckRecordings` already gets
+    // this right (`db.put(...).then(() => true, () => false)`); this is that
+    // exact pattern.
+    const stored =
+      db && changed.length > 0
+        ? await db.put(changed).then(
+            () => true,
+            () => false,
+          )
+        : false;
 
     const currentLane = loadQueue(storage);
     const changedById = new Map(changed.map((p) => [p.id, p]));
-    // A changed entry leaves the lane once IndexedDB holds it; with no
-    // IndexedDB, it stays in the lane but gets rewritten in place.
-    const goneFromLane = db ? new Set([...removedIds, ...changedById.keys()]) : removedIds;
+    // A changed entry leaves the lane only once IndexedDB is CONFIRMED to
+    // hold it (`stored`). Whenever it is NOT confirmed — no IndexedDB at all,
+    // OR IndexedDB refused this particular put (the lane-only, correlated-
+    // failure case R2-F1 is about) — the freshest copy is instead rewritten
+    // IN PLACE in the lane, so the rejection stamp a lane-only entry just
+    // picked up isn't silently dropped on the floor while it waits for
+    // IndexedDB to recover. A single `saveQueue` write is all-or-nothing, so
+    // there's nothing further to confirm on that side.
+    const goneFromLane = new Set(removedIds);
+    if (stored) for (const id of changedById.keys()) goneFromLane.add(id);
     const nextLane = currentLane
       .filter((p) => !goneFromLane.has(p.id))
-      .map((p) => (db ? p : (changedById.get(p.id) ?? p)));
+      .map((p) => (stored ? p : (changedById.get(p.id) ?? p)));
     if (
       nextLane.length !== currentLane.length ||
       nextLane.some((p, i) => p !== currentLane[i])

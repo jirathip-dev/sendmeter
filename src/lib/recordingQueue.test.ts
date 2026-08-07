@@ -624,6 +624,31 @@ describe("drainPendingRecordingsQueue without IndexedDB", () => {
     expect(loadQueue(storage).map((p) => p.id)).toEqual(["bad"]); // still not deleted
   });
 
+  // R2-F1 — PROVED. A lane-only entry is lane-only precisely BECAUSE
+  // `absorbSyncLane`'s own `db.put` already failed once (the two failures are
+  // CORRELATED, not independent) — so when the drain re-attempts persisting
+  // its fresh rejection stamp via `db.put` and that ALSO fails, the entry
+  // must not be removed from the lane on the mere attempt. Before the fix,
+  // the removal was gated on `db` merely being non-null, not on the put
+  // having committed — this test fails against that shape (the entry vanishes
+  // from BOTH stores: not in the lane, and never landed in IndexedDB either).
+  it("does not remove a lane-only entry from the lane when persisting its rejection stamp fails", async () => {
+    const storage = fakeStorage();
+    saveQueue(enqueueRecording([], rec("bad"), "user-1"), storage);
+    // Both `absorbSyncLane`'s migration attempt AND the drain's own re-attempt
+    // to persist the rejection stamp go through this same refusing `put`.
+    const { loader, map } = fakeDb([], () => quotaError());
+
+    const insert = vi.fn().mockRejectedValue({ code: "23514", message: "violates check constraint" });
+    const recovered = await drainPendingRecordingsQueue("user-1", insert, loader, storage);
+
+    expect(recovered).toBe(0);
+    // Still there — in the ONE store that ever held it.
+    expect(loadQueue(storage).map((p) => p.id)).toEqual(["bad"]);
+    expect(loadQueue(storage)[0]?.rejection).toMatchObject({ code: "23514", stuck: false });
+    expect([...map.keys()]).toEqual([]); // never made it into IndexedDB either
+  });
+
   it("guards against a second concurrent drain double-inserting", async () => {
     const storage = fakeStorage();
     saveQueue(enqueueRecording([], rec("a"), "user-1"), storage);
@@ -1058,6 +1083,23 @@ describe("clearRecordingQueue", () => {
 
       expect(await clearRecordingQueue(null, loader, storage)).toBe(2);
       expect([...map.keys()]).toEqual([]);
+    });
+
+    // R2-F3 — PROVED. The IndexedDB half of scoping was pinned, but the
+    // LANE half wasn't: `mine`'s filter is exercised here with BOTH accounts'
+    // entries sitting in the lane (`noDb`, so there is no IndexedDB path to
+    // fall back on), which the earlier tests never did. The lane is the
+    // salvage-on-unmount store (#269) — the one holding a recording that
+    // reached no other store — so an unscoped lane wipe during account B's
+    // sign-out is the worst version of F3's failure scenario.
+    it("does not touch another account's entries sitting in the LANE when scoped", async () => {
+      const storage = fakeStorage();
+      const mine = queueOf("mine-lane");
+      const theirs = enqueueRecording(mine, rec("theirs-lane"), "user-2", () => "t");
+      saveQueue(theirs, storage);
+
+      expect(await clearRecordingQueue("user-1", noDb, storage)).toBe(1); // only mine-lane
+      expect(loadQueue(storage).map((p) => p.id)).toEqual(["theirs-lane"]); // untouched
     });
   });
 });
