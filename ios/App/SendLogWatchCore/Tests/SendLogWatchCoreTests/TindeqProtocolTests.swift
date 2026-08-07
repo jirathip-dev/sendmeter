@@ -49,7 +49,7 @@ final class TindeqProtocolTests: XCTestCase {
     }
 
     func testTruncatedFrameIsSafe() {
-        XCTAssertEqual(parseTindeqNotification(Data([0x01])), .unknown(0xFF))
+        XCTAssertEqual(parseTindeqNotification(Data([0x01])), .unknown(TindeqFrame.truncatedTag))
         // Length byte claims more than actually present — parse what's there
         var frame = Data([0x01, 0x10])
         frame.append(contentsOf: [UInt8](repeating: 0, count: 8))
@@ -61,6 +61,34 @@ final class TindeqProtocolTests: XCTestCase {
 
     func testUnknownTag() {
         XCTAssertEqual(parseTindeqNotification(Data([0x7F, 0x00])), .unknown(0x7F))
+    }
+
+    /// #488: the too-short sentinel must not collide with a genuine tag byte
+    /// a real device could send. The web mirror (`tindeq-protocol.ts`) uses
+    /// -1 for "too short to have a tag at all" — a value no real tag byte
+    /// (0-255) can ever produce — so it can always tell a truncated
+    /// notification apart from an actual unrecognized tag. Pin the same
+    /// distinguishability here.
+    func testTruncatedFrameSentinelDoesNotCollideWithARealTag0xFFFrame() {
+        let truncated = parseTindeqNotification(Data([0x01]))
+        let realTag0xFF = parseTindeqNotification(Data([0xFF, 0x00]))
+        XCTAssertNotEqual(
+            truncated, realTag0xFF,
+            "a too-short frame must not be indistinguishable from a genuine tag=0xFF frame"
+        )
+    }
+
+    /// #488 F6: `truncatedTag` (-1) is not representable as `UInt8` — that's
+    /// the whole point (it must be a value no real tag byte can produce) —
+    /// but it means a naive `UInt8(tag)` on an `.unknown` payload traps where
+    /// the old `UInt8`-typed case couldn't. Pins that this is a deliberate,
+    /// documented trade-off (see the WARNING on `TindeqFrame.unknown` and the
+    /// doc comment on `truncatedTag`), not an oversight: the safe conversion
+    /// is `UInt8(exactly:)`, which must return nil for this sentinel.
+    func testTruncatedTagIsDeliberatelyNotRepresentableAsUInt8() {
+        XCTAssertNil(UInt8(exactly: TindeqFrame.truncatedTag))
+        // A real, if unrecognized, tag always converts safely.
+        XCTAssertEqual(UInt8(exactly: 0x7F), 0x7F)
     }
 }
 
