@@ -84,21 +84,88 @@ import { describe, expect, it } from "vitest";
 /// test target that ships nothing), so opening a reachability hole in any
 /// other directory goes red immediately instead of silently.
 ///
+/// **Third correction (post-review round 3, #488).** Round 2's tokenizer
+/// itself created four new defects in one commit — two of them regressions
+/// against round 1 — while fixing what it was asked to fix:
+///
+/// - **G1 (regression).** `tokenize()` treated Swift string interpolation
+///   (`\(…)`) as opaque string content, so `swiftCodeForAccessorScan`
+///   blanked it along with everything else — hiding
+///   `Logger().debug("token=\(client.auth.session)")`, the exact realistic
+///   line the Second Correction above names as the reason this file exists
+///   in this shape. Round 1 (plain comment-stripping, strings untouched) saw
+///   this line; round 2 didn't. Fixed: a string form with an
+///   `interpolationPrefix` re-enters `\(…)` as real code (tracking paren
+///   depth, skipping nested string literals wholesale so their parens don't
+///   confuse the count) instead of blanking it.
+/// - **G2 (regression).** `AUTH_PROPERTY_ACCESS`'s receiver class
+///   (`[\w)\]\\]`) didn't include `?`/`!`, so `client?.auth` and
+///   `client!.auth` — ordinary optional-chaining/force-unwrap, not evasion —
+///   were missed. Round 1's bare `/\.auth\b/` caught both. Fixed: widened to
+///   `[\w)\]\\?!}>]` (also picking up `{ … }.auth` and `Foo<Bar>.auth` for
+///   free) — verified this doesn't reopen `case .auth:`/`forKey: .auth`,
+///   since both are preceded by whitespace either way.
+/// - **G3 (new, silent).** A tokenizer that can't find a string's or block
+///   comment's closing delimiter (an extended raw string `##"…"##` the old
+///   single-`#` form didn't recognize; an escaped `\"""` inside a multi-line
+///   string) used to blank the ENTIRE REST OF THE FILE as one giant string
+///   segment — no error, no offender, just silently fewer real matches. That
+///   is the worst failure mode this file can have: a miss that reads as a
+///   pass. Fixed two ways: (a) raw strings now match any hash count
+///   generically, and `"""` scanning is escape-aware (`\"""` correctly
+///   escapes just the first quote), which removes the two known desync
+///   triggers; (b) more importantly, every comment/string form in
+///   `tokenize()` now **throws** if it reaches EOF without its terminator,
+///   converting every desync mode — including ones not specifically handled
+///   by (a) — from "silently green" to "fails with a file and index". A
+///   final self-check (the reconstructed segments must equal the input
+///   exactly) catches any other way the tokenizer could drop text. Swept all
+///   135 Swift files under `ios/` + `native-plugins/` against the new
+///   tokenizer: zero desyncs today — this is entirely about future input.
+/// - **G4.** The import allow-list (`describe("every Supabase-importing
+///   Swift file …")` below) matched only `import Supabase`, but
+///   supabase-swift ships `AuthClient` in the separately importable `Auth`
+///   product (`PostgREST`/`Realtime`/`Storage`/`Functions` too) — a file
+///   could `import Auth`, hold an `AuthClient`, and never write the word
+///   "Supabase", reopening the exact reachability hole that assertion exists
+///   to close. Fixed: the regex now matches any of the six product names.
+/// - **G5 (new, low severity).** Swift permits nested `/* … */`; the old
+///   scanner closed at the first `*/`, so a historical note like `/* Outer
+///   /* inner */ … client.auth.session … */` had its tail read as code — a
+///   false positive (loud, not silent, but still wrong). Fixed: block
+///   comments now track nesting depth.
+///
+/// The pattern across all three rounds is the same: **an overclaim in this
+/// very docstring, found by the next round's adversarial review.** G6 named
+/// it directly — the round-2 residual list below was honest about the three
+/// things it listed, but silently missing G1–G3, which were more realistic
+/// than any of them. This round's list is written from the actual round-3
+/// findings, not from what the code was intended to cover.
+///
 /// **What this still does not cover, stated plainly rather than reused as
 /// another overclaim:**
 /// - **A member-access dot broken across whitespace this scan doesn't
 ///   tolerate**, e.g. `client.\n    auth` (dot at end of line) or `client\n
 ///   .auth` (leading-dot continuation) or a stray `client .auth`. All three
 ///   are valid Swift. The first two contain no `.auth` substring at all
-///   (there's a newline between the dot and the name), so no text-substring
-///   scan can catch them without a real parser. The third — a literal space
-///   before the dot — is deliberately not chased either: allowing arbitrary
+///   (there's a newline between the dot and the name) — closing them needs a
+///   real parser, not a bigger regex. The third (a literal space before the
+///   dot) IS something the tokenizer could now normalize before matching
+///   (round 2's docstring claimed otherwise — that stopped being true the
+///   moment a tokenizer existed, per round-3 review G7). The reason it's
+///   still open is a **cost decision, not an impossibility**: tolerating
 ///   whitespace before the dot would make `case .auth:` / `forKey: .auth` /
 ///   `return .auth` match again (a keyword or label ends in a word character
-///   too), reopening the exact false-positive class this round just closed.
-///   None of these three are realistic — SwiftFormat/Xcode's default
-///   formatting never produces them — but they are a real, known gap, not a
-///   closed one.
+///   too), reopening the false-positive class G2/round-2 closed, for a
+///   formatting shape SwiftFormat/Xcode's defaults never produce. Not worth
+///   the added tokenizer complexity for that trade.
+/// - **Raw-string interpolation (`\#(…)`, `\##(…)`, …).** `#"…"#`-style raw
+///   strings interpolate with a hash-prefixed escape, not `\(…)` — the
+///   `interpolationPrefix` mechanism that closes G1 for ordinary and
+///   triple-quoted strings isn't wired up for raw strings. Raw strings are
+///   unused in the two guarded directories today (verified); a future one
+///   containing an interpolated accessor would be blanked as opaque string
+///   content, unseen by the accessor scan.
 /// - **Reflection/KVC-style access** (`value(forKeyPath:)`) — not realistic
 ///   against a non-`@objc` Swift type here, and not checked.
 /// - **A rotating-credential accessor added under a name with no "auth" in
@@ -106,6 +173,14 @@ import { describe, expect, it } from "vitest";
 ///   name it has never seen. That is code review's job, same as the
 ///   precedent (`watchAuthPollInvariants.test.ts`) states for its own
 ///   equivalent gap.
+///
+/// **On the pin's complexity itself:** round 3's review assessed ~90 lines of
+/// hand-rolled Swift/TS lexing producing four defects in its first round as
+/// on the wrong trajectory, and recommended a structural follow-up — making
+/// the accessor unreachable by construction (a private `SupabaseClient`
+/// behind a small façade per target, collapsing this file's job to two
+/// greps) — rather than a fourth round of tokenizer patches. That is tracked
+/// as a separate issue, not attempted here.
 
 const REPO = join(import.meta.dirname, "..", "..");
 
@@ -145,19 +220,103 @@ interface StringForm {
   open: string;
   close: string;
   // Whether a backslash escapes the next character while scanning for
-  // `close` — only meaningful (and only needed) for single-character quotes.
+  // `close` — needed for both single-character quotes AND `"""` (Swift's
+  // `\"""` escapes just the first quote of what would otherwise read as the
+  // closing delimiter — #488 G3).
   escapes: boolean;
+  // If set, this text (`\(` for Swift) starts a string interpolation: the
+  // interpolation body is scanned for its matching close paren (tracking
+  // depth, and skipping any NESTED string literal wholesale so ITS parens
+  // don't confuse the count) and re-tokenized as real CODE, instead of being
+  // blanked as string content. Without this, an accessor written inside a
+  // string interpolation is invisible to the accessor-only scan (#488 G1) —
+  // exactly the realistic "one debug log line" case round 1's F1 named.
+  // Not set for raw strings (`#"…"#`), which interpolate with `\#(` instead
+  // — see the module doc comment's residual list.
+  interpolationPrefix?: string;
 }
 
-/// A small shared tokenizer for `//` / `/* … */` comments plus a
-/// caller-supplied list of quoted-string forms (checked in the given order,
-/// so put more specific/longer delimiters first — e.g. `"""` before `"`).
-/// Not a full lexer for either language: string interpolation (`\(…)` in
-/// Swift, `${…}` in TS) is treated as opaque string content, not re-entered
-/// as code. That's a real, deliberate simplification (see the module doc
-/// comment above) — good enough for ordinary application source, not text
-/// built specifically to evade a scan.
-function tokenize(src: string, stringForms: StringForm[]): Segment[] {
+/// Thrown when the tokenizer cannot find a comment's or string's terminator
+/// before EOF — which means it lost sync, not that the input is unusual
+/// Swift/TS. #488 G3: a silent desync used to blank the rest of the file
+/// (everything after it read as one giant "string" segment), which is the
+/// worst failure mode a pin can have — a miss that looks exactly like a
+/// pass. Throwing converts every desync mode, including ones not
+/// specifically handled below, from "silently green" to "fails with a
+/// location", which is why this exists as a dedicated error rather than
+/// e.g. returning a null/partial result.
+class TokenizeDesyncError extends Error {
+  constructor(what: string, sourceLabel: string, index: number) {
+    super(`tokenize(): unterminated ${what} at index ${index} of ${sourceLabel} — the lexer lost sync (#488 G3)`);
+  }
+}
+
+// Scans forward from `start` (the index right after an interpolation's
+// opening `\(`) tracking paren depth, so `\(a(b))` and even
+// `\(foo("weird)string"))` end at the correct matching `)` — a NESTED
+// string literal's own parens must not affect the count, so its content is
+// skipped wholesale via the same open/close/escapes rules as top-level
+// scanning. Returns the index just past that `)`, or throws if EOF is
+// reached first (an unterminated interpolation is exactly a desync — #488
+// G1+G3).
+function findInterpolationEnd(
+  src: string,
+  start: number,
+  stringForms: StringForm[],
+  sourceLabel: string,
+): number {
+  let depth = 1;
+  let i = start;
+  while (i < src.length && depth > 0) {
+    let matchedNested = false;
+    for (const form of stringForms) {
+      if (!src.startsWith(form.open, i)) continue;
+      let j = i + form.open.length;
+      while (j < src.length && !src.startsWith(form.close, j)) {
+        j += form.escapes && src[j] === "\\" ? 2 : 1;
+      }
+      if (j >= src.length) {
+        throw new TokenizeDesyncError(`nested string literal (inside interpolation)`, sourceLabel, i);
+      }
+      i = j + form.close.length;
+      matchedNested = true;
+      break;
+    }
+    if (matchedNested) continue;
+    if (src[i] === "(") depth++;
+    else if (src[i] === ")") depth--;
+    i++;
+  }
+  if (depth > 0) {
+    throw new TokenizeDesyncError("string interpolation", sourceLabel, start);
+  }
+  return i;
+}
+
+// A Swift raw string opener is one-or-more `#` immediately followed by `"`
+// (`#"…"#`, `##"…"##`, …) — arbitrary hash count, both ends must match
+// (#488 G3: a fixed single-`#` form let a `##"…"##` literal's `"#` close
+// early and desync the rest of the file). Returns the hash count, or 0 if
+// `i` isn't a raw-string opener (e.g. a `#if`/`#else` directive, where the
+// `#` is followed by a letter, not `"`).
+function rawStringHashCountAt(src: string, i: number): number {
+  let hashes = 0;
+  while (src[i + hashes] === "#") hashes++;
+  return src[i + hashes] === '"' ? hashes : 0;
+}
+
+/// A small shared tokenizer for `//` / `/* … */` comments (block comments
+/// nest, per Swift — #488 G5) plus a caller-supplied list of quoted-string
+/// forms (checked in the given order, so put more specific/longer
+/// delimiters first — e.g. `"""` before `"`) and Swift's arbitrary-hash-count
+/// raw strings. String interpolation is re-entered as code where
+/// `interpolationPrefix` says to (#488 G1); every comment/string form throws
+/// rather than silently swallowing the rest of the file if its terminator is
+/// missing (#488 G3). A final self-check confirms the segments reconstruct
+/// the input exactly. Not a full lexer for either language — good enough for
+/// ordinary application source, not text built specifically to evade a scan
+/// (see the module doc comment for the residual this still doesn't cover).
+function tokenize(src: string, stringForms: StringForm[], sourceLabel = "<input>"): Segment[] {
   const segments: Segment[] = [];
   let i = 0;
   outer: while (i < src.length) {
@@ -169,27 +328,69 @@ function tokenize(src: string, stringForms: StringForm[]): Segment[] {
       continue;
     }
     if (src.startsWith("/*", i)) {
-      const end = src.indexOf("*/", i + 2);
-      const j = end === -1 ? src.length : end + 2;
+      let depth = 1;
+      let j = i + 2;
+      while (j < src.length && depth > 0) {
+        if (src.startsWith("/*", j)) {
+          depth++;
+          j += 2;
+        } else if (src.startsWith("*/", j)) {
+          depth--;
+          j += 2;
+        } else {
+          j++;
+        }
+      }
+      if (depth > 0) throw new TokenizeDesyncError("block comment", sourceLabel, i);
       segments.push({ text: src.slice(i, j), kind: "comment" });
       i = j;
       continue;
     }
+    const rawHashes = rawStringHashCountAt(src, i);
+    if (rawHashes > 0) {
+      const openLen = rawHashes + 1;
+      const closeDelim = '"' + "#".repeat(rawHashes);
+      let j = i + openLen;
+      while (j < src.length && !src.startsWith(closeDelim, j)) j++;
+      if (j >= src.length) throw new TokenizeDesyncError("raw string literal", sourceLabel, i);
+      j += closeDelim.length;
+      segments.push({ text: src.slice(i, j), kind: "string" });
+      i = j;
+      continue;
+    }
     for (const form of stringForms) {
-      if (src.startsWith(form.open, i)) {
-        let j = i + form.open.length;
-        while (j < src.length && !src.startsWith(form.close, j)) {
-          j += form.escapes && src[j] === "\\" ? 2 : 1;
+      if (!src.startsWith(form.open, i)) continue;
+      let cursor = i + form.open.length;
+      let pieceStart = i;
+      let closed = false;
+      while (cursor < src.length) {
+        if (src.startsWith(form.close, cursor)) {
+          cursor += form.close.length;
+          closed = true;
+          break;
         }
-        j = Math.min(j + form.close.length, src.length);
-        segments.push({ text: src.slice(i, j), kind: "string" });
-        i = j;
-        continue outer;
+        if (form.interpolationPrefix && src.startsWith(form.interpolationPrefix, cursor)) {
+          const bodyStart = cursor + form.interpolationPrefix.length;
+          segments.push({ text: src.slice(pieceStart, bodyStart), kind: "string" });
+          const afterBody = findInterpolationEnd(src, bodyStart, stringForms, sourceLabel);
+          const body = src.slice(bodyStart, afterBody - 1); // exclude the matching `)`
+          segments.push(...tokenize(body, stringForms, `${sourceLabel} (interpolation)`));
+          segments.push({ text: src.slice(afterBody - 1, afterBody), kind: "string" }); // the `)`
+          pieceStart = afterBody;
+          cursor = afterBody;
+          continue;
+        }
+        cursor += form.escapes && src[cursor] === "\\" ? 2 : 1;
       }
+      if (!closed) throw new TokenizeDesyncError("string literal", sourceLabel, i);
+      segments.push({ text: src.slice(pieceStart, cursor), kind: "string" });
+      i = cursor;
+      continue outer;
     }
     let j = i + 1;
     scan: while (j < src.length) {
       if (src.startsWith("//", j) || src.startsWith("/*", j)) break scan;
+      if (rawStringHashCountAt(src, j) > 0) break scan;
       for (const form of stringForms) {
         if (src.startsWith(form.open, j)) break scan;
       }
@@ -197,6 +398,10 @@ function tokenize(src: string, stringForms: StringForm[]): Segment[] {
     }
     segments.push({ text: src.slice(i, j), kind: "code" });
     i = j;
+  }
+  const reconstructed = segments.map((s) => s.text).join("");
+  if (reconstructed !== src) {
+    throw new TokenizeDesyncError("(segments don't reconstruct the source — this is a tokenizer bug, not an input problem)", sourceLabel, 0);
   }
   return segments;
 }
@@ -209,9 +414,8 @@ function blank(text: string): string {
 }
 
 const SWIFT_STRINGS: StringForm[] = [
-  { open: '"""', close: '"""', escapes: false },
-  { open: '#"', close: '"#', escapes: false },
-  { open: '"', close: '"', escapes: true },
+  { open: '"""', close: '"""', escapes: true, interpolationPrefix: "\\(" },
+  { open: '"', close: '"', escapes: true, interpolationPrefix: "\\(" },
 ];
 
 const TS_STRINGS: StringForm[] = [
@@ -224,7 +428,7 @@ const TS_STRINGS: StringForm[] = [
 /// need to read real Swift text, including string contents (e.g. the
 /// `"refreshToken"` dictionary key checked below).
 function swiftCode(path: string): string {
-  return tokenize(readFileSync(path, "utf8"), SWIFT_STRINGS)
+  return tokenize(readFileSync(path, "utf8"), SWIFT_STRINGS, path)
     .map((s) => (s.kind === "comment" ? blank(s.text) : s.text))
     .join("");
 }
@@ -232,9 +436,11 @@ function swiftCode(path: string): string {
 /// Comments AND string-literal contents both stripped — for the
 /// AuthClient-reachability scans only. A string's content (a URL, a Keychain
 /// key name, a doc line quoted in a log message) must never be mistaken for
-/// real code touching `.auth`.
+/// real code touching `.auth`. String INTERPOLATION is the exception —
+/// `tokenize()` re-enters `\(…)` as code, so an accessor written inside a
+/// string interpolation stays visible here (#488 G1).
 function swiftCodeForAccessorScan(path: string): string {
-  return tokenize(readFileSync(path, "utf8"), SWIFT_STRINGS)
+  return tokenize(readFileSync(path, "utf8"), SWIFT_STRINGS, path)
     .map((s) => (s.kind === "code" ? s.text : blank(s.text)))
     .join("");
 }
@@ -243,7 +449,7 @@ function swiftCodeForAccessorScan(path: string): string {
 /// inside a string literal used to truncate those the same way (round 1 only
 /// fixed the Swift side; this closes the identical shape in this same file).
 function tsCodeWithoutComments(path: string): string {
-  return tokenize(readFileSync(path, "utf8"), TS_STRINGS)
+  return tokenize(readFileSync(path, "utf8"), TS_STRINGS, path)
     .map((s) => (s.kind === "comment" ? blank(s.text) : s.text))
     .join("");
 }
@@ -291,14 +497,17 @@ const ROTATING_CALLS = [
   { pattern: /\brefreshToken\s*[:=]/, name: "a refreshToken argument/property" },
 ];
 
-// `.auth` preceded by an identifier character, `)`, `]`, or a keypath
-// backslash — i.e. real member access (`client.auth`, `bridge().auth`,
-// `arr[0].auth`, `\.auth` as a KeyPath literal) — NOT preceded by whitespace
+// `.auth` preceded by an identifier character, `)`, `]`, `?`/`!` (optional
+// chaining/force-unwrap — `client?.auth`, `client!.auth` are ordinary
+// idiomatic Swift, #488 G2), `}`/`>` (`{ … }.auth`, `Foo<Bar>.auth`), or a
+// keypath backslash — i.e. real member access — NOT preceded by whitespace
 // or punctuation, which is how implicit-member syntax referencing an
 // unrelated enum case always looks (`case .auth:`, `forKey: .auth`, `return
-// .auth`). See the module doc comment for what this deliberately still
-// doesn't catch.
-const AUTH_PROPERTY_ACCESS = /[\w)\]\\]\.auth\b/g;
+// .auth`; a keyword/label ends in a word character too, which is what makes
+// this narrowing sound — widening the receiver class further doesn't touch
+// it, only tolerating whitespace before the dot would). See the module doc
+// comment for what this deliberately still doesn't catch.
+const AUTH_PROPERTY_ACCESS = /[\w)\]\\?!}>]\.auth\b/g;
 
 describe("no session-consuming native client may hold or spend a refresh token (#265)", () => {
   const consumers = accessorScanSources(WATCH_APP, HEALTH_PLUGIN);
@@ -364,8 +573,16 @@ describe("every Supabase-importing Swift file lives inside a scanned directory (
     // the moment ANY file outside those two (and the one exempt test target)
     // starts importing Supabase, this goes red and has to be looked at,
     // rather than silently gaining a new, unchecked #265 surface.
+    //
+    // Matches every supabase-swift product, not just the `Supabase` umbrella
+    // (#488 G4): `AuthClient` itself lives in the separately importable
+    // `Auth` module, so a file can `import Auth`, hold one, and never write
+    // the word "Supabase" — reopening the exact hole this assertion exists
+    // to close, by module name instead of by directory.
     const importers = [...swiftFiles(IOS_ROOT), ...swiftFiles(NATIVE_PLUGINS_ROOT)].filter((p) =>
-      /^\s*import\s+Supabase\b/m.test(readFileSync(p, "utf8")),
+      /^\s*import\s+(Supabase|Auth|PostgREST|Realtime|Storage|Functions)\b/m.test(
+        readFileSync(p, "utf8"),
+      ),
     );
 
     const outsideScannedDirs = importers.filter((p) => {
