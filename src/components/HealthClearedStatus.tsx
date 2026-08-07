@@ -13,10 +13,19 @@
 /// exercise a component's initial render for given PROPS, never a state
 /// transition. Making `resyncFailed` a prop here is what makes the honest-vs-
 /// dishonest branch reachable from a test at all.
+///
+/// `native` is a prop for the same reason (#494 N5): the success copy used
+/// to unconditionally say "Your device will re-sync fresh metrics" even on
+/// web, where `resyncHealthHistory` is a documented no-op (health ingestion
+/// is iPhone-only — see CLAUDE.md) — nothing on that device is about to
+/// resync anything. `#487`'s own test PINNED that false string; fixing it
+/// needs the platform reachable from a render, same as `resyncFailed`.
 export default function HealthClearedStatus({
   resyncFailed,
+  native,
 }: {
   resyncFailed: boolean;
+  native: boolean;
 }) {
   if (resyncFailed) {
     return (
@@ -25,6 +34,14 @@ export default function HealthClearedStatus({
         rebuilt. Reopening the app only refreshes today's score, not the rest
         of your history. Close this screen and run Clear & resync again to
         retry — safe, since there's nothing left to delete.
+      </div>
+    );
+  }
+  if (!native) {
+    return (
+      <div style={{ fontSize: "var(--t-sm)", color: "var(--success)", lineHeight: 1.5 }}>
+        Health data cleared. Resyncing only happens on the iPhone app — open
+        it to rebuild your recent history from Apple Health.
       </div>
     );
   }

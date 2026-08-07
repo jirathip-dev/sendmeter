@@ -23,14 +23,14 @@ function text(html: string): string {
 
 describe("HealthClearedStatus (#487, F4)", () => {
   it("never claims resyncing when the resync failed", () => {
-    const html = renderToStaticMarkup(<HealthClearedStatus resyncFailed={true} />);
+    const html = renderToStaticMarkup(<HealthClearedStatus resyncFailed={true} native={true} />);
     const t = text(html);
     expect(t).not.toContain("resyncing");
     expect(t).not.toMatch(/will re-sync fresh metrics/);
   });
 
   it("tells the user the failure is real and names a true remedy", () => {
-    const html = renderToStaticMarkup(<HealthClearedStatus resyncFailed={true} />);
+    const html = renderToStaticMarkup(<HealthClearedStatus resyncFailed={true} native={true} />);
     const t = text(html);
     expect(t).toContain("the resync failed");
     // The remedy must not claim reopening the app rebuilds history — verified
@@ -41,11 +41,33 @@ describe("HealthClearedStatus (#487, F4)", () => {
     expect(t).toContain("run Clear & resync again");
   });
 
-  it("shows the success message only when the resync actually succeeded", () => {
-    const html = renderToStaticMarkup(<HealthClearedStatus resyncFailed={false} />);
+  it("shows the device-resync success message on native when the resync actually succeeded", () => {
+    const html = renderToStaticMarkup(<HealthClearedStatus resyncFailed={false} native={true} />);
     const t = text(html);
     expect(t).toContain("Health data cleared");
     expect(t).toContain("re-sync fresh metrics");
     expect(t).not.toContain("failed");
+  });
+});
+
+/// #494 (N5): `resyncHealthHistory` is a documented no-op on web (health
+/// ingestion is iPhone-only), so the native success copy — "Your device
+/// will re-sync fresh metrics from Apple Health shortly" — is false there:
+/// nothing on a web tab is about to resync anything. #487's own test used to
+/// pin that exact string regardless of platform; this suite instead reads
+/// the rendered web output and requires it NOT claim an on-device resync.
+describe("HealthClearedStatus web copy (#494, N5)", () => {
+  it("does not claim the device will re-sync when running on web", () => {
+    const html = renderToStaticMarkup(<HealthClearedStatus resyncFailed={false} native={false} />);
+    const t = text(html);
+    expect(t).not.toMatch(/your device will re-sync/i);
+    expect(t).not.toContain("failed");
+  });
+
+  it("still tells the truth about the clear itself, and names the iPhone app as the real remedy", () => {
+    const html = renderToStaticMarkup(<HealthClearedStatus resyncFailed={false} native={false} />);
+    const t = text(html);
+    expect(t).toContain("Health data cleared");
+    expect(t).toMatch(/iphone app/i);
   });
 });

@@ -623,6 +623,13 @@ export type Database = {
     }
     Functions: {
       delete_account: { Args: never; Returns: undefined }
+      link_tindeq_recordings_to_session: {
+        Args: { p_recording_ids: string[]; p_session_id: string }
+        Returns: {
+          duration_min: number
+          group_id: string
+        }[]
+      }
       rename_tindeq_tag: {
         Args: { new_name: string; old_name: string }
         Returns: undefined

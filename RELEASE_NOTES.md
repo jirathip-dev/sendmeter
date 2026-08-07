@@ -20,6 +20,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Linking loose Force recordings to a session (the "link to this session" nudge) is now all-or-nothing — a failure partway through no longer leaves recordings regrouped without the session actually reflecting them.
+- Account: "Clear health data & resync" no longer shows a permanent "resync failed" warning for an account with no Health history to rebuild in the first place, and the success message on web now correctly says to open the iPhone app to resync instead of claiming this device will do it.
 - Restore the Tare button in the Force fullscreen gauge so a non-zero load-cell baseline can be zeroed again.
 - Force: fixed hands-free adaptive reps failing to save (with a "Failed to save recording" error) after the first rep of a run.
 - Force: fixed a disconnect while hands-free was armed (before the first pull) silently discarding a later normal run's recordings, and fixed switching or clearing a static preset after a hands-free run carrying that run's stale state into the new one.
