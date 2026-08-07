@@ -16,13 +16,6 @@ struct ForceGaugeView: View {
     // App-level so the connection + gauge session survive leaving this screen
     // (SL-58 #5). The finish prompt is presented from RootView.
     @Environment(TindeqManager.self) private var tindeq
-    @State private var saving = false
-    @State private var savedMsg: String?
-    // Bumped every time savedMsg is finalized (issue #149 follow-up) so the
-    // delayed auto-clear below only fires for the message it was scheduled
-    // for — a fast next rep that overwrites savedMsg before the old timer
-    // fires must not have its fresh message wiped by the stale one.
-    @State private var savedMsgGeneration = 0
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
 
     // Exercise setup — set once before the first rep, tweak side between reps.
@@ -100,7 +93,7 @@ struct ForceGaugeView: View {
                                 EmptyView()
                             }
 
-                            if let savedMsg {
+                            if let savedMsg = tindeq.savedMsg {
                                 // Least essential line in the stack (issue #149
                                 // follow-up) — kept last so it's the first thing
                                 // to scroll off if the combo still overflows the
@@ -109,7 +102,15 @@ struct ForceGaugeView: View {
                                 // second line and blow the budget.
                                 Text(savedMsg)
                                     .font(.caption2)
-                                    .foregroundStyle(saving ? Color.secondary : SendmeterColor.success)
+                                    .foregroundStyle(
+                                        tindeq.saving
+                                            ? Color.secondary
+                                            : savedMsg.hasPrefix("Rep not saved")
+                                                ? SendmeterColor.danger
+                                                : savedMsg.hasPrefix("Saved")
+                                                    ? SendmeterColor.success
+                                                    : Color.secondary
+                                    )
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.7)
                                     .truncationMode(.tail)
@@ -247,6 +248,7 @@ struct ForceGaugeView: View {
                     .font(.caption2)
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
+                    .disabled(tindeq.saving)
             }
         }
     }
@@ -332,17 +334,32 @@ struct ForceGaugeView: View {
                 }
             }
 
-            Button {
-                savedMsg = nil
-                tindeq.start()
-            } label: {
-                Text("Start")
-                    .font(.body.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 44)
+            if tindeq.handsFreeRequested {
+                Button { tindeq.cancelHandsFree() } label: {
+                    Text(tindeq.saving ? "Saving…" : "Armed — pull to start")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(SendmeterColor.success)
+                .disabled(tindeq.saving)
+                .accessibilityHint("Tap to disarm hands-free mode")
+            } else {
+                Button { tindeq.start() } label: {
+                    Text("Start")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(SendmeterColor.primary)
+                .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                Button("Arm hands-free") { tindeq.armHandsFree() }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(SendmeterColor.primary)
-            .disabled(saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
             if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
                 Text("Pick an exercise to start.")
                     .font(.caption2)
@@ -474,76 +491,9 @@ struct ForceGaugeView: View {
         Sparkline(samples: sparkSamples)
             .frame(minHeight: 28, maxHeight: 50)
 
-        Button(saving ? "Saving…" : "Stop & Save") { saveStop() }
+        Button("Stop & Save") { tindeq.stopAndSave() }
             .buttonStyle(.borderedProminent)
             .tint(SendmeterColor.primary)
-            .disabled(saving)
-    }
-
-    // Stop always saves — with the tag/side set before the rep. #486:
-    // persist-first + idempotent upsert (`PendingRecordingQueue`/`Repo`), same
-    // pattern as the workout and gauge-session queues — a gym-basement outage
-    // no longer loses the rep, only delays its upload. Only a genuine `.lost`
-    // (disk AND the in-memory direct-upload fallback both failed) surfaces a
-    // message and is reported via `RecordingLossNotice` (CLAUDE.md #264: a
-    // non-persisted outcome is never phrased as "queued" or "will sync").
-    private func saveStop() {
-        guard let rec = tindeq.stop() else { return }
-        saving = true
-        savedMsg = "Saving…"
-        // Auto-group: the first saved rep mints the session so every rep of this
-        // connect shares a group_id (SL-58 #5). Mint synchronously before the
-        // async insert so the group id is stable for this and later reps.
-        let groupId = tindeq.ensureSession()
-        let savedTag = tag.trimmingCharacters(in: .whitespaces)
-        let savedSide = side
-        let recordingId = UUID()
-        let row = Repo.makeTindeqRecordingRow(
-            rec, id: recordingId, note: "", tag: savedTag, side: savedSide, groupId: groupId
-        )
-        Task {
-            let outcome = await PendingRecordingQueue.shared.enqueue(PendingTindeqRecording(row: row))
-            if outcome == .lost {
-                savedMsg = "Rep not saved — try pulling again"
-                RecordingLossNotice.record()
-            } else {
-                let tagLabel = savedTag.isEmpty ? "" : " · \(savedTag)"
-                savedMsg = String(format: "Saved · %.1f kg%@", rec.peakKg, tagLabel)
-                tindeq.sessionCount += 1
-                // Fold this rep into the session's W' depletion (#280) — only
-                // once it's durably persisted (queued or uploaded), so the
-                // prediction describes the reps the session will really
-                // contain.
-                tindeq.recordRepDepletion(
-                    peakKg: rec.peakKg, durationMs: rec.durationMs, tag: savedTag
-                )
-                // Remember for next launch (SL-75: instant, correct defaults).
-                UserDefaults.standard.set(savedTag, forKey: LAST_TAG_KEY)
-                UserDefaults.standard.set(savedSide, forKey: LAST_SIDE_KEY)
-            }
-            saving = false
-            scheduleSavedMsgDismiss()
-        }
-    }
-
-    /// Auto-clears the save confirmation a couple seconds after it lands
-    /// (issue #149 follow-up). `savedMsg` used to sit on screen indefinitely
-    /// — until the *next* Start tap set it back to nil — which meant it was
-    /// routinely still showing once the user was back in `setupContent` for
-    /// the next rep, stacked under the session bar. It's harmless
-    /// UX-wise (nothing reads `savedMsg` besides this display and the
-    /// explicit clear on Start), so letting it fade on its own keeps the
-    /// setup screen's normal state as uncluttered as its first render.
-    /// Generation-guarded like `loadTags()`'s fetch tracking: a fast next
-    /// rep that overwrites `savedMsg` with a new confirmation before this
-    /// timer fires must not have the old timer wipe the new message.
-    private func scheduleSavedMsgDismiss() {
-        savedMsgGeneration += 1
-        let generation = savedMsgGeneration
-        Task {
-            try? await Task.sleep(for: .seconds(2.5))
-            if generation == savedMsgGeneration { savedMsg = nil }
-        }
     }
 }
 

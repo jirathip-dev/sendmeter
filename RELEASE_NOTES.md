@@ -10,6 +10,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Apple Watch Force sessions can now arm hands-free for free holds: pulling starts a rep and releasing saves it automatically, with a 10-minute idle safety cutoff.
+
 ### Improved
 
 - See your 28-day activity mix at a glance with a proportional training-load bar.

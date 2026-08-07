@@ -1,3 +1,8 @@
+// KEEP-IN-SYNC: mirrored by
+// ios/App/SendLogWatchCore/Sources/SendLogWatchCore/HandsFreeForce.swift.
+// Keep phases, thresholds, timestamp recovery, and transition claims aligned;
+// both runtimes intentionally make each action claim before async work.
+
 export interface HandsFreeForceConfig {
   /// Load that must be held continuously before an armed pull begins.
   startKg: number;
