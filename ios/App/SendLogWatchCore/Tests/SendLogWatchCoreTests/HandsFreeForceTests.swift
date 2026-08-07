@@ -96,6 +96,27 @@ final class HandsFreeForceTests: XCTestCase {
         )
     }
 
+    func testOnlyReleaseRearmsImmediatelyTapAndCapWaitForSlack() {
+        // #503: the re-arm decision is keyed on the stop reason itself.
+        // Release proved 1.5 s of slack, so it re-arms straight to armed;
+        // a mid-hold tap or the 30-minute cap must gate the same continuous
+        // load behind fresh slack or it becomes a phantom rep (#467).
+        XCTAssertEqual(
+            rearmedHandsFreeForce(afterStop: .released(endMs: 1_234)),
+            .armed(aboveSinceMs: nil)
+        )
+        XCTAssertEqual(rearmedHandsFreeForce(afterStop: .userTapped), .waitingForSlack)
+        XCTAssertEqual(rearmedHandsFreeForce(afterStop: .cappedAt30Min), .waitingForSlack)
+    }
+
+    func testOnlyReleaseCarriesATrimTimestamp() {
+        // A tap or cap stop has no proven release point, so trimming the
+        // tail there would drop real load from the recording.
+        XCTAssertEqual(HandsFreeStopReason.released(endMs: 1_234).trimEndMs, 1_234)
+        XCTAssertNil(HandsFreeStopReason.userTapped.trimEndMs)
+        XCTAssertNil(HandsFreeStopReason.cappedAt30Min.trimEndMs)
+    }
+
     func testTwoNearSimultaneousStopClaimsSaveExactlyOnce() async {
         let harness = await MainActor.run { ClaimBeforeAwaitHarness() }
         await MainActor.run { harness.begin() }

@@ -59,8 +59,8 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         manager.liveSide = "right"
         manager.start()
         feed(manager, [(4, 4_000_000), (20, 4_250_000), (0, 4_500_000)])
-        manager.stopAndSave()
-        manager.stopAndSave() // near-simultaneous duplicate loses the sync claim
+        manager.stopAndSave(reason: .userTapped)
+        manager.stopAndSave(reason: .userTapped) // near-simultaneous duplicate loses the sync claim
 
         try await waitUntil { manager.sessionCount == 2 && !manager.saving }
         let allRows = await recordings.snapshot().map(\.row)
@@ -160,8 +160,8 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
 
         // Exercise the production auto-release call site racing user taps.
         // Its synchronous claim must make both duplicates no-ops.
-        manager.stopAndSave()
-        manager.stopAndSave()
+        manager.stopAndSave(reason: .userTapped)
+        manager.stopAndSave(reason: .userTapped)
         try await waitUntil { manager.sessionCount == 1 && !manager.saving }
         let rowsAfterRace = await recordings.count()
         XCTAssertEqual(rowsAfterRace, 1)
@@ -175,7 +175,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
 
         // The climber taps while still hanging. Persistence can resolve before
         // they unload, but that same 35 kg must not become a phantom next rep.
-        manager.stopAndSave()
+        manager.stopAndSave(reason: .userTapped)
         try await waitUntil { manager.sessionCount == 2 && !manager.saving }
         XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
         feed(manager, [(35, 3_300_000), (35, 4_000_000)])
@@ -184,6 +184,47 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         let rowsWhileStillLoaded = await recordings.count()
         XCTAssertEqual(rowsWhileStillLoaded, 2)
         XCTAssertEqual(commands, [.startWeight, .stop, .startWeight, .stop, .startWeight])
+    }
+
+    func testThirtyMinuteCapSavesOneUntrimmedRepAndWaitsForSlack() async throws {
+        let recordings = RecordingQueueSpy()
+        var commands: [Tindeq.Cmd] = []
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: SessionQueueSpy(),
+            armTimeoutSeconds: 600,
+            commandWriter: { commands.append($0) }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.armHandsFree()
+        feed(manager, [(3, 0), (3, 600_000), (25, 700_000)])
+        XCTAssertEqual(manager.status, .measuring)
+
+        // Still fully loaded when the rep hits the 30-minute cap: only the
+        // UI timer's cap check can stop it, and that stop must not get
+        // release semantics (#503) — no proven slack, no trimmed tail.
+        feed(manager, [(25, 1_800_600_000)])
+        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
+        let rows = await recordings.snapshot().map(\.row)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].durationMs, 1_800_000, "a cap stop has no release point to trim at")
+        XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
+
+        // The same continuous 25 kg spans well past the 600 ms stable window.
+        // If the cap ever re-armed with release semantics, this would start a
+        // phantom rep #467-style; it must stay an armed-side no-op.
+        feed(manager, [(25, 1_801_000_000), (25, 1_801_800_000)])
+        XCTAssertEqual(manager.status, .connected)
+        XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
+        let rowsWhileStillLoaded = await recordings.count()
+        XCTAssertEqual(rowsWhileStillLoaded, 1)
+
+        // After real slack the machine still arms and starts the next rep.
+        feed(manager, [(0.5, 1_802_000_000), (3, 1_802_200_000), (3, 1_802_900_000)])
+        XCTAssertEqual(manager.status, .measuring)
+        XCTAssertEqual(commands, [.startWeight, .stop, .startWeight])
     }
 
     func testWallClockTimeoutDisarmsAQuietPostSaveRearm() async throws {
@@ -201,7 +242,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
 
         manager.armHandsFree()
         feed(manager, [(3, 0), (3, 600_000), (25, 700_000)])
-        manager.stopAndSave()
+        manager.stopAndSave(reason: .userTapped)
         try await waitUntil { manager.sessionCount == 1 && !manager.saving }
         XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
 

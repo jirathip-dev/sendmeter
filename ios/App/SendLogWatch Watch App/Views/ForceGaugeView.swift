@@ -491,7 +491,7 @@ struct ForceGaugeView: View {
         Sparkline(samples: sparkSamples)
             .frame(minHeight: 28, maxHeight: 50)
 
-        Button("Stop & Save") { tindeq.stopAndSave() }
+        Button("Stop & Save") { tindeq.stopAndSave(reason: .userTapped) }
             .buttonStyle(.borderedProminent)
             .tint(SendmeterColor.primary)
     }
