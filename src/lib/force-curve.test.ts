@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import * as capabilityModel from "./capabilityModel";
 import {
   meanMaxForce,
   pickCurveRecordings,
@@ -20,6 +21,11 @@ import {
 import { curveCandidateRecordings } from "./zoneHistory";
 import type { TindeqSample } from "../types";
 import type { CapabilityFit } from "./capabilityModel";
+
+// Spy-mode mock (#489 review F1): real implementations, call counting only —
+// the grid-search work-count test below needs to observe how many times
+// computeForceCurve actually runs fitCapabilityRegression.
+vi.mock("./capabilityModel", { spy: true });
 
 /// A constant-force hold sampled at 10 Hz (t in ms).
 function hold(seconds: number, kg: number): TindeqSample[] {
@@ -414,6 +420,37 @@ describe("computeForceCurve — display uncertainty and coverage", () => {
     expect(withNewDefault).toEqual(withNoBootstrap);
     expect(withOne).toEqual(withNoBootstrap);
     expect(withFive).toEqual(withNoBootstrap);
+  });
+
+  // #489 review F1: the ONLY work-count guard over the dominant cost — the
+  // 25×101 grid search fitCapabilityRegression runs once for the point
+  // estimate plus once per bootstrap resample. `meanMaxEvaluations` above
+  // cannot cover this: it counts prepareEfforts' signal work, which the
+  // preprocess-once test proves is INVARIANT to bootstrapSamples by
+  // construction. Before this test, a bootstrap-cost regression (say the
+  // production default at force-curve.ts's `iterations` going 200 → 2000, a
+  // measured 523ms → 4.4s+ per call) was caught only by the accidental 5s
+  // wall-clock timeout that #489 removed. This pins it as a load-insensitive
+  // count instead: the numbers below move with the work, never with machine
+  // load.
+  it("runs exactly one grid-search fit per bootstrap resample plus the point estimate", () => {
+    const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
+    const fits = vi.mocked(capabilityModel.fitCapabilityRegression);
+
+    const beforeExplicit = fits.mock.calls.length;
+    computeForceCurve(efforts, { bootstrapSamples: 40 });
+    expect(fits.mock.calls.length - beforeExplicit).toBe(41);
+
+    // The production default (200 — see the comment above `iterations` in
+    // force-curve.ts for why it must not quietly change in either direction).
+    const beforeDefault = fits.mock.calls.length;
+    computeForceCurve(efforts);
+    expect(fits.mock.calls.length - beforeDefault).toBe(201);
+
+    // bootstrapSamples: 0 skips the bootstrap entirely — point estimate only.
+    const beforeZero = fits.mock.calls.length;
+    computeForceCurve(efforts, { bootstrapSamples: 0 });
+    expect(fits.mock.calls.length - beforeZero).toBe(1);
   });
 
   it("flags one long recording as weak coverage despite its many rolling windows", () => {
