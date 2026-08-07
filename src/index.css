@@ -124,6 +124,10 @@ input[type="number"] {
 }
 ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-track { background: var(--bg); } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
+/* Opt-in: hide the scrollbar on a horizontally-scrolling row while keeping touch/trackpad scroll. */
+.chip-scroll { scrollbar-width: none; }
+.chip-scroll::-webkit-scrollbar { display: none; }
+
 .app-shell {
   position: relative;
   display: flex; flex-direction: column; height: 100dvh;
