@@ -18,8 +18,17 @@ for the App Store Connect forms.
   Delete account. Removes the auth user; every table cascades.
 - **Password sign-in**: needed for the reviewer demo account (magic-link-only apps
   are painful to review).
-- **Usage strings**: Bluetooth (iOS + watch), HealthKit share/read, Motion — all set.
-- **No Sign in with Apple requirement**: only email-based auth, no third-party login.
+- **Usage strings**: Bluetooth (iOS + watch), HealthKit share/read, Motion,
+  Location (when-in-use only, for Send Conditions) — all set.
+- **Sign in with Apple**: offered (#496 — this file used to claim email-only
+  auth, which was false). `src/lib/appleAuth.ts` wires the native flow
+  (`SignInWithApple.authorize` → Supabase `signInWithIdToken`) and the web
+  OAuth redirect (`signInWithOAuth(provider: "apple")`), rendered from
+  `LoginScreen.tsx`. Since Apple is the only third-party login offered,
+  guideline 4.8's "must also offer Sign in with Apple" rule is satisfied by
+  construction. What Apple provides on that path (the email address — possibly
+  a Hide-My-Email relay address) is covered by the Email Address row in the
+  App Privacy table below; confirm the App Store Connect answers reflect it.
 - **Privacy manifests** (`PrivacyInfo.xcprivacy`, issue #226): one per shipped
   bundle — see the section below. Without them App Store Connect bounces the
   upload with **ITMS-91053: Missing API declaration** before review even starts.
