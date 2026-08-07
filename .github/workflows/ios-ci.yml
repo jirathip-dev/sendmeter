@@ -69,9 +69,12 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     runs-on: blacksmith-6vcpu-macos-26
     # 15, not 45: the p50 of this job was ~2 minutes build-only; #500's
-    # simulator boot + 216-test run adds low single-digit minutes (the suite
-    # itself executes in ~4s once booted — measured locally), so 15 still
-    # has real headroom. The old ceiling was theoretical until a hung run on
+    # simulator boot + test run adds well under a minute (~42s measured
+    # locally: ~21s cold sim boot + a suite that executes in seconds, ~2-20s
+    # depending on load), so 15 still has real headroom. Every wait in the
+    # suite is wall-clock-bounded (#501) precisely so a regression fails in
+    # seconds instead of hanging this job to its ceiling (the #290 shape).
+    # The old ceiling was theoretical until a hung run on
     # fix/issue-196 sat for 30 minutes before anything cancelled it — 24% of
     # that month's entire macOS spend from one incident (#290).
     # `cancel-in-progress` does not cover this: it only fires on a superseding
@@ -95,8 +98,8 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
 
-      # The 216-test SendLogWatchTests suite needs a concrete, booted
-      # simulator (#500). Selected by query rather than a hardcoded device
+      # The SendLogWatchTests suite needs a concrete, booted simulator
+      # (#500). Selected by query rather than a hardcoded device
       # name, which would silently break on the next runner-image Xcode bump.
       # Booting explicitly (instead of letting xcodebuild do it lazily)
       # makes a boot failure its own loud step instead of a confusing
