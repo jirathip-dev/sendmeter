@@ -286,6 +286,13 @@ export function reverseActionSetMetrics(
 
 export function buildReverseActionSetRecording(
   input: BuildReverseActionRecordingInput,
+  // #487 (F2, review finding 3): stamp the capture moment on the object
+  // itself at construction, same reasoning as ForceView.tsx's builders —
+  // this is the ONE place both the live save (saveReverseActionSet) and the
+  // sign-out salvage path (buildUnclaimedReverseActionSalvage) build a
+  // recording, so it covers both. Injectable (matching recordingQueue.ts's
+  // `now` convention) so callers stay deterministic in tests.
+  now: () => string = () => new Date().toISOString(),
 ): (NewTindeqRecording & { id: string }) | null {
   const slice = sliceReverseActionSet(
     input.samples,
@@ -304,6 +311,7 @@ export function buildReverseActionSetRecording(
   const durationMs = Math.max(1, Math.round(slice.samples.at(-1)!.t));
   return {
     id: input.id,
+    recordedAt: now(),
     durationMs,
     peakKg: Math.max(...kgs),
     avgKg: metrics.meanKg,

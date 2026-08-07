@@ -417,12 +417,14 @@ extension TindeqManager: CBCentralManagerDelegate {
     /// (issue #151), mirroring the web app's interruption-salvage
     /// (`useTindeq.ts`/`ForceView.tsx`): saved with the same note text so it
     /// reads identically in History. Claims `samples` immediately so a late
-    /// duplicate delegate callback can't double-save, then inserts on the
+    /// duplicate delegate callback can't double-save, then queues on the
     /// existing per-connect session group (minting one if this is the first
-    /// rep of the connect) just like `ForceGaugeView.saveStop()`. Does NOT
-    /// show any discard/save prompt — since #280 the salvaged rep is folded
-    /// into the session's depletion and the session logs itself, exactly as a
-    /// manual Finish would.
+    /// rep of the connect) just like `ForceGaugeView.saveStop()` — #486:
+    /// persist-first + idempotent upsert, so a BLE drop that ALSO coincides
+    /// with no network doesn't lose the rep on top of the connection. Does
+    /// NOT show any discard/save prompt — since #280 the salvaged rep is
+    /// folded into the session's depletion and the session logs itself,
+    /// exactly as a manual Finish would.
     private func salvageInterruptedRecording(_ summary: StoppedRecording) {
         currentKg = 0
         peakKg = summary.peakKg
@@ -431,23 +433,30 @@ extension TindeqManager: CBCentralManagerDelegate {
         let groupId = ensureSession()
         let tag = liveTag
         let side = liveSide
+        let row = Repo.makeTindeqRecordingRow(
+            summary,
+            id: UUID(),
+            note: "Recovered after connection loss",
+            tag: tag,
+            side: side,
+            groupId: groupId
+        )
         Task { @MainActor in
-            do {
-                try await Repo.insertTindeqRecording(
-                    summary,
-                    note: "Recovered after connection loss",
-                    tag: tag,
-                    side: side,
-                    groupId: groupId
-                )
+            let outcome = await PendingRecordingQueue.shared.enqueue(PendingTindeqRecording(row: row))
+            if outcome == .lost {
+                // Both disk persistence and the in-memory direct-upload
+                // fallback failed — there is no underlying network error to
+                // route through `ErrorText.friendly` here (unlike a bare
+                // insert, `enqueue` never throws); say so plainly instead.
+                errorMsg = "Rep not saved — couldn't write to the watch."
+                RecordingLossNotice.record()
+                if sessionCount == 0 { clearSession() }
+            } else {
                 sessionCount += 1
                 recordRepDepletion(peakKg: summary.peakKg, durationMs: summary.durationMs, tag: tag)
-            } catch {
-                errorMsg = ErrorText.friendly(error)
-                if sessionCount == 0 { clearSession() }
             }
             // Log whatever the session ended up with — including the reps
-            // saved before the drop when this one failed to upload (#280).
+            // salvaged before the drop when this one was truly lost (#280).
             logSessionNow()
         }
     }

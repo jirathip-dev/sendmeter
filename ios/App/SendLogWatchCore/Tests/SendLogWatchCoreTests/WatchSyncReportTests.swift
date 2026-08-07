@@ -196,12 +196,14 @@ final class PendingSyncCacheTests: XCTestCase {
     }
 
     func testSumsTheQueuesTheWatchDrains() {
-        // The watch's own Home screen shows workouts + gauge sessions as one
-        // number; the phone must not disagree with the wrist.
+        // The watch's own Home screen shows workouts + gauge sessions +
+        // individual force recordings (#486) as one number; the phone must
+        // not disagree with the wrist.
         let cache = PendingSyncCache()
         cache.record(2, for: .workouts)
         cache.record(3, for: .tindeqSessions)
-        XCTAssertEqual(cache.total, 5)
+        cache.record(1, for: .tindeqRecordings)
+        XCTAssertEqual(cache.total, 6)
     }
 
     func testLatestCountPerQueueWins() {

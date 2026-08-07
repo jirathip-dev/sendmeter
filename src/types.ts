@@ -282,6 +282,16 @@ export interface NewTindeqRecording {
   /// never saw) collides on the unique constraint instead of duplicating the
   /// row. Omitted for normal (non-retried) saves — the DB default applies.
   id?: string;
+  /// ISO timestamp of when this was actually recorded (#487, F2). Set by the
+  /// offline queue (`recordingQueue.ts`'s `drainQueue`, from the queued
+  /// entry's own `queuedAt`) before a retried insert, so a recording queued
+  /// offline and drained hours/days later lands on the day it was captured,
+  /// not the day it happened to finally upload — otherwise it lands in the
+  /// wrong ACWR bucket (the watch already solved this shape for sessions,
+  /// #144). Omitted for a normal (non-queued) save — the DB's
+  /// `recorded_at default now()` applies, which is correct there since the
+  /// insert happens immediately after capture.
+  recordedAt?: string;
   durationMs: number;
   peakKg: number | null;
   avgKg: number | null;

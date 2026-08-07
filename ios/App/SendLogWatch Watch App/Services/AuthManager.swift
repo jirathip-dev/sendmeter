@@ -197,7 +197,8 @@ final class AuthManager: NSObject {
             Task {
                 async let workouts: Void = OfflineQueue.shared.drain()
                 async let sessions: Void = PendingSessionQueue.shared.drain()
-                _ = await (workouts, sessions)
+                async let recordings: Void = PendingRecordingQueue.shared.drain()
+                _ = await (workouts, sessions, recordings)
                 await WatchBuild.refreshAndReportQueueStatus()
             }
         case .signedOut:

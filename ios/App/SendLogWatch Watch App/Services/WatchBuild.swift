@@ -75,17 +75,25 @@ enum WatchBuild {
         }
     }
 
-    /// Count all three actors' relevant totals first so a fresh install
-    /// reports an honest zero rather than leaving `PendingSyncCache`
-    /// unknown — quarantine included (#475 F1), since this runs
-    /// independently of (and concurrently with) `OfflineQueue.shared.drain()`
-    /// at launch (see `SendLogWatchApp.swift`) and can't assume a drain
-    /// pass has already populated it.
+    /// Count every queue's relevant total first so a fresh install reports
+    /// an honest zero rather than leaving `PendingSyncCache` unknown —
+    /// quarantine included (#475 F1), since this runs independently of (and
+    /// concurrently with) `OfflineQueue.shared.drain()` at launch (see
+    /// `SendLogWatchApp.swift`) and can't assume a drain pass has already
+    /// populated it.
+    ///
+    /// All four `async let`s must stay in the tuple below. `PendingSyncCache`
+    /// sums over whatever reported, so a dropped one reads as zero rather
+    /// than as an error — it under-reports queue depth SILENTLY. This exact
+    /// hunk conflicted when the #475 (quarantine) and #486
+    /// (PendingRecordingQueue) waves were composed; taking either side alone
+    /// loses a queue.
     static func refreshAndReportQueueStatus() async {
         async let workouts = OfflineQueue.shared.pendingCount()
         async let quarantined = OfflineQueue.shared.quarantinedCount()
         async let sessions = PendingSessionQueue.shared.pendingCount()
-        _ = await (workouts, quarantined, sessions)
+        async let recordings = PendingRecordingQueue.shared.pendingCount()
+        _ = await (workouts, quarantined, sessions, recordings)
         await MainActor.run { reportQueueStatus() }
     }
 }

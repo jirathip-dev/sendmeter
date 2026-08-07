@@ -171,15 +171,15 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
   const [setupGuideSensor, setSetupGuideSensor] = useState(true);
   // #106: a rep whose insert fails (dead auth session, dropped connection)
-  // gets queued instead of dropped — App.tsx drains it once a session comes
-  // back. Tracks whether the PREVIOUS attempt (of either kind) failed, so the
-  // toast below fires once per outage rather than once per queue-empty check —
-  // a queue that's still non-empty from an earlier outage must not swallow the
-  // notice for a brand-new one.
+  // gets queued instead of dropped — App.tsx drains it (mount, foreground,
+  // and periodically — #484 F2). Tracks whether the PREVIOUS attempt (of
+  // either kind) failed, so the toast below fires once per outage rather
+  // than once per queue-empty check — a queue that's still non-empty from an
+  // earlier outage must not swallow the notice for a brand-new one.
   const outageRef = useRef(false);
   // #269: the queue's ambient depth. Not an interrupt — see pendingUploads.ts
   // for why a per-failure toast is the wrong shape.
-  const pendingUploads = usePendingUploads();
+  const pendingUploads = usePendingUploads(userId);
   // #264: reps that the insert AND both stores refused. Their samples exist
   // nowhere but this array, so the banner below says exactly that and offers a
   // real retry while the view is still mounted. Never told "will sync
@@ -599,6 +599,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // instead of inserting a second row for the same rep (#106).
     const rec: NewTindeqRecording & { id: string } = {
       id: crypto.randomUUID(),
+      // #487 (F2, review finding 3): stamp the capture moment on the object
+      // ITSELF, at construction — not on whichever request path eventually
+      // writes it. This same object is what `queueFailedRecording` queues
+      // AND what `retryUnqueued`'s in-memory banner retries later
+      // (potentially hours later), so stamping here is the one fix that
+      // covers every route to `insertRecording`, not just the queue drain.
+      recordedAt: new Date().toISOString(),
       durationMs: Math.max(1, Math.round(slice[slice.length - 1]!.t)),
       peakKg: Math.max(...kgs),
       avgKg: Math.round((kgs.reduce((a, b) => a + b, 0) / kgs.length) * 100) / 100,
@@ -681,6 +688,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     );
     return {
       id: crypto.randomUUID(),
+      // #487 (F2): see the comment on the equivalent line in saveHoldSlice —
+      // this builder feeds both the live save (saveAdaptiveHold) and the
+      // sign-out salvage path (buildAdaptiveStaticSalvage), so stamping here
+      // covers both without duplicating the field at each call site.
+      recordedAt: new Date().toISOString(),
       durationMs: adaptiveHoldDurationMs(startedMs, endedMs),
       peakKg: Math.max(...kgs),
       avgKg: Math.round((kgs.reduce((sum, kg) => sum + kg, 0) / kgs.length) * 100) / 100,
@@ -973,6 +985,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // saveHoldSlice (retry idempotency via 23505, #106).
     const rec: NewTindeqRecording & { id: string } = {
       id: crypto.randomUUID(),
+      // #487 (F2): see saveHoldSlice's comment on the equivalent line.
+      recordedAt: new Date().toISOString(),
       durationMs: summary.durationMs,
       peakKg: summary.peakKg,
       avgKg: summary.avgKg,
@@ -2370,7 +2384,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           the queue is empty (or not yet read) — this is the one place silence
           is honest, because the recordings list right above it is the positive
           signal that saving works. */}
-      {pendingUploads !== null && pendingUploads > 0 && (
+      {pendingUploads !== null && pendingUploads.pending > 0 && (
         <div
           style={{
             display: "flex",
@@ -2379,7 +2393,9 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             marginTop: 10,
             fontSize: "var(--t-xs)",
             color:
-              pendingUploads >= PENDING_BACKED_UP ? "var(--warning)" : "var(--ink-muted)",
+              pendingUploads.pending >= PENDING_BACKED_UP
+                ? "var(--warning)"
+                : "var(--ink-muted)",
           }}
         >
           <span
@@ -2389,14 +2405,53 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               height: 6,
               borderRadius: "50%",
               background:
-                pendingUploads >= PENDING_BACKED_UP ? "var(--warning)" : "var(--ink-faint)",
+                pendingUploads.pending >= PENDING_BACKED_UP
+                  ? "var(--warning)"
+                  : "var(--ink-faint)",
               flexShrink: 0,
             }}
           />
           <span>
-            {pendingUploads} recording{pendingUploads === 1 ? "" : "s"} waiting to
-            upload — saved on this device, {pendingUploads === 1 ? "it" : "they"} will
-            sync when the connection is back.
+            {pendingUploads.pending} recording{pendingUploads.pending === 1 ? "" : "s"}{" "}
+            waiting to upload — saved on this device,{" "}
+            {pendingUploads.pending === 1 ? "it" : "they"} will sync when the connection
+            is back.
+          </span>
+        </div>
+      )}
+
+      {/* #484: a recording the server keeps rejecting is retained (never
+          deleted on a server response — see the policy block above
+          `drainQueue`), but a drain has stopped auto-attempting it. Informational
+          only here (this tab is a muted ambient line); History's banner is
+          where the "explicit user action" re-attempt path (Retry) lives — see
+          `uploadWarningPresentation`. */}
+      {pendingUploads !== null && pendingUploads.stuck > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginTop: 10,
+            fontSize: "var(--t-xs)",
+            color: "var(--warning)",
+          }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "var(--warning)",
+              flexShrink: 0,
+            }}
+          />
+          <span>
+            {pendingUploads.stuck} recording{pendingUploads.stuck === 1 ? "" : "s"} stuck
+            — the server keeps rejecting {pendingUploads.stuck === 1 ? "it" : "them"} and{" "}
+            {pendingUploads.stuck === 1 ? "it" : "they"} won't retry automatically. Retry
+            from the History tab.
           </span>
         </div>
       )}
@@ -2768,6 +2823,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             if (!id) return false;
             const rec: NewTindeqRecording & { id: string } = {
               id,
+              // #487 (F2): see saveHoldSlice's comment on the equivalent line.
+              recordedAt: new Date().toISOString(),
               source: "manual",
               durationMs: actualDurationMs,
               peakKg: null,

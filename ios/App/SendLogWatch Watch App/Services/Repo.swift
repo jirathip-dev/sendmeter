@@ -7,14 +7,22 @@ enum Repo {
 
     // MARK: Tindeq recordings (identical shape to the web app's inserts)
 
-    static func insertTindeqRecording(
+    /// Builds the insert row from a stopped recording (#486) — pulled out of
+    /// `insertTindeqRecording` so `PendingRecordingQueue`'s callers can build
+    /// the durable payload synchronously, before ever touching the network.
+    /// `id` is minted by the caller (not defaulted here) so the SAME id is
+    /// what gets persisted to disk and later replayed — a fresh `UUID()` per
+    /// retry would defeat the idempotent upsert below.
+    static func makeTindeqRecordingRow(
         _ r: StoppedRecording,
+        id: UUID,
         note: String,
         tag: String,
         side: String,
         groupId: UUID?
-    ) async throws {
-        let row = TindeqRecordingInsert(
+    ) -> TindeqRecordingInsert {
+        TindeqRecordingInsert(
+            id: id,
             durationMs: r.durationMs,
             peakKg: r.peakKg,
             avgKg: r.avgKg,
@@ -25,7 +33,17 @@ enum Repo {
             groupId: groupId,
             samples: r.samples.map { [$0.t, $0.kg] }
         )
-        try await client.from("tindeq_recordings").insert(row).execute()
+    }
+
+    /// Idempotent upsert on the client-minted id (#486) — safe for
+    /// `PendingRecordingQueue` to replay after a response was lost. Mirrors
+    /// `uploadBundle`/`logTindeqSession`'s `ignoreDuplicates` pattern: a
+    /// retry that lands after the original insert already succeeded is a
+    /// no-op rather than a duplicate row.
+    static func insertTindeqRecording(_ row: TindeqRecordingInsert) async throws {
+        try await client.from("tindeq_recordings")
+            .upsert(row, onConflict: "id", ignoreDuplicates: true)
+            .execute()
     }
 
     /// Distinct tags from recent recordings, most recently used first, minus
@@ -128,6 +146,13 @@ enum Repo {
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoff.localDateString)
+            // #487 (F1): exclude soft-deleted sessions from the on-watch ACWR
+            // used by WidgetBridge — same fix as the iPhone health plugin's
+            // acwrSeries/computeAcwr (HealthSyncManager.swift). Without this a
+            // deleted session kept depressing the widget's ACWR for the rest
+            // of the 28-day window even though it no longer counts anywhere
+            // else in the app.
+            .is("deleted_at", value: nil)
             .execute()
             .value
     }

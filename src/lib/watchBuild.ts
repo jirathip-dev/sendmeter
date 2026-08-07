@@ -32,7 +32,20 @@ export interface UploadWarningItem {
   /// attempt), so telling the user the wrong one would be actively
   /// misleading about their own data. All three sources can be present at
   /// once, so they need separate keys, not a shared row.
-  source: "watch" | "watch-quarantined" | "watch-quarantined-retrying" | "phone";
+  
+  /// #484: `"phone-stuck"` is a recording the server has rejected across an
+  /// app-version change (see the policy block above `drainQueue` in
+  /// recordingQueue.ts) — retained on device, no longer auto-retried. Kept
+  /// as its own source rather than folded into `"phone"`: different cause,
+  /// different (and the only) recovery — `retryStuckRecordings`, which the
+  /// view wires to an actual button for this source.
+  
+  source:
+    | "watch"
+    | "watch-quarantined"
+    | "watch-quarantined-retrying"
+    | "phone"
+    | "phone-stuck";
   text: string;
   detail: string;
   /// Epoch seconds of the watch queue report. A historical count is only as
@@ -150,9 +163,16 @@ function connectedWatchStatus(
 
 /// Issue #369: the History tab is quiet when uploads are healthy or unknown,
 /// and visible only when the user can act on a pending or stale queue.
+///
+/// #484: `phoneUploads` is the `{pending, stuck}` split
+/// (`pendingRecordingsBreakdown`) rather than one number — a stuck recording
+/// gets its OWN item (`"phone-stuck"`), not folded into the pending count or
+/// dropped, because there is nothing "waiting to upload" about it any more
+/// and the count with zero readers is exactly the #475 F1 mistake this repo
+/// already paid for once, on the watch.
 export function uploadWarningPresentation(
   watchInfo: WatchBuildInfo | null,
-  phonePending: number | null,
+  phoneUploads: { pending: number | null; stuck: number | null },
 ): UploadWarningPresentation | null {
   const items: UploadWarningItem[] = [];
   const syncStatus = watchInfo?.syncStatus;
@@ -233,16 +253,36 @@ export function uploadWarningPresentation(
   }
 
   if (phonePending !== null && phonePending > 0) {
+  if (phoneUploads.stuck !== null && phoneUploads.stuck > 0) {
+    const n = phoneUploads.stuck;
+    items.push({
+      source: "phone-stuck",
+      text: `This iPhone · ${n} Force recording${n === 1 ? "" : "s"} stuck — the server keeps rejecting ${n === 1 ? "it" : "them"} and ${n === 1 ? "it" : "they"} won't retry automatically.`,
+      detail: "Retry now, or wait for the next app update.",
+    });
+  }
+
+  if (phoneUploads.pending !== null && phoneUploads.pending > 0) {
+    const n = phoneUploads.pending;
     items.push({
       source: "phone",
-      text: `This iPhone · ${phonePending} Force recording${phonePending === 1 ? "" : "s"} waiting to upload.`,
+      text: `This iPhone · ${n} Force recording${n === 1 ? "" : "s"} waiting to upload.`,
       detail: "Keep Sendmeter open with an internet connection to retry.",
     });
   }
 
   if (items.length === 0) return null;
   return {
-    title: items.some((item) => /waiting to upload/.test(item.text))
+    // Not a regex sniff of text THIS function just generated — "waiting to
+    // upload" is only ever a watch item's own wording; the phone sources are
+    // judged directly by their kind. A stuck-only phone still reads as
+    // "Uploads waiting" (it's true, it's just not automatic).
+    title: items.some(
+      (item) =>
+        item.source === "phone" ||
+        item.source === "phone-stuck" ||
+        (item.source === "watch" && /waiting to upload/.test(item.text)),
+    )
       ? "Uploads waiting"
       : "Check Apple Watch uploads",
     items,
