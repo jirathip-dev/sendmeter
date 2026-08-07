@@ -132,6 +132,46 @@ describe("KeepAwakeCoordinator", () => {
     expect(calls).toEqual([true, false]);
   });
 
+  // #493 review F3: transitions are swallowed-on-failure and never retried,
+  // so a failed allowSleep would otherwise leave the idle timer disabled for
+  // the rest of the process. reassert() re-applies the CURRENT state — it
+  // heals the stuck-awake case without being able to release a live hold.
+  it("reassert() retries the idle-timer restore after a swallowed allowSleep failure", async () => {
+    const calls: boolean[] = [];
+    let failedOnce = false;
+    const coordinator = new KeepAwakeCoordinator(async (active) => {
+      calls.push(active);
+      if (!active && !failedOnce) {
+        failedOnce = true;
+        throw new Error("bridge hiccup");
+      }
+    });
+
+    const release = coordinator.acquire();
+    await coordinator.settled();
+    release();
+    await coordinator.settled();
+    // The failed allowSleep was swallowed — native idle timer still disabled.
+    expect(calls).toEqual([true, false]);
+
+    await coordinator.reassert();
+    expect(calls).toEqual([true, false, false]);
+  });
+
+  it("reassert() cannot release a hold another consumer still has", async () => {
+    const calls: boolean[] = [];
+    const coordinator = new KeepAwakeCoordinator(async (active) => {
+      calls.push(active);
+    });
+
+    coordinator.acquire();
+    await coordinator.settled();
+    // An unrelated inactive consumer mounting re-asserts while A holds.
+    await coordinator.reassert();
+    expect(calls).not.toContain(false);
+    expect(calls.at(-1)).toBe(true);
+  });
+
   it("continues after a rejected deactivation", async () => {
     const calls: boolean[] = [];
     const coordinator = new KeepAwakeCoordinator(async (active) => {

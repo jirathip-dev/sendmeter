@@ -38,6 +38,17 @@ export class KeepAwakeCoordinator {
     };
   }
 
+  /// Re-applies the current desired state (#493 review F3). Transitions are
+  /// fire-and-forget and a rejected one is swallowed below, so without this
+  /// a single failed allowSleep (a bridge hiccup on routine pause) would
+  /// leave the idle timer disabled for the rest of the process — the screen
+  /// never auto-locks again. Callers re-assert at natural boundaries (an
+  /// inactive useWakeLock (re)mount); it applies `holds > 0`, so it can
+  /// never release a hold another consumer still has.
+  reassert(): Promise<void> {
+    return this.apply();
+  }
+
   /// Settles after every transition scheduled so far has run (or been
   /// superseded). Ordering point for tests and callers that must observe the
   /// applied state.
