@@ -285,6 +285,36 @@ export function computeForceCurve(
   const fitDepth = opts.fitDepth ?? 3;
   const prepared = prepareEfforts(recordings, opts.diagnostics);
   const model = computeCurveCore(prepared, { fitDepth });
+  // #488/#489: `cf`/`wPrime`/`capabilityFit` above are the point estimate —
+  // computed once, before this loop, from the FULL (non-resampled) data —
+  // and are what's persisted to `tindeq_tags.cf_kg`/`w_prime_kgs` for the
+  // watch's RPE prediction (#280); `iterations` only controls how many
+  // bootstrap resamples build `confidenceBand` (the chart's shaded
+  // uncertainty band) below, so changing it cannot change the persisted
+  // values. Each iteration reruns `fitCapabilityRegression`'s 25×101 grid
+  // search, which is what made this ~2s of main-thread work at 200
+  // iterations, called 3x per Stop in ForceView (main tag/side + alternating
+  // left + alternating right).
+  //
+  // The default here stays 200 — a prior version of this fix cut it to 40 to
+  // chase the #489 test flake, and an adversarial review of that version
+  // (see the #489 PR discussion) measured that trade as a loss on both
+  // sides: (1) the flake's own repro showed the three explicit test-only
+  // `bootstrapSamples` overrides below `computeForceCurve — display
+  // uncertainty and coverage` accounted for the suite cost, not this
+  // default — cutting only those, with this default untouched, measured
+  // *faster* test time than also cutting this default (the version that
+  // additionally cut this default had to re-add an explicit
+  // `bootstrapSamples: 200` call in its own pinning test, net-negative); and
+  // (2) at 40 resamples the percentile band's low edge sits at index
+  // `0.025 × 39 ≈ 0.98` — essentially the sample minimum, the single
+  // noisiest order statistic available — measured at ~2.5x the band's own
+  // width in seed-to-seed sampling noise on a realistic fixture, vs. well
+  // under the band's width at 200. The grid-search rewrite in
+  // `capabilityModel.ts` (see its doc comment) already buys ~1.45x per call
+  // with zero output change; that's the win to take here. Do not lower this
+  // to "fix" a test-timing problem — fix the calling test's own
+  // `bootstrapSamples` override instead, as the three tests below do.
   const iterations = opts.bootstrapSamples ?? 200;
   if (!model?.capabilityFit || recordings.length < 3 || iterations <= 0) return model;
 

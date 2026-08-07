@@ -330,10 +330,23 @@ describe("computeForceCurve — multi-point fit (SL-80b)", () => {
 });
 
 describe("computeForceCurve — display uncertainty and coverage", () => {
+  // #488/#489: these bootstrapSamples values used to be 120/200/500 — each
+  // iteration reruns fitCapabilityRegression's 25×101 grid search, so this
+  // one describe block alone used to burn (120+200+500)=820 grid searches
+  // every `npm test` run, real CPU cost that (under machine load) can
+  // contend with unrelated tests elsewhere in the suite for scheduling.
+  // None of these three assertions is about a SPECIFIC sample count —
+  // they're testing reproducibility, band bounds and the preprocess-once
+  // invariant, all of which hold at any positive iteration count — so
+  // they're cut to 40 here, a TEST-ONLY override (the production default in
+  // force-curve.ts is unchanged, still 200 — see the comment above
+  // `iterations` there for why cutting the production default was tried and
+  // reverted). This is pure suite-cost reduction with no loss of assertion
+  // value and no production behavior change.
   it("produces a reproducible recording-level bootstrap band", () => {
     const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
-    const a = computeForceCurve(efforts, { bootstrapSamples: 120 })!;
-    const b = computeForceCurve(efforts, { bootstrapSamples: 120 })!;
+    const a = computeForceCurve(efforts, { bootstrapSamples: 40 })!;
+    const b = computeForceCurve(efforts, { bootstrapSamples: 40 })!;
     expect(a.confidenceBand).toEqual(b.confidenceBand);
     expect(a.confidenceBand!.length).toBeGreaterThanOrEqual(3);
     expect(a.confidenceBand!.every((p) => p.lowKg <= p.highKg)).toBe(true);
@@ -344,7 +357,7 @@ describe("computeForceCurve — display uncertainty and coverage", () => {
   it("never draws the model interval beyond measured duration support", () => {
     const m = computeForceCurve(
       [hold(15, 32), hold(30, 28), hold(60, 24)],
-      { bootstrapSamples: 200 },
+      { bootstrapSamples: 40 },
     )!;
     expect(m.confidenceBand!.at(0)!.windowS).toBeGreaterThanOrEqual(m.points[0]!.windowS);
     expect(m.confidenceBand!.at(-1)!.windowS).toBeLessThanOrEqual(m.points.at(-1)!.windowS);
@@ -353,8 +366,54 @@ describe("computeForceCurve — display uncertainty and coverage", () => {
   it("preprocesses mean-max values once instead of repeating signal work per bootstrap", () => {
     const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
     const diagnostics = { meanMaxEvaluations: 0 };
-    computeForceCurve(efforts, { bootstrapSamples: 500, diagnostics });
+    computeForceCurve(efforts, { bootstrapSamples: 40, diagnostics });
     expect(diagnostics.meanMaxEvaluations).toBe(efforts.length * CURVE_WINDOWS_S.length);
+  });
+
+  // #488/#489: `fitCapabilityRegression`'s grid search (capabilityModel.ts)
+  // was rewritten to do the same 2525-candidate search without redundant
+  // per-data-point work — the production `bootstrapSamples` default stayed
+  // at 200 (see the comment above `iterations` in force-curve.ts for why: an
+  // earlier version of this fix cut it to 40, and an adversarial review
+  // measured that as both unnecessary for #489 — the three test-only
+  // overrides above already account for the suite cost — and a real loss of
+  // display-band estimator quality). So this fix has NO observable
+  // production output difference from before it (verified against the
+  // pre-rewrite `fitCapabilityRegression` bit-for-bit, including degenerate
+  // inputs, in a scratch copy outside the repo — see HANDOFF.md). This test
+  // is a structural regression pin, not a "proves the fix changed something"
+  // test — it already held before this fix too, and is expected to keep
+  // holding after it:
+  it("persists the same cf/wPrime/capabilityFit/points regardless of bootstrapSamples — only confidenceBand precision is sample-count-dependent", () => {
+    // These are what `tindeq_tags.cf_kg`/`w_prime_kgs` store and the watch
+    // reads back for RPE prediction (#280) — computed once, before the
+    // bootstrap loop, from the full (non-resampled) data. Changing how many
+    // times the loop below runs must not move them by even one ULP.
+    //
+    // Deliberately small sample counts (0/1/5), not e.g. 200/500: this
+    // invariant is structural (`computeCurveCore` runs once, before
+    // `iterations` is even read), so it can't be more or less "proven" by a
+    // larger iteration count — but a larger count IS more main-thread work,
+    // and stacking several such calls in one `it()` is exactly the #488/#489
+    // failure mode this whole fix removes. An earlier version of this test
+    // used 200 and 500 here and timed out at the default 5s under real
+    // machine load (2 of 5 `npm test` runs while validating this fix) —
+    // proof by self-inflicted example that "assert a bigger number" is not
+    // the same as "prove the invariant." 1 and 5 are both below the 20-draw
+    // floor in the suppression guard below (`Math.max(20, iterations *
+    // 0.2)`), so neither ever produces a confidenceBand at all — which is
+    // exactly why comparing them here (via `persisted`, which excludes
+    // confidenceBand) is safe and not a vacuous no-op.
+    const efforts = [hold(15, 32), hold(30, 28), hold(60, 24), hold(120, 21)];
+    const persisted = (m: ReturnType<typeof computeForceCurve>) =>
+      m && { cf: m.cf, wPrime: m.wPrime, capabilityFit: m.capabilityFit, points: m.points, maxF: m.maxF };
+    const withNoBootstrap = persisted(computeForceCurve(efforts, { bootstrapSamples: 0 }));
+    const withNewDefault = persisted(computeForceCurve(efforts));
+    const withOne = persisted(computeForceCurve(efforts, { bootstrapSamples: 1 }));
+    const withFive = persisted(computeForceCurve(efforts, { bootstrapSamples: 5 }));
+    expect(withNewDefault).toEqual(withNoBootstrap);
+    expect(withOne).toEqual(withNoBootstrap);
+    expect(withFive).toEqual(withNoBootstrap);
   });
 
   it("flags one long recording as weak coverage despite its many rolling windows", () => {

@@ -17,6 +17,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: Hands-free mode now runs every static sensor protocol pull-by-pull, records completed and early-release outcomes, and waits safely for unload before the next rep.
 - Force equipment setup is now concise, optional guidance without checklists or training blockers.
 - Switch the Force protocol list clearly between Static and Reverse Action modes, with color-coded badges and mode-matched presets.
+- Force: shortened the brief pause after Stop while your force curve recomputes, without changing any of the numbers it produces.
 
 ### Fixed
 
