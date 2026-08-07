@@ -144,16 +144,61 @@ actor PendingRecordingQueue {
     /// the `.uploadDirect` → `.lost` fallback in `enqueue`) while every
     /// older, already-failing entry survived untouched — the inverse of that
     /// decision.
+    ///
+    /// #486 re-review R1: the first version of this loop was `while true`
+    /// with the removal wrapped in `try?` — if `removeItem` itself failed,
+    /// the same file was re-selected and re-attempted forever (proven:
+    /// 200,001 iterations, 59.6s, no exit). Run synchronously inside this
+    /// actor, that hang was worse than the disk-full case it was meant to
+    /// survive: `enqueue`/`drain`/`pendingCount` all block behind it, the
+    /// watch UI is stuck with `saving = true`, and the `.lost` reporting
+    /// path in `enqueue` can never be reached. Two independent fixes, both
+    /// required: (1) a removal failure now STOPS the loop instead of being
+    /// swallowed — it is information ("this file cannot be freed"), not
+    /// noise; (2) the loop is additionally bounded by the number of other
+    /// files present when it starts, so it cannot run away even if some
+    /// future change reintroduces a silent-failure path here.
+    ///
+    /// #486 re-review R2: the #264 half this was supposed to port —
+    /// `recordingQueue.ts:129-134`, "Each one is itself a lost rep, so
+    /// callers report it" — was dropped in translation. An evicted file WAS
+    /// a queued, unsynced recording; deleting it is a real loss, not routine
+    /// housekeeping, exactly like a `.lost` `enqueue` outcome. `defer`
+    /// reports it (via the same `RecordingLossNotice` one-shot the `.lost`
+    /// path already uses) whenever at least one eviction happened, on every
+    /// exit from this function — success or failure — because a file that
+    /// was deleted along the way is gone regardless of how the NEW entry's
+    /// own write ultimately turns out.
     private func writeWithEviction(_ data: Data, to url: URL) -> Bool {
-        while true {
+        let maxAttempts = (((try? FileManager.default.contentsOfDirectory(
+            at: pendingDir, includingPropertiesForKeys: nil
+        )) ?? [])
+            .filter { $0.pathExtension == "json" && $0 != url }).count
+
+        var evictedCount = 0
+        defer {
+            if evictedCount > 0 {
+                RecordingLossNotice.record()
+            }
+        }
+
+        for _ in 0...maxAttempts {
             do {
                 try data.write(to: url, options: .atomic)
                 return true
             } catch {
                 guard let oldest = oldestOtherFile(excluding: url) else { return false }
-                try? FileManager.default.removeItem(at: oldest)
+                do {
+                    try FileManager.default.removeItem(at: oldest)
+                    evictedCount += 1
+                } catch {
+                    // R1: a failed removal means this file cannot be freed —
+                    // looping back would just re-select it forever.
+                    return false
+                }
             }
         }
+        return false
     }
 
     private func oldestOtherFile(excluding url: URL) -> URL? {

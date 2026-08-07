@@ -230,6 +230,41 @@ final class PendingRecordingQueueTests: XCTestCase {
         // return value alone.
         XCTAssertEqual(outcome, .lost)
     }
+
+    // MARK: - #486 re-review R1: eviction must terminate even when removal itself fails
+
+    /// The exact shape the re-review proved hung: a write that can never
+    /// succeed, an older file to "evict", and the removal ALSO failing (a
+    /// read-only parent directory blocks both `data.write` and
+    /// `removeItem`, the same way a real permissions/disk-pressure failure
+    /// would). Before the fix this spun for 200,001 iterations / 59.6s with
+    /// no exit; `enqueue` must now return well within the test timeout.
+    func testWriteFailureWithAnUnremovableOlderFileTerminatesRatherThanHanging() async throws {
+        let stuck = UUID()
+        try writeFile(makePending(id: stuck, enqueuedUserId: testUserId), createdAt: Date())
+        // Read+execute only: contentsOfDirectory (used to find the "oldest
+        // other file") still works, but both creating the new file AND
+        // removing the old one are refused.
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: pendingDir.path)
+        defer {
+            // Restore write access so tearDown can actually delete tempDir.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pendingDir.path)
+        }
+
+        let id = UUID()
+        let queue = PendingRecordingQueue(uploader: ScriptedUploader(failing: [:]), baseDir: tempDir)
+
+        let expectation = expectation(description: "enqueue returns instead of hanging")
+        Task {
+            _ = await queue.enqueue(makePending(id: id, enqueuedUserId: testUserId))
+            expectation.fulfill()
+        }
+        await fulfillment(of: [expectation], timeout: 5)
+
+        // The pre-existing file must survive — removal was refused, not
+        // silently treated as done.
+        XCTAssertTrue(try filesOnDisk().contains("\(stuck.uuidString).json"))
+    }
 }
 
 // MARK: - Test doubles
