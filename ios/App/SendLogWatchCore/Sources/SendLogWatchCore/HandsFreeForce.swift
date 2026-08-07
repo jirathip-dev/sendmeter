@@ -141,6 +141,53 @@ public func stepHandsFreeForce(
     }
 }
 
+/// Why a recording stopped (issue #503). `.released` is the only case that
+/// carries a trim timestamp — the state machine's own below-threshold start —
+/// and the only case that may re-arm without observing slack first: its grace
+/// window already proved `stopGraceMs` of unloaded gauge. Every other stop
+/// can happen mid-hold, where re-arming immediately turns the same continuous
+/// load into a phantom rep (#467). Binding the timestamp into the case makes
+/// the coupling structural: a call site cannot trim the low-force tail
+/// without declaring release, and cannot declare release without the proof
+/// timestamp. Watch-side only — not part of the ported `handsFreeForce.ts`
+/// machine (the web stop path has no save/restart dark window to bridge).
+public enum HandsFreeStopReason: Equatable, Sendable {
+    /// `endMs` is on the RECORDING clock — the same t0-relative milliseconds
+    /// as the sample buffer (`samples[].t`), not the armed stream's absolute
+    /// device timestamps. Release can only be detected from `.recording`, so
+    /// its below-threshold start is always measured on that clock; the trim
+    /// filter compares it directly against `samples[].t`.
+    case released(endMs: Double)
+    case userTapped
+    case cappedAt30Min
+
+    /// Timestamp to trim the recording's low-force tail at; nil for stops
+    /// with no proven release point (the whole buffer is the rep).
+    /// Exhaustive on purpose (#503): a new case must answer the trim
+    /// question here at compile time, exactly like the re-arm question in
+    /// `rearmedHandsFreeForce(afterStop:)` — not silently inherit "no trim".
+    public var trimEndMs: Double? {
+        switch self {
+        case .released(let endMs): return endMs
+        case .userTapped, .cappedAt30Min: return nil
+        }
+    }
+}
+
+/// The state a hands-free stream re-arms into after a save, decided by WHY
+/// the recording stopped rather than by which optional parameters a call
+/// site happened to pass. Automatic release has already proved
+/// `stopGraceMs` of slack, so requiring another slack sample after the
+/// stop/save/restart dark window would silently miss a fast next rep; a tap
+/// or the 30-minute cap has no such proof and must gate the same continuous
+/// load behind fresh slack before re-arming.
+public func rearmedHandsFreeForce(afterStop reason: HandsFreeStopReason) -> HandsFreeForceState {
+    switch reason {
+    case .released: return armedHandsFreeForce()
+    case .userTapped, .cappedAt30Min: return rearmedHandsFreeForce()
+    }
+}
+
 /// Labels and identity snapshotted when a rep starts. The stop path consumes
 /// this value synchronously, before its first persistence await, so an
 /// auto-stop racing a tap cannot enqueue the same rep twice.

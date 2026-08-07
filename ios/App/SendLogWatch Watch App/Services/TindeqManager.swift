@@ -282,18 +282,19 @@ final class TindeqManager: NSObject {
         }
     }
 
-    /// Stop and persistence share one synchronous claim. Both an automatic
-    /// release and the Stop & Save button enter here; only the first can take
-    /// `repClaims.active`, and that happens before the Task/await below.
-    func stopAndSave(endMs: Double? = nil) {
+    /// Stop and persistence share one synchronous claim. Automatic release,
+    /// the Stop & Save button and the 30-minute cap all enter here; only the
+    /// first can take `repClaims.active`, and that happens before the
+    /// Task/await below. `reason` has no default on purpose (#503): only
+    /// `.released` carries a trim timestamp and re-arms without fresh slack,
+    /// and every call site must say which stop it is — a new caller cannot
+    /// get release semantics by accident.
+    func stopAndSave(reason: HandsFreeStopReason) {
         guard let claim = repClaims.claimStop() else { return }
-        // Only release detection supplies its below-threshold start time;
-        // button and 30-minute-cap stops use the nil default.
-        let afterRelease = endMs != nil
         if handsFreeRequested { handsFreeState = .stopping }
-        guard let summary = stopTransport(endMs: endMs) else {
+        guard let summary = stopTransport(endMs: reason.trimEndMs) else {
             if handsFreeRequested, transportConnected {
-                rearmHandsFreeAfterSave(afterRelease: afterRelease)
+                rearmHandsFreeAfterSave(afterStop: reason)
             }
             return
         }
@@ -301,8 +302,7 @@ final class TindeqManager: NSObject {
             summary,
             claim: claim,
             note: "",
-            rearmHandsFree: handsFreeRequested,
-            rearmAfterRelease: afterRelease
+            rearmHandsFreeAfterStop: handsFreeRequested ? reason : nil
         )
     }
 
@@ -374,7 +374,7 @@ final class TindeqManager: NSObject {
             if self.beatTick % 5 == 0 { self.pushForceBeat() }
             if TindeqRecordingLimit.shouldStop(elapsedMs: last.t), self.measuring {
                 if self.handsFreeRequested {
-                    self.stopAndSave()
+                    self.stopAndSave(reason: .cappedAt30Min)
                 } else {
                     // Preserve the pre-existing manual cap behavior: it stops
                     // the stream and returns to setup without inventing a
@@ -504,16 +504,17 @@ final class TindeqManager: NSObject {
         pushForceBeat()
     }
 
-    private func rearmHandsFreeAfterSave(afterRelease: Bool) {
+    private func rearmHandsFreeAfterSave(afterStop reason: HandsFreeStopReason) {
         guard handsFreeRequested, transportConnected, status == .connected, !finishAfterSaves else {
             handsFreeState = idleHandsFreeForce()
             return
         }
-        // Automatic release has already proved 1.5 s <= stopKg, so requiring
-        // another slack sample after the stop/save/restart dark window can
-        // silently miss a fast next rep. Manual/cap stops have no such proof
-        // and must still gate the same continuous load before re-arming.
-        handsFreeState = afterRelease ? armedHandsFreeForce() : rearmedHandsFreeForce()
+        // Only `.released` has already proved 1.5 s <= stopKg, so it re-arms
+        // straight to armed — requiring another slack sample after the
+        // stop/save/restart dark window can silently miss a fast next rep.
+        // Tap/cap stops have no such proof and must still gate the same
+        // continuous load before re-arming. Decided in Core (#503).
+        handsFreeState = rearmedHandsFreeForce(afterStop: reason)
         armedStreamStartedAtUs = nil
         resetRecordingBuffer()
         write(.startWeight)
@@ -533,8 +534,9 @@ final class TindeqManager: NSObject {
         _ summary: StoppedRecording,
         claim: HandsFreeForceRepClaim,
         note: String,
-        rearmHandsFree: Bool,
-        rearmAfterRelease: Bool = false,
+        // nil = never re-arm (the disconnect salvage); non-nil re-arms after
+        // the save with slack semantics decided by the stop reason (#503).
+        rearmHandsFreeAfterStop: HandsFreeStopReason?,
         lostSavedMessage: String = "Rep not saved — try pulling again",
         lostErrorMessage: String? = nil,
         rememberSelection: Bool = true
@@ -578,8 +580,8 @@ final class TindeqManager: NSObject {
 
             if finishAfterSaves, saveOperationsInFlight == 0 {
                 logSessionAfterPendingSaves()
-            } else if rearmHandsFree {
-                rearmHandsFreeAfterSave(afterRelease: rearmAfterRelease)
+            } else if let rearmHandsFreeAfterStop {
+                rearmHandsFreeAfterSave(afterStop: rearmHandsFreeAfterStop)
             }
         }
     }
@@ -649,7 +651,12 @@ final class TindeqManager: NSObject {
             let stepped = stepHandsFreeForce(handsFreeState, atMs: t, kg: Double(sample.kg))
             handsFreeState = stepped.state // claim before stop/save Task
             if stepped.action == .stop {
-                stopAndSave(endMs: belowSinceMs)
+                // `.stop` only fires once the grace window measured from a
+                // non-nil belowSinceMs has elapsed, so the fallback is
+                // unreachable while stopGraceMs > 0; `t` (the sample that
+                // crossed the grace) is the conservative no-trim end if a
+                // future config ever made it reachable.
+                stopAndSave(reason: .released(endMs: belowSinceMs ?? t))
                 return
             }
         }
@@ -785,7 +792,7 @@ extension TindeqManager: CBCentralManagerDelegate {
             summary,
             claim: claim,
             note: "Recovered after connection loss",
-            rearmHandsFree: false,
+            rearmHandsFreeAfterStop: nil,
             lostSavedMessage: "Recovered rep was not saved",
             lostErrorMessage: "Rep not saved — couldn't write to the watch.",
             rememberSelection: false
