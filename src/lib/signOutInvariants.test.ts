@@ -85,4 +85,22 @@ describe("#273 sign-out invariants", () => {
       "lib/signOut.ts",
     ]);
   });
+
+  // #492 F1 (review): the discard path used to accept `userId: string |
+  // null`, with `null` meaning "wipe every account's queue" — a real,
+  // demonstrated race (two independent `getSession()` reads disagreeing
+  // across a token rotation) could produce that `null` with no error and no
+  // warning. Requiring a non-null `string` closes it at the type level, but
+  // a type can be WIDENED back by a future edit with nothing else noticing —
+  // pinned here the same crude, refactor-proof way as #1/#2 above.
+  it("requires a non-null userId on the discard path — no caller can wipe unscoped", () => {
+    const recordingQueue = sources.find((s) => s.path === "lib/recordingQueue.ts")?.code ?? "";
+    const signOut = sources.find((s) => s.path === "lib/signOut.ts")?.code ?? "";
+    expect(recordingQueue).toMatch(
+      /export async function clearRecordingQueue\(\s*userId:\s*string,/,
+    );
+    expect(signOut).toMatch(
+      /export async function discardQueueOnUserSignOut\(\s*userId:\s*string,/,
+    );
+  });
 });

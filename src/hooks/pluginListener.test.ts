@@ -81,4 +81,16 @@ describe("subscribePluginListener (#485 F7 fix)", () => {
 
     expect(remove).toHaveBeenCalledOnce();
   });
+
+  it("review F7 — a rejecting addListener()/remove() does not surface as an unhandled rejection", async () => {
+    const unsubscribe = subscribePluginListener(() =>
+      Promise.reject(new Error("plugin unavailable")),
+    );
+    // No `expect(...).rejects` needed — the point is that calling
+    // unsubscribe() and letting microtasks flush does not blow up the test
+    // run with an unhandled rejection.
+    unsubscribe();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 });

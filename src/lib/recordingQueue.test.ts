@@ -3,6 +3,7 @@ import {
   MAX_QUEUE_BYTES,
   absorbSyncLane,
   clearRecordingQueue,
+  clearRecordingQueueUnscoped,
   drainPendingRecordingsQueue,
   drainQueue,
   enqueueRecording,
@@ -1015,10 +1016,10 @@ describe("pendingRecordingsCount", () => {
 describe("clearRecordingQueue", () => {
   // The mechanics only. WHEN this is allowed to run — user-initiated sign-out
   // and nothing else — is `signOut.ts`'s job and lives in `signOut.test.ts`.
-  // Exercised scoped to an account (the normal sign-out shape) unless a test
-  // says otherwise — see the "scoping (#484 F3)" block below for the
-  // `userId: null` (account-deletion) shape and the property scoping exists
-  // to protect.
+  // Always scoped to an account — `clearRecordingQueue` no longer accepts
+  // `null` at all (#492 F1); see `clearRecordingQueueUnscoped` for the
+  // separately-named unscoped primitive and the "scoping (#484 F3)" block
+  // below for the property scoping exists to protect.
 
   it("empties BOTH stores for the account, not just the main one", async () => {
     const storage = fakeStorage();
@@ -1106,13 +1107,19 @@ describe("clearRecordingQueue", () => {
       expect([...map.keys()]).toEqual([]);
     });
 
-    it("userId: null clears EVERYTHING, unscoped — the no-known-user fallback shape", async () => {
+    // #492 F1 (review): `clearRecordingQueue` no longer accepts `null` at
+    // all — the unscoped wipe is `clearRecordingQueueUnscoped`, a separately
+    // named primitive with zero production callers, so a caller can no
+    // longer reach "wipe everything" by passing a falsy id to the scoped
+    // function. This test now exercises that primitive directly rather than
+    // `clearRecordingQueue(null, ...)`, which is a type error.
+    it("clearRecordingQueueUnscoped clears EVERYTHING, unscoped — a deliberately separate, uncalled-in-production primitive", async () => {
       const storage = fakeStorage();
       const mine = queueOf("mine-1");
       const theirs = enqueueRecording([], rec("theirs-1"), "user-2", () => "t");
       const { loader, map } = fakeDb([...mine, ...theirs]);
 
-      expect(await clearRecordingQueue(null, loader, storage)).toBe(2);
+      expect(await clearRecordingQueueUnscoped(loader, storage)).toBe(2);
       expect([...map.keys()]).toEqual([]);
     });
 

@@ -20,6 +20,10 @@ export function subscribePluginListener<H extends { remove: () => Promise<void> 
 ): () => void {
   const listener = addListener();
   return () => {
-    void listener.then((handle) => handle.remove());
+    // A rejecting `addListener()` (or `remove()`) must not surface as an
+    // unhandled promise rejection — there is nothing further to clean up
+    // either way, and the pre-fix shape had the same exposure, so this is a
+    // NIT fix (#485 review F7), not new fragility.
+    void listener.then((handle) => handle.remove()).catch(() => {});
   };
 }

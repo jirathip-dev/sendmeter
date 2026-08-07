@@ -132,18 +132,23 @@ async function withDeadline<T>(
 /// `userId` is threaded straight to `clearRecordingQueue` — #484 F3: it must
 /// be the SAME id the remainder count (`pendingRecordingsCount`) was scoped
 /// to, or "Delete N and sign out" understates what a scoped count names but
-/// an unscoped delete actually destroys. That now includes the
-/// account-deletion path (`queue: "discard"`): #492 found `deleteAccount()`
-/// still passing `null` here, which `clearRecordingQueue` treats as an
-/// unscoped wipe — deleting account B destroyed account A's queued
-/// recordings too on a shared device. `deleteAccount()` now threads the
-/// deleting user's own id, so `null` only ever reaches here in the genuine
-/// edge case of no signed-in user to attribute to — see
-/// `clearRecordingQueue`'s doc comment.
+/// an unscoped delete actually destroys.
+///
+/// Required, non-null `string` ON PURPOSE (#492 F1, review): the first
+/// version of this fix still accepted `userId: string | null` here and
+/// `deleteAccount()` passed `null` through whenever it couldn't resolve an
+/// id — which is a real, demonstrated race (two independent `getSession()`
+/// reads, one for this id and one for the delete RPC's own bearer token, can
+/// disagree across a token rotation in another tab) — reproducing #492's
+/// whole-device wipe exactly. `clearRecordingQueue` itself now refuses a
+/// `null` id at the type level, so this function does too: `signOutUser`
+/// only calls it when `opts.userId` is truthy, and treats a falsy one as
+/// "discard nothing, report it" instead (see its doc comment). There is no
+/// path from here to an unscoped wipe any more.
 ///
 /// Exported so the refusal is directly testable; not for general use.
 export async function discardQueueOnUserSignOut(
-  userId: string | null,
+  userId: string,
   deps: Pick<SignOutDeps, "clear" | "userSignOutPending" | "report"> = {},
 ): Promise<number> {
   const pending = deps.userSignOutPending ?? isUserSignOutPending;
@@ -205,17 +210,26 @@ export async function signOutUser(
 
   let discarded = 0;
   if (choice === "discard") {
-    // Before `signOut()`, not after: the user asked for this and it must
-    // happen even if the network call fails. It is a local delete, so there is
-    // no token to race.
-    discarded = await discardQueueOnUserSignOut(opts.userId, deps);
-    if (policy === "drain" && discarded < remaining) {
-      // The user asked for these to be gone and some of them are not. Silent
-      // is the one thing this must not be.
-      report("tindeq-queue: discard-on-signout-incomplete", {
-        requested: remaining,
-        discarded,
-      });
+    if (opts.userId) {
+      // Before `signOut()`, not after: the user asked for this and it must
+      // happen even if the network call fails. It is a local delete, so
+      // there is no token to race.
+      discarded = await discardQueueOnUserSignOut(opts.userId, deps);
+      if (policy === "drain" && discarded < remaining) {
+        // The user asked for these to be gone and some of them are not. Silent
+        // is the one thing this must not be.
+        report("tindeq-queue: discard-on-signout-incomplete", {
+          requested: remaining,
+          discarded,
+        });
+      }
+    } else {
+      // #492 F1 (review): no attributable user id. The pre-fix bug was
+      // exactly this case silently falling back to "wipe every account's
+      // queue on this device" — an id-resolution failure widening the blast
+      // radius is worse than doing nothing, so this path discards NOTHING
+      // and says so out loud (#264) instead of guessing.
+      report("tindeq-queue: discard-skipped-no-attributable-user", {});
     }
   }
 

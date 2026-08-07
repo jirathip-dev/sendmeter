@@ -336,14 +336,15 @@ describe("a forced sign-out never discards anything", () => {
 });
 
 describe("signOutUser — account deletion", () => {
-  it("discards without attempting an upload or asking", async () => {
+  it("discards without attempting an upload or asking, when the deleting account is known", async () => {
     const h = await harness(ok);
     await persistRecordingDurable(rec("idb-1"), USER, h.loader, h.storage);
     expect(persistRecording(rec("lane-1"), USER, h.storage).persisted).toBe(true);
     const onRemainder = vi.fn<() => QueueRemainderChoice>(() => "keep");
 
+    // The realistic `deleteAccount()` shape: a real, resolved user id.
     const outcome = await signOutUser(
-      { userId: null, queue: "discard", onRemainder },
+      { userId: USER, queue: "discard", onRemainder },
       h.deps,
     );
 
@@ -356,5 +357,40 @@ describe("signOutUser — account deletion", () => {
     // `remaining` is 0 on this path (nothing was measured), so the
     // incomplete-discard report must not fire off it.
     expect(h.report).not.toHaveBeenCalled();
+  });
+
+  // #492 F1 — PROVED (review finding, addressed here). Before this fix,
+  // `userId: null` on the discard path fell through to
+  // `clearRecordingQueue(null)`'s unscoped wipe — the exact shape the
+  // review reproduced end-to-end against a real IndexedDB. `userId` can
+  // legitimately still be `null` here (two independent `getSession()` reads
+  // — this id capture and the delete RPC's own bearer-token read — can
+  // disagree across a token rotation race; see `settings.ts`'s doc comment),
+  // so the fix is not "never let this happen", it is "when it happens,
+  // discard NOTHING and say so".
+  it("PROVED. userId: null discards nothing and reports, never falling back to an unscoped wipe", async () => {
+    const h = await harness(ok);
+    await persistRecordingDurable(rec("idb-1"), USER, h.loader, h.storage);
+    expect(persistRecording(rec("lane-1"), USER, h.storage).persisted).toBe(true);
+    const clearSpy = vi.fn(h.deps.clear);
+    const onRemainder = vi.fn<() => QueueRemainderChoice>(() => "keep");
+
+    const outcome = await signOutUser(
+      { userId: null, queue: "discard", onRemainder },
+      { ...h.deps, clear: clearSpy },
+    );
+
+    // Pre-fix, `outcome.discarded` was 2 and both stores ended up empty —
+    // identical to the "known account" test above, which is exactly the
+    // bug: a resolution failure produced the SAME destructive result as a
+    // successful, attributed deletion.
+    expect(clearSpy).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ signedOut: true, discarded: 0 });
+    expect(await h.queue()).toEqual({ main: ["idb-1"], lane: ["lane-1"] }); // untouched
+    expect(onRemainder).not.toHaveBeenCalled(); // this is the discard policy, not drain
+    expect(h.report).toHaveBeenCalledWith(
+      "tindeq-queue: discard-skipped-no-attributable-user",
+      {},
+    );
   });
 });

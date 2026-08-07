@@ -3,27 +3,8 @@ import { Capacitor } from "@capacitor/core";
 import { App as CapacitorApp } from "@capacitor/app";
 import { subscribePendingUploads, type PendingUploadsBreakdown } from "../lib/pendingUploads";
 import { pendingRecordingsBreakdown } from "../lib/recordingQueue";
+import { subscribePluginListener } from "./pluginListener";
 
-/// #269: the offline recording queue's depth, for the ambient indicators.
-/// `null` until the first read completes — callers must not treat it as an
-/// empty queue. History intentionally stays quiet until there is an actionable
-/// pending/stuck count; diagnostic surfaces can use `pendingUploadsLine` when
-/// they need to distinguish unknown from empty.
-///
-/// #484: split into `{pending, stuck}` (see `pendingRecordingsBreakdown`) so
-/// a recording the server keeps rejecting renders as its own honest state
-/// rather than either counting as "will sync" or going silent — #475 F1 on
-/// the watch was a BLOCKER for a quarantine count with no reader anywhere.
-///
-/// #484 F5: scoped to `userId` — see `pendingRecordingsCount` for why an
-/// unscoped count is a real bug, not just a cosmetic one (it gets read back
-/// as "will sync").
-///
-/// Re-reads on four signals, because the queue changes from places this
-/// component can't see: the module-level notification (something queued or
-/// drained in this tab), app foreground (a drain may have run while
-/// backgrounded, and on native the WebView can be suspended mid-drain), a
-/// change of account, and mount.
 /// A `refresh()` that only ever applies the LATEST in-flight read to
 /// `onValue` — #485 F6: `refresh` fires once per signal (mount, the
 /// module-level notification, foreground) with no sequencing between them,
@@ -55,6 +36,27 @@ export function makeSequencedRefresher<T>(
   };
 }
 
+/// #269: the offline recording queue's depth, for the ambient indicators.
+/// `null` until the first read completes — callers must not treat it as an
+/// empty queue. History intentionally stays quiet until there is an actionable
+/// pending/stuck count; diagnostic surfaces can use `pendingUploadsLine` when
+/// they need to distinguish unknown from empty.
+///
+/// #484: split into `{pending, stuck}` (see `pendingRecordingsBreakdown`) so
+/// a recording the server keeps rejecting renders as its own honest state
+/// rather than either counting as "will sync" or going silent — #475 F1 on
+/// the watch was a BLOCKER for a quarantine count with no reader anywhere.
+///
+/// #484 F5: scoped to `userId` — see `pendingRecordingsCount` for why an
+/// unscoped count is a real bug, not just a cosmetic one (it gets read back
+/// as "will sync").
+///
+/// Re-reads on four signals, because the queue changes from places this
+/// component can't see: the module-level notification (something queued or
+/// drained in this tab), app foreground (a drain may have run while
+/// backgrounded, and on native the WebView can be suspended mid-drain), a
+/// change of account, and mount. `makeSequencedRefresher` (above) is what
+/// keeps those four signals' reads from clobbering each other out of order.
 export function usePendingUploads(userId: string): PendingUploadsBreakdown | null {
   const [breakdown, setBreakdown] = useState<PendingUploadsBreakdown | null>(null);
 
@@ -78,13 +80,17 @@ export function usePendingUploads(userId: string): PendingUploadsBreakdown | nul
         document.removeEventListener("visibilitychange", onVisible);
       };
     }
-    const sub = CapacitorApp.addListener("appStateChange", ({ isActive }) => {
-      if (isActive) refresh();
-    });
+    // #485 F7: `subscribePluginListener` (see its doc comment) instead of
+    // hand-rolling the same promise-chaining shape.
+    const unsubscribeAppState = subscribePluginListener(() =>
+      CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+        if (isActive) refresh();
+      }),
+    );
     return () => {
       stop();
       unsubscribe();
-      void sub.then((h) => h.remove());
+      unsubscribeAppState();
     };
   }, [userId]);
 

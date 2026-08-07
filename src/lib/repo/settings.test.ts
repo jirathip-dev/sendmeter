@@ -21,6 +21,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   session: { user: { id: "user-A" } } as { user: { id: string } } | null,
+  sessionError: null as unknown,
   rpcResult: { data: null as unknown, error: null as unknown },
   order: [] as string[],
   signOutUser: vi.fn(() =>
@@ -33,6 +34,7 @@ const h = vi.hoisted(() => ({
       timedOut: false,
     }),
   ),
+  captureDataLoss: vi.fn(),
 }));
 
 vi.mock("../supabase", () => ({
@@ -47,21 +49,24 @@ vi.mock("../supabase", () => ({
     auth: {
       getSession: () => {
         h.order.push("getSession");
-        return Promise.resolve({ data: { session: h.session }, error: null });
+        return Promise.resolve({ data: { session: h.session }, error: h.sessionError });
       },
     },
   },
 }));
 
 vi.mock("../signOut", () => ({ signOutUser: h.signOutUser }));
+vi.mock("../monitoring", () => ({ captureDataLoss: h.captureDataLoss }));
 
 const { deleteAccount } = await import("./settings");
 
 beforeEach(() => {
   h.session = { user: { id: "user-A" } };
+  h.sessionError = null;
   h.rpcResult = { data: null, error: null };
   h.order = [];
   h.signOutUser.mockClear();
+  h.captureDataLoss.mockClear();
 });
 
 describe("deleteAccount", () => {
@@ -90,11 +95,46 @@ describe("deleteAccount", () => {
     });
   });
 
-  it("falls back to an unscoped discard only when there is genuinely no session to attribute to", async () => {
+  // #492 F3 (review) — the ORIGINAL version of this test was named "falls
+  // back to an unscoped discard" and asserted `{ userId: null, queue:
+  // "discard" }`, which PASSES against pre-fix `settings.ts` too — it pinned
+  // the #492 shape as correct instead of guarding against it. This module
+  // has no way to prove "nothing gets wiped" on its own (it mocks
+  // `signOutUser` entirely, precisely so it can assert what `deleteAccount`
+  // PASSES rather than re-testing `signOutUser`'s own logic) — that
+  // property now lives where it can actually be checked: `signOut.test.ts`
+  // ("userId: null discards nothing and reports") and
+  // `deleteAccount.e2e.test.ts` (real stores, real chain, both accounts'
+  // queues proven untouched). This test's job is narrower and honest about
+  // it: `deleteAccount()` passes `userId` through AS-IS, including `null` —
+  // it invents no fallback of its own, because the actual safety boundary is
+  // downstream.
+  it("passes userId through as-is (including null) when there is no session to attribute to — safety is downstream, not here", async () => {
     h.session = null;
 
     await deleteAccount();
 
+    expect(h.signOutUser).toHaveBeenCalledExactlyOnceWith({
+      userId: null,
+      queue: "discard",
+    });
+  });
+
+  it("#492 F1 (review) — reports, but does not throw or skip the RPC, when getSession() itself errors", async () => {
+    h.session = null;
+    h.sessionError = new Error("network error");
+
+    await expect(deleteAccount()).resolves.toBeUndefined();
+
+    // Pre-fix, `getSession()`'s `error` was destructured away and silently
+    // discarded — this is the "stop discarding it" fix: the failure is now
+    // visible, even though nothing downstream can turn it into an unscoped
+    // wipe any more.
+    expect(h.captureDataLoss).toHaveBeenCalledWith(
+      "account.delete-session-read-failed",
+      {},
+    );
+    expect(h.order).toEqual(["getSession", "rpc"]); // the RPC still runs
     expect(h.signOutUser).toHaveBeenCalledExactlyOnceWith({
       userId: null,
       queue: "discard",
