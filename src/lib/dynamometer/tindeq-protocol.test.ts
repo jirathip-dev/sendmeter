@@ -101,6 +101,38 @@ describe("parseNotification", () => {
     expect(result.payload.getUint8(1)).toBe(0xbb);
   });
 
+  it("bounds the response payload to the notification's own byteLength, not the underlying buffer's (#488)", () => {
+    // `dv` here does NOT extend to the end of its underlying buffer — there
+    // are five unrelated trailing bytes after it, simulating a shared/reused
+    // ArrayBuffer. `new DataView(dv.buffer, dv.byteOffset + 2)` (no explicit
+    // length) implicitly runs to the END OF THE BUFFER rather than to the
+    // end of `dv`, so it would leak those trailing bytes into the response
+    // payload. SendLogWatchCore's TindeqProtocol.swift mirror doesn't have
+    // this bug — `data.dropFirst(2)` is bounded to `data`'s own endIndex,
+    // never the underlying storage's — so this pins the web side to match.
+    const outer = new DataView(new ArrayBuffer(12));
+    outer.setUint8(3, 0x00); // tag, at the start of the notification sub-view
+    outer.setUint8(4, 0x02); // len: declares a 2-byte payload
+    outer.setUint8(5, 0xaa); // payload byte 0
+    outer.setUint8(6, 0xbb); // payload byte 1 — dv's own view ends here
+    outer.setUint8(7, 0x11); // trailing bytes belonging to a LATER frame /
+    outer.setUint8(8, 0x22); // reused buffer region — must NOT leak into
+    outer.setUint8(9, 0x33); // this notification's response payload
+    outer.setUint8(10, 0x44);
+    outer.setUint8(11, 0x55);
+
+    // byteOffset 3, explicit byteLength 4 — covers exactly [tag, len, 0xaa,
+    // 0xbb] and deliberately stops short of the buffer's end.
+    const dv = new DataView(outer.buffer, 3, 4);
+    const result = parseNotification(dv);
+
+    expect(result.kind).toBe("response");
+    if (result.kind !== "response") throw new Error("unreachable");
+    expect(result.payload.byteLength).toBe(2);
+    expect(result.payload.getUint8(0)).toBe(0xaa);
+    expect(result.payload.getUint8(1)).toBe(0xbb);
+  });
+
   it("decodes tag 0x02 as lowBattery", () => {
     const dv = new DataView(new Uint8Array([0x02, 0x00]).buffer);
     expect(parseNotification(dv)).toEqual({ kind: "lowBattery" });

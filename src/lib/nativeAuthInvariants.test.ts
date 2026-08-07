@@ -18,8 +18,29 @@ import { describe, expect, it } from "vitest";
 ///
 /// So this asserts the *absence* of the credential and of every SDK call that
 /// could rotate one, in the two components that consume the phone's session.
-/// It is deliberately a crude text scan: it cannot be satisfied by refactoring
-/// around it, only by not doing the thing.
+/// It is deliberately a crude text scan.
+///
+/// **Correction (post-audit, #488).** This file used to end the paragraph
+/// above with "it cannot be satisfied by refactoring around it, only by not
+/// doing the thing." That was false, and false in exactly the shape #196
+/// itself failed in: `ROTATING_CALLS` matches fixed dotted chains like
+/// `.auth.session` written on one call, so
+/// ```swift
+/// let authClient = SupabaseService.data.auth   // no ".auth.session" substring
+/// let stale = authClient.session                // no ".auth." substring either
+/// ```
+/// reaches the exact #196 accessor one hop removed while every pattern below
+/// stays green — the alias is a different string, so a scan for fixed
+/// substrings doesn't see it. `watchAuthPollInvariants.test.ts` hit the same
+/// class of gap (a per-site/per-pattern scan reachable by indirection) and
+/// closed it by forbidding the bare identifier everywhere in its file, not a
+/// dotted chain naming one call site. The equivalent move here is the test
+/// below: neither client has any legitimate reason to touch `.auth` at
+/// all — both are built with an `accessToken` closure and never construct or
+/// reach an `AuthClient` (see `SupabaseService.swift` / `HealthConfig.swift`)
+/// — so it forbids the bare `.auth` property access outright, direct or
+/// aliased, closing the rename/new-file/indirection escapes the per-pattern
+/// checks below cannot.
 
 const REPO = join(import.meta.dirname, "..", "..");
 
@@ -94,6 +115,28 @@ describe("no session-consuming native client may hold or spend a refresh token (
       expect(offenders).toEqual([]);
     });
   }
+
+  it("never touches AuthClient at all — no `.auth` property access, direct or aliased (#196, #488)", () => {
+    // The checks above only match specific dotted chains (`.auth.session`,
+    // `.auth.setSession(`, ...) written out on one call. #196's accessor
+    // survives an alias: `let a = client.auth` then `a.session` contains
+    // none of those substrings. There is currently zero legitimate use of
+    // `.auth` anywhere in either consumer — grep the two source directories
+    // and the only two hits are the Keychain service-key string literals
+    // `"supabase.auth.token"` / `"supabase.auth.token-code-verifier"`, which
+    // this strips before matching. Everything else is a real access to
+    // `AuthClient`, so ANY remaining `.auth` — under any local name, in any
+    // file in these directories, new or existing — is the #196 accessor
+    // reached one hop removed.
+    const offenders = consumers.flatMap(({ path, code }) => {
+      const withoutKeychainKeyLiterals = code.replace(
+        /"supabase\.auth\.token(?:-code-verifier)?"/g,
+        "",
+      );
+      return /\.auth\b/.test(withoutKeychainKeyLiterals) ? [path] : [];
+    });
+    expect(offenders).toEqual([]);
+  });
 
   it("configures every Supabase client with a non-refreshing accessToken provider", () => {
     // The seam that makes the above structural rather than incidental: a
