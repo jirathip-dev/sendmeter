@@ -517,35 +517,34 @@ export async function updateRecordingGroup(
 /// group_id convention History's multi-select flow uses (SL-21): mint a
 /// fresh group_id for the session if it doesn't have one yet (a session
 /// logged through the plain Log Session form never gets one), stamp it onto
-/// the recordings in one batch (mirrors updateRecordingsMeta's `.in()`
-/// pattern). Duration is recomputed from the recording span ONLY for tindeq
-/// sessions, where duration is defined as the gauge wall-clock span — for a
-/// manually-logged session the user just typed a duration into the form, and
-/// attaching a few gauge reps must not clobber it (e.g. a 90-min climbing
-/// session would become the reps' 12-min span).
+/// the recordings, and (for tindeq sessions only — see the RPC's own
+/// comment) recompute the session's duration from the recordings' actual
+/// span. For a manually-logged session the user just typed a duration into
+/// the form, and attaching a few gauge reps must not clobber it (e.g. a
+/// 90-min climbing session would become the reps' 12-min span).
+///
+/// #490: this used to be three separate, non-transactional requests
+/// (set session.group_id, regroup the recordings, recompute duration) — a
+/// failure on the 2nd or 3rd left the 1st stranded (the session pointing at
+/// a group with none/some of the intended recordings, or grouped correctly
+/// but with a stale duration). `link_tindeq_recordings_to_session` (see
+/// supabase/migrations/20260807090000_link_tindeq_recordings_rpc.sql) does
+/// all three inside one DB transaction, so any failure anywhere leaves
+/// nothing changed. Takes only the session id — not a client-held
+/// `groupId`/`type` snapshot, which could be stale by the time this runs
+/// (see CLAUDE.md's closures-outliving-the-render note) — the function reads
+/// both fresh, inside the same transaction that uses them.
 export async function linkRecordingsToSession(
-  session: { id: string; groupId: string | null; type: string },
+  sessionId: string,
   recordingIds: string[],
 ): Promise<void> {
   if (recordingIds.length === 0) return;
-  const groupId = session.groupId ?? crypto.randomUUID();
-  if (!session.groupId) {
-    unwrap(
-      await supabase
-        .from("sessions")
-        .update({ group_id: groupId })
-        .eq("id", session.id)
-        .select("id"),
-    );
-  }
   unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .update({ group_id: groupId })
-      .in("id", recordingIds)
-      .select("id"),
+    await supabase.rpc("link_tindeq_recordings_to_session", {
+      p_session_id: sessionId,
+      p_recording_ids: recordingIds,
+    }),
   );
-  if (session.type === "tindeq") await recalcTindeqSessionDuration(groupId);
 }
 
 /// Recompute a Tindeq session's duration from its recordings' actual time span

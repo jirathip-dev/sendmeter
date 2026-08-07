@@ -124,15 +124,27 @@ export async function syncHealthNow(): Promise<void> {
 /// success when it isn't) applied to the one irreversible action in the app.
 /// Callers must use `ok` to show an honest "resync failed" state rather than
 /// claiming the rebuild is in progress.
-export async function resyncHealthHistory(): Promise<{ ok: boolean }> {
+///
+/// #494 (N4): a failure's `message` is carried back rather than discarded —
+/// e.g. the native `HealthResyncFoundNoDataError` ("Resync found no Health
+/// data to rebuild from — Health access may be denied, or your history is
+/// genuinely empty for this window") used to be thrown away here, leaving
+/// the caller no way to tell a genuinely-empty HealthKit history apart from
+/// a real failure. `message` alone still can't make that distinction
+/// reliably (the native comment explains why: `authorizationStatus` can't
+/// tell denied from empty either) — see `healthClearFailed` in
+/// `lib/healthClearOutcome.ts` for the discriminator the caller actually
+/// uses (rows deleted vs. rows rebuilt). This field is for surfacing the
+/// real reason when it IS a genuine failure, not for classifying it.
+export async function resyncHealthHistory(): Promise<{ ok: boolean; message?: string }> {
   if (!IS_NATIVE) return { ok: true };
   try {
     await SendLogHealth.clearAndResync();
     recordHealthSync("resync");
     return { ok: true };
-  } catch {
+  } catch (e) {
     // plugin call failed (unavailable, HealthKit error, dead session, …) —
     // not fatal to the already-completed delete, but the caller must say so.
-    return { ok: false };
+    return { ok: false, message: e instanceof Error ? e.message : undefined };
   }
 }

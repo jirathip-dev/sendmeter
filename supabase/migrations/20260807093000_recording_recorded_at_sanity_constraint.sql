@@ -1,0 +1,50 @@
+-- #494 (N2): recorded_at moved from the server's now() to the client clock
+-- at all 7 insert sites (#487, F2) — correct, so a recording queued offline
+-- and drained hours/days later keeps the moment it was actually captured.
+-- But that also means a skewed device clock now writes recorded_at directly,
+-- with nothing at the DB level to catch it.
+--
+-- Review finding F5 (this migration's first draft): this is NOT the
+-- Buddhist-calendar bug 20260713060000_date_sanity_constraint.sql guards
+-- `sessions.date`/`health_metrics.date` against — that bug is a Swift
+-- `Calendar.current` (year +543) problem, and `recorded_at` structurally
+-- can't reach it. It is written only by JS `new Date().toISOString()`
+-- (ForceView.tsx, useTindeq.ts, cadenceOnlyRun.ts, reverseAction.ts) or
+-- `recordingQueue.ts`'s queued `queuedAt` (same source), or left to the
+-- column's own `default now()` — `toISOString()` is Gregorian UTC by
+-- definition. The watch never writes this column at all (Repo.swift only
+-- reads it). What this guards against instead is an ordinary skewed/wrong
+-- device clock (dead-battery boot to a stale date, a manually-set wrong
+-- date, a bad NTP sync, timezone misconfiguration) — a narrower but still
+-- real class of bug, since a recording captured under a skewed clock lands
+-- in no ACWR window and stays there permanently with nothing to catch it.
+--
+-- Same generous bounds as the date_sanity_constraint precedent (a
+-- multi-year-past or week-plus-future timestamp is never legitimate for a
+-- gauge recording, so this only catches gross clock skew, not normal
+-- variance): 2020-01-01 as the floor, now() + 7 days as the ceiling.
+-- `now()` (not `current_date`) since recorded_at is a timestamptz with real
+-- time-of-day precision, unlike the date-only columns the existing
+-- constraint covers.
+--
+-- Accepted residual (review finding F6, verified against the bounds table
+-- above): a recording captured under a skewed clock fails this constraint
+-- on every insert AND every retry — drainQueue resends the same stored
+-- recordedAt (recordingQueue.ts), so it can never be accepted, even after
+-- the device's clock is corrected. That's honest loss, not silent loss: a
+-- 23514 (check_violation) classifies as "constraint" in
+-- classifyHandledFailure (monitoring.ts), so it's retained, retried,
+-- eventually reported `stuck`, and surfaced via the #484 quarantine rather
+-- than dropped. It's the same trade the two existing date constraints
+-- already made; not changing it here, just writing it down.
+--
+-- Existing rows: none violate this. Verified against both remote projects
+-- before writing this migration (read-only query, 2026-08-07):
+--   dev  (mjkndfhjnipomjjhgsxv):  11 rows, recorded_at in [2026-07-13, 2026-08-01], 0 would violate
+--   prod (zznsqmcewtzlnfoiefkk): 439 rows, recorded_at in [2026-04-16, 2026-08-06], 0 would violate
+-- so this ADD CONSTRAINT (which validates all existing rows, same as the
+-- precedent migration) is expected to apply cleanly on both.
+
+alter table public.tindeq_recordings
+  add constraint tindeq_recordings_recorded_at_sane
+  check (recorded_at >= timestamptz '2020-01-01' and recorded_at <= now() + interval '7 days');

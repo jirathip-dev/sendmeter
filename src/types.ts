@@ -282,15 +282,18 @@ export interface NewTindeqRecording {
   /// never saw) collides on the unique constraint instead of duplicating the
   /// row. Omitted for normal (non-retried) saves — the DB default applies.
   id?: string;
-  /// ISO timestamp of when this was actually recorded (#487, F2). Set by the
-  /// offline queue (`recordingQueue.ts`'s `drainQueue`, from the queued
-  /// entry's own `queuedAt`) before a retried insert, so a recording queued
-  /// offline and drained hours/days later lands on the day it was captured,
-  /// not the day it happened to finally upload — otherwise it lands in the
-  /// wrong ACWR bucket (the watch already solved this shape for sessions,
-  /// #144). Omitted for a normal (non-queued) save — the DB's
-  /// `recorded_at default now()` applies, which is correct there since the
-  /// insert happens immediately after capture.
+  /// ISO timestamp of when this was actually recorded (#487, F2), so a
+  /// recording queued offline and drained hours/days later lands on the day
+  /// it was captured, not the day it happened to finally upload — otherwise
+  /// it lands in the wrong ACWR bucket (the watch already solved this shape
+  /// for sessions, #144). Optional on the TYPE only because `insertRecording`
+  /// itself has no way to enforce it — every REAL construction site stamps
+  /// it at build time (not just the offline-queue retry path: a live save
+  /// needs it too, since ForceView's #264 in-memory Retry banner can re-call
+  /// `insertRecording` on the same object hours later). `recordedAtInvariant
+  /// .test.ts` pins this structurally across all of `src`, so an insert
+  /// literal that omits it is a bug, not a valid "normal save" case — don't
+  /// reintroduce a comment (or a call site) that treats omission as fine.
   recordedAt?: string;
   durationMs: number;
   peakKg: number | null;

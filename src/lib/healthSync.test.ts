@@ -53,6 +53,29 @@ describe("resyncHealthHistory", () => {
     vi.doMock("sendlog-health", () => ({ SendLogHealth: { clearAndResync } }));
 
     const { resyncHealthHistory } = await import("./healthSync");
-    await expect(resyncHealthHistory()).resolves.toEqual({ ok: false });
+    await expect(resyncHealthHistory()).resolves.toMatchObject({ ok: false });
+  });
+
+  // #494 (N4): the thrown error's message used to be discarded entirely —
+  // this pins that it's carried back on the failure result instead, so a
+  // caller CAN surface the real native reason (HealthKit denied vs. found no
+  // data) rather than only ever knowing "it failed".
+  it("carries the thrown error's message back instead of discarding it", async () => {
+    vi.doMock("@capacitor/core", () => ({
+      Capacitor: { isNativePlatform: () => true },
+    }));
+    const clearAndResync = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "Resync found no Health data to rebuild from — Health access may be denied, or your history is genuinely empty for this window.",
+        ),
+      );
+    vi.doMock("sendlog-health", () => ({ SendLogHealth: { clearAndResync } }));
+
+    const { resyncHealthHistory } = await import("./healthSync");
+    const result = await resyncHealthHistory();
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/genuinely empty/);
   });
 });

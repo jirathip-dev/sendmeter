@@ -14,7 +14,7 @@ import {
   fetchRecordings,
   insertRecording,
   insertTindeqSession,
-  recalcTindeqSessionDuration,
+  linkRecordingsToSession,
   restoreRecording,
   updateRecordingGroup,
 } from "../lib/repo";
@@ -234,7 +234,15 @@ export default function HistoryView({
     (s) => s.type === "tindeq" && s.groupId,
   );
 
-  async function assignSelectionToSession(groupId: string) {
+  // #490 (review finding F3): used to be an N+1 loop of `updateRecordingGroup`
+  // calls followed by a separate `recalcTindeqSessionDuration` round trip —
+  // the exact non-atomic shape #490 fixed for `linkRecordingsToSession`, just
+  // not yet routed through the fix. This screen already has the target
+  // session's id in hand (`tindeqSessions` below carries full `Session`
+  // objects), so it needs no group-id plumbing of its own — one call to the
+  // same RPC-backed `linkRecordingsToSession` does the regroup AND the
+  // duration recompute atomically.
+  async function assignSelectionToSession(sessionId: string) {
     // Derived exactly like createSessionFromSelection's `recs`: only visible
     // `ungrouped` rows, so a ticked-then-soft-deleted (or otherwise hidden)
     // recording is never written to and the toast count matches reality.
@@ -243,10 +251,10 @@ export default function HistoryView({
     setAssigning(true);
     setAssignError(null);
     try {
-      for (const r of recs) await updateRecordingGroup(r.id, groupId);
-      // The target session's span just grew — recompute its total time so the
-      // duration/load reflect the newly-added recordings, not the stale value.
-      await recalcTindeqSessionDuration(groupId);
+      await linkRecordingsToSession(
+        sessionId,
+        recs.map((r) => r.id),
+      );
       setAssignedIds((prev) => {
         const next = new Set(prev);
         for (const r of recs) next.add(r.id);
@@ -291,6 +299,18 @@ export default function HistoryView({
   // Group the ticked recordings under a new session: the session takes the
   // recordings' own date and time span; RPE defaults to 5 (editable via the
   // pencil afterwards).
+  //
+  // #490 (review finding F3): still N+1 non-atomic (regroup every recording,
+  // then insert the session; an insert failure orphans the whole group) —
+  // NOT converted to the `linkRecordingsToSession` RPC, unlike
+  // `assignSelectionToSession` above. The RPC needs an existing session id;
+  // this function's whole job is minting the session that doesn't exist yet,
+  // so there is nothing for it to link TO until after `insertTindeqSession`
+  // succeeds — a different operation shape (create-then-populate), not the
+  // same "link into an existing session" one #490 fixed. Left as a known,
+  // smaller residual (the unclamped `Math.max(1, Math.round(spanMs/60000))`
+  // duration below is harmless: `insertTindeqSession` clamps to `min(600,…)`
+  // itself), rather than folded into this branch.
   async function createSessionFromSelection() {
     const recs = ungrouped
       .filter((r) => selectedIds.has(r.id))
@@ -611,7 +631,7 @@ export default function HistoryView({
             <button
               key={s.id}
               disabled={assigning}
-              onClick={() => void assignSelectionToSession(s.groupId!)}
+              onClick={() => void assignSelectionToSession(s.id)}
               style={{
                 display: "block",
                 width: "100%",
