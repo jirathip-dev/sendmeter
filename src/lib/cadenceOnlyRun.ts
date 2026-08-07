@@ -107,6 +107,12 @@ export function buildCadenceOnlySetRecording(
   if (!complete && (!includePartial || availableMs < 1_000)) return null;
   return {
     id,
+    // #487 (F2, review finding 3): `nowMs` is already this function's own
+    // wall-clock anchor (every duration below is derived from it), so
+    // reusing it keeps the function pure/deterministic instead of reaching
+    // for `Date.now()` — same "stamp at construction, not at whichever
+    // request path eventually inserts" reasoning as ForceView.tsx's builders.
+    recordedAt: new Date(nowMs).toISOString(),
     source: "manual",
     durationMs: Math.max(1, availableMs),
     peakKg: null,

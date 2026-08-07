@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
+import HealthClearedStatus from "./HealthClearedStatus";
 import { authRedirectUrl } from "../lib/authRedirect";
 import {
   getAuthDiagnosticEvents,
@@ -309,7 +310,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       toast(
         resynced
           ? "Health data cleared · resyncing"
-          : "Health data cleared. Resync failed — reopen the app to retry.",
+          : "Health data cleared, but the resync failed. Close this screen and run Clear & resync again.",
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to clear health data");
@@ -462,18 +463,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
           <div>
             {eyebrow("Health data")}
             {cleared ? (
-              resyncFailed ? (
-                <div style={{ fontSize: "var(--t-sm)", color: "var(--warning)", lineHeight: 1.5 }}>
-                  Health data cleared, but the resync failed to start. Reopen
-                  the app (or wait for the next background sync) to rebuild
-                  your history from Apple Health.
-                </div>
-              ) : (
-                <div style={{ fontSize: "var(--t-sm)", color: "var(--success)", lineHeight: 1.5 }}>
-                  Health data cleared. Your device will re-sync fresh metrics from
-                  Apple Health shortly.
-                </div>
-              )
+              <HealthClearedStatus resyncFailed={resyncFailed} />
             ) : confirmingClear ? (
               <div>
                 <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
