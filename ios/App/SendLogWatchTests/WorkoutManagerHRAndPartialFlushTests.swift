@@ -179,6 +179,32 @@ private actor OrderLog {
         target = n
         return await withCheckedContinuation { continuation = $0 }
     }
+
+    /// Event-driven like `waitUntilCount(_:)` — resumes the instant the nth
+    /// event lands — but bounded by wall clock: if a REGRESSION means the
+    /// event never arrives at all (a wedged drain, #501's subject), it
+    /// resumes with whatever has arrived once `timeout` elapses, so the
+    /// caller fails a clean assertion instead of hanging the run forever.
+    /// This is NOT a poll: no scheduling-turn count anywhere on the success
+    /// path, so it cannot lose a race against a lower-QoS producer.
+    func waitUntilCount(_ n: Int, orTimeout timeout: Duration) async -> [String] {
+        if events.count >= n { return events }
+        target = n
+        return await withCheckedContinuation { c in
+            continuation = c
+            Task {
+                try? await Task.sleep(for: timeout)
+                await self.expireWait()
+            }
+        }
+    }
+
+    private func expireWait() {
+        guard let c = continuation else { return }
+        continuation = nil
+        target = nil
+        c.resume(returning: events)
+    }
 }
 
 /// A one-shot gate a fake uploader can block on, released explicitly by the
@@ -429,25 +455,30 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
         XCTAssertTrue(manager.isRunning, "a rejected start must not disturb the still-running workout")
         XCTAssertEqual(manager.startDate, Date(timeIntervalSince1970: 1_700_000_000), "a rejected start must not reset the live workout's startDate")
 
-        // Let workout N's original in-flight flush resolve.
+        // Let workout N's original in-flight flush resolve. Deliberately no
+        // yield-loop here (the #501 flake): the uploader resumes on a
+        // `.background`-priority detached task and its completion handler
+        // then needs a MainActor hop — `Task.yield()` from the MainActor
+        // neither runs nor priority-boosts either of those, so any
+        // yield-counted wait on this chain is a scheduling race the test
+        // lost ~half the time even on an idle machine. If the completion
+        // handler hasn't run yet when the flush below is requested, the
+        // drain answers `.queued` and coalesces it into the rerun — both
+        // orders must deliver exactly one "later-flush-ran".
         await gate.release()
-        for _ in 0..<50 { await Task.yield() } // let the completion handler run
 
         // The load-bearing assertion: workout N (still the SAME, still-live
         // workout — never replaced) must still be able to flush afterward.
-        // Bounded poll rather than `waitUntilCount` deliberately: a wedged
-        // drain means this event NEVER arrives, and an unbounded continuation
-        // wait would hang the test (and any future regression's CI run)
-        // forever instead of failing fast with a clean assertion.
+        // Bounded `waitUntilCount(_:orTimeout:)` rather than the unbounded
+        // wait deliberately: a wedged drain means this event NEVER arrives,
+        // and an unbounded continuation wait would hang the test (and any
+        // future regression's CI run) forever — the timeout turns that into
+        // a clean assertion failure instead, without putting a
+        // scheduling-turn count back on the success path.
         let order = OrderLog()
         manager.partialUploader = { _ in await order.append("later-flush-ran") }
         manager.flushPartial()
-        var events: [String] = []
-        for _ in 0..<50 {
-            events = await order.snapshot()
-            if !events.isEmpty { break }
-            await Task.yield()
-        }
+        let events = await order.waitUntilCount(1, orTimeout: .seconds(10))
         XCTAssertEqual(
             events, ["later-flush-ran"],
             "durable flushing must not be wedged by a start() that was REJECTED (isRunning already true) — only an ACCEPTED start() actually replaces the drain"
