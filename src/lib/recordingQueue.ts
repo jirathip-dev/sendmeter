@@ -449,7 +449,14 @@ export async function drainQueue(
       continue;
     }
     try {
-      await insert(item.input);
+      // #487 (F2): stamp the capture time before the (possibly much later)
+      // insert — `item.queuedAt` was set when this entry was first queued,
+      // right after the live insert attempt failed, i.e. at the moment it
+      // was actually recorded, not whenever this drain happens to run.
+      // `item.input.recordedAt` wins if already set (e.g. a retried queue
+      // entry that already carries one) so a drain never overwrites an
+      // earlier, more precise stamp with a later `queuedAt`.
+      await insert({ ...item.input, recordedAt: item.input.recordedAt ?? item.queuedAt });
       succeeded.push(item);
     } catch (e) {
       if (isDuplicateKeyError(e)) {

@@ -36,6 +36,9 @@ CI, dependency updates, and refactors unless users experience a change.
 - Routine: reopening the Workout tab long after leaving a routine mid-way no longer silently auto-resumes it and logs a fabricated session duration. A routine you actually finished is now logged as completed even if the screen locked right at the end; one you genuinely abandoned partway logs only the real time you spent (with a toast either way, never silently); and Skip no longer inflates the logged duration to the routine's full nominal length.
 - Routine: the screen no longer auto-locks while a guided routine is running, so leaving the phone alone mid-routine no longer under-logs (or fails to log) how long it actually took.
 - Routine: preset totals in the Workout tab now include the routine's lead-in countdown to match the running timer, so a listed total may read a few seconds longer than before (e.g. "9m" → "9m5s").
+- Readiness (iPhone and watch) no longer counts training you've deleted in newly computed scores — a deleted session drops out of today's readiness immediately. Your stored history for the days before still reflects the deleted training until you run "Clear health data & resync" to rebuild it.
+- "Clear health data & resync" now tells you honestly if the resync failed to rebuild your history, instead of always saying "resyncing" even when it didn't.
+- Force: a recording that's queued while offline now logs against the day it was actually recorded, not the day it happens to finally upload.
 
 ## 1.0 — 2026-08-02
 

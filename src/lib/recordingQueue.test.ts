@@ -359,6 +359,37 @@ describe("drainQueue", () => {
     const result = await drainQueue(queue, "user-1", insert);
     expect(result.succeeded.map((p) => p.id)).toEqual(["legacy"]);
   });
+
+  // #487 (F2): a recording queued offline must keep the time it was actually
+  // recorded, not whenever the drain finally runs (which can be hours or
+  // days later — a delayed drain used to insert with the DB's `recorded_at
+  // default now()`, landing the rep in the wrong ACWR day-bucket).
+  it("stamps the insert with the entry's queuedAt, not just whatever input it was queued with", async () => {
+    const queue = [
+      { id: "a", queuedAt: "2026-08-01T09:00:00.000Z", userId: "user-1", input: rec("a") },
+    ];
+    const insert = vi.fn().mockResolvedValue({});
+    await drainQueue(queue, "user-1", insert);
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ recordedAt: "2026-08-01T09:00:00.000Z" }),
+    );
+  });
+
+  it("does not clobber an input that already carries its own recordedAt", async () => {
+    const queue = [
+      {
+        id: "a",
+        queuedAt: "2026-08-01T09:00:00.000Z",
+        userId: "user-1",
+        input: { ...rec("a"), recordedAt: "2026-08-01T08:30:00.000Z" },
+      },
+    ];
+    const insert = vi.fn().mockResolvedValue({});
+    await drainQueue(queue, "user-1", insert);
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ recordedAt: "2026-08-01T08:30:00.000Z" }),
+    );
+  });
 });
 
 /// The DEGRADED arrangement (#269): no IndexedDB at all, so the localStorage

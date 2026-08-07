@@ -128,6 +128,13 @@ enum Repo {
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoff.localDateString)
+            // #487 (F1): exclude soft-deleted sessions from the on-watch ACWR
+            // used by WidgetBridge — same fix as the iPhone health plugin's
+            // acwrSeries/computeAcwr (HealthSyncManager.swift). Without this a
+            // deleted session kept depressing the widget's ACWR for the rest
+            // of the 28-day window even though it no longer counts anywhere
+            // else in the app.
+            .is("deleted_at", value: nil)
             .execute()
             .value
     }

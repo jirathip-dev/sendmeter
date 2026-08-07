@@ -599,6 +599,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // instead of inserting a second row for the same rep (#106).
     const rec: NewTindeqRecording & { id: string } = {
       id: crypto.randomUUID(),
+      // #487 (F2, review finding 3): stamp the capture moment on the object
+      // ITSELF, at construction — not on whichever request path eventually
+      // writes it. This same object is what `queueFailedRecording` queues
+      // AND what `retryUnqueued`'s in-memory banner retries later
+      // (potentially hours later), so stamping here is the one fix that
+      // covers every route to `insertRecording`, not just the queue drain.
+      recordedAt: new Date().toISOString(),
       durationMs: Math.max(1, Math.round(slice[slice.length - 1]!.t)),
       peakKg: Math.max(...kgs),
       avgKg: Math.round((kgs.reduce((a, b) => a + b, 0) / kgs.length) * 100) / 100,
@@ -681,6 +688,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     );
     return {
       id: crypto.randomUUID(),
+      // #487 (F2): see the comment on the equivalent line in saveHoldSlice —
+      // this builder feeds both the live save (saveAdaptiveHold) and the
+      // sign-out salvage path (buildAdaptiveStaticSalvage), so stamping here
+      // covers both without duplicating the field at each call site.
+      recordedAt: new Date().toISOString(),
       durationMs: adaptiveHoldDurationMs(startedMs, endedMs),
       peakKg: Math.max(...kgs),
       avgKg: Math.round((kgs.reduce((sum, kg) => sum + kg, 0) / kgs.length) * 100) / 100,
@@ -973,6 +985,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // saveHoldSlice (retry idempotency via 23505, #106).
     const rec: NewTindeqRecording & { id: string } = {
       id: crypto.randomUUID(),
+      // #487 (F2): see saveHoldSlice's comment on the equivalent line.
+      recordedAt: new Date().toISOString(),
       durationMs: summary.durationMs,
       peakKg: summary.peakKg,
       avgKg: summary.avgKg,
@@ -2768,6 +2782,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             if (!id) return false;
             const rec: NewTindeqRecording & { id: string } = {
               id,
+              // #487 (F2): see saveHoldSlice's comment on the equivalent line.
+              recordedAt: new Date().toISOString(),
               source: "manual",
               durationMs: actualDurationMs,
               peakKg: null,
