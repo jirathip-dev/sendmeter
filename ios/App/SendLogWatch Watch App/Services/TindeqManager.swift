@@ -267,7 +267,7 @@ final class TindeqManager: NSObject {
     func cancelHandsFree() {
         let wasArmedStream: Bool
         switch handsFreeState {
-        case .armed, .recording: wasArmedStream = !measuring
+        case .armed, .waitingForSlack, .recording: wasArmedStream = !measuring
         case .idle, .stopping: wasArmedStream = false
         }
         handsFreeRequested = false
@@ -439,6 +439,13 @@ final class TindeqManager: NSObject {
         liveTag.trimmingCharacters(in: .whitespaces)
     }
 
+    private var isWaitingForHandsFreePull: Bool {
+        switch handsFreeState {
+        case .armed, .waitingForSlack: return true
+        case .idle, .recording, .stopping: return false
+        }
+    }
+
     private func resetRecordingBuffer() {
         samples.removeAll()
         t0us = nil
@@ -457,7 +464,7 @@ final class TindeqManager: NSObject {
         // remain live for the whole armed wait. Bound that radio/CPU duty to
         // ten idle minutes instead of silently streaming until disconnect.
         armTimeoutTimer = Timer.scheduledTimer(withTimeInterval: armTimeoutSeconds, repeats: false) { [weak self] _ in
-            guard let self, self.handsFreeRequested, case .armed = self.handsFreeState else { return }
+            guard let self, self.handsFreeRequested, self.isWaitingForHandsFreePull else { return }
             self.cancelHandsFree()
             self.savedMsg = "Hands-free disarmed after 10 min idle"
             self.scheduleSavedMsgDismiss()
@@ -491,7 +498,10 @@ final class TindeqManager: NSObject {
             handsFreeState = idleHandsFreeForce()
             return
         }
-        handsFreeState = armedHandsFreeForce()
+        // A manual Stop & Save can land while the climber is still loaded.
+        // Require one <= stopKg sample before this stream can recognize a new
+        // pull, so the same continuous hang cannot fabricate another rep.
+        handsFreeState = rearmedHandsFreeForce()
         armedStreamStartedAtUs = nil
         resetRecordingBuffer()
         write(.startWeight)
@@ -512,6 +522,7 @@ final class TindeqManager: NSObject {
         claim: HandsFreeForceRepClaim,
         note: String,
         rearmHandsFree: Bool,
+        lostSavedMessage: String = "Rep not saved — try pulling again",
         lostErrorMessage: String? = nil,
         rememberSelection: Bool = true
     ) {
@@ -531,7 +542,7 @@ final class TindeqManager: NSObject {
         Task { @MainActor in
             let outcome = await recordingQueue.enqueue(PendingTindeqRecording(row: row))
             if outcome == .lost {
-                savedMsg = "Rep not saved — try pulling again"
+                savedMsg = lostSavedMessage
                 if let lostErrorMessage { errorMsg = lostErrorMessage }
                 RecordingLossNotice.record()
             } else {
@@ -574,7 +585,7 @@ final class TindeqManager: NSObject {
         case .weight(let incoming):
             // THE BLOCKER path sits alongside — and before — the original
             // manual guard. Armed samples reach Core but never the buffer.
-            if !measuring, handsFreeRequested, case .armed = handsFreeState {
+            if !measuring, handsFreeRequested, isWaitingForHandsFreePull {
                 handleArmedSamples(incoming)
                 return
             }
@@ -740,8 +751,17 @@ extension TindeqManager: CBCentralManagerDelegate {
     /// NOT show any discard/save prompt — since #280 the salvaged rep is
     /// folded into the session's depletion and the session logs itself,
     /// exactly as a manual Finish would.
-    private func salvageInterruptedRecording(_ summary: StoppedRecording) {
-        guard let claim = repClaims.claimStop() else { return }
+    func salvageInterruptedRecording(_ summary: StoppedRecording) {
+        guard let claim = repClaims.claimStop() else {
+            // This invariant currently follows from `measuring`: every real
+            // recording begins a claim first. If later cleanup breaks it, a
+            // recovered hold must still be reported and prior saved reps must
+            // still be logged instead of disappearing behind a silent return.
+            errorMsg = "Interrupted force rep was not saved — recovery state was missing."
+            RecordingLossNotice.record()
+            logSessionNow()
+            return
+        }
         currentKg = 0
         peakKg = summary.peakKg
         elapsedMs = Double(summary.durationMs)
@@ -751,6 +771,7 @@ extension TindeqManager: CBCentralManagerDelegate {
             claim: claim,
             note: "Recovered after connection loss",
             rearmHandsFree: false,
+            lostSavedMessage: "Recovered rep was not saved",
             lostErrorMessage: "Rep not saved — couldn't write to the watch.",
             rememberSelection: false
         )

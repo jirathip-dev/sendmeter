@@ -63,9 +63,14 @@ final class HandsFreeForceTests: XCTestCase {
         XCTAssertEqual(firstStart.action, .start)
         XCTAssertEqual(firstStop.action, .stop)
 
-        var state = armedHandsFreeForce()
-        state = step(state, 5_000, 3).state
-        let secondStart = step(state, 5_600, 3)
+        var state = rearmedHandsFreeForce()
+        XCTAssertEqual(step(state, 5_000, 35).state, .waitingForSlack)
+        XCTAssertEqual(step(state, 50_000, 35).state, .waitingForSlack)
+
+        state = step(state, 50_100, 0.5).state
+        XCTAssertEqual(state, .armed(aboveSinceMs: nil))
+        state = step(state, 50_200, 3).state
+        let secondStart = step(state, 50_800, 3)
         XCTAssertEqual(secondStart.action, .start)
         XCTAssertEqual(secondStart.state, .recording(belowSinceMs: nil))
     }
@@ -91,33 +96,4 @@ final class HandsFreeForceTests: XCTestCase {
         )
     }
 
-    func testTwoNearSimultaneousStopClaimsSaveExactlyOnce() async {
-        let harness = await MainActor.run { ClaimBeforeAwaitHarness() }
-        await MainActor.run { harness.begin() }
-
-        let first = Task { @MainActor in await harness.stopAndSave() }
-        let second = Task { @MainActor in await harness.stopAndSave() }
-        await first.value
-        await second.value
-
-        let savedCount = await MainActor.run { harness.savedCount }
-        XCTAssertEqual(savedCount, 1)
-    }
-}
-
-@MainActor
-private final class ClaimBeforeAwaitHarness {
-    private var claims = HandsFreeForceRepClaims()
-    private(set) var savedCount = 0
-
-    func begin() {
-        XCTAssertNotNil(claims.begin(tag: "Half crimp", side: "left"))
-    }
-
-    func stopAndSave() async {
-        // This is the production ordering: consume synchronously, then await.
-        guard claims.claimStop() != nil else { return }
-        await Task.yield()
-        savedCount += 1
-    }
 }

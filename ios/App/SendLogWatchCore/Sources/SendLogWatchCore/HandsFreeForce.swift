@@ -30,6 +30,7 @@ public struct HandsFreeForceConfig: Equatable, Sendable {
 
 public enum HandsFreeForceState: Equatable, Sendable {
     case idle
+    case waitingForSlack
     case armed(aboveSinceMs: Double?)
     case recording(belowSinceMs: Double?)
     case stopping
@@ -60,19 +61,31 @@ public func armedHandsFreeForce() -> HandsFreeForceState {
     .armed(aboveSinceMs: nil)
 }
 
+/// A post-save re-arm must observe an unloaded gauge before it can recognize
+/// another pull. Otherwise a manual Stop & Save while still hanging turns the
+/// same continuous load into a phantom second rep after `startStableMs`.
+public func rearmedHandsFreeForce() -> HandsFreeForceState {
+    .waitingForSlack
+}
+
 public func idleHandsFreeForce() -> HandsFreeForceState {
     .idle
 }
 
 /// Reconcile the control claim while the transport reports an inactive
-/// status. `connected + armed` is the one intentional overlap: Arm claims the
-/// machine synchronously, then the transport may still report connected while
-/// its weight stream starts.
+/// status. `connected + armed/waitingForSlack` is the intentional overlap:
+/// the state machine owns a live weight stream while the transport-facing
+/// status remains connected.
 public func handsFreeForceAtInactiveStatus(
     _ state: HandsFreeForceState,
     status: HandsFreeForceInactiveStatus
 ) -> HandsFreeForceState {
-    if status == .connected, case .armed = state { return state }
+    if status == .connected {
+        switch state {
+        case .armed, .waitingForSlack: return state
+        case .idle, .recording, .stopping: break
+        }
+    }
     return state == .idle ? state : idleHandsFreeForce()
 }
 
@@ -88,6 +101,11 @@ public func stepHandsFreeForce(
     switch state {
     case .idle, .stopping:
         return HandsFreeForceStep(state: state, action: nil)
+
+    case .waitingForSlack:
+        return kg <= config.stopKg
+            ? HandsFreeForceStep(state: armedHandsFreeForce(), action: nil)
+            : HandsFreeForceStep(state: state, action: nil)
 
     case .armed(let existingAboveSinceMs):
         guard kg >= config.startKg else {
