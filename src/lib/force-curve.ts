@@ -285,7 +285,24 @@ export function computeForceCurve(
   const fitDepth = opts.fitDepth ?? 3;
   const prepared = prepareEfforts(recordings, opts.diagnostics);
   const model = computeCurveCore(prepared, { fitDepth });
-  const iterations = opts.bootstrapSamples ?? 200;
+  // #488/#489: this default was 200. `cf`/`wPrime`/`capabilityFit` above are
+  // the point estimate — computed once, before this loop, from the FULL
+  // (non-resampled) data — and are what's persisted to
+  // `tindeq_tags.cf_kg`/`w_prime_kgs` for the watch's RPE prediction (#280);
+  // `iterations` only controls how many bootstrap resamples build
+  // `confidenceBand` (the chart's shaded uncertainty band) below, so
+  // changing it cannot change the persisted values. Each iteration reruns
+  // `fitCapabilityRegression`'s 25×101 grid search, which is what made this
+  // ~2s of main-thread work at 200 iterations, called 3x per Stop in
+  // ForceView (main tag/side + alternating left + alternating right). 40
+  // resamples is on the low end of what percentile-bootstrap practice uses
+  // for a display band (vs. the ≥1000 a published CI would want) but this is
+  // an approximate visual band, not the persisted number, and the band is
+  // already suppressed per-window when too few resamples land a fit
+  // (`values.length < Math.max(20, iterations * 0.2)` below) rather than
+  // silently drawn from a thin sample. Pass an explicit bootstrapSamples for
+  // any caller that needs more (or a period overlay that needs none, via 0).
+  const iterations = opts.bootstrapSamples ?? 40;
   if (!model?.capabilityFit || recordings.length < 3 || iterations <= 0) return model;
 
   // Recording-level bootstrap: resample whole efforts, never the correlated
