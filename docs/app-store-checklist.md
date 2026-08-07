@@ -70,15 +70,18 @@ row below. Native crash reporting (Sentry Cocoa) is deliberately **out of
 scope**; adding it later *would* add a framework bundle and require re-checking
 both the manifest and this file.
 
-`NSPrivacyCollectedDataTypes` mirrors the App Privacy table below — all four
-rows on the iOS app; the watch app declares the subset it actually uploads
-(health, fitness, user content, but never email or auth diagnostics); the two
-widget extensions collect nothing.
+`NSPrivacyCollectedDataTypes` mirrors the App Privacy table below — all six
+rows on the iOS app (location is app-only: Send Conditions runs in the WebView
+bundled into the main App target, not the watch app or either widget
+extension); the watch app declares the subset it actually uploads (health,
+fitness, user content, but never email, location, or auth diagnostics); the
+two widget extensions collect nothing.
 
 ## App Store Connect: App Privacy answers ("nutrition label")
 
 Declare these under **Data Types Collected**, all with:
-- Linked to identity: **Yes** (rows are keyed to the account)
+- Linked to identity: **Yes** (rows are keyed to the account) — **except
+  Location, which is No** (see below)
 - Used for tracking: **No**
 - Purpose: **App Functionality** (only)
 
@@ -89,15 +92,28 @@ Declare these under **Data Types Collected**, all with:
 | Body weight | Health & Fitness → Health |
 | Training/session logs, force recordings | User Content → Other User Content |
 | Error diagnostics (crash/error reports) | Diagnostics → Other Diagnostic Data |
+| Location (Send Conditions weather lookup) | Location → Coarse Location |
+
+The Location row is the one exception to the "Linked to identity: Yes" default
+above: `src/lib/weather.ts` takes device coordinates from
+`@capacitor/geolocation` and rounds them to 2 decimal places (~1.1km) *before*
+either fetch — that rounding is why the declared sub-type is **Coarse**, not
+Precise, per Apple's own threshold (Precise = 3+ decimal places). The rounded
+coordinates then go to **Open-Meteo** (a third-party weather API) to fetch a
+reading, and nothing ties them to the account or stores them server-side.
+Answer that row **Linked to identity: No, Used for tracking: No, Purpose: App
+Functionality only**.
 
 The Diagnostics row covers error monitoring keyed to the auth uuid, which is why
-it answers "linked to identity: yes" like every other row here:
+it answers "linked to identity: yes" like every other row here (except Location,
+above):
 
 **Error monitoring** (issues #227 and #382) covers uncaught JavaScript
 exceptions, React render errors, unhandled promise rejections, and a narrow set
 of handled session/workout failures after recovery is exhausted, processed by **Sentry**
-(`sentry.io`, Functional Software, Inc.) — the one **third-party processor**
-the app uses. `src/lib/monitoring.ts` is the only place it is configured.
+(`sentry.io`, Functional Software, Inc.), a **third-party processor** (Open-
+Meteo, covered by the Location row above, is another). `src/lib/monitoring.ts`
+is the only place Sentry is configured.
 
 The bounded auth-diagnostics ring remains on-device in Preferences and is not
 uploaded or included in the App Privacy collected-data answers.
@@ -130,7 +146,7 @@ What Sentry receives is built from an allow-list in `beforeSend` /
 data for advertising or measurement, and there is no ad network or cross-app
 identifier — so **no ATT prompt** and `NSPrivacyTracking` stays `false`.
 
-Everything else (location, contacts, identifiers, purchases, browsing):
+Everything else (contacts, identifiers, purchases, browsing):
 **Not collected**. There are no analytics or ad SDKs and no trackers — Sentry is
 error monitoring only.
 
@@ -146,9 +162,11 @@ error monitoring only.
 > is stored on the user's own account row (see privacy policy) and never used for
 > advertising.
 > Crash/error diagnostics are processed by Sentry (sentry.io). Reports carry the
-> account's anonymous user id, the error and its stack trace only — health data,
+> account's anonymous user id, the error and its stack trace — health data,
 > email and request contents are stripped before the report is sent, and there
 > is no analytics, advertising, or tracking SDK in the app.
+> Location is used only to fetch weather; coordinates are rounded to ~1km
+> before being sent to Open-Meteo, never stored or linked to the account.
 
 **Demo account**: create a throwaway user before submitting — sign up via
 magic link on the web app with a spare email, set a password via Account →

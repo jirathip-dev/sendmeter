@@ -54,9 +54,10 @@ const HEALTH_RE = new RegExp(`\\b(?:${HEALTH_TERMS.join("|")})\\b`, "i");
 
 /**
  * Context blocks worth keeping — none of these can carry user data. `culture`
- * (the SDK's default locale/timezone block) is deliberately absent: a timezone
- * is a coarse location signal, and the App Privacy answers say location is not
- * collected.
+ * (the SDK's default locale/timezone block) is deliberately absent: unlike
+ * the rounded coarse coordinates Send Conditions sends to Open-Meteo (only
+ * when Send Conditions is used), a timezone would leak on every single
+ * event regardless of whether the user ever opens Send Conditions.
  */
 const ALLOWED_CONTEXTS = ["app", "browser", "os", "device", "runtime", "react"];
 /** The only `extra` keys we ever set deliberately. Everything else is dropped. */
