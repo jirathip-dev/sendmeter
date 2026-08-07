@@ -32,10 +32,15 @@ export default defineConfig({
       includeAssets: ["icon-512.png", "splash-cave-background.webp", "splash-kangaroo.webp"],
       // Default globPatterns is js/css/html only — without woff2 the
       // self-hosted Inter file (#505) would be the one shell asset missing
-      // from the offline precache. This list is an allow-list: a new asset
-      // type emitted into dist/assets/ (an svg, a png past assetsInlineLimit)
-      // is silently absent from the precache until its extension is added here.
-      workbox: { globPatterns: ["**/*.{js,css,html,woff2}"] },
+      // from the offline precache, and without txt the service worker's
+      // navigation fallback would serve the APP SHELL for a direct link to
+      // /fonts/OFL.txt (any non-precached navigation falls through to
+      // index.html — there is no denylist). This list is an allow-list: a
+      // new asset type emitted into dist/ is silently absent from the
+      // precache — and, if it is ever a link target, shell-hijacked — until
+      // its extension is added here. That exact trap caught the licence
+      // file one commit after this comment was first written.
+      workbox: { globPatterns: ["**/*.{js,css,html,txt,woff2}"] },
     }),
   ],
   test: {
