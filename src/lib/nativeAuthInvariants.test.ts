@@ -38,28 +38,52 @@ import { describe, expect, it } from "vitest";
 /// the client or to `.auth`. Outside those two files, a refreshing accessor
 /// — named, aliased, optional-chained, written inside a raw-string
 /// interpolation, or split across newlines — is not something a scan must
-/// find; it is a compile error. All three of round 3's residual holes were
-/// re-verified as compile errors under the façade (see the #502 mutation
-/// probes in that PR).
+/// find; it is a compile error, verified by mutation probes in both #502
+/// rounds (all three of round 3's residual holes among them). That holds
+/// exactly as long as the premises below do — the #502 review (F1)
+/// demonstrated that a façade quietly re-exporting its client turns the
+/// newline-split accessor back into legal Swift, which is why premise 1 is
+/// now an allow-list over the façades' whole declaration surface rather
+/// than a hunt for one type annotation.
 ///
-/// The compiler's guarantee rests on three premises, each pinned below by an
-/// assertion small enough to read whole and (for the first two) run on RAW
-/// file text — no lexer, so nothing to silently desync; the worst failure is
-/// a LOUD false positive on a comment, fixed by rewording the comment, never
-/// by weakening the pin:
+/// The compiler's guarantee rests on three premises. Each is pinned below,
+/// and the pins are built so their failure modes point the right way: the
+/// load-bearing assertions are NEGATIVE offender hunts over RAW file text —
+/// no lexer, so nothing to silently desync, and the worst failure is a LOUD
+/// false positive on a comment that gets reworded, never a silent pass. The
+/// one POSITIVE match is line-anchored, because the #502 review (F2)
+/// demonstrated that a whole-file positive match is satisfiable by a comment
+/// quoting the expected phrase while the real declaration says something
+/// else — and even that positive is only a label: were it ever fooled, the
+/// allow-list below would still flag the real, non-private declaration.
 ///
-/// 1. **The client properties really are `private`** — and every
-///    `SupabaseClient`-typed declaration inside a façade sits on a `private`
-///    line, so the façade cannot quietly grow a `static let leaked:
-///    SupabaseClient` for outside code to dot off.
-/// 2. **There is no other client to reach.** The identifier `SupabaseClient`
-///    appears nowhere in either guarded directory outside the two façade
-///    files (raw text, so a construction hidden inside a string, comment
-///    trick, or regex literal is still seen), and `AuthClient` /
-///    `GoTrueClient` — directly constructible, and a self-built one has no
-///    `.auth` member access for any scan to see — appear in no *code*
-///    anywhere in either directory (code-only view, because comments
-///    legitimately discuss `AuthClient`).
+/// 1. **Each façade file's declaration surface is exactly its allow-list.**
+///    Every line that declares anything reachable from outside the file —
+///    any `static` member (annotated, inferred, `var`, `func`, or
+///    split-modifier spelling), any neighbour/nested type, `extension`,
+///    `typealias`, or column-0 global — must be `private` or appear
+///    verbatim in `FACADES[].allowedLines`. The #502 review (F1) defeated
+///    the previous annotation-hunting pin with `static let shared = client`
+///    — type inferred, no `: SupabaseClient` text anywhere — re-opening
+///    `auth.session` with a clean compile and green pins; this scan does
+///    not look for the type at all. Each façade file contains nothing but
+///    the façade enum, because Swift's `private` is FILE-scoped: a
+///    neighbour type in the same file could reach the client legally
+///    (which is why `HealthSessionStore` lives in its own file).
+/// 2. **There is no other client to reach.** The identifier
+///    `SupabaseClient` appears nowhere in either guarded directory outside
+///    the two façade files (raw text — a construction hidden inside a
+///    string, comment trick, or regex literal is still seen), and
+///    `AuthClient`/`GoTrueClient` — directly constructible even outside
+///    the façades (it COMPILES; #502 review F3 verified the compiler does
+///    not seal this), with no `.auth` member text for the tripwires to
+///    see — appear on no line of either directory whose first
+///    non-whitespace isn't `//`. Real code cannot live on a `//` line, so
+///    the tokenizer blind spots (bare regex literals, raw-string
+///    interpolation — both demonstrated hiding an `AuthClient(…)` from the
+///    tokenized view in review F3) do not apply to this raw scan. The
+///    tokenized code-only twin runs alongside as the zero-false-positive
+///    complement.
 /// 3. **The SDK is importable only inside the guarded directories** — the
 ///    #488 allow-list over all six separately-importable supabase-swift
 ///    products (`Supabase`, `Auth`, `PostgREST`, `Realtime`, `Storage`,
@@ -67,42 +91,50 @@ import { describe, expect, it } from "vitest";
 ///
 /// The pre-#502 accessor scans (ROTATING_CALLS / the `.auth` member-access
 /// scan, tokenizer-based) are KEPT as tripwires, no longer as the line of
-/// defence. They are the only automated check on the two façade files
-/// themselves — the compiler cannot police code that legitimately holds the
-/// client — and post-#502 there is no legitimate `.auth` member access
-/// anywhere in either directory, so any future match is dead code or an
-/// attack, never a false positive to engineer around.
+/// defence. Post-#502 there is no legitimate `.auth` member access anywhere
+/// in either directory, so any future match is dead code or an attack,
+/// never a false positive to engineer around.
 ///
-/// **What this arrangement does NOT cover, stated precisely (three earlier
-/// versions of this docstring overclaimed; this list is the contract):**
+/// **What this arrangement does NOT cover, stated precisely (four earlier
+/// versions of this docstring overclaimed; every claim below is matched to
+/// a mutation that was actually run — see HANDOFF.md for the outputs):**
 ///
-/// - **The two façade files are trusted code.** Inside them the compiler
-///   enforces nothing about `.auth`, and the tokenized tripwires retain the
-///   round-3 residuals: `\#(…)` raw-string interpolation is blanked as
-///   opaque string content; a Swift bare regex literal containing a quote
-///   character can desync string detection (regex literals are not
-///   tokenized); `client.\n    auth` split across a newline contains no
-///   `.auth` substring. A hostile or careless edit *within the façades*
-///   could therefore hide an accessor from every assertion here. The guard
-///   is review of façade diffs — which is why the façades stay small and
-///   single-purpose.
-/// - **Type laundering that never names a banned identifier in scannable
-///   code** — e.g. a typealias for `SupabaseClient` itself hidden inside
-///   tokenizer-evading text, then used to construct a fresh client. The
-///   raw-text identifier grep (premise 2) sees strings, comments and regex
-///   literals alike, so the alias *target* must be written in a shape no
-///   formatter produces to get past it — but "must be written weirdly" is
-///   an obstacle, not an impossibility. Review's job.
+/// - **The BODIES of the façades' members are trusted code.** The surface
+///   allow-list pins what the façades DECLARE, so a leaking declaration in
+///   any spelling goes red — but what an allowed or private member's body
+///   does is guarded only by the tokenized tripwires, which retain their
+///   known evasions there: `\#(…)` raw-string interpolation is blanked as
+///   opaque string content; a bare regex literal holding a quote can
+///   desync string pairing; `client.\n    auth` split across a newline has
+///   no `.auth` substring. An adversarial edit inside `makeClient()` (or
+///   the health façade's init closure) could hide `client.auth.…` from
+///   every automated check in this file. The guard is review of façade
+///   diffs — two small files whose only job is this invariant. Outside the
+///   façade files those same shapes are compile errors for the client path
+///   (mutation-verified in both #502 rounds) and raw-text-visible for the
+///   identifier pins.
+/// - **Name-free access.** These pins hunt identifiers on non-comment
+///   lines. An accessor reached without its name ever appearing on one — a
+///   future SDK API that returns an `AuthClient` under another name, or a
+///   rotating accessor added under a name never seen — is review's job,
+///   same as the precedent (`watchAuthPollInvariants.test.ts`) states for
+///   its equivalent gap. (Swift has no runtime string-to-type construction
+///   for these non-`@objc` types, so this is about future API surface, not
+///   a trick available today.)
+/// - **The SDK version is part of the trust boundary.** The compiler
+///   argument holds because `PostgrestQueryBuilder` (supabase-swift
+///   v2.51.0) has no member path back to the client or any auth surface —
+///   verified against that revision only. An SDK bump that adds such a
+///   member would void the argument without any pin here going red;
+///   re-review the façade's return type on every supabase-swift upgrade.
 /// - **Hand-rolled HTTP.** A `URLSession` POST to `/auth/v1/token` with the
 ///   committed anon key involves no SDK type; neither the compiler barrier
 ///   nor anything in this file sees it. The operative backstop is #265's,
 ///   not this file's: there is no refresh token on the device or the wire to
 ///   spend, so a hand-rolled call would need credentials the native side
-///   does not hold.
-/// - **A rotating accessor added to the SDK under a name with no "auth" in
-///   it.** A grep cannot know a name it has never seen; same answer as the
-///   precedent (`watchAuthPollInvariants.test.ts`) gives for its equivalent
-///   gap: code review.
+///   does not hold. The same backstop bounds a self-built `AuthClient`
+///   slipping every pin: it would still have nothing to rotate, and both
+///   session stores purge supabase-swift's Keychain item on every launch.
 ///
 /// Housekeeping notes on the tokenizer (still used for the tripwires and the
 /// non-auth pins at the bottom of this file): the round-3
@@ -132,9 +164,30 @@ const TEST_TARGETS_EXEMPT_FROM_SCAN = [join(REPO, "ios", "App", "SendLogWatchTes
 
 /// The two files allowed to hold a `SupabaseClient` (#502). Everything the
 /// compiler-enforcement story rests on is asserted against exactly these.
+///
+/// `allowedLines` is each façade's ENTIRE permitted non-private declaration
+/// surface, verbatim (trimmed): the enum itself and the one `from(_:)`
+/// accessor. Every other line that declares anything reachable from outside
+/// the file must say `private`. Extend this list CONSCIOUSLY — a new narrow
+/// accessor gets its line added here in the same PR that adds it, so the
+/// diff shows both sides.
 const FACADES = [
-  { dir: WATCH_APP, file: join(WATCH_APP, "Services", "SupabaseService.swift") },
-  { dir: HEALTH_PLUGIN, file: join(HEALTH_PLUGIN, "HealthConfig.swift") },
+  {
+    dir: WATCH_APP,
+    file: join(WATCH_APP, "Services", "SupabaseService.swift"),
+    allowedLines: new Set([
+      "enum SupabaseService {",
+      "static func from(_ table: String) -> PostgrestQueryBuilder {",
+    ]),
+  },
+  {
+    dir: HEALTH_PLUGIN,
+    file: join(HEALTH_PLUGIN, "HealthConfig.swift"),
+    allowedLines: new Set([
+      "enum HealthConfig {",
+      "static func from(_ table: String) -> PostgrestQueryBuilder {",
+    ]),
+  },
 ];
 
 // Directories that hold build output, not source — walking into them is both
@@ -421,28 +474,26 @@ function offenseAt(path: string, text: string, index: number): string {
   return `${path}:${line}: ${lineText}`;
 }
 
-// The full source line containing `index` — for line-scoped checks like
-// "this declaration must be on a `private` line".
-function lineAt(text: string, index: number): string {
-  const lineStart = text.lastIndexOf("\n", index) + 1;
-  const lineEndIdx = text.indexOf("\n", index);
-  return text.slice(lineStart, lineEndIdx === -1 ? text.length : lineEndIdx);
-}
-
 describe("the refreshing accessor is unreachable by construction (#502)", () => {
-  // These three assertions are the premises the compiler-enforcement story
-  // rests on (module doc comment, premises 1–2). The first two run on RAW
-  // file text on purpose: with no lexer there is nothing to desync, so an
-  // identifier hidden inside a string, a comment trick, or a regex literal
-  // is still seen. The trade is a possible LOUD false positive on a future
-  // comment that spells out `SupabaseClient` in a non-façade file — the fix
-  // for that is rewording the comment, never weakening this pin.
+  // These assertions are the premises the compiler-enforcement story rests
+  // on (module doc comment). The load-bearing ones are NEGATIVE offender
+  // hunts over RAW file text: with no lexer there is nothing to desync, so
+  // an identifier hidden inside a string, a comment trick, or a regex
+  // literal is still seen, and the worst failure is a LOUD false positive
+  // on a comment — reworded, never engineered around. The one POSITIVE
+  // match is line-anchored and merely a convenience label; if it were ever
+  // satisfied by stray text, the surface allow-list below would still flag
+  // the real, non-private declaration (#502 review F2).
 
-  it("each façade holds its client in a `private static let` — the compiler seals every member path to `.auth` from outside the façade file", () => {
+  it("each façade holds its client in a `private static let` (line-anchored — a comment quoting this phrase cannot satisfy it)", () => {
+    // `^\s*` + `m`: only a line whose first non-whitespace text IS the
+    // declaration matches. A `//`/`///` comment line starts with slashes and
+    // never matches (#502 review F2 defeated the previous whole-file match
+    // with exactly such a comment).
     for (const { file } of FACADES) {
       const raw = readFileSync(file, "utf8");
       expect(raw, file.slice(REPO.length + 1)).toMatch(
-        /\bprivate static let client: SupabaseClient\b/,
+        /^\s*private static let client: SupabaseClient\b/m,
       );
     }
   });
@@ -467,28 +518,74 @@ describe("the refreshing accessor is unreachable by construction (#502)", () => 
     expect(offenders).toEqual([]);
   });
 
-  it("every SupabaseClient-typed declaration inside a façade is on a `private` line", () => {
-    // Guards the façades' own surface: a `static let leaked: SupabaseClient`
-    // or `static func client() -> SupabaseClient` would hand the whole
-    // target the client back and silently void the compiler argument. A
-    // declaration split across lines puts the type annotation on a line
-    // without `private`, which fails here loudly — the false-positive
-    // direction, never the silent one.
-    for (const { file } of FACADES) {
+  it("each façade's declaration surface is exactly its allow-list — every other declaring line must be `private` (#502 review F1/F2)", () => {
+    // The pre-review pin hunted the type annotation `: SupabaseClient`, so a
+    // façade edit `static let shared = client` — type INFERRED — re-exported
+    // the client with a clean compile and green pins (review F1). This scan
+    // doesn't look for the type at all: it holds the façade file's whole
+    // declaration surface to the allow-list.
+    //
+    // Two triggers, both raw-line-based:
+    // - any line containing a declaration keyword that can widen the
+    //   surface (`static` catches every enum member incl. split-modifier
+    //   spellings; `class`/`struct`/`actor`/`enum`/`protocol`/`extension`/
+    //   `typealias` catch neighbour types, nested types, and aliases —
+    //   Swift's `private` is FILE-scoped, so a neighbour type in this file
+    //   could reach the client, which is why each façade file contains
+    //   nothing but the façade);
+    // - any column-0 code line (file-scope `let leaked = client` or
+    //   `func leak()` declares a reachable global without any keyword the
+    //   first trigger sees).
+    // `//`-comment lines are skipped — real code cannot live on one; body
+    // lines (indented `let`/`var` locals) carry none of the trigger words.
+    // Enum stored instance properties are a compile error and a no-case
+    // enum has no instances, so instance members don't need a trigger.
+    const SURFACE_TRIGGER = /\b(?:static|class|struct|actor|enum|protocol|extension|typealias)\b/;
+    for (const { file, allowedLines } of FACADES) {
       const raw = readFileSync(file, "utf8");
-      const offenders = [...raw.matchAll(/(?::|->)\s*SupabaseClient\b/g)]
-        .filter((m) => !/\bprivate\b/.test(lineAt(raw, m.index)))
-        .map((m) => offenseAt(file.slice(REPO.length + 1), raw, m.index));
+      const offenders = raw.split("\n").flatMap((line, i) => {
+        const trimmed = line.trim();
+        if (trimmed === "" || trimmed.startsWith("//")) return [];
+        if (allowedLines.has(trimmed)) return [];
+        const topLevelCode = /^\S/.test(line) && !/^(?:import\s|\}|#)/.test(line);
+        const declares = SURFACE_TRIGGER.test(line) && !/\bprivate\b/.test(line);
+        if (!topLevelCode && !declares) return [];
+        return [`${file.slice(REPO.length + 1)}:${i + 1}: ${trimmed}`];
+      });
       expect(offenders).toEqual([]);
     }
   });
 
-  it("never names AuthClient/GoTrueClient in code, anywhere in either directory", () => {
+  it("never names AuthClient/GoTrueClient outside a `//` comment, anywhere in either directory (raw text)", () => {
     // `import Supabase` re-exports the Auth product, so `AuthClient` is
-    // directly constructible — and a self-built AuthClient contains no
-    // `.auth` member access for the tripwires below to see. Runs on the
-    // code-only view (not raw text) because comments legitimately discuss
-    // `AuthClient` (e.g. WatchSessionStore's docs).
+    // directly constructible OUTSIDE the façades too — the compiler seals
+    // only the façades' clients, and a self-built AuthClient contains no
+    // `.auth` member access for the tripwires below to see. Text is the
+    // only guard here, so it must be the un-desyncable kind: the review
+    // (F3) showed the tokenized twin below goes blind behind a bare regex
+    // literal or a raw-string interpolation. This scan reads raw lines and
+    // skips only lines whose first non-whitespace is `//` — real code can
+    // never live on such a line, and every legitimate doc mention of
+    // `AuthClient` does. A future non-`//` mention (a `/* */` block, a log
+    // string) fails LOUD and gets reworded.
+    const offenders = [WATCH_APP, HEALTH_PLUGIN].flatMap((dir) =>
+      swiftFiles(dir).flatMap((path) => {
+        const raw = readFileSync(path, "utf8");
+        return raw.split("\n").flatMap((line, i) => {
+          if (line.trim().startsWith("//")) return [];
+          if (!/\b(?:AuthClient|GoTrueClient)\b/.test(line)) return [];
+          return [`${path.slice(REPO.length + 1)}:${i + 1}: ${line.trim()}`];
+        });
+      }),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("never names AuthClient/GoTrueClient in code, anywhere in either directory (tokenized twin)", () => {
+    // Kept alongside the raw scan above: this view has no false positives
+    // by construction (comments and strings are stripped), so it stays as
+    // the precise complement while the raw scan carries the
+    // cannot-be-evaded guarantee.
     const offenders = accessorScanSources(WATCH_APP, HEALTH_PLUGIN).flatMap(
       ({ path, scanText }) =>
         [...scanText.matchAll(/\b(?:AuthClient|GoTrueClient)\b/g)].map((m) =>

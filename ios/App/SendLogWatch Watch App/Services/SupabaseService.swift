@@ -31,7 +31,10 @@ enum SupabaseService {
     /// cannot name the client, alias it, or reach any auth accessor through
     /// it; the compiler enforces what #196's convention and #488's scans
     /// could not. The residual trusted surface is THIS FILE, which the
-    /// (much smaller) text pin still scans.
+    /// (much smaller) text pin still scans — and NOTHING ELSE may live in
+    /// this file, because Swift's `private` is file-scoped: a neighbouring
+    /// type here could reach the client. The pin holds this file's whole
+    /// declaration surface to an allow-list.
     ///
     /// The watch is handed a short-lived access token, keeps it in
     /// `WatchSessionStore`, and sends it as a bearer token. There is no
