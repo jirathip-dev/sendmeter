@@ -1106,7 +1106,7 @@ describe("clearRecordingQueue", () => {
       expect([...map.keys()]).toEqual([]);
     });
 
-    it("userId: null clears EVERYTHING, unscoped — the deliberate account-deletion shape", async () => {
+    it("userId: null clears EVERYTHING, unscoped — the fallback for when no user id is known at all", async () => {
       const storage = fakeStorage();
       const mine = queueOf("mine-1");
       const theirs = enqueueRecording([], rec("theirs-1"), "user-2", () => "t");
@@ -1114,6 +1114,25 @@ describe("clearRecordingQueue", () => {
 
       expect(await clearRecordingQueue(null, loader, storage)).toBe(2);
       expect([...map.keys()]).toEqual([]);
+    });
+
+    // #492 — the shape `deleteAccount()` now uses: a real, non-null userId,
+    // even though the account being deleted has no server-side rows left to
+    // upload into. Users A and B plus one unattributed legacy (userId: null)
+    // entry; deleting B's account must remove B's and the legacy entry, leave
+    // A's present in BOTH stores and still counted for A.
+    it("deleting one account removes its entries and unattributed legacy ones, leaving another account's counted and intact", async () => {
+      const storage = fakeStorage();
+      const a = enqueueRecording([], rec("a-idb"), "user-a", () => "t");
+      const b = enqueueRecording(a, rec("b-idb"), "user-b", () => "t");
+      const legacy = enqueueRecording(b, rec("legacy"), null, () => "t");
+      const { loader, map } = fakeDb(legacy);
+      saveQueue(enqueueRecording([], rec("a-lane"), "user-a", () => "t"), storage);
+
+      expect(await clearRecordingQueue("user-b", loader, storage)).toBe(2); // b-idb + legacy
+      expect([...map.keys()]).toEqual(["a-idb"]);
+      expect(loadQueue(storage).map((p) => p.id)).toEqual(["a-lane"]);
+      expect(await pendingRecordingsCount("user-a", loader, storage)).toBe(2);
     });
 
     // R2-F3 — PROVED. The IndexedDB half of scoping was pinned, but the

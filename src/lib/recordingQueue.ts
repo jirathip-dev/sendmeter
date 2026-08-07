@@ -412,16 +412,19 @@ export async function pendingRecordingsBreakdown(
 /// policy block above is the decision this carries out, and is where to look
 /// before calling it.
 ///
-/// `userId: null` clears EVERYTHING, unscoped — the shape `deleteAccount()`
-/// wants: the account being deleted has no server-side rows left to upload
-/// into, and account deletion is nuclear enough that clearing this device's
-/// whole local queue (rather than trying to attribute leftovers) is the
-/// existing, deliberate behavior, preserved as-is. A real `userId` (the
-/// normal sign-out path) scopes to that account plus unattributed legacy
-/// entries, the same "mine" rule `pendingRecordingsCount` uses — #484 F3:
-/// before this, the delete was always unscoped while the sign-out prompt's
-/// count became scoped, so "Delete N and sign out" could silently destroy
-/// another account's stranded recordings along with the N it named.
+/// A real `userId` scopes the clear to that account plus unattributed legacy
+/// entries (`userId: null` on the entry) — the same "mine" rule
+/// `pendingRecordingsCount` uses — #484 F3: before this, the delete was
+/// always unscoped while the sign-out prompt's count became scoped, so
+/// "Delete N and sign out" could silently destroy another account's stranded
+/// recordings along with the N it named. `deleteAccount()` (#492) passes the
+/// deleting account's own id for exactly this reason: a shared/handed-down
+/// device must not lose another signed-in account's queued recordings just
+/// because a different account was deleted.
+///
+/// `userId: null` clears EVERYTHING, unscoped — kept only for the case where
+/// no signed-in user id is known at all (e.g. a sign-out racing a session
+/// that already went null); there is no "mine" left to scope to.
 ///
 /// DO NOT CALL THIS DIRECTLY. `discardQueueOnUserSignOut` in `signOut.ts` is
 /// the only caller, because it is the only place that first checks the

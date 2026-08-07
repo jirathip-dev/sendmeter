@@ -132,9 +132,11 @@ async function withDeadline<T>(
 /// `userId` is threaded straight to `clearRecordingQueue` — #484 F3: it must
 /// be the SAME id the remainder count (`pendingRecordingsCount`) was scoped
 /// to, or "Delete N and sign out" understates what a scoped count names but
-/// an unscoped delete actually destroys. `null` (the account-deletion path,
-/// `queue: "discard"`) keeps the deliberate unscoped behavior — see
-/// `clearRecordingQueue`'s doc comment.
+/// an unscoped delete actually destroys. The account-deletion path
+/// (`queue: "discard"`) is no exception (#492): `deleteAccount()` passes the
+/// deleting account's own real id, so this scopes there too — `null` only
+/// reaches `clearRecordingQueue`'s unscoped fallback when no signed-in user
+/// id is known at all. See `clearRecordingQueue`'s doc comment.
 ///
 /// Exported so the refusal is directly testable; not for general use.
 export async function discardQueueOnUserSignOut(

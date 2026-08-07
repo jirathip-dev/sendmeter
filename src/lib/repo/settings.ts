@@ -42,11 +42,18 @@ export async function updateSettings(s: UserSettings): Promise<void> {
 /// Deletes the auth user; every table cascades from auth.users, so all data
 /// goes with it. Required by App Store guideline 5.1.1(v).
 export async function deleteAccount(): Promise<void> {
+  // Captured BEFORE the RPC: once the account is gone there is nothing left
+  // to ask `auth.getUser()` for. #492: this id is what scopes the local
+  // queue discard below to the account actually being deleted, rather than
+  // wiping every account's queued recordings on this device.
+  const { data: userData, error: userError } = await supabase.auth.getUser();
+  if (userError) throw userError;
+  const userId = userData.user.id;
   unwrap(await supabase.rpc("delete_account"));
   // Through the shared sign-out (#273), which marks the SIGNED_OUT as expected
   // rather than an incident (#202) — that used to be a second hand-rolled copy
   // of the pair. `discard` rather than `drain`: the rows this queue would
   // upload into no longer exist, so there is nothing to attempt and nothing to
   // ask the user to keep.
-  await signOutUser({ userId: null, queue: "discard" });
+  await signOutUser({ userId, queue: "discard" });
 }

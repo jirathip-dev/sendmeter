@@ -342,8 +342,12 @@ describe("signOutUser — account deletion", () => {
     expect(persistRecording(rec("lane-1"), USER, h.storage).persisted).toBe(true);
     const onRemainder = vi.fn<() => QueueRemainderChoice>(() => "keep");
 
+    // #492: `deleteAccount()` passes the deleting account's own id, not
+    // `null` — the account being deleted still has a real id to scope to,
+    // and a shared/handed-down device may have another account's entries
+    // sitting in the same queue.
     const outcome = await signOutUser(
-      { userId: null, queue: "discard", onRemainder },
+      { userId: USER, queue: "discard", onRemainder },
       h.deps,
     );
 
@@ -356,5 +360,34 @@ describe("signOutUser — account deletion", () => {
     // `remaining` is 0 on this path (nothing was measured), so the
     // incomplete-discard report must not fire off it.
     expect(h.report).not.toHaveBeenCalled();
+  });
+
+  // #492 — the defect this issue fixes: deleting account B on a shared device
+  // used to wipe account A's queued recordings too, because the discard was
+  // unscoped. Queues one entry under A, one under B, and one unattributed
+  // legacy (`userId: null`) entry, then deletes B's account: only B's and the
+  // legacy entry should go, A's must survive in BOTH stores and stay counted
+  // for A.
+  it("removes only the deleted account's entries, leaving another account's queue intact", async () => {
+    const OTHER = "user-a";
+    const h = await harness(ok);
+    await persistRecordingDurable(rec("other-idb"), OTHER, h.loader, h.storage);
+    expect(persistRecording(rec("other-lane"), OTHER, h.storage).persisted).toBe(true);
+    await persistRecordingDurable(rec("mine-idb"), USER, h.loader, h.storage);
+    await persistRecordingDurable(rec("legacy"), null, h.loader, h.storage);
+    const onRemainder = vi.fn<() => QueueRemainderChoice>(() => "keep");
+
+    const outcome = await signOutUser(
+      { userId: USER, queue: "discard", onRemainder },
+      h.deps,
+    );
+
+    expect(onRemainder).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ signedOut: true, discarded: 2 }); // mine-idb + legacy
+    expect(await h.queue()).toEqual({
+      main: ["other-idb"],
+      lane: ["other-lane"],
+    });
+    expect(await pendingRecordingsCount(OTHER, h.loader, h.storage)).toBe(2);
   });
 });
