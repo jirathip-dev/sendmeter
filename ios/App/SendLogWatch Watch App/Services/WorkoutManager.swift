@@ -331,6 +331,23 @@ final class WorkoutManager: NSObject {
                 session.startActivity(with: start)
                 try await builder.beginCollection(at: start)
             } catch {
+                // #480 review F1/F2: `session`/`builder` were wired to
+                // `self` as their delegate two lines above the inner `do`,
+                // BEFORE either can fail — a delegate callback on this
+                // now-discarded pair (`didFailWithError`, `didCollectDataOf`)
+                // is otherwise indistinguishable from one on whatever
+                // workout is running when it lands, and both write `self`
+                // state (`errorMsg`, `activeKcal`) with no identity check.
+                // Detach first so HealthKit stops targeting `self` for
+                // anything from this pair, THEN end/discard. This can't be
+                // the only guard — Apple doesn't document `delegate = nil`
+                // as synchronously cancelling an already-dispatched
+                // callback — so `workoutSession(_:didFailWithError:)` and
+                // `workoutBuilder(_:didCollectDataOf:)` below also compare
+                // the callback's sender against `self.session`/`self.builder`
+                // before writing anything, as the actual backstop.
+                session.delegate = nil
+                builder.delegate = nil
                 session.end()
                 builder.discardWorkout()
                 throw error
@@ -996,6 +1013,14 @@ extension WorkoutManager: HKWorkoutSessionDelegate {
 
     func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
         Task { @MainActor in
+            // #480 review F1: `session.delegate = nil` in start()'s catch
+            // closes the common case, but isn't documented to cancel a
+            // callback already dispatched before that assignment lands —
+            // this identity check is the real backstop against a dead
+            // session (one whose beginCollection failed) painting its error
+            // over whatever workout is actually running by the time this
+            // Task resumes on MainActor.
+            guard workoutSession === self.session else { return }
             self.errorMsg = error.localizedDescription
         }
     }
@@ -1044,6 +1069,13 @@ extension WorkoutManager: HKLiveWorkoutBuilderDelegate {
             }
         }
         Task { @MainActor in
+            // #480 review F2: same backstop as `didFailWithError` above —
+            // a discarded builder (beginCollection failed inside start())
+            // has its delegate nil'd in the catch, but an already-dispatched
+            // callback isn't guaranteed cancelled by that, so this identity
+            // check is what actually stops it clobbering `activeKcal`/HR for
+            // whatever workout N+1 is live by the time this Task runs.
+            guard workoutBuilder === self.builder else { return }
             if let hrCandidate {
                 self.acceptHeartRate(hrCandidate)
             }
