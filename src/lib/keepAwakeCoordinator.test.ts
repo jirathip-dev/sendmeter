@@ -12,25 +12,71 @@ function deferred() {
 }
 
 describe("KeepAwakeCoordinator", () => {
-  it("processes an intent queued as the prior transition promise settles", async () => {
+  it("acquire enables, the last release disables", async () => {
     const calls: boolean[] = [];
     const coordinator = new KeepAwakeCoordinator(async (active) => {
       calls.push(active);
     });
 
-    const pending = coordinator.setDesired(true);
-    let deactivation!: Promise<void>;
-    queueMicrotask(() => {
-      deactivation = coordinator.setDesired(false);
-    });
+    const release = coordinator.acquire();
+    await coordinator.settled();
+    expect(calls).toEqual([true]);
 
-    await pending;
-    await new Promise<void>((resolve) => queueMicrotask(resolve));
-    await deactivation;
+    release();
+    await coordinator.settled();
     expect(calls).toEqual([true, false]);
   });
 
-  it("serializes rapid true-false-true changes and ends at the current intent", async () => {
+  // #493 F-E: the last-write-wins coordinator this replaced would have run
+  // allowSleep here — one consumer unmounting released the lock the other
+  // still needed. The refcount keeps the screen awake until the LAST holder
+  // releases.
+  it("one of two holders releasing does not release the other's lock", async () => {
+    const calls: boolean[] = [];
+    const coordinator = new KeepAwakeCoordinator(async (active) => {
+      calls.push(active);
+    });
+
+    const releaseA = coordinator.acquire();
+    const releaseB = coordinator.acquire();
+    await coordinator.settled();
+    expect(calls.at(-1)).toBe(true);
+
+    releaseA();
+    await coordinator.settled();
+    // The wrong value here is a trailing `false`: sleep allowed while B still
+    // holds the lock.
+    expect(calls).not.toContain(false);
+
+    releaseB();
+    await coordinator.settled();
+    expect(calls.at(-1)).toBe(false);
+  });
+
+  it("a double-fired release is a no-op and cannot steal a later holder's lock", async () => {
+    const calls: boolean[] = [];
+    const coordinator = new KeepAwakeCoordinator(async (active) => {
+      calls.push(active);
+    });
+
+    const releaseA = coordinator.acquire();
+    releaseA();
+    const releaseB = coordinator.acquire();
+    await coordinator.settled();
+    expect(calls.at(-1)).toBe(true);
+
+    // A releases again (e.g. a React cleanup firing twice). B's hold must
+    // survive — a second decrement would drop holds to 0 and allow sleep.
+    releaseA();
+    await coordinator.settled();
+    expect(calls.at(-1)).toBe(true);
+
+    releaseB();
+    await coordinator.settled();
+    expect(calls.at(-1)).toBe(false);
+  });
+
+  it("serializes a rapid acquire/release/acquire burst and ends at the current intent", async () => {
     const first = deferred();
     const calls: boolean[] = [];
     const transition = vi.fn(async (active: boolean) => {
@@ -39,16 +85,16 @@ describe("KeepAwakeCoordinator", () => {
     });
     const coordinator = new KeepAwakeCoordinator(transition);
 
-    const pending = coordinator.setDesired(true);
+    const releaseA = coordinator.acquire();
     await Promise.resolve();
-    void coordinator.setDesired(false);
-    const finalActivation = coordinator.setDesired(true);
+    releaseA();
+    coordinator.acquire();
     expect(calls).toEqual([true]);
 
     first.resolve();
-    await pending;
-    await finalActivation;
-    expect(calls).toEqual([true, true]);
+    await coordinator.settled();
+    // The intermediate release was superseded while the first transition was
+    // in flight; the final applied state is the newest intent (held).
     expect(calls.at(-1)).toBe(true);
   });
 
@@ -60,12 +106,11 @@ describe("KeepAwakeCoordinator", () => {
       if (calls.length === 1) await first.promise;
     });
 
-    const activation = coordinator.setDesired(true);
+    const release = coordinator.acquire();
     await Promise.resolve();
-    const deactivation = coordinator.setDesired(false);
+    release();
     first.resolve();
-    await activation;
-    await deactivation;
+    await coordinator.settled();
 
     expect(calls).toEqual([true, false]);
   });
@@ -78,12 +123,11 @@ describe("KeepAwakeCoordinator", () => {
       if (calls.length === 1) await first.promise;
     });
 
-    const activation = coordinator.setDesired(true);
+    const release = coordinator.acquire();
     await Promise.resolve();
-    const deactivation = coordinator.setDesired(false);
+    release();
     first.reject(new Error("bridge reply lost"));
-    await activation;
-    await deactivation;
+    await coordinator.settled();
 
     expect(calls).toEqual([true, false]);
   });
@@ -95,9 +139,13 @@ describe("KeepAwakeCoordinator", () => {
       if (!active) throw new Error("temporary bridge failure");
     });
 
-    await coordinator.setDesired(false);
-    await coordinator.setDesired(true);
+    const release = coordinator.acquire();
+    await coordinator.settled();
+    release();
+    await coordinator.settled();
+    coordinator.acquire();
+    await coordinator.settled();
 
-    expect(calls).toEqual([false, true]);
+    expect(calls).toEqual([true, false, true]);
   });
 });

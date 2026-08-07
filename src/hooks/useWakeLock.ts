@@ -56,12 +56,11 @@ export function useWakeLock(active: boolean): void {
   }, [active]);
 
   useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return;
-    void nativeCoordinator.setDesired(active);
-    return () => {
-      // This is process-global native state, so cleanup must explicitly restore
-      // the idle timer. The coordinator orders it after any in-flight enable.
-      void nativeCoordinator.setDesired(false);
-    };
+    if (!active || !Capacitor.isNativePlatform()) return;
+    // This is process-global native state (#493 F-E): each active consumer
+    // holds one refcounted acquire, so one unmounting can't release a lock
+    // another still needs. The coordinator serializes the underlying native
+    // transitions; the last release restores the idle timer.
+    return nativeCoordinator.acquire();
   }, [active]);
 }
