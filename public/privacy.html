@@ -56,12 +56,10 @@
         error/stack trace, plus basic device, OS and app-version diagnostics
         and recent in-app activity (taps, in-app navigation, and request
         URLs); health data, email, and request contents are stripped before
-        the report is sent), <strong>Open-Meteo</strong> (weather lookups for
+        the report is sent) and <strong>Open-Meteo</strong> (weather lookups for
         Send Conditions — receives a coarse, rounded device location only,
-        never your account id or email), and <strong>Google Fonts</strong>
-        (the app loads its typeface from Google's font CDN on every launch —
-        the request carries your device's IP address and user-agent, as any
-        web request does, but no account id, email, or app data).</li>
+        never your account id or email). The app's typeface ships inside the
+        app itself, so no font CDN is contacted.</li>
     <li>HealthKit data is used only to display your metrics and compute your
         recovery score. It is never used for marketing or advertising and is never
         disclosed to third parties, in line with Apple's HealthKit guidelines.</li>

@@ -120,14 +120,13 @@ above):
 **Error monitoring** (issues #227 and #382) covers uncaught JavaScript
 exceptions, React render errors, unhandled promise rejections, and a narrow set
 of handled session/workout failures after recovery is exhausted, processed by **Sentry**
-(`sentry.io`, Functional Software, Inc.), one of **three** third-party
-processors the app sends anything to: Open-Meteo (weather lookups, covered by
-the Location row above), and Google Fonts (`fonts.googleapis.com` /
-`fonts.gstatic.com`, requested on every launch to load the app's typeface —
-receives the device's IP and user-agent, no account data). `src/lib/monitoring.ts`
-is the only place Sentry is configured. (Sign in with Apple makes Apple a
-fourth party on that login path; #496 tracks this checklist's separate false
-claim that Sign in with Apple isn't offered — not fixed here.)
+(`sentry.io`, Functional Software, Inc.), one of **two** third-party
+processors the app sends anything to — the other is Open-Meteo (weather
+lookups, covered by the Location row above). The typeface (Inter) is
+self-hosted in the app bundle (#505), so no request goes to Google Fonts
+any more. `src/lib/monitoring.ts` is the only place Sentry is configured.
+(Sign in with Apple additionally makes Apple a party on that login path —
+see the Sign in with Apple bullet above.)
 
 The bounded auth-diagnostics ring remains on-device in Preferences and is not
 uploaded or included in the App Privacy collected-data answers.
