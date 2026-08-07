@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Capacitor } from "@capacitor/core";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
-import { healthClearFailed } from "../lib/healthClearOutcome";
+import { resolveHealthClearResult, type HealthClearOutcome } from "../lib/healthClearOutcome";
 import HealthClearedStatus from "./HealthClearedStatus";
 import { authRedirectUrl } from "../lib/authRedirect";
 import {
@@ -152,12 +152,15 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const [cleared, setCleared] = useState(false);
-  // #487 (F4): the delete is hard, not soft — by the time this can be true
-  // the rows are already gone, so it never blocks `cleared`. It only changes
-  // what `cleared` says: "resyncing" is a claim about SendLogHealth.
-  // clearAndResync succeeding, and that claim must not be made when it threw.
-  const [resyncFailed, setResyncFailed] = useState(false);
+  // #487 (F4) / #494 (N4, F2): null = "Clear & resync" hasn't run yet (drives
+  // the same UI branch `cleared` used to). Once set, it's one of three
+  // outcomes, not a boolean: "resynced" (green — the rebuild actually
+  // succeeded), "nothingToClear" (neutral — no history existed to rebuild;
+  // must not promise a resync or tell the user to retry a remedy that can't
+  // fix a denied HealthKit permission, which also has zero rows), "failed"
+  // (amber — real data existed and the rebuild came back empty). See
+  // healthClearOutcome.ts for why this needs three states, not `!resynced`.
+  const [clearOutcome, setClearOutcome] = useState<HealthClearOutcome | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   // #273: the sign-out drains the offline recording queue first, which on a
   // bad connection is the slow part — say which is happening rather than
@@ -312,16 +315,14 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       // which left stale scores on screen after a clear.
       bumpRealtime();
       setConfirmingClear(false);
-      setCleared(true);
-      // #494 (N4): a resync that reports failure isn't automatically a
-      // failure worth alarming the user over — see healthClearOutcome.ts.
-      const failed = healthClearFailed(deletedCount, resynced);
-      setResyncFailed(failed);
-      toast(
-        failed
-          ? "Health data cleared, but the resync failed. Close this screen and run Clear & resync again."
-          : "Health data cleared · resyncing",
-      );
+      // #494 (N4) / review finding F2: `resolveHealthClearResult` is the
+      // one place that turns these two raw results into what the user
+      // sees — do nothing here but forward its output, so the decision is
+      // exercised by the same call this component makes in
+      // healthClearOutcome.test.ts, not re-derived inline.
+      const { outcome, toast: toastText } = resolveHealthClearResult(deletedCount, resynced);
+      setClearOutcome(outcome);
+      toast(toastText);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to clear health data");
     } finally {
@@ -472,8 +473,8 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         {tab === "health" && (
           <div>
             {eyebrow("Health data")}
-            {cleared ? (
-              <HealthClearedStatus resyncFailed={resyncFailed} native={IS_NATIVE} />
+            {clearOutcome ? (
+              <HealthClearedStatus outcome={clearOutcome} native={IS_NATIVE} />
             ) : confirmingClear ? (
               <div>
                 <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>

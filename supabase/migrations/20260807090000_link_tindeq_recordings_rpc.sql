@@ -19,10 +19,23 @@
 -- for this shape) — RLS on `sessions`/`tindeq_recordings` already scopes
 -- every statement inside to the caller's own rows, so no elevated privilege
 -- is needed or granted. A session id the caller doesn't own is invisible to
--- the initial SELECT (RLS), so it raises 'session not found' rather than
+-- the initial UPDATE (RLS), so it raises 'session not found' rather than
 -- silently touching someone else's row; recording ids the caller doesn't own
 -- are silently skipped by the regroup UPDATE, exactly like the `.in(...)`
 -- batch update it replaces.
+--
+-- The group_id read-then-write is a single `UPDATE ... RETURNING`, not a
+-- separate `SELECT` followed by a conditional `UPDATE` (review finding F1):
+-- a bare SELECT takes no row lock, so two concurrent calls for the same
+-- ungrouped session could both read group_id IS NULL, both mint their own
+-- UUID, and the second UPDATE would silently win — leaving the first call's
+-- recordings stamped with a group_id no session references (reproduced
+-- against the pre-fix version of this function with a widened window; both
+-- calls reported success, which is worse than the error case #490 fixed,
+-- since nothing surfaced). `UPDATE ... WHERE id = p_session_id` takes the
+-- row lock itself: a second concurrent call blocks on the first's lock,
+-- then re-reads the now-committed group_id via `coalesce`, so it joins the
+-- same group instead of minting a competing one.
 --
 -- Duration recompute mirrors `computeGroupDurationMin`
 -- (src/lib/duration.ts): span from the earliest recording's start to the
@@ -55,17 +68,13 @@ begin
     return;
   end if;
 
-  select s.group_id, s.type into v_group_id, v_session_type
-  from sessions s
-  where s.id = p_session_id;
+  update sessions s
+  set group_id = coalesce(s.group_id, gen_random_uuid())
+  where s.id = p_session_id
+  returning s.group_id, s.type into v_group_id, v_session_type;
 
   if not found then
     raise exception 'session not found';
-  end if;
-
-  if v_group_id is null then
-    v_group_id := gen_random_uuid();
-    update sessions set group_id = v_group_id where id = p_session_id;
   end if;
 
   update tindeq_recordings
