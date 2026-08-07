@@ -51,6 +51,7 @@ export interface ZonedHold {
   protocolMode?: TindeqProtocolMode;
   capacityEvidence?: boolean | null;
   note?: string | null;
+  protocolRunId?: string | null;
 }
 
 /** Historical null/absent protocol modes are Static by contract. */
@@ -85,29 +86,73 @@ export function recordingZone(rec: ZonedHold): ZoneAttribution {
   return { zone: classifyZone(rec.durationMs / 1000), source: "inferred" };
 }
 
-/// #486: whether a recording is a whole-buffer salvage/recovery blob rather
-/// than a deliberate hold. `useTindeq.ts` writes exactly two note strings for
-/// this — "Recovered after sign-out" (unmount salvage) and "Recovered after
-/// connection loss" (`interruptionNote`'s mid-measurement-drop label) — both
-/// generic-fallback saves of whatever was in the live buffer, with `zone:
-/// null`. `recordingZone` then INFERS a zone from raw duration alone, so a
-/// multi-minute blob reads as `endurance` — a maximal-intent capacity effort
-/// it never was. The note is the only signal that survives to tell the two
-/// apart; nothing else about the row does. Prefix match (not equality) so a
-/// future note that elaborates on either string ("Recovered after
-/// connection loss — reconnect timed out") still gets caught.
-export function isRecoveredRecording(rec: Pick<ZonedHold, "note">): boolean {
-  return typeof rec.note === "string" && rec.note.startsWith("Recovered after");
+/// #486: whether a recording is a whole-buffer salvage/recovery blob — a raw,
+/// unclassified slice of the live sample buffer, saved by a generic fallback
+/// path rather than as a deliberate per-rep/per-set hold. This is NOT simply
+/// "does the note say 'Recovered after ...'": that note text (or one of the
+/// two literal sentences it's built from) reaches several call sites in
+/// `useTindeq.ts`/`ForceView.tsx`, and more than one of them is a
+/// legitimate, precisely time-sliced reconstruction — the adaptive-static
+/// and reverse-action salvage builders, and the same two protocols' own
+/// interruption-recovery paths mid-run — that carry a real `protocolRunId`
+/// and a recorded `zone`, and can carry the exact same note text a true blob
+/// carries. Note text alone cannot tell a blob from a reconstruction — a
+/// review of this exact bug caught it. Do not re-derive a fixed count of
+/// "how many writers" here; trace the call sites instead (see
+/// `zoneHistory.test.ts`'s F4 cases for the shapes this must get right).
+///
+/// What DOES tell them apart is already on the row: `useTindeq.ts`'s
+/// salvage-on-unmount and `ForceView.tsx`'s free-hold interruption-recovery
+/// path both stamp a true blob with `protocolRunId: null` AND `zone: null`
+/// — by explicit design (see the comments at those two call sites): a bare
+/// buffer slice has no protocol run and no performed quality to record.
+/// Every reconstructed hold/set, adaptive or reverse-action, carries a
+/// non-null `protocolRunId` and a non-null recorded `zone` regardless of its
+/// note. So a blob is the CONJUNCTION: no protocol run, no recorded zone,
+/// AND one of the two literal salvage-writer strings.
+///
+/// Exact equality, not a prefix — `note` is a user-editable field
+/// (`EditRecordingSheet.tsx`'s textarea, PATCHed by `updateRecordingMeta`),
+/// so a policy decision cannot safely live in a loose match over it. The
+/// durable fix is a real schema column (matches how `zone`/
+/// `capacity_evidence`/`protocol_mode` already record every other capacity
+/// decision structurally) — deliberately not done here; see HANDOFF.md for
+/// why. Exact-match plus the zone/protocolRunId conjunction narrows the
+/// remaining false-positive surface to a user typing one of these two
+/// sentences verbatim onto an ordinary, otherwise-unprotocoled free hold —
+/// documented as a known residual, not hidden.
+const SALVAGE_BLOB_NOTES = new Set([
+  "Recovered after sign-out",
+  "Recovered after connection loss",
+]);
+
+export function isRecoveredRecording(
+  rec: Pick<ZonedHold, "note" | "zone" | "protocolRunId">,
+): boolean {
+  return (
+    rec.zone == null &&
+    rec.protocolRunId == null &&
+    typeof rec.note === "string" &&
+    SALVAGE_BLOB_NOTES.has(rec.note)
+  );
 }
 
 /// Whether a hold is safe to read as evidence of capacity (curve fit,
 /// PR/trend charts, asymmetry and training balance). Warm-up and Prehab are
 /// deliberately submaximal maintenance work, so neither can stand in for a
-/// maximal-intent observation — and neither can a salvage/recovery blob
-/// (#486): its zone is an inferred guess and its content may be a partial or
-/// overlapping buffer, not a clean maximal pull.
+/// maximal-intent observation.
+///
+/// Deliberately does NOT also exclude a salvage/recovery blob (#486): a
+/// blob's contamination is entirely in `durationMs`/`avgKg` (inter-rep rests
+/// inflate the first and deflate the second) — exactly what
+/// `computeForceCurve` consumes — while `peakKg` is a max over samples and is
+/// unaffected by rest contamination. PR (`effortPeakKg`), trend
+/// (`forceTrend.ts`) and asymmetry (`SideAsymmetryCard.tsx`) are all
+/// peak-based, so excluding a blob from THEM would throw away a real number
+/// the user has already seen for no accuracy gain. Only
+/// `curveCandidateRecordings` excludes it, via `isRecoveredRecording`.
 export function isEffortRecording(rec: ZonedHold): boolean {
-  return !isMaintenanceZone(recordingZone(rec).zone) && !isRecoveredRecording(rec);
+  return !isMaintenanceZone(recordingZone(rec).zone);
 }
 
 /// Whether W′-depletion should be computed for session RPE. Prehab is known
@@ -143,7 +188,11 @@ export function effortPeakKg<
 
 /// The recordings `ForceView` feeds its critical-force fit: scoped to the
 /// active tag/side, with maintenance protocols excluded for the exact reason
-/// `isEffortRecording` documents.
+/// `isEffortRecording` documents, and a salvage/recovery blob excluded for
+/// the exact reason `isRecoveredRecording` documents (#486) — this is the
+/// ONE additional exclusion beyond `isEffortRecording`, deliberately not
+/// folded into it (see that function's doc comment for why PR/trend/
+/// asymmetry/balance must keep reading a blob's peak).
 /// Null tag means "nothing armed yet" and returns no candidates, matching
 /// `ForceView`'s prior inline filter. Exported (pure, no hooks) so this
 /// guarantee is pinned directly rather than by a test that re-implements the
@@ -163,6 +212,12 @@ export function curveCandidateRecordings<
     recordingCapacityModality(r) === modality &&
     isEffortRecording(r) &&
     isMeasuredRecording(r) &&
+    // #486: excludes a whole-buffer salvage/recovery blob from the curve fit
+    // (and, since pickCurveRecordings only ever sees this function's output,
+    // from its "3 longest efforts regardless of load" guarantee too) without
+    // touching PR/trend/asymmetry/balance, which stay on `isEffortRecording`
+    // alone above.
+    !isRecoveredRecording(r) &&
     // New ordinary Reverse Action prescriptions stamp false so they cannot
     // improve the curve they were prescribed from. Null/undefined preserves
     // existing measured Reverse Action rows as historical evidence.

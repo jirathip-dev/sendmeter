@@ -2,6 +2,27 @@ import Foundation
 import SendLogWatchCore
 import Supabase
 
+// MARK: - #486 review F9 — injectable seam for PendingRecordingQueue
+//
+// `PendingRecordingQueue` originally talked straight to `Repo` (a static
+// method) and the real `Documents` directory — there was nowhere to inject a
+// scripted uploader or a scratch directory, so every one of its actual
+// behaviors (persist → drain → upload → delete, oldest-first ordering, the
+// #158 account guard, the `.lost` path) was only checkable by hand on a
+// device. Mirrors the `WorkoutBundleUploading`/`baseDir` seam
+// `OfflineQueue` gained for the same reason (issue #475): the real path is
+// the default, a test supplies a stub.
+
+protocol TindeqRecordingUploading: Sendable {
+    func upload(_ row: TindeqRecordingInsert) async throws
+}
+
+struct RepoRecordingUploader: TindeqRecordingUploading {
+    func upload(_ row: TindeqRecordingInsert) async throws {
+        try await Repo.insertTindeqRecording(row)
+    }
+}
+
 /// Persist-first queue for individual Tindeq force recordings (#486),
 /// mirroring `OfflineQueue`/`PendingSessionQueue` exactly: `Repo.insertTindeqRecording`
 /// used to be a bare `try await …insert(…)` awaited directly by the Stop tap
@@ -27,9 +48,20 @@ actor PendingRecordingQueue {
     static let shared = PendingRecordingQueue()
 
     private var drainState = CoalescingDrain()
+    private let uploader: TindeqRecordingUploading
+    /// Test seam only — `nil` in production, which resolves against the real
+    /// `Documents` directory below. A test passes a scratch directory so
+    /// nothing here ever touches the real device/simulator filesystem.
+    private let baseDirOverride: URL?
+
+    init(uploader: TindeqRecordingUploading = RepoRecordingUploader(), baseDir: URL? = nil) {
+        self.uploader = uploader
+        self.baseDirOverride = baseDir
+    }
 
     private var pendingDir: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let docs = baseDirOverride
+            ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let dir = docs.appendingPathComponent("pending-recordings", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
@@ -76,7 +108,7 @@ actor PendingRecordingQueue {
             return .queued
         case .uploadDirect:
             do {
-                try await Repo.insertTindeqRecording(pending.row)
+                try await uploader.upload(pending.row)
                 return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: true)
             } catch {
                 return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: false)
@@ -84,21 +116,57 @@ actor PendingRecordingQueue {
         }
     }
 
+    /// #486 review F5: encoding failure is a programmer error no eviction can
+    /// fix, so it's kept out of the retry loop below — only the actual disk
+    /// WRITE gets the eviction treatment.
     private func persist(_ pending: PendingTindeqRecording) -> Bool {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let url = pendingDir.appendingPathComponent("\(pending.row.id.uuidString).json")
         let persisted: Bool
-        do {
-            let data = try encoder.encode(pending)
-            try data.write(to: url, options: .atomic)
-            persisted = true
-        } catch {
+        if let data = try? encoder.encode(pending) {
+            persisted = writeWithEviction(data, to: url)
+        } else {
             persisted = false
         }
         _ = pendingCount() // refresh the reported depth (#21)
         Task { @MainActor in WatchBuild.reportQueueStatus() }
         return persisted
+    }
+
+    /// #486 review F5: a refused write (disk full) is retried after dropping
+    /// the OLDEST other queued file, repeatedly, down to this new entry
+    /// alone — the same "the new recording wins" policy `recordingQueue.ts`
+    /// decided under CLAUDE.md #264 for the web queue: the new recording is
+    /// the rep the user just pulled and is still thinking about, while a
+    /// queued entry has by definition already failed to sync at least once.
+    /// Before this, a full `Documents` volume destroyed the NEWEST rep (via
+    /// the `.uploadDirect` → `.lost` fallback in `enqueue`) while every
+    /// older, already-failing entry survived untouched — the inverse of that
+    /// decision.
+    private func writeWithEviction(_ data: Data, to url: URL) -> Bool {
+        while true {
+            do {
+                try data.write(to: url, options: .atomic)
+                return true
+            } catch {
+                guard let oldest = oldestOtherFile(excluding: url) else { return false }
+                try? FileManager.default.removeItem(at: oldest)
+            }
+        }
+    }
+
+    private func oldestOtherFile(excluding url: URL) -> URL? {
+        let files = ((try? FileManager.default.contentsOfDirectory(
+            at: pendingDir, includingPropertiesForKeys: [.creationDateKey]
+        )) ?? [])
+            .filter { $0.pathExtension == "json" && $0 != url }
+        guard !files.isEmpty else { return nil }
+        return files.min { lhs, rhs in
+            let l = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            let r = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            return l < r
+        }
     }
 
     func drain() async {
@@ -145,7 +213,7 @@ actor PendingRecordingQueue {
                 continue
             }
             do {
-                try await Repo.insertTindeqRecording(pending.row)
+                try await uploader.upload(pending.row)
                 try? FileManager.default.removeItem(at: file)
             } catch {
                 break // no network (or auth) — stop, retry next drain
