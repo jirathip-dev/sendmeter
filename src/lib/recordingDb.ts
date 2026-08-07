@@ -196,6 +196,24 @@ function wrap(db: IDBDatabase): RecordingDb {
 }
 
 let cached: Promise<RecordingDb | null> | null = null;
+/// When the CURRENT `cached` promise last resolved to `null` (a failed
+/// open), or `null` if `cached` is unset or its attempt is still in flight /
+/// succeeded. Drives the cooldown below — see #485 F2/F6 in
+/// `openRecordingDb`'s doc comment.
+let cachedFailedAt: number | null = null;
+
+/// #485 F2 (review of the F9 fix): how long a FAILED open's cooldown lasts
+/// before the NEXT call is allowed to retry. Bounds the retry cost — with no
+/// cooldown, a hung/blocked open (which burns the full `OPEN_TIMEOUT_MS`
+/// every single time, exactly the case this module documents: "a
+/// version-change block, or a WebKit private-mode open that hangs") turned a
+/// realistic sign-out-drain-plus-save-path sequence from 1 open attempt
+/// (pre-#485) into 12 (measured in review) — 6s of `DRAIN_TIMEOUT_MS`'s 8s
+/// budget alone, and a 3s stall on every ForceView rep save. One retry per
+/// cooldown window bounds that to at most one `OPEN_TIMEOUT_MS` stall per
+/// window, no matter how many callers pile on meanwhile (they all share the
+/// one in-flight/failed `cached` promise).
+export const RETRY_COOLDOWN_MS = 30_000;
 
 function openOnce(factory: IDBFactory | null): Promise<RecordingDb | null> {
   if (!factory) return Promise.resolve(null);
@@ -268,18 +286,56 @@ function openOnce(factory: IDBFactory | null): Promise<RecordingDb | null> {
 /// never rejects — when IndexedDB is unavailable, refused or blocked; the
 /// caller's job is then to use the localStorage lane instead.
 ///
-/// Pass an explicit `factory` to bypass the module-level memo (tests).
+/// Pass an explicit `factory` to bypass the module-level memo (tests). Pass
+/// `now` to control the retry-cooldown clock (tests); defaults to `Date.now`.
+///
+/// #485 F9: `cached` memoizes the PROMISE, not the resolved value, so a plain
+/// `cached ??= openOnce(...)` would keep re-returning a promise that already
+/// resolved to `null` forever — a single transient blocked-open (another tab
+/// mid version-change, a slow disk) permanently downgrades the whole session
+/// to the localStorage lane, which #269 sized as a ~1.5 MB emergency lane,
+/// not a main store. So a `null` resolution starts a `RETRY_COOLDOWN_MS`
+/// cooldown (`cachedFailedAt`) rather than either memoizing the failure
+/// forever OR retrying unconditionally.
+///
+/// #485 F2 (review): retrying unconditionally — clearing `cached` on every
+/// `null` resolution, with no cooldown — was tried first and measured
+/// turning ONE open attempt per session into TWELVE on a realistic
+/// sign-out-drain-plus-save-path sequence, each burning the full
+/// `OPEN_TIMEOUT_MS` on a hung open. `readyToRetry` bounds that to at most
+/// one retry per cooldown window; every call in between shares the same
+/// failed `cached` promise (still resolves `null`, same as before — no
+/// caller-visible change on the fast path).
+///
+/// #485 F6 (review): the attempt that gets to flag a failure (or install
+/// itself as `cached`) is checked by IDENTITY (`cached !== attempt`), not by
+/// "did I resolve to null" alone — a late-arriving, SUPERSEDED attempt (the
+/// cooldown fired again and a newer attempt already replaced `cached` before
+/// this older one finally settled) must not stomp state a newer attempt
+/// already installed.
 export function openRecordingDb(
   factory?: IDBFactory | null,
+  now: () => number = Date.now,
 ): Promise<RecordingDb | null> {
   if (factory !== undefined) return openOnce(factory);
-  cached ??= openOnce(defaultFactory());
+  const readyToRetry =
+    cachedFailedAt !== null && now() - cachedFailedAt >= RETRY_COOLDOWN_MS;
+  if (!cached || readyToRetry) {
+    const attempt = openOnce(defaultFactory());
+    cached = attempt;
+    cachedFailedAt = null;
+    void attempt.then((db) => {
+      if (cached !== attempt) return; // superseded — see F6 above
+      if (!db) cachedFailedAt = now();
+    });
+  }
   return cached;
 }
 
 /// Forget the memoized connection. Only for tests — the app opens once.
 export function resetRecordingDbCache(): void {
   cached = null;
+  cachedFailedAt = null;
 }
 
 /// Whether a rejected write was the store refusing for want of room, as

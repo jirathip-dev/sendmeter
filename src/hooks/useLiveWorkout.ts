@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
-import type { PluginListenerHandle } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
 import { supabase } from "../lib/supabase";
 import { fetchLiveWorkout } from "../lib/repo";
 import type { LiveWorkout } from "../types";
+import { subscribePluginListener } from "./pluginListener";
 import {
   appendHrPoint,
   messageToLive,
@@ -78,26 +78,29 @@ export function useLiveWorkout(
     // WatchConnectivity via the auth-bridge plugin — sub-second, no network.
     // Keep whichever source is newest; Supabase remains the fallback and the
     // only path for web-on-desktop.
-    let wcHandle: PluginListenerHandle | null = null;
-    if (Capacitor.isNativePlatform()) {
-      void SendLogAuthBridge.addListener("liveWorkout", (msg) => {
-        const prev = rowRef.current;
-        const next = preferFresher(prev, messageToLive(msg, prev));
-        if (next === prev) return; // a fresher supabase row already landed
-        rowRef.current = next;
-        setRow(next);
-        ingest(next);
-      }).then((h) => {
-        wcHandle = h;
-      });
-    }
+    //
+    // #485 F7: `subscribePluginListener` (see its doc comment) so a handle
+    // that resolves after this effect has already cleaned up still gets
+    // removed instead of leaking.
+    const unsubscribeWc = Capacitor.isNativePlatform()
+      ? subscribePluginListener(() =>
+          SendLogAuthBridge.addListener("liveWorkout", (msg) => {
+            const prev = rowRef.current;
+            const next = preferFresher(prev, messageToLive(msg, prev));
+            if (next === prev) return; // a fresher supabase row already landed
+            rowRef.current = next;
+            setRow(next);
+            ingest(next);
+          }),
+        )
+      : null;
 
     const interval = setInterval(() => setNow(Date.now()), 5_000);
     return () => {
       cancelled = true;
       clearInterval(interval);
       void supabase.removeChannel(channel);
-      void wcHandle?.remove();
+      unsubscribeWc?.();
     };
   }, [userId]);
 

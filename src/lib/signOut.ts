@@ -132,13 +132,23 @@ async function withDeadline<T>(
 /// `userId` is threaded straight to `clearRecordingQueue` — #484 F3: it must
 /// be the SAME id the remainder count (`pendingRecordingsCount`) was scoped
 /// to, or "Delete N and sign out" understates what a scoped count names but
-/// an unscoped delete actually destroys. `null` (the account-deletion path,
-/// `queue: "discard"`) keeps the deliberate unscoped behavior — see
-/// `clearRecordingQueue`'s doc comment.
+/// an unscoped delete actually destroys.
+///
+/// Required, non-null `string` ON PURPOSE (#492 F1, review): the first
+/// version of this fix still accepted `userId: string | null` here and
+/// `deleteAccount()` passed `null` through whenever it couldn't resolve an
+/// id — which is a real, demonstrated race (two independent `getSession()`
+/// reads, one for this id and one for the delete RPC's own bearer token, can
+/// disagree across a token rotation in another tab) — reproducing #492's
+/// whole-device wipe exactly. `clearRecordingQueue` itself now refuses a
+/// `null` id at the type level, so this function does too: `signOutUser`
+/// only calls it when `opts.userId` is truthy, and treats a falsy one as
+/// "discard nothing, report it" instead (see its doc comment). There is no
+/// path from here to an unscoped wipe any more.
 ///
 /// Exported so the refusal is directly testable; not for general use.
 export async function discardQueueOnUserSignOut(
-  userId: string | null,
+  userId: string,
   deps: Pick<SignOutDeps, "clear" | "userSignOutPending" | "report"> = {},
 ): Promise<number> {
   const pending = deps.userSignOutPending ?? isUserSignOutPending;
@@ -200,17 +210,43 @@ export async function signOutUser(
 
   let discarded = 0;
   if (choice === "discard") {
-    // Before `signOut()`, not after: the user asked for this and it must
-    // happen even if the network call fails. It is a local delete, so there is
-    // no token to race.
-    discarded = await discardQueueOnUserSignOut(opts.userId, deps);
-    if (policy === "drain" && discarded < remaining) {
-      // The user asked for these to be gone and some of them are not. Silent
-      // is the one thing this must not be.
-      report("tindeq-queue: discard-on-signout-incomplete", {
-        requested: remaining,
-        discarded,
-      });
+    if (opts.userId) {
+      // Before `signOut()`, not after: the user asked for this and it must
+      // happen even if the network call fails. It is a local delete, so
+      // there is no token to race.
+      discarded = await discardQueueOnUserSignOut(opts.userId, deps);
+      if (policy === "drain" && discarded < remaining) {
+        // The user asked for these to be gone and some of them are not. Silent
+        // is the one thing this must not be.
+        report("tindeq-queue: discard-on-signout-incomplete", {
+          requested: remaining,
+          discarded,
+        });
+      }
+    } else {
+      // #492 F1 (review): no attributable user id. The pre-fix bug was
+      // exactly this case silently falling back to "wipe every account's
+      // queue on this device" — an id-resolution failure widening the blast
+      // radius is worse than doing nothing, so this path discards NOTHING
+      // and says so out loud instead of guessing.
+      //
+      // R2-F2 (round-2 review, nit): `report` (default `captureDataLoss`)
+      // is nominally the #264 LOSS channel, and nothing is lost here — the
+      // discard-skip is the whole point. Reused deliberately rather than
+      // introducing a differently-labeled channel: `report` is the one
+      // free-form diagnostic hook already threaded through this function
+      // (the sibling `discard-on-signout-incomplete` report above uses the
+      // same one), and a proper "handled, not lost" channel would mean
+      // widening `monitoring.ts`'s closed `HANDLED_OPERATIONS` map, which
+      // is out of this branch's declared scope. This event should be rare
+      // (the #492 F1 race it flags is not an everyday occurrence), so
+      // channel dilution risk is low; still, revisit with a dedicated
+      // non-loss channel outside this branch's scope rather than treating
+      // this reuse as the final shape. The user-visible residual this skip
+      // leaves behind (R2-F3) is documented in `recordingQueue.ts`'s #273
+      // policy block, not here — this comment is only about which Sentry
+      // channel the report itself rides on.
+      report("tindeq-queue: discard-skipped-no-attributable-user", {});
     }
   }
 

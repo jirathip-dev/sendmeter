@@ -179,6 +179,36 @@ export function applyRemoveSessionOptimistic(
   return list.filter((s) => s.id !== id);
 }
 
+/// `editSession`'s rollback step: restore only the edited row, against
+/// whatever `list` CURRENTLY is — not a whole-list snapshot taken before the
+/// optimistic apply ran. #485 F4: a plain `setSessions(prevSnapshot)` also
+/// reverts any OTHER mutation that landed in the async window between the
+/// snapshot and this rollback (a concurrent add/edit/delete succeeding, or a
+/// realtime refetch) — a decision made from state captured earlier than the
+/// decision, this repo's named defect class (CLAUDE.md #295/#296). A missing
+/// `original` (the row left `list` some other way in the meantime) is a
+/// no-op: there is nothing to restore it FROM.
+export function rollbackEditSession(
+  list: Session[],
+  id: string,
+  original: Session | undefined,
+): Session[] {
+  if (!original) return list;
+  return list.map((s) => (s.id === id ? original : s));
+}
+
+/// `removeSession`'s rollback step: reinsert only the removed row, against
+/// whatever `list` CURRENTLY is. Same #485 F4 reasoning as
+/// `rollbackEditSession`. Guarded against a double-insert on the unlikely
+/// chance `id` is already back in `list` by the time this runs.
+export function rollbackRemoveSession(
+  list: Session[],
+  removed: Session | undefined,
+): Session[] {
+  if (!removed || list.some((s) => s.id === removed.id)) return list;
+  return sortSessions([...list, removed]);
+}
+
 export interface PhaseSnapshot {
   currentPhase: PhaseId;
   phaseStartDate: string;
@@ -356,7 +386,9 @@ export function useTrainingData(userId: string) {
   }
 
   async function editSession(id: string, patch: SessionPatch) {
-    const prev = sessions;
+    // #485 F4: captured once, up front, same as before — but only the ONE
+    // row rollback needs, not the whole list. See `rollbackEditSession`.
+    const original = sessions.find((s) => s.id === id);
     // Optimistic: apply the patch locally (load = duration × rpe mirrors the
     // DB's generated column), roll back on failure.
     await withOptimisticUpdate({
@@ -365,7 +397,7 @@ export function useTrainingData(userId: string) {
       action: () => repo.updateSession(id, patch),
       onSuccess: (saved) =>
         setSessions((list) => list.map((s) => (s.id === id ? saved : s))),
-      rollback: () => setSessions(prev),
+      rollback: () => setSessions((list) => rollbackEditSession(list, id, original)),
       onError: (message) => setError(message),
       fallbackMessage: "Failed to update session",
       onFailure: (failure) =>
@@ -376,12 +408,14 @@ export function useTrainingData(userId: string) {
   }
 
   async function removeSession(id: string) {
-    const prev = sessions;
+    // #485 F4: captured once, up front — just the removed row, not the
+    // whole list. See `rollbackRemoveSession`.
+    const removed = sessions.find((s) => s.id === id);
     await withOptimisticUpdate({
       apply: () => setSessions((list) => applyRemoveSessionOptimistic(list, id)),
       action: () => repo.deleteSession(id),
       onSuccess: () => {},
-      rollback: () => setSessions(prev),
+      rollback: () => setSessions((list) => rollbackRemoveSession(list, removed)),
       onError: (message) => setError(message),
       fallbackMessage: "Failed to delete session",
       onFailure: (failure) =>

@@ -223,6 +223,23 @@ export interface PersistResult {
 // the alternative is destroying training data to satisfy a privacy property
 // the user just declined — and the wrong one for a shared device. If this app
 // ever runs on shared hardware, revisit it here first.
+//
+// ACCEPTED RESIDUAL #2 (R2-F3, round-2 review of #492's fix): the
+// account-deletion discard (`deleteAccount()`, `queue: "discard"`) can now
+// be SKIPPED entirely — see `signOutUser`'s doc comment — when the deleting
+// account's id can't be resolved (the #492 F1 `getSession()`/RPC race).
+// #264's never-swallow half is satisfied (it's reported, not silently
+// dropped) but its user-visible half is not: unlike a genuinely LOST
+// recording (`lostRecordings.ts`'s one-shot notice), nothing was lost here,
+// so there is no UI notice — only a Sentry report. The account is already
+// deleted server-side by the time this could happen, so there is no "sign
+// back in and drain" recovery path either. The honest residual: THAT
+// ACCOUNT'S recordings stay on the device forever, invisible (a scoped
+// count for a different, still-signed-in account will never surface an id
+// that isn't theirs — same "mine" rule as everywhere else in this file) and
+// permanently un-uploadable (the account they'd upload into no longer
+// exists). Accepted rather than fixed, because the alternative — falling
+// back to an unscoped wipe to guarantee cleanup — is #492 itself.
 
 /// SYNCHRONOUS emergency lane — see the policy block above. Read the lane,
 /// append `input`, write it back, making room by dropping the oldest entries if
@@ -408,20 +425,43 @@ export async function pendingRecordingsBreakdown(
   return { pending: all.length - stuck, stuck };
 }
 
-/// Remove queued recordings from BOTH stores — the "#273" section of the
-/// policy block above is the decision this carries out, and is where to look
-/// before calling it.
+/// Remove queued recordings from BOTH stores, SCOPED to `userId` (plus
+/// unattributed legacy entries) — the "#273" section of the policy block
+/// above is the decision this carries out, and is where to look before
+/// calling it.
 ///
-/// `userId: null` clears EVERYTHING, unscoped — the shape `deleteAccount()`
-/// wants: the account being deleted has no server-side rows left to upload
-/// into, and account deletion is nuclear enough that clearing this device's
-/// whole local queue (rather than trying to attribute leftovers) is the
-/// existing, deliberate behavior, preserved as-is. A real `userId` (the
-/// normal sign-out path) scopes to that account plus unattributed legacy
-/// entries, the same "mine" rule `pendingRecordingsCount` uses — #484 F3:
-/// before this, the delete was always unscoped while the sign-out prompt's
-/// count became scoped, so "Delete N and sign out" could silently destroy
-/// another account's stranded recordings along with the N it named.
+/// `userId` is a required, non-null `string` ON PURPOSE (#492 F1, review of
+/// the initial fix): the first version of this fix kept `userId: string |
+/// null` with `null` meaning "clear EVERYTHING, unscoped", on the theory
+/// that `deleteAccount()` needed it. The review found `deleteAccount()`
+/// could still legitimately resolve a `null` id (two independent
+/// `getSession()` reads — the id capture here and the RPC's own bearer-token
+/// read — can race a token rotation in another tab and disagree), and that a
+/// TYPE-LEVEL `null` on this function meant that race reproduced #492's
+/// whole-device wipe byte-for-byte. Making `null` unrepresentable here (not
+/// just unused) is what closes it: there is no longer a value a caller can
+/// pass to this function that wipes another account's queue.
+///
+/// R2-F1 (round-2 review): an earlier version of THIS fix moved the unscoped
+/// wipe behind a separately-named `clearRecordingQueueUnscoped` rather than
+/// deleting it, reasoning that a deliberately-named primitive is harder to
+/// reach by accident than a `null` argument. That reasoning didn't survive
+/// review: the function had no `isUserSignOutPending` gate (so a revoked
+/// session calling it would violate #265/#273 outright), the "exactly one
+/// deletion place" structural pin in `signOutInvariants.test.ts` did not
+/// match its name and so did not cover it, and mutation-testing proved it —
+/// adding a production call site left every structural pin green. A whole-
+/// device wipe capability with zero callers is not a safety net, it is an
+/// unpinned second deletion site waiting for its first caller. The #273
+/// policy block's answer is "only the signed-in account's own entries,
+/// never everyone's" with no carve-out, so there is no capability to keep:
+/// deleted outright rather than re-guarded.
+///
+/// Scopes to `userId` plus unattributed (`userId: null`) legacy entries, the
+/// same "mine" rule `pendingRecordingsCount` uses — #484 F3: before that,
+/// the delete was always unscoped while the sign-out prompt's count became
+/// scoped, so "Delete N and sign out" could silently destroy another
+/// account's stranded recordings along with the N it named.
 ///
 /// DO NOT CALL THIS DIRECTLY. `discardQueueOnUserSignOut` in `signOut.ts` is
 /// the only caller, because it is the only place that first checks the
@@ -437,42 +477,30 @@ export async function pendingRecordingsBreakdown(
 /// same reason `pendingRecordingsCount` is: an interrupted absorb legitimately
 /// leaves the same entry in both.
 export async function clearRecordingQueue(
-  userId: string | null,
+  userId: string,
   loadDb: RecordingDbLoader = openRecordingDb,
   storage: QueueStorage | null = defaultStorage(),
 ): Promise<number> {
-  const mine = (p: PendingRecording) =>
-    userId === null || p.userId === null || p.userId === userId;
+  const mine = (p: PendingRecording) => p.userId === null || p.userId === userId;
   const removed = new Set<string>();
   const db = await loadDb().catch(() => null);
   if (db) {
-    if (userId === null) {
-      // Unscoped: clear() in one transaction, same as before scoping existed.
-      const keys = await db.keys().catch(() => [] as string[]);
-      const cleared = await db.clear().then(
+    // Only `userId`'s (plus unattributed) ids, deleted by id —
+    // `getAllForUser` already applies the same "mine" rule.
+    const rows = await db.getAllForUser(userId).catch(() => [] as PendingRecording[]);
+    const ids = rows.map((p) => p.id);
+    if (ids.length > 0) {
+      const ok = await db.delete(ids).then(
         () => true,
         () => false,
       );
-      if (cleared) for (const k of keys) removed.add(k);
-    } else {
-      // Scoped: only `userId`'s (plus unattributed) ids, deleted by id —
-      // `getAllForUser` already applies the same "mine" rule.
-      const rows = await db.getAllForUser(userId).catch(() => [] as PendingRecording[]);
-      const ids = rows.map((p) => p.id);
-      if (ids.length > 0) {
-        const ok = await db.delete(ids).then(
-          () => true,
-          () => false,
-        );
-        if (ok) for (const id of ids) removed.add(id);
-      }
+      if (ok) for (const id of ids) removed.add(id);
     }
   }
   const lane = loadQueue(storage);
   const laneMine = lane.filter(mine);
   if (laneMine.length > 0) {
-    const remaining = userId === null ? [] : lane.filter((p) => !mine(p));
-    if (saveQueue(remaining, storage)) {
+    if (saveQueue(lane.filter((p) => !mine(p)), storage)) {
       for (const p of laneMine) removed.add(p.id);
     }
   }

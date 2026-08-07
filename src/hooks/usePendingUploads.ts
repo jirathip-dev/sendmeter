@@ -3,6 +3,38 @@ import { Capacitor } from "@capacitor/core";
 import { App as CapacitorApp } from "@capacitor/app";
 import { subscribePendingUploads, type PendingUploadsBreakdown } from "../lib/pendingUploads";
 import { pendingRecordingsBreakdown } from "../lib/recordingQueue";
+import { subscribePluginListener } from "./pluginListener";
+
+/// A `refresh()` that only ever applies the LATEST in-flight read to
+/// `onValue` — #485 F6: `refresh` fires once per signal (mount, the
+/// module-level notification, foreground) with no sequencing between them,
+/// so a slow earlier call resolving AFTER a faster later one used to
+/// overwrite the fresh value with a stale one. `active` additionally covers
+/// a caller that has since unmounted, same as `subscribeToWatchInfo`'s
+/// `active` flag in `useWatchInfo.ts` (the same shape, extracted here so the
+/// ordering property is directly testable without a React renderer, which
+/// this repo has none of for hooks).
+export function makeSequencedRefresher<T>(
+  load: () => Promise<T>,
+  onValue: (v: T) => void,
+): { refresh: () => void; stop: () => void } {
+  let active = true;
+  let latestRequest = 0;
+  return {
+    refresh: () => {
+      if (!active) return;
+      const request = ++latestRequest;
+      // setState only ever inside the async callback — never synchronously in
+      // an effect body (react-compiler lint).
+      void load().then((v) => {
+        if (active && request === latestRequest) onValue(v);
+      });
+    },
+    stop: () => {
+      active = false;
+    },
+  };
+}
 
 /// #269: the offline recording queue's depth, for the ambient indicators.
 /// `null` until the first read completes — callers must not treat it as an
@@ -23,19 +55,16 @@ import { pendingRecordingsBreakdown } from "../lib/recordingQueue";
 /// component can't see: the module-level notification (something queued or
 /// drained in this tab), app foreground (a drain may have run while
 /// backgrounded, and on native the WebView can be suspended mid-drain), a
-/// change of account, and mount.
+/// change of account, and mount. `makeSequencedRefresher` (above) is what
+/// keeps those four signals' reads from clobbering each other out of order.
 export function usePendingUploads(userId: string): PendingUploadsBreakdown | null {
   const [breakdown, setBreakdown] = useState<PendingUploadsBreakdown | null>(null);
 
   useEffect(() => {
-    let alive = true;
-    function refresh() {
-      // setState only ever inside the async callback — never synchronously in
-      // an effect body (react-compiler lint).
-      void pendingRecordingsBreakdown(userId).then((b) => {
-        if (alive) setBreakdown(b);
-      });
-    }
+    const { refresh, stop } = makeSequencedRefresher(
+      () => pendingRecordingsBreakdown(userId),
+      setBreakdown,
+    );
     refresh();
     const unsubscribe = subscribePendingUploads(refresh);
     if (!Capacitor.isNativePlatform()) {
@@ -46,18 +75,22 @@ export function usePendingUploads(userId: string): PendingUploadsBreakdown | nul
       };
       document.addEventListener("visibilitychange", onVisible);
       return () => {
-        alive = false;
+        stop();
         unsubscribe();
         document.removeEventListener("visibilitychange", onVisible);
       };
     }
-    const sub = CapacitorApp.addListener("appStateChange", ({ isActive }) => {
-      if (isActive) refresh();
-    });
+    // #485 F7: `subscribePluginListener` (see its doc comment) instead of
+    // hand-rolling the same promise-chaining shape.
+    const unsubscribeAppState = subscribePluginListener(() =>
+      CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+        if (isActive) refresh();
+      }),
+    );
     return () => {
-      alive = false;
+      stop();
       unsubscribe();
-      void sub.then((h) => h.remove());
+      unsubscribeAppState();
     };
   }, [userId]);
 
