@@ -223,6 +223,23 @@ export interface PersistResult {
 // the alternative is destroying training data to satisfy a privacy property
 // the user just declined — and the wrong one for a shared device. If this app
 // ever runs on shared hardware, revisit it here first.
+//
+// ACCEPTED RESIDUAL #2 (R2-F3, round-2 review of #492's fix): the
+// account-deletion discard (`deleteAccount()`, `queue: "discard"`) can now
+// be SKIPPED entirely — see `signOutUser`'s doc comment — when the deleting
+// account's id can't be resolved (the #492 F1 `getSession()`/RPC race).
+// #264's never-swallow half is satisfied (it's reported, not silently
+// dropped) but its user-visible half is not: unlike a genuinely LOST
+// recording (`lostRecordings.ts`'s one-shot notice), nothing was lost here,
+// so there is no UI notice — only a Sentry report. The account is already
+// deleted server-side by the time this could happen, so there is no "sign
+// back in and drain" recovery path either. The honest residual: THAT
+// ACCOUNT'S recordings stay on the device forever, invisible (a scoped
+// count for a different, still-signed-in account will never surface an id
+// that isn't theirs — same "mine" rule as everywhere else in this file) and
+// permanently un-uploadable (the account they'd upload into no longer
+// exists). Accepted rather than fixed, because the alternative — falling
+// back to an unscoped wipe to guarantee cleanup — is #492 itself.
 
 /// SYNCHRONOUS emergency lane — see the policy block above. Read the lane,
 /// append `input`, write it back, making room by dropping the oldest entries if
@@ -423,9 +440,22 @@ export async function pendingRecordingsBreakdown(
 /// TYPE-LEVEL `null` on this function meant that race reproduced #492's
 /// whole-device wipe byte-for-byte. Making `null` unrepresentable here (not
 /// just unused) is what closes it: there is no longer a value a caller can
-/// pass to this function that wipes another account's queue. The genuinely
-/// unscoped primitive still exists — see `clearRecordingQueueUnscoped` below
-/// — under its own name, so it can never be reached by accident.
+/// pass to this function that wipes another account's queue.
+///
+/// R2-F1 (round-2 review): an earlier version of THIS fix moved the unscoped
+/// wipe behind a separately-named `clearRecordingQueueUnscoped` rather than
+/// deleting it, reasoning that a deliberately-named primitive is harder to
+/// reach by accident than a `null` argument. That reasoning didn't survive
+/// review: the function had no `isUserSignOutPending` gate (so a revoked
+/// session calling it would violate #265/#273 outright), the "exactly one
+/// deletion place" structural pin in `signOutInvariants.test.ts` did not
+/// match its name and so did not cover it, and mutation-testing proved it —
+/// adding a production call site left every structural pin green. A whole-
+/// device wipe capability with zero callers is not a safety net, it is an
+/// unpinned second deletion site waiting for its first caller. The #273
+/// policy block's answer is "only the signed-in account's own entries,
+/// never everyone's" with no carve-out, so there is no capability to keep:
+/// deleted outright rather than re-guarded.
 ///
 /// Scopes to `userId` plus unattributed (`userId: null`) legacy entries, the
 /// same "mine" rule `pendingRecordingsCount` uses — #484 F3: before that,
@@ -473,40 +503,6 @@ export async function clearRecordingQueue(
     if (saveQueue(lane.filter((p) => !mine(p)), storage)) {
       for (const p of laneMine) removed.add(p.id);
     }
-  }
-  notifyPendingUploadsChanged();
-  return removed.size;
-}
-
-/// DANGER — unscoped. Clears EVERY account's queue on this device, no
-/// exceptions. This is the primitive #492 F1 found reachable from
-/// `deleteAccount()` via `clearRecordingQueue(null)`; that call is gone now
-/// (`clearRecordingQueue` requires a real `userId` — see its doc comment)
-/// and NOTHING in production calls this function. It exists only so "clear
-/// everything" stays a deliberately-named, single-purpose primitive that a
-/// caller has to reach for on purpose, instead of a `null` argument anyone
-/// could pass by accident (or by an id-resolution race, which is exactly
-/// what happened). If you are reaching for this, stop: the #273 policy
-/// block above `clearRecordingQueue` is what decides when a device's queue
-/// may be cleared, and the answer there is "only the signed-in account's own
-/// entries", never "everyone's".
-export async function clearRecordingQueueUnscoped(
-  loadDb: RecordingDbLoader = openRecordingDb,
-  storage: QueueStorage | null = defaultStorage(),
-): Promise<number> {
-  const removed = new Set<string>();
-  const db = await loadDb().catch(() => null);
-  if (db) {
-    const keys = await db.keys().catch(() => [] as string[]);
-    const cleared = await db.clear().then(
-      () => true,
-      () => false,
-    );
-    if (cleared) for (const k of keys) removed.add(k);
-  }
-  const lane = loadQueue(storage);
-  if (lane.length > 0 && saveQueue([], storage)) {
-    for (const p of lane) removed.add(p.id);
   }
   notifyPendingUploadsChanged();
   return removed.size;

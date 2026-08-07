@@ -74,6 +74,14 @@ export async function deleteAccount(): Promise<void> {
     // exactly the shape that can leave `userId` unresolved below — worth
     // knowing about on its own, even though nothing downstream can turn it
     // into an unscoped wipe any more.
+    //
+    // R2-F2 (round-2 review, nit): `captureDataLoss` is nominally the #264
+    // LOSS channel and nothing is lost here — reused deliberately because
+    // it is the only free-form Sentry hook this module can reach without
+    // widening `monitoring.ts`'s closed `HANDLED_OPERATIONS` map, which is
+    // out of this branch's declared scope (see the identical note on
+    // `signOut.ts`'s sibling report). Expected to be rare; revisit with a
+    // dedicated non-loss channel outside this branch's scope.
     captureDataLoss("account.delete-session-read-failed", {});
   }
   const userId = session?.user.id ?? null;

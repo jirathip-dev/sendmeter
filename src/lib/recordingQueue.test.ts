@@ -3,7 +3,6 @@ import {
   MAX_QUEUE_BYTES,
   absorbSyncLane,
   clearRecordingQueue,
-  clearRecordingQueueUnscoped,
   drainPendingRecordingsQueue,
   drainQueue,
   enqueueRecording,
@@ -1017,9 +1016,12 @@ describe("clearRecordingQueue", () => {
   // The mechanics only. WHEN this is allowed to run — user-initiated sign-out
   // and nothing else — is `signOut.ts`'s job and lives in `signOut.test.ts`.
   // Always scoped to an account — `clearRecordingQueue` no longer accepts
-  // `null` at all (#492 F1); see `clearRecordingQueueUnscoped` for the
-  // separately-named unscoped primitive and the "scoping (#484 F3)" block
-  // below for the property scoping exists to protect.
+  // `null` at all (#492 F1); see the "scoping (#484 F3)" block below for the
+  // property scoping exists to protect. There is deliberately no unscoped
+  // variant any more (R2-F1, round-2 review): a whole-device wipe primitive
+  // with no `isUserSignOutPending` gate and no structural pin was a second,
+  // unguarded deletion site waiting for its first caller — see the doc
+  // comment above `clearRecordingQueue` in `recordingQueue.ts`.
 
   it("empties BOTH stores for the account, not just the main one", async () => {
     const storage = fakeStorage();
@@ -1107,20 +1109,18 @@ describe("clearRecordingQueue", () => {
       expect([...map.keys()]).toEqual([]);
     });
 
-    // #492 F1 (review): `clearRecordingQueue` no longer accepts `null` at
-    // all — the unscoped wipe is `clearRecordingQueueUnscoped`, a separately
-    // named primitive with zero production callers, so a caller can no
-    // longer reach "wipe everything" by passing a falsy id to the scoped
-    // function. This test now exercises that primitive directly rather than
-    // `clearRecordingQueue(null, ...)`, which is a type error.
-    it("clearRecordingQueueUnscoped clears EVERYTHING, unscoped — a deliberately separate, uncalled-in-production primitive", async () => {
-      const storage = fakeStorage();
-      const mine = queueOf("mine-1");
-      const theirs = enqueueRecording([], rec("theirs-1"), "user-2", () => "t");
-      const { loader, map } = fakeDb([...mine, ...theirs]);
-
-      expect(await clearRecordingQueueUnscoped(loader, storage)).toBe(2);
-      expect([...map.keys()]).toEqual([]);
+    // #492 F1 / R2-F1 (review): `clearRecordingQueue` no longer accepts
+    // `null` at all, and there is deliberately no separate unscoped
+    // primitive any more either (R2-F1: an earlier version of this fix kept
+    // one under its own name, but it had no sign-out-marker gate and no
+    // structural pin — see `recordingQueue.ts`'s doc comment above
+    // `clearRecordingQueue`). The `@ts-expect-error` below is itself the
+    // regression guard: if `userId`'s type is ever widened back to `string |
+    // null`, this line stops being an error and `tsc --noEmit` fails on the
+    // now-unused directive — a compile-time pin, not a runtime assertion.
+    it("does not accept a null userId — enforced at the type level", () => {
+      // @ts-expect-error — userId is `string`, not `string | null`.
+      void clearRecordingQueue(null, noDb, fakeStorage());
     });
 
     // R2-F3 — PROVED. The IndexedDB half of scoping was pinned, but the

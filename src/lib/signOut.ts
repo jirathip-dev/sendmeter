@@ -228,7 +228,24 @@ export async function signOutUser(
       // exactly this case silently falling back to "wipe every account's
       // queue on this device" — an id-resolution failure widening the blast
       // radius is worse than doing nothing, so this path discards NOTHING
-      // and says so out loud (#264) instead of guessing.
+      // and says so out loud instead of guessing.
+      //
+      // R2-F2 (round-2 review, nit): `report` (default `captureDataLoss`)
+      // is nominally the #264 LOSS channel, and nothing is lost here — the
+      // discard-skip is the whole point. Reused deliberately rather than
+      // introducing a differently-labeled channel: `report` is the one
+      // free-form diagnostic hook already threaded through this function
+      // (the sibling `discard-on-signout-incomplete` report above uses the
+      // same one), and a proper "handled, not lost" channel would mean
+      // widening `monitoring.ts`'s closed `HANDLED_OPERATIONS` map, which
+      // is out of this branch's declared scope. This event should be rare
+      // (the #492 F1 race it flags is not an everyday occurrence), so
+      // channel dilution risk is low; still, revisit with a dedicated
+      // non-loss channel outside this branch's scope rather than treating
+      // this reuse as the final shape. The user-visible residual this skip
+      // leaves behind (R2-F3) is documented in `recordingQueue.ts`'s #273
+      // policy block, not here — this comment is only about which Sentry
+      // channel the report itself rides on.
       report("tindeq-queue: discard-skipped-no-attributable-user", {});
     }
   }
