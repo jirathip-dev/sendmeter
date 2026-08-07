@@ -27,10 +27,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The watch suite is pure logic in the SendLogWatchCore SwiftPM package
-  # (#191), so it needs no simulator and no Xcode — run it on Ubuntu, which
-  # bills at a fraction of the macOS rate (#199). The macOS job below is
-  # deliberately build-only as a result.
+  # The pure-logic watch tests live in the SendLogWatchCore SwiftPM package
+  # (#191), so they need no simulator and no Xcode — run them on Ubuntu,
+  # which bills at a fraction of the macOS rate (#199). The macOS job below
+  # additionally runs the SendLogWatchTests Xcode target (#500), which tests
+  # app-target code (queues, workout ownership, the save path) that cannot
+  # move into the package without moving the code under test.
   package-tests:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
@@ -66,8 +68,10 @@ jobs:
     # runner against minutes of Xcode.
     if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
     runs-on: blacksmith-6vcpu-macos-26
-    # 15, not 45: the p50 of this job is ~2 minutes and it has never legitimately
-    # needed more than 3. The old ceiling was theoretical until a hung run on
+    # 15, not 45: the p50 of this job was ~2 minutes build-only; #500's
+    # simulator boot + 216-test run adds low single-digit minutes (the suite
+    # itself executes in ~4s once booted — measured locally), so 15 still
+    # has real headroom. The old ceiling was theoretical until a hung run on
     # fix/issue-196 sat for 30 minutes before anything cancelled it — 24% of
     # that month's entire macOS spend from one incident (#290).
     # `cancel-in-progress` does not cover this: it only fires on a superseding
@@ -91,19 +95,49 @@ jobs:
       - name: Xcode version
         run: xcodebuild -version
 
-      # Build-only: the test suite runs on Linux in `package-tests` above.
-      # A generic destination avoids resolving and booting a simulator
-      # entirely — verified locally that it builds the same targets.
-      #
-      # This is still the check that catches the #162 class of bug (a missing
-      # `import Supabase` in the offline queues that reached staging green),
-      # and it caught #196's AuthOptions argument-order error the same way.
-      - name: Compile watch app
+      # The 216-test SendLogWatchTests suite needs a concrete, booted
+      # simulator (#500). Selected by query rather than a hardcoded device
+      # name, which would silently break on the next runner-image Xcode bump.
+      # Booting explicitly (instead of letting xcodebuild do it lazily)
+      # makes a boot failure its own loud step instead of a confusing
+      # test-time timeout.
+      - name: Boot a watchOS simulator
+        id: sim
         run: |
-          xcodebuild build \
+          UDID=$(xcrun simctl list devices available --json \
+            | jq -r '[.devices | to_entries[] | select(.key | contains("watchOS")) | .value[]] | first | .udid')
+          if [ -z "$UDID" ] || [ "$UDID" = "null" ]; then
+            echo "No available watchOS simulator on this runner" >&2
+            xcrun simctl list devices >&2
+            exit 1
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          xcrun simctl boot "$UDID" || true # already-booted is fine
+          xcrun simctl bootstatus "$UDID" -b
+
+      # Compiles the same targets the old build-only step did — this is
+      # still the check that catches the #162 class of bug (a missing
+      # `import Supabase` in the offline queues that reached staging green),
+      # and it caught #196's AuthOptions argument-order error the same way —
+      # and then actually EXECUTES SendLogWatchTests, which until #500 was
+      # compiled and discarded: the offline queue, pending-recording queue,
+      # workout ownership and workout save path tests never ran in any CI
+      # job (only the SendLogWatchCore package suite ran, above).
+      #
+      # Unsigned is deliberate and sufficient: the suite is written to run
+      # without the HealthKit entitlement (WorkoutManager tests drive seams
+      # that stop short of HealthKit, and `start()` failing at
+      # `requestAuthorization()` is part of several tests' setup) — the full
+      # suite passes with CODE_SIGNING_ALLOWED=NO. What this still does NOT
+      # cover: HealthKit runtime behavior, background delivery, real
+      # sensors — device-only, as CLAUDE.md's testing ladder says.
+      - name: Build and test watch app
+        run: |
+          xcodebuild test \
             -project "ios/App/App.xcodeproj" \
             -scheme "SendLogWatch Watch App" \
-            -destination "generic/platform=watchOS Simulator" \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -only-testing:SendLogWatchTests \
             CODE_SIGNING_ALLOWED=NO
 
       # The App target copies the built web bundle into ios/App/App/public and
