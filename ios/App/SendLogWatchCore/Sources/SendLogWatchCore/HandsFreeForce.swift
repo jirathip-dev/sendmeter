@@ -152,15 +152,25 @@ public func stepHandsFreeForce(
 /// timestamp. Watch-side only — not part of the ported `handsFreeForce.ts`
 /// machine (the web stop path has no save/restart dark window to bridge).
 public enum HandsFreeStopReason: Equatable, Sendable {
+    /// `endMs` is on the RECORDING clock — the same t0-relative milliseconds
+    /// as the sample buffer (`samples[].t`), not the armed stream's absolute
+    /// device timestamps. Release can only be detected from `.recording`, so
+    /// its below-threshold start is always measured on that clock; the trim
+    /// filter compares it directly against `samples[].t`.
     case released(endMs: Double)
     case userTapped
     case cappedAt30Min
 
     /// Timestamp to trim the recording's low-force tail at; nil for stops
     /// with no proven release point (the whole buffer is the rep).
+    /// Exhaustive on purpose (#503): a new case must answer the trim
+    /// question here at compile time, exactly like the re-arm question in
+    /// `rearmedHandsFreeForce(afterStop:)` — not silently inherit "no trim".
     public var trimEndMs: Double? {
-        if case .released(let endMs) = self { return endMs }
-        return nil
+        switch self {
+        case .released(let endMs): return endMs
+        case .userTapped, .cappedAt30Min: return nil
+        }
     }
 }
 
