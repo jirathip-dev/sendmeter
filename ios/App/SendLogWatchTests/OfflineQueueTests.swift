@@ -893,6 +893,56 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(pending, 1, "the item is still reported pending (#189) — only the retry-armed claim is false")
     }
 
+    // MARK: #481 / #491 review F1 — quarantine sheds the raw trace, keeps everything user-visible
+
+    /// Quarantine is retained indefinitely (nothing prunes it, #475 F8), and
+    /// `workout.raw` is the 1Hz debug trace — hundreds of KB per workout
+    /// with keepRawTrace on. #481's named cheap win: strip it BEFORE the
+    /// forever-write. Every user-visible field must survive the strip.
+    func testQuarantineStripsTheRawTraceButKeepsEveryUserVisibleField() async throws {
+        var poisoned = makeBundle(id: UUID(), attempts: [makePoisonedAttempt(workoutId: UUID())])
+        poisoned.workout.raw = [[0, 12.5, 0.4, 140], [1, 12.6, 0.5, 141]]
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(poisoned, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            poisoned.workout.id: StagedUploadError(stage: .climbAttempts, underlying: durationCheckViolation),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        await queue.drain()
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(poisoned.workout.id.uuidString).quarantine"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let record = try decoder.decode(QueueQuarantineRecord<WorkoutSaveBundle>.self, from: data)
+        XCTAssertNil(record.item.workout.raw, "the debug trace must not be stored forever")
+        XCTAssertEqual(record.payloadDropped, true, "the strip is recorded honestly on the record")
+        XCTAssertEqual(record.item.workout.id, poisoned.workout.id)
+        XCTAssertEqual(record.item.attempts.count, 1, "attempts — the training data — survive")
+        XCTAssertEqual(record.item.session.id, poisoned.session.id, "the session row survives")
+        XCTAssertEqual(record.reason, .schemaRejection)
+    }
+
+    /// A bundle with no trace to shed quarantines exactly as before — no
+    /// strip, no `payloadDropped` claim about a payload that never existed.
+    func testQuarantineOfATracelessBundleDoesNotClaimAStrip() async throws {
+        let poisoned = makeBundle(id: UUID(), attempts: [makePoisonedAttempt(workoutId: UUID())])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(poisoned, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            poisoned.workout.id: StagedUploadError(stage: .climbAttempts, underlying: durationCheckViolation),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        await queue.drain()
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(poisoned.workout.id.uuidString).quarantine"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let record = try decoder.decode(QueueQuarantineRecord<WorkoutSaveBundle>.self, from: data)
+        XCTAssertNil(record.payloadDropped)
+    }
+
     // MARK: #491 — on-disk compatibility with pre-consolidation quarantine records
 
     /// The generic engine reads/writes `QueueQuarantineRecord<Item>`, whose

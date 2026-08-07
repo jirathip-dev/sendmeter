@@ -502,6 +502,119 @@ final class PendingRecordingQueueTests: XCTestCase {
         XCTAssertTrue(try filesOnDisk().contains(quarantined.lastPathComponent))
     }
 
+    // MARK: - #491 review F1: a disk full of quarantined recordings must not cost a new rep
+
+    /// Writes a `.quarantine` record directly, the way the engine's own
+    /// quarantine path lays it out. `quarantinedAt` is deliberately FUTURE
+    /// (the same 2027-ish instant the other fixtures use) so the background
+    /// drain's resurrection sweep, which runs on the real clock in these
+    /// tests, can never re-pend it mid-assertion.
+    @discardableResult
+    private func writeQuarantineRecord(
+        id: UUID,
+        samples: [[Double]],
+        createdAt: Date,
+        payloadDropped: Bool? = nil
+    ) throws -> URL {
+        try FileManager.default.createDirectory(at: pendingDir, withIntermediateDirectories: true)
+        var pending = makePending(id: id, enqueuedUserId: testUserId)
+        pending.row.samples = samples
+        let record = QueueQuarantineRecord(
+            item: pending,
+            reason: .stuckRetrying,
+            stage: nil,
+            httpStatus: nil,
+            postgrestCode: "23514",
+            errorMessage: "rejected",
+            attemptCount: QueueRetryPolicy.maxConsecutiveFailures,
+            quarantinedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            payloadDropped: payloadDropped
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let url = pendingDir
+            .appendingPathComponent(id.uuidString)
+            .appendingPathExtension("quarantine")
+        try encoder.encode(record).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.creationDate: createdAt], ofItemAtPath: url.path)
+        return url
+    }
+
+    private func readQuarantineRecord(id: UUID) throws -> QueueQuarantineRecord<PendingTindeqRecording> {
+        let url = pendingDir
+            .appendingPathComponent(id.uuidString)
+            .appendingPathExtension("quarantine")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(QueueQuarantineRecord<PendingTindeqRecording>.self, from: Data(contentsOf: url))
+    }
+
+    /// The assertion #495 R3 was filed about, extended by review F1: with
+    /// nothing evictable left but retained quarantine records, a refused
+    /// write reclaims the OLDEST record's sample payload (keeping the
+    /// record — id, stats, provenance — per #273) instead of letting the
+    /// brand-new rep die on the `.uploadDirect`-while-offline path.
+    func testANewRepSurvivesADiskFullOfQuarantinedRecordings() async throws {
+        let heavySamples: [[Double]] = (0..<200).map { [Double($0) * 10, 30 + Double($0 % 7)] }
+        let oldQuarantined = UUID()
+        let newerQuarantined = UUID()
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeQuarantineRecord(id: oldQuarantined, samples: heavySamples, createdAt: base)
+        try writeQuarantineRecord(id: newerQuarantined, samples: heavySamples, createdAt: base.addingTimeInterval(1))
+
+        // The pending write is refused once (disk full); the small stripped
+        // quarantine rewrite is allowed — freeing the payload is what lets
+        // the retried pending write fit.
+        let fileIO = ScriptedFileIO(refuseWrites: 1, refuseOnlyPathExtension: "json")
+        let reporter = CountingEvictionReporter()
+        // Offline throughout: the direct-upload fallback would fail, so
+        // only the reclaim can save this rep — and the background drain
+        // can't race the on-disk assertions.
+        let uploader = ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet))
+        let queue = makeQueue(uploader: uploader, fileIO: fileIO, evictionReporter: reporter)
+
+        let incoming = UUID()
+        let outcome = await queue.enqueue(makePending(id: incoming, enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .queued, "the new rep must survive on disk, not die on the offline direct-upload path")
+        XCTAssertTrue(try filesOnDisk().contains("\(incoming.uuidString).json"))
+
+        let reclaimed = try readQuarantineRecord(id: oldQuarantined)
+        XCTAssertEqual(reclaimed.item.row.samples.isEmpty, true, "the OLDEST quarantined record's payload is what gets sacrificed")
+        XCTAssertEqual(reclaimed.payloadDropped, true, "the sacrifice is recorded on the record itself")
+        XCTAssertEqual(reclaimed.item.row.id, oldQuarantined, "the record survives — reclaim is a payload strip, not a delete (#273)")
+        XCTAssertEqual(reclaimed.item.row.peakKg, 34.5, accuracy: 0.001, "summary stats survive for the eventual re-attempt")
+        XCTAssertEqual(reclaimed.reason, .stuckRetrying)
+        XCTAssertEqual(reclaimed.attemptCount, QueueRetryPolicy.maxConsecutiveFailures)
+
+        let untouched = try readQuarantineRecord(id: newerQuarantined)
+        XCTAssertEqual(untouched.item.row.samples.count, heavySamples.count, "only as many payloads are reclaimed as the write actually needs")
+        XCTAssertNil(untouched.payloadDropped)
+
+        XCTAssertEqual(reporter.count, 1, "a reclaimed payload is a real loss and reports like an eviction (#264)")
+    }
+
+    /// When every quarantined payload is already gone, the reclaim stage
+    /// honestly reports nothing left — the caller falls back to the direct
+    /// upload, and no record is deleted or rewritten in a doomed attempt to
+    /// free bytes that aren't there.
+    func testAlreadyStrippedQuarantineRecordsAreNotTouchedAgain() async throws {
+        let stripped = UUID()
+        try writeQuarantineRecord(id: stripped, samples: [], createdAt: Date(), payloadDropped: true)
+
+        let fileIO = ScriptedFileIO(refuseAllWrites: true, refuseOnlyPathExtension: "json")
+        let uploader = ScriptedUploader(failing: [:]) // direct upload succeeds
+        let queue = makeQueue(uploader: uploader, fileIO: fileIO)
+
+        let incoming = UUID()
+        let outcome = await queue.enqueue(makePending(id: incoming, enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .uploadedDirect, "nothing reclaimable — straight to the fallback")
+        XCTAssertTrue(fileIO.removedFileNames.isEmpty)
+        let record = try readQuarantineRecord(id: stripped)
+        XCTAssertEqual(record.item.row.id, stripped, "the stripped record is left exactly as it was")
+    }
+
     // MARK: - #486 re-review R1: eviction must terminate even when removal itself fails
 
     /// The exact shape the re-review proved hung: a write that can never
@@ -610,12 +723,18 @@ private final class ScriptedFileIO: QueueFileIO, @unchecked Sendable {
     private let lock = NSLock()
     private var refuseWritesRemaining: Int
     private let refuseAllWrites: Bool
+    /// When set, only writes to URLs with this path extension are scripted
+    /// to fail; everything else performs the real write. Models "the big
+    /// pending file is refused but the small quarantine rewrite fits" —
+    /// the actual disk-full shape the #491 F1 reclaim exists for.
+    private let refuseOnlyPathExtension: String?
     private var _writeCalls = 0
     private var _removedFileNames: [String] = []
 
-    init(refuseWrites: Int = 0, refuseAllWrites: Bool = false) {
+    init(refuseWrites: Int = 0, refuseAllWrites: Bool = false, refuseOnlyPathExtension: String? = nil) {
         self.refuseWritesRemaining = refuseWrites
         self.refuseAllWrites = refuseAllWrites
+        self.refuseOnlyPathExtension = refuseOnlyPathExtension
     }
 
     var writeCalls: Int {
@@ -633,8 +752,12 @@ private final class ScriptedFileIO: QueueFileIO, @unchecked Sendable {
     func write(_ data: Data, to url: URL) throws {
         lock.lock()
         _writeCalls += 1
-        let refuse = refuseAllWrites || refuseWritesRemaining > 0
-        if refuseWritesRemaining > 0 { refuseWritesRemaining -= 1 }
+        let scripted = refuseOnlyPathExtension.map { url.pathExtension == $0 } ?? true
+        var refuse = false
+        if scripted {
+            refuse = refuseAllWrites || refuseWritesRemaining > 0
+            if refuseWritesRemaining > 0 { refuseWritesRemaining -= 1 }
+        }
         lock.unlock()
         if refuse { throw CocoaError(.fileWriteOutOfSpace) }
         try data.write(to: url, options: .atomic)

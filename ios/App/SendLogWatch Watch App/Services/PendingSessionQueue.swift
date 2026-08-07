@@ -73,4 +73,8 @@ extension PendingSessionQueue: QueueDepthReporting {
 
 extension PendingTindeqSession: QueueUploadItem {
     var queueFileId: UUID { id }
+
+    /// A pending session is a few hundred bytes of scalars — there is no
+    /// separable heavy payload to shed.
+    func strippedOfHeavyPayload() -> PendingTindeqSession? { nil }
 }

@@ -11,6 +11,19 @@ import SendLogWatchCore
 protocol QueueUploadItem: Codable, Sendable {
     var queueFileId: UUID { get }
     var enqueuedUserId: UUID? { get set }
+
+    /// #491 review F1 / #481: a copy of this item with its heavy payload
+    /// removed (the recordings sample array, the workout 1Hz raw trace), or
+    /// nil when there is nothing separable left to drop — used to keep
+    /// quarantine from growing without bound (workouts strip at quarantine
+    /// time, #481's named cheap win) and, for the recordings queue, as the
+    /// disk-full LAST resort: reclaiming a long-rejected recording's samples
+    /// beats destroying the brand-new rep the user just pulled (the same
+    /// "the new recording wins" hierarchy `recordingQueue.ts` decided under
+    /// CLAUDE.md #264 — a quarantined entry has already been rejected 20+
+    /// times). The stripped copy must still identify the item and survive a
+    /// re-attempt (ids, stats, provenance intact).
+    func strippedOfHeavyPayload() -> Self?
 }
 
 /// What `UploadFailureMapping` decides about a failed upload — see that type
@@ -68,6 +81,13 @@ nonisolated struct QueueQuarantineRecord<Item: Codable>: Codable {
     /// passes it failed before being given up on, for auditability.
     var attemptCount: Int?
     var quarantinedAt: Date
+    /// #491 review F1: true when `item` is a `strippedOfHeavyPayload()` copy
+    /// — either stripped at quarantine time (workouts, #481) or reclaimed
+    /// later under disk pressure (recordings). Honest provenance: a
+    /// resurrected re-attempt of this record uploads real summary stats but
+    /// not the original buffer, and support/debugging must be able to tell
+    /// that from "the buffer was always this small". nil on legacy records.
+    var payloadDropped: Bool?
 
     enum CodingKeys: String, CodingKey {
         /// The on-disk key stays "bundle": #475 shipped workout quarantine
@@ -77,6 +97,31 @@ nonisolated struct QueueQuarantineRecord<Item: Codable>: Codable {
         /// through the legacy type.
         case item = "bundle"
         case reason, stage, httpStatus, postgrestCode, errorMessage, attemptCount, quarantinedAt
+        case payloadDropped
+    }
+}
+
+/// #491 review F2: the header-only projection of a `QueueQuarantineRecord`,
+/// for the two per-pass sweeps that must not materialize every quarantined
+/// recording's full sample array on a watch (`quarantinedCount` and the
+/// not-yet-due majority of `resurrectDueStuckRetries`). `enqueuedUserId` is
+/// the one item field the #475-F4 account scoping needs, and every
+/// `QueueUploadItem` encodes it under that same synthesized key, so the
+/// probe can reach into the legacy "bundle" object without knowing the item
+/// type. Decode failure is handled exactly like the full record's ("counted
+/// as the cautious default").
+private nonisolated struct QueueQuarantineProbe: Decodable {
+    struct ItemStamp: Decodable {
+        var enqueuedUserId: UUID?
+    }
+
+    var item: ItemStamp
+    var reason: QuarantineReason
+    var quarantinedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case item = "bundle"
+        case reason, quarantinedAt
     }
 }
 
@@ -135,6 +180,17 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// eviction policy to them is a product decision, not a refactor.
     private let evictsOldestOnRefusedWrite: Bool
     private let evictionReporter: EvictionReporting?
+    /// #481 / #491 review F1: strip the item's heavy payload at quarantine
+    /// time. ON for workouts — `workout.raw` is a 1Hz debug trace, not the
+    /// training data, so dropping it before the potentially-forever
+    /// quarantine is #481's named cheap win. OFF for recordings — the
+    /// samples ARE the recording, and every recording quarantine is the
+    /// re-attemptable `.stuckRetrying` kind (its classifier has no
+    /// first-attempt schema branch), so stripping eagerly would gut a rep
+    /// that a healed server could still land whole; their samples are
+    /// reclaimed only under actual disk pressure (`writeWithEviction`'s
+    /// last resort), when the alternative is losing a brand-new rep.
+    private let stripsPayloadOnQuarantine: Bool
 
     private var drainState = CoalescingDrain()
     /// #472b: consecutive drain PASSES that stopped early (a `.retry` or
@@ -161,7 +217,8 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         scheduler: DrainScheduling,
         fileIO: QueueFileIO = RealQueueFileIO(),
         evictsOldestOnRefusedWrite: Bool = false,
-        evictionReporter: EvictionReporting? = nil
+        evictionReporter: EvictionReporting? = nil,
+        stripsPayloadOnQuarantine: Bool = false
     ) {
         self.slot = slot
         self.directoryName = directoryName
@@ -175,6 +232,7 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         self.fileIO = fileIO
         self.evictsOldestOnRefusedWrite = evictsOldestOnRefusedWrite
         self.evictionReporter = evictionReporter
+        self.stripsPayloadOnQuarantine = stripsPayloadOnQuarantine
     }
 
     private var pendingDir: URL {
@@ -243,9 +301,12 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         var total = 0
         var stuck = 0
         for file in files {
+            // #491 review F2: the header-only probe, not the full record —
+            // this sweep runs at the end of every drain pass and must not
+            // materialize every quarantined recording's sample array.
             guard
                 let data = try? Data(contentsOf: file),
-                let record = try? decoder.decode(QueueQuarantineRecord<Item>.self, from: data)
+                let record = try? decoder.decode(QueueQuarantineProbe.self, from: data)
             else {
                 total += 1 // unreadable: retained and reported, same as pendingCount()
                 continue
@@ -350,31 +411,91 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// evicted item's `.retry` ledger goes with it (metadata about a file
     /// that no longer exists).
     private func writeWithEviction(_ data: Data, to url: URL) -> Bool {
-        let otherFileCount = ((try? FileManager.default.contentsOfDirectory(
+        let directoryContents = ((try? FileManager.default.contentsOfDirectory(
             at: pendingDir, includingPropertiesForKeys: nil
         )) ?? [])
+        let otherFileCount = directoryContents
             .filter { $0.pathExtension == "json" && $0 != url }.count
+        // The bound covers both stages: every other pending file, then every
+        // quarantine record whose payload could still be reclaimed.
+        let quarantineFileCount = directoryContents
+            .filter { $0.pathExtension == quarantineExtension }.count
 
         let result = EvictingWrite.run(
-            maxEvictions: otherFileCount,
+            maxEvictions: otherFileCount + quarantineFileCount,
             write: { try fileIO.write(data, to: url) },
             evictOldest: {
-                guard let oldest = self.oldestOtherFile(excluding: url) else { return .nothingLeftToEvict }
-                do {
-                    try self.fileIO.removeItem(at: oldest)
-                    try? self.fileIO.removeItem(
-                        at: oldest.deletingPathExtension().appendingPathExtension(self.retryLedgerExtension)
-                    )
-                    return .evicted
-                } catch {
-                    return .evictionRefused
+                if let oldest = self.oldestOtherFile(excluding: url) {
+                    do {
+                        try self.fileIO.removeItem(at: oldest)
+                        try? self.fileIO.removeItem(
+                            at: oldest.deletingPathExtension().appendingPathExtension(self.retryLedgerExtension)
+                        )
+                        return .evicted
+                    } catch {
+                        return .evictionRefused
+                    }
                 }
+                // #491 review F1: no pending file left to evict. Before
+                // giving the write up (and with it, likely, the brand-new
+                // rep — the direct-upload fallback needs a network the user
+                // may not have), reclaim the sample payload of the OLDEST
+                // still-heavy quarantined record. The record itself is
+                // retained — id, stats, provenance, `payloadDropped: true` —
+                // so #273 ("only sign-out deletes a quarantined item")
+                // holds; only its buffer is sacrificed, and only at the
+                // moment it would otherwise cost data the user just
+                // produced. Reported through the same loss notice as an
+                // eviction, because it is one.
+                return self.reclaimOldestHeavyQuarantinePayload()
             }
         )
         if result.evictedCount > 0 {
             evictionReporter?.recordEviction()
         }
         return result.persisted
+    }
+
+    /// The disk-full last resort behind `writeWithEviction` (#491 review
+    /// F1): rewrites the oldest quarantine record whose item still carries a
+    /// heavy payload as its stripped copy. Atomic replace via `fileIO.write`
+    /// — if even that small write is refused, the record is left whole and
+    /// the loop stops (`.evictionRefused`): a truly zero-byte disk is beyond
+    /// this valve, and a half-destroyed record must never be the outcome
+    /// (#264). Records that fail to decode are skipped, not touched — the
+    /// #287 rule (never delete or rewrite what we cannot read) outranks
+    /// freeing space.
+    private func reclaimOldestHeavyQuarantinePayload() -> EvictionAttemptOutcome {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let files = ((try? FileManager.default.contentsOfDirectory(
+            at: pendingDir, includingPropertiesForKeys: [.creationDateKey]
+        )) ?? [])
+            .filter { $0.pathExtension == quarantineExtension }
+            .sorted { lhs, rhs in
+                let l = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                let r = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+                return l < r
+            }
+        for file in files {
+            guard
+                let data = try? Data(contentsOf: file),
+                var record = try? decoder.decode(QueueQuarantineRecord<Item>.self, from: data),
+                let stripped = record.item.strippedOfHeavyPayload()
+            else { continue }
+            record.item = stripped
+            record.payloadDropped = true
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            guard let strippedData = try? encoder.encode(record) else { continue }
+            do {
+                try fileIO.write(strippedData, to: file)
+                return .evicted
+            } catch {
+                return .evictionRefused
+            }
+        }
+        return .nothingLeftToEvict
     }
 
     private func oldestOtherFile(excluding url: URL) -> URL? {
@@ -608,15 +729,26 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         failure: UploadFailure,
         attemptCount: Int?
     ) {
+        // #481 / #491 review F1: quarantine is retained indefinitely, so a
+        // queue that opted in sheds the heavy payload NOW rather than
+        // storing it forever — see `stripsPayloadOnQuarantine`'s doc for
+        // which queues opt in and why.
+        var quarantinedItem = item
+        var payloadDropped: Bool?
+        if stripsPayloadOnQuarantine, let stripped = item.strippedOfHeavyPayload() {
+            quarantinedItem = stripped
+            payloadDropped = true
+        }
         let record = QueueQuarantineRecord(
-            item: item,
+            item: quarantinedItem,
             reason: reason,
             stage: stage,
             httpStatus: failure.httpStatus,
             postgrestCode: failure.postgrestCode,
             errorMessage: failure.message,
             attemptCount: attemptCount,
-            quarantinedAt: clock.now()
+            quarantinedAt: clock.now(),
+            payloadDropped: payloadDropped
         )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -651,11 +783,16 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
             .filter { $0.pathExtension == quarantineExtension } ?? []
         let now = clock.now()
         for file in files {
+            // #491 review F2: probe first — this runs at the top of every
+            // drain pass, and for the (typical) not-yet-due majority the
+            // header answers without materializing the payload. Only a
+            // record that is actually due pays for the full decode below.
             guard
                 let data = try? Data(contentsOf: file),
-                let record = try? decoder.decode(QueueQuarantineRecord<Item>.self, from: data),
-                record.reason == .stuckRetrying,
-                QueueRetryPolicy.isStuckRetryDue(quarantinedAt: record.quarantinedAt, now: now)
+                let probe = try? decoder.decode(QueueQuarantineProbe.self, from: data),
+                probe.reason == .stuckRetrying,
+                QueueRetryPolicy.isStuckRetryDue(quarantinedAt: probe.quarantinedAt, now: now),
+                let record = try? decoder.decode(QueueQuarantineRecord<Item>.self, from: data)
             else { continue }
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601

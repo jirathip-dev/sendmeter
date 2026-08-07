@@ -101,4 +101,20 @@ extension PendingRecordingQueue: QueueDepthReporting {
 
 extension PendingTindeqRecording: QueueUploadItem {
     var queueFileId: UUID { row.id }
+
+    /// The sample array IS the recording, so this queue does NOT strip at
+    /// quarantine time (see `stripsPayloadOnQuarantine`'s doc) — this hook
+    /// only fires as `writeWithEviction`'s disk-full last resort, where the
+    /// choice is a 20-times-rejected buffer versus a brand-new rep. The
+    /// summary stats (`durationMs`/`peakKg`/`avgKg`/`sampleCount`) survive,
+    /// so a later resurrected re-attempt still lands the History row's
+    /// headline numbers; `sampleCount` keeps describing what was measured,
+    /// while the empty `samples` (plus the record's `payloadDropped`) says
+    /// the curve itself was sacrificed.
+    func strippedOfHeavyPayload() -> PendingTindeqRecording? {
+        guard !row.samples.isEmpty else { return nil }
+        var stripped = self
+        stripped.row.samples = []
+        return stripped
+    }
 }

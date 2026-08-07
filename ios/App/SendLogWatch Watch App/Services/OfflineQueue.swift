@@ -40,7 +40,11 @@ actor OfflineQueue {
             clock: clock,
             baseDir: baseDir ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],
             sessionRelay: sessionRelay,
-            scheduler: scheduler
+            scheduler: scheduler,
+            // #481 / #491 review F1: `workout.raw` (the 1Hz debug trace,
+            // hundreds of KB with keepRawTrace on) is shed before the
+            // potentially-forever quarantine.
+            stripsPayloadOnQuarantine: true
         )
     }
 
@@ -65,4 +69,14 @@ extension OfflineQueue: QueueDepthReporting {
 
 extension WorkoutSaveBundle: QueueUploadItem {
     var queueFileId: UUID { workout.id }
+
+    /// The 1Hz raw trace is debug telemetry, not training data — the upload
+    /// works with `raw` nil and every user-visible number (attempts, HR,
+    /// effort, session row) survives. nil when there is nothing to shed.
+    func strippedOfHeavyPayload() -> WorkoutSaveBundle? {
+        guard workout.raw != nil else { return nil }
+        var stripped = self
+        stripped.workout.raw = nil
+        return stripped
+    }
 }
