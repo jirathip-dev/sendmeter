@@ -3,9 +3,20 @@
    (what Google actually served for every weight of the old
    css2?family=Inter:wght@400;500;600;700;800 import), declared at the same
    five discrete weights so weight snapping (650→700, 750/850/900→800) and
-   font-display behaviour stay identical. Non-latin scripts fall back to the
-   system font, exactly as they did before (only the latin file was ever
-   fetched). */
+   font-display behaviour stay identical.
+
+   Licence: the file is Google's latin subset of Inter 4.001 — a Modified
+   Version under the SIL Open Font License 1.1 (no Reserved Font Name, so
+   keeping the family name is fine). The licence text ships with the app as
+   public/fonts/OFL.txt (public/ is copied verbatim into dist/; src/assets/
+   is NOT, which is why the shipping copy can't live next to the font) and a
+   repo-side copy sits beside the woff2 in src/assets/fonts/.
+
+   Deliberate trade-off: only the latin subset is vendored. Shipped UI text
+   is entirely latin, but user-entered text (tags, notes, preset names) in
+   latin-ext/Vietnamese/Cyrillic/Greek used to lazy-load the matching Google
+   subset and now falls back to the system font mid-string. Thai was never
+   in any Inter subset and is unaffected either way. */
 @font-face {
   font-family: 'Inter';
   font-style: normal;

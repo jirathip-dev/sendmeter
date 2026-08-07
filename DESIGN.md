@@ -74,7 +74,7 @@ these only tint small text/chips.
 
 ## Typography
 
-Single family: **Inter** (Google Fonts, weights 400/500/600/700/800),
+Single family: **Inter** (self-hosted, SIL OFL 1.1 — see `public/fonts/OFL.txt`; weights 400/500/600/650/700/800),
 `font-variant-numeric: tabular-nums` — numbers are the product; they must
 align and be scannable (readiness 72, ACWR 1.13, 36.8 kg).
 

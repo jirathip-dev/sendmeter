@@ -32,7 +32,9 @@ export default defineConfig({
       includeAssets: ["icon-512.png", "splash-cave-background.webp", "splash-kangaroo.webp"],
       // Default globPatterns is js/css/html only — without woff2 the
       // self-hosted Inter file (#505) would be the one shell asset missing
-      // from the offline precache.
+      // from the offline precache. This list is an allow-list: a new asset
+      // type emitted into dist/assets/ (an svg, a png past assetsInlineLimit)
+      // is silently absent from the precache until its extension is added here.
       workbox: { globPatterns: ["**/*.{js,css,html,woff2}"] },
     }),
   ],
