@@ -312,8 +312,29 @@ final class WorkoutManager: NSObject {
             builder.delegate = self
 
             let start = Date()
-            session.startActivity(with: start)
-            try await builder.beginCollection(at: start)
+            do {
+                // #480: `startActivity` makes the session live in HealthKit
+                // immediately (watchOS now holds it as THE single active
+                // session), but nothing under `self` references it yet. If
+                // `beginCollection` throws next, that session would
+                // otherwise be orphaned — active, but unreachable, because
+                // `self.session` is only assigned below on success, and
+                // `end()` guards on `guard let session`. End + discard it
+                // right here, before rethrowing, so watchOS's one-active-
+                // session slot is freed for the retry the user is about to
+                // make. Deliberately local: this manager is long-lived
+                // across workouts (#476A), so this failure path must never
+                // assign to `self.session`/`self.builder` — a handle set
+                // here would either dangle into workout N+1's render or
+                // need its own cleanup on the next `start()`, which is the
+                // exact bug this closes.
+                session.startActivity(with: start)
+                try await builder.beginCollection(at: start)
+            } catch {
+                session.end()
+                builder.discardWorkout()
+                throw error
+            }
 
             self.session = session
             self.builder = builder
