@@ -10,11 +10,7 @@ import {
 } from "../lib/workoutChartAxis";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import {
-  CHART_TOUCH_TARGET_UNITS,
-  chartColor,
-  chartGradientUrl,
-} from "../lib/chartTheme";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import type { WorkoutAttempt, WorkoutHrSample, WorkoutSource } from "../types";
 
 interface Props {
@@ -51,7 +47,7 @@ export default function WorkoutHrChart({
   showTimeAxis,
   source,
 }: Props) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
   const chartId = useChartId("workout-hr");
 
   const hrSamples = samples?.filter((s) => s.hr !== null) ?? [];
@@ -227,21 +223,27 @@ export default function WorkoutHrChart({
               </g>
             ),
           )}
-          {/* Hover targets */}
-          {hoverIndices.map((i) => (
-            <circle
-              key={i}
-              cx={px(hrSamples[i]!.t)}
-              cy={py(hrSamples[i]!.hr!)}
-              r={CHART_TOUCH_TARGET_UNITS / 2}
-              fill="transparent"
-              role="button"
-              tabIndex={0}
-              aria-label={`${fmtMinSec(hrSamples[i]!.t)}: ${Math.round(hrSamples[i]!.hr!)} bpm`}
-              style={{ cursor: "pointer" }}
-              {...hoverProps(i)}
-            />
-          ))}
+          {/* One deterministic surface owns all scrub gestures. Visual marks
+              are intentionally not interactive, so dense samples cannot steal
+              a touch by DOM order. */}
+          <rect
+            data-chart-hit-surface="workout-heart-rate"
+            className="chart-scrub"
+            x={PAD.left}
+            y={PAD.top}
+            width={W - PAD.left - PAD.right}
+            height={baseline - PAD.top}
+            fill="transparent"
+            role="button"
+            tabIndex={0}
+            aria-label={
+              hovered !== null && hoveredSample
+                ? `${fmtMinSec(hoveredSample.t)}: ${Math.round(hoveredSample.hr!)} bpm`
+                : "Workout heart rate data; use arrow keys to inspect samples"
+            }
+            style={{ cursor: "crosshair" }}
+            {...surfaceProps(hoverIndices, W, (index) => px(hrSamples[index]!.t))}
+          />
           {hovered !== null && hoveredSample && (
             <>
               <line

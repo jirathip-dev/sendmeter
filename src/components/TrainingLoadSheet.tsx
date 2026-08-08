@@ -76,7 +76,7 @@ export default function TrainingLoadSheet({
   sessions: Session[];
   onClose: () => void;
 }) {
-  const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
+  const [hoveredWeek, , , surfaceProps] = useChartHover<number>();
   const weeklySummaryId = useChartId("weekly-load-summary");
   const maxW = Math.max(...weeklyLoads.map((week) => week.total), 1);
   const current = weeklyLoads[weeklyLoads.length - 1]?.total ?? 0;
@@ -134,22 +134,26 @@ export default function TrainingLoadSheet({
         </div>
         <div
           className="chart-scrub"
-          role="group"
-          aria-label="Weekly training load bars"
+          role="button"
+          tabIndex={0}
+          aria-label={
+            hoveredWeek !== null && weeklyLoads[hoveredWeek]
+              ? `${weeklyLoads[hoveredWeek]!.label}: ${weeklyLoads[hoveredWeek]!.total.toLocaleString()} AU`
+              : "Weekly training load data; use arrow keys to inspect weeks"
+          }
           aria-describedby={weeklySummaryId}
           style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 88 }}
+          {...surfaceProps(weeklyLoads.map((_, i) => i), weeklyLoads.length, (i) => i + 0.5)}
         >
           <span id={weeklySummaryId} className="chart-a11y-summary">
-            Each week is a keyboard-accessible data point. Focus a week to hear its
-            total and change from the prior week.
+            Use the weekly load chart's single keyboard surface and arrow keys to
+            inspect each week's total and change from the prior week.
           </span>
           {weeklyLoads.map((week, index) => {
             const delta = index > 0 ? weekDelta(week.total, weeklyLoads[index - 1]!.total) : null;
             return (
-              <button
+              <div
                 key={index}
-                type="button"
-                aria-label={`${week.label}: ${week.total.toLocaleString()} AU${delta ? `, ${Math.abs(delta.pct).toFixed(0)}% ${delta.pct < 0 ? "down" : "up"} from prior week` : ""}`}
                 style={{
                   flex: 1,
                   position: "relative",
@@ -168,7 +172,6 @@ export default function TrainingLoadSheet({
                   appearance: "none",
                   justifyContent: "flex-end",
                 }}
-                {...hoverWeekProps(index)}
               >
                 {hoveredWeek === index && (
                   <ChartTooltip
@@ -210,7 +213,7 @@ export default function TrainingLoadSheet({
                 <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)" }}>
                   {week.label}
                 </span>
-              </button>
+              </div>
             );
           })}
         </div>

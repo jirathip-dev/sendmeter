@@ -5,11 +5,7 @@ import { useSvgScale } from "../hooks/useSvgScale";
 import { useChartId } from "../hooks/useChartId";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import {
-  CHART_TOUCH_TARGET_UNITS,
-  chartColor,
-  chartGradientUrl,
-} from "../lib/chartTheme";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import type { TindeqRecordingMeta, TindeqSample, TindeqSide } from "../types";
 
 interface Props {
@@ -83,7 +79,7 @@ function pickOutlierDots(outliers: number[], py: (v: number) => number, max: num
 /// gradient fill; the session-best rep's median tick is called out in the
 /// warning color, matching `ForceTrendChart`'s "Best" convention.
 export default function RepBoxPlotChart({ recs, samplesById }: Props) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
   // Gradient ids must be unique per chart instance — several tag groups (and
   // therefore several of this component) render at once on the same page.
   const uid = useChartId("rep-box");
@@ -264,18 +260,6 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                     strokeDasharray="2 2"
                     vectorEffect="non-scaling-stroke"
                   />
-                  <rect
-                    x={px(i)}
-                    y={PAD.top}
-                    width={Math.max(CHART_TOUCH_TARGET_UNITS, px(i + 1) - px(i))}
-                    height={H - PAD.top - PAD.bottom}
-                    fill="transparent"
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Rep ${i + 1}: no samples recorded`}
-                    style={{ cursor: "pointer" }}
-                    {...hoverProps(i)}
-                  />
                 </g>
               );
             }
@@ -367,23 +351,28 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                     vectorEffect="non-scaling-stroke"
                   />
                 ))}
-                {/* Hit band: full chart height so a scrub anywhere over this
-                    rep's column selects it. */}
-                <rect
-                  x={px(i)}
-                  y={PAD.top}
-                  width={Math.max(CHART_TOUCH_TARGET_UNITS, px(i + 1) - px(i))}
-                  height={H - PAD.top - PAD.bottom}
-                  fill="transparent"
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Rep ${i + 1}${sideLabel(r.side) ? ` · ${sideLabel(r.side)}` : ""}: median ${s.median.toFixed(1)} kg`}
-                  style={{ cursor: "pointer" }}
-                  {...hoverProps(i)}
-                />
               </g>
             );
           })}
+
+          <rect
+            data-chart-hit-surface="rep-box-plot"
+            className="chart-scrub"
+            x={PAD.left}
+            y={PAD.top}
+            width={W - PAD.left - PAD.right}
+            height={H - PAD.top - PAD.bottom}
+            fill="transparent"
+            role="button"
+            tabIndex={0}
+            aria-label={
+              hovered !== null && hoveredRec
+                ? `Rep ${hovered + 1}${sideLabel(hoveredRec.side) ? ` · ${sideLabel(hoveredRec.side)}` : ""} data`
+                : "Force distribution by repetition; use arrow keys to inspect reps"
+            }
+            style={{ cursor: "crosshair" }}
+            {...surfaceProps(chrono.map((_, i) => i), W, (i) => px(i + 0.5))}
+          />
 
           {hovered !== null && hoveredState?.loaded && hoveredRec && (
             <>

@@ -8,7 +8,6 @@ import {
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
-import { CHART_TOUCH_TARGET_UNITS } from "../lib/chartTheme";
 import ChartTooltip from "./ChartTooltip";
 import type { Session, WorkoutDetail } from "../types";
 
@@ -47,7 +46,7 @@ function BarTrend({
   color: string;
   fmt: (v: number) => string;
 }) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
   const max = Math.max(1, ...rows.map((r) => r.value ?? 0));
   const interactive = rows.some((r) => r.tooltip);
   return (
@@ -55,19 +54,26 @@ function BarTrend({
       role="group"
       aria-label="Workout metric trend"
       style={{ display: "flex", flexDirection: "column", gap: 3 }}
+      {...(interactive
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            "aria-label": hovered !== null && rows[hovered]
+              ? `${rows[hovered]!.label}: ${rows[hovered]!.value !== null ? fmt(rows[hovered]!.value!) : "no data"}`
+              : "Workout metric trend; use arrow keys to inspect rows",
+            ...surfaceProps(rows.map((_, i) => i), rows.length, (i) => i + 0.5),
+          }
+        : {})}
     >
       {rows.map((r, i) => (
-        <button
+        <div
           key={i}
-          type="button"
-          disabled={!interactive}
-          aria-label={`${r.label}: ${r.value !== null ? fmt(r.value) : "no data"}`}
           className={interactive ? "chart-scrub" : undefined}
           style={{
             display: "flex",
             alignItems: "center",
             gap: 6,
-            minHeight: CHART_TOUCH_TARGET_UNITS,
+            minHeight: 44,
             padding: 0,
             border: 0,
             background: "transparent",
@@ -77,7 +83,6 @@ function BarTrend({
             textAlign: "left",
             cursor: interactive ? "pointer" : undefined,
           }}
-          {...(interactive ? hoverProps(i) : {})}
         >
           <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", width: 30, flexShrink: 0 }}>
             {r.label}
@@ -129,7 +134,7 @@ function BarTrend({
           >
             {r.value !== null ? fmt(r.value) : "—"}
           </span>
-        </button>
+        </div>
       ))}
     </div>
   );

@@ -7,11 +7,7 @@ import { ewma } from "../lib/metrics";
 import { daysAgo } from "../lib/dates";
 import ChartTooltip from "./ChartTooltip";
 import ChartDefs from "./ChartDefs";
-import {
-  CHART_TOUCH_TARGET_UNITS,
-  chartColor,
-  chartInstanceId,
-} from "../lib/chartTheme";
+import { chartColor, chartInstanceId } from "../lib/chartTheme";
 import type { HealthMetric } from "../types";
 
 type MetricKey =
@@ -61,7 +57,7 @@ const Y_BASE = 28;
 /// All rows share one X axis (the same last-14-days range, gaps included);
 /// each row overlays short (7d, solid) and long (28d, dashed) EWMA trends.
 export default function RecoveryStatsCard() {
-  const [hovered, hoverProps] = useChartHover<string>();
+  const [hovered, , , surfaceProps] = useChartHover<string>();
   const chartId = useChartId("recovery");
   const realtimeVersion = useRealtimeVersion();
   const metrics = useCancellableFetch<HealthMetric[]>(
@@ -284,22 +280,30 @@ export default function RecoveryStatsCard() {
                   strokeWidth="1.5"
                   vectorEffect="non-scaling-stroke"
                 />
-                {/* Full-height transparent hover targets, one per day slot */}
-                {visibleDays.map((_, i) => (
-                  <rect
-                    key={`h-${i}`}
-                    x={i * SLOT}
-                    width={Math.max(SLOT, CHART_TOUCH_TARGET_UNITS)}
-                    y={0}
-                    height={H}
-                    fill="transparent"
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`${visibleDays[i]} ${spec.label}: ${values[i] !== null ? `${spec.format(values[i]!)} ${spec.unit}` : "no data"}`}
-                    style={{ cursor: "pointer" }}
-                    {...hoverProps(`${spec.key}:${i}`)}
-                  />
-                ))}
+                {/* One chart-level surface avoids overlapping full-height
+                    targets and keeps each row to one keyboard stop. */}
+                <rect
+                  data-chart-hit-surface={`recovery-${spec.key}`}
+                  className="chart-scrub"
+                  x={0}
+                  y={0}
+                  width={W}
+                  height={H}
+                  fill="transparent"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={
+                    hovered?.startsWith(`${spec.key}:`) && hoveredDay !== null
+                      ? `${visibleDays[hoveredDay]} ${spec.label}: ${values[hoveredDay] !== null ? `${spec.format(values[hoveredDay]!)} ${spec.unit}` : "no data"}`
+                      : `${spec.label} data; use arrow keys to inspect days`
+                  }
+                  style={{ cursor: "crosshair" }}
+                  {...surfaceProps(
+                    visibleDays.map((_, i) => `${spec.key}:${i}`),
+                    W,
+                    (i) => (i + 0.5) * SLOT,
+                  )}
+                />
               </svg>
             </div>
           </div>

@@ -12,11 +12,7 @@ import { useChartId } from "../hooks/useChartId";
 import InfoDot from "./InfoDot";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import {
-  CHART_TOUCH_TARGET_UNITS,
-  chartColor,
-  chartGradientUrl,
-} from "../lib/chartTheme";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import {
   curvePeriodStyle,
   type CurvePeriodStyle,
@@ -53,7 +49,7 @@ const H = 130;
 const PAD = { top: 10, bottom: 18, left: 30, right: 8 };
 
 function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Overlay[] }) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
   const chartId = useChartId("force-curve");
   const pts = model.points;
   const tMin = Math.log10(pts[0]!.windowS);
@@ -228,17 +224,6 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           <circle
             cx={px(p.windowS)}
             cy={py(p.kg)}
-            r={CHART_TOUCH_TARGET_UNITS / 2}
-            fill="transparent"
-            role="button"
-            tabIndex={0}
-            aria-label={`${p.windowS}s force ${p.kg.toFixed(1)} kg`}
-            style={{ cursor: "pointer" }}
-            {...hoverProps(i)}
-          />
-          <circle
-            cx={px(p.windowS)}
-            cy={py(p.kg)}
             r={hovered === i ? 5 : 3}
             fill={chartColor("forceSecondary")}
             style={{ pointerEvents: "none", transition: "r 0.1s" }}
@@ -268,6 +253,24 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           strokeWidth={1}
         />
       )}
+      <rect
+        data-chart-hit-surface="force-curve"
+        className="chart-scrub"
+        x={PAD.left}
+        y={PAD.top}
+        width={W - PAD.left - PAD.right}
+        height={H - PAD.top - PAD.bottom}
+        fill="transparent"
+        role="button"
+        tabIndex={0}
+        aria-label={
+          hovered !== null && pts[hovered]
+            ? `${pts[hovered]!.windowS}s force ${pts[hovered]!.kg.toFixed(1)} kg`
+            : "Force duration curve data; use arrow keys to inspect durations"
+        }
+        style={{ cursor: "crosshair" }}
+        {...surfaceProps(pts.map((_, i) => i), W, (i) => px(pts[i]!.windowS))}
+      />
       {hovered !== null && pts[hovered] && (
         <SvgChartTooltip
           x={px(pts[hovered]!.windowS)}
@@ -341,7 +344,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
                 return (
                   <button
                     key={p.label}
-                    className="tag"
+                    className="tag chart-period-chip"
                     disabled={!has}
                     onClick={() =>
                       setActivePeriods((prev) => {
@@ -353,11 +356,13 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
                     }
                     style={{
                       background: active ? style.color : "var(--surface-1)",
-                      color: active ? "#ffffff" : has ? style.color : "var(--ink-faint)",
+                      color: active ? style.foreground : has ? style.color : "var(--ink-faint)",
                       border: `1px solid ${has ? style.color : "var(--border)"}`,
                       opacity: has ? 1 : 0.4,
                       cursor: has ? "pointer" : "default",
                       fontFamily: "Inter, sans-serif",
+                      minHeight: 44,
+                      minWidth: 44,
                     }}
                   >
                     {p.label}

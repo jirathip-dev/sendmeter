@@ -5,7 +5,7 @@ import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { computeTindeqWeeks, selectedTagDays } from "../lib/tindeqConsistency";
 import { fetchHiddenTags, fetchRecordings } from "../lib/repo";
-import { CHART_TOUCH_TARGET_UNITS, chartColor } from "../lib/chartTheme";
+import { chartColor } from "../lib/chartTheme";
 import { useState } from "react";
 import type { TindeqRecordingMeta } from "../types";
 
@@ -23,7 +23,7 @@ export default function ForceConsistencyCard() {
   );
   const hiddenTags = useCancellableFetch<string[]>(fetchHiddenTags, [], realtimeVersion);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
+  const [hoveredWeek, , , surfaceProps] = useChartHover<number>();
 
   // `recordings === null` means "not fetched yet" — must not render as
   // "empty" (CLAUDE.md convention). Computing off `[]` in that case keeps
@@ -51,6 +51,7 @@ export default function ForceConsistencyCard() {
       {tags.length > 0 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
           <button
+            className="chart-filter-chip"
             onClick={() => setSelectedTag(null)}
             style={{
               padding: "4px 10px",
@@ -68,6 +69,7 @@ export default function ForceConsistencyCard() {
           {tags.map((t) => (
             <button
               key={t}
+              className="chart-filter-chip"
               onClick={() => setSelectedTag(t)}
               style={{
                 padding: "4px 10px",
@@ -95,9 +97,15 @@ export default function ForceConsistencyCard() {
       {loaded && hasAny && (
         <div
           className="chart-scrub"
-          role="group"
-          aria-label="Eight-week force consistency bars"
+          role="button"
+          tabIndex={0}
+          aria-label={
+            hoveredWeek !== null && weeks[hoveredWeek]
+              ? `${weeks[hoveredWeek]!.label}: ${barDays[hoveredWeek]} ${barDays[hoveredWeek] === 1 ? "day" : "days"} trained`
+              : "Eight-week force consistency data; use arrow keys to inspect weeks"
+          }
           style={{ display: "flex", gap: 6, alignItems: "flex-end", height: 88 }}
+          {...surfaceProps(weeks.map((_, i) => i), weeks.length, (i) => i + 0.5)}
         >
           {weeks.map((w, i) => {
             const days = barDays[i]!;
@@ -105,10 +113,8 @@ export default function ForceConsistencyCard() {
               ? []
               : Object.entries(w.byTag).sort((a, b) => b[1] - a[1]);
             return (
-              <button
+              <div
                 key={i}
-                type="button"
-                aria-label={`${w.label}: ${days} ${days === 1 ? "day" : "days"} trained`}
                 style={{
                   flex: 1,
                   position: "relative",
@@ -117,7 +123,7 @@ export default function ForceConsistencyCard() {
                   alignItems: "center",
                   gap: 4,
                   height: "100%",
-                  minHeight: CHART_TOUCH_TARGET_UNITS,
+                  minHeight: 44,
                   minWidth: 0,
                   padding: 0,
                   border: 0,
@@ -127,7 +133,6 @@ export default function ForceConsistencyCard() {
                   appearance: "none",
                   justifyContent: "flex-end",
                 }}
-                {...hoverWeekProps(i)}
               >
                 {hoveredWeek === i && (
                   <ChartTooltip
@@ -163,7 +168,7 @@ export default function ForceConsistencyCard() {
                 <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)" }}>
                   {w.label}
                 </span>
-              </button>
+              </div>
             );
           })}
         </div>

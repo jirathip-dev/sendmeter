@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useChartHover } from "../hooks/useChartHover";
 import { useChartId } from "../hooks/useChartId";
 import { ACTIVITY_COLORS, activityColor, activityLabel } from "../lib/activityTypes";
@@ -51,7 +52,7 @@ export default function ContributionHeatmap({
   weeks?: number;
   unit?: string;
 }) {
-  const [hovered, hoverProps] = useChartHover<string>();
+  const [hovered, hoverProps, select] = useChartHover<string>();
   const summaryId = useChartId("contribution-summary");
 
   const { columns, max } = useMemo(() => {
@@ -93,6 +94,25 @@ export default function ContributionHeatmap({
       ? "var(--surface-2)"
       : withAlpha(activityColor(cell.type), LEVEL_ALPHA[level(cell.value)]!);
 
+  const selectableCells = columns.flatMap((column) => column.filter((cell) => !cell.future));
+  const selectedIndex = hovered === null
+    ? -1
+    : selectableCells.findIndex((cell) => cell.key === hovered);
+  const onGridKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (selectableCells.length === 0) return;
+    const index = selectedIndex < 0 ? 0 : selectedIndex;
+    let next: number | null = null;
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = index - 1;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") next = index + 1;
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = selectableCells.length - 1;
+    if (event.key === "Enter" || event.key === " ") next = index;
+    if (next !== null) {
+      event.preventDefault();
+      select(selectableCells[Math.max(0, Math.min(selectableCells.length - 1, next))]!.key);
+    }
+  };
+
   // Activity types that actually appear (for the legend), in the palette order.
   const presentTypes = useMemo(() => {
     const seen = new Set<string>();
@@ -130,8 +150,8 @@ export default function ContributionHeatmap({
       aria-describedby={summaryId}
     >
       <span id={summaryId} className="chart-a11y-summary">
-        Each day is a keyboard-accessible data point. Focus a day to hear its training
-        load and activity type; future days are unavailable.
+        Use the heatmap's single keyboard surface and arrow keys to inspect each day;
+        future days are unavailable.
       </span>
       <div style={{ display: "flex", gap: 5 }}>
         {/* Weekday labels — absolutely pinned to the Mon/Wed/Fri cell-row
@@ -179,6 +199,15 @@ export default function ContributionHeatmap({
           {/* Fluid grid: 1 column per week, square cells, fills the width */}
           <div
             className="chart-scrub"
+            role="grid"
+            tabIndex={0}
+            aria-label={
+              hovered
+                ? `Training load ${hovered}`
+                : "Daily training load; use arrow keys to inspect days"
+            }
+            aria-describedby={summaryId}
+            onKeyDown={onGridKeyDown}
             style={{
               display: "grid",
               gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
@@ -191,6 +220,8 @@ export default function ContributionHeatmap({
               return (
                 <div
                   key={ci}
+                  role="row"
+                  aria-rowindex={ci + 1}
                   style={{
                     display: "grid",
                     gridTemplateRows: "repeat(7, 1fr)",
@@ -198,10 +229,12 @@ export default function ContributionHeatmap({
                   }}
                 >
                   {col.map((cell, di) => (
-                    <button
+                    <div
                       key={cell.key}
-                      type="button"
-                      disabled={cell.future}
+                      role="gridcell"
+                      aria-colindex={di + 1}
+                      aria-selected={hovered === cell.key}
+                      aria-disabled={cell.future}
                       style={{
                         position: "relative",
                         aspectRatio: "1",
@@ -234,7 +267,7 @@ export default function ContributionHeatmap({
                             : `${cell.key} · rest`}
                         </ChartTooltip>
                       )}
-                    </button>
+                    </div>
                   ))}
                 </div>
               );

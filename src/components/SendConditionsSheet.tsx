@@ -87,7 +87,7 @@ function DayComparisonChart({
 }) {
   const max = Math.max(1, ...days, score);
   const todayColor = percentileColor(percentile);
-  const [hoveredIdx, hoverProps] = useChartHover<number>();
+  const [hoveredIdx, , , surfaceProps] = useChartHover<number>();
   // Median of the days plotted — today is excluded, matching the banner's
   // "better than N of the last M days" which also ranks today *against* the
   // history rather than including it.
@@ -104,8 +104,21 @@ function DayComparisonChart({
     >
       <div
         className="chart-scrub"
-        role="group"
+        role="button"
+        tabIndex={0}
+        aria-label={
+          hoveredIdx === days.length
+            ? `Today: send conditions score ${score}`
+            : hoveredIdx !== null
+              ? `${sameHourDaysAgo(hoveredIdx, days.length)} days ago: send conditions score ${days[hoveredIdx]}`
+              : "Same-time-of-day send conditions data; use arrow keys to inspect days"
+        }
         style={{ display: "flex", alignItems: "flex-end", gap: 2, height: "100%", position: "relative" }}
+        {...surfaceProps(
+          days.map((_, i) => i).concat(days.length),
+          days.length + 1.3,
+          (i) => (i < days.length ? i + 0.5 : days.length + 0.65),
+        )}
       >
         {/* Median of the plotted days — the "typical day here" baseline. Dotted
             and muted so it reads as background reference, not as today. */}
@@ -135,10 +148,8 @@ function DayComparisonChart({
           const daysAgo = sameHourDaysAgo(i, days.length);
           const isHovered = hoveredIdx === i;
           return (
-            <button
+            <div
               key={i}
-              type="button"
-              aria-label={`${daysAgo} days ago: send conditions score ${s}`}
               style={{
                 flex: 1,
                 position: "relative",
@@ -155,7 +166,6 @@ function DayComparisonChart({
                 appearance: "none",
                 cursor: "pointer",
               }}
-              {...hoverProps(i)}
             >
               {isHovered && (
                 <ChartTooltip align={i < 5 ? "start" : i > days.length - 5 ? "end" : "center"}>
@@ -174,13 +184,11 @@ function DayComparisonChart({
                   transition: "opacity 0.1s",
                 }}
               />
-            </button>
+            </div>
           );
         })}
         {/* Today's bar, appended on the right — coloured + full opacity so it pops. */}
-        <button
-          type="button"
-          aria-label={`Today: send conditions score ${score}`}
+        <div
           style={{
             flex: 1.3,
             position: "relative",
@@ -197,7 +205,6 @@ function DayComparisonChart({
             appearance: "none",
             cursor: "pointer",
           }}
-          {...hoverProps(days.length)}
         >
           {hoveredIdx === days.length && <ChartTooltip align="end">Today: {score}</ChartTooltip>}
           <div
@@ -214,7 +221,7 @@ function DayComparisonChart({
               transition: "opacity 0.1s",
             }}
           />
-        </button>
+        </div>
         </div>
       {/* Inline end labels, in the reserved gutter — every reference line on
           this chart is identifiable without hovering. */}

@@ -7,11 +7,7 @@ import { useSvgScale } from "../hooks/useSvgScale";
 import { useChartId } from "../hooks/useChartId";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import {
-  CHART_TOUCH_TARGET_UNITS,
-  chartColor,
-  chartGradientUrl,
-} from "../lib/chartTheme";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import type { TindeqRecordingMeta, TindeqSample } from "../types";
 import ReverseActionSetDetail from "./ReverseActionSetDetail";
 
@@ -37,7 +33,7 @@ const H = 80;
 const PAD = { top: 6, right: 6, bottom: 14, left: 26 };
 
 function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
   const chartId = useChartId("recording");
   // The trace spans the full card width: measure the container and use its
   // real width as the viewBox width (a fixed 300px viewBox letterboxed
@@ -126,20 +122,6 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
         strokeWidth="1.5"
         vectorEffect="non-scaling-stroke"
       />
-      {hoverIndices.map((i) => (
-        <circle
-          key={i}
-          cx={px(samples[i]!.t)}
-          cy={py(samples[i]!.kg)}
-          r={CHART_TOUCH_TARGET_UNITS / 2}
-          fill="transparent"
-          role="button"
-          tabIndex={0}
-          aria-label={`${(samples[i]!.t / 1000).toFixed(1)}s: ${samples[i]!.kg.toFixed(1)} kg`}
-          style={{ cursor: "pointer" }}
-          {...hoverProps(i)}
-        />
-      ))}
       {hovered !== null && hoveredSample && (
         <>
           <line
@@ -166,6 +148,24 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
           />
         </>
       )}
+      <rect
+        data-chart-hit-surface="recording-trace"
+        className="chart-scrub"
+        x={PAD.left}
+        y={PAD.top}
+        width={W - PAD.left - PAD.right}
+        height={H - PAD.top - PAD.bottom}
+        fill="transparent"
+        role="button"
+        tabIndex={0}
+        aria-label={
+          hoveredSample
+            ? `${(hoveredSample.t / 1000).toFixed(1)}s: ${hoveredSample.kg.toFixed(1)} kg`
+            : "Force recording trace; use arrow keys to inspect samples"
+        }
+        style={{ cursor: "crosshair" }}
+        {...surfaceProps(hoverIndices, W, (i) => px(samples[i]!.t))}
+      />
     </svg>
     </div>
   );

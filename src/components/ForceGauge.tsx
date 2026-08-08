@@ -154,22 +154,32 @@ export default function ForceGauge({
       attributes: true,
       attributeFilter: ["data-theme"],
     });
-    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
-    const onSchemeChange = () => drawCurrent();
-    if (typeof scheme.addEventListener === "function") {
-      scheme.addEventListener("change", onSchemeChange);
-    } else {
-      scheme.addListener(onSchemeChange);
+    const preferences = [
+      window.matchMedia("(prefers-color-scheme: dark)"),
+      window.matchMedia("(prefers-contrast: more)"),
+    ];
+    const onPreferenceChange = () => drawCurrent();
+    for (const preference of preferences) {
+      if (typeof preference.addEventListener === "function") {
+        preference.addEventListener("change", onPreferenceChange);
+      } else {
+        preference.addListener(onPreferenceChange);
+      }
     }
+    const removePreferenceListeners = () => {
+      for (const preference of preferences) {
+        if (typeof preference.removeEventListener === "function") {
+          preference.removeEventListener("change", onPreferenceChange);
+        } else {
+          preference.removeListener(onPreferenceChange);
+        }
+      }
+    };
     if (!live) {
       drawCurrent();
       return () => {
         themeObserver.disconnect();
-        if (typeof scheme.removeEventListener === "function") {
-          scheme.removeEventListener("change", onSchemeChange);
-        } else {
-          scheme.removeListener(onSchemeChange);
-        }
+        removePreferenceListeners();
       };
     }
     let raf = 0;
@@ -182,11 +192,7 @@ export default function ForceGauge({
     return () => {
       cancelAnimationFrame(raf);
       themeObserver.disconnect();
-      if (typeof scheme.removeEventListener === "function") {
-        scheme.removeEventListener("change", onSchemeChange);
-      } else {
-        scheme.removeListener(onSchemeChange);
-      }
+      removePreferenceListeners();
     };
   }, [live, samplesRef, target]);
 

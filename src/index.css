@@ -93,6 +93,17 @@
   --chart-caution: #DDB13A;
   --chart-alert: #E5743A;
   --chart-reference: #8E8E93;
+  /* Semantic foregrounds are selected per hue so small active chips keep AA
+     contrast instead of assuming white works on yellow/orange fills. */
+  --chart-on-focus: #FFFFFF;
+  --chart-on-health: #1C1C1E;
+  --chart-on-load: #1C1C1E;
+  --chart-on-force: #FFFFFF;
+  --chart-on-force-secondary: #1C1C1E;
+  --chart-on-optimal: #1C1C1E;
+  --chart-on-caution: #1C1C1E;
+  --chart-on-alert: #1C1C1E;
+  --chart-on-reference: #1C1C1E;
   --chart-grid: #E2E2E6;
   --chart-axis: #6E6E73;
   --chart-tooltip: #FFFFFF;
@@ -163,6 +174,15 @@
   --chart-caution: #E8C24E;
   --chart-alert: #F0864C;
   --chart-reference: #A9A9B0;
+  --chart-on-focus: #161618;
+  --chart-on-health: #161618;
+  --chart-on-load: #161618;
+  --chart-on-force: #161618;
+  --chart-on-force-secondary: #161618;
+  --chart-on-optimal: #161618;
+  --chart-on-caution: #161618;
+  --chart-on-alert: #161618;
+  --chart-on-reference: #161618;
   --chart-grid: #3E3E44;
   --chart-axis: #A9A9B0;
   --chart-tooltip: #2C2C31;
@@ -211,6 +231,15 @@
     --chart-caution: #E8C24E;
     --chart-alert: #F0864C;
     --chart-reference: #A9A9B0;
+    --chart-on-focus: #161618;
+    --chart-on-health: #161618;
+    --chart-on-load: #161618;
+    --chart-on-force: #161618;
+    --chart-on-force-secondary: #161618;
+    --chart-on-optimal: #161618;
+    --chart-on-caution: #161618;
+    --chart-on-alert: #161618;
+    --chart-on-reference: #161618;
     --chart-grid: #3E3E44;
     --chart-axis: #A9A9B0;
     --chart-tooltip: #2C2C31;
@@ -236,19 +265,27 @@
 /* Increased contrast is additive: it strengthens quiet axes and bands while
    retaining the same semantic hues and existing labels/shapes. */
 @media (prefers-contrast: more) {
-  /* Match the explicit-light selector's specificity so a later high-contrast
-     preference wins over the base dark-mode declarations. */
-  :root,
-  :root[data-theme="light"] {
+  /* The no-attribute root means OS theme. Keep it in the light branch until
+     the nested system-dark media query below; the old broad `:not(light)`
+     selector incorrectly made system-light high contrast use dark axes. */
+  :root[data-theme="light"],
+  :root:not([data-theme]) {
     --chart-grid: #AFAFB6;
     --chart-axis: #4F4F55;
     --chart-area-opacity: 0.24;
     --chart-band-opacity: 0.2;
   }
-  /* `:root:not([data-theme="light"])` mirrors the OS-dark selector above;
-     without the matching specificity, the OS rule silently wins here. */
-  :root[data-theme="dark"],
-  :root:not([data-theme="light"]) {
+  :root[data-theme="dark"] {
+    --chart-grid: #6A6A72;
+    --chart-axis: #D1D1D7;
+    --chart-area-opacity: 0.28;
+    --chart-band-opacity: 0.22;
+  }
+}
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  /* Explicit themes are unaffected by this media query; only an unthemed
+     root follows the OS dark preference. */
+  :root:not([data-theme]) {
     --chart-grid: #6A6A72;
     --chart-axis: #D1D1D7;
     --chart-area-opacity: 0.28;
@@ -589,6 +626,11 @@ textarea.field { resize: none; }
 
 /* Tag */
 .tag { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: var(--t-eyebrow); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.chart-period-chip, .chart-filter-chip {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 10px;
+}
 
 /* Phase card */
 .phase-card { background: var(--canvas); border: 1px solid var(--card-border); border-radius: 12px; padding: 16px; cursor: pointer; transition: transform 0.15s; margin-bottom: 10px; box-shadow: var(--shadow-card); -webkit-tap-highlight-color: transparent; }
