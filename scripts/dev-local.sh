@@ -22,7 +22,7 @@ VITE_SUPABASE_ANON_KEY=$PUBLISHABLE_KEY
 VITE_DEV_AUTO_LOGIN=true
 EOF
 echo "→ dev server will use local Supabase at $API_URL and auto-login the seeded user"
-echo "→ add ?auth to the app URL to test the sign-in screen"
+echo "→ add ?auth to disable auto-login (cached sessions remain signed in)"
 echo "→ delete .env.development.local to point npm run dev back at hosted Supabase"
 
 exec npm run dev
