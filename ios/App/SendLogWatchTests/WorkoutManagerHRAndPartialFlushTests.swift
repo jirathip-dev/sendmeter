@@ -162,22 +162,62 @@ private actor OrderLog {
     private var events: [String] = []
     private var target: Int?
     private var continuation: CheckedContinuation<[String], Never>?
+    private var timeoutTask: Task<Void, Never>?
+    private var waitToken = 0
 
     func append(_ event: String) {
         events.append(event)
         if let target, events.count >= target {
-            continuation?.resume(returning: events)
-            continuation = nil
-            self.target = nil
+            resumeWait()
         }
     }
 
     func snapshot() -> [String] { events }
 
-    func waitUntilCount(_ n: Int) async -> [String] {
+    /// Event-driven — resumes the instant the nth event lands (no
+    /// scheduling-turn count anywhere on the success path, so it cannot
+    /// lose a race against a lower-QoS producer, the #501 flake) — but
+    /// bounded by wall clock: if a REGRESSION means the event never arrives
+    /// at all (a wedged drain, #501's subject), it resumes with whatever
+    /// has arrived once `timeout` elapses, so the caller fails a clean
+    /// assertion instead of hanging the suite — and, since #500, a paid
+    /// macOS CI run — to `timeout-minutes` with no test report. There is
+    /// deliberately NO unbounded variant to reach for.
+    func waitUntilCount(_ n: Int, orTimeout timeout: Duration) async -> [String] {
+        precondition(continuation == nil, "OrderLog supports one waiter at a time")
         if events.count >= n { return events }
         target = n
-        return await withCheckedContinuation { continuation = $0 }
+        // The token pins the timer to THIS wait: cancellation alone is not
+        // enough, because a cancelled `Task.sleep` returns EARLY, so a
+        // just-cancelled timer could still race `expireWait` into a LATER
+        // wait on the same log and resume it with a partial list (a new
+        // flake, or a false pass on a negative assertion).
+        waitToken &+= 1
+        let token = waitToken
+        return await withCheckedContinuation { c in
+            continuation = c
+            timeoutTask = Task {
+                try? await Task.sleep(for: timeout)
+                await self.expireWait(token)
+            }
+        }
+    }
+
+    private func expireWait(_ token: Int) {
+        guard token == waitToken else { return } // stale timer from an earlier wait
+        resumeWait()
+    }
+
+    /// Single resume path for both arms. Cancelling the timer here is
+    /// hygiene (release the sleep now, not in 10s); the token above is what
+    /// actually makes a stale timer harmless.
+    private func resumeWait() {
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        guard let c = continuation else { return }
+        continuation = nil
+        target = nil
+        c.resume(returning: events)
     }
 }
 
@@ -239,7 +279,7 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
         // Wait until the upload has demonstrably started — this is the
         // point at which unfixed code (no await before returning) would
         // already have raced ahead and returned.
-        _ = await order.waitUntilCount(1)
+        _ = await order.waitUntilCount(1, orTimeout: .seconds(10))
         await gate.release()
         _ = await endDate
         await order.append("stopRecording-returned")
@@ -322,12 +362,15 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
 
         await gate.release() // let the first pass, and the coalesced rerun, run to completion
 
-        let events = await order.waitUntilCount(4) // start:1, commit:1, start:<rerun>, commit:<rerun>
+        let events = await order.waitUntilCount(4, orTimeout: .seconds(10)) // start:1, commit:1, start:<rerun>, commit:<rerun>
 
         let starts = events.filter { $0.hasPrefix("start:") }
         XCTAssertEqual(starts.count, 2, "3 requests while one is in flight must coalesce into exactly 2 runs, not 3: \(events)")
         XCTAssertEqual(events.first, "start:1")
-        XCTAssertEqual(events[1], "commit:1")
+        // Optional access, not `events[1]`: assertion failures are non-fatal,
+        // so on a regression that leaves `events` short a bare subscript
+        // traps the whole test process here instead of finishing the run.
+        XCTAssertEqual(events.dropFirst().first, "commit:1")
         XCTAssertEqual(
             starts.last, "start:3",
             "the coalesced rerun must snapshot state as of when it actually runs (3), not the moment of an earlier skipped request (2)"
@@ -375,16 +418,19 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
 
         // Let workout N's flush finally resolve — its completion handler
         // runs strictly after N+1 has already replaced the drain it was
-        // tied to.
+        // tied to, and bails on the epoch fence WHENEVER it gets scheduled.
+        // Nothing here waits for it: a yield-loop cannot advance a
+        // `.background` detached chain from the MainActor anyway (the #501
+        // flake), and the assertion below holds in both orders — N+1's
+        // drain is fresh, so its flush starts regardless.
         await gate.release()
-        for _ in 0..<50 { await Task.yield() } // let the completion handler run
 
         // N+1's OWN flushing must still work normally — proves the stale
         // handler didn't leave partialFlushDrain/partialFlushTask wedged.
         let order = OrderLog()
         manager.partialUploader = { _ in await order.append("n-plus-1-flush-ran") }
         manager.flushPartial()
-        let events = await order.waitUntilCount(1)
+        let events = await order.waitUntilCount(1, orTimeout: .seconds(10))
         XCTAssertEqual(events, ["n-plus-1-flush-ran"])
     }
 
@@ -429,25 +475,30 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
         XCTAssertTrue(manager.isRunning, "a rejected start must not disturb the still-running workout")
         XCTAssertEqual(manager.startDate, Date(timeIntervalSince1970: 1_700_000_000), "a rejected start must not reset the live workout's startDate")
 
-        // Let workout N's original in-flight flush resolve.
+        // Let workout N's original in-flight flush resolve. Deliberately no
+        // yield-loop here (the #501 flake): the uploader resumes on a
+        // `.background`-priority detached task and its completion handler
+        // then needs a MainActor hop — `Task.yield()` from the MainActor
+        // neither runs nor priority-boosts either of those, so any
+        // yield-counted wait on this chain is a scheduling race the test
+        // lost ~half the time even on an idle machine. If the completion
+        // handler hasn't run yet when the flush below is requested, the
+        // drain answers `.queued` and coalesces it into the rerun — both
+        // orders must deliver exactly one "later-flush-ran".
         await gate.release()
-        for _ in 0..<50 { await Task.yield() } // let the completion handler run
 
         // The load-bearing assertion: workout N (still the SAME, still-live
         // workout — never replaced) must still be able to flush afterward.
-        // Bounded poll rather than `waitUntilCount` deliberately: a wedged
-        // drain means this event NEVER arrives, and an unbounded continuation
-        // wait would hang the test (and any future regression's CI run)
-        // forever instead of failing fast with a clean assertion.
+        // Bounded `waitUntilCount(_:orTimeout:)` rather than the unbounded
+        // wait deliberately: a wedged drain means this event NEVER arrives,
+        // and an unbounded continuation wait would hang the test (and any
+        // future regression's CI run) forever — the timeout turns that into
+        // a clean assertion failure instead, without putting a
+        // scheduling-turn count back on the success path.
         let order = OrderLog()
         manager.partialUploader = { _ in await order.append("later-flush-ran") }
         manager.flushPartial()
-        var events: [String] = []
-        for _ in 0..<50 {
-            events = await order.snapshot()
-            if !events.isEmpty { break }
-            await Task.yield()
-        }
+        let events = await order.waitUntilCount(1, orTimeout: .seconds(10))
         XCTAssertEqual(
             events, ["later-flush-ran"],
             "durable flushing must not be wedged by a start() that was REJECTED (isRunning already true) — only an ACCEPTED start() actually replaces the drain"

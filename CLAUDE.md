@@ -35,8 +35,17 @@ alongside each module (`*.test.ts` in `src/lib` and `src/hooks`). The **Swift** 
   `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App"
   -only-testing:SendLogWatchTests -destination "platform=watchOS Simulator,..."`
   also runs them locally; in CI the `package-tests` job in `ios-ci.yml` runs
-  the same suite on Linux (`swift:6.3` container, #199) and the macOS `swift`
-  job is build-only as a result — the Xcode target stays for local runs.
+  the same suite on Linux (`swift:6.3` container, #199), and the macOS `swift`
+  job runs the **`SendLogWatchTests` Xcode target** on a booted watchOS
+  simulator, unsigned (#500 — before that it was compiled and discarded, never
+  executed in any workflow). What that target *adds* over the Linux job is the
+  app-target-only tests (~77 as of #500: offline queue, pending-recording
+  queue, workout ownership, save path, Tindeq hands-free integration); the
+  rest of the target is `SendLogWatchCore` test files cross-compiled in, which
+  Linux already covers for free. Note the test target is a plain `PBXGroup`,
+  not filesystem-synced: a new test file dropped into
+  `ios/App/SendLogWatchTests/` without a pbxproj edit is **silently absent**
+  from local and CI runs alike — a green check does not prove it ran.
 
 Always run `npm run typecheck && npm run lint && npm test && npm run build` after web changes.
 
@@ -472,11 +481,22 @@ are safe regardless.
   explicitly on pure-data types when making them public.
 - **A green `quality` check says nothing about Swift.** `ci.yml` is lint /
   typecheck / vitest / vite build — all web. Only the `swift` job in `ios-ci.yml`
-  (#178, `paths: ios/**`) compiles the watch and phone targets. An iOS-only PR
+  (#178, `paths: ios/**`) compiles the watch and phone targets, and since #500
+  it also **executes** the `SendLogWatchTests` suite on a watchOS simulator
+  (before that, the suite was compiled and discarded — a green `swift` job said
+  nothing about the queue/ownership/save-path tests). An iOS-only PR
   with `quality=SUCCESS` and no `swift` result is **unverified**; #162 reached
   staging exactly that way, and a missing-argument-order error nearly did again
-  in #196. If the macOS runner is queued, compile locally rather than merge:
-  `xcodebuild build -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -destination "id=<sim udid>" CODE_SIGNING_ALLOWED=NO`.
+  in #196. If the macOS runner is queued, run the suite locally rather than
+  merge (a bare `xcodebuild build` is no longer equivalent to what CI does —
+  it skips every test):
+  `xcodebuild test -project ios/App/App.xcodeproj -scheme "SendLogWatch Watch App" -destination "id=<sim udid>" -only-testing:SendLogWatchTests CODE_SIGNING_ALLOWED=NO`.
+  Still not covered by any CI: the phone App target has no test target of its
+  own, and HealthKit runtime / background delivery / real sensors / Live
+  Activities remain device-only (testing-ladder rung 4) — the suite runs
+  unsigned by design, so nothing in it may ever require the HealthKit
+  entitlement (tests drive seams that stop short of HealthKit, several relying
+  on `requestAuthorization()` throwing in an unsigned host).
 
 - **Tindeq capture flow (intentional).** Both the in-app gauge and the watch set
   **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
