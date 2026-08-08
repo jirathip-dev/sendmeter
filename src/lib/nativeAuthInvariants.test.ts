@@ -507,15 +507,13 @@ function offenseAt(path: string, text: string, index: number): string {
 }
 
 describe("the refreshing accessor is unreachable by construction (#502)", () => {
-  // These assertions are the premises the compiler-enforcement story rests
-  // on (module doc comment). The load-bearing ones are NEGATIVE offender
-  // hunts over RAW file text: with no lexer there is nothing to desync, so
-  // an identifier hidden inside a string, a comment trick, or a regex
-  // literal is still seen, and the worst failure is a LOUD false positive
-  // on a comment — reworded, never engineered around. The one POSITIVE
-  // match is line-anchored and merely a convenience label; if it were ever
-  // satisfied by stray text, the surface allow-list below would still flag
-  // the real, non-private declaration (#502 review F2).
+  // These are secondary premise tripwires, not the load-bearing guarantee:
+  // the compiler is load-bearing for the #502 access boundary. The source
+  // checks are certified only for the named mutation-tested spellings listed
+  // in the module doc comment and HANDOFF.md; novel declaration spellings
+  // remain outside the contract, and a raw-text scan can still miss them.
+  // The positive match is only a label on one façade fact, not independent
+  // or compensating enforcement.
 
   it("each façade holds its client in a `private static let` (line-anchored — a comment quoting this phrase cannot satisfy it)", () => {
     // `^\s*` + `m`: only a line whose first non-whitespace text IS the
