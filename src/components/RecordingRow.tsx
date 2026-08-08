@@ -148,6 +148,9 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
           />
         </>
       )}
+      {/* Values are source indices, so positionForIndex must dereference the
+          selected source sample rather than treating the shortened list's
+          ordinal as a raw sample index. */}
       <rect
         data-chart-hit-surface="recording-trace"
         className="chart-scrub"
@@ -164,7 +167,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
             : "Force recording trace; use arrow keys to inspect samples"
         }
         style={{ cursor: "crosshair" }}
-        {...surfaceProps(hoverIndices, W, (i) => px(samples[i]!.t))}
+        {...surfaceProps(hoverIndices, W, (i) => px(samples[hoverIndices[i]!]!.t))}
       />
     </svg>
     </div>

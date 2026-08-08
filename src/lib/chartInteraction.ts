@@ -35,6 +35,17 @@ export function clientXToChartCoordinate(
   return ((clientX - rect.left) / rect.width) * chartWidth;
 }
 
+export function clientYToChartCoordinate(
+  clientY: number,
+  rect: { top: number; height: number },
+  chartHeight: number,
+): number {
+  if (!Number.isFinite(clientY) || !Number.isFinite(rect.height) || rect.height <= 0) {
+    return 0;
+  }
+  return ((clientY - rect.top) / rect.height) * chartHeight;
+}
+
 export function nearestDatumFromClientX(
   positions: readonly number[],
   clientX: number,
@@ -45,4 +56,57 @@ export function nearestDatumFromClientX(
     positions,
     clientXToChartCoordinate(clientX, rect, chartWidth),
   );
+}
+
+export function nearestDatumFromClientY(
+  positions: readonly number[],
+  clientY: number,
+  rect: { top: number; height: number },
+  chartHeight: number,
+): number | null {
+  return nearestDatumIndex(
+    positions,
+    clientYToChartCoordinate(clientY, rect, chartHeight),
+  );
+}
+
+export interface ChartPoint2D {
+  x: number;
+  y: number;
+}
+
+/** Deterministic nearest-point selection for a dense 2D surface. */
+export function nearestDatumIndex2D(
+  positions: readonly ChartPoint2D[],
+  coordinate: ChartPoint2D,
+): number | null {
+  if (positions.length === 0 || !Number.isFinite(coordinate.x) || !Number.isFinite(coordinate.y)) {
+    return null;
+  }
+  let nearest = 0;
+  let distance = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < positions.length; i += 1) {
+    const point = positions[i]!;
+    const dx = point.x - coordinate.x;
+    const dy = point.y - coordinate.y;
+    const nextDistance = dx * dx + dy * dy;
+    // Strictly less keeps ties stable and independent from paint/DOM order.
+    if (nextDistance < distance) {
+      nearest = i;
+      distance = nextDistance;
+    }
+  }
+  return nearest;
+}
+
+export function nearestDatumFromClientPoint(
+  positions: readonly ChartPoint2D[],
+  client: { x: number; y: number },
+  rect: { left: number; top: number; width: number; height: number },
+  chartSize: { width: number; height: number },
+): number | null {
+  return nearestDatumIndex2D(positions, {
+    x: clientXToChartCoordinate(client.x, rect, chartSize.width),
+    y: clientYToChartCoordinate(client.y, rect, chartSize.height),
+  });
 }

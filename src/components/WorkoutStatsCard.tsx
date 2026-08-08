@@ -61,7 +61,7 @@ function BarTrend({
             "aria-label": hovered !== null && rows[hovered]
               ? `${rows[hovered]!.label}: ${rows[hovered]!.value !== null ? fmt(rows[hovered]!.value!) : "no data"}`
               : "Workout metric trend; use arrow keys to inspect rows",
-            ...surfaceProps(rows.map((_, i) => i), rows.length, (i) => i + 0.5),
+            ...surfaceProps(rows.map((_, i) => i), rows.length, (i) => i + 0.5, "y"),
           }
         : {})}
     >

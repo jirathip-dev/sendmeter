@@ -90,7 +90,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
         }
         style={{ display: "flex", flexDirection: "column", gap: 5 }}
         onClick={(e) => e.stopPropagation()}
-        {...surfaceProps(QUALITIES.map((q) => q.id), QUALITIES.length, (i) => i + 0.5)}
+        {...surfaceProps(QUALITIES.map((q) => q.id), QUALITIES.length, (i) => i + 0.5, "y")}
       >
         {QUALITIES.map((q) => {
           const n = sets[q.id];

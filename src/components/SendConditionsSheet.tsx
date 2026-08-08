@@ -497,10 +497,10 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
       )}
 
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button className="btn-primary" disabled={loading} onClick={onRefresh} style={{ flex: 1 }}>
+        <button className="btn-primary" disabled={loading} onClick={onRefresh} style={{ flex: 1, minHeight: 44 }}>
           {loading ? "Checking…" : cond ? "Refresh" : "Check conditions"}
         </button>
-        <button className="btn-ghost" onClick={onClose} style={{ flex: 1 }}>
+        <button className="btn-ghost" onClick={onClose} style={{ flex: 1, minHeight: 44 }}>
           Close
         </button>
       </div>

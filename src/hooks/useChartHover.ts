@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { selectionHaptic } from "../lib/haptics";
-import { nearestDatumFromClientX } from "../lib/chartInteraction";
+import {
+  nearestDatumFromClientPoint,
+  nearestDatumFromClientX,
+  nearestDatumFromClientY,
+} from "../lib/chartInteraction";
+
+export type ChartAxis = "x" | "y";
 
 /// Pure decision logic for #299: on touch, tapping a chart point leaves its
 /// tooltip up (no hover to clear it — see `onPointerLeave` below), so
@@ -10,15 +16,15 @@ import { nearestDatumFromClientX } from "../lib/chartInteraction";
 /// repo's node-environment vitest setup, same convention as `useTindeq.ts`'s
 /// exported pure helpers — no jsdom dependency needed.
 ///
-/// Design: each `claim(ev)` records the event that a point's own
+/// Design: each `claim(ev)` records the event that this chart surface's
 /// `onPointerDown` just handled. A window-level bubble-phase `pointerdown`
 /// listener then calls `onWindowPointerDown(ev)` for every pointerdown that
 /// reaches it; if `ev` isn't the one just claimed, the tooltip clears. Because
-/// React 19 attaches handlers at the root container, the point's own handler
+/// React 19 attaches handlers at the root container, the surface handler
 /// (which claims the event) always runs before the same event bubbles to
-/// `window`, so a tap that lands on this chart's own point never
-/// self-dismisses, while a tap anywhere else — another chart, blank space,
-/// the nav, or the start of a page scroll — does.
+/// `window`, so a tap that lands on this chart's surface never self-dismisses,
+/// while a tap anywhere else — another chart, blank space, the nav, or the
+/// start of a page scroll — does.
 ///
 /// Known limitation (see `useChartHover` below): this only works because
 /// nothing currently calls `stopPropagation()` on `pointerdown`.
@@ -35,12 +41,12 @@ export function createOutsideClearTracker(clear: () => void) {
 }
 
 /// Shared hover/tap/drag tracking for chart data points. Desktop hovers via
-/// pointerenter/leave. Touch supports **scrubbing**: pointerdown releases the
-/// implicit pointer capture so pointerenter keeps firing on the points the
-/// finger drags across, moving the tooltip live instead of needing a fresh tap
-/// each time. Entering a new point fires a light haptic tick (native only).
-/// Chart hit areas should carry the `.chart-scrub` class (touch-action: pan-y)
-/// so a horizontal drag scrubs instead of being claimed as a page scroll.
+/// pointerenter/leave. Chart-level surfaces use pointer capture while touch
+/// scrubbing, so a drag keeps selecting the nearest datum even when visual
+/// marks are dense or pointer events leave the original geometry. Entering a
+/// new point fires a light haptic tick (native only). Chart hit areas should
+/// carry the `.chart-scrub` class (touch-action: pan-y) so a horizontal drag
+/// scrubs instead of being claimed as a page scroll.
 export function useChartHover<T = number>() {
   const [hovered, setHovered] = useState<T | null>(null);
   const dragging = useRef(false);
@@ -122,8 +128,9 @@ export function useChartHover<T = number>() {
    */
   function surfaceProps(
     values: readonly T[],
-    chartWidth: number,
+    chartExtent: number,
     positionForIndex: (index: number) => number,
+    axis: ChartAxis = "x",
   ) {
     // Compute positions once per render rather than allocating a new array on
     // every pointermove of a live scrub gesture.
@@ -134,12 +141,9 @@ export function useChartHover<T = number>() {
         ? current.ownerSVGElement ?? current
         : current;
       const rect = chartElement.getBoundingClientRect();
-      const index = nearestDatumFromClientX(
-        positions,
-        event.clientX,
-        rect,
-        chartWidth,
-      );
+      const index = axis === "x"
+        ? nearestDatumFromClientX(positions, event.clientX, rect, chartExtent)
+        : nearestDatumFromClientY(positions, event.clientY, rect, chartExtent);
       if (index !== null) select(values[index]!);
     };
 
@@ -162,13 +166,32 @@ export function useChartHover<T = number>() {
         outsideClear.current.claim(event.nativeEvent);
         if (event.pointerType !== "mouse") {
           try {
-            (event.currentTarget as Element).releasePointerCapture(event.pointerId);
+            (event.currentTarget as Element).setPointerCapture(event.pointerId);
           } catch {
-            /* wasn't captured */
+            /* pointer capture is unavailable in some test/webview surfaces */
           }
           dragging.current = true;
         }
         chooseAt(event);
+      },
+      onPointerUp: (event: ReactPointerEvent) => {
+        dragging.current = false;
+        try {
+          (event.currentTarget as Element).releasePointerCapture(event.pointerId);
+        } catch {
+          /* wasn't captured */
+        }
+      },
+      onPointerCancel: (event: ReactPointerEvent) => {
+        dragging.current = false;
+        try {
+          (event.currentTarget as Element).releasePointerCapture(event.pointerId);
+        } catch {
+          /* wasn't captured */
+        }
+      },
+      onLostPointerCapture: () => {
+        dragging.current = false;
       },
       onFocus: () => chooseKeyboard(currentIndex < 0 ? 0 : currentIndex),
       onBlur: () => setHovered(null),
@@ -176,8 +199,13 @@ export function useChartHover<T = number>() {
         if (values.length === 0) return;
         const index = currentIndex < 0 ? 0 : currentIndex;
         let next: number | null = null;
-        if (event.key === "ArrowLeft" || event.key === "ArrowDown") next = index - 1;
-        if (event.key === "ArrowRight" || event.key === "ArrowUp") next = index + 1;
+        if (axis === "y") {
+          if (event.key === "ArrowUp") next = index - 1;
+          if (event.key === "ArrowDown") next = index + 1;
+        } else {
+          if (event.key === "ArrowLeft" || event.key === "ArrowDown") next = index - 1;
+          if (event.key === "ArrowRight" || event.key === "ArrowUp") next = index + 1;
+        }
         if (event.key === "Home") next = 0;
         if (event.key === "End") next = values.length - 1;
         if (event.key === "Enter" || event.key === " ") next = index;
@@ -189,5 +217,72 @@ export function useChartHover<T = number>() {
     };
   }
 
-  return [hovered, hoverProps, select, surfaceProps] as const;
+  /** Pointer-only props for a single 2D grid surface. Keyboard navigation is
+   * intentionally left to the caller because grids have spatial row/column
+   * semantics rather than a single linear order. */
+  function surface2DProps(
+    values: readonly T[],
+    chartSize: { width: number; height: number },
+    positionForIndex: (index: number) => { x: number; y: number },
+  ) {
+    const positions = values.map((_, i) => positionForIndex(i));
+    const chooseAt = (event: ReactPointerEvent) => {
+      const current = event.currentTarget as SVGElement | HTMLElement;
+      const chartElement = "ownerSVGElement" in current
+        ? current.ownerSVGElement ?? current
+        : current;
+      const rect = chartElement.getBoundingClientRect();
+      const index = nearestDatumFromClientPoint(
+        positions,
+        { x: event.clientX, y: event.clientY },
+        rect,
+        chartSize,
+      );
+      if (index !== null) select(values[index]!);
+    };
+    return {
+      onPointerEnter: (event: ReactPointerEvent) => {
+        if (event.pointerType === "mouse") chooseAt(event);
+      },
+      onPointerMove: (event: ReactPointerEvent) => {
+        if (event.pointerType === "mouse" || dragging.current) chooseAt(event);
+      },
+      onPointerLeave: (event: ReactPointerEvent) => {
+        if (event.pointerType === "mouse") setHovered(null);
+      },
+      onPointerDown: (event: ReactPointerEvent) => {
+        outsideClear.current.claim(event.nativeEvent);
+        if (event.pointerType !== "mouse") {
+          try {
+            (event.currentTarget as Element).setPointerCapture(event.pointerId);
+          } catch {
+            /* pointer capture is unavailable in some test/webview surfaces */
+          }
+          dragging.current = true;
+        }
+        chooseAt(event);
+      },
+      onPointerUp: (event: ReactPointerEvent) => {
+        dragging.current = false;
+        try {
+          (event.currentTarget as Element).releasePointerCapture(event.pointerId);
+        } catch {
+          /* wasn't captured */
+        }
+      },
+      onPointerCancel: (event: ReactPointerEvent) => {
+        dragging.current = false;
+        try {
+          (event.currentTarget as Element).releasePointerCapture(event.pointerId);
+        } catch {
+          /* wasn't captured */
+        }
+      },
+      onLostPointerCapture: () => {
+        dragging.current = false;
+      },
+    };
+  }
+
+  return [hovered, hoverProps, select, surfaceProps, surface2DProps] as const;
 }

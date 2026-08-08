@@ -204,7 +204,10 @@
   --overlay: rgba(0,0,0,0.6);
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  /* Only an unthemed root follows the OS. An explicit theme must win even
+     when the OS is dark, and keeping this selector identical to the OS-dark
+     high-contrast branch makes the later contrast tokens win predictably. */
+  :root:not([data-theme]) {
     --bg: #161618;
     --canvas: #232327;
     --card-border: #303034;
@@ -556,7 +559,7 @@ input[type="number"] {
 /* Buttons */
 .btn-primary {
   background: var(--primary); color: #ffffff; border: none;
-  padding: 14px 20px; border-radius: 8px; width: 100%;
+  padding: 14px 20px; min-height: 44px; border-radius: 8px; width: 100%;
   font-family: inherit; font-size: var(--t-base);
   font-weight: 600; letter-spacing: 0.02em; cursor: pointer;
   transition: background 0.15s; -webkit-tap-highlight-color: transparent;
@@ -566,7 +569,7 @@ input[type="number"] {
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 .btn-ghost {
   background: var(--canvas); border: 1px solid var(--border); color: var(--ink-muted);
-  padding: 13px 20px; border-radius: 8px; width: 100%;
+  padding: 13px 20px; min-height: 44px; border-radius: 8px; width: 100%;
   font-family: inherit; font-size: var(--t-base); font-weight: 500; cursor: pointer;
   transition: border-color 0.15s; -webkit-tap-highlight-color: transparent;
 }

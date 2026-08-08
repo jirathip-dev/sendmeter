@@ -222,7 +222,8 @@ export default function RecoveryStatsCard() {
                 role="group"
                 aria-label={`${spec.label} recovery input over the last ${VISIBLE_DAYS} days`}
                 viewBox={`0 0 ${W} ${H}`}
-                style={{ width: "100%", display: "block" }}
+                preserveAspectRatio="none"
+                style={{ width: "100%", height: 44, minHeight: 44, display: "block" }}
               >
                 <ChartDefs instanceId={rowChartId} />
                 {/* Shared-X hover crosshair (mirrors across all rows) */}

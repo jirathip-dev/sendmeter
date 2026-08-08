@@ -226,6 +226,8 @@ export default function WorkoutHrChart({
           {/* One deterministic surface owns all scrub gestures. Visual marks
               are intentionally not interactive, so dense samples cannot steal
               a touch by DOM order. */}
+          {/* Keep the downsampled value (a source index) and its position
+              paired; ordinal positions would drift on long/nonuniform traces. */}
           <rect
             data-chart-hit-surface="workout-heart-rate"
             className="chart-scrub"
@@ -242,7 +244,7 @@ export default function WorkoutHrChart({
                 : "Workout heart rate data; use arrow keys to inspect samples"
             }
             style={{ cursor: "crosshair" }}
-            {...surfaceProps(hoverIndices, W, (index) => px(hrSamples[index]!.t))}
+            {...surfaceProps(hoverIndices, W, (index) => px(hrSamples[hoverIndices[index]!]!.t))}
           />
           {hovered !== null && hoveredSample && (
             <>

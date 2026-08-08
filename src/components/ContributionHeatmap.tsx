@@ -52,7 +52,7 @@ export default function ContributionHeatmap({
   weeks?: number;
   unit?: string;
 }) {
-  const [hovered, hoverProps, select] = useChartHover<string>();
+  const [hovered, , select, , surface2DProps] = useChartHover<string>();
   const summaryId = useChartId("contribution-summary");
 
   const { columns, max } = useMemo(() => {
@@ -94,22 +94,37 @@ export default function ContributionHeatmap({
       ? "var(--surface-2)"
       : withAlpha(activityColor(cell.type), LEVEL_ALPHA[level(cell.value)]!);
 
-  const selectableCells = columns.flatMap((column) => column.filter((cell) => !cell.future));
-  const selectedIndex = hovered === null
-    ? -1
-    : selectableCells.findIndex((cell) => cell.key === hovered);
+  const selectableCells = columns.flatMap((column, ci) =>
+    column.map((cell, di) => ({ cell, ci, di })).filter(({ cell }) => !cell.future),
+  );
+  const selectedCell = hovered === null
+    ? undefined
+    : selectableCells.find(({ cell }) => cell.key === hovered);
+  const selectAt = (ci: number, di: number) => {
+    const cell = columns[ci]?.[di];
+    if (cell && !cell.future) select(cell.key);
+  };
   const onGridKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (selectableCells.length === 0) return;
-    const index = selectedIndex < 0 ? 0 : selectedIndex;
-    let next: number | null = null;
-    if (event.key === "ArrowLeft" || event.key === "ArrowUp") next = index - 1;
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") next = index + 1;
-    if (event.key === "Home") next = 0;
-    if (event.key === "End") next = selectableCells.length - 1;
-    if (event.key === "Enter" || event.key === " ") next = index;
-    if (next !== null) {
-      event.preventDefault();
-      select(selectableCells[Math.max(0, Math.min(selectableCells.length - 1, next))]!.key);
+    const origin = selectedCell ?? selectableCells[0]!;
+    let ci = origin.ci;
+    let di = origin.di;
+    const direction = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 1;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") ci += direction;
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") di += direction;
+    if (event.key === "Home") ci = 0;
+    if (event.key === "End") ci = columns.length - 1;
+    if (event.key === "Enter" || event.key === " ") {
+      ci = origin.ci;
+      di = origin.di;
+    }
+    const isNavigation = event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End" || event.key === "Enter" || event.key === " ";
+    if (!isNavigation) return;
+    event.preventDefault();
+    // Clamp at visual edges and never move into a future/unavailable cell.
+    if (ci >= 0 && ci < columns.length && di >= 0 && di < 7) {
+      const next = columns[ci]![di]!;
+      if (!next.future) selectAt(ci, di);
     }
   };
 
@@ -199,40 +214,60 @@ export default function ContributionHeatmap({
           {/* Fluid grid: 1 column per week, square cells, fills the width */}
           <div
             className="chart-scrub"
+            data-chart-hit-surface="contribution-heatmap"
             role="grid"
             tabIndex={0}
+            aria-rowcount={7}
+            aria-colcount={columns.length}
+            aria-activedescendant={
+              selectedCell ? `${summaryId}-cell-${selectedCell.cell.key}` : undefined
+            }
             aria-label={
-              hovered
-                ? `Training load ${hovered}`
+              selectedCell
+                ? `${selectedCell.cell.key}: ${selectedCell.cell.value > 0 ? `${selectedCell.cell.value} ${unit}${selectedCell.cell.type ? `, ${activityLabel(selectedCell.cell.type)}` : ""}` : "rest"}`
                 : "Daily training load; use arrow keys to inspect days"
             }
             aria-describedby={summaryId}
             onKeyDown={onGridKeyDown}
+            {...surface2DProps(
+              selectableCells.map(({ cell }) => cell.key),
+              { width: columns.length, height: 7 },
+              (index) => {
+                const point = selectableCells[index]!;
+                return { x: point.ci + 0.5, y: point.di + 0.5 };
+              },
+            )}
             style={{
               display: "grid",
               gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
               columnGap: GAP,
+              gridTemplateRows: `repeat(7, auto)`,
+              rowGap: GAP,
+              minHeight: 44,
             }}
           >
-            {columns.map((col, ci) => {
-              const hAlign =
-                ci < columns.length / 3 ? "start" : ci > (columns.length * 2) / 3 ? "end" : "center";
-              return (
-                <div
-                  key={ci}
-                  role="row"
-                  aria-rowindex={ci + 1}
-                  style={{
-                    display: "grid",
-                    gridTemplateRows: "repeat(7, 1fr)",
-                    rowGap: GAP,
-                  }}
-                >
-                  {col.map((cell, di) => (
+            {Array.from({ length: 7 }, (_, di) => (
+              <div
+                key={di}
+                role="row"
+                aria-rowindex={di + 1}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
+                  columnGap: GAP,
+                  gridColumn: "1 / -1",
+                }}
+              >
+                {columns.map((col, ci) => {
+                  const cell = col[di]!;
+                  const hAlign =
+                    ci < columns.length / 3 ? "start" : ci > (columns.length * 2) / 3 ? "end" : "center";
+                  return (
                     <div
                       key={cell.key}
+                      id={`${summaryId}-cell-${cell.key}`}
                       role="gridcell"
-                      aria-colindex={di + 1}
+                      aria-colindex={ci + 1}
                       aria-selected={hovered === cell.key}
                       aria-disabled={cell.future}
                       style={{
@@ -255,7 +290,6 @@ export default function ContributionHeatmap({
                         cursor: cell.future ? "default" : "pointer",
                       }}
                       aria-label={`${cell.key}: ${cell.value > 0 ? `${cell.value} ${unit}${cell.type ? `, ${activityLabel(cell.type)}` : ""}` : "rest"}`}
-                      {...(cell.future ? {} : hoverProps(cell.key))}
                     >
                       {hovered === cell.key && (
                         <ChartTooltip
@@ -268,10 +302,10 @@ export default function ContributionHeatmap({
                         </ChartTooltip>
                       )}
                     </div>
-                  ))}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            ))}
           </div>
         </div>
       </div>
