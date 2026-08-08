@@ -2215,8 +2215,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
 
       {sensorlessLaunchAvailable(status) && <>
         <button
-          className="btn-primary"
-          style={{ marginTop: 10, background: "var(--surface-2)", color: "var(--primary)", border: "1px solid var(--primary)" }}
+          className="btn-secondary"
+          style={{ marginTop: 10 }}
           disabled={!activeProtocol || !pendingTag.trim() || runActive}
           title={!activeProtocol ? "Choose a protocol preset first" : !pendingTag.trim() ? "Add an exercise first" : undefined}
           onClick={() => {
@@ -2486,20 +2486,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button
+              className="btn-danger btn-inline"
               onClick={() => void retryUnqueued()}
               disabled={retryingUnqueued}
-              style={{
-                flex: 1,
-                background: "var(--danger)",
-                border: "none",
-                color: "#fff",
-                padding: "8px 12px",
-                borderRadius: 8,
-                fontSize: "var(--t-xs)",
-                fontWeight: 700,
-                fontFamily: "Inter, sans-serif",
-                cursor: "pointer",
-              }}
+              style={{ flex: 1 }}
             >
               {retryingUnqueued ? "Retrying…" : "Retry"}
             </button>

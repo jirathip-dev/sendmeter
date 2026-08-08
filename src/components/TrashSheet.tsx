@@ -144,20 +144,9 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
           Cancel
         </button>
         <button
+          className="btn-danger btn-inline"
           disabled={busyId === id}
           onClick={() => void handlePurge()}
-          style={{
-            background: "var(--danger)",
-            color: "#ffffff",
-            border: "none",
-            padding: "8px 14px",
-            borderRadius: 8,
-            fontFamily: "Inter, sans-serif",
-            fontSize: "var(--t-xs)",
-            fontWeight: 600,
-            cursor: "pointer",
-            whiteSpace: "nowrap",
-          }}
         >
           {busyId === id ? "Deleting…" : "Delete forever"}
         </button>

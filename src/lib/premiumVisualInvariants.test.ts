@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -8,6 +8,48 @@ const indexHtml = readFileSync(join(SRC, "..", "index.html"), "utf8");
 
 function component(name: string): string {
   return readFileSync(join(SRC, "components", name), "utf8");
+}
+
+function componentSources(): Array<[string, string]> {
+  return readdirSync(join(SRC, "components"), { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".tsx"))
+    .map((entry) => [entry.name, component(entry.name)]);
+}
+
+/**
+ * Extract JSX button opening tags without stopping at object-literal braces in
+ * event handlers/styles. This lets the invariant inspect every semantic
+ * button consumer instead of relying on a hand-maintained file list.
+ */
+function buttonOpeningTags(source: string): string[] {
+  const tags: string[] = [];
+  let cursor = 0;
+  while (true) {
+    const start = source.indexOf("<button", cursor);
+    if (start < 0) return tags;
+
+    let braceDepth = 0;
+    let quote: "'" | '"' | "`" | null = null;
+    let end = start + "<button".length;
+    for (; end < source.length; end += 1) {
+      const character = source[end]!;
+      if (quote) {
+        if (character === quote && source[end - 1] !== "\\") quote = null;
+        continue;
+      }
+      if (character === "'" || character === '"' || character === "`") {
+        quote = character;
+      } else if (character === "{") {
+        braceDepth += 1;
+      } else if (character === "}") {
+        braceDepth = Math.max(0, braceDepth - 1);
+      } else if (character === ">" && braceDepth === 0) {
+        break;
+      }
+    }
+    tags.push(source.slice(start, end + 1));
+    cursor = end + 1;
+  }
 }
 
 /** Return the contents of the first balanced block after a CSS marker. */
@@ -78,6 +120,31 @@ const THEME_TOKENS = [
   "--primary-action-disabled",
   "--primary-action-disabled-shade",
   "--primary-action-text",
+  "--secondary-action-bg",
+  "--secondary-action-bg-shade",
+  "--secondary-action-bg-hover",
+  "--secondary-action-bg-hover-shade",
+  "--secondary-action-bg-active",
+  "--secondary-action-bg-active-shade",
+  "--secondary-action-bg-disabled",
+  "--secondary-action-bg-disabled-shade",
+  "--secondary-action-text",
+  "--secondary-action-text-hover",
+  "--secondary-action-text-active",
+  "--secondary-action-text-disabled",
+  "--secondary-action-border",
+  "--secondary-action-border-hover",
+  "--secondary-action-border-active",
+  "--secondary-action-border-disabled",
+  "--danger-action",
+  "--danger-action-shade",
+  "--danger-action-hover",
+  "--danger-action-hover-shade",
+  "--danger-action-active",
+  "--danger-action-active-shade",
+  "--danger-action-disabled",
+  "--danger-action-disabled-shade",
+  "--danger-action-text",
 ] as const;
 
 type RGB = readonly [number, number, number];
@@ -140,55 +207,124 @@ describe("premium visual language contracts (#517)", () => {
     expect(css).toContain("@media (prefers-color-scheme: dark)");
   });
 
-  it("keeps every primary button state AA-readable across both themes and gradients", () => {
+  it("keeps every semantic button state AA-readable across both themes and gradients", () => {
     const textByTheme = Object.fromEntries(
       Object.entries(themeDeclarations).map(([theme, values]) => [
         theme,
-        hexColor(values["--primary-action-text"]!, `${theme} action text`),
+        {
+          primary: hexColor(values["--primary-action-text"]!, `${theme} primary action text`),
+          secondary: hexColor(values["--secondary-action-text"]!, `${theme} secondary action text`),
+          secondaryHover: hexColor(values["--secondary-action-text-hover"]!, `${theme} secondary hover text`),
+          secondaryActive: hexColor(values["--secondary-action-text-active"]!, `${theme} secondary active text`),
+          secondaryDisabled: hexColor(values["--secondary-action-text-disabled"]!, `${theme} secondary disabled text`),
+          danger: hexColor(values["--danger-action-text"]!, `${theme} danger action text`),
+        },
       ]),
     );
-    const states = [
-      ["--primary-action", "--primary-action-shade"],
-      ["--primary-action-hover", "--primary-action-hover-shade"],
-      ["--primary-action-active", "--primary-action-active-shade"],
-      ["--primary-action-disabled", "--primary-action-disabled-shade"],
-    ] as const;
+    const states = {
+      primary: [
+        ["--primary-action", "--primary-action-shade", "primary"],
+        ["--primary-action-hover", "--primary-action-hover-shade", "primary"],
+        ["--primary-action-active", "--primary-action-active-shade", "primary"],
+        ["--primary-action-disabled", "--primary-action-disabled-shade", "primary"],
+      ],
+      secondary: [
+        ["--secondary-action-bg", "--secondary-action-bg-shade", "secondary"],
+        ["--secondary-action-bg-hover", "--secondary-action-bg-hover-shade", "secondaryHover"],
+        ["--secondary-action-bg-active", "--secondary-action-bg-active-shade", "secondaryActive"],
+        ["--secondary-action-bg-disabled", "--secondary-action-bg-disabled-shade", "secondaryDisabled"],
+      ],
+      danger: [
+        ["--danger-action", "--danger-action-shade", "danger"],
+        ["--danger-action-hover", "--danger-action-hover-shade", "danger"],
+        ["--danger-action-active", "--danger-action-active-shade", "danger"],
+        ["--danger-action-disabled", "--danger-action-disabled-shade", "danger"],
+      ],
+    } as const;
 
     for (const [theme, values] of Object.entries(themeDeclarations)) {
-      for (const [startToken, endToken] of states) {
-        const start = hexColor(values[startToken]!, `${theme} ${startToken}`);
-        const end = hexColor(values[endToken]!, `${theme} ${endToken}`);
-        for (const amount of [0, 0.5, 1]) {
-          expect(
-            contrastRatio(textByTheme[theme]!, mix(start, end, amount)),
-            `${theme} ${startToken}/${endToken} at ${amount}`,
-          ).toBeGreaterThanOrEqual(4.5);
+      for (const [variant, variantStates] of Object.entries(states)) {
+        for (const [startToken, endToken, textToken] of variantStates) {
+          const start = hexColor(values[startToken]!, `${theme} ${startToken}`);
+          const end = hexColor(values[endToken]!, `${theme} ${endToken}`);
+          const text = textByTheme[theme]![textToken];
+          for (let step = 0; step <= 100; step += 1) {
+            const amount = step / 100;
+            expect(
+              contrastRatio(text, mix(start, end, amount)),
+              `${theme} ${variant} ${startToken}/${endToken} at ${amount}`,
+            ).toBeGreaterThanOrEqual(4.5);
+          }
         }
       }
     }
 
     const buttonStyles = css.slice(css.indexOf("/* Buttons */"), css.indexOf(".btn-ghost {"));
-    for (const [selector, startToken, endToken] of [
-      [".btn-primary {", "--primary-action", "--primary-action-shade"],
-      [".btn-primary:hover:not(:disabled):not([aria-disabled=\"true\"]) {", "--primary-action-hover", "--primary-action-hover-shade"],
-      [".btn-primary:active:not(:disabled):not([aria-disabled=\"true\"]) {", "--primary-action-active", "--primary-action-active-shade"],
-      [".btn-primary:disabled,", "--primary-action-disabled", "--primary-action-disabled-shade"],
-    ] as const) {
+    const cssStates = [
+      [".btn-primary {", "--primary-action", "--primary-action-shade", "--primary-action-text"],
+      [".btn-primary:hover:not(:disabled):not([aria-disabled=\"true\"]) {", "--primary-action-hover", "--primary-action-hover-shade", "--primary-action-text"],
+      [".btn-primary:active:not(:disabled):not([aria-disabled=\"true\"]) {", "--primary-action-active", "--primary-action-active-shade", "--primary-action-text"],
+      [".btn-primary:disabled,", "--primary-action-disabled", "--primary-action-disabled-shade", "--primary-action-text"],
+      [".btn-secondary {", "--secondary-action-bg", "--secondary-action-bg-shade", "--secondary-action-text"],
+      [".btn-secondary:hover:not(:disabled):not([aria-disabled=\"true\"]) {", "--secondary-action-bg-hover", "--secondary-action-bg-hover-shade", "--secondary-action-text-hover"],
+      [".btn-secondary:active:not(:disabled):not([aria-disabled=\"true\"]) {", "--secondary-action-bg-active", "--secondary-action-bg-active-shade", "--secondary-action-text-active"],
+      [".btn-secondary:disabled,", "--secondary-action-bg-disabled", "--secondary-action-bg-disabled-shade", "--secondary-action-text-disabled"],
+      [".btn-danger {", "--danger-action", "--danger-action-shade", "--danger-action-text"],
+      [".btn-danger:hover:not(:disabled):not([aria-disabled=\"true\"]) {", "--danger-action-hover", "--danger-action-hover-shade", "--danger-action-text"],
+      [".btn-danger:active:not(:disabled):not([aria-disabled=\"true\"]) {", "--danger-action-active", "--danger-action-active-shade", "--danger-action-text"],
+      [".btn-danger:disabled,", "--danger-action-disabled", "--danger-action-disabled-shade", "--danger-action-text"],
+    ] as const;
+    for (const [selector, startToken, endToken, textToken] of cssStates) {
       const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       expect(buttonStyles, `${selector} background`).toMatch(
         new RegExp(
           `${escapedSelector}[\\s\\S]*?background-image:[^;]*var\\(${startToken}\\)[^;]*var\\(${endToken}\\)`,
         ),
       );
+      expect(buttonStyles, `${selector} text`).toMatch(
+        new RegExp(`${escapedSelector}[\\s\\S]*?color:\\s*var\\(${textToken}\\)`),
+      );
     }
-    expect(buttonStyles).toContain("color: var(--primary-action-text)");
-    expect(css).toContain('.btn-primary:hover:not(:disabled):not([aria-disabled="true"])');
-    expect(css).toContain('.btn-primary:active:not(:disabled):not([aria-disabled="true"])');
-    expect(css).toContain(".btn-primary:disabled,");
-    expect(css).toContain('.btn-primary[aria-disabled="true"]');
-    expect(css).toMatch(/\.btn-primary:disabled,[\s\S]*?opacity:\s*1;/);
+    for (const className of ["btn-primary", "btn-secondary", "btn-danger"]) {
+      expect(css).toContain(`.${className}:hover:not(:disabled):not([aria-disabled="true"])`);
+      expect(css).toContain(`.${className}:active:not(:disabled):not([aria-disabled="true"])`);
+      expect(css).toContain(`.${className}:disabled,`);
+      expect(css).toContain(`.${className}[aria-disabled="true"]`);
+      expect(css).toMatch(new RegExp(`\\.${className}:disabled,[\\s\\S]*?opacity:\\s*1;`));
+      expect(css).toContain(`.${className}:focus-visible`);
+    }
+    expect(css).toContain(".btn-secondary.btn-inline");
+    expect(css).toContain(".btn-danger.btn-inline");
     expect(component("PhoneWorkoutCard.tsx")).not.toContain("style={blockedReason ? { opacity: 0.5 }");
     expect(component("RoutineCard.tsx")).not.toContain("flex: 1, opacity: 0.5");
+  });
+
+  it("keeps every semantic button consumer on the shared recipe", () => {
+    const consumers = componentSources().flatMap(([file, source]) =>
+      buttonOpeningTags(source).map((tag) => ({ file, tag })),
+    );
+    const semanticConsumers = consumers.filter(({ tag }) =>
+      /btn-(?:primary|secondary|danger)\b/.test(tag),
+    );
+
+    expect(semanticConsumers.some(({ tag }) => tag.includes("btn-primary"))).toBe(true);
+    expect(semanticConsumers.some(({ tag }) => tag.includes("btn-secondary"))).toBe(true);
+    expect(semanticConsumers.some(({ tag }) => tag.includes("btn-danger"))).toBe(true);
+
+    for (const { file, tag } of semanticConsumers) {
+      expect(
+        tag,
+        `${file} overrides a shared semantic button with an inline paint property`,
+      ).not.toMatch(/\b(?:background(?:-image|-color)?|color|border(?:-color)?)\s*:/);
+    }
+
+    for (const { file, tag } of consumers) {
+      const inlineDangerFill = /\bbackground(?:-image|-color)?\s*:\s*["'`]?\s*var\(\s*--danger\b\s*\)\s*["'`]?/i.test(tag);
+      expect(
+        inlineDangerFill,
+        `${file} uses an inline danger/white action fill; use .btn-danger instead`,
+      ).toBe(false);
+    }
   });
 
   it("keeps high-contrast light and dark selectors in the intended cascade", () => {

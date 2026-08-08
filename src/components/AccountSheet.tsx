@@ -614,20 +614,9 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                     recording, workout, and health metric. There is no undo.
                   </div>
                   <button
+                    className="btn-danger"
                     disabled={deleting}
                     onClick={() => void runDelete()}
-                    style={{
-                      background: "var(--danger)",
-                      color: "#ffffff",
-                      border: "none",
-                      padding: "13px 20px",
-                      borderRadius: 8,
-                      width: "100%",
-                      fontFamily: "Inter, sans-serif",
-                      fontSize: "var(--t-base)",
-                      fontWeight: 500,
-                      cursor: "pointer",
-                    }}
                   >
                     {deleting ? "Deleting…" : "Yes, delete everything"}
                   </button>

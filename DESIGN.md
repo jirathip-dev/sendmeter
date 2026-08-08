@@ -44,6 +44,8 @@ the one exception; they can't resolve CSS vars, so charts use literal hex).
 | `--ink-faint` | `#8B96AA` | `#7F8CA5` | Tertiary/metadata, axis text |
 | `--primary` | `#5B5FC7` | `#7378E2` | Interaction accent, live force trace, active state, data series |
 | `--primary-action*` | `#4E53B9` → `#6A6E9F` | `#565BC1` → `#656999` | WCAG-AA-safe primary button fills (normal → disabled) |
+| `--secondary-action-*` | cool well + purple text ramp | dark well + light purple text ramp | WCAG-AA-safe outlined/secondary button states |
+| `--danger-action*` | `#A94420` → `#B54D2B` | `#B54D2B` → `#A24627` | WCAG-AA-safe destructive button fills (normal → disabled) |
 | `--primary-hover` | `#4A4EB3` | `#858BEF` | Decorative hover accent |
 | `--primary-accent` | `#4E53B9` | `#A3A8FF` | Primary used as text/underline (readable on the theme bg) |
 | `--info` | `#5964B7` | `#8A95EE` | Tags, secondary data series |
@@ -113,8 +115,12 @@ one place:
   `var(--shadow-card)`. The gradient stays at the edge of the hierarchy; values
   remain solid, highest-contrast content.
 - **Buttons**: `.btn-primary` = a WCAG-AA-safe purple action gradient with
-  white text, tactile pressed/disabled states; `.btn-ghost` is a raised theme
-  control.
+  white text, tactile pressed/disabled states; `.btn-secondary` is the
+  contrast-safe outlined/quiet-well action; `.btn-danger` is the
+  contrast-safe destructive action recipe (never substitute the bright health
+  `--danger` accent for an action fill). `.btn-ghost` is a raised theme
+  control. All three semantic recipes define enabled, hover, active, disabled,
+  focus and forced-colors states; use layout-only inline styles around them.
   `.btn-ghost` on chrome = chrome-border + chrome-ink; inside cards it
   inherits a light variant (`.card .btn-ghost`, `.modal-sheet .btn-ghost`).
 - **Modals**: theme-aware document panels (`.modal-sheet`) with a raised sheet

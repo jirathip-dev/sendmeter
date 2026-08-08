@@ -161,7 +161,7 @@ export default function CadenceOnlyReverseActionFullscreen({
       <div style={{ color: "var(--ink-faint)", fontSize: "var(--t-xs)" }}>
         Equipment resistance · {run.preset.setupNote || "no setup note"}
       </div>
-      <button className="btn-primary" style={{ background: "var(--danger)" }} onClick={() => void stop()}>Emergency stop</button>
+      <button className="btn-danger" onClick={() => void stop()}>Emergency stop</button>
     </> : <div className="card" style={{ margin: "auto 0" }}>
       <div style={{ fontWeight: 850, fontSize: "var(--t-xl)" }}>{stopped ? "Partial protocol saved" : "Protocol complete"}</div>
       <div className="section-sub">Clock-guided dose only; no force capacity evidence was recorded.</div>

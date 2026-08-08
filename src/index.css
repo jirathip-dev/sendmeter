@@ -91,6 +91,36 @@
   --primary-action-disabled: #6A6E9F;
   --primary-action-disabled-shade: #5D6193;
   --primary-action-text: #FFFFFF;
+  /* Secondary outlined actions keep the quiet well while using a dedicated
+     text/border ramp instead of the decorative primary accent. Every fill
+     endpoint stays readable for normal-size labels. */
+  --secondary-action-bg: #EAF0F8;
+  --secondary-action-bg-shade: #DCE5F2;
+  --secondary-action-bg-hover: #DCE5F2;
+  --secondary-action-bg-hover-shade: #CFD9E8;
+  --secondary-action-bg-active: #D3DEED;
+  --secondary-action-bg-active-shade: #C7D2E3;
+  --secondary-action-bg-disabled: #F5F7FB;
+  --secondary-action-bg-disabled-shade: #EEF2F8;
+  --secondary-action-text: #4E53B9;
+  --secondary-action-text-hover: #4449A8;
+  --secondary-action-text-active: #3D429A;
+  --secondary-action-text-disabled: #666A98;
+  --secondary-action-border: #4E53B9;
+  --secondary-action-border-hover: #4449A8;
+  --secondary-action-border-active: #3D429A;
+  --secondary-action-border-disabled: #666A98;
+  /* Destructive fills are intentionally separate from the bright health
+     --danger accent: action labels need a dark enough fill in both themes. */
+  --danger-action: #A94420;
+  --danger-action-shade: #923919;
+  --danger-action-hover: #9F3E1D;
+  --danger-action-hover-shade: #873317;
+  --danger-action-active: #913719;
+  --danger-action-active-shade: #7A2F17;
+  --danger-action-disabled: #B54D2B;
+  --danger-action-disabled-shade: #9A3E22;
+  --danger-action-text: #FFFFFF;
   --info: #5964B7;
   /* Health scale, "cool = good": electric-blue = optimal, yellow = caution,
      orange = alert/high. No red or green anywhere — violet is interaction. */
@@ -180,6 +210,31 @@
   --primary-action-disabled: #656999;
   --primary-action-disabled-shade: #5B5F90;
   --primary-action-text: #FFFFFF;
+  --secondary-action-bg: #273348;
+  --secondary-action-bg-shade: #30415B;
+  --secondary-action-bg-hover: #30415B;
+  --secondary-action-bg-hover-shade: #374A66;
+  --secondary-action-bg-active: #30415B;
+  --secondary-action-bg-active-shade: #3B4E6B;
+  --secondary-action-bg-disabled: #1D2636;
+  --secondary-action-bg-disabled-shade: #253044;
+  --secondary-action-text: #A3A8FF;
+  --secondary-action-text-hover: #B8BDFF;
+  --secondary-action-text-active: #B8BDFF;
+  --secondary-action-text-disabled: #8E94E6;
+  --secondary-action-border: #A3A8FF;
+  --secondary-action-border-hover: #B8BDFF;
+  --secondary-action-border-active: #B8BDFF;
+  --secondary-action-border-disabled: #8E94E6;
+  --danger-action: #B54D2B;
+  --danger-action-shade: #9F3F23;
+  --danger-action-hover: #B84F28;
+  --danger-action-hover-shade: #A44422;
+  --danger-action-active: #A94727;
+  --danger-action-active-shade: #963D21;
+  --danger-action-disabled: #A24627;
+  --danger-action-disabled-shade: #8F3B23;
+  --danger-action-text: #FFFFFF;
   /* Health scale, brighter for dark surfaces */
   --success: #58B8FF;
   --warning: #F0C957;
@@ -238,6 +293,31 @@
     --primary-action-disabled: #656999;
     --primary-action-disabled-shade: #5B5F90;
     --primary-action-text: #FFFFFF;
+    --secondary-action-bg: #273348;
+    --secondary-action-bg-shade: #30415B;
+    --secondary-action-bg-hover: #30415B;
+    --secondary-action-bg-hover-shade: #374A66;
+    --secondary-action-bg-active: #30415B;
+    --secondary-action-bg-active-shade: #3B4E6B;
+    --secondary-action-bg-disabled: #1D2636;
+    --secondary-action-bg-disabled-shade: #253044;
+    --secondary-action-text: #A3A8FF;
+    --secondary-action-text-hover: #B8BDFF;
+    --secondary-action-text-active: #B8BDFF;
+    --secondary-action-text-disabled: #8E94E6;
+    --secondary-action-border: #A3A8FF;
+    --secondary-action-border-hover: #B8BDFF;
+    --secondary-action-border-active: #B8BDFF;
+    --secondary-action-border-disabled: #8E94E6;
+    --danger-action: #B54D2B;
+    --danger-action-shade: #9F3F23;
+    --danger-action-hover: #B84F28;
+    --danger-action-hover-shade: #A44422;
+    --danger-action-active: #A94727;
+    --danger-action-active-shade: #963D21;
+    --danger-action-disabled: #A24627;
+    --danger-action-disabled-shade: #8F3B23;
+    --danger-action-text: #FFFFFF;
     --success: #58B8FF;
     --warning: #F0C957;
     --danger: #F18A50;
@@ -632,6 +712,82 @@ input[type="number"] {
   cursor: default;
   box-shadow: var(--shadow-xs);
 }
+.btn-secondary,
+.btn-danger {
+  padding: 14px 20px; border-radius: var(--radius-control); width: 100%;
+  font-family: inherit; font-size: var(--t-base); font-weight: 600;
+  letter-spacing: 0.02em; cursor: pointer;
+  transition: transform var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-secondary {
+  background: var(--secondary-action-bg);
+  background-image: linear-gradient(135deg, var(--secondary-action-bg), var(--secondary-action-bg-shade));
+  border: 1px solid var(--secondary-action-border);
+  color: var(--secondary-action-text);
+  box-shadow: var(--shadow-xs), inset 0 1px 0 rgba(255,255,255,0.34);
+}
+.btn-secondary:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--secondary-action-bg-hover);
+  background-image: linear-gradient(135deg, var(--secondary-action-bg-hover), var(--secondary-action-bg-hover-shade));
+  border-color: var(--secondary-action-border-hover);
+  color: var(--secondary-action-text-hover);
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.3);
+}
+.btn-secondary:active:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--secondary-action-bg-active);
+  background-image: linear-gradient(135deg, var(--secondary-action-bg-active), var(--secondary-action-bg-active-shade));
+  border-color: var(--secondary-action-border-active);
+  color: var(--secondary-action-text-active);
+  transform: translateY(1px) scale(0.992);
+  box-shadow: var(--shadow-xs), inset 0 1px 0 rgba(255,255,255,0.24);
+}
+.btn-secondary:disabled,
+.btn-secondary[aria-disabled="true"] {
+  background: var(--secondary-action-bg-disabled);
+  background-image: linear-gradient(135deg, var(--secondary-action-bg-disabled), var(--secondary-action-bg-disabled-shade));
+  border-color: var(--secondary-action-border-disabled);
+  color: var(--secondary-action-text-disabled);
+  opacity: 1;
+  cursor: default;
+  box-shadow: var(--shadow-xs);
+}
+.btn-danger {
+  background: var(--danger-action);
+  background-image: linear-gradient(135deg, var(--danger-action), var(--danger-action-shade));
+  border: 1px solid var(--danger-action-shade);
+  color: var(--danger-action-text);
+  box-shadow: 0 5px 12px color-mix(in srgb, var(--danger-action) 24%, transparent), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+.btn-danger:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--danger-action-hover);
+  background-image: linear-gradient(135deg, var(--danger-action-hover), var(--danger-action-hover-shade));
+  border-color: var(--danger-action-hover-shade);
+  box-shadow: 0 7px 16px color-mix(in srgb, var(--danger-action-hover) 30%, transparent), inset 0 1px 0 rgba(255,255,255,0.22);
+}
+.btn-danger:active:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--danger-action-active);
+  background-image: linear-gradient(135deg, var(--danger-action-active), var(--danger-action-active-shade));
+  border-color: var(--danger-action-active-shade);
+  transform: translateY(1px) scale(0.992);
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--danger-action-active) 20%, transparent), inset 0 1px 0 rgba(255,255,255,0.18);
+}
+.btn-danger:disabled,
+.btn-danger[aria-disabled="true"] {
+  background: var(--danger-action-disabled);
+  background-image: linear-gradient(135deg, var(--danger-action-disabled), var(--danger-action-disabled-shade));
+  border-color: var(--danger-action-disabled-shade);
+  color: var(--danger-action-text);
+  opacity: 1;
+  cursor: default;
+  box-shadow: var(--shadow-xs);
+}
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.btn-danger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
 .btn-ghost {
   background: var(--canvas-raised); border: 1px solid var(--border); color: var(--ink-muted);
   padding: 13px 20px; border-radius: var(--radius-control); width: 100%;
@@ -684,6 +840,8 @@ textarea.field { resize: none; }
 .theme-option:active { transform: scale(0.97); }
 /* Small inline button (overrides .btn-ghost full-width for in-row actions) */
 .btn-inline { width: auto; padding: 7px 14px; font-size: var(--t-sm); }
+.btn-secondary.btn-inline,
+.btn-danger.btn-inline { padding: 8px 14px; font-size: var(--t-xs); white-space: nowrap; }
 /* Passkey list row */
 .pk-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--hairline); }
 .pk-row:last-of-type { border-bottom: none; }
@@ -812,6 +970,39 @@ textarea.field { resize: none; }
    selected appearance option, plus a focus ring that survives native color
    substitution. */
 @media (forced-colors: active) {
+  .btn-secondary,
+  .btn-danger {
+    background: ButtonFace;
+    background-image: none;
+    border-color: ButtonText;
+    color: ButtonText;
+  }
+  .btn-secondary:hover:not(:disabled):not([aria-disabled="true"]),
+  .btn-danger:hover:not(:disabled):not([aria-disabled="true"]) {
+    background: Highlight;
+    border-color: Highlight;
+    color: HighlightText;
+  }
+  .btn-secondary:active:not(:disabled):not([aria-disabled="true"]),
+  .btn-danger:active:not(:disabled):not([aria-disabled="true"]) {
+    background: Highlight;
+    border-color: Highlight;
+    color: HighlightText;
+  }
+  .btn-secondary:disabled,
+  .btn-secondary[aria-disabled="true"],
+  .btn-danger:disabled,
+  .btn-danger[aria-disabled="true"] {
+    background: ButtonFace;
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+  .btn-secondary:focus-visible,
+  .btn-danger:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 3px;
+  }
   .theme-option {
     color: ButtonText;
   }
