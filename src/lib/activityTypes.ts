@@ -1,17 +1,17 @@
 import { SESSION_TYPES } from "../constants";
 
 export const ACTIVITY_COLORS: Record<string, string> = {
-  board: "#2E96F0",
-  fingerboard: "#7B83EB",
-  gym: "#5B5FC7",
-  outdoor: "#2FB6C0",
-  arc: "#56C2E6",
-  antagonist: "#9B6BE0",
-  routine: "#D775A6",
-  campus: "#E5743A",
-  tindeq: "#E0913D",
-  auto: "#3DA5F4",
-  custom: "#8E8E93",
+  board: "var(--chart-activity-board)",
+  fingerboard: "var(--chart-activity-fingerboard)",
+  gym: "var(--chart-activity-gym)",
+  outdoor: "var(--chart-activity-outdoor)",
+  arc: "var(--chart-activity-arc)",
+  antagonist: "var(--chart-activity-antagonist)",
+  routine: "var(--chart-activity-routine)",
+  campus: "var(--chart-activity-campus)",
+  tindeq: "var(--chart-activity-tindeq)",
+  auto: "var(--chart-activity-auto)",
+  custom: "var(--chart-activity-custom)",
 };
 
 const DEFAULT_TYPE_COLOR = "#8E8E93";

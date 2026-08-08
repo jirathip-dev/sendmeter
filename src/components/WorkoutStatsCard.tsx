@@ -50,10 +50,16 @@ function BarTrend({
   const max = Math.max(1, ...rows.map((r) => r.value ?? 0));
   const interactive = rows.some((r) => r.tooltip);
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+    <div
+      role="img"
+      aria-label="Workout metric trend"
+      style={{ display: "flex", flexDirection: "column", gap: 3 }}
+    >
       {rows.map((r, i) => (
         <div
           key={i}
+          role="img"
+          aria-label={`${r.label}: ${r.value !== null ? fmt(r.value) : "no data"}`}
           className={interactive ? "chart-scrub" : undefined}
           style={{
             display: "flex",
@@ -91,7 +97,7 @@ function BarTrend({
                   style={{
                     width: `${(r.value / max) * 100}%`,
                     height: "100%",
-                    background: color,
+                    background: `linear-gradient(90deg, color-mix(in srgb, ${color} 55%, var(--canvas)), ${color})`,
                     // Muting (#114) and hover de-emphasis compound: an
                     // unconfirmed bar stays dimmer than a confirmed one either way.
                     opacity:

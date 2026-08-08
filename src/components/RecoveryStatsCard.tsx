@@ -1,10 +1,13 @@
 import { useChartHover } from "../hooks/useChartHover";
+import { useChartId } from "../hooks/useChartId";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { fetchHealthMetrics } from "../lib/repo";
 import { ewma } from "../lib/metrics";
 import { daysAgo } from "../lib/dates";
 import ChartTooltip from "./ChartTooltip";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartInstanceId } from "../lib/chartTheme";
 import type { HealthMetric } from "../types";
 
 type MetricKey =
@@ -55,6 +58,7 @@ const Y_BASE = 28;
 /// each row overlays short (7d, solid) and long (28d, dashed) EWMA trends.
 export default function RecoveryStatsCard() {
   const [hovered, hoverProps] = useChartHover<string>();
+  const chartId = useChartId("recovery");
   const realtimeVersion = useRealtimeVersion();
   const metrics = useCancellableFetch<HealthMetric[]>(
     () => fetchHealthMetrics(FETCH_DAYS),
@@ -109,13 +113,13 @@ export default function RecoveryStatsCard() {
         <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)", display: "flex", gap: 8 }}>
           <span>
             <svg width="14" height="6" style={{ verticalAlign: "middle" }}>
-              <line x1="0" y1="3" x2="14" y2="3" stroke="var(--primary)" strokeWidth="1.5" />
+              <line x1="0" y1="3" x2="14" y2="3" stroke={chartColor("focus")} strokeWidth="1.5" />
             </svg>{" "}
             7d
           </span>
           <span>
             <svg width="14" height="6" style={{ verticalAlign: "middle" }}>
-              <line x1="0" y1="3" x2="14" y2="3" stroke="var(--ink-muted)" strokeWidth="1.2" strokeDasharray="3 2" />
+              <line x1="0" y1="3" x2="14" y2="3" stroke={chartColor("reference")} strokeWidth="1.2" strokeDasharray="3 2" />
             </svg>{" "}
             28d
           </span>
@@ -123,6 +127,7 @@ export default function RecoveryStatsCard() {
       </div>
 
       {rows.map(({ spec, values, short, long }, rowIdx) => {
+        const rowChartId = chartInstanceId(chartId, spec.key);
         // Latest = newest non-null day in the visible window.
         let latest: number | null = null;
         for (let i = values.length - 1; i >= 0; i--) {
@@ -214,9 +219,12 @@ export default function RecoveryStatsCard() {
               )}
               <svg
                 className="chart-scrub"
+                role="img"
+                aria-label={`${spec.label} recovery input over the last ${VISIBLE_DAYS} days`}
                 viewBox={`0 0 ${W} ${H}`}
                 style={{ width: "100%", display: "block" }}
               >
+                <ChartDefs instanceId={rowChartId} />
                 {/* Shared-X hover crosshair (mirrors across all rows) */}
                 {hoveredDay !== null && (
                   <line
@@ -224,7 +232,7 @@ export default function RecoveryStatsCard() {
                     x2={(hoveredDay + 0.5) * SLOT}
                     y1={0}
                     y2={H}
-                    stroke="var(--ink-faint)"
+                    stroke={chartColor("axis")}
                     strokeWidth="1"
                     strokeDasharray="2 2"
                     vectorEffect="non-scaling-stroke"
@@ -258,7 +266,7 @@ export default function RecoveryStatsCard() {
                 <polyline
                   points={linePoints(long)}
                   fill="none"
-                  stroke="var(--ink-muted)"
+                  stroke={chartColor("reference")}
                   strokeWidth="1.2"
                   strokeDasharray="3 2"
                   vectorEffect="non-scaling-stroke"
@@ -268,7 +276,7 @@ export default function RecoveryStatsCard() {
                 <polyline
                   points={linePoints(short)}
                   fill="none"
-                  stroke="var(--primary)"
+                  stroke={chartColor("focus")}
                   strokeWidth="1.5"
                   vectorEffect="non-scaling-stroke"
                 />

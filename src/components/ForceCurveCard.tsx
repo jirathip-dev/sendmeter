@@ -8,8 +8,11 @@ import {
 import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
 import InfoDot from "./InfoDot";
 import SvgChartTooltip from "./SvgChartTooltip";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import type { ForceCapacityModality } from "../types";
 
 export interface GaugeTarget {
@@ -31,15 +34,15 @@ interface Props {
   modality: ForceCapacityModality;
 }
 
-/// One hue per trailing window — hex literals because SVG attributes can't
-/// resolve CSS vars (matches the palette's chart convention).
+/// One hue per trailing window — semantic CSS tokens keep the overlay family
+/// theme-aware while the labels/dashes carry the exact time window.
 const PERIOD_COLORS: Record<string, string> = {
-  "30d": "#2E96F0",
-  "90d": "#7B83EB",
-  "180d": "#DDB13A",
-  "1y": "#E0913D",
-  "2y": "#E5743A",
-  "3y": "#8E8E93",
+  "30d": chartColor("forceSecondary"),
+  "90d": chartColor("load"),
+  "180d": chartColor("caution"),
+  "1y": chartColor("alert"),
+  "2y": chartColor("alert"),
+  "3y": chartColor("reference"),
 };
 
 interface Overlay {
@@ -54,6 +57,7 @@ const PAD = { top: 10, bottom: 18, left: 30, right: 8 };
 
 function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Overlay[] }) {
   const [hovered, hoverProps] = useChartHover<number>();
+  const chartId = useChartId("force-curve");
   const pts = model.points;
   const tMin = Math.log10(pts[0]!.windowS);
   const tMax = Math.log10(Math.max(pts[pts.length - 1]!.windowS, 10));
@@ -95,7 +99,14 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
   const xTicks = [1, 10, 60, 120].filter((t) => Math.log10(t) <= tMax + 0.01);
 
   return (
-    <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+    <svg
+      className="chart-scrub"
+      role="img"
+      aria-label="Force duration curve with quality regions, measured envelope, and confidence band"
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ width: "100%", display: "block" }}
+    >
+      <ChartDefs instanceId={chartId} />
       <g aria-label="Training quality regions">
         {qualityRegions(model, 10 ** tMin, 10 ** tMax, yMax).map((r, i) => (
           <rect
@@ -117,14 +128,14 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
             y1={py(v)}
             x2={W - PAD.right}
             y2={py(v)}
-            style={{ stroke: "var(--hairline)" }}
+            style={{ stroke: chartColor("grid") }}
             strokeWidth={1}
           />
           <text
             x={2}
             y={py(v) + (i === yTicks.length - 1 ? 4 : i === 0 ? -2 : 2.5)}
             fontSize={7.5}
-            style={{ fill: "var(--ink-faint)" }}
+            style={{ fill: chartColor("axis") }}
           >
             {v.toFixed(0)}
             {i === yTicks.length - 1 ? "kg" : ""}
@@ -138,7 +149,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           y1={PAD.top}
           x2={px(t)}
           y2={H - PAD.bottom}
-          style={{ stroke: "var(--hairline)" }}
+          style={{ stroke: chartColor("grid") }}
           strokeWidth={1}
         />
       ))}
@@ -149,7 +160,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
             y1={py(model.cf)}
             x2={W - PAD.right}
             y2={py(model.cf)}
-            stroke="#E0913D"
+            stroke={chartColor("caution")}
             strokeWidth={1}
             strokeDasharray="4 3"
           />
@@ -157,7 +168,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
             x={W - PAD.right}
             y={py(model.cf) - 4}
             fontSize={8}
-            fill="#E0913D"
+            fill={chartColor("caution")}
             textAnchor="end"
           >
             CF {model.cf.toFixed(1)}kg
@@ -171,7 +182,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           cx={px(p.windowS)}
           cy={py(p.kg)}
           r={1.4}
-          fill="#7B83EB"
+          fill={chartColor("forceSecondary")}
           opacity={0.3}
         />
       ))}
@@ -179,8 +190,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
         <polygon
           aria-label="95% bootstrap confidence band"
           points={bandPolygon}
-          fill="#7B83EB"
-          opacity={0.14}
+          fill={chartGradientUrl(chartId, "reference-band")}
         />
       )}
       {/* Curve-shift overlays: each active trailing window's fit (SL-80c) */}
@@ -201,22 +211,31 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           aria-label={`${model.capabilityFit?.family ?? "Measured"} capability curve`}
           points={displayed}
           fill="none"
-          stroke="#5B5FC7"
+          stroke={chartColor("force")}
           strokeWidth={1.5}
           opacity={0.8}
           vectorEffect="non-scaling-stroke"
         />
       )}
       {pts.map((p, i) => (
-        <circle
-          key={p.windowS}
-          cx={px(p.windowS)}
-          cy={py(p.kg)}
-          r={hovered === i ? 5 : 3}
-          fill="#7B83EB"
-          style={{ cursor: "pointer", transition: "r 0.1s" }}
-          {...hoverProps(i)}
-        />
+        <g key={p.windowS} {...hoverProps(i)}>
+          {hovered === i && (
+            <circle
+              cx={px(p.windowS)}
+              cy={py(p.kg)}
+              r={9}
+              fill={chartGradientUrl(chartId, "selected-halo")}
+              aria-hidden="true"
+            />
+          )}
+          <circle
+            cx={px(p.windowS)}
+            cy={py(p.kg)}
+            r={hovered === i ? 5 : 3}
+            fill={chartColor("forceSecondary")}
+            style={{ cursor: "pointer", transition: "r 0.1s" }}
+          />
+        </g>
       ))}
       {xTicks.map((t) => (
         <text
@@ -224,7 +243,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           x={px(t)}
           y={H - 5}
           fontSize={8}
-          style={{ fill: "var(--ink-faint)" }}
+          style={{ fill: chartColor("axis") }}
           textAnchor="middle"
         >
           {t}s
@@ -236,7 +255,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           y1={PAD.top}
           x2={px(pts[hovered]!.windowS)}
           y2={H - PAD.bottom}
-          style={{ stroke: "var(--ink-faint)" }}
+          style={{ stroke: chartColor("axis") }}
           strokeDasharray="2 2"
           strokeWidth={1}
         />

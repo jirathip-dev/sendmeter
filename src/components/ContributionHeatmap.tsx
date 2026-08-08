@@ -13,8 +13,13 @@ const GAP = 2;
 // theme scale — cool blues/teals/purples + warm orange/amber, no red or green.
 const LEVEL_ALPHA = [0, 0.34, 0.55, 0.78, 1]; // index by level 0..4
 
-/// #RRGGBB → rgba() at the given alpha (CSS vars can't take a runtime alpha).
+/// Mix a colour token with transparency without forcing a component to know
+/// the current light/dark value. Legacy hex colours still work for callers
+/// that pass one directly.
 function withAlpha(hex: string, a: number): string {
+  if (hex.startsWith("var(")) {
+    return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`;
+  }
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
@@ -117,7 +122,7 @@ export default function ContributionHeatmap({
   }, [columns]);
 
   return (
-    <div>
+    <div role="img" aria-label={`Training load contribution heatmap for ${columns.length} weeks`}>
       <div style={{ display: "flex", gap: 5 }}>
         {/* Weekday labels — absolutely pinned to the Mon/Wed/Fri cell-row
             centers so they track the (tiny, fluid) grid rows. A text-sized grid
@@ -197,6 +202,8 @@ export default function ContributionHeatmap({
                         outline: hovered === cell.key ? "1.5px solid var(--ink)" : "none",
                         cursor: cell.future ? "default" : "pointer",
                       }}
+                      role="img"
+                      aria-label={`${cell.key}: ${cell.value > 0 ? `${cell.value} ${unit}${cell.type ? `, ${activityLabel(cell.type)}` : ""}` : "rest"}`}
                       {...(cell.future ? {} : hoverProps(cell.key))}
                     >
                       {hovered === cell.key && (

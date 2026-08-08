@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
 import { dateStr } from "../lib/dates";
 import {
   dailyBoxStats,
@@ -12,6 +13,8 @@ import {
 import { fetchWeightHistory } from "../lib/repo";
 import BoxChip from "./BoxChip";
 import SvgChartTooltip from "./SvgChartTooltip";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import type { ForceCapacityModality, TindeqRecordingMeta, TindeqSide } from "../types";
 
 interface Props {
@@ -89,6 +92,7 @@ function Chart({
   unit: string;
 }) {
   const [hovered, hoverProps] = useChartHover<number>();
+  const chartId = useChartId("force-trend");
   const allTs = all.map((r) => Date.parse(r.recordedAt));
   const tMin = Math.min(days[0]!.t, allTs[0] ?? days[0]!.t);
   const tMax = Math.max(days[days.length - 1]!.t, tMin + 1);
@@ -143,7 +147,14 @@ function Chart({
   );
 
   return (
-    <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+    <svg
+      className="chart-scrub"
+      role="img"
+      aria-label={`Force trend distribution by training day in ${unit}`}
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ width: "100%", display: "block" }}
+    >
+      <ChartDefs instanceId={chartId} />
       {/* y-axis gridlines */}
       {yTicks.map((v, i) => (
         <g key={i}>
@@ -152,14 +163,14 @@ function Chart({
             y1={py(v)}
             x2={W - PAD.right}
             y2={py(v)}
-            style={{ stroke: "var(--hairline)" }}
+            style={{ stroke: chartColor("grid") }}
             strokeWidth={1}
           />
           <text
             x={2}
             y={py(v) + (i === 0 ? -2 : i === yTicks.length - 1 ? 7 : 2.5)}
             fontSize={7.5}
-            style={{ fill: "var(--ink-faint)" }}
+              style={{ fill: chartColor("axis") }}
           >
             {v.toFixed(0)}
             {i === yTicks.length - 1 ? unit : ""}
@@ -173,7 +184,7 @@ function Chart({
           cx={px(allTs[i]!)}
           cy={py(r.val)}
           r={1.8}
-          fill="#7B83EB"
+          fill={chartColor("forceSecondary")}
           opacity={0.3}
         />
       ))}
@@ -185,7 +196,7 @@ function Chart({
         const cx = px(d.t);
         const isPr = i === prIdx;
         const isHovered = hovered === i;
-        const color = isPr ? "#DDB13A" : "#5B5FC7";
+        const color = isPr ? chartColor("caution") : chartColor("force");
         const outlierDots = pickOutlierDots(s.outliers, py, MAX_OUTLIER_DOTS);
         return (
           <g key={d.date} opacity={hovered !== null && !isHovered ? 0.55 : 1}>
@@ -195,7 +206,7 @@ function Chart({
               y1={py(s.whiskerLo)}
               x2={cx}
               y2={py(s.whiskerHi)}
-              stroke="var(--ink-faint)"
+              stroke={chartColor("axis")}
               strokeOpacity={0.7}
               strokeWidth={1}
               vectorEffect="non-scaling-stroke"
@@ -205,7 +216,7 @@ function Chart({
               y1={py(s.whiskerLo)}
               x2={cx + capW / 2}
               y2={py(s.whiskerLo)}
-              stroke="var(--ink-faint)"
+              stroke={chartColor("axis")}
               strokeOpacity={0.7}
               strokeWidth={1}
               vectorEffect="non-scaling-stroke"
@@ -215,7 +226,7 @@ function Chart({
               y1={py(s.whiskerHi)}
               x2={cx + capW / 2}
               y2={py(s.whiskerHi)}
-              stroke="var(--ink-faint)"
+              stroke={chartColor("axis")}
               strokeOpacity={0.7}
               strokeWidth={1}
               vectorEffect="non-scaling-stroke"
@@ -227,7 +238,7 @@ function Chart({
               width={boxW}
               height={Math.max(0.5, py(s.q1) - py(s.q3))}
               rx={2}
-              fill={color}
+              fill={isPr ? color : chartGradientUrl(chartId, "force-area")}
               fillOpacity={isHovered ? 0.32 : 0.22}
               stroke={color}
               strokeWidth={isHovered ? 1.5 : 1}
@@ -252,7 +263,7 @@ function Chart({
                 cy={py(v)}
                 r={1.3}
                 fill="none"
-                stroke="var(--ink-faint)"
+                stroke={chartColor("axis")}
                 strokeOpacity={0.6}
                 strokeWidth={1}
                 vectorEffect="non-scaling-stroke"
@@ -278,19 +289,19 @@ function Chart({
           x={Math.min(px(days[prIdx]!.t), W - 18)}
           y={Math.max(py(days[prIdx]!.best) - 8, 8)}
           fontSize={8}
-          fill="#DDB13A"
+          fill={chartColor("caution")}
         >
           PR
         </text>
       )}
-      <text x={PAD.left} y={H - 4} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
+      <text x={PAD.left} y={H - 4} fontSize={8} style={{ fill: chartColor("axis") }}>
         {fmtDate(tMin)}
       </text>
       <text
         x={W - PAD.right}
         y={H - 4}
         fontSize={8}
-        style={{ fill: "var(--ink-faint)" }}
+        style={{ fill: chartColor("axis") }}
         textAnchor="end"
       >
         {fmtDate(tMax)}
@@ -301,7 +312,7 @@ function Chart({
           y1={PAD.top}
           x2={px(hoveredD.t)}
           y2={H - PAD.bottom}
-          style={{ stroke: "var(--ink-faint)" }}
+          style={{ stroke: chartColor("axis") }}
           strokeDasharray="2 2"
           strokeWidth={1}
         />

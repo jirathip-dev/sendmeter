@@ -5,6 +5,7 @@ import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { computeTindeqWeeks, selectedTagDays } from "../lib/tindeqConsistency";
 import { fetchHiddenTags, fetchRecordings } from "../lib/repo";
+import { chartColor } from "../lib/chartTheme";
 import { useState } from "react";
 import type { TindeqRecordingMeta } from "../types";
 
@@ -94,6 +95,8 @@ export default function ForceConsistencyCard() {
       {loaded && hasAny && (
         <div
           className="chart-scrub"
+          role="img"
+          aria-label="Eight-week force consistency bars"
           style={{ display: "flex", gap: 6, alignItems: "flex-end", height: 88 }}
         >
           {weeks.map((w, i) => {
@@ -135,10 +138,12 @@ export default function ForceConsistencyCard() {
                   {days}
                 </span>
                 <div
+                  role="img"
+                  aria-label={`${w.label}: ${days} ${days === 1 ? "day" : "days"} trained`}
                   style={{
                     width: "100%",
                     height: Math.max((days / 7) * 64, 2),
-                    background: i === weeks.length - 1 ? "var(--success)" : "var(--border)",
+                    background: `linear-gradient(180deg, color-mix(in srgb, ${i === weeks.length - 1 ? chartColor("optimal") : chartColor("forceSecondary")} 58%, var(--canvas)), ${i === weeks.length - 1 ? chartColor("optimal") : chartColor("forceSecondary")})`,
                     borderRadius: 3,
                     opacity: hoveredWeek === null || hoveredWeek === i ? 1 : 0.5,
                     boxShadow: hoveredWeek === i ? "0 0 0 1.5px var(--ink)" : "none",

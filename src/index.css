@@ -81,6 +81,35 @@
   --warning: #DDB13A;  /* caution (yellow) */
   --danger: #E5743A;   /* alert / high / destructive / error (orange) */
   --orange: #E0913D;   /* chart accent (CF line, power) */
+  /* Shared chart semantics (#516). Charts use these names instead of
+     component-local colour literals so light/dark/contrast modes keep the
+     same meaning. Opacity stays restrained and is tuned once here. */
+  --chart-focus: #5B5FC7;
+  --chart-health: #2E96F0;
+  --chart-load: #7B83EB;
+  --chart-force: #5B5FC7;
+  --chart-force-secondary: #2E96F0;
+  --chart-optimal: #2E96F0;
+  --chart-caution: #DDB13A;
+  --chart-alert: #E5743A;
+  --chart-reference: #8E8E93;
+  --chart-grid: #E2E2E6;
+  --chart-axis: #6E6E73;
+  --chart-tooltip: #FFFFFF;
+  --chart-tooltip-border: #D8D8DC;
+  --chart-activity-board: #2E96F0;
+  --chart-activity-fingerboard: #7B83EB;
+  --chart-activity-gym: #5B5FC7;
+  --chart-activity-outdoor: #218E98;
+  --chart-activity-arc: #1682A5;
+  --chart-activity-antagonist: #7752A8;
+  --chart-activity-routine: #A94D7D;
+  --chart-activity-campus: #C96032;
+  --chart-activity-tindeq: #B96C2C;
+  --chart-activity-auto: #2A82C5;
+  --chart-activity-custom: #6E6E73;
+  --chart-area-opacity: 0.16;
+  --chart-band-opacity: 0.12;
   /* Layered elevation + a faint top highlight (subtle skeuomorphism) */
   --shadow-card: 0 1px 2px rgba(28,28,30,0.06), 0 8px 24px rgba(28,28,30,0.08), inset 0 1px 0 rgba(255,255,255,0.7);
   /* Iridescent hairline gradient shared by cards + floating chrome — stops
@@ -125,6 +154,32 @@
   --warning: #E8C24E;
   --danger: #F0864C;
   --orange: #E8A24D;
+  --chart-focus: #9296EE;
+  --chart-health: #4FB0FF;
+  --chart-load: #9296EE;
+  --chart-force: #9296EE;
+  --chart-force-secondary: #4FB0FF;
+  --chart-optimal: #4FB0FF;
+  --chart-caution: #E8C24E;
+  --chart-alert: #F0864C;
+  --chart-reference: #A9A9B0;
+  --chart-grid: #3E3E44;
+  --chart-axis: #A9A9B0;
+  --chart-tooltip: #2C2C31;
+  --chart-tooltip-border: #4A4A50;
+  --chart-activity-board: #4FB0FF;
+  --chart-activity-fingerboard: #9296EE;
+  --chart-activity-gym: #9296EE;
+  --chart-activity-outdoor: #65D2DB;
+  --chart-activity-arc: #66D5EF;
+  --chart-activity-antagonist: #B18AE8;
+  --chart-activity-routine: #E39AC3;
+  --chart-activity-campus: #F0864C;
+  --chart-activity-tindeq: #E8A24D;
+  --chart-activity-auto: #77C8F5;
+  --chart-activity-custom: #A9A9B0;
+  --chart-area-opacity: 0.2;
+  --chart-band-opacity: 0.16;
   --shadow-card: 0 1px 2px rgba(0,0,0,0.30), 0 10px 28px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
   --overlay: rgba(0,0,0,0.6);
 }
@@ -147,8 +202,51 @@
     --warning: #E8C24E;
     --danger: #F0864C;
     --orange: #E8A24D;
+    --chart-focus: #9296EE;
+    --chart-health: #4FB0FF;
+    --chart-load: #9296EE;
+    --chart-force: #9296EE;
+    --chart-force-secondary: #4FB0FF;
+    --chart-optimal: #4FB0FF;
+    --chart-caution: #E8C24E;
+    --chart-alert: #F0864C;
+    --chart-reference: #A9A9B0;
+    --chart-grid: #3E3E44;
+    --chart-axis: #A9A9B0;
+    --chart-tooltip: #2C2C31;
+    --chart-tooltip-border: #4A4A50;
+    --chart-activity-board: #4FB0FF;
+    --chart-activity-fingerboard: #9296EE;
+    --chart-activity-gym: #9296EE;
+    --chart-activity-outdoor: #65D2DB;
+    --chart-activity-arc: #66D5EF;
+    --chart-activity-antagonist: #B18AE8;
+    --chart-activity-routine: #E39AC3;
+    --chart-activity-campus: #F0864C;
+    --chart-activity-tindeq: #E8A24D;
+    --chart-activity-auto: #77C8F5;
+    --chart-activity-custom: #A9A9B0;
+    --chart-area-opacity: 0.2;
+    --chart-band-opacity: 0.16;
     --shadow-card: 0 1px 2px rgba(0,0,0,0.30), 0 10px 28px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
     --overlay: rgba(0,0,0,0.6);
+  }
+}
+
+/* Increased contrast is additive: it strengthens quiet axes and bands while
+   retaining the same semantic hues and existing labels/shapes. */
+@media (prefers-contrast: more) {
+  :root {
+    --chart-grid: #AFAFB6;
+    --chart-axis: #4F4F55;
+    --chart-area-opacity: 0.24;
+    --chart-band-opacity: 0.2;
+  }
+  :root[data-theme="dark"] {
+    --chart-grid: #6A6A72;
+    --chart-axis: #D1D1D7;
+    --chart-area-opacity: 0.28;
+    --chart-band-opacity: 0.22;
   }
 }
 
@@ -689,7 +787,13 @@ textarea.field { resize: none; }
 
 /* Chart interaction areas: a horizontal finger drag scrubs the tooltip instead
    of being claimed as a page scroll; vertical drags still scroll the page. */
-.chart-scrub { touch-action: pan-y; }
+.chart-scrub {
+  /* Horizontal movement belongs to the chart; vertical movement remains a
+     page/sheet scroll. Keep this boundary on every interactive chart. */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
 
 /* Card heading — larger/heavier than the 9px eyebrow so the metric a card
    carries reads as important at a glance (SL-60 / SL-64). */

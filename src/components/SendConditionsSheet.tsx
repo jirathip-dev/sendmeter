@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import Sheet from "./Sheet";
 import ChartTooltip from "./ChartTooltip";
 import { useChartHover } from "../hooks/useChartHover";
+import { chartColor } from "../lib/chartTheme";
 import { median } from "../lib/boxplot";
 import {
   humidityFrictionScore,
@@ -96,7 +97,11 @@ function DayComparisonChart({
   // Each label goes on the side facing away from the other line.
   const todayAbove = med === null || score >= med;
   return (
-    <div style={{ position: "relative", height: CHART_H, paddingRight: CHART_LABEL_GUTTER }}>
+    <div
+      role="img"
+      aria-label="Same-time-of-day send conditions comparison"
+      style={{ position: "relative", height: CHART_H, paddingRight: CHART_LABEL_GUTTER }}
+    >
       <div
         className="chart-scrub"
         style={{ display: "flex", alignItems: "flex-end", gap: 2, height: "100%", position: "relative" }}
@@ -110,7 +115,7 @@ function DayComparisonChart({
               left: 0,
               right: 0,
               bottom: `${medPct}%`,
-              borderTop: "1px dotted var(--ink-muted)",
+              borderTop: `1px dotted ${chartColor("reference")}`,
             }}
           />
         )}
@@ -151,7 +156,7 @@ function DayComparisonChart({
                   width: "100%",
                   height: `${(s / max) * 100}%`,
                   minHeight: s > 0 ? 2 : 0,
-                  background: "var(--ink-faint)",
+                  background: `linear-gradient(180deg, color-mix(in srgb, ${chartColor("reference")} 45%, var(--canvas)), ${chartColor("reference")})`,
                   opacity: hoveredIdx === null ? 0.55 : isHovered ? 0.85 : 0.35,
                   borderRadius: 2,
                   boxShadow: isHovered ? "0 0 0 1.5px var(--ink)" : "none",
@@ -179,7 +184,7 @@ function DayComparisonChart({
               width: "100%",
               height: `${(score / max) * 100}%`,
               minHeight: score > 0 ? 2 : 0,
-              background: todayColor,
+            background: `linear-gradient(180deg, color-mix(in srgb, ${todayColor} 62%, var(--canvas)), ${todayColor})`,
               outline: `2px solid ${todayColor}`,
               outlineOffset: 1,
               borderRadius: 2,

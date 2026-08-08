@@ -1,4 +1,5 @@
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
 import { fmtHoldS } from "../lib/protocol";
 import type { PresetRefs } from "../lib/protocol";
 import {
@@ -10,6 +11,8 @@ import {
 } from "../lib/presetPlan";
 import type { PlanPreset } from "../lib/presetPlan";
 import type { ResolvedAlternatingPlanSet } from "../lib/presetPlan";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 
 const W = 320;
 const H = 64;
@@ -31,6 +34,7 @@ interface Props {
 /// editor form and the fullscreen READY block so both read off the same
 /// `buildPresetPlan`.
 export default function PresetPlanChart({ preset, refs, resolvedAlternating }: Props) {
+  const chartId = useChartId("preset-plan");
   const rows = buildPresetPlan(preset, refs, resolvedAlternating);
   const metric = planMetric(rows);
   const holdValue = (row: (typeof rows)[number]) =>
@@ -60,8 +64,14 @@ export default function PresetPlanChart({ preset, refs, resolvedAlternating }: P
 
   return (
     <div style={{ marginTop: 10 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }} aria-hidden="true">
-        <line x1={PAD.left} y1={baseline} x2={W - PAD.right} y2={baseline} stroke="var(--border)" strokeWidth={1} />
+      <svg
+        role="img"
+        aria-label="Preset plan progression chart"
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ width: "100%", display: "block" }}
+      >
+        <ChartDefs instanceId={chartId} />
+        <line x1={PAD.left} y1={baseline} x2={W - PAD.right} y2={baseline} stroke={chartColor("grid")} strokeWidth={1} />
         {rows.map((r, i) => {
           const x = PAD.left + i * (barW + gap);
           const cx = x + barW / 2;
@@ -105,18 +115,18 @@ export default function PresetPlanChart({ preset, refs, resolvedAlternating }: P
                 y={barTop}
                 width={barW}
                 height={Math.max(baseline - barTop, 1)}
-                fill="var(--success)"
+                fill={chartGradientUrl(chartId, "load-area")}
                 opacity={0.75}
                 rx={2}
               />
               {showHold && topLabel &&
                 ((!handHoldsDiffer && !handTargetsDiffer) || compactHandLabelFits) && (
-                <text x={cx} y={barTop - 3} textAnchor="middle" fontSize={8} fill="var(--ink)">
+                  <text x={cx} y={barTop - 3} textAnchor="middle" fontSize={8} fill={chartColor("axis")}>
                   {topLabel}
                 </text>
                 )}
               {showBelow && below && (
-                <text x={cx} y={H - 4} textAnchor="middle" fontSize={7.5} fill="var(--ink-muted)">
+                <text x={cx} y={H - 4} textAnchor="middle" fontSize={7.5} fill={chartColor("axis")}>
                   {below}
                 </text>
               )}

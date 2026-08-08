@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import type { LiveForceSample } from "../hooks/useLiveForce";
 
 const H = 44;
@@ -17,6 +20,7 @@ const RUN_GAP_MS = 1_500;
 /// already the accumulated rolling buffer from useLiveForce (wall-clock
 /// `atMs`, oldest first).
 export default function LiveForceSparkline({ samples }: { samples: LiveForceSample[] }) {
+  const chartId = useChartId("live-force");
   const hostRef = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(300);
   useEffect(() => {
@@ -61,14 +65,20 @@ export default function LiveForceSparkline({ samples }: { samples: LiveForceSamp
 
   return (
     <div ref={hostRef} style={{ width: "100%", marginTop: 10 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H, display: "block" }}>
+      <svg
+        role="img"
+        aria-label="Live force trace from watch"
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ width: "100%", height: H, display: "block" }}
+      >
+        <ChartDefs instanceId={chartId} />
         {runs.map((r, i) => (
           <g key={i}>
-            <path d={areaPath(r)} fill="#5B5FC7" opacity="0.12" />
+            <path d={areaPath(r)} fill={chartGradientUrl(chartId, "force-area")} />
             <polyline
               points={linePoints(r)}
               fill="none"
-              stroke="#5B5FC7"
+              stroke={chartColor("force")}
               strokeWidth="1.5"
               vectorEffect="non-scaling-stroke"
             />

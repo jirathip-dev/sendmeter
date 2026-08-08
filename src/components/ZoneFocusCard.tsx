@@ -81,6 +81,8 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
           tick. The click guard keeps a scrub from opening the detail page. */}
       <div
         className="chart-scrub"
+        role="img"
+        aria-label={`Training balance for ${exercise}, last four weeks`}
         style={{ display: "flex", flexDirection: "column", gap: 5 }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -130,6 +132,8 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
                 {q.label}
               </span>
               <div
+                role="img"
+                aria-label={`${q.label}: ${rounded} set${rounded === 1 ? "" : "s"}`}
                 style={{
                   flex: 1,
                   height: 8,
@@ -142,7 +146,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
                   style={{
                     width: `${(n / maxSets) * 100}%`,
                     height: "100%",
-                    background: color,
+                    background: `linear-gradient(90deg, color-mix(in srgb, ${color} 60%, var(--canvas)), ${color})`,
                     borderRadius: 4,
                     opacity: hovered === null || hovered === q.id ? 1 : 0.45,
                   }}

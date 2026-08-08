@@ -28,14 +28,14 @@ export default function SvgChartTooltip({
   if (by < 2) by = Math.min(y + 10, viewH - boxH - 2);
 
   return (
-    <g style={{ pointerEvents: "none" }}>
+    <g role="status" aria-live="polite" style={{ pointerEvents: "none" }}>
       <rect
         x={bx}
         y={by}
         width={boxW}
         height={boxH}
         rx={3}
-        style={{ fill: "var(--surface-2)", stroke: "var(--border)" }}
+        style={{ fill: "var(--chart-tooltip)", stroke: "var(--chart-tooltip-border)" }}
         strokeWidth={0.6}
       />
       {lines.map((line, i) => (

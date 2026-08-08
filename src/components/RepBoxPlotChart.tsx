@@ -1,8 +1,11 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { boxStats, type BoxStats } from "../lib/boxplot";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
 import SvgChartTooltip from "./SvgChartTooltip";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import type { TindeqRecordingMeta, TindeqSample, TindeqSide } from "../types";
 
 interface Props {
@@ -41,10 +44,10 @@ function sideLabel(side: TindeqSide): "L" | "R" | null {
   return null; // "both" or "" (unset) carries no useful distinction here
 }
 
-/// Left → primary (indigo), right → success (electric blue); "both"/unset
-/// keeps the plain success color used everywhere else in this file.
+/// Left → focus/force (indigo), right → secondary force (electric blue);
+/// "both"/unset keeps the secondary force color used elsewhere in this file.
 function sideColor(side: TindeqSide): string {
-  return side === "left" ? "var(--primary)" : "var(--success)";
+  return side === "left" ? chartColor("force") : chartColor("forceSecondary");
 }
 
 /// Thins a rep's outliers (can be hundreds from a raw force trace) down to
@@ -79,7 +82,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
   const [hovered, hoverProps] = useChartHover<number>();
   // Gradient ids must be unique per chart instance — several tag groups (and
   // therefore several of this component) render at once on the same page.
-  const uid = useId().replace(/:/g, "");
+  const uid = useChartId("rep-box");
 
   const hostRef = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(300);
@@ -177,7 +180,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: "var(--primary)",
+                background: chartColor("force"),
                 display: "inline-block",
               }}
             />
@@ -189,7 +192,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                 width: 6,
                 height: 6,
                 borderRadius: "50%",
-                background: "var(--success)",
+                background: chartColor("forceSecondary"),
                 display: "inline-block",
               }}
             />
@@ -200,22 +203,12 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
       <div ref={hostRef} style={{ width: "100%" }}>
         <svg
           className="chart-scrub"
+          role="img"
+          aria-label="Force distribution by repetition"
           viewBox={`0 0 ${W} ${H}`}
           style={{ width: "100%", height: H, display: "block", marginTop: 6 }}
         >
-          <defs>
-            {/* Vertical, top-heavy glass fill — echoes the app's --iris
-                aesthetic without hard-coding a color: same idea (a soft
-                gradient wash), driven by each rep's side token. */}
-            <linearGradient id={`${uid}-primary`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" style={{ stopColor: "var(--primary)", stopOpacity: 0.35 }} />
-              <stop offset="100%" style={{ stopColor: "var(--primary)", stopOpacity: 0.06 }} />
-            </linearGradient>
-            <linearGradient id={`${uid}-success`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" style={{ stopColor: "var(--success)", stopOpacity: 0.35 }} />
-              <stop offset="100%" style={{ stopColor: "var(--success)", stopOpacity: 0.06 }} />
-            </linearGradient>
-          </defs>
+          <ChartDefs instanceId={uid} />
 
           {yTicks.map((v, i) => (
             <g key={`y-${i}`}>
@@ -224,14 +217,14 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                 y1={py(v)}
                 x2={W - PAD.right}
                 y2={py(v)}
-                style={{ stroke: "var(--hairline)" }}
+                style={{ stroke: chartColor("grid") }}
                 strokeWidth={1}
               />
               <text
                 x={2}
                 y={py(v) + (i === 0 ? -2 : i === yTicks.length - 1 ? 7 : 2.5)}
                 fontSize={7.5}
-                style={{ fill: "var(--ink-faint)" }}
+                style={{ fill: chartColor("axis") }}
               >
                 {v.toFixed(0)}
                 {i === yTicks.length - 1 ? "kg" : ""}
@@ -261,7 +254,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                     y1={py(yMin)}
                     x2={cx + MIN_BOX_W / 2}
                     y2={py(yMin)}
-                    stroke="var(--ink-faint)"
+                    stroke={chartColor("axis")}
                     strokeOpacity={0.5}
                     strokeWidth={1.5}
                     strokeDasharray="2 2"
@@ -283,7 +276,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
             const s = state.stats;
             const outlierDots = pickOutlierDots(s.outliers, py, MAX_OUTLIER_DOTS);
             const color = sideColor(r.side);
-            const gradientId = r.side === "left" ? `${uid}-primary` : `${uid}-success`;
+            const gradient = r.side === "left" ? "focus-area" : "health-area";
             return (
               <g key={r.id} opacity={dimmed ? DIM_OPACITY : 1}>
                 {/* Whisker + caps */}
@@ -292,7 +285,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                   y1={py(s.whiskerLo)}
                   x2={cx}
                   y2={py(s.whiskerHi)}
-                  stroke="var(--ink-faint)"
+                  stroke={chartColor("axis")}
                   strokeOpacity={0.7}
                   strokeWidth={1}
                   vectorEffect="non-scaling-stroke"
@@ -302,7 +295,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                   y1={py(s.whiskerLo)}
                   x2={cx + capW / 2}
                   y2={py(s.whiskerLo)}
-                  stroke="var(--ink-faint)"
+                  stroke={chartColor("axis")}
                   strokeOpacity={0.7}
                   strokeWidth={1}
                   vectorEffect="non-scaling-stroke"
@@ -312,7 +305,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                   y1={py(s.whiskerHi)}
                   x2={cx + capW / 2}
                   y2={py(s.whiskerHi)}
-                  stroke="var(--ink-faint)"
+                  stroke={chartColor("axis")}
                   strokeOpacity={0.7}
                   strokeWidth={1}
                   vectorEffect="non-scaling-stroke"
@@ -324,7 +317,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                   width={boxW}
                   height={Math.max(0.5, py(s.q1) - py(s.q3))}
                   rx={2.5}
-                  fill={`url(#${gradientId})`}
+                  fill={chartGradientUrl(uid, gradient)}
                   stroke={color}
                   strokeWidth={isHovered ? 1.5 : 1}
                   vectorEffect="non-scaling-stroke"
@@ -361,7 +354,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                     cy={py(v)}
                     r={1.5}
                     fill="none"
-                    stroke="var(--ink-faint)"
+                    stroke={chartColor("axis")}
                     strokeOpacity={0.55}
                     strokeWidth={1}
                     vectorEffect="non-scaling-stroke"
@@ -389,7 +382,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                 y1={PAD.top}
                 x2={px(hovered + 0.5)}
                 y2={H - PAD.bottom}
-                style={{ stroke: "var(--ink-faint)" }}
+                style={{ stroke: chartColor("axis") }}
                 strokeDasharray="2 2"
                 strokeWidth={1}
               />

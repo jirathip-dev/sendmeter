@@ -3,6 +3,7 @@ import { useChartHover } from "../hooks/useChartHover";
 import { today } from "../lib/dates";
 import { activityMix } from "../lib/trainingLoad";
 import { activityColor } from "../lib/activityTypes";
+import { chartColor } from "../lib/chartTheme";
 import type { Session, WeeklyLoad } from "../types";
 import ChartTooltip from "./ChartTooltip";
 import ContributionHeatmap from "./ContributionHeatmap";
@@ -131,6 +132,8 @@ export default function TrainingLoadSheet({
         </div>
         <div
           className="chart-scrub"
+          role="img"
+          aria-label="Weekly training load bars"
           style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 88 }}
         >
           {weeklyLoads.map((week, index) => {
@@ -175,11 +178,12 @@ export default function TrainingLoadSheet({
                   {week.total.toLocaleString()}
                 </span>
                 <div
+                  role="img"
+                  aria-label={`${week.label}: ${week.total.toLocaleString()} AU`}
                   style={{
                     width: "100%",
                     height: Math.max((week.total / maxW) * 64, 2),
-                    background:
-                      index === weeklyLoads.length - 1 ? "var(--success)" : "var(--border)",
+                    background: `linear-gradient(180deg, color-mix(in srgb, ${index === weeklyLoads.length - 1 ? chartColor("optimal") : chartColor("load")} 58%, var(--canvas)), ${index === weeklyLoads.length - 1 ? chartColor("optimal") : chartColor("load")})`,
                     borderRadius: 3,
                     opacity: hoveredWeek === null || hoveredWeek === index ? 1 : 0.5,
                     boxShadow: hoveredWeek === index ? "0 0 0 1.5px var(--ink)" : "none",

@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Charts now share a restrained, theme-aware visual system with clearer focus, reference bands, gradients, and selected-point emphasis across readiness, load, workouts, Force, and History.
 - The app's typeface now ships inside the app instead of loading from Google Fonts — nothing is requested from Google on launch any more, and the font renders identically, works offline, and no longer depends on network conditions.
 - See your 28-day activity mix at a glance with a proportional training-load bar.
 - Filter History by session type and Force tag, including loose Force recordings.
