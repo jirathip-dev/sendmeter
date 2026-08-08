@@ -18,6 +18,10 @@ import {
   syncHealthNow,
 } from "../lib/healthSync";
 import { setMonitoringUser } from "../lib/monitoring";
+import {
+  autoSignInForLocalDev,
+  shouldAutoSignInForLocalDev,
+} from "../lib/devAuth";
 
 export function useAuth() {
   const [session, setSession] = useState<Session | null>(null);
@@ -27,6 +31,16 @@ export function useAuth() {
   const [recovery, setRecovery] = useState(false);
 
   useEffect(() => {
+    const aliveRef = { current: true };
+    const appliedSessionRef = {
+      current: undefined as Session | null | undefined,
+    };
+    const devAutoSignIn = shouldAutoSignInForLocalDev({
+      enabled: import.meta.env.VITE_DEV_AUTO_LOGIN,
+      supabaseUrl: SUPABASE_URL,
+      pageSearch: window.location.search,
+    });
+
     // Kick off HealthKit auth + background delivery once, after the first
     // session is known (no-op on web / until a session exists).
     let healthStarted = false;
@@ -61,14 +75,43 @@ export function useAuth() {
     // init resolves the build tag itself now; there is nothing to await here.
     void initAuthDiagnostics();
 
+    function applySession(s: Session | null) {
+      if (!aliveRef.current) return;
+      appliedSessionRef.current = s;
+      setSession(s);
+      setLoading(false);
+      onSession(s);
+    }
+
     // A null session here (issue #194) is otherwise indistinguishable
     // between "never logged in", a network hiccup, and auth-js having
     // silently cleared a revoked stored session — see authDiagnostics.ts.
-    getSessionWithDiagnostics(supabase, SUPABASE_URL).then(({ session }) => {
-      setSession(session);
-      setLoading(false);
-      onSession(session);
-    });
+    void getSessionWithDiagnostics(supabase, SUPABASE_URL).then(
+      async ({ session: storedSession }) => {
+        if (!aliveRef.current) return;
+
+        if (!storedSession && devAutoSignIn) {
+          try {
+            const autoSession = await autoSignInForLocalDev(supabase.auth);
+            if (!aliveRef.current) return;
+            // signInWithPassword normally emits SIGNED_IN before its promise
+            // resolves. Only apply the returned session ourselves if that
+            // event did not already win the race.
+            if (appliedSessionRef.current === undefined) {
+              applySession(autoSession);
+            }
+            return;
+          } catch (error) {
+            console.warn(
+              "Local dev auto-login failed; showing the sign-in screen.",
+              error,
+            );
+          }
+        }
+
+        if (appliedSessionRef.current === undefined) applySession(storedSession);
+      },
+    );
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, s) => {
@@ -81,9 +124,10 @@ export function useAuth() {
       // logout, and this line used to just `setSession(null)` — no record, no
       // console line, nothing to find the next morning.
       if (!s) recordAuthStateChange(event);
-      setSession(s);
-      setLoading(false);
-      onSession(s);
+      // Keep the splash visible while the launch path exchanges the seeded
+      // local credentials. `?auth` disables this branch for auth UI testing.
+      if (event === "INITIAL_SESSION" && !s && devAutoSignIn) return;
+      applySession(s);
     });
 
     // Re-relay the (supabase-js keeps it fresh) session to the watch + health
@@ -135,6 +179,7 @@ export function useAuth() {
     window.addEventListener("sendmeter:recovery", onRecovery);
 
     return () => {
+      aliveRef.current = false;
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("sendmeter:recovery", onRecovery);

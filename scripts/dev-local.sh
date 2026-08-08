@@ -19,7 +19,10 @@ cat > .env.development.local <<EOF
 # Delete this file to point npm run dev back at the hosted project.
 VITE_SUPABASE_URL=$API_URL
 VITE_SUPABASE_ANON_KEY=$PUBLISHABLE_KEY
+VITE_DEV_AUTO_LOGIN=true
 EOF
-echo "→ dev server will use local Supabase at $API_URL (delete .env.development.local to undo)"
+echo "→ dev server will use local Supabase at $API_URL and auto-login the seeded user"
+echo "→ add ?auth to the app URL to test the sign-in screen"
+echo "→ delete .env.development.local to point npm run dev back at hosted Supabase"
 
 exec npm run dev
