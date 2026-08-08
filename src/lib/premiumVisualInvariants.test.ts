@@ -6,6 +6,19 @@ const SRC = join(import.meta.dirname, "..");
 const css = readFileSync(join(SRC, "index.css"), "utf8");
 const indexHtml = readFileSync(join(SRC, "..", "index.html"), "utf8");
 const design = readFileSync(join(SRC, "..", "DESIGN.md"), "utf8");
+const mainSource = readFileSync(join(SRC, "..", "src", "main.tsx"), "utf8");
+const manifestPath = join(SRC, "..", "public", "manifest.json");
+const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+  background_color?: string;
+  theme_color?: string;
+};
+const viteConfig = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
+const themeSource = readFileSync(join(SRC, "lib", "theme.ts"), "utf8");
+const packageScripts = (
+  JSON.parse(readFileSync(join(SRC, "..", "package.json"), "utf8")) as {
+    scripts?: Record<string, string>;
+  }
+).scripts ?? {};
 
 function component(name: string): string {
   return readFileSync(join(SRC, "components", name), "utf8");
@@ -102,62 +115,309 @@ function attributeValue(tag: string, name: string): string | null {
   return tag.slice(cursor);
 }
 
-/** Parse CSS rules into bounded selector/body pairs, including nested media
- * blocks. Assertions can now inspect one rule body without crossing into the
- * next selector. */
+const INLINE_PAINT_PROPERTIES = new Set([
+  "background",
+  "backgroundColor",
+  "backgroundImage",
+  "border",
+  "borderColor",
+  "borderImage",
+  "borderInline",
+  "borderInlineColor",
+  "borderBlock",
+  "borderBlockColor",
+  "color",
+  "outline",
+  "outlineColor",
+]);
+
+function matchingJsBrace(source: string, open: number): number {
+  let depth = 1;
+  let quote: "'" | '"' | "`" | null = null;
+  for (let cursor = open + 1; cursor < source.length; cursor += 1) {
+    const character = source[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(source, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+    } else if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return cursor;
+    }
+  }
+  return -1;
+}
+
+function splitTopLevel(source: string, delimiter: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let quote: "'" | '"' | "`" | null = null;
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    const character = source[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(source, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+    } else if (character === "{") {
+      braceDepth += 1;
+    } else if (character === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+    } else if (character === "[") {
+      bracketDepth += 1;
+    } else if (character === "]") {
+      bracketDepth = Math.max(0, bracketDepth - 1);
+    } else if (character === "(") {
+      parenDepth += 1;
+    } else if (character === ")") {
+      parenDepth = Math.max(0, parenDepth - 1);
+    } else if (
+      source.startsWith(delimiter, cursor) &&
+      braceDepth === 0 &&
+      bracketDepth === 0 &&
+      parenDepth === 0
+    ) {
+      parts.push(source.slice(start, cursor));
+      start = cursor + delimiter.length;
+      cursor += delimiter.length - 1;
+    }
+  }
+  parts.push(source.slice(start));
+  return parts;
+}
+
+function topLevelIndex(source: string, needle: string): number {
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenDepth = 0;
+  let quote: "'" | '"' | "`" | null = null;
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    const character = source[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(source, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+    } else if (character === "{") {
+      braceDepth += 1;
+    } else if (character === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+    } else if (character === "[") {
+      bracketDepth += 1;
+    } else if (character === "]") {
+      bracketDepth = Math.max(0, bracketDepth - 1);
+    } else if (character === "(") {
+      parenDepth += 1;
+    } else if (character === ")") {
+      parenDepth = Math.max(0, parenDepth - 1);
+    } else if (
+      source.startsWith(needle, cursor) &&
+      braceDepth === 0 &&
+      bracketDepth === 0 &&
+      parenDepth === 0
+    ) {
+      return cursor;
+    }
+  }
+  return -1;
+}
+
+function unsafeStyleObject(body: string): boolean {
+  for (const property of splitTopLevel(body, ",")) {
+    const trimmed = property.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith("...")) return true;
+    const colon = topLevelIndex(trimmed, ":");
+    const key = (colon < 0 ? trimmed : trimmed.slice(0, colon)).trim();
+    if (key.startsWith("[") || key.startsWith("{")) return true;
+    const normalizedKey = key.replace(/^(?:["'])(.*)(?:["'])$/, "$1");
+    if (INLINE_PAINT_PROPERTIES.has(normalizedKey)) return true;
+    // A shorthand property is an opaque value and may be a paint property.
+    // Explicit assignments are inspectable and safe unless they name paint.
+    if (colon < 0 && !normalizedKey.startsWith("--")) return true;
+  }
+  return false;
+}
+
+function unsafeStyleExpression(styleValue: string | null): boolean {
+  if (!styleValue) return false;
+  const source = styleValue.trim();
+  if (!source.startsWith("{") || matchingJsBrace(source, 0) < 0) return true;
+  const expressionEnd = matchingJsBrace(source, 0);
+  if (expressionEnd !== source.length - 1) {
+    // Object style casts (`{{ ... } as CSSProperties}`) are safe to inspect;
+    // arbitrary suffixes and type assertions on unknown values are not.
+    const suffix = source.slice(expressionEnd + 1).trim();
+    if (!/^as\s+[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(suffix)) return true;
+  }
+  const expression = source.slice(1, expressionEnd).trim();
+  const question = topLevelIndex(expression, "?");
+  if (question >= 0) {
+    const branches = splitTopLevel(expression.slice(question + 1), ":");
+    if (branches.length !== 2) return true;
+    return branches.some((branch) => unsafeStyleExpression(`{${branch.trim()}}`));
+  }
+  if (expression === "undefined" || expression === "null") return false;
+  if (!expression.startsWith("{")) return true;
+  const objectEnd = matchingJsBrace(expression, 0);
+  if (objectEnd < 0) return true;
+  const objectSuffix = expression.slice(objectEnd + 1).trim();
+  if (
+    objectSuffix &&
+    !/^as\s+[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(objectSuffix)
+  ) {
+    return true;
+  }
+  return unsafeStyleObject(expression.slice(1, objectEnd));
+}
+
+/**
+ * CSS scanners used by these invariants. A regular-expression brace match is
+ * not sufficient here: a declaration can contain a quoted `}` or `/*`, and a
+ * comment can contain a complete-looking rule. Keep all boundary discovery
+ * outside comments and strings, then return source slices bounded by the
+ * matching brace.
+ */
 interface CssRule {
   selector: string;
   body: string;
 }
 
+type CssQuote = "'" | '"' | "`" | null;
+
+function isEscaped(source: string, index: number): boolean {
+  let slashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === "\\"; cursor -= 1) {
+    slashes += 1;
+  }
+  return slashes % 2 === 1;
+}
+
+function skipCssComment(source: string, start: number, end: number): number {
+  const close = source.indexOf("*/", start + 2);
+  return close < 0 ? end : close + 2;
+}
+
+function stripCssComments(source: string): string {
+  let output = "";
+  let quote: CssQuote = null;
+  let cursor = 0;
+  while (cursor < source.length) {
+    const character = source[cursor]!;
+    if (quote) {
+      output += character;
+      if (character === quote && !isEscaped(source, cursor)) quote = null;
+      cursor += 1;
+      continue;
+    }
+    if (character === "/" && source[cursor + 1] === "*") {
+      output += " ";
+      cursor = skipCssComment(source, cursor, source.length);
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") quote = character;
+    output += character;
+    cursor += 1;
+  }
+  return output;
+}
+
+function findCssOpen(source: string, start: number, end: number): number {
+  let quote: CssQuote = null;
+  for (let cursor = start; cursor < end; cursor += 1) {
+    const character = source[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(source, cursor)) quote = null;
+      continue;
+    }
+    if (character === "/" && source[cursor + 1] === "*") {
+      cursor = skipCssComment(source, cursor, end) - 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") return cursor;
+  }
+  return -1;
+}
+
+function findCssClose(source: string, open: number, end = source.length): number {
+  let depth = 1;
+  let quote: CssQuote = null;
+  for (let cursor = open + 1; cursor < end; cursor += 1) {
+    const character = source[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(source, cursor)) quote = null;
+      continue;
+    }
+    if (character === "/" && source[cursor + 1] === "*") {
+      cursor = skipCssComment(source, cursor, end) - 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+    } else if (character === "{") {
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return cursor;
+    }
+  }
+  return -1;
+}
+
+function findCssMarker(source: string, marker: string): number {
+  let quote: CssQuote = null;
+  for (let cursor = 0; cursor < source.length; cursor += 1) {
+    const character = source[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(source, cursor)) quote = null;
+      continue;
+    }
+    if (character === "/" && source[cursor + 1] === "*") {
+      cursor = skipCssComment(source, cursor, source.length) - 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (source.startsWith(marker, cursor)) return cursor;
+  }
+  return -1;
+}
+
 function cssRules(source: string): CssRule[] {
   const rules: CssRule[] = [];
-  const clean = source.replace(/\/\*[\s\S]*?\*\//g, "");
 
   function parseRange(start: number, end: number): void {
     let cursor = start;
     while (cursor < end) {
-      let open = cursor;
-      let quote: "'" | '"' | null = null;
-      for (; open < end; open += 1) {
-        const character = clean[open]!;
-        if (quote) {
-          if (character === quote && clean[open - 1] !== "\\") quote = null;
-        } else if (character === "'" || character === '"') {
-          quote = character;
-        } else if (character === "{") {
-          break;
-        }
-      }
-      if (open >= end) return;
+      const open = findCssOpen(source, cursor, end);
+      if (open < 0) return;
+      const close = findCssClose(source, open, end);
+      if (close < 0) return;
 
-      let depth = 1;
-      let close = open + 1;
-      quote = null;
-      for (; close < end; close += 1) {
-        const character = clean[close]!;
-        if (quote) {
-          if (character === quote && clean[close - 1] !== "\\") quote = null;
-        } else if (character === "'" || character === '"') {
-          quote = character;
-        } else if (character === "{") {
-          depth += 1;
-        } else if (character === "}") {
-          depth -= 1;
-          if (depth === 0) break;
-        }
-      }
-      if (close >= end) return;
-
-      const selector = clean.slice(cursor, open).trim();
-      const body = clean.slice(open + 1, close);
+      const selector = stripCssComments(source.slice(cursor, open)).trim();
+      const body = source.slice(open + 1, close);
       if (selector && !selector.startsWith("@")) rules.push({ selector, body });
       parseRange(open + 1, close);
       cursor = close + 1;
     }
   }
 
-  parseRange(0, clean.length);
+  parseRange(0, source.length);
   return rules;
 }
 
@@ -172,22 +432,15 @@ function cssRuleBody(rules: CssRule[], selector: string): string {
 
 /** Return the contents of the first balanced block after a CSS marker. */
 function blockAfter(source: string, marker: string): string {
-  const markerStart = source.indexOf(marker);
+  const markerStart = findCssMarker(source, marker);
   if (markerStart < 0) throw new Error(`Missing CSS marker: ${marker}`);
   const open = marker.endsWith("{")
     ? markerStart + marker.length - 1
-    : source.indexOf("{", markerStart + marker.length);
+    : findCssOpen(source, markerStart + marker.length, source.length);
   if (open < 0) throw new Error(`Missing opening brace after: ${marker}`);
-
-  let depth = 0;
-  for (let i = open; i < source.length; i += 1) {
-    if (source[i] === "{") depth += 1;
-    if (source[i] === "}") {
-      depth -= 1;
-      if (depth === 0) return source.slice(open + 1, i);
-    }
-  }
-  throw new Error(`Unclosed CSS block after: ${marker}`);
+  const close = findCssClose(source, open);
+  if (close < 0) throw new Error(`Unclosed CSS block after: ${marker}`);
+  return source.slice(open + 1, close);
 }
 
 function declarations(source: string): Record<string, string> {
@@ -311,6 +564,30 @@ function mix(a: RGB, b: RGB, amount: number): RGB {
 }
 
 describe("premium visual language contracts (#517)", () => {
+  it("bounds CSS parsing around comments, strings, and neighboring rules", () => {
+    const fixture = `
+      /* } { .fake { } */
+      .quoted::before { content: "} /* still a string */"; }
+      /* { .also-fake { } */
+      .next { color: red; }
+    `;
+    const rules = cssRules(fixture);
+    expect(cssRuleBody(rules, ".quoted::before")).toContain("still a string");
+    expect(cssRuleBody(rules, ".next")).toContain("color: red");
+    expect(blockAfter(fixture, ".quoted::before {")).toContain(
+      'content: "} /* still a string */"',
+    );
+  });
+
+  it("treats opaque style expressions and unsafe paint branches conservatively", () => {
+    expect(unsafeStyleExpression("{{ background: \"var(--primary-action)\" }}")).toBe(true);
+    expect(unsafeStyleExpression("{condition ? { flex: 1 } : { color: \"#fff\" }}")).toBe(true);
+    expect(unsafeStyleExpression("{{ ...buttonStyle, flex: 1 }}")).toBe(true);
+    expect(unsafeStyleExpression("{templateStyle as CSSProperties}")).toBe(true);
+    expect(unsafeStyleExpression("{{ flex: 1 } as CSSProperties}")).toBe(false);
+    expect(unsafeStyleExpression("{{ flex: 1 }}")).toBe(false);
+  });
+
   it("defines every semantic token in light, explicit dark, and system-dark themes", () => {
     for (const token of THEME_TOKENS) {
       for (const [theme, values] of Object.entries(themeDeclarations)) {
@@ -429,23 +706,20 @@ describe("premium visual language contracts (#517)", () => {
     expect(semanticConsumers.some(({ tag }) => tag.includes("btn-danger"))).toBe(true);
 
     for (const { file, tag, styleValue } of semanticConsumers) {
-      const styleSource = styleValue ?? "";
       expect(
         tag,
         `${file} overrides a shared semantic button with an inline paint property`,
       ).not.toMatch(/\b(?:background(?:-image|-color)?|color|border(?:-color)?)\s*:/);
       expect(
-        styleSource,
-        `${file} uses an opaque style expression on a semantic button`,
-      ).not.toMatch(/^\{\s*[A-Za-z_$][\w$]*\s*\}$/);
+        unsafeStyleExpression(styleValue),
+        `${file} uses an unsafe or opaque style expression on a semantic button`,
+      ).toBe(false);
     }
 
-    for (const { file, styleValue } of consumers) {
-      const styleSource = styleValue ?? "";
-      const inlineActionFill = /\bbackground(?:-image|-color)?\s*:\s*["'`]?\s*var\(\s*--(?:danger|primary|surface-2)\b\s*\)\s*["'`]?/i.test(styleSource);
+    for (const { file, classValue, styleValue } of consumers) {
       expect(
-        inlineActionFill,
-        `${file} uses an inline semantic action fill; use the shared button recipe instead`,
+        unsafeStyleExpression(styleValue) && /\bbtn-(?:primary|secondary|danger)\b/.test(classValue),
+        `${file} uses an unsafe inline button paint; use the shared recipe instead`,
       ).toBe(false);
     }
   });
@@ -612,10 +886,29 @@ describe("premium visual language contracts (#517)", () => {
   });
 
   it("keeps the browser chrome aligned with the new canvas themes", () => {
-    expect(indexHtml).toContain('content="#F2F4F8"');
-    expect(indexHtml).toContain('content="#0E121B"');
-    expect(component("ThemeSection.tsx")).toContain('"#0E121B"');
-    expect(component("ThemeSection.tsx")).toContain('"#F2F4F8"');
+    const themeMetas = Array.from(
+      indexHtml.matchAll(/<meta\s+name="theme-color"[^>]*>/g),
+      ([match]) => match,
+    );
+    expect(themeMetas).toHaveLength(2);
+    expect(themeMetas).toContain(
+      '<meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F4F8" />',
+    );
+    expect(themeMetas).toContain(
+      '<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0E121B" />',
+    );
+
+    expect(manifest.background_color).toBe("#F2F4F8");
+    expect(manifest.theme_color).toBe("#F2F4F8");
+    // `manifest: false` leaves the authoritative public manifest untouched;
+    // Vite copies it verbatim to dist alongside the generated service worker.
+    expect(viteConfig).toContain("VitePWA");
+    expect(viteConfig).toMatch(/manifest:\s*false/);
+    expect(packageScripts["verify:pwa"]).toBe("node scripts/verify-pwa-chrome.mjs");
+    expect(packageScripts.build).toContain("npm run verify:pwa");
+    expect(themeSource).toContain("syncThemeColorMeta");
+    expect(mainSource).toContain("initializeTheme();");
+    expect(component("ThemeSection.tsx")).not.toContain("querySelector('meta[name=\"theme-color\"]')");
 
     const pwaThemeColors = design.match(
       /`theme-color`\s*=\s*`([^`]+)`\s*light\s*\/\s*`([^`]+)`\s*dark/,

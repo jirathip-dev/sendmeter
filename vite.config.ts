@@ -28,6 +28,8 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      // Keep the documented public manifest authoritative. Vite copies this
+      // exact file into dist; the PWA plugin only generates the service worker.
       manifest: false,
       includeAssets: ["icon-512.png", "splash-cave-background.webp", "splash-kangaroo.webp"],
       // Default globPatterns is js/css/html only — without woff2 the

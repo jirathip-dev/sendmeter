@@ -167,6 +167,9 @@ one place:
   recover`) — hues tuned to this palette but semantics unchanged.
 - The boulder app icon and the PWA identity (`theme-color` = `#F2F4F8` light /
   `#0E121B` dark), matching `index.html` and the theme canvas tokens above.
+  The manifest uses the light canvas for its single install/splash color; the
+  two media-qualified `index.html` metas and runtime theme controller keep
+  browser chrome responsive for System and explicit Light/Dark choices.
 - Watch app keeps native watchOS styling; this system governs web + iOS shell.
 
 ---

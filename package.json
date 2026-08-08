@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && npm run verify:pwa",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint .",
@@ -21,7 +21,8 @@
     "postinstall": "patch-package",
     "migration:status": "node scripts/migration-status.mjs",
     "migration:apply": "node scripts/apply-migrations.mjs",
-    "analyze:rpe-stability": "tsx scripts/analyze-rpe-stability.ts"
+    "analyze:rpe-stability": "tsx scripts/analyze-rpe-stability.ts",
+    "verify:pwa": "node scripts/verify-pwa-chrome.mjs"
   },
   "dependencies": {
     "@capacitor-community/apple-sign-in": "^7.1.0",
