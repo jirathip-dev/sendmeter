@@ -9,7 +9,7 @@ import {
 } from "../lib/workoutChartAxis";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import { chartColor } from "../lib/chartTheme";
+import { CHART_TOUCH_TARGET_UNITS, chartColor } from "../lib/chartTheme";
 import type { WorkoutAttempt } from "../types";
 
 interface Props {
@@ -69,7 +69,7 @@ export default function WorkoutEffortChart({
   return (
     <svg
       className="chart-scrub"
-      role="img"
+      role="group"
       aria-label="Workout attempt effort timeline"
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", display: "block" }}
@@ -119,15 +119,19 @@ export default function WorkoutEffortChart({
           strokeWidth={hovered === b.i ? 1 : 0}
         />
       ))}
-      {/* Hit areas — widened past thin bars so short climbs stay tappable */}
+      {/* Hit areas — 44 viewBox units keeps short climbs tappable without
+          enlarging the visible bars. Pointer scrubbing remains on this layer. */}
       {bars.map((b) => (
         <rect
           key={`hit-${b.i}`}
-          x={b.cx - Math.max(b.w, 10) / 2}
+          x={b.cx - Math.max(b.w, CHART_TOUCH_TARGET_UNITS) / 2}
           y={PAD.top}
-          width={Math.max(b.w, 10)}
+          width={Math.max(b.w, CHART_TOUCH_TARGET_UNITS)}
           height={baseline - PAD.top}
           fill="transparent"
+          role="button"
+          tabIndex={0}
+          aria-label={`Attempt ${b.i + 1}${b.a.effortScore != null ? `, effort ${b.a.effortScore.toFixed(1)}` : ""}`}
           style={{ cursor: "pointer" }}
           {...hoverProps(b.i)}
         />

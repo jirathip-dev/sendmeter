@@ -8,6 +8,7 @@ import {
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import { CHART_TOUCH_TARGET_UNITS } from "../lib/chartTheme";
 import ChartTooltip from "./ChartTooltip";
 import type { Session, WorkoutDetail } from "../types";
 
@@ -51,20 +52,29 @@ function BarTrend({
   const interactive = rows.some((r) => r.tooltip);
   return (
     <div
-      role="img"
+      role="group"
       aria-label="Workout metric trend"
       style={{ display: "flex", flexDirection: "column", gap: 3 }}
     >
       {rows.map((r, i) => (
-        <div
+        <button
           key={i}
-          role="img"
+          type="button"
+          disabled={!interactive}
           aria-label={`${r.label}: ${r.value !== null ? fmt(r.value) : "no data"}`}
           className={interactive ? "chart-scrub" : undefined}
           style={{
             display: "flex",
             alignItems: "center",
             gap: 6,
+            minHeight: CHART_TOUCH_TARGET_UNITS,
+            padding: 0,
+            border: 0,
+            background: "transparent",
+            color: "inherit",
+            font: "inherit",
+            appearance: "none",
+            textAlign: "left",
             cursor: interactive ? "pointer" : undefined,
           }}
           {...(interactive ? hoverProps(i) : {})}
@@ -119,7 +129,7 @@ function BarTrend({
           >
             {r.value !== null ? fmt(r.value) : "—"}
           </span>
-        </div>
+        </button>
       ))}
     </div>
   );

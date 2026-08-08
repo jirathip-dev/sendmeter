@@ -81,7 +81,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
           tick. The click guard keeps a scrub from opening the detail page. */}
       <div
         className="chart-scrub"
-        role="img"
+        role="group"
         aria-label={`Training balance for ${exercise}, last four weeks`}
         style={{ display: "flex", flexDirection: "column", gap: 5 }}
         onClick={(e) => e.stopPropagation()}
@@ -94,13 +94,22 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
           return (
             // The whole row is the hit area — an 8px bar is too thin to hit
             // with a finger.
-            <div
+            <button
               key={q.id}
+              type="button"
+              aria-label={`${q.label}: ${rounded} set${rounded === 1 ? "" : "s"}`}
               style={{
                 position: "relative",
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
+                minHeight: 44,
+                padding: "0 4px",
+                border: 0,
+                background: "transparent",
+                color: "inherit",
+                font: "inherit",
+                appearance: "none",
                 cursor: "pointer",
               }}
               {...hoverProps(q.id)}
@@ -132,8 +141,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
                 {q.label}
               </span>
               <div
-                role="img"
-                aria-label={`${q.label}: ${rounded} set${rounded === 1 ? "" : "s"}`}
+                aria-hidden="true"
                 style={{
                   flex: 1,
                   height: 8,
@@ -163,7 +171,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
               >
                 {rounded} set{rounded === 1 ? "" : "s"}
               </span>
-            </div>
+            </button>
           );
         })}
       </div>

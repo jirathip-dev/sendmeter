@@ -1,4 +1,5 @@
 import { SESSION_TYPES } from "../constants";
+import { chartColor } from "./chartTheme";
 
 export const ACTIVITY_COLORS: Record<string, string> = {
   board: "var(--chart-activity-board)",
@@ -14,11 +15,10 @@ export const ACTIVITY_COLORS: Record<string, string> = {
   custom: "var(--chart-activity-custom)",
 };
 
-const DEFAULT_TYPE_COLOR = "#8E8E93";
 const TYPE_LABEL = new Map(SESSION_TYPES.map((type) => [type.id, type.label]));
 
 export function activityColor(type: string): string {
-  return ACTIVITY_COLORS[type] ?? DEFAULT_TYPE_COLOR;
+  return ACTIVITY_COLORS[type] ?? chartColor("reference");
 }
 
 export function activityLabel(type: string): string {

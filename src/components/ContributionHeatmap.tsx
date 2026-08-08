@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useChartHover } from "../hooks/useChartHover";
+import { useChartId } from "../hooks/useChartId";
 import { ACTIVITY_COLORS, activityColor, activityLabel } from "../lib/activityTypes";
 import ChartTooltip from "./ChartTooltip";
 
@@ -51,6 +52,7 @@ export default function ContributionHeatmap({
   unit?: string;
 }) {
   const [hovered, hoverProps] = useChartHover<string>();
+  const summaryId = useChartId("contribution-summary");
 
   const { columns, max } = useMemo(() => {
     const today = new Date();
@@ -122,7 +124,15 @@ export default function ContributionHeatmap({
   }, [columns]);
 
   return (
-    <div role="img" aria-label={`Training load contribution heatmap for ${columns.length} weeks`}>
+    <div
+      role="group"
+      aria-label={`Training load contribution heatmap for ${columns.length} weeks`}
+      aria-describedby={summaryId}
+    >
+      <span id={summaryId} className="chart-a11y-summary">
+        Each day is a keyboard-accessible data point. Focus a day to hear its training
+        load and activity type; future days are unavailable.
+      </span>
       <div style={{ display: "flex", gap: 5 }}>
         {/* Weekday labels — absolutely pinned to the Mon/Wed/Fri cell-row
             centers so they track the (tiny, fluid) grid rows. A text-sized grid
@@ -188,13 +198,22 @@ export default function ContributionHeatmap({
                   }}
                 >
                   {col.map((cell, di) => (
-                    <div
+                    <button
                       key={cell.key}
+                      type="button"
+                      disabled={cell.future}
                       style={{
                         position: "relative",
                         aspectRatio: "1",
                         width: "100%",
+                        minWidth: 0,
+                        minHeight: 0,
+                        padding: 0,
+                        border: 0,
                         borderRadius: 2,
+                        appearance: "none",
+                        font: "inherit",
+                        color: "inherit",
                         // Future days are greyed out, not blank, so "today" reads
                         // as the leading edge of the grid (SL-68).
                         background: cell.future ? "var(--surface-1)" : cellColor(cell),
@@ -202,7 +221,6 @@ export default function ContributionHeatmap({
                         outline: hovered === cell.key ? "1.5px solid var(--ink)" : "none",
                         cursor: cell.future ? "default" : "pointer",
                       }}
-                      role="img"
                       aria-label={`${cell.key}: ${cell.value > 0 ? `${cell.value} ${unit}${cell.type ? `, ${activityLabel(cell.type)}` : ""}` : "rest"}`}
                       {...(cell.future ? {} : hoverProps(cell.key))}
                     >
@@ -216,7 +234,7 @@ export default function ContributionHeatmap({
                             : `${cell.key} · rest`}
                         </ChartTooltip>
                       )}
-                    </div>
+                    </button>
                   ))}
                 </div>
               );

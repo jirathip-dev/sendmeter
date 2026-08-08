@@ -10,7 +10,11 @@ import {
 } from "../lib/workoutChartAxis";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import { chartColor, chartGradientUrl } from "../lib/chartTheme";
+import {
+  CHART_TOUCH_TARGET_UNITS,
+  chartColor,
+  chartGradientUrl,
+} from "../lib/chartTheme";
 import type { WorkoutAttempt, WorkoutHrSample, WorkoutSource } from "../types";
 
 interface Props {
@@ -155,7 +159,7 @@ export default function WorkoutHrChart({
       <div style={{ width: "100%" }}>
         <svg
           className="chart-scrub"
-          role="img"
+          role="group"
           aria-label="Workout heart rate timeline with climb and rest windows"
           viewBox={`0 0 ${W} ${H}`}
           style={{ width: "100%", display: "block" }}
@@ -229,8 +233,11 @@ export default function WorkoutHrChart({
               key={i}
               cx={px(hrSamples[i]!.t)}
               cy={py(hrSamples[i]!.hr!)}
-              r={8}
+              r={CHART_TOUCH_TARGET_UNITS / 2}
               fill="transparent"
+              role="button"
+              tabIndex={0}
+              aria-label={`${fmtMinSec(hrSamples[i]!.t)}: ${Math.round(hrSamples[i]!.hr!)} bpm`}
               style={{ cursor: "pointer" }}
               {...hoverProps(i)}
             />

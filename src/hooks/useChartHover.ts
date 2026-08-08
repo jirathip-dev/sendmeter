@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { selectionHaptic } from "../lib/haptics";
 
 /// Pure decision logic for #299: on touch, tapping a chart point leaves its
@@ -101,6 +101,14 @@ export function useChartHover<T = number>() {
           dragging.current = true;
         }
         select(value);
+      },
+      onFocus: () => select(value),
+      onBlur: () => setHovered((current) => (current === value ? null : current)),
+      onKeyDown: (e: ReactKeyboardEvent) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          select(value);
+        }
       },
     };
   }

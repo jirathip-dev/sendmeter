@@ -14,7 +14,11 @@ import { fetchWeightHistory } from "../lib/repo";
 import BoxChip from "./BoxChip";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import { chartColor, chartGradientUrl } from "../lib/chartTheme";
+import {
+  CHART_TOUCH_TARGET_UNITS,
+  chartColor,
+  chartGradientUrl,
+} from "../lib/chartTheme";
 import type { ForceCapacityModality, TindeqRecordingMeta, TindeqSide } from "../types";
 
 interface Props {
@@ -59,6 +63,8 @@ interface TrendPoint {
 const MIN_BOX_W = 4;
 const MAX_BOX_W = 16;
 const MAX_OUTLIER_DOTS = 8;
+const BOX_FILL_OPACITY = 0.85;
+const BOX_HOVER_FILL_OPACITY = 1;
 
 /// Thins a day's outliers down to at most `max` rendered dots. Adapted from
 /// `RepBoxPlotChart.tsx`'s `pickOutlierDots` (not imported — that copy lives
@@ -143,13 +149,13 @@ function Chart({
   const hitWidths = hitWidthsPx(
     days.map((d) => px(d.t)),
     boxW,
-    MIN_BOX_W,
+    CHART_TOUCH_TARGET_UNITS,
   );
 
   return (
     <svg
       className="chart-scrub"
-      role="img"
+      role="group"
       aria-label={`Force trend distribution by training day in ${unit}`}
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", display: "block" }}
@@ -239,7 +245,9 @@ function Chart({
               height={Math.max(0.5, py(s.q1) - py(s.q3))}
               rx={2}
               fill={isPr ? color : chartGradientUrl(chartId, "force-area")}
-              fillOpacity={isHovered ? 0.32 : 0.22}
+              // The gradient already carries the shared area opacity. Keep
+              // this multiplier near 1 so the box does not become invisible.
+              fillOpacity={isHovered ? BOX_HOVER_FILL_OPACITY : BOX_FILL_OPACITY}
               stroke={color}
               strokeWidth={isHovered ? 1.5 : 1}
               vectorEffect="non-scaling-stroke"
@@ -278,6 +286,9 @@ function Chart({
               width={hitWidths[i]!}
               height={H - PAD.top - PAD.bottom}
               fill="transparent"
+              role="button"
+              tabIndex={0}
+              aria-label={`${d.date}: median ${s.median.toFixed(1)} ${unit}, ${d.count} rep${d.count === 1 ? "" : "s"}`}
               style={{ cursor: "pointer" }}
               {...hoverProps(i)}
             />

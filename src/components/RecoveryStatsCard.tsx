@@ -7,7 +7,11 @@ import { ewma } from "../lib/metrics";
 import { daysAgo } from "../lib/dates";
 import ChartTooltip from "./ChartTooltip";
 import ChartDefs from "./ChartDefs";
-import { chartColor, chartInstanceId } from "../lib/chartTheme";
+import {
+  CHART_TOUCH_TARGET_UNITS,
+  chartColor,
+  chartInstanceId,
+} from "../lib/chartTheme";
 import type { HealthMetric } from "../types";
 
 type MetricKey =
@@ -219,7 +223,7 @@ export default function RecoveryStatsCard() {
               )}
               <svg
                 className="chart-scrub"
-                role="img"
+                role="group"
                 aria-label={`${spec.label} recovery input over the last ${VISIBLE_DAYS} days`}
                 viewBox={`0 0 ${W} ${H}`}
                 style={{ width: "100%", display: "block" }}
@@ -285,10 +289,13 @@ export default function RecoveryStatsCard() {
                   <rect
                     key={`h-${i}`}
                     x={i * SLOT}
-                    width={SLOT}
+                    width={Math.max(SLOT, CHART_TOUCH_TARGET_UNITS)}
                     y={0}
                     height={H}
                     fill="transparent"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${visibleDays[i]} ${spec.label}: ${values[i] !== null ? `${spec.format(values[i]!)} ${spec.unit}` : "no data"}`}
                     style={{ cursor: "pointer" }}
                     {...hoverProps(`${spec.key}:${i}`)}
                   />

@@ -7,7 +7,11 @@ import { useSvgScale } from "../hooks/useSvgScale";
 import { useChartId } from "../hooks/useChartId";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import { chartColor, chartGradientUrl } from "../lib/chartTheme";
+import {
+  CHART_TOUCH_TARGET_UNITS,
+  chartColor,
+  chartGradientUrl,
+} from "../lib/chartTheme";
 import type { TindeqRecordingMeta, TindeqSample } from "../types";
 import ReverseActionSetDetail from "./ReverseActionSetDetail";
 
@@ -75,7 +79,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
     <div ref={hostRef} style={{ width: "100%" }}>
     <svg
       className="chart-scrub"
-      role="img"
+      role="group"
       aria-label="Force recording trace"
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", height: H, display: "block", marginTop: 10 }}
@@ -127,8 +131,11 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
           key={i}
           cx={px(samples[i]!.t)}
           cy={py(samples[i]!.kg)}
-          r={7}
+          r={CHART_TOUCH_TARGET_UNITS / 2}
           fill="transparent"
+          role="button"
+          tabIndex={0}
+          aria-label={`${(samples[i]!.t / 1000).toFixed(1)}s: ${samples[i]!.kg.toFixed(1)} kg`}
           style={{ cursor: "pointer" }}
           {...hoverProps(i)}
         />

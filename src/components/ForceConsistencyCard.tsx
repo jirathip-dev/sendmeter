@@ -5,7 +5,7 @@ import { useChartHover } from "../hooks/useChartHover";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
 import { computeTindeqWeeks, selectedTagDays } from "../lib/tindeqConsistency";
 import { fetchHiddenTags, fetchRecordings } from "../lib/repo";
-import { chartColor } from "../lib/chartTheme";
+import { CHART_TOUCH_TARGET_UNITS, chartColor } from "../lib/chartTheme";
 import { useState } from "react";
 import type { TindeqRecordingMeta } from "../types";
 
@@ -95,7 +95,7 @@ export default function ForceConsistencyCard() {
       {loaded && hasAny && (
         <div
           className="chart-scrub"
-          role="img"
+          role="group"
           aria-label="Eight-week force consistency bars"
           style={{ display: "flex", gap: 6, alignItems: "flex-end", height: 88 }}
         >
@@ -105,8 +105,10 @@ export default function ForceConsistencyCard() {
               ? []
               : Object.entries(w.byTag).sort((a, b) => b[1] - a[1]);
             return (
-              <div
+              <button
                 key={i}
+                type="button"
+                aria-label={`${w.label}: ${days} ${days === 1 ? "day" : "days"} trained`}
                 style={{
                   flex: 1,
                   position: "relative",
@@ -115,6 +117,14 @@ export default function ForceConsistencyCard() {
                   alignItems: "center",
                   gap: 4,
                   height: "100%",
+                  minHeight: CHART_TOUCH_TARGET_UNITS,
+                  minWidth: 0,
+                  padding: 0,
+                  border: 0,
+                  background: "transparent",
+                  color: "inherit",
+                  font: "inherit",
+                  appearance: "none",
                   justifyContent: "flex-end",
                 }}
                 {...hoverWeekProps(i)}
@@ -138,8 +148,7 @@ export default function ForceConsistencyCard() {
                   {days}
                 </span>
                 <div
-                  role="img"
-                  aria-label={`${w.label}: ${days} ${days === 1 ? "day" : "days"} trained`}
+                  aria-hidden="true"
                   style={{
                     width: "100%",
                     height: Math.max((days / 7) * 64, 2),
@@ -154,7 +163,7 @@ export default function ForceConsistencyCard() {
                 <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)" }}>
                   {w.label}
                 </span>
-              </div>
+              </button>
             );
           })}
         </div>

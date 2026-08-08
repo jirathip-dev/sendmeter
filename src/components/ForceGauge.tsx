@@ -130,31 +130,47 @@ export default function ForceGauge({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    let palette: TracePalette = {
+    const readPalette = (): TracePalette => ({
       grid: cssChartColor(canvas, "--chart-grid", "#8E8E93"),
       optimal: cssChartColor(canvas, "--chart-optimal", "#2E96F0"),
       focus: cssChartColor(canvas, "--chart-focus", "#5B5FC7"),
+    });
+    let palette = readPalette();
+    const drawCurrent = () => {
+      // Computed styles are read only at mount or when a theme signal changes;
+      // the live RAF below reuses this palette for every trace frame.
+      palette = readPalette();
+      const samples = samplesRef.current;
+      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0, target, palette);
     };
     // Theme changes are rare compared with trace frames. Observe the root
     // instead of reading computed styles in the animation loop, keeping the
-    // live canvas cheap while still adapting immediately to light/dark mode.
+    // live canvas cheap while still adapting immediately to explicit and
+    // system light/dark mode.
     const themeObserver = new MutationObserver(() => {
-      palette = {
-        grid: cssChartColor(canvas, "--chart-grid", "#8E8E93"),
-        optimal: cssChartColor(canvas, "--chart-optimal", "#2E96F0"),
-        focus: cssChartColor(canvas, "--chart-focus", "#5B5FC7"),
-      };
+      drawCurrent();
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
+    const scheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const onSchemeChange = () => drawCurrent();
+    if (typeof scheme.addEventListener === "function") {
+      scheme.addEventListener("change", onSchemeChange);
+    } else {
+      scheme.addListener(onSchemeChange);
+    }
     if (!live) {
-      // one final draw of whatever is in the buffer
-      const samples = samplesRef.current;
-      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0, target, palette);
-      themeObserver.disconnect();
-      return;
+      drawCurrent();
+      return () => {
+        themeObserver.disconnect();
+        if (typeof scheme.removeEventListener === "function") {
+          scheme.removeEventListener("change", onSchemeChange);
+        } else {
+          scheme.removeListener(onSchemeChange);
+        }
+      };
     }
     let raf = 0;
     const tick = () => {
@@ -166,6 +182,11 @@ export default function ForceGauge({
     return () => {
       cancelAnimationFrame(raf);
       themeObserver.disconnect();
+      if (typeof scheme.removeEventListener === "function") {
+        scheme.removeEventListener("change", onSchemeChange);
+      } else {
+        scheme.removeListener(onSchemeChange);
+      }
     };
   }, [live, samplesRef, target]);
 

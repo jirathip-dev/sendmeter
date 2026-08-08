@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useChartHover } from "../hooks/useChartHover";
+import { useChartId } from "../hooks/useChartId";
 import { today } from "../lib/dates";
 import { activityMix } from "../lib/trainingLoad";
 import { activityColor } from "../lib/activityTypes";
@@ -76,6 +77,7 @@ export default function TrainingLoadSheet({
   onClose: () => void;
 }) {
   const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
+  const weeklySummaryId = useChartId("weekly-load-summary");
   const maxW = Math.max(...weeklyLoads.map((week) => week.total), 1);
   const current = weeklyLoads[weeklyLoads.length - 1]?.total ?? 0;
   const previous = weeklyLoads[weeklyLoads.length - 2]?.total ?? 0;
@@ -132,15 +134,22 @@ export default function TrainingLoadSheet({
         </div>
         <div
           className="chart-scrub"
-          role="img"
+          role="group"
           aria-label="Weekly training load bars"
+          aria-describedby={weeklySummaryId}
           style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 88 }}
         >
+          <span id={weeklySummaryId} className="chart-a11y-summary">
+            Each week is a keyboard-accessible data point. Focus a week to hear its
+            total and change from the prior week.
+          </span>
           {weeklyLoads.map((week, index) => {
             const delta = index > 0 ? weekDelta(week.total, weeklyLoads[index - 1]!.total) : null;
             return (
-              <div
+              <button
                 key={index}
+                type="button"
+                aria-label={`${week.label}: ${week.total.toLocaleString()} AU${delta ? `, ${Math.abs(delta.pct).toFixed(0)}% ${delta.pct < 0 ? "down" : "up"} from prior week` : ""}`}
                 style={{
                   flex: 1,
                   position: "relative",
@@ -149,6 +158,14 @@ export default function TrainingLoadSheet({
                   alignItems: "center",
                   gap: 4,
                   height: "100%",
+                  minHeight: 44,
+                  minWidth: 0,
+                  padding: 0,
+                  border: 0,
+                  background: "transparent",
+                  color: "inherit",
+                  font: "inherit",
+                  appearance: "none",
                   justifyContent: "flex-end",
                 }}
                 {...hoverWeekProps(index)}
@@ -178,8 +195,7 @@ export default function TrainingLoadSheet({
                   {week.total.toLocaleString()}
                 </span>
                 <div
-                  role="img"
-                  aria-label={`${week.label}: ${week.total.toLocaleString()} AU`}
+                  aria-hidden="true"
                   style={{
                     width: "100%",
                     height: Math.max((week.total / maxW) * 64, 2),
@@ -194,7 +210,7 @@ export default function TrainingLoadSheet({
                 <span style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-faint)" }}>
                   {week.label}
                 </span>
-              </div>
+              </button>
             );
           })}
         </div>

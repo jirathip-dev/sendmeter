@@ -98,12 +98,13 @@ function DayComparisonChart({
   const todayAbove = med === null || score >= med;
   return (
     <div
-      role="img"
+      role="group"
       aria-label="Same-time-of-day send conditions comparison"
       style={{ position: "relative", height: CHART_H, paddingRight: CHART_LABEL_GUTTER }}
     >
       <div
         className="chart-scrub"
+        role="group"
         style={{ display: "flex", alignItems: "flex-end", gap: 2, height: "100%", position: "relative" }}
       >
         {/* Median of the plotted days — the "typical day here" baseline. Dotted
@@ -134,14 +135,24 @@ function DayComparisonChart({
           const daysAgo = sameHourDaysAgo(i, days.length);
           const isHovered = hoveredIdx === i;
           return (
-            <div
+            <button
               key={i}
+              type="button"
+              aria-label={`${daysAgo} days ago: send conditions score ${s}`}
               style={{
                 flex: 1,
                 position: "relative",
                 height: "100%",
                 display: "flex",
                 alignItems: "flex-end",
+                minHeight: 44,
+                minWidth: 0,
+                padding: 0,
+                border: 0,
+                background: "transparent",
+                color: "inherit",
+                font: "inherit",
+                appearance: "none",
                 cursor: "pointer",
               }}
               {...hoverProps(i)}
@@ -163,17 +174,27 @@ function DayComparisonChart({
                   transition: "opacity 0.1s",
                 }}
               />
-            </div>
+            </button>
           );
         })}
         {/* Today's bar, appended on the right — coloured + full opacity so it pops. */}
-        <div
+        <button
+          type="button"
+          aria-label={`Today: send conditions score ${score}`}
           style={{
             flex: 1.3,
             position: "relative",
             height: "100%",
             display: "flex",
             alignItems: "flex-end",
+            minHeight: 44,
+            minWidth: 0,
+            padding: 0,
+            border: 0,
+            background: "transparent",
+            color: "inherit",
+            font: "inherit",
+            appearance: "none",
             cursor: "pointer",
           }}
           {...hoverProps(days.length)}
@@ -193,7 +214,7 @@ function DayComparisonChart({
               transition: "opacity 0.1s",
             }}
           />
-        </div>
+        </button>
         </div>
       {/* Inline end labels, in the reserved gutter — every reference line on
           this chart is identifiable without hovering. */}

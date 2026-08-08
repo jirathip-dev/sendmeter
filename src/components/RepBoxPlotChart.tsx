@@ -5,7 +5,11 @@ import { useSvgScale } from "../hooks/useSvgScale";
 import { useChartId } from "../hooks/useChartId";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import { chartColor, chartGradientUrl } from "../lib/chartTheme";
+import {
+  CHART_TOUCH_TARGET_UNITS,
+  chartColor,
+  chartGradientUrl,
+} from "../lib/chartTheme";
 import type { TindeqRecordingMeta, TindeqSample, TindeqSide } from "../types";
 
 interface Props {
@@ -203,7 +207,7 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
       <div ref={hostRef} style={{ width: "100%" }}>
         <svg
           className="chart-scrub"
-          role="img"
+          role="group"
           aria-label="Force distribution by repetition"
           viewBox={`0 0 ${W} ${H}`}
           style={{ width: "100%", height: H, display: "block", marginTop: 6 }}
@@ -263,9 +267,12 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                   <rect
                     x={px(i)}
                     y={PAD.top}
-                    width={Math.max(1, px(i + 1) - px(i))}
+                    width={Math.max(CHART_TOUCH_TARGET_UNITS, px(i + 1) - px(i))}
                     height={H - PAD.top - PAD.bottom}
                     fill="transparent"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Rep ${i + 1}: no samples recorded`}
                     style={{ cursor: "pointer" }}
                     {...hoverProps(i)}
                   />
@@ -365,9 +372,12 @@ export default function RepBoxPlotChart({ recs, samplesById }: Props) {
                 <rect
                   x={px(i)}
                   y={PAD.top}
-                  width={Math.max(1, px(i + 1) - px(i))}
+                  width={Math.max(CHART_TOUCH_TARGET_UNITS, px(i + 1) - px(i))}
                   height={H - PAD.top - PAD.bottom}
                   fill="transparent"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Rep ${i + 1}${sideLabel(r.side) ? ` · ${sideLabel(r.side)}` : ""}: median ${s.median.toFixed(1)} kg`}
                   style={{ cursor: "pointer" }}
                   {...hoverProps(i)}
                 />

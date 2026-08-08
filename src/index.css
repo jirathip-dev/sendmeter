@@ -236,13 +236,19 @@
 /* Increased contrast is additive: it strengthens quiet axes and bands while
    retaining the same semantic hues and existing labels/shapes. */
 @media (prefers-contrast: more) {
-  :root {
+  /* Match the explicit-light selector's specificity so a later high-contrast
+     preference wins over the base dark-mode declarations. */
+  :root,
+  :root[data-theme="light"] {
     --chart-grid: #AFAFB6;
     --chart-axis: #4F4F55;
     --chart-area-opacity: 0.24;
     --chart-band-opacity: 0.2;
   }
-  :root[data-theme="dark"] {
+  /* `:root:not([data-theme="light"])` mirrors the OS-dark selector above;
+     without the matching specificity, the OS rule silently wins here. */
+  :root[data-theme="dark"],
+  :root:not([data-theme="light"]) {
     --chart-grid: #6A6A72;
     --chart-axis: #D1D1D7;
     --chart-area-opacity: 0.28;
@@ -793,6 +799,19 @@ textarea.field { resize: none; }
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
+}
+/* Keep descriptive chart summaries in the accessibility tree without adding
+   a visual row or changing the chart's measured layout. */
+.chart-a11y-summary {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* Card heading — larger/heavier than the 9px eyebrow so the metric a card

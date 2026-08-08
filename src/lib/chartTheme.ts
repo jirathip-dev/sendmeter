@@ -24,6 +24,9 @@ export const CHART_TOKENS = {
 
 export type ChartSemantic = keyof typeof CHART_TOKENS;
 
+/** Minimum SVG viewBox extent used for an interactive chart hit target. */
+export const CHART_TOUCH_TARGET_UNITS = 44;
+
 export const CHART_SEMANTICS: Readonly<Record<ChartSemantic, string>> = {
   focus: "active series or selected point",
   health: "readiness and recovery input",

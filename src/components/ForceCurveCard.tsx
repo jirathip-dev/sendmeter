@@ -12,7 +12,15 @@ import { useChartId } from "../hooks/useChartId";
 import InfoDot from "./InfoDot";
 import SvgChartTooltip from "./SvgChartTooltip";
 import ChartDefs from "./ChartDefs";
-import { chartColor, chartGradientUrl } from "../lib/chartTheme";
+import {
+  CHART_TOUCH_TARGET_UNITS,
+  chartColor,
+  chartGradientUrl,
+} from "../lib/chartTheme";
+import {
+  curvePeriodStyle,
+  type CurvePeriodStyle,
+} from "../lib/chartPeriodStyles";
 import type { ForceCapacityModality } from "../types";
 
 export interface GaugeTarget {
@@ -34,20 +42,9 @@ interface Props {
   modality: ForceCapacityModality;
 }
 
-/// One hue per trailing window — semantic CSS tokens keep the overlay family
-/// theme-aware while the labels/dashes carry the exact time window.
-const PERIOD_COLORS: Record<string, string> = {
-  "30d": chartColor("forceSecondary"),
-  "90d": chartColor("load"),
-  "180d": chartColor("caution"),
-  "1y": chartColor("alert"),
-  "2y": chartColor("alert"),
-  "3y": chartColor("reference"),
-};
-
 interface Overlay {
   label: string;
-  color: string;
+  style: CurvePeriodStyle;
   model: ForceCurveModel;
 }
 
@@ -101,7 +98,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
   return (
     <svg
       className="chart-scrub"
-      role="img"
+      role="group"
       aria-label="Force duration curve with quality regions, measured envelope, and confidence band"
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", display: "block" }}
@@ -199,9 +196,9 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           key={o.label}
           points={displayCurve(o.model)}
           fill="none"
-          stroke={o.color}
+          stroke={o.style.color}
           strokeWidth={1.2}
-          strokeDasharray="5 3"
+          strokeDasharray={o.style.dash}
           opacity={0.75}
           vectorEffect="non-scaling-stroke"
         />
@@ -218,7 +215,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
         />
       )}
       {pts.map((p, i) => (
-        <g key={p.windowS} {...hoverProps(i)}>
+        <g key={p.windowS}>
           {hovered === i && (
             <circle
               cx={px(p.windowS)}
@@ -231,9 +228,20 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           <circle
             cx={px(p.windowS)}
             cy={py(p.kg)}
+            r={CHART_TOUCH_TARGET_UNITS / 2}
+            fill="transparent"
+            role="button"
+            tabIndex={0}
+            aria-label={`${p.windowS}s force ${p.kg.toFixed(1)} kg`}
+            style={{ cursor: "pointer" }}
+            {...hoverProps(i)}
+          />
+          <circle
+            cx={px(p.windowS)}
+            cy={py(p.kg)}
             r={hovered === i ? 5 : 3}
             fill={chartColor("forceSecondary")}
-            style={{ cursor: "pointer", transition: "r 0.1s" }}
+            style={{ pointerEvents: "none", transition: "r 0.1s" }}
           />
         </g>
       ))}
@@ -278,7 +286,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
   const [activePeriods, setActivePeriods] = useState<Set<string>>(new Set());
   const overlays: Overlay[] = periods.flatMap((p) =>
     activePeriods.has(p.label) && p.model
-      ? [{ label: p.label, color: PERIOD_COLORS[p.label] ?? "#8E8E93", model: p.model }]
+      ? [{ label: p.label, style: curvePeriodStyle(p.label), model: p.model }]
       : [],
   );
   return (
@@ -329,7 +337,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
               {periods.map((p) => {
                 const has = p.model !== null;
                 const active = activePeriods.has(p.label);
-                const color = PERIOD_COLORS[p.label] ?? "#8E8E93";
+                const style = curvePeriodStyle(p.label);
                 return (
                   <button
                     key={p.label}
@@ -344,9 +352,9 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
                       })
                     }
                     style={{
-                      background: active ? color : "var(--surface-1)",
-                      color: active ? "#ffffff" : has ? color : "var(--ink-faint)",
-                      border: `1px solid ${has ? color : "var(--border)"}`,
+                      background: active ? style.color : "var(--surface-1)",
+                      color: active ? "#ffffff" : has ? style.color : "var(--ink-faint)",
+                      border: `1px solid ${has ? style.color : "var(--border)"}`,
                       opacity: has ? 1 : 0.4,
                       cursor: has ? "pointer" : "default",
                       fontFamily: "Inter, sans-serif",
