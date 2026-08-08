@@ -1039,7 +1039,7 @@ input[type="number"] {
   background: var(--canvas);
   background-image: var(--card-gradient, var(--gradient-interaction));
   border: 1px solid color-mix(in srgb, var(--accent-interaction) 42%, var(--card-border));
-  border-radius: var(--radius-card);
+  border-radius: 12px;
   box-shadow: var(--shadow-card);
   cursor: pointer;
   transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface);

@@ -72,7 +72,6 @@ export default function PhoneWorkoutCard({
           textAlign: "left",
           cursor: "pointer",
           marginBottom: 12,
-          borderRadius: 12,
           padding: 16,
           display: "flex",
           alignItems: "center",

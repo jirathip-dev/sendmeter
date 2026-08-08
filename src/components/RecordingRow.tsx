@@ -217,7 +217,6 @@ export default function RecordingRow({
             style={{
               width: 20,
               height: 20,
-              borderRadius: "50%",
               flexShrink: 0,
               fontSize: "var(--t-sm)",
               lineHeight: 1,
