@@ -137,4 +137,23 @@ describe("useAuth local auto-login", () => {
     expect(mocks.relaySessionToWatch).toHaveBeenCalledWith(cachedSession);
     expect(mocks.setMonitoringUser).toHaveBeenCalledWith(cachedSession.user.id);
   });
+
+  it("uses the DEV-only helper for an empty local session without delaying auth UI opt-out", async () => {
+    window.history.replaceState({}, "", "/");
+    mocks.getSessionWithDiagnostics.mockResolvedValue({ session: null });
+    mocks.signInWithPassword.mockResolvedValue({
+      data: { session: cachedSession },
+      error: null,
+    });
+
+    await act(async () => {
+      root.render(createElement(Probe));
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await Promise.resolve();
+    });
+
+    expect(mocks.signInWithPassword).toHaveBeenCalledOnce();
+    expect(latest?.loading).toBe(false);
+    expect(latest?.session).toBe(cachedSession);
+  });
 });

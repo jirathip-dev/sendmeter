@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- the DEV entry exports its mount adapter. */
 
 import { StrictMode, useEffect, useMemo, useState } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import ConfirmDialog from "../components/ConfirmDialog";
 import ChartDefs from "../components/ChartDefs";
 import Sheet, { SheetLayerProvider } from "../components/Sheet";
@@ -294,21 +294,21 @@ function UiQaEmbedded() {
 
           <div className="uiqa-metric-grid">
             <MetricCard
-              testId="uiqa-readiness"
+              testId="uiqa-readiness-card"
               className="surface-readiness"
               label="Readiness"
               value="82"
               detail="Strong · static overnight signal"
             />
             <MetricCard
-              testId="uiqa-load"
+              testId="uiqa-load-card"
               className="surface-load"
               label="Training load"
               value="0.78"
               detail="ACWR · steady working week"
             />
             <MetricCard
-              testId="uiqa-force"
+              testId="uiqa-force-card"
               className="surface-force"
               label="Force PR"
               value="42.6 kg"
@@ -349,7 +349,7 @@ function UiQaEmbedded() {
               <button
                 type="button"
                 className="btn-primary"
-                data-testid="uiqa-primary"
+                data-testid="uiqa-primary-action"
                 onClick={() => setActionMessage("Primary action checked.")}
               >
                 Primary action
@@ -357,7 +357,7 @@ function UiQaEmbedded() {
               <button
                 type="button"
                 className="btn-secondary"
-                data-testid="uiqa-secondary"
+                data-testid="uiqa-secondary-action"
                 onClick={() => setActionMessage("Secondary action checked.")}
               >
                 Secondary action
@@ -365,7 +365,7 @@ function UiQaEmbedded() {
               <button
                 type="button"
                 className="btn-danger"
-                data-testid="uiqa-danger"
+                data-testid="uiqa-danger-action"
                 onClick={() => setActionMessage("Danger action is wired safely.")}
               >
                 Danger action
@@ -445,9 +445,11 @@ function UiQaEmbedded() {
   );
 }
 
-export function mountUiQa(root: HTMLElement): void {
+export function mountUiQa(root: HTMLElement): Root {
   const embedded = new URLSearchParams(window.location.search).get("embedded") === "1";
-  createRoot(root).render(
+  const reactRoot = createRoot(root);
+  reactRoot.render(
     <StrictMode>{embedded ? <UiQaEmbedded /> : <UiQaOuter />}</StrictMode>,
   );
+  return reactRoot;
 }

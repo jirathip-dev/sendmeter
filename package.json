@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && npm run verify:pwa",
+    "build": "tsc --noEmit && vite build && npm run verify:pwa && npm run verify:production",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint .",
     "preview": "vite preview",
+    "verify:production": "node scripts/verify-production-artifacts.mjs",
     "sync": "cap sync ios",
     "build:local": "tsc --noEmit && vite build --mode development",
     "sync:local": "npm run build:local && cap sync ios",

@@ -91,6 +91,10 @@
 .uiqa-frame-control iframe {
   display: block;
   flex: 0 0 auto;
+  /* The dimensions label the iframe's content viewport. Keep the visible
+     border outside those exact phone dimensions despite index.css's global
+     border-box reset. */
+  box-sizing: content-box;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 18px;
