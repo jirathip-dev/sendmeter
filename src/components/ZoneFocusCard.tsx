@@ -177,32 +177,18 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
           }}
           disabled={locked}
         >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>
+        <div className="zone-focus-copy">
+          <div className="zone-focus-kicker">
             FOCUS NEXT
           </div>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontWeight: 800,
-              fontSize: "var(--t-md)",
-              color: QUALITY_COLORS[rec.zone],
-            }}
-          >
+          <div className="zone-focus-label">
             {QUALITIES.find((q) => q.id === rec.zone)?.label}
           </div>
-          <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 2 }}>
+          <div className="zone-focus-reason">
             {rec.reason}
           </div>
         </div>
-        <span
-          style={{
-            fontSize: "var(--t-xs)",
-            fontWeight: 700,
-            color: QUALITY_COLORS[rec.zone],
-            flexShrink: 0,
-          }}
-        >
+        <span className="zone-focus-action">
           Arm ›
         </span>
         </button>

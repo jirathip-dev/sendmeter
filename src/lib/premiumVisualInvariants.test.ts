@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const SRC = join(import.meta.dirname, "..");
@@ -29,9 +30,24 @@ function component(name: string): string {
 }
 
 function componentSources(): Array<[string, string]> {
-  return readdirSync(join(SRC, "components"), { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".tsx"))
-    .map((entry) => [entry.name, component(entry.name)]);
+  const componentsRoot = join(SRC, "components");
+  const files: string[] = [];
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.isFile() && entry.name.endsWith(".tsx")) files.push(path);
+    }
+  };
+  visit(componentsRoot);
+  files.sort();
+  return [
+    ["src/App.tsx", readFileSync(join(SRC, "App.tsx"), "utf8")],
+    ...files.map((path) => [
+      `src/components/${path.slice(componentsRoot.length + 1)}`,
+      readFileSync(path, "utf8"),
+    ] as [string, string]),
+  ];
 }
 
 interface ButtonRegion {
@@ -43,12 +59,13 @@ interface ButtonConsumer extends ButtonRegion {
   file: string;
   classValue: string;
   styleValue: string | null;
+  astViolations?: string[];
 }
 
 /**
- * Extract JSX button opening tags without stopping at object-literal braces in
- * event handlers/styles. This lets the invariant inspect every
- * button consumer instead of relying on a hand-maintained file list.
+ * Fixture-only balanced extractor used by the recovery-order and legacy
+ * negative fixtures below. The production consumer audit uses TypeScript's
+ * JSX AST (`auditButtonSource`) so it cannot be fooled by nested braces.
  */
 function buttonRegions(source: string): ButtonRegion[] {
   const regions: ButtonRegion[] = [];
@@ -330,18 +347,314 @@ function unsafeStyleExpression(styleValue: string | null): boolean {
   return unsafeStyleObject(expression.slice(1, objectEnd));
 }
 
-function buttonConsumers(): ButtonConsumer[] {
-  return componentSources().flatMap(([file, source]) =>
-    buttonRegions(source).map((region) => ({
-      ...region,
-      file,
-      classValue: attributeValue(region.tag, "className") ?? "",
-      styleValue: attributeValue(region.tag, "style"),
-    })),
+interface AstClassAnalysis {
+  tokens: Set<string>;
+  guaranteedRecipe: boolean;
+  opaque: boolean;
+}
+
+type LocalClassResolver = (name: string) => ts.Expression | undefined;
+
+const READABLE_INK_VALUES = new Set([
+  "var(--ink)",
+  "var(--ink-muted)",
+  "var(--ink-faint)",
+  "currentColor",
+]);
+
+function cssButtonRecipeClasses(): Set<string> {
+  const classes = new Set<string>();
+  for (const rule of parsedCssRules) {
+    for (const match of rule.selector.matchAll(/\.([A-Za-z_][\w-]*)/g)) {
+      if (match[1]) classes.add(match[1]);
+    }
+  }
+  return classes;
+}
+
+function unwrapTsExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    (ts.isSatisfiesExpression?.(current) ?? false)
+  ) {
+    if (ts.isParenthesizedExpression(current)) current = current.expression;
+    else if (ts.isAsExpression(current)) current = current.expression;
+    else if (ts.isTypeAssertionExpression(current)) current = current.expression;
+    else current = (current as ts.SatisfiesExpression).expression;
+  }
+  return current;
+}
+
+function classTokens(text: string): Set<string> {
+  return new Set(text.split(/\s+/).map((token) => token.trim()).filter(Boolean));
+}
+
+function mergeClassAnalyses(analyses: AstClassAnalysis[]): AstClassAnalysis {
+  return {
+    tokens: new Set(analyses.flatMap((analysis) => [...analysis.tokens])),
+    guaranteedRecipe: analyses.some((analysis) => analysis.guaranteedRecipe),
+    opaque: analyses.some((analysis) => analysis.opaque),
+  };
+}
+
+function analyzeClassExpression(
+  expression: ts.Expression | undefined,
+  recipeClasses: Set<string>,
+  resolveLocal?: LocalClassResolver,
+  resolving = new Set<string>(),
+): AstClassAnalysis {
+  if (!expression) return { tokens: new Set(), guaranteedRecipe: false, opaque: true };
+  const current = unwrapTsExpression(expression);
+  if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
+    const tokens = classTokens(current.text);
+    return {
+      tokens,
+      guaranteedRecipe: [...tokens].some((token) => recipeClasses.has(token)),
+      opaque: false,
+    };
+  }
+  if (ts.isTemplateExpression(current)) {
+    const staticText = [current.head.text, ...current.templateSpans.map((span) => span.literal.text)].join(" ");
+    const tokens = classTokens(staticText);
+    const dynamic = current.templateSpans.map((span) =>
+      analyzeClassExpression(span.expression, recipeClasses, resolveLocal, resolving),
+    );
+    return {
+      tokens: new Set([...tokens, ...dynamic.flatMap((analysis) => [...analysis.tokens])]),
+      guaranteedRecipe:
+        [...tokens].some((token) => recipeClasses.has(token)) ||
+        (dynamic.length > 0 && dynamic.every((analysis) => analysis.guaranteedRecipe)),
+      opaque: true,
+    };
+  }
+  if (ts.isConditionalExpression(current)) {
+    const branches = [
+      analyzeClassExpression(current.whenTrue, recipeClasses, resolveLocal, resolving),
+      analyzeClassExpression(current.whenFalse, recipeClasses, resolveLocal, resolving),
+    ];
+    const merged = mergeClassAnalyses(branches);
+    return { ...merged, guaranteedRecipe: branches.every((branch) => branch.guaranteedRecipe) };
+  }
+  if (ts.isBinaryExpression(current)) {
+    const left = analyzeClassExpression(current.left, recipeClasses, resolveLocal, resolving);
+    const right = analyzeClassExpression(current.right, recipeClasses, resolveLocal, resolving);
+    const merged = mergeClassAnalyses([left, right]);
+    if (current.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      return { ...merged, guaranteedRecipe: left.guaranteedRecipe || right.guaranteedRecipe };
+    }
+    // `&&` can omit its class and `||` can select an uninspected fallback.
+    return { ...merged, guaranteedRecipe: false, opaque: true };
+  }
+  if (ts.isCallExpression(current)) {
+    const callee = current.expression.getText();
+    if (["clsx", "classnames", "cx", "cn"].includes(callee)) {
+      const args = current.arguments.map((argument) =>
+        analyzeClassExpression(argument, recipeClasses, resolveLocal, resolving),
+      );
+      const merged = mergeClassAnalyses(args);
+      return {
+        ...merged,
+        guaranteedRecipe: args.some((argument) => argument.guaranteedRecipe),
+        opaque: args.some((argument) => argument.opaque),
+      };
+    }
+    return { tokens: new Set(), guaranteedRecipe: false, opaque: true };
+  }
+  if (ts.isIdentifier(current) && resolveLocal && !resolving.has(current.text)) {
+    const initializer = resolveLocal(current.text);
+    if (initializer) {
+      const nextResolving = new Set(resolving);
+      nextResolving.add(current.text);
+      return analyzeClassExpression(initializer, recipeClasses, resolveLocal, nextResolving);
+    }
+  }
+  return { tokens: new Set(), guaranteedRecipe: false, opaque: true };
+}
+
+function jsxAttribute(
+  opening: ts.JsxOpeningLikeElement,
+  name: string,
+): ts.JsxAttribute | undefined {
+  return opening.attributes.properties.find(
+    (property): property is ts.JsxAttribute =>
+      ts.isJsxAttribute(property) && property.name.getText() === name,
   );
 }
 
+function jsxAttributeExpression(
+  opening: ts.JsxOpeningLikeElement,
+  name: string,
+): ts.Expression | undefined {
+  const attribute = jsxAttribute(opening, name);
+  if (!attribute?.initializer) return undefined;
+  if (ts.isStringLiteral(attribute.initializer)) return attribute.initializer;
+  if (!ts.isJsxExpression(attribute.initializer)) return undefined;
+  return attribute.initializer.expression;
+}
+
+function jsxOpeningElement(
+  node: ts.JsxElement | ts.JsxSelfClosingElement,
+): ts.JsxOpeningLikeElement {
+  return ts.isJsxElement(node) ? node.openingElement : node;
+}
+
+function jsxElementName(opening: ts.JsxOpeningLikeElement): string {
+  return opening.tagName.getText();
+}
+
+function styleValueIsReadableInk(expression: ts.Expression): boolean {
+  const current = unwrapTsExpression(expression);
+  if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
+    return READABLE_INK_VALUES.has(current.text.trim());
+  }
+  if (ts.isConditionalExpression(current)) {
+    return styleValueIsReadableInk(current.whenTrue) && styleValueIsReadableInk(current.whenFalse);
+  }
+  return false;
+}
+
+function stylePaintViolations(
+  expression: ts.Expression | undefined,
+  sourceFile: ts.SourceFile,
+  direct: boolean,
+): string[] {
+  if (!expression) return ["missing style expression"];
+  const current = unwrapTsExpression(expression);
+  if (current.kind === ts.SyntaxKind.NullKeyword || current.kind === ts.SyntaxKind.Identifier && current.getText() === "undefined") {
+    return [];
+  }
+  if (ts.isConditionalExpression(current)) {
+    return [
+      ...stylePaintViolations(current.whenTrue, sourceFile, direct),
+      ...stylePaintViolations(current.whenFalse, sourceFile, direct),
+    ];
+  }
+  if (ts.isBinaryExpression(current)) {
+    if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+      return stylePaintViolations(current.right, sourceFile, direct);
+    }
+    if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+      return [
+        ...stylePaintViolations(current.left, sourceFile, direct),
+        ...stylePaintViolations(current.right, sourceFile, direct),
+      ];
+    }
+  }
+  if (!ts.isObjectLiteralExpression(current)) {
+    return [`opaque ${direct ? "button" : "descendant"} style expression`];
+  }
+  const violations: string[] = [];
+  for (const property of current.properties) {
+    if (ts.isSpreadAssignment(property) || ts.isShorthandPropertyAssignment(property)) {
+      violations.push("opaque style spread or shorthand");
+      continue;
+    }
+    if (!ts.isPropertyAssignment(property)) {
+      violations.push("opaque computed style property");
+      continue;
+    }
+    const key = property.name.getText(sourceFile).replace(/^(?:['"])(.*)(?:['"])$/, "$1");
+    if (ts.isComputedPropertyName(property.name) || key.startsWith("[") || key.startsWith("--")) {
+      violations.push(`unsafe style property ${key}`);
+      continue;
+    }
+    if (INLINE_PAINT_PROPERTIES.has(key)) {
+      if (!direct && key === "color" && styleValueIsReadableInk(property.initializer)) continue;
+      violations.push(`unsafe ${direct ? "button" : "descendant"} style property ${key}`);
+    }
+  }
+  return violations;
+}
+
+function descendantJsxPaintViolations(
+  root: ts.JsxElement | ts.JsxSelfClosingElement,
+  sourceFile: ts.SourceFile,
+): string[] {
+  const violations: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const opening = jsxOpeningElement(node);
+      const tagName = jsxElementName(opening);
+      if (tagName === "button") return;
+      const style = jsxAttributeExpression(opening, "style");
+      if (style) violations.push(...stylePaintViolations(style, sourceFile, false));
+      if (ts.isJsxElement(node)) node.children.forEach(visit);
+      return;
+    }
+    if (ts.isJsxExpression(node) && node.expression) {
+      node.expression.forEachChild(visit);
+    }
+  };
+  if (ts.isJsxElement(root)) root.children.forEach(visit);
+  return violations;
+}
+
+function auditButtonSource(file: string, source: string): ButtonConsumer[] {
+  const sourceFile = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const recipeClasses = cssButtonRecipeClasses();
+  const localInitializers = new Map<string, ts.Expression>();
+  const collectInitializers = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      localInitializers.set(node.name.text, node.initializer);
+    }
+    ts.forEachChild(node, collectInitializers);
+  };
+  collectInitializers(sourceFile);
+  const consumers: ButtonConsumer[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const opening = jsxOpeningElement(node);
+      if (jsxElementName(opening) === "button") {
+        const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+        const classAttribute = jsxAttribute(opening, "className");
+        const classExpression = jsxAttributeExpression(opening, "className");
+        const classAnalysis = analyzeClassExpression(
+          classExpression,
+          recipeClasses,
+          (name) => localInitializers.get(name),
+        );
+        const violations: string[] = [];
+        if (!classAttribute) violations.push("button is missing a className recipe");
+        if (!classAnalysis.guaranteedRecipe) {
+          violations.push("button className does not guarantee a CSS recipe");
+        }
+        if (opening.attributes.properties.some((property) => ts.isJsxSpreadAttribute(property))) {
+          violations.push("opaque JSX button spread hides button paint");
+        }
+        const style = jsxAttributeExpression(opening, "style");
+        if (style) violations.push(...stylePaintViolations(style, sourceFile, true));
+        violations.push(...descendantJsxPaintViolations(node, sourceFile));
+        consumers.push({
+          tag: opening.getText(sourceFile),
+          element: node.getText(sourceFile),
+          file,
+          classValue: classExpression?.getText(sourceFile) ?? "",
+          styleValue: jsxAttribute(opening, "style")?.initializer?.getText(sourceFile) ?? null,
+          astViolations: violations.map((violation) => `${file}:${line}: ${violation}`),
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return consumers;
+}
+
+function buttonConsumers(): ButtonConsumer[] {
+  return componentSources().flatMap(([file, source]) => auditButtonSource(file, source));
+}
+
 function buttonAuditViolations(consumer: ButtonConsumer): string[] {
+  if (consumer.astViolations) return consumer.astViolations;
   const violations = spreadAttributes(consumer.tag).map(
     (spread) => `${consumer.file}: opaque JSX button spread ${spread}`,
   );
@@ -919,7 +1232,7 @@ describe("premium visual language contracts (#517)", () => {
         selector: ".zone-focus-button",
         hover: ".zone-focus-button:hover:not(:disabled)",
         hues: actualBoxChipHues,
-        percentages: [0.12, 0.2],
+        percentages: [0.12, 0.2, 0.24],
       },
       {
         name: "force action ready",
@@ -1017,6 +1330,130 @@ describe("premium visual language contracts (#517)", () => {
       buttonAuditViolations(consumer).map((violation) => `${violation}\n${consumer.tag}`),
     );
     expect(violations).toEqual([]);
+  });
+
+  it("uses the TypeScript AST for App and component button regressions", () => {
+    const consumers = buttonConsumers();
+    expect(consumers.some((consumer) => consumer.file === "src/App.tsx")).toBe(true);
+    const phaseChooser = consumers.find(
+      (consumer) => consumer.file === "src/App.tsx" && consumer.classValue.includes("phase-option"),
+    );
+    expect(phaseChooser).toBeDefined();
+    expect(buttonAuditViolations(phaseChooser!)).toEqual([]);
+
+    const fixture = auditButtonSource(
+      "src/fixtures/button-audit.tsx",
+      `
+        const Example = ({ active, hue, buttonProps }: Props) => {
+          const localClass = active ? "btn-primary" : "btn-secondary";
+          return <>
+            <button className={active ? "btn-primary" : "btn-secondary"}>
+              <span style={{ color: hue }}>Unsafe descendant</span>
+            </button>
+            <button {...buttonProps}>Opaque props</button>
+            <button className={getClassName()}>Unknown recipe</button>
+            <button className={localClass}>Resolved local recipe</button>
+          </>;
+        };
+      `,
+    );
+    expect(fixture).toHaveLength(4);
+    expect(buttonAuditViolations(fixture[0]!)).toEqual([
+      expect.stringContaining("unsafe descendant style property color"),
+    ]);
+    expect(buttonAuditViolations(fixture[1]!)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("missing a className recipe"),
+        expect.stringContaining("opaque JSX button spread"),
+      ]),
+    );
+    expect(buttonAuditViolations(fixture[2]!)).toEqual([
+      expect.stringContaining("does not guarantee a CSS recipe"),
+    ]);
+    expect(buttonAuditViolations(fixture[3]!)).toEqual([]);
+  });
+
+  it("keeps active phase chooser text readable while retaining each phase hue", () => {
+    const phaseSource = readFileSync(join(SRC, "App.tsx"), "utf8");
+    expect(phaseSource).not.toContain("color: p.color");
+    expect(phaseSource).not.toContain("background: active ? p.bg");
+    expect(phaseSource).not.toContain("border: `1px solid ${active ? p.color");
+
+    const phaseHues = ["#2E96F0", "#DDB13A", "#E5743A", "#7B83EB"];
+    for (const theme of Object.keys(themeDeclarations) as ThemeName[]) {
+      const ink = resolveThemeColor("var(--ink)", theme, "phase chooser ink");
+      const surface = resolveThemeColor("var(--surface-1)", theme, "phase chooser surface");
+      for (const hue of phaseHues) {
+        const phase = hexColor(hue, `phase hue ${hue}`);
+        for (const percentage of [0.12, 0.18]) {
+          expect(
+            contrastRatio(ink, mix(surface, phase, percentage)),
+            `${theme} phase tint ${hue} ${percentage}`,
+          ).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+
+    expect(cssRuleBody(parsedCssRules, ".phase-option")).toContain("color: var(--ink);");
+    for (const phase of ["capacity", "strength", "power", "execution"]) {
+      const active = cssRuleBody(parsedCssRules, `.phase-option[data-active="true"][data-phase="${phase}"]`);
+      expect(active).toContain("box-shadow:");
+      expect(active).not.toMatch(/color:\s*#fff/i);
+    }
+  });
+
+  it("keeps runtime zone and workout accents in decoration, not low-contrast text", () => {
+    const zoneSource = component("ZoneFocusCard.tsx");
+    const phoneSource = component("PhoneWorkoutFullscreen.tsx");
+    expect(zoneSource).not.toContain("color: QUALITY_COLORS[rec.zone]");
+    expect(phoneSource).not.toContain("color: accent");
+    expect(cssRuleBody(parsedCssRules, ".zone-focus-label")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".zone-focus-action")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".phone-workout-phase-label")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".workout-action-label")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".workout-action-button:hover:not(:disabled)")).toContain(
+      "color-mix(in srgb, var(--workout-accent, var(--primary)) 12%",
+    );
+    expect(cssRuleBody(parsedCssRules, ".workout-action-button:focus-visible")).toContain(
+      "outline: 2px solid var(--focus-ring);",
+    );
+    expect(cssRuleBody(parsedCssRules, ".zone-focus-button:active:not(:disabled)")).toContain(
+      "color-mix(in srgb, var(--zone-focus-color, var(--info)) 24%",
+    );
+    expect(css).toContain(".zone-focus-button:disabled .zone-focus-label");
+
+    const workoutHues = ["var(--success)", "var(--danger)", "var(--primary)"];
+    for (const theme of Object.keys(themeDeclarations) as ThemeName[]) {
+      const ink = resolveThemeColor("var(--ink)", theme, "workout accent ink");
+      const canvas = resolveThemeColor("var(--canvas)", theme, "workout accent canvas");
+      for (const hue of workoutHues) {
+        const accent = resolveThemeColor(hue, theme, `workout ${hue}`);
+        for (const percentage of [0.12, 0.18]) {
+          expect(
+            contrastRatio(ink, mix(canvas, accent, percentage)),
+            `${theme} workout ${hue} tint ${percentage}`,
+          ).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    }
+  });
+
+  it("keeps BoxChip wrappers and inner buttons equal-width and tappable", () => {
+    expect(component("TagSideEditor.tsx")).toMatch(/style=\{\{\s*flex:\s*1,\s*minWidth:\s*0\s*\}\}/);
+    const host = cssRuleBody(parsedCssRules, ".box-chip-host");
+    const inner = cssRuleBody(parsedCssRules, ".box-chip-host > .box-chip");
+    expect(host).toContain("display: inline-flex;");
+    expect(inner).toContain("width: 100%;");
+    expect(inner).toContain("min-width: 0;");
+    expect(inner).toContain("min-height: 44px;");
+  });
+
+  it("keeps System theme-color media fallbacks intact before matchMedia exists", () => {
+    expect(bootstrapSource).toMatch(/choice\s*===\s*["']system["']/);
+    expect(bootstrapSource).toMatch(/typeof\s+media\?\.matches\s*===\s*["']boolean["']/);
+    expect(bootstrapSource).toMatch(/choice\s*!==\s*["']system["']\s*\|\|\s*systemPrefersDark\s*!==\s*null/);
+    expect(indexHtml).toContain('media="(prefers-color-scheme: light)"');
+    expect(indexHtml).toContain('media="(prefers-color-scheme: dark)"');
   });
 
   it("rejects raw paint and opaque prop-spread fixtures without class gating", () => {
@@ -1264,6 +1701,14 @@ describe("premium visual language contracts (#517)", () => {
         ".filter-chip:focus-visible",
         ".filter-chip:hover:not(:disabled)",
       ],
+      [
+        "phase chooser",
+        ".phase-option",
+        '.phase-option[data-active="true"]',
+        ".phase-option:disabled",
+        ".phase-option:focus-visible",
+        ".phase-option:hover:not(:disabled)",
+      ],
     ] as const;
 
     for (const [name, normalSelector, selectedSelector, disabledSelector, focusSelector, hoverSelector] of controls) {
@@ -1290,6 +1735,43 @@ describe("premium visual language contracts (#517)", () => {
       expect(hover, `${name} hover background`).toContain("background: Highlight;");
       expect(hover, `${name} hover text`).toContain("color: HighlightText;");
     }
+  });
+
+  it("keeps the zone focus control readable in forced colors, including descendants", () => {
+    const forcedRules = cssRules(blockAfter(css, "@media (forced-colors: active) {"));
+    const normal = cssRuleBody(forcedRules, ".zone-focus-button");
+    expect(normal).toContain("background: ButtonFace;");
+    expect(normal).toContain("border-color: ButtonText;");
+    expect(normal).toContain("color: ButtonText;");
+    const hover = cssRuleBody(forcedRules, ".zone-focus-button:hover:not(:disabled)");
+    expect(hover).toContain("background: Highlight;");
+    expect(hover).toContain("color: HighlightText;");
+    const disabled = cssRuleBody(forcedRules, ".zone-focus-button:disabled");
+    expect(disabled).toContain("border-color: GrayText;");
+    expect(disabled).toContain("color: GrayText;");
+    expect(cssRuleBody(forcedRules, ".zone-focus-button:focus-visible")).toContain(
+      "outline: 2px solid Highlight;",
+    );
+    expect(css).toContain(".zone-focus-button:hover:not(:disabled) .zone-focus-label");
+    expect(css).toContain(".zone-focus-button:active:not(:disabled) .zone-focus-action");
+    expect(css).toContain(".workout-action-button:active:not(:disabled) .workout-action-label");
+  });
+
+  it("keeps the workout action button readable through forced-colors states", () => {
+    const forcedRules = cssRules(blockAfter(css, "@media (forced-colors: active) {"));
+    expect(cssRuleBody(forcedRules, ".workout-action-button")).toContain("color: ButtonText;");
+    expect(cssRuleBody(forcedRules, ".workout-action-button:hover:not(:disabled)")).toContain(
+      "color: HighlightText;",
+    );
+    expect(cssRuleBody(forcedRules, ".workout-action-button:active:not(:disabled)")).toContain(
+      "background: Highlight;",
+    );
+    expect(cssRuleBody(forcedRules, ".workout-action-button:disabled")).toContain(
+      "color: GrayText;",
+    );
+    expect(cssRuleBody(forcedRules, ".workout-action-button:focus-visible")).toContain(
+      "outline: 2px solid Highlight;",
+    );
   });
 
   it("keeps high-contrast light and dark selectors in the intended cascade", () => {

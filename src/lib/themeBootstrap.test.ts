@@ -48,17 +48,17 @@ function media(meta: HTMLMetaElement | undefined): string | null {
   return meta?.getAttribute("media") ?? null;
 }
 
-function runBootstrap(stored: string | null, prefersDark: boolean) {
+function runBootstrap(stored: string | null, prefersDark: boolean | null) {
   resetHead();
   const storage = memoryStorage(stored);
-  const matchMedia = vi.fn(() => ({ matches: prefersDark }));
+  const matchMedia = vi.fn(() => ({ matches: prefersDark === true }));
   Object.defineProperty(window, "localStorage", {
     configurable: true,
     value: storage,
   });
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
-    value: matchMedia,
+    value: prefersDark === null ? undefined : matchMedia,
   });
   new Function("window", "document", bootstrap!)(window, document);
   return { storage, matchMedia };
@@ -124,6 +124,25 @@ describe("pre-paint theme bootstrap", () => {
     controller.dispose();
   });
 
+  it("preserves media-qualified System chrome when matchMedia is unavailable", () => {
+    const { storage, matchMedia } = runBootstrap("system", null);
+    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+    expect(matchMedia).not.toHaveBeenCalled();
+    const [light, dark] = metas();
+    expect(media(light)).toBe(LIGHT_COLOR_SCHEME_QUERY);
+    expect(media(dark)).toBe(DARK_COLOR_SCHEME_QUERY);
+
+    const controller = createThemeController({
+      document,
+      storage,
+      matchMedia: (() => ({ matches: true })) as unknown as (query: string) => MediaQueryList,
+    });
+    expect(controller.initialize()).toBe("system");
+    expect(media(metas()[0])).toBe(LIGHT_COLOR_SCHEME_QUERY);
+    expect(media(metas()[1])).toBe(DARK_COLOR_SCHEME_QUERY);
+    controller.dispose();
+  });
+
   it("falls back to System when storage and matchMedia APIs throw", () => {
     resetHead();
     Object.defineProperty(window, "localStorage", {
@@ -132,16 +151,15 @@ describe("pre-paint theme bootstrap", () => {
         throw new Error("storage unavailable");
       },
     });
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: () => {
-        throw new Error("media unavailable");
-      },
+    const matchMedia = vi.fn(() => {
+      throw new Error("media unavailable");
     });
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: matchMedia });
 
     expect(() => new Function("window", "document", bootstrap)(window, document)).not.toThrow();
     expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
-    expect(media(metas()[0])).toBeNull();
-    expect(media(metas()[1])).toBe("not all");
+    expect(matchMedia).toHaveBeenCalledWith(DARK_COLOR_SCHEME_QUERY);
+    expect(media(metas()[0])).toBe(LIGHT_COLOR_SCHEME_QUERY);
+    expect(media(metas()[1])).toBe(DARK_COLOR_SCHEME_QUERY);
   });
 });

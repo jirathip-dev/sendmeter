@@ -587,6 +587,57 @@ input[type="number"] {
   border-color: #7B83EB;
   background: color-mix(in srgb, #7B83EB 10%, var(--surface-1));
 }
+.phase-option {
+  width: 100%; min-height: 44px; text-align: left; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: 10px; cursor: pointer;
+  background: var(--surface-1); color: var(--ink); font-family: inherit;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+.phase-option-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.phase-option-name { font-size: var(--t-base); font-weight: 700; color: var(--ink); }
+.phase-option-current {
+  color: var(--ink-muted); font-size: var(--t-eyebrow); text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.phase-option-description { margin-top: 2px; color: var(--ink-muted); font-size: var(--t-xs); }
+.phase-option:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--surface-1));
+}
+.phase-option:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.phase-option:disabled { background: var(--surface-1); border-color: var(--border); color: var(--ink-faint); opacity: 1; cursor: default; }
+.phase-option:disabled .phase-option-name,
+.phase-option:disabled .phase-option-current,
+.phase-option:disabled .phase-option-description { color: var(--ink-faint); }
+.phase-option[data-active="true"][data-phase="capacity"] {
+  border-color: #2E96F0; background: color-mix(in srgb, #2E96F0 12%, var(--surface-1));
+  box-shadow: 0 0 0 2px color-mix(in srgb, #2E96F0 20%, transparent);
+}
+.phase-option[data-active="true"][data-phase="strength"] {
+  border-color: #DDB13A; background: color-mix(in srgb, #DDB13A 12%, var(--surface-1));
+  box-shadow: 0 0 0 2px color-mix(in srgb, #DDB13A 20%, transparent);
+}
+.phase-option[data-active="true"][data-phase="power"] {
+  border-color: #E5743A; background: color-mix(in srgb, #E5743A 12%, var(--surface-1));
+  box-shadow: 0 0 0 2px color-mix(in srgb, #E5743A 20%, transparent);
+}
+.phase-option[data-active="true"][data-phase="execution"] {
+  border-color: #7B83EB; background: color-mix(in srgb, #7B83EB 12%, var(--surface-1));
+  box-shadow: 0 0 0 2px color-mix(in srgb, #7B83EB 20%, transparent);
+}
+.phase-option[data-active="true"][data-phase="capacity"]:hover:not(:disabled) {
+  border-color: #2E96F0; background: color-mix(in srgb, #2E96F0 18%, var(--surface-1));
+}
+.phase-option[data-active="true"][data-phase="strength"]:hover:not(:disabled) {
+  border-color: #DDB13A; background: color-mix(in srgb, #DDB13A 18%, var(--surface-1));
+}
+.phase-option[data-active="true"][data-phase="power"]:hover:not(:disabled) {
+  border-color: #E5743A; background: color-mix(in srgb, #E5743A 18%, var(--surface-1));
+}
+.phase-option[data-active="true"][data-phase="execution"]:hover:not(:disabled) {
+  border-color: #7B83EB; background: color-mix(in srgb, #7B83EB 18%, var(--surface-1));
+}
+.phase-option[data-active="true"] .phase-option-name { color: var(--ink); }
 .phase-dismiss-button {
   flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%;
   border: 1px solid transparent; background: transparent; color: var(--ink-faint);
@@ -632,6 +683,9 @@ input[type="number"] {
 .force-open-link {
   border: 0; padding: 8px 0; background: none; cursor: pointer; font-family: inherit;
 }
+.force-open-link-label {
+  color: var(--ink); font-size: var(--t-base); font-weight: 700; white-space: nowrap;
+}
 .force-session-action {
   background: none; border: 1px solid var(--ink-faint); color: var(--ink-muted);
   padding: 6px 10px; border-radius: 6px; font-size: var(--t-2xs);
@@ -651,6 +705,9 @@ input[type="number"] {
 }
 .info-dot-button:focus-visible { outline-offset: 2px; }
 .box-chip-host { display: inline-flex; color: var(--ink); }
+.box-chip-host > .box-chip {
+  width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box;
+}
 .box-chip {
   padding: 8px 12px; border-radius: 8px;
   border: 1px solid var(--box-chip-hue, var(--border));
@@ -736,8 +793,14 @@ input[type="number"] {
 }
 .workout-action-button {
   position: relative; border-radius: 50%; border: none; background: transparent;
-  cursor: pointer; flex-shrink: 0;
+  color: var(--ink); cursor: pointer; flex-shrink: 0;
 }
+.workout-action-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--workout-accent, var(--primary)) 12%, transparent);
+}
+.workout-action-button:active:not(:disabled) { transform: scale(0.98); }
+.workout-action-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; }
+.workout-action-button:disabled { color: var(--ink-faint); opacity: 1; cursor: default; }
 .preset-basis-option,
 .tolerance-mode-option {
   background: var(--surface-1); color: var(--ink-muted); border: 1px solid var(--border);
@@ -789,13 +852,36 @@ input[type="number"] {
   background: color-mix(in srgb, var(--zone-focus-color, var(--info)) 12%, var(--surface-1));
   color: var(--ink); cursor: pointer; font-family: inherit;
 }
+.zone-focus-copy { flex: 1; min-width: 0; }
+.zone-focus-kicker { color: var(--ink-muted); font-size: var(--t-eyebrow); }
+.zone-focus-label {
+  color: var(--ink); font-family: Inter, sans-serif; font-weight: 800; font-size: var(--t-md);
+}
+.zone-focus-reason { margin-top: 2px; color: var(--ink-muted); font-size: var(--t-2xs); }
+.zone-focus-action { flex-shrink: 0; color: var(--ink); font-size: var(--t-xs); font-weight: 700; }
 .zone-focus-button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--zone-focus-color, var(--info)) 20%, var(--surface-1));
+}
+.zone-focus-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--zone-focus-color, var(--info)) 24%, var(--surface-1));
 }
 .zone-focus-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
 .zone-focus-button:disabled {
   background: var(--surface-1); border-color: var(--border); color: var(--ink-faint);
   cursor: default; opacity: 1;
+}
+.zone-focus-button:disabled .zone-focus-kicker,
+.zone-focus-button:disabled .zone-focus-label,
+.zone-focus-button:disabled .zone-focus-reason,
+.zone-focus-button:disabled .zone-focus-action { color: var(--ink-faint); }
+.phone-workout-phase-label {
+  color: var(--ink); font-family: Inter, sans-serif; font-weight: 800;
+  letter-spacing: 0.08em; font-size: var(--t-lg);
+}
+.workout-action-label {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 2px; color: var(--ink); font-family: Inter, sans-serif;
+  font-weight: 800; font-size: var(--t-md);
 }
 .box-chip[data-disabled="true"],
 .box-chip:disabled,
@@ -925,6 +1011,7 @@ input[type="number"] {
 .phone-workout-resume.climbing { --accent-interaction: var(--accent-readiness); --card-gradient: var(--gradient-readiness); }
 .phone-workout-resume:hover { border-color: color-mix(in srgb, var(--accent-interaction) 60%, var(--card-border)); }
 .phone-workout-resume:active { transform: scale(0.995); box-shadow: var(--shadow-sm); }
+.phone-workout-resume-action { color: var(--ink); font-size: var(--t-base); font-weight: 700; }
 .force-connection-card {
   box-shadow: var(--shadow-card);
   transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface);
@@ -1361,6 +1448,42 @@ textarea.field { resize: none; }
     outline: 2px solid Highlight;
     outline-offset: 3px;
   }
+  .phase-option {
+    background: ButtonFace;
+    background-image: none;
+    border-color: ButtonText;
+    color: ButtonText;
+    opacity: 1;
+  }
+  .phase-option[data-active="true"],
+  .phase-option:hover:not(:disabled) {
+    background: Highlight;
+    background-image: none;
+    border-color: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .phase-option[data-active="true"] .phase-option-name,
+  .phase-option[data-active="true"] .phase-option-current,
+  .phase-option[data-active="true"] .phase-option-description {
+    color: HighlightText;
+  }
+  .phase-option:disabled {
+    background: ButtonFace;
+    background-image: none;
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+  .phase-option:disabled .phase-option-name,
+  .phase-option:disabled .phase-option-current,
+  .phase-option:disabled .phase-option-description {
+    color: GrayText;
+  }
+  .phase-option:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 3px;
+  }
 
   /* The selectable controls below use data/ARIA state instead of the
      semantic action recipes, so give them the same explicit high-contrast
@@ -1387,6 +1510,78 @@ textarea.field { resize: none; }
     border-color: ButtonText;
     color: ButtonText;
     opacity: 1;
+  }
+  .zone-focus-button {
+    background: ButtonFace;
+    background-image: none;
+    border-color: ButtonText;
+    color: ButtonText;
+    opacity: 1;
+  }
+  .zone-focus-button:hover:not(:disabled),
+  .zone-focus-button:active:not(:disabled) {
+    background: Highlight;
+    background-image: none;
+    border-color: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .zone-focus-button:hover:not(:disabled) .zone-focus-kicker,
+  .zone-focus-button:hover:not(:disabled) .zone-focus-label,
+  .zone-focus-button:hover:not(:disabled) .zone-focus-reason,
+  .zone-focus-button:hover:not(:disabled) .zone-focus-action,
+  .zone-focus-button:active:not(:disabled) .zone-focus-kicker,
+  .zone-focus-button:active:not(:disabled) .zone-focus-label,
+  .zone-focus-button:active:not(:disabled) .zone-focus-reason,
+  .zone-focus-button:active:not(:disabled) .zone-focus-action {
+    color: HighlightText;
+  }
+  .zone-focus-button:disabled {
+    background: ButtonFace;
+    background-image: none;
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+  .zone-focus-button:disabled .zone-focus-kicker,
+  .zone-focus-button:disabled .zone-focus-label,
+  .zone-focus-button:disabled .zone-focus-reason,
+  .zone-focus-button:disabled .zone-focus-action {
+    color: GrayText;
+  }
+  .zone-focus-button:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 3px;
+  }
+  .workout-action-button {
+    background: ButtonFace;
+    background-image: none;
+    border: 1px solid ButtonText;
+    color: ButtonText;
+    opacity: 1;
+  }
+  .workout-action-button:hover:not(:disabled),
+  .workout-action-button:active:not(:disabled) {
+    background: Highlight;
+    background-image: none;
+    border-color: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .workout-action-button:hover:not(:disabled) .workout-action-label,
+  .workout-action-button:active:not(:disabled) .workout-action-label {
+    color: HighlightText;
+  }
+  .workout-action-button:disabled {
+    background: ButtonFace;
+    background-image: none;
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+  .workout-action-button:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 4px;
   }
   .box-chip[data-active="true"],
   .period-toggle[data-active="true"],

@@ -89,7 +89,7 @@ export default function PhoneWorkoutCard({
             {climbing ? "climbing" : "resting"}
           </div>
         </div>
-        <span style={{ color: climbing ? "var(--success)" : "var(--primary)", fontWeight: 700, fontSize: "var(--t-base)" }}>
+        <span className="phone-workout-resume-action">
           Resume ›
         </span>
       </button>

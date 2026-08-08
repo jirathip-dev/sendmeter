@@ -20,16 +20,19 @@
           let stored = null;
           try { stored = window.localStorage?.getItem("theme"); } catch {}
           const choice = stored === "light" || stored === "dark" ? stored : "system";
-          let prefersDark = choice === "dark";
+          let systemPrefersDark = null;
           if (choice === "system") {
-            try { prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false; } catch {}
+            try {
+              const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+              if (typeof media?.matches === "boolean") systemPrefersDark = media.matches;
+            } catch {}
           }
           choice === "system" ? root.removeAttribute("data-theme") : root.dataset.theme = choice;
           const metas = [...document.querySelectorAll('meta[name="theme-color"]')];
           const light = metas.find((meta) => meta.getAttribute("media") === "(prefers-color-scheme: light)") || metas[0];
           const dark = metas.find((meta) => meta.getAttribute("media") === "(prefers-color-scheme: dark)") || metas.find((meta) => meta !== light);
-          if (light && dark) {
-            const active = choice === "dark" || (choice === "system" && prefersDark) ? dark : light;
+          if (light && dark && (choice !== "system" || systemPrefersDark !== null)) {
+            const active = choice === "dark" || (choice === "system" && systemPrefersDark === true) ? dark : light;
             const inactive = active === dark ? light : dark;
             active.removeAttribute("media");
             inactive.setAttribute("media", "not all");

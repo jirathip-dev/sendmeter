@@ -164,7 +164,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
           animation: restOver ? "pulse 0.8s ease-in-out infinite" : undefined,
         }}
       >
-        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.08em", fontSize: "var(--t-lg)", color: accent }}>
+        <div className="phone-workout-phase-label">
           {climbing ? "CLIMBING" : restOver ? "REST OVER" : "RESTING"}
         </div>
         <div
@@ -247,21 +247,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
               />
             )}
           </svg>
-          <span
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexDirection: "column",
-              gap: 2,
-              color: accent,
-              fontFamily: "Inter, sans-serif",
-              fontWeight: 800,
-              fontSize: "var(--t-md)",
-            }}
-          >
+          <span className="workout-action-label">
             {climbing ? (
               <>
                 <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>

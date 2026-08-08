@@ -500,6 +500,10 @@ function AuthedApp({
               const active = p.id === currentPhase;
               return (
                 <button
+                  className="phase-option"
+                  data-phase={p.id}
+                  data-active={active ? "true" : "false"}
+                  aria-pressed={active}
                   key={p.id}
                   onClick={() => {
                     if (!active) {
@@ -508,33 +512,18 @@ function AuthedApp({
                     }
                     setShowPhaseChange(false);
                   }}
-                  style={{
-                    textAlign: "left",
-                    padding: "12px 14px",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                    background: active ? p.bg : "var(--surface-1)",
-                    border: `1px solid ${active ? p.color : "var(--border)"}`,
-                    fontFamily: "inherit",
-                  }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <span style={{ fontSize: "var(--t-base)", fontWeight: 700, color: p.color }}>
+                  <div className="phase-option-heading">
+                    <span className="phase-option-name">
                       {p.name}
                     </span>
                     {active && (
-                      <span style={{ fontSize: "var(--t-eyebrow)", color: p.color, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      <span className="phase-option-current">
                         Current
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
+                  <div className="phase-option-description">
                     {p.desc}
                   </div>
                 </button>

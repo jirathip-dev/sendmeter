@@ -55,7 +55,7 @@ export default function ForceConnectionCard({
         type="button"
         onClick={onOpenGauge}
       >
-        <span style={{ color: "var(--primary)", fontWeight: 700, fontSize: "var(--t-base)", whiteSpace: "nowrap" }}>
+        <span className="force-open-link-label">
           Open gauge ›
         </span>
       </button>

@@ -16,7 +16,7 @@ export default function BoxChip({
   onClick: () => void;
   /// Compact variant for the fullscreen's tight quick-pickers.
   small?: boolean;
-  /// Accent hue: fill when active, text + border tint when idle.
+  /// Accent hue: fill and border tint; text always uses the readable ink token.
   /// Defaults to the info violet.
   color?: string;
   style?: CSSProperties;
