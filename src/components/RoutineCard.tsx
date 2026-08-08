@@ -457,7 +457,6 @@ export default function RoutineCard({
                   className="del-btn"
                   aria-label="Remove step"
                   disabled={steps.length === 1}
-                  style={{ opacity: steps.length === 1 ? 0.3 : 1 }}
                   onClick={() => setSteps((list) => list.filter((_, j) => j !== i))}
                 >
                   ×
@@ -547,12 +546,7 @@ export default function RoutineCard({
             Start Routine
           </button>
           <button
-            className="btn-ghost"
-            style={
-              blockedReason
-                ? { width: "auto", flexShrink: 0, whiteSpace: "nowrap", opacity: 0.5 }
-                : { width: "auto", flexShrink: 0, whiteSpace: "nowrap" }
-            }
+            className="btn-ghost routine-new-button"
             aria-disabled={blockedReason ? true : undefined}
             onClick={() => {
               if (blockedReason) {

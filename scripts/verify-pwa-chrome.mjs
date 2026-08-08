@@ -14,19 +14,47 @@ if (sourceManifest !== builtManifest) {
 
 const builtIndex = readFileSync(join(root, "dist", "index.html"), "utf8");
 const requiredThemeMetas = [
-  '<meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F4F8" />',
-  '<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0E121B" />',
+  { media: "(prefers-color-scheme: light)", content: "#F2F4F8" },
+  { media: "(prefers-color-scheme: dark)", content: "#0E121B" },
 ];
 const themeMetas = Array.from(
   builtIndex.matchAll(/<meta\s+name="theme-color"[^>]*>/g),
-  ([match]) => match,
+  ([match]) => ({
+    media: match.match(/\bmedia\s*=\s*["']([^"']*)["']/i)?.[1] ?? null,
+    content: match.match(/\bcontent\s*=\s*["']([^"']*)["']/i)?.[1] ?? null,
+  }),
 );
+
+const bootstrap = builtIndex.match(
+  /<script\b[^>]*data-theme-bootstrap[^>]*>([\s\S]*?)<\/script>/i,
+)?.[1];
+const bootstrapMarker = builtIndex.search(/<script\b[^>]*data-theme-bootstrap\b[^>]*>/i);
+const moduleScriptMarker = builtIndex.search(
+  /<script\b[^>]*type=["']module["'][^>]*>/i,
+);
+const bootstrapContract = [
+  /localStorage/,
+  /getItem\s*\(\s*["']theme["']\s*\)/,
+  /matchMedia/,
+  /data-theme/,
+  /theme-color/,
+  /not\s+all/,
+];
 
 if (
   themeMetas.length !== requiredThemeMetas.length ||
-  requiredThemeMetas.some((meta) => !themeMetas.includes(meta))
+  requiredThemeMetas.some((required) =>
+    !themeMetas.some(
+      (actual) => actual.media === required.media && actual.content === required.content,
+    ),
+  ) ||
+  !bootstrap ||
+  bootstrapMarker < 0 ||
+  moduleScriptMarker < 0 ||
+  bootstrapMarker > moduleScriptMarker ||
+  bootstrapContract.some((token) => !token.test(bootstrap))
 ) {
-  throw new Error("dist/index.html has unexpected theme-color metas");
+  throw new Error("dist/index.html has unexpected theme-color metas or bootstrap contract");
 }
 
 console.log("PWA chrome verified: manifest copied verbatim and light/dark metas shipped.");

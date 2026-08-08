@@ -13,6 +13,30 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F2F4F8" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0E121B" />
+    <script data-theme-bootstrap>
+      (() => {
+        try {
+          const root = document.documentElement;
+          let stored = null;
+          try { stored = window.localStorage?.getItem("theme"); } catch {}
+          const choice = stored === "light" || stored === "dark" ? stored : "system";
+          let prefersDark = choice === "dark";
+          if (choice === "system") {
+            try { prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false; } catch {}
+          }
+          choice === "system" ? root.removeAttribute("data-theme") : root.dataset.theme = choice;
+          const metas = [...document.querySelectorAll('meta[name="theme-color"]')];
+          const light = metas.find((meta) => meta.getAttribute("media") === "(prefers-color-scheme: light)") || metas[0];
+          const dark = metas.find((meta) => meta.getAttribute("media") === "(prefers-color-scheme: dark)") || metas.find((meta) => meta !== light);
+          if (light && dark) {
+            const active = choice === "dark" || (choice === "system" && prefersDark) ? dark : light;
+            const inactive = active === dark ? light : dark;
+            active.removeAttribute("media");
+            inactive.setAttribute("media", "not all");
+          }
+        } catch {}
+      })();
+    </script>
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta
       name="apple-mobile-web-app-status-bar-style"

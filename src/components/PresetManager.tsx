@@ -668,15 +668,9 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 ] as const).map(([m, label]) => (
               <button
                 key={m}
-                className="tag"
+                className="tag preset-target-mode"
+                data-selected={targetMode === m ? "true" : "false"}
                 onClick={() => setTargetMode(m)}
-                style={{
-                  background: targetMode === m ? "var(--primary)" : "var(--surface-1)",
-                  color: targetMode === m ? "#ffffff" : "var(--ink-muted)",
-                  border: `1px solid ${targetMode === m ? "var(--primary)" : "var(--border)"}`,
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                }}
               >
                 {label}
               </button>
@@ -707,15 +701,9 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 ).map(([b, label]) => (
                   <button
                     key={b}
-                    className="tag"
+                    className="tag preset-basis-option"
+                    data-selected={pctBasis === b ? "true" : "false"}
                     onClick={() => setPctBasis(b)}
-                    style={{
-                      background: pctBasis === b ? "var(--info)" : "var(--surface-1)",
-                      color: pctBasis === b ? "#ffffff" : "var(--ink-muted)",
-                      border: `1px solid ${pctBasis === b ? "var(--info)" : "var(--border)"}`,
-                      cursor: "pointer",
-                      fontFamily: "Inter, sans-serif",
-                    }}
                   >
                     {label}
                   </button>

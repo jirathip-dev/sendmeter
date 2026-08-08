@@ -40,6 +40,14 @@ function writeStorage(storage: Storage | null | undefined, choice: ThemeChoice):
   }
 }
 
+function browserStorage(): Storage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeThemeChoice(value: string | null | undefined): ThemeChoice {
   return value === "light" || value === "dark" ? value : "system";
 }
@@ -122,7 +130,7 @@ export function syncThemeColorMeta(document: Document, choice: ThemeChoice): voi
 
 export function createThemeController(environment?: Partial<ThemeEnvironment>): ThemeController {
   const document = environment?.document ?? globalThis.document;
-  const storage = environment?.storage ?? globalThis.localStorage;
+  const storage = environment?.storage ?? browserStorage();
   const matchMedia =
     environment?.matchMedia ??
     (typeof globalThis.window !== "undefined" &&
@@ -138,7 +146,7 @@ export function createThemeController(environment?: Partial<ThemeEnvironment>): 
     if (!mediaQuery || !mediaListener) return;
     if (typeof mediaQuery.removeEventListener === "function") {
       mediaQuery.removeEventListener("change", mediaListener);
-    } else {
+    } else if (typeof mediaQuery.removeListener === "function") {
       mediaQuery.removeListener(mediaListener);
     }
     mediaQuery = null;
@@ -158,7 +166,7 @@ export function createThemeController(environment?: Partial<ThemeEnvironment>): 
       };
       if (typeof mediaQuery.addEventListener === "function") {
         mediaQuery.addEventListener("change", mediaListener);
-      } else {
+      } else if (typeof mediaQuery.addListener === "function") {
         mediaQuery.addListener(mediaListener);
       }
     } catch {

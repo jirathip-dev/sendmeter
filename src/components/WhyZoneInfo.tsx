@@ -35,25 +35,9 @@ export default function WhyZoneInfo({ zoneLabel, recs, defaultOpen = false }: Pr
       >
         <span className="label-eyebrow">Why this session is {zoneLabel}</span>
         <button
+          className="info-dot-button"
           aria-label={`About: why this session is ${zoneLabel}`}
           onClick={() => setOpen(true)}
-          style={{
-            width: 18,
-            height: 18,
-            borderRadius: "50%",
-            border: "1px solid var(--border)",
-            background: "transparent",
-            color: "var(--ink-faint)",
-            fontSize: "var(--t-xs)",
-            lineHeight: 1,
-            cursor: "pointer",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 0,
-            fontFamily: "Inter, sans-serif",
-            flexShrink: 0,
-          }}
         >
           ?
         </button>

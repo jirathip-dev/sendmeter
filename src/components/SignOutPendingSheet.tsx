@@ -47,12 +47,11 @@ export default function SignOutPendingSheet({ count, onChoose }: Props) {
       </button>
       <div style={{ marginTop: 8 }}>
         <button
-          className="btn-ghost"
+          className="btn-danger"
           // #171: the destructive step gets the heavier tick so it doesn't feel
           // like the plain choice above it.
           data-haptic="medium"
           onClick={() => onChoose("discard")}
-          style={{ borderColor: "rgba(229,116,58,0.35)", color: "var(--danger)" }}
         >
           Delete {count === 1 ? "it" : "them"} and sign out
         </button>

@@ -122,8 +122,8 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
                     Save
                   </button>
                   <button
+                    className="tag-action-button"
                     onClick={() => setEditing(null)}
-                    style={pillBtn}
                     aria-label="Cancel"
                   >
                     ✕
@@ -152,19 +152,19 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
                     {t.count} rep{t.count === 1 ? "" : "s"}
                   </span>
                   <button
+                    className="tag-action-button"
                     onClick={() => {
                       setDraft(t.name);
                       setEditing(t.name);
                     }}
-                    style={pillBtn}
                     aria-label={`Rename ${t.name}`}
                     disabled={busy}
                   >
                     ✎
                   </button>
                   <button
+                    className="tag-action-button"
                     onClick={() => void toggleHidden(t.name, !isHidden)}
-                    style={pillBtn}
                     aria-label={isHidden ? `Show ${t.name}` : `Hide ${t.name}`}
                     disabled={busy}
                   >
@@ -185,15 +185,3 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
     </Sheet>
   );
 }
-
-const pillBtn: React.CSSProperties = {
-  flexShrink: 0,
-  background: "none",
-  border: "1px solid var(--border)",
-  color: "var(--ink-muted)",
-  padding: "5px 9px",
-  borderRadius: 7,
-  fontSize: "var(--t-2xs)",
-  fontFamily: "Inter, sans-serif",
-  cursor: "pointer",
-};

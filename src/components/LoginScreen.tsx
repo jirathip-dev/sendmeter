@@ -210,25 +210,9 @@ export default function LoginScreen() {
                 <span style={{ flex: 1, height: 1, background: "var(--hairline)" }} />
               </div>
               <button
+                className="apple-signin-button"
                 onClick={signInApple}
                 disabled={busy}
-                style={{
-                  width: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 8,
-                  background: "var(--ink)",
-                  color: "var(--bg)",
-                  border: "none",
-                  borderRadius: 8,
-                  padding: "13px 20px",
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: "var(--t-base)",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  WebkitTapHighlightColor: "transparent",
-                }}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M17.05 12.04c-.02-2.02 1.65-2.99 1.72-3.04-.94-1.37-2.4-1.56-2.92-1.58-1.24-.13-2.42.73-3.05.73-.63 0-1.6-.71-2.63-.69-1.35.02-2.6.79-3.3 2-1.4 2.44-.36 6.05 1.01 8.03.67.97 1.47 2.06 2.52 2.02 1.01-.04 1.39-.65 2.62-.65 1.22 0 1.57.65 2.63.63 1.09-.02 1.78-.99 2.45-1.96.77-1.12 1.09-2.21 1.11-2.27-.02-.01-2.13-.82-2.16-3.25zM15.03 6.06c.56-.68.94-1.62.83-2.56-.81.03-1.79.54-2.37 1.21-.52.6-.98 1.56-.86 2.48.9.07 1.83-.46 2.4-1.13z"/>
@@ -247,18 +231,10 @@ export default function LoginScreen() {
               )}
               <div style={{ marginTop: 12, textAlign: "center" }}>
                 <button
+                  className="auth-mode-toggle"
                   onClick={() => {
                     setMode(mode === "magic" ? "password" : "magic");
                     setError(null);
-                  }}
-                  style={{
-                    background: "none",
-                    border: "none",
-                    color: "var(--ink-muted)",
-                    fontSize: "var(--t-xs)",
-                    cursor: "pointer",
-                    fontFamily: "Inter, sans-serif",
-                    textDecoration: "underline",
                   }}
                 >
                   {mode === "magic"

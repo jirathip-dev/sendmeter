@@ -7,6 +7,7 @@ const css = readFileSync(join(SRC, "index.css"), "utf8");
 const indexHtml = readFileSync(join(SRC, "..", "index.html"), "utf8");
 const design = readFileSync(join(SRC, "..", "DESIGN.md"), "utf8");
 const mainSource = readFileSync(join(SRC, "..", "src", "main.tsx"), "utf8");
+const zoneSelectionSource = readFileSync(join(SRC, "lib", "zoneSelection.ts"), "utf8");
 const manifestPath = join(SRC, "..", "public", "manifest.json");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
   background_color?: string;
@@ -14,6 +15,9 @@ const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
 };
 const viteConfig = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
 const themeSource = readFileSync(join(SRC, "lib", "theme.ts"), "utf8");
+const bootstrapSource = indexHtml.match(
+  /<script\b[^>]*data-theme-bootstrap[^>]*>([\s\S]*?)<\/script>/i,
+)?.[1] ?? "";
 const packageScripts = (
   JSON.parse(readFileSync(join(SRC, "..", "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
@@ -35,9 +39,15 @@ interface ButtonRegion {
   element: string;
 }
 
+interface ButtonConsumer extends ButtonRegion {
+  file: string;
+  classValue: string;
+  styleValue: string | null;
+}
+
 /**
  * Extract JSX button opening tags without stopping at object-literal braces in
- * event handlers/styles. This lets the invariant inspect every semantic
+ * event handlers/styles. This lets the invariant inspect every
  * button consumer instead of relying on a hand-maintained file list.
  */
 function buttonRegions(source: string): ButtonRegion[] {
@@ -74,8 +84,35 @@ function buttonRegions(source: string): ButtonRegion[] {
   }
 }
 
-function buttonOpeningTags(source: string): string[] {
-  return buttonRegions(source).map(({ tag }) => tag);
+/** Return JSX spread attributes at the opening-tag level, excluding spreads
+ * nested inside a style object (which are inspected separately below). */
+function spreadAttributes(tag: string): string[] {
+  const spreads: string[] = [];
+  let quote: "'" | '"' | "`" | null = null;
+  let braceDepth = 0;
+  for (let cursor = 0; cursor < tag.length; cursor += 1) {
+    const character = tag[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(tag, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") {
+      if (braceDepth === 0 && /^\{\s*\.\.\./.test(tag.slice(cursor))) {
+        const end = matchingJsBrace(tag, cursor);
+        spreads.push(tag.slice(cursor, end < 0 ? tag.length : end + 1));
+        cursor = end < 0 ? tag.length : end;
+        continue;
+      }
+      braceDepth += 1;
+    } else if (character === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
+    }
+  }
+  return spreads;
 }
 
 function attributeValue(tag: string, name: string): string | null {
@@ -127,8 +164,20 @@ const INLINE_PAINT_PROPERTIES = new Set([
   "borderBlock",
   "borderBlockColor",
   "color",
+  "opacity",
+  "boxShadow",
+  "all",
+  "WebkitTextFillColor",
+  "WebkitTapHighlightColor",
   "outline",
   "outlineColor",
+  "textShadow",
+  "textDecorationColor",
+  "fill",
+  "stroke",
+  "caretColor",
+  "accentColor",
+  "colorScheme",
 ]);
 
 function matchingJsBrace(source: string, open: number): number {
@@ -240,6 +289,7 @@ function unsafeStyleObject(body: string): boolean {
     const key = (colon < 0 ? trimmed : trimmed.slice(0, colon)).trim();
     if (key.startsWith("[") || key.startsWith("{")) return true;
     const normalizedKey = key.replace(/^(?:["'])(.*)(?:["'])$/, "$1");
+    if (normalizedKey.startsWith("--")) return true;
     if (INLINE_PAINT_PROPERTIES.has(normalizedKey)) return true;
     // A shorthand property is an opaque value and may be a paint property.
     // Explicit assignments are inspectable and safe unless they name paint.
@@ -278,6 +328,32 @@ function unsafeStyleExpression(styleValue: string | null): boolean {
     return true;
   }
   return unsafeStyleObject(expression.slice(1, objectEnd));
+}
+
+function buttonConsumers(): ButtonConsumer[] {
+  return componentSources().flatMap(([file, source]) =>
+    buttonRegions(source).map((region) => ({
+      ...region,
+      file,
+      classValue: attributeValue(region.tag, "className") ?? "",
+      styleValue: attributeValue(region.tag, "style"),
+    })),
+  );
+}
+
+function buttonAuditViolations(consumer: ButtonConsumer): string[] {
+  const violations = spreadAttributes(consumer.tag).map(
+    (spread) => `${consumer.file}: opaque JSX button spread ${spread}`,
+  );
+  if (
+    consumer.styleValue &&
+    unsafeStyleExpression(consumer.styleValue)
+  ) {
+    violations.push(
+      `${consumer.file}: inline button paint bypasses the shared or named recipe`,
+    );
+  }
+  return violations;
 }
 
 /**
@@ -563,6 +639,45 @@ function mix(a: RGB, b: RGB, amount: number): RGB {
   ];
 }
 
+type ThemeName = keyof typeof themeDeclarations;
+
+function resolveThemeColor(value: string, theme: ThemeName, name: string): RGB {
+  const variable = value.trim().match(/^var\(\s*(--[\w-]+)\s*\)$/)?.[1];
+  if (variable) {
+    const resolved = themeDeclarations[theme][variable];
+    if (!resolved) throw new Error(`${name} references undefined ${variable}`);
+    return resolveThemeColor(resolved, theme, `${name} ${variable}`);
+  }
+  return hexColor(value.trim(), `${name} in ${theme}`);
+}
+
+function objectBlock(source: string, marker: string): string {
+  const markerStart = source.indexOf(marker);
+  if (markerStart < 0) throw new Error(`Missing object marker: ${marker}`);
+  const open = source.indexOf("{", markerStart + marker.length);
+  if (open < 0) throw new Error(`Missing object opening brace: ${marker}`);
+  const close = matchingJsBrace(source, open);
+  if (close < 0) throw new Error(`Unclosed object: ${marker}`);
+  return source.slice(open + 1, close);
+}
+
+const qualityHueBlock = objectBlock(zoneSelectionSource, "export const QUALITY_COLORS");
+const qualityHues = Array.from(
+  qualityHueBlock.matchAll(/:\s*["']([^"']+)["']/g),
+  ([, value]) => value ?? "",
+).filter(Boolean);
+const directBoxChipHues = Array.from(
+  component("TargetZonesCard.tsx").matchAll(/\bcolor\s*=\s*["']([^"']+)["']/g),
+  ([, value]) => value ?? "",
+).filter(Boolean);
+const actualBoxChipHues = [...new Set(["var(--info)", ...qualityHues, ...directBoxChipHues])];
+
+const periodHueBlock = objectBlock(component("ForceCurveCard.tsx"), "const PERIOD_COLORS");
+const actualPeriodHues = Array.from(
+  periodHueBlock.matchAll(/:\s*["']([^"']+)["']/g),
+  ([, value]) => value ?? "",
+).filter(Boolean);
+
 describe("premium visual language contracts (#517)", () => {
   it("bounds CSS parsing around comments, strings, and neighboring rules", () => {
     const fixture = `
@@ -688,15 +803,197 @@ describe("premium visual language contracts (#517)", () => {
     expect(component("RoutineCard.tsx")).not.toContain("flex: 1, opacity: 0.5");
   });
 
-  it("keeps every semantic button consumer on the shared recipe", () => {
-    const consumers = componentSources().flatMap(([file, source]) =>
-      buttonOpeningTags(source).map((tag) => ({
-        file,
-        tag,
-        classValue: attributeValue(tag, "className") ?? "",
-        styleValue: attributeValue(tag, "style"),
-      })),
+  it("keeps every hue-driven selected endpoint readable in both themes", () => {
+    // These are resolved from the real callers instead of a sample palette:
+    // QUALITY_COLORS covers warning/danger/info/success, BoxChip has explicit
+    // primary/ink-muted callers, and PERIOD_COLORS covers every chart toggle.
+    expect(component("BoxChip.tsx")).toContain('color ?? "var(--info)"');
+    expect(component("TargetZonesCard.tsx")).toContain("color={QUALITY_COLORS[q.id]}");
+    expect(component("ForceCurveCard.tsx")).toContain("const PERIOD_COLORS");
+    expect(actualBoxChipHues).toEqual(
+      expect.arrayContaining([
+        "var(--info)",
+        "var(--danger)",
+        "var(--warning)",
+        "var(--success)",
+        "var(--primary)",
+        "var(--ink-muted)",
+      ]),
     );
+    expect(actualPeriodHues).toHaveLength(6);
+
+    const recipes = [
+      {
+        name: "box chip",
+        selector: '.box-chip[data-active="true"]',
+        hover: '.box-chip[data-active="true"]:hover:not(:disabled):not([data-disabled="true"])',
+        hues: actualBoxChipHues,
+        percentages: [0.18, 0.26],
+      },
+      {
+        name: "period toggle",
+        selector: '.period-toggle[data-active="true"]',
+        hover: '.period-toggle[data-active="true"]:hover:not(:disabled)',
+        hues: actualPeriodHues,
+        percentages: [0.18, 0.26],
+      },
+      {
+        name: "preset basis",
+        selector: '.preset-basis-option[data-selected="true"]',
+        hover: '.preset-basis-option[data-selected="true"]:hover:not(:disabled)',
+        hues: ["var(--info)"],
+        percentages: [0.18, 0.26],
+      },
+      {
+        name: "tolerance mode",
+        selector: '.tolerance-mode-option[data-selected="true"]',
+        hover: '.tolerance-mode-option[data-selected="true"]:hover:not(:disabled)',
+        hues: ["var(--info)"],
+        percentages: [0.18, 0.26],
+      },
+      {
+        name: "static protocol mode",
+        selector: '.protocol-mode-option[data-selected="true"][data-mode="static"]',
+        hover: '.protocol-mode-option[data-selected="true"][data-mode="static"]:hover:not(:disabled)',
+        hues: ["var(--success)"],
+        percentages: [0.18, 0.26],
+      },
+      {
+        name: "reverse-action protocol mode",
+        selector: '.protocol-mode-option[data-selected="true"][data-mode="reverse_action"]',
+        hover: '.protocol-mode-option[data-selected="true"][data-mode="reverse_action"]:hover:not(:disabled)',
+        hues: ["var(--primary)"],
+        percentages: [0.18, 0.26],
+      },
+      {
+        name: "preset target mode",
+        selector: '.preset-target-mode[data-selected="true"]',
+        hover: '.preset-target-mode[data-selected="true"]:hover:not(:disabled)',
+        hues: ["var(--primary)"],
+        percentages: [0.18, 0.26],
+      },
+      {
+        name: "recording tag/scope",
+        selector: '.recording-tag-option[data-selected="true"]',
+        hover: '.recording-tag-option[data-selected="true"]:hover:not(:disabled)',
+        hues: ["var(--info)"],
+        percentages: [0.14, 0.24],
+      },
+      {
+        name: "consistency tag",
+        selector: '.consistency-tag-option[data-selected="true"]',
+        hover: '.consistency-tag-option[data-selected="true"]:hover:not(:disabled)',
+        hues: ["var(--info)"],
+        percentages: [0.14, 0.24],
+      },
+      {
+        name: "recording side",
+        selector: '.recording-side-option[data-selected="true"]',
+        hover: '.recording-side-option[data-selected="true"]:hover:not(:disabled)',
+        hues: ["var(--warning)"],
+        percentages: [0.14, 0.24],
+      },
+      {
+        name: "recording selection",
+        selector: '.recording-select-button[aria-pressed="true"]',
+        hover: '.recording-select-button[aria-pressed="true"]:hover:not(:disabled)',
+        hues: ["var(--primary)"],
+        percentages: [0.18, 0.26],
+      },
+      {
+        name: "history filter",
+        selector: '.filter-chip[aria-pressed="true"]',
+        hover: '.filter-chip[aria-pressed="true"]:hover:not(:disabled)',
+        hues: ["var(--primary)"],
+        percentages: [0.16, 0.24],
+      },
+      {
+        name: "rest target",
+        selector: '.rest-target-button[data-selected="true"]',
+        hover: '.rest-target-button[data-selected="true"]:hover:not(:disabled)',
+        hues: ["var(--success)", "var(--danger)", "var(--primary)"],
+        percentages: [0.2, 0.28],
+      },
+      {
+        name: "zone focus",
+        selector: ".zone-focus-button",
+        hover: ".zone-focus-button:hover:not(:disabled)",
+        hues: actualBoxChipHues,
+        percentages: [0.12, 0.2],
+      },
+      {
+        name: "force action ready",
+        selector: ".force-action-button.ready",
+        hover: ".force-action-button:hover:not(:disabled)",
+        hues: ["var(--success)"],
+        percentages: [0.16, 0.24],
+      },
+      {
+        name: "force action danger",
+        selector: ".force-action-button.danger",
+        hover: ".force-action-button.danger:hover:not(:disabled)",
+        hues: ["var(--danger)"],
+        percentages: [0.16, 0.24],
+      },
+    ] as const;
+
+    const consumers = buttonConsumers();
+    const extractedClasses = [
+      "box-chip",
+      "period-toggle",
+      "preset-basis-option",
+      "tolerance-mode-option",
+      "protocol-mode-option",
+      "preset-target-mode",
+      "recording-tag-option",
+      "recording-side-option",
+      "recording-scope-option",
+      "consistency-tag-option",
+      "recording-select-button",
+      "rest-target-button",
+      "filter-chip",
+      "zone-focus-button",
+      "force-action-button",
+    ];
+    for (const className of extractedClasses) {
+      expect(
+        consumers.some(({ classValue }) => classValue.includes(className)),
+        `no button consumer is wired to .${className}`,
+      ).toBe(true);
+      expect(css, `missing extracted button selector .${className}`).toMatch(
+        new RegExp(`\\.${className}(?:[.:\\s,\\[{])`),
+      );
+    }
+
+    for (const recipe of recipes) {
+      const selectedBody = cssRuleBody(parsedCssRules, recipe.selector);
+      const hoverBody = cssRuleBody(parsedCssRules, recipe.hover);
+      expect(selectedBody, `${recipe.name} selected text`).toContain("color: var(--ink);");
+      expect(selectedBody, `${recipe.name} selected text`).not.toMatch(/color:\s*#fff/i);
+      expect(selectedBody, `${recipe.name} selected fill recipe`).toContain("background: color-mix");
+      expect(hoverBody, `${recipe.name} hover text`).not.toMatch(/color:\s*#fff/i);
+
+      for (const theme of Object.keys(themeDeclarations) as ThemeName[]) {
+        const ink = resolveThemeColor("var(--ink)", theme, `${recipe.name} ink`);
+        const surface = resolveThemeColor("var(--surface-1)", theme, `${recipe.name} surface`);
+        for (const hue of recipe.hues) {
+          const hueColor = resolveThemeColor(hue, theme, `${recipe.name} ${hue}`);
+          for (const percentage of recipe.percentages) {
+            expect(
+              // CSS `color-mix(hue P%, surface)` weights the hue by P;
+              // `mix` takes its interpolation amount from the first color.
+              contrastRatio(ink, mix(surface, hueColor, percentage)),
+              `${theme} ${recipe.name} ${hue} tint ${percentage}`,
+            ).toBeGreaterThanOrEqual(4.5);
+          }
+        }
+      }
+    }
+  });
+
+  it("keeps every button consumer on a shared or named recipe", () => {
+    const consumers = buttonConsumers();
+    expect(consumers.length, "button audit must cover every component button").toBeGreaterThan(100);
     const semanticConsumers = consumers.filter(({ classValue }) =>
       /\bbtn-(?:primary|secondary|danger)\b/.test(classValue),
     );
@@ -716,12 +1013,94 @@ describe("premium visual language contracts (#517)", () => {
       ).toBe(false);
     }
 
-    for (const { file, classValue, styleValue } of consumers) {
+    const violations = consumers.flatMap((consumer) =>
+      buttonAuditViolations(consumer).map((violation) => `${violation}\n${consumer.tag}`),
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it("rejects raw paint and opaque prop-spread fixtures without class gating", () => {
+    const rawDangerTag = buttonRegions(
+      '<button style={{ background: "var(--danger)", color: "#fff" }}>Delete</button>',
+    )[0]!;
+    expect(
+      buttonAuditViolations({
+        ...rawDangerTag,
+        file: "raw-danger.fixture.tsx",
+        classValue: attributeValue(rawDangerTag.tag, "className") ?? "",
+        styleValue: attributeValue(rawDangerTag.tag, "style"),
+      }),
+    ).toEqual([expect.stringContaining("inline button paint")]);
+
+    const hardcodedTag = buttonRegions(
+      '<button className={condition ? "btn-ghost" : "header-btn"} style={{ backgroundColor: "#ffffff", color: "#101828" }}>Raw</button>',
+    )[0]!;
+    expect(
+      buttonAuditViolations({
+        ...hardcodedTag,
+        file: "hardcoded-paint.fixture.tsx",
+        classValue: attributeValue(hardcodedTag.tag, "className") ?? "",
+        styleValue: attributeValue(hardcodedTag.tag, "style"),
+      }),
+    ).toEqual([expect.stringContaining("inline button paint")]);
+
+    const spreadTag = buttonRegions(
+      '<button {...buttonProps}>Delete</button>',
+    )[0]!;
+    expect(
+      buttonAuditViolations({
+        ...spreadTag,
+        file: "opaque-props.fixture.tsx",
+        classValue: "",
+        styleValue: null,
+      }),
+    ).toEqual([expect.stringContaining("opaque JSX button spread")]);
+
+    const conditionalTag = buttonRegions(
+      '<button className={danger ? "btn-danger" : "btn-ghost"} style={{ backgroundColor: "var(--surface-2)" }}>Delete</button>',
+    )[0]!;
+    expect(
+      buttonAuditViolations({
+        ...conditionalTag,
+        file: "conditional-danger.fixture.tsx",
+        classValue: attributeValue(conditionalTag.tag, "className") ?? "",
+        styleValue: attributeValue(conditionalTag.tag, "style"),
+      }),
+    ).toEqual([expect.stringContaining("inline button paint")]);
+
+    for (const property of [
+      "background",
+      "backgroundColor",
+      "backgroundImage",
+      "color",
+      "border",
+      "borderColor",
+      "borderImage",
+      "borderInline",
+      "borderInlineColor",
+      "borderBlock",
+      "borderBlockColor",
+      "opacity",
+      "boxShadow",
+      "all",
+      "WebkitTextFillColor",
+      "outline",
+      "outlineColor",
+      "textShadow",
+      "textDecorationColor",
+      "fill",
+      "stroke",
+      "caretColor",
+      "accentColor",
+      "colorScheme",
+    ]) {
       expect(
-        unsafeStyleExpression(styleValue) && /\bbtn-(?:primary|secondary|danger)\b/.test(classValue),
-        `${file} uses an unsafe inline button paint; use the shared recipe instead`,
-      ).toBe(false);
+        unsafeStyleExpression(`{{ ${property}: "var(--danger)" }}`),
+        property,
+      ).toBe(true);
     }
+    expect(unsafeStyleExpression("{{ '--danger-fill': '#fff' }}")).toBe(true);
+    expect(unsafeStyleExpression("{{ flex: 1, marginTop: 8 }}")).toBe(false);
   });
 
   it("maps Force recovery meaning to the correct action hierarchy", () => {
@@ -778,6 +1157,141 @@ describe("premium visual language contracts (#517)", () => {
     }
   });
 
+  it("defines forced-colors states for extracted selected controls", () => {
+    const forcedRules = cssRules(blockAfter(css, "@media (forced-colors: active) {"));
+    const controls = [
+      [
+        "box chip",
+        ".box-chip",
+        '.box-chip[data-active="true"]',
+        '.box-chip:disabled',
+        '.box-chip:focus-visible',
+        '.box-chip:hover:not(:disabled):not([data-disabled="true"])',
+      ],
+      [
+        "period toggle",
+        ".period-toggle",
+        '.period-toggle[data-active="true"]',
+        '.period-toggle[data-available="false"]',
+        '.period-toggle:focus-visible',
+        '.period-toggle:hover:not(:disabled)',
+      ],
+      [
+        "preset basis",
+        ".preset-basis-option",
+        '.preset-basis-option[data-selected="true"]',
+        ".preset-basis-option:disabled",
+        ".preset-basis-option:focus-visible",
+        ".preset-basis-option:hover:not(:disabled)",
+      ],
+      [
+        "tolerance mode",
+        ".tolerance-mode-option",
+        '.tolerance-mode-option[data-selected="true"]',
+        ".tolerance-mode-option:disabled",
+        ".tolerance-mode-option:focus-visible",
+        ".tolerance-mode-option:hover:not(:disabled)",
+      ],
+      [
+        "protocol mode",
+        ".protocol-mode-option",
+        '.protocol-mode-option[data-selected="true"]',
+        ".protocol-mode-option:disabled",
+        ".protocol-mode-option:focus-visible",
+        ".protocol-mode-option:hover:not(:disabled)",
+      ],
+      [
+        "preset target",
+        ".preset-target-mode",
+        '.preset-target-mode[data-selected="true"]',
+        ".preset-target-mode:disabled",
+        ".preset-target-mode:focus-visible",
+        ".preset-target-mode:hover:not(:disabled)",
+      ],
+      [
+        "recording tag",
+        ".recording-tag-option",
+        '.recording-tag-option[data-selected="true"]',
+        ".recording-tag-option:disabled",
+        ".recording-tag-option:focus-visible",
+        ".recording-tag-option:hover:not(:disabled)",
+      ],
+      [
+        "recording side",
+        ".recording-side-option",
+        '.recording-side-option[data-selected="true"]',
+        ".recording-side-option:disabled",
+        ".recording-side-option:focus-visible",
+        ".recording-side-option:hover:not(:disabled)",
+      ],
+      [
+        "recording scope",
+        ".recording-scope-option",
+        '.recording-scope-option[data-selected="true"]',
+        ".recording-scope-option:disabled",
+        ".recording-scope-option:focus-visible",
+        ".recording-scope-option:hover:not(:disabled)",
+      ],
+      [
+        "consistency tag",
+        ".consistency-tag-option",
+        '.consistency-tag-option[data-selected="true"]',
+        ".consistency-tag-option:disabled",
+        ".consistency-tag-option:focus-visible",
+        ".consistency-tag-option:hover:not(:disabled)",
+      ],
+      [
+        "recording selection",
+        ".recording-select-button",
+        '.recording-select-button[aria-pressed="true"]',
+        ".recording-select-button:disabled",
+        ".recording-select-button:focus-visible",
+        ".recording-select-button:hover:not(:disabled)",
+      ],
+      [
+        "rest target",
+        ".rest-target-button",
+        '.rest-target-button[data-selected="true"]',
+        ".rest-target-button:disabled",
+        ".rest-target-button:focus-visible",
+        ".rest-target-button:hover:not(:disabled)",
+      ],
+      [
+        "filter chip",
+        ".filter-chip",
+        '.filter-chip[aria-pressed="true"]',
+        ".filter-chip:disabled",
+        ".filter-chip:focus-visible",
+        ".filter-chip:hover:not(:disabled)",
+      ],
+    ] as const;
+
+    for (const [name, normalSelector, selectedSelector, disabledSelector, focusSelector, hoverSelector] of controls) {
+      const normal = cssRuleBody(forcedRules, normalSelector);
+      expect(normal, `${name} normal background`).toContain("background: ButtonFace;");
+      expect(normal, `${name} normal background image`).toContain("background-image: none;");
+      expect(normal, `${name} normal text`).toContain("color: ButtonText;");
+
+      const selected = cssRuleBody(forcedRules, selectedSelector);
+      expect(selected, `${name} selected background`).toContain("background: Highlight;");
+      expect(selected, `${name} selected border`).toContain("border-color: Highlight;");
+      expect(selected, `${name} selected text`).toContain("color: HighlightText;");
+
+      const disabled = cssRuleBody(forcedRules, disabledSelector);
+      expect(disabled, `${name} disabled background`).toContain("background: ButtonFace;");
+      expect(disabled, `${name} disabled border`).toContain("border-color: GrayText;");
+      expect(disabled, `${name} disabled text`).toContain("color: GrayText;");
+      expect(disabled, `${name} disabled opacity`).toContain("opacity: 1;");
+
+      expect(cssRuleBody(forcedRules, focusSelector), `${name} focus`).toContain(
+        "outline: 2px solid Highlight;",
+      );
+      const hover = cssRuleBody(forcedRules, hoverSelector);
+      expect(hover, `${name} hover background`).toContain("background: Highlight;");
+      expect(hover, `${name} hover text`).toContain("color: HighlightText;");
+    }
+  });
+
   it("keeps high-contrast light and dark selectors in the intended cascade", () => {
     const contrastStart = css.indexOf("@media (prefers-contrast: more) {");
     const systemDarkContrastStart = css.indexOf(
@@ -815,6 +1329,10 @@ describe("premium visual language contracts (#517)", () => {
     );
     const localProperties = new Set([
       "--color", // SVG/chart colors supplied by the component at render time.
+      "--box-chip-hue", // Dynamic chip hue is inherited by the shared BoxChip recipe.
+      "--period-color", // Dynamic period overlay hue is inherited by the toggle recipe.
+      "--workout-accent", // Fullscreen workout state hue is inherited by controls.
+      "--zone-focus-color", // Recommended training zone hue is inherited by the button.
       "--pill-tint", // Glass action tint supplied by each fullscreen control.
       "--toast-accent", // Toast kind color supplied by ToastProvider.
     ]);
@@ -909,6 +1427,15 @@ describe("premium visual language contracts (#517)", () => {
     expect(themeSource).toContain("syncThemeColorMeta");
     expect(mainSource).toContain("initializeTheme();");
     expect(component("ThemeSection.tsx")).not.toContain("querySelector('meta[name=\"theme-color\"]')");
+    expect(bootstrapSource).toMatch(/localStorage/);
+    expect(bootstrapSource).toMatch(/getItem\s*\(\s*["']theme["']\s*\)/);
+    expect(bootstrapSource).toMatch(/matchMedia/);
+    expect(bootstrapSource).toMatch(/data-theme/);
+    expect(bootstrapSource).toMatch(/theme-color/);
+    expect(bootstrapSource).toMatch(/not\s+all/);
+    expect(indexHtml.indexOf("data-theme-bootstrap")).toBeLessThan(
+      indexHtml.indexOf('<script type="module" src="/src/main.tsx">'),
+    );
 
     const pwaThemeColors = design.match(
       /`theme-color`\s*=\s*`([^`]+)`\s*light\s*\/\s*`([^`]+)`\s*dark/,

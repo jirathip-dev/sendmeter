@@ -2155,17 +2155,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             </span>
           </span>
           <button
+            className="force-session-action"
             onClick={() => void endSession()}
-            style={{
-              background: "none",
-              border: "1px solid var(--ink-faint)",
-              color: "var(--ink-muted)",
-              padding: "6px 10px",
-              borderRadius: 6,
-              fontSize: "var(--t-2xs)",
-              cursor: "pointer",
-              fontFamily: "Inter, sans-serif",
-            }}
           >
             Finish
           </button>
@@ -2297,15 +2288,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           <div className="label-eyebrow">Exercise &amp; Side</div>
           {tagCounts.length > 0 && (
             <button
+              className="btn-ghost btn-inline"
               onClick={() => setShowTagManager(true)}
               style={{
-                background: "none",
-                border: "none",
-                color: "var(--primary)",
                 fontFamily: "Inter, sans-serif",
                 fontWeight: 700,
                 fontSize: "var(--t-xs)",
-                cursor: "pointer",
                 padding: 0,
               }}
             >
@@ -2351,17 +2339,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
                 {justSaved.peakKg?.toFixed(1)} kg
               </span>
               <button
+                className="force-session-action"
                 onClick={() => void undoJustSaved()}
-                style={{
-                  background: "none",
-                  border: "1px solid var(--ink-faint)",
-                  color: "var(--ink-muted)",
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  fontSize: "var(--t-2xs)",
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                }}
               >
                 Undo
               </button>
@@ -2529,20 +2508,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             <button
               key={mode}
               type="button"
-              className="tag"
+              className="tag protocol-mode-option"
+              data-mode={mode}
+              data-selected={protocolModality === mode ? "true" : "false"}
               disabled={runActive}
               aria-pressed={protocolModality === mode}
               onClick={() => selectProtocolModality(mode)}
-              style={{
-                background: protocolModality === mode
-                  ? mode === "static" ? "var(--success)" : "var(--primary)"
-                  : "var(--surface-1)",
-                color: protocolModality === mode ? "#fff" : "var(--ink-muted)",
-                border: `1px solid ${protocolModality === mode
-                  ? mode === "static" ? "var(--success)" : "var(--primary)"
-                  : "var(--border)"}`,
-                fontFamily: "Inter, sans-serif",
-              }}
             >{label}</button>
           ))}
         </div>

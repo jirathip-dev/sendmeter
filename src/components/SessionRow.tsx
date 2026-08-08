@@ -78,20 +78,8 @@ function TagGroup({
   return (
     <div style={{ marginBottom: 8 }}>
       <button
+        className="session-recording-toggle"
         onClick={() => setOpen((v) => !v)}
-        style={{
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "10px 12px",
-          borderRadius: 9,
-          border: "1px solid var(--border)",
-          background: "var(--surface-1)",
-          fontFamily: "inherit",
-          cursor: "pointer",
-          textAlign: "left",
-        }}
       >
         <span style={{ fontSize: "var(--t-base)", fontWeight: 700, color: "var(--ink)", flex: 1 }}>
           {tag || "untagged"}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import {
   qualityRegions,
@@ -312,30 +312,29 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
                 const active = activePeriods.has(p.label);
                 const color = PERIOD_COLORS[p.label] ?? "#8E8E93";
                 return (
-                  <button
+                  <span
                     key={p.label}
-                    className="tag"
-                    disabled={!has}
-                    onClick={() =>
-                      setActivePeriods((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(p.label)) next.delete(p.label);
-                        else next.add(p.label);
-                        return next;
-                      })
-                    }
-                    style={{
-                      background: active ? color : "var(--surface-1)",
-                      color: active ? "#ffffff" : has ? color : "var(--ink-faint)",
-                      border: `1px solid ${has ? color : "var(--border)"}`,
-                      opacity: has ? 1 : 0.4,
-                      cursor: has ? "pointer" : "default",
-                      fontFamily: "Inter, sans-serif",
-                    }}
+                    className="period-toggle-host"
+                    style={{ "--period-color": color } as CSSProperties}
                   >
-                    {p.label}
-                    {active && p.model?.cf != null && ` · CF ${p.model.cf.toFixed(1)}`}
-                  </button>
+                    <button
+                      className="tag period-toggle"
+                      data-active={active ? "true" : "false"}
+                      data-available={has ? "true" : "false"}
+                      disabled={!has}
+                      onClick={() =>
+                        setActivePeriods((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(p.label)) next.delete(p.label);
+                          else next.add(p.label);
+                          return next;
+                        })
+                      }
+                    >
+                      {p.label}
+                      {active && p.model?.cf != null && ` · CF ${p.model.cf.toFixed(1)}`}
+                    </button>
+                  </span>
                 );
               })}
             </div>

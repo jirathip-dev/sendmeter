@@ -745,8 +745,8 @@ export default function ForceFullscreen({
           )}
           <button
             onClick={handleDisconnectTap}
-            className="glass-pill"
-            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)", "--pill-tint": "var(--danger)" } as CSSProperties}
+            className="glass-pill glass-pill-danger"
+            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
           >
             Disconnect
           </button>
@@ -1169,7 +1169,7 @@ export default function ForceFullscreen({
                   primeAudio();
                   onPause();
                 }}
-                className="glass-pill"
+                className={`glass-pill ${paused ? "glass-pill-success" : "glass-pill-warning"}`}
                 style={
                   {
                     padding: "9px 18px",
@@ -1177,7 +1177,6 @@ export default function ForceFullscreen({
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
-                    "--pill-tint": paused ? "var(--success)" : "var(--warning)",
                   } as CSSProperties
                 }
               >
@@ -1190,7 +1189,7 @@ export default function ForceFullscreen({
               </button>
               <button
                 onClick={onSkip}
-                className="glass-pill"
+                className="glass-pill glass-pill-info"
                 style={
                   {
                     padding: "9px 18px",
@@ -1198,7 +1197,6 @@ export default function ForceFullscreen({
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
-                    "--pill-tint": "var(--info)",
                   } as CSSProperties
                 }
               >
@@ -1236,24 +1234,11 @@ export default function ForceFullscreen({
               }
             }}
             disabled={measuring ? saving : armed ? false : counting ? false : !canStart}
+            className={`force-action-button ${measuring || armed || counting ? "danger" : "ready"}`}
             style={{
               width: clampCss(FORCE_ACTION_CIRCLE),
               height: clampCss(FORCE_ACTION_CIRCLE),
               flexShrink: 0,
-              borderRadius: "50%",
-              border: `3px solid ${measuring || armed || counting ? "var(--danger)" : "var(--success)"}`,
-              background: `color-mix(in srgb, ${measuring || armed || counting ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
-              color: measuring || armed || counting ? "var(--danger)" : "var(--success)",
-              cursor: "pointer",
-              fontFamily: "Inter, sans-serif",
-              fontWeight: 800,
-              fontSize: "var(--t-md)",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 3,
-              opacity: (measuring ? saving : armed ? false : counting ? false : !canStart) ? 0.45 : 1,
             }}
           >
             {measuring ? (

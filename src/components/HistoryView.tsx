@@ -630,20 +630,9 @@ export default function HistoryView({
           {tindeqSessions.map((s) => (
             <button
               key={s.id}
+              className="history-session-option"
               disabled={assigning}
               onClick={() => void assignSelectionToSession(s.id)}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "12px 14px",
-                marginBottom: 8,
-                background: "var(--canvas)",
-                border: "1px solid var(--card-border)",
-                borderRadius: 10,
-                cursor: assigning ? "default" : "pointer",
-                boxShadow: "var(--shadow-card)",
-              }}
             >
               <div style={{ fontSize: "var(--t-base)", fontWeight: 600, color: "var(--ink)" }}>
                 {s.date} · {s.duration}min · RPE {s.rpe}

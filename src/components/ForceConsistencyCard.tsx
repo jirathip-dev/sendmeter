@@ -50,34 +50,18 @@ export default function ForceConsistencyCard() {
       {tags.length > 0 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
           <button
+            className="consistency-tag-option"
+            data-selected={activeTag === null ? "true" : "false"}
             onClick={() => setSelectedTag(null)}
-            style={{
-              padding: "4px 10px",
-              borderRadius: 999,
-              fontSize: "var(--t-xs)",
-              fontWeight: 600,
-              cursor: "pointer",
-              border: `1px solid ${activeTag === null ? "var(--info)" : "var(--border)"}`,
-              background: activeTag === null ? "rgba(123,131,235,0.12)" : "transparent",
-              color: activeTag === null ? "var(--ink)" : "var(--ink-muted)",
-            }}
           >
             All
           </button>
           {tags.map((t) => (
             <button
               key={t}
+              className="consistency-tag-option"
+              data-selected={activeTag === t ? "true" : "false"}
               onClick={() => setSelectedTag(t)}
-              style={{
-                padding: "4px 10px",
-                borderRadius: 999,
-                fontSize: "var(--t-xs)",
-                fontWeight: 600,
-                cursor: "pointer",
-                border: `1px solid ${activeTag === t ? "var(--info)" : "var(--border)"}`,
-                background: activeTag === t ? "rgba(123,131,235,0.12)" : "transparent",
-                color: activeTag === t ? "var(--ink)" : "var(--ink-muted)",
-              }}
             >
               {t}
             </button>

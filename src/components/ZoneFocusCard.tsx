@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { useChartHover } from "../hooks/useChartHover";
 import { QUALITIES } from "../lib/force-curve";
 import type { ForceCurveModel, TrainingQuality } from "../lib/force-curve";
@@ -165,28 +165,18 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
       </div>
 
       {/* Focus recommendation — tap to arm its guided zone. */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation(); // arming the zone is not "open the detail page"
-          onPick(rec.zone);
-        }}
-        disabled={locked}
-        style={{
-          marginTop: 12,
-          width: "100%",
-          textAlign: "left",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "10px 12px",
-          borderRadius: 10,
-          border: `1px solid ${QUALITY_COLORS[rec.zone]}`,
-          background: `color-mix(in srgb, ${QUALITY_COLORS[rec.zone]} 12%, transparent)`,
-          cursor: locked ? "default" : "pointer",
-          opacity: locked ? 0.6 : 1,
-          fontFamily: "inherit",
-        }}
+      <span
+        className="zone-focus-button-host"
+        style={{ "--zone-focus-color": QUALITY_COLORS[rec.zone] } as CSSProperties}
       >
+        <button
+          className="zone-focus-button"
+          onClick={(e) => {
+            e.stopPropagation(); // arming the zone is not "open the detail page"
+            onPick(rec.zone);
+          }}
+          disabled={locked}
+        >
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>
             FOCUS NEXT
@@ -215,7 +205,8 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
         >
           Arm ›
         </span>
-      </button>
+        </button>
+      </span>
 
       {detailOpen && (
         <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default" }}>

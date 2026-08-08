@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ROUTINE_TIMER_FONT, heroFontCss } from "../lib/fullscreenLayout";
 import { useWakeLock } from "../hooks/useWakeLock";
@@ -297,10 +297,9 @@ export default function RoutineFullscreen({
             </div>
           </div>
           <button
-            className="glass-pill"
+            className="glass-pill glass-pill-primary"
             onClick={skip}
             disabled={done}
-            style={{ "--pill-tint": "var(--primary)" } as CSSProperties}
           >
             Skip
           </button>
@@ -366,9 +365,9 @@ export default function RoutineFullscreen({
           )}
           {!done && (
             <button
-              className="glass-pill"
+              className={`glass-pill ${paused ? "glass-pill-success" : "glass-pill-warning"}`}
               onClick={togglePause}
-              style={{ marginTop: 6, "--pill-tint": paused ? "var(--success)" : "var(--warning)" } as CSSProperties}
+              style={{ marginTop: 6 }}
             >
               {paused ? "Resume" : "Pause"}
             </button>
