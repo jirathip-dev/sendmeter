@@ -84,7 +84,7 @@ export default function Dashboard({
           Both are slim/neutral context; the phase name carries the color. */}
       <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "stretch" }}>
         <div
-          className="phase-banner"
+          className="phase-banner surface-context"
           title="Phase details"
           // #171: tappable strip, not a button — opt into the delegated tick.
           data-haptic="light"
@@ -246,7 +246,7 @@ export default function Dashboard({
 
         {/* The summary remains visible; tapping anywhere except InfoDot opens detail. */}
         <div
-          className="card"
+          className="card surface-load"
           role="button"
           aria-label="Open training load details"
           tabIndex={0}

@@ -18,7 +18,7 @@ export default function ForceConnectionCard({
       : "var(--info)";
 
   return (
-    <div style={{
+    <div className="force-connection-card" style={{
       width: "100%",
       background: "var(--canvas)",
       border: `1px solid color-mix(in srgb, ${tone} 45%, transparent)`,

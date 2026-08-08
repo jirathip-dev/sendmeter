@@ -381,7 +381,7 @@ export default function HistoryView({
   ].sort((a, b) => b.sortKey.localeCompare(a.sortKey));
 
   return (
-    <div>
+    <div className="history-view">
       <div
         style={{
           display: "flex",
@@ -716,20 +716,7 @@ function FilterButton({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      style={{
-        flex: "0 0 auto",
-        border: `1px solid ${active ? "var(--primary)" : "var(--card-border)"}`,
-        borderRadius: 999,
-        padding: "5px 10px",
-        background: active
-          ? "color-mix(in srgb, var(--primary) 15%, var(--canvas))"
-          : "var(--canvas)",
-        color: active ? "var(--primary-accent)" : "var(--ink-muted)",
-        fontSize: "var(--t-xs)",
-        fontWeight: active ? 700 : 600,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-      }}
+      className="filter-chip"
     >
       {children}
     </button>

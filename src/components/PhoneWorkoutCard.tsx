@@ -29,7 +29,7 @@ export default function PhoneWorkoutCard({
 
   if (state.phase === "idle") {
     return (
-      <div className="card" style={{ marginBottom: 12 }}>
+      <div className="card surface-workout" style={{ marginBottom: 12 }}>
         <div className="card-title" style={{ marginBottom: 8 }}>
           Phone workout
         </div>
@@ -65,14 +65,13 @@ export default function PhoneWorkoutCard({
     const climbing = state.climbingSince !== null;
     return (
       <button
+        className={`phone-workout-resume surface-workout ${climbing ? "climbing" : "resting"}`}
         onClick={onResume}
         style={{
           width: "100%",
           textAlign: "left",
           cursor: "pointer",
           marginBottom: 12,
-          background: "var(--canvas)",
-          border: `1px solid color-mix(in srgb, ${climbing ? "var(--success)" : "var(--primary)"} 45%, transparent)`,
           borderRadius: 12,
           padding: 16,
           display: "flex",
@@ -100,7 +99,7 @@ export default function PhoneWorkoutCard({
   // confirming — the workout auto-saves the instant it's stopped (WorkoutView
   // effect); this card is just the momentary "saving" placeholder.
   return (
-    <div className="card" style={{ marginBottom: 12 }}>
+    <div className="card surface-workout" style={{ marginBottom: 12 }}>
       <div className="card-title" style={{ marginBottom: 6 }}>
         Saving workout…
       </div>

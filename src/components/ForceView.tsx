@@ -2020,7 +2020,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   }
 
   return (
-    <div>
+    <div className="force-view">
       <div className="section-head">
         FORCE{" "}
         {tindeq.fakeMode && (
@@ -2042,7 +2042,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           its live numbers here, read-only (the watch owns the session). */}
       {liveForce && (
         <div
-          className="card"
+          className="card surface-force"
           style={{
             marginBottom: 10,
             border: "1px solid color-mix(in srgb, var(--info) 45%, transparent)",
@@ -2173,7 +2173,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       )}
 
       {status === "unsupported" && (
-        <div className="card">
+        <div className="card surface-force">
           <div
             style={{
               fontFamily: "Inter, sans-serif",
@@ -2285,7 +2285,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       {/* GLOBAL exercise + side: labels the next recording AND drives the
           target zones, trend and curve below. Always visible — this is also
           the only place a brand-new tag can be typed. */}
-      <div className="card" style={{ marginTop: 10 }}>
+      <div className="card surface-force" style={{ marginTop: 10 }}>
         <div
           style={{
             display: "flex",
@@ -2465,7 +2465,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           silent consequence of navigating away. */}
       {unqueued.length > 0 && (
         <div
-          className="card"
+          className="card surface-caution"
           style={{
             marginTop: 10,
             borderColor: "var(--danger)",
@@ -2616,7 +2616,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         />
       )}
       {zoneTag && capacityModality === "reverse_action" && (
-        <div className="card" style={{ color: "var(--ink-muted)", fontSize: "var(--t-xs)" }}>
+        <div className="card surface-force" style={{ color: "var(--ink-muted)", fontSize: "var(--t-xs)" }}>
           Static recommendations are hidden in Reverse Action mode. Its PR, Hill/CF model, and targets use Reverse Action capacity evidence only.
         </div>
       )}

@@ -52,7 +52,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
 
   return (
     <div
-      className="card tappable"
+      className="card surface-force tappable"
       style={{ marginTop: 10 }}
       onClick={() => setDetailOpen(true)}
     >

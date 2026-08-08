@@ -329,7 +329,7 @@ export default function RoutineCard({
   }
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-workout" style={{ marginTop: 10 }}>
       <div className="card-title" style={{ marginBottom: 8 }}>
         Routines
       </div>

@@ -376,7 +376,7 @@ export default function ForceTrendChart({
       : null;
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-force" style={{ marginTop: 10 }}>
       <div
         style={{
           display: "flex",

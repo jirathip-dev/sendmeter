@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Sendmeter's Home, Workout, Force, and History surfaces now share a richer light and dark visual system, with clearer metric accents, tactile controls, and more dimensional cards and sheets while keeping the same information density.
 - The app's typeface now ships inside the app instead of loading from Google Fonts — nothing is requested from Google on launch any more, and the font renders identically, works offline, and no longer depends on network conditions.
 - See your 28-day activity mix at a glance with a proportional training-load bar.
 - Filter History by session type and Force tag, including loose Force recordings.

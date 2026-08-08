@@ -170,7 +170,7 @@ export default function WorkoutStatsCard({ sessions }: { sessions: Session[] }) 
   }
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-workout" style={{ marginTop: 10 }}>
       <div className="label-eyebrow" style={{ marginBottom: 10 }}>
         Session stats
       </div>

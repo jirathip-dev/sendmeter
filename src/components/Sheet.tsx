@@ -111,7 +111,7 @@ export default function Sheet({ onClose, fullHeight, className, children }: Prop
       }}
     >
       <div
-        className={`modal-sheet${fullHeight ? " full" : ""}`}
+        className={`modal-sheet premium-sheet${fullHeight ? " full" : ""}`}
         style={{
           transform: `translateY(${dragY}px)`,
           // No transition while the finger is down (dragY > 0 = actively

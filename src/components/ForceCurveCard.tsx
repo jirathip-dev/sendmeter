@@ -263,7 +263,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
       : [],
   );
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-force" style={{ marginTop: 10 }}>
       <div
         className="label-eyebrow"
         style={{

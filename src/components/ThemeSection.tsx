@@ -22,7 +22,7 @@ function applyTheme(choice: ThemeChoice) {
       window.matchMedia("(prefers-color-scheme: dark)").matches);
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", isDark ? "#161618" : "#EFEFF1");
+    ?.setAttribute("content", isDark ? "#0E121B" : "#F2F4F8");
 }
 
 const OPTIONS: { value: ThemeChoice; label: string }[] = [
@@ -44,35 +44,12 @@ export default function ThemeSection() {
       <span className="field-label" style={{ marginTop: 0 }}>
         Appearance
       </span>
-      <div
-        style={{
-          display: "flex",
-          gap: 4,
-          background: "var(--surface-1)",
-          border: "1px solid var(--border)",
-          borderRadius: 8,
-          padding: 3,
-        }}
-      >
+      <div className="theme-switcher">
         {OPTIONS.map((o) => (
           <button
             key={o.value}
+            className={`theme-option${choice === o.value ? " selected" : ""}`}
             onClick={() => select(o.value)}
-            style={{
-              flex: 1,
-              padding: "8px 0",
-              borderRadius: 6,
-              border: "none",
-              cursor: "pointer",
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--t-sm)",
-              fontWeight: 600,
-              background: choice === o.value ? "var(--canvas)" : "transparent",
-              color: choice === o.value ? "var(--ink)" : "var(--ink-muted)",
-              boxShadow:
-                choice === o.value ? "0 1px 3px rgba(0,0,0,0.15)" : "none",
-              transition: "background 0.15s, color 0.15s",
-            }}
           >
             {o.label}
           </button>

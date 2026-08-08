@@ -32,25 +32,26 @@ the one exception; they can't resolve CSS vars, so charts use literal hex).
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
-| `--bg` | `#EFEFF1` | `#161618` | App shell background (behind cards, under safe areas) |
-| `--canvas` | `#FFFFFF` | `#232327` | Cards / panels — the "paper"; also the glass tint base |
-| `--card-border` | `transparent` | `#303034` | Card outline (dark only) |
-| `--surface-1` | `#F5F5F7` | `#2C2C31` | Inputs, inner wells on cards |
-| `--surface-2` | `#E9E9EC` | `#37373C` | Emphasized wells; heatmap empty cell |
-| `--border` | `#D8D8DC` | `#3E3E44` | Borders on surfaces |
-| `--hairline` | `#E2E2E6` | `#333338` | Dividers, gridlines |
-| `--ink` | `#1C1C1E` | `#E8E8EC` | Primary text |
-| `--ink-muted` | `#6E6E73` | `#A9A9B0` | Labels, secondary text |
-| `--ink-faint` | `#8E8E93` | `#7F7F87` | Tertiary/metadata, axis text |
+| `--bg` | `#F2F4F8` | `#0E121B` | App shell background (behind cards, under safe areas) |
+| `--canvas` | `#FFFFFF` | `#171D2A` | Cards / panels — the "paper"; also the glass tint base |
+| `--card-border` | `rgba(35,48,72,.08)` | `rgba(196,211,239,.13)` | Card outline |
+| `--surface-1` | `#F5F7FB` | `#1D2636` | Inputs, inner wells on cards |
+| `--surface-2` | `#EAF0F8` | `#273348` | Emphasized wells; heatmap empty cell |
+| `--border` | `#D6DDE9` | `#35435A` | Borders on surfaces |
+| `--hairline` | `#E4E8F0` | `#283346` | Dividers, gridlines |
+| `--ink` | `#182131` | `#F0F4FC` | Primary text |
+| `--ink-muted` | `#647087` | `#A6B2C7` | Labels, secondary text |
+| `--ink-faint` | `#8B96AA` | `#7F8CA5` | Tertiary/metadata, axis text |
 | `--primary` | `#5B5FC7` | `#5B5FC7` | CTAs, live force trace, active state, data series |
-| `--primary-hover` | `#4A4EB3` | `#6A6ED6` | Hover state |
-| `--primary-accent` | `#5B5FC7` | `#9296EE` | Primary used as text/underline (readable on the theme bg) |
-| `--info` | `#7B83EB` | `#7B83EB` | Tags, secondary data series |
-| `--success` | `#2E96F0` | `#4FB0FF` | Readiness *Push*, optimal ACWR, in-zone force, positive deltas (electric blue) |
-| `--warning` | `#DDB13A` | `#E8C24E` | Readiness *Maintain*, ACWR caution, PR markers (yellow) |
-| `--danger` | `#E5743A` | `#F0864C` | Readiness *Recover*, ACWR danger, delete, negative deltas (orange) |
-| `--orange` | `#E0913D` | `#E8A24D` | Critical-force line, power phase (amber accent) |
-| `--shadow-card` / `--overlay` | — | — | Card shadow / modal backdrop (theme-tuned) |
+| `--primary-hover` | `#4A4EB3` | `#858BEF` | Hover state |
+| `--primary-accent` | `#4E53B9` | `#A3A8FF` | Primary used as text/underline (readable on the theme bg) |
+| `--info` | `#5964B7` | `#8A95EE` | Tags, secondary data series |
+| `--success` | `#1674BE` | `#58B8FF` | Readiness *Push*, optimal ACWR, in-zone force, positive deltas (electric blue) |
+| `--warning` | `#956A00` | `#F0C957` | Readiness *Maintain*, ACWR caution, PR markers (yellow) |
+| `--danger` | `#B95122` | `#F18A50` | Readiness *Recover*, ACWR danger, delete, negative deltas (orange) |
+| `--orange` | `#A15D00` | `#F0A753` | Critical-force line, power phase (amber accent) |
+| `--accent-*` / `--gradient-*` | semantic | semantic | Readiness, caution, load, force, interaction surface accents |
+| `--shadow-*` / `--chrome-*` / `--overlay` | theme-tuned | theme-tuned | Elevation, glass chrome and modal backdrop |
 
 **Health-semantic rule (cool = good):** the health scale runs **electric-blue →
 yellow → orange** (optimal → caution → alert) — *no red, no green*. These hues are
@@ -105,14 +106,18 @@ one place:
 
 ## Surfaces & components
 
-- **Cards** (`.card`, `.session-row`): white, `border-radius: 12px`,
-  `box-shadow: 0 1px 4px rgba(0,0,0,0.12)`, no border (border only for inner
-  nesting). Cards on chrome need no outline — the value contrast does the work.
-- **Buttons**: `.btn-primary` = purple fill, white text, radius 8.
+- **Cards** (`.card`, `.session-row`): theme-aware material, `border-radius:
+  var(--radius-card)`, a restrained semantic wash (`.surface-readiness`,
+  `.surface-load`, `.surface-force`, `.surface-workout`) and layered
+  `var(--shadow-card)`. The gradient stays at the edge of the hierarchy; values
+  remain solid, highest-contrast content.
+- **Buttons**: `.btn-primary` = purple interaction gradient, white text,
+  tactile pressed/disabled states; `.btn-ghost` is a raised theme control.
   `.btn-ghost` on chrome = chrome-border + chrome-ink; inside cards it
   inherits a light variant (`.card .btn-ghost`, `.modal-sheet .btn-ghost`).
-- **Modals**: white document panels (`.modal-sheet`) — bottom sheet on mobile,
-  centered dialog ≥720px. The moment of input = the white paper moment.
+- **Modals**: theme-aware document panels (`.modal-sheet`) with a raised sheet
+  shadow and opaque fallback when blur is unavailable — bottom sheet on mobile,
+  centered dialog ≥720px. The moment of input = the focused material moment.
 - **Charts**: data series in `--primary` purple (the "waveform"), PR points in
   `--warning` amber, CF reference lines in `--orange`, axes/gridlines
   `#E5E5EA`, axis text `#8E8E93`. Canvas/SVG use literal hex (attributes can't
@@ -170,17 +175,18 @@ Both the account fab (`.account-fab`) and the bottom nav (`.bottom-nav`) use the
 same glass so they read as one system:
 
 ```css
-background: color-mix(in srgb, var(--canvas) 55%, transparent);
+background: var(--chrome-bg);
 -webkit-backdrop-filter: blur(24px) saturate(1.7);
 backdrop-filter: blur(24px) saturate(1.7);
-border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
-box-shadow: 0 4px 16px rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.10);
+border: 1px solid var(--chrome-border);
+box-shadow: var(--shadow-float);
 ```
 
-- `color-mix` tints the glass with the theme's card color at 55% so it works in
-  light **and** dark without hardcoded rgba. The inset top highlight gives the
-  "lit edge" of frosted glass. Content scrolls *under* the glass (it overlays,
-  see below) so the blur has something to refract.
+- `--chrome-bg` and `--chrome-border` tune the glass in light **and** dark
+  without component-level colors. The shared elevation token gives a lit edge
+  and a consistent float. Content scrolls *under* the glass (it overlays, see
+  below) so the blur has something to refract; an opaque fallback keeps text
+  legible when backdrop-filter is unavailable.
 - Requires iOS 16.2+ (our floor is 16) — `color-mix` + `backdrop-filter` are
   both supported there.
 
