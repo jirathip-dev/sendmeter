@@ -2482,30 +2482,25 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             couldn&apos;t be queued for later either.{" "}
             {unqueued.length === 1 ? "It is" : "They are"} only held on this
             screen and will be lost when you leave it. Free up storage, then
-            retry.
+            Retry to preserve them; Discard permanently loses them now.
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button
-              className="btn-danger btn-inline"
+              type="button"
+              className="btn-primary btn-inline"
               onClick={() => void retryUnqueued()}
               disabled={retryingUnqueued}
+              aria-label={retryingUnqueued ? "Retrying unsaved recordings" : "Retry unsaved recordings"}
               style={{ flex: 1 }}
             >
               {retryingUnqueued ? "Retrying…" : "Retry"}
             </button>
             <button
+              type="button"
+              className="btn-danger btn-inline"
               onClick={() => setUnqueued([])}
               disabled={retryingUnqueued}
-              style={{
-                background: "none",
-                border: "1px solid var(--ink-faint)",
-                color: "var(--ink-muted)",
-                padding: "8px 12px",
-                borderRadius: 8,
-                fontSize: "var(--t-xs)",
-                fontFamily: "Inter, sans-serif",
-                cursor: "pointer",
-              }}
+              aria-label="Discard unsaved recordings"
             >
               Discard
             </button>

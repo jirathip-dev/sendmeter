@@ -165,8 +165,8 @@ one place:
 
 - Zone/status colors carry meaning across watch + web + DB (`push/maintain/
   recover`) — hues tuned to this palette but semantics unchanged.
-- The boulder app icon and the PWA identity (`theme-color` = `#EFEFF1` light /
-  `#161618` dark).
+- The boulder app icon and the PWA identity (`theme-color` = `#F2F4F8` light /
+  `#0E121B` dark), matching `index.html` and the theme canvas tokens above.
 - Watch app keeps native watchOS styling; this system governs web + iOS shell.
 
 ---

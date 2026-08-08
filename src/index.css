@@ -694,11 +694,13 @@ input[type="number"] {
 .btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--primary-action-hover);
   background-image: linear-gradient(135deg, var(--primary-action-hover), var(--primary-action-hover-shade));
+  color: var(--primary-action-text);
   box-shadow: 0 7px 16px color-mix(in srgb, var(--primary-action-hover) 30%, transparent), inset 0 1px 0 rgba(255,255,255,0.26);
 }
 .btn-primary:active:not(:disabled):not([aria-disabled="true"]) {
   background: var(--primary-action-active);
   background-image: linear-gradient(135deg, var(--primary-action-active), var(--primary-action-active-shade));
+  color: var(--primary-action-text);
   transform: translateY(1px) scale(0.992);
   box-shadow: 0 2px 7px color-mix(in srgb, var(--primary-action-active) 20%, transparent), inset 0 1px 0 rgba(255,255,255,0.2);
 }
@@ -763,12 +765,14 @@ input[type="number"] {
   background: var(--danger-action-hover);
   background-image: linear-gradient(135deg, var(--danger-action-hover), var(--danger-action-hover-shade));
   border-color: var(--danger-action-hover-shade);
+  color: var(--danger-action-text);
   box-shadow: 0 7px 16px color-mix(in srgb, var(--danger-action-hover) 30%, transparent), inset 0 1px 0 rgba(255,255,255,0.22);
 }
 .btn-danger:active:not(:disabled):not([aria-disabled="true"]) {
   background: var(--danger-action-active);
   background-image: linear-gradient(135deg, var(--danger-action-active), var(--danger-action-active-shade));
   border-color: var(--danger-action-active-shade);
+  color: var(--danger-action-text);
   transform: translateY(1px) scale(0.992);
   box-shadow: 0 2px 7px color-mix(in srgb, var(--danger-action-active) 20%, transparent), inset 0 1px 0 rgba(255,255,255,0.18);
 }
@@ -970,6 +974,7 @@ textarea.field { resize: none; }
    selected appearance option, plus a focus ring that survives native color
    substitution. */
 @media (forced-colors: active) {
+  .btn-primary,
   .btn-secondary,
   .btn-danger {
     background: ButtonFace;
@@ -977,18 +982,22 @@ textarea.field { resize: none; }
     border-color: ButtonText;
     color: ButtonText;
   }
+  .btn-primary:hover:not(:disabled):not([aria-disabled="true"]),
   .btn-secondary:hover:not(:disabled):not([aria-disabled="true"]),
   .btn-danger:hover:not(:disabled):not([aria-disabled="true"]) {
     background: Highlight;
     border-color: Highlight;
     color: HighlightText;
   }
+  .btn-primary:active:not(:disabled):not([aria-disabled="true"]),
   .btn-secondary:active:not(:disabled):not([aria-disabled="true"]),
   .btn-danger:active:not(:disabled):not([aria-disabled="true"]) {
     background: Highlight;
     border-color: Highlight;
     color: HighlightText;
   }
+  .btn-primary:disabled,
+  .btn-primary[aria-disabled="true"],
   .btn-secondary:disabled,
   .btn-secondary[aria-disabled="true"],
   .btn-danger:disabled,
@@ -998,6 +1007,7 @@ textarea.field { resize: none; }
     color: GrayText;
     opacity: 1;
   }
+  .btn-primary:focus-visible,
   .btn-secondary:focus-visible,
   .btn-danger:focus-visible {
     outline: 2px solid Highlight;

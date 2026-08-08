@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const SRC = join(import.meta.dirname, "..");
 const css = readFileSync(join(SRC, "index.css"), "utf8");
 const indexHtml = readFileSync(join(SRC, "..", "index.html"), "utf8");
+const design = readFileSync(join(SRC, "..", "DESIGN.md"), "utf8");
 
 function component(name: string): string {
   return readFileSync(join(SRC, "components", name), "utf8");
@@ -16,17 +17,22 @@ function componentSources(): Array<[string, string]> {
     .map((entry) => [entry.name, component(entry.name)]);
 }
 
+interface ButtonRegion {
+  tag: string;
+  element: string;
+}
+
 /**
  * Extract JSX button opening tags without stopping at object-literal braces in
  * event handlers/styles. This lets the invariant inspect every semantic
  * button consumer instead of relying on a hand-maintained file list.
  */
-function buttonOpeningTags(source: string): string[] {
-  const tags: string[] = [];
+function buttonRegions(source: string): ButtonRegion[] {
+  const regions: ButtonRegion[] = [];
   let cursor = 0;
   while (true) {
     const start = source.indexOf("<button", cursor);
-    if (start < 0) return tags;
+    if (start < 0) return regions;
 
     let braceDepth = 0;
     let quote: "'" | '"' | "`" | null = null;
@@ -47,9 +53,121 @@ function buttonOpeningTags(source: string): string[] {
         break;
       }
     }
-    tags.push(source.slice(start, end + 1));
+    const tag = source.slice(start, end + 1);
+    const closingStart = source.indexOf("</button>", end + 1);
+    const closingEnd = closingStart < 0 ? end + 1 : closingStart + "</button>".length;
+    regions.push({ tag, element: source.slice(start, closingEnd) });
     cursor = end + 1;
   }
+}
+
+function buttonOpeningTags(source: string): string[] {
+  return buttonRegions(source).map(({ tag }) => tag);
+}
+
+function attributeValue(tag: string, name: string): string | null {
+  const marker = new RegExp(`\\b${name}\\s*=`).exec(tag);
+  if (!marker) return null;
+  let cursor = marker.index + marker[0].length;
+  while (/\s/.test(tag[cursor] ?? "")) cursor += 1;
+  const first = tag[cursor];
+  if (first === '"' || first === "'") {
+    const quote = first;
+    let end = cursor + 1;
+    while (end < tag.length) {
+      if (tag[end] === quote && tag[end - 1] !== "\\") return tag.slice(cursor, end + 1);
+      end += 1;
+    }
+    return tag.slice(cursor);
+  }
+  if (first !== "{") return tag.slice(cursor).split(/\s|>/, 1)[0] ?? "";
+
+  let braceDepth = 0;
+  let quote: "'" | '"' | "`" | null = null;
+  for (let end = cursor; end < tag.length; end += 1) {
+    const character = tag[end]!;
+    if (quote) {
+      if (character === quote && tag[end - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+    } else if (character === "{") {
+      braceDepth += 1;
+    } else if (character === "}") {
+      braceDepth -= 1;
+      if (braceDepth === 0) return tag.slice(cursor, end + 1);
+    }
+  }
+  return tag.slice(cursor);
+}
+
+/** Parse CSS rules into bounded selector/body pairs, including nested media
+ * blocks. Assertions can now inspect one rule body without crossing into the
+ * next selector. */
+interface CssRule {
+  selector: string;
+  body: string;
+}
+
+function cssRules(source: string): CssRule[] {
+  const rules: CssRule[] = [];
+  const clean = source.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  function parseRange(start: number, end: number): void {
+    let cursor = start;
+    while (cursor < end) {
+      let open = cursor;
+      let quote: "'" | '"' | null = null;
+      for (; open < end; open += 1) {
+        const character = clean[open]!;
+        if (quote) {
+          if (character === quote && clean[open - 1] !== "\\") quote = null;
+        } else if (character === "'" || character === '"') {
+          quote = character;
+        } else if (character === "{") {
+          break;
+        }
+      }
+      if (open >= end) return;
+
+      let depth = 1;
+      let close = open + 1;
+      quote = null;
+      for (; close < end; close += 1) {
+        const character = clean[close]!;
+        if (quote) {
+          if (character === quote && clean[close - 1] !== "\\") quote = null;
+        } else if (character === "'" || character === '"') {
+          quote = character;
+        } else if (character === "{") {
+          depth += 1;
+        } else if (character === "}") {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      if (close >= end) return;
+
+      const selector = clean.slice(cursor, open).trim();
+      const body = clean.slice(open + 1, close);
+      if (selector && !selector.startsWith("@")) rules.push({ selector, body });
+      parseRange(open + 1, close);
+      cursor = close + 1;
+    }
+  }
+
+  parseRange(0, clean.length);
+  return rules;
+}
+
+function cssRuleBody(rules: CssRule[], selector: string): string {
+  const exact = rules.find((candidate) => candidate.selector.trim() === selector);
+  const rule = exact ?? rules.find((candidate) =>
+    candidate.selector.split(",").some((part) => part.trim() === selector),
+  );
+  if (!rule) throw new Error(`Missing CSS rule: ${selector}`);
+  return rule.body;
 }
 
 /** Return the contents of the first balanced block after a CSS marker. */
@@ -92,6 +210,7 @@ const themeBlocks = {
 const themeDeclarations = Object.fromEntries(
   Object.entries(themeBlocks).map(([name, block]) => [name, declarations(block)]),
 ) as Record<keyof typeof themeBlocks, Record<string, string>>;
+const parsedCssRules = cssRules(css);
 
 const THEME_TOKENS = [
   "--accent-readiness",
@@ -259,39 +378,32 @@ describe("premium visual language contracts (#517)", () => {
       }
     }
 
-    const buttonStyles = css.slice(css.indexOf("/* Buttons */"), css.indexOf(".btn-ghost {"));
     const cssStates = [
-      [".btn-primary {", "--primary-action", "--primary-action-shade", "--primary-action-text"],
-      [".btn-primary:hover:not(:disabled):not([aria-disabled=\"true\"]) {", "--primary-action-hover", "--primary-action-hover-shade", "--primary-action-text"],
-      [".btn-primary:active:not(:disabled):not([aria-disabled=\"true\"]) {", "--primary-action-active", "--primary-action-active-shade", "--primary-action-text"],
-      [".btn-primary:disabled,", "--primary-action-disabled", "--primary-action-disabled-shade", "--primary-action-text"],
-      [".btn-secondary {", "--secondary-action-bg", "--secondary-action-bg-shade", "--secondary-action-text"],
-      [".btn-secondary:hover:not(:disabled):not([aria-disabled=\"true\"]) {", "--secondary-action-bg-hover", "--secondary-action-bg-hover-shade", "--secondary-action-text-hover"],
-      [".btn-secondary:active:not(:disabled):not([aria-disabled=\"true\"]) {", "--secondary-action-bg-active", "--secondary-action-bg-active-shade", "--secondary-action-text-active"],
-      [".btn-secondary:disabled,", "--secondary-action-bg-disabled", "--secondary-action-bg-disabled-shade", "--secondary-action-text-disabled"],
-      [".btn-danger {", "--danger-action", "--danger-action-shade", "--danger-action-text"],
-      [".btn-danger:hover:not(:disabled):not([aria-disabled=\"true\"]) {", "--danger-action-hover", "--danger-action-hover-shade", "--danger-action-text"],
-      [".btn-danger:active:not(:disabled):not([aria-disabled=\"true\"]) {", "--danger-action-active", "--danger-action-active-shade", "--danger-action-text"],
-      [".btn-danger:disabled,", "--danger-action-disabled", "--danger-action-disabled-shade", "--danger-action-text"],
+      [".btn-primary", "--primary-action", "--primary-action-shade", "--primary-action-text"],
+      [".btn-primary:hover:not(:disabled):not([aria-disabled=\"true\"])", "--primary-action-hover", "--primary-action-hover-shade", "--primary-action-text"],
+      [".btn-primary:active:not(:disabled):not([aria-disabled=\"true\"])", "--primary-action-active", "--primary-action-active-shade", "--primary-action-text"],
+      [".btn-primary:disabled", "--primary-action-disabled", "--primary-action-disabled-shade", "--primary-action-text"],
+      [".btn-secondary", "--secondary-action-bg", "--secondary-action-bg-shade", "--secondary-action-text"],
+      [".btn-secondary:hover:not(:disabled):not([aria-disabled=\"true\"])", "--secondary-action-bg-hover", "--secondary-action-bg-hover-shade", "--secondary-action-text-hover"],
+      [".btn-secondary:active:not(:disabled):not([aria-disabled=\"true\"])", "--secondary-action-bg-active", "--secondary-action-bg-active-shade", "--secondary-action-text-active"],
+      [".btn-secondary:disabled", "--secondary-action-bg-disabled", "--secondary-action-bg-disabled-shade", "--secondary-action-text-disabled"],
+      [".btn-danger", "--danger-action", "--danger-action-shade", "--danger-action-text"],
+      [".btn-danger:hover:not(:disabled):not([aria-disabled=\"true\"])", "--danger-action-hover", "--danger-action-hover-shade", "--danger-action-text"],
+      [".btn-danger:active:not(:disabled):not([aria-disabled=\"true\"])", "--danger-action-active", "--danger-action-active-shade", "--danger-action-text"],
+      [".btn-danger:disabled", "--danger-action-disabled", "--danger-action-disabled-shade", "--danger-action-text"],
     ] as const;
     for (const [selector, startToken, endToken, textToken] of cssStates) {
-      const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      expect(buttonStyles, `${selector} background`).toMatch(
-        new RegExp(
-          `${escapedSelector}[\\s\\S]*?background-image:[^;]*var\\(${startToken}\\)[^;]*var\\(${endToken}\\)`,
-        ),
+      const body = cssRuleBody(parsedCssRules, selector.trim());
+      expect(body, `${selector} background`).toContain(
+        `background-image: linear-gradient(135deg, var(${startToken}), var(${endToken}))`,
       );
-      expect(buttonStyles, `${selector} text`).toMatch(
-        new RegExp(`${escapedSelector}[\\s\\S]*?color:\\s*var\\(${textToken}\\)`),
-      );
+      expect(body, `${selector} text`).toContain(`color: var(${textToken})`);
     }
     for (const className of ["btn-primary", "btn-secondary", "btn-danger"]) {
-      expect(css).toContain(`.${className}:hover:not(:disabled):not([aria-disabled="true"])`);
-      expect(css).toContain(`.${className}:active:not(:disabled):not([aria-disabled="true"])`);
-      expect(css).toContain(`.${className}:disabled,`);
-      expect(css).toContain(`.${className}[aria-disabled="true"]`);
-      expect(css).toMatch(new RegExp(`\\.${className}:disabled,[\\s\\S]*?opacity:\\s*1;`));
-      expect(css).toContain(`.${className}:focus-visible`);
+      expect(cssRuleBody(parsedCssRules, `.${className}:disabled`)).toContain("opacity: 1;");
+      expect(cssRuleBody(parsedCssRules, `.${className}:focus-visible`)).toContain(
+        "outline: 2px solid var(--focus-ring);",
+      );
     }
     expect(css).toContain(".btn-secondary.btn-inline");
     expect(css).toContain(".btn-danger.btn-inline");
@@ -301,29 +413,94 @@ describe("premium visual language contracts (#517)", () => {
 
   it("keeps every semantic button consumer on the shared recipe", () => {
     const consumers = componentSources().flatMap(([file, source]) =>
-      buttonOpeningTags(source).map((tag) => ({ file, tag })),
+      buttonOpeningTags(source).map((tag) => ({
+        file,
+        tag,
+        classValue: attributeValue(tag, "className") ?? "",
+        styleValue: attributeValue(tag, "style"),
+      })),
     );
-    const semanticConsumers = consumers.filter(({ tag }) =>
-      /btn-(?:primary|secondary|danger)\b/.test(tag),
+    const semanticConsumers = consumers.filter(({ classValue }) =>
+      /\bbtn-(?:primary|secondary|danger)\b/.test(classValue),
     );
 
     expect(semanticConsumers.some(({ tag }) => tag.includes("btn-primary"))).toBe(true);
     expect(semanticConsumers.some(({ tag }) => tag.includes("btn-secondary"))).toBe(true);
     expect(semanticConsumers.some(({ tag }) => tag.includes("btn-danger"))).toBe(true);
 
-    for (const { file, tag } of semanticConsumers) {
+    for (const { file, tag, styleValue } of semanticConsumers) {
+      const styleSource = styleValue ?? "";
       expect(
         tag,
         `${file} overrides a shared semantic button with an inline paint property`,
       ).not.toMatch(/\b(?:background(?:-image|-color)?|color|border(?:-color)?)\s*:/);
+      expect(
+        styleSource,
+        `${file} uses an opaque style expression on a semantic button`,
+      ).not.toMatch(/^\{\s*[A-Za-z_$][\w$]*\s*\}$/);
     }
 
-    for (const { file, tag } of consumers) {
-      const inlineDangerFill = /\bbackground(?:-image|-color)?\s*:\s*["'`]?\s*var\(\s*--danger\b\s*\)\s*["'`]?/i.test(tag);
+    for (const { file, styleValue } of consumers) {
+      const styleSource = styleValue ?? "";
+      const inlineActionFill = /\bbackground(?:-image|-color)?\s*:\s*["'`]?\s*var\(\s*--(?:danger|primary|surface-2)\b\s*\)\s*["'`]?/i.test(styleSource);
       expect(
-        inlineDangerFill,
-        `${file} uses an inline danger/white action fill; use .btn-danger instead`,
+        inlineActionFill,
+        `${file} uses an inline semantic action fill; use the shared button recipe instead`,
       ).toBe(false);
+    }
+  });
+
+  it("maps Force recovery meaning to the correct action hierarchy", () => {
+    const source = component("ForceView.tsx");
+    const recoveryStart = source.indexOf('className="card surface-caution"');
+    const recoveryEnd = source.indexOf("/* Protocols:", recoveryStart);
+    expect(recoveryStart).toBeGreaterThanOrEqual(0);
+    expect(recoveryEnd).toBeGreaterThan(recoveryStart);
+
+    const recoveryButtons = buttonRegions(source.slice(recoveryStart, recoveryEnd));
+    const retry = recoveryButtons.find(({ element }) => element.includes("Retry"));
+    const discard = recoveryButtons.find(({ element }) => element.includes("Discard"));
+    expect(retry).toBeDefined();
+    expect(discard).toBeDefined();
+    expect(retry!.tag).toContain('className="btn-primary btn-inline"');
+    expect(retry!.tag).toContain('aria-label={retryingUnqueued ? "Retrying unsaved recordings" : "Retry unsaved recordings"}');
+    expect(discard!.tag).toContain('className="btn-danger btn-inline"');
+    expect(discard!.tag).toContain('aria-label="Discard unsaved recordings"');
+    expect(recoveryButtons.indexOf(retry!)).toBeLessThan(recoveryButtons.indexOf(discard!));
+  });
+
+  it("defines explicit forced-colors states for every semantic button recipe", () => {
+    const forcedRules = cssRules(blockAfter(css, "@media (forced-colors: active) {"));
+    for (const className of ["btn-primary", "btn-secondary", "btn-danger"]) {
+      const normal = cssRuleBody(forcedRules, `.${className}`);
+      expect(normal).toContain("background: ButtonFace;");
+      expect(normal).toContain("background-image: none;");
+      expect(normal).toContain("border-color: ButtonText;");
+      expect(normal).toContain("color: ButtonText;");
+
+      const hover = cssRuleBody(
+        forcedRules,
+        `.${className}:hover:not(:disabled):not([aria-disabled="true"])`,
+      );
+      expect(hover).toContain("background: Highlight;");
+      expect(hover).toContain("color: HighlightText;");
+
+      const active = cssRuleBody(
+        forcedRules,
+        `.${className}:active:not(:disabled):not([aria-disabled="true"])`,
+      );
+      expect(active).toContain("background: Highlight;");
+      expect(active).toContain("color: HighlightText;");
+
+      const disabled = cssRuleBody(forcedRules, `.${className}:disabled`);
+      expect(disabled).toContain("background: ButtonFace;");
+      expect(disabled).toContain("border-color: GrayText;");
+      expect(disabled).toContain("color: GrayText;");
+      expect(disabled).toContain("opacity: 1;");
+
+      expect(cssRuleBody(forcedRules, `.${className}:focus-visible`)).toContain(
+        "outline: 2px solid Highlight;",
+      );
     }
   });
 
@@ -439,5 +616,11 @@ describe("premium visual language contracts (#517)", () => {
     expect(indexHtml).toContain('content="#0E121B"');
     expect(component("ThemeSection.tsx")).toContain('"#0E121B"');
     expect(component("ThemeSection.tsx")).toContain('"#F2F4F8"');
+
+    const pwaThemeColors = design.match(
+      /`theme-color`\s*=\s*`([^`]+)`\s*light\s*\/\s*`([^`]+)`\s*dark/,
+    );
+    expect(pwaThemeColors?.[1]).toBe("#F2F4F8");
+    expect(pwaThemeColors?.[2]).toBe("#0E121B");
   });
 });
