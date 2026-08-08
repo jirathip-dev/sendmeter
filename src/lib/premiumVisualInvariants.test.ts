@@ -353,23 +353,84 @@ interface AstClassAnalysis {
   opaque: boolean;
 }
 
-type LocalClassResolver = (name: string) => ts.Expression | undefined;
+type LocalClassResolver = (name: string, reference?: ts.Identifier) => ts.Expression | undefined;
 
-const READABLE_INK_VALUES = new Set([
-  "var(--ink)",
-  "var(--ink-muted)",
-  "var(--ink-faint)",
-  "currentColor",
-]);
+// Descendant paint is intentionally never accepted inline. Even an ink token
+// can be wrong on a gradient/selected state; readable foregrounds belong to a
+// named CSS recipe whose actual surface/state endpoints are tested below.
+const READABLE_INK_VALUES = new Set<string>();
 
 function cssButtonRecipeClasses(): Set<string> {
-  const classes = new Set<string>();
+  const recipes = new Map<string, { paint: boolean; cursor: boolean; state: boolean }>();
+  const paintPattern = /\b(?:background|background-image|background-color|border|border-color|border-image|color|opacity|box-shadow|outline|outline-color)\s*:/;
+  const statePattern = /(?::(?:hover|active|focus-visible|disabled)|\[(?:data|aria)-[\w-]+\s*=|\.(?:active|selected|ready|danger|climbing|resting)\b)/;
+  const selectorList = (selector: string): string[] => {
+    const branches: string[] = [];
+    let start = 0;
+    let parenDepth = 0;
+    let bracketDepth = 0;
+    let quote: CssQuote = null;
+    for (let cursor = 0; cursor < selector.length; cursor += 1) {
+      const character = selector[cursor]!;
+      if (quote) {
+        if (character === quote && !isEscaped(selector, cursor)) quote = null;
+        continue;
+      }
+      if (character === "'" || character === '"') {
+        quote = character;
+      } else if (character === "(") {
+        parenDepth += 1;
+      } else if (character === ")") {
+        parenDepth = Math.max(0, parenDepth - 1);
+      } else if (character === "[") {
+        bracketDepth += 1;
+      } else if (character === "]") {
+        bracketDepth = Math.max(0, bracketDepth - 1);
+      } else if (character === "," && parenDepth === 0 && bracketDepth === 0) {
+        branches.push(selector.slice(start, cursor).trim());
+        start = cursor + 1;
+      }
+    }
+    branches.push(selector.slice(start).trim());
+    return branches.filter(Boolean);
+  };
+  const compounds = (selector: string): string[] => selector.split(/[\s>+~]+/).filter(Boolean);
+  const directClass = (selector: string, className: string): boolean =>
+    selectorList(selector).some((branch) =>
+      compounds(branch).some((compound) => {
+        const classes = [...compound.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((match) => match[1]);
+        return classes.length === 1 && classes[0] === className;
+      }),
+    );
+  const stateForClass = (selector: string, className: string): boolean =>
+    selectorList(selector).some((branch) =>
+      compounds(branch).some((compound) => {
+        const classes = [...compound.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((match) => match[1]);
+        return classes.includes(className) && statePattern.test(compound);
+      }),
+    );
   for (const rule of parsedCssRules) {
+    const paint = paintPattern.test(rule.body);
+    const cursor = /\bcursor\s*:\s*(?:pointer|default)\b/.test(rule.body);
     for (const match of rule.selector.matchAll(/\.([A-Za-z_][\w-]*)/g)) {
-      if (match[1]) classes.add(match[1]);
+      if (!match[1]) continue;
+      const className = match[1];
+      const recipe = recipes.get(className) ?? { paint: false, cursor: false, state: false };
+      if (!directClass(rule.selector, className)) {
+        recipes.set(className, recipe);
+        continue;
+      }
+      if (paint) recipe.paint = true;
+      if (!stateForClass(rule.selector, className) && cursor) recipe.cursor = true;
+      if (stateForClass(rule.selector, className) && rule.body.trim()) recipe.state = true;
+      recipes.set(className, recipe);
     }
   }
-  return classes;
+  return new Set(
+    [...recipes]
+      .filter(([, recipe]) => recipe.paint && recipe.cursor && recipe.state)
+      .map(([className]) => className),
+  );
 }
 
 function unwrapTsExpression(expression: ts.Expression): ts.Expression {
@@ -464,7 +525,7 @@ function analyzeClassExpression(
     return { tokens: new Set(), guaranteedRecipe: false, opaque: true };
   }
   if (ts.isIdentifier(current) && resolveLocal && !resolving.has(current.text)) {
-    const initializer = resolveLocal(current.text);
+    const initializer = resolveLocal(current.text, current);
     if (initializer) {
       const nextResolving = new Set(resolving);
       nextResolving.add(current.text);
@@ -575,21 +636,104 @@ function descendantJsxPaintViolations(
 ): string[] {
   const violations: string[] = [];
   const visit = (node: ts.Node): void => {
+    if (ts.isJsxFragment(node)) {
+      node.children.forEach(visit);
+      return;
+    }
     if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
       const opening = jsxOpeningElement(node);
-      const tagName = jsxElementName(opening);
-      if (tagName === "button") return;
       const style = jsxAttributeExpression(opening, "style");
       if (style) violations.push(...stylePaintViolations(style, sourceFile, false));
+      if (opening.attributes.properties.some((property) => ts.isJsxSpreadAttribute(property))) {
+        violations.push("opaque descendant JSX spread hides descendant paint");
+      }
       if (ts.isJsxElement(node)) node.children.forEach(visit);
       return;
     }
-    if (ts.isJsxExpression(node) && node.expression) {
-      node.expression.forEachChild(visit);
-    }
+    ts.forEachChild(node, visit);
   };
   if (ts.isJsxElement(root)) root.children.forEach(visit);
   return violations;
+}
+
+function isLexicalScope(node: ts.Node): boolean {
+  return (
+    ts.isSourceFile(node) ||
+    ts.isBlock(node) ||
+    ts.isModuleBlock(node) ||
+    ts.isCaseBlock(node) ||
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isCatchClause(node) ||
+    ts.isFunctionLike(node)
+  );
+}
+
+function nearestLexicalScope(node: ts.Node): ts.Node {
+  let current: ts.Node | undefined = node;
+  while (current && !isLexicalScope(current)) current = current.parent;
+  return current ?? node.getSourceFile();
+}
+
+function buildLexicalBindings(sourceFile: ts.SourceFile): Map<ts.Node, Map<string, ts.Expression | null>> {
+  const bindings = new Map<ts.Node, Map<string, ts.Expression | null>>();
+  const addBinding = (scope: ts.Node, name: string, initializer: ts.Expression | null): void => {
+    const scopeBindings = bindings.get(scope) ?? new Map<string, ts.Expression | null>();
+    if (scopeBindings.has(name)) scopeBindings.set(name, null);
+    else scopeBindings.set(name, initializer);
+    bindings.set(scope, scopeBindings);
+  };
+  const bindingIdentifiers = (name: ts.BindingName): ts.Identifier[] => {
+    if (ts.isIdentifier(name)) return [name];
+    return name.elements.flatMap((element) => {
+      if (ts.isOmittedExpression(element)) return [];
+      return bindingIdentifiers(element.name);
+    });
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node)) {
+      const declarationList = node.parent;
+      const isVar = ts.isVariableDeclarationList(declarationList) &&
+        (declarationList.flags & ts.NodeFlags.Let) === 0 &&
+        (declarationList.flags & ts.NodeFlags.Const) === 0;
+      let scope = nearestLexicalScope(node);
+      if (isVar) {
+        while (scope && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope)) {
+          if (!scope.parent || scope === scope.parent) break;
+          scope = nearestLexicalScope(scope.parent);
+        }
+      }
+      const identifiers = bindingIdentifiers(node.name);
+      for (const identifier of identifiers) {
+        addBinding(scope, identifier.text, ts.isIdentifier(node.name) ? node.initializer ?? null : null);
+      }
+    } else if (ts.isParameter(node)) {
+      for (const identifier of bindingIdentifiers(node.name)) {
+        addBinding(nearestLexicalScope(node), identifier.text, null);
+      }
+    } else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
+      addBinding(nearestLexicalScope(node.parent), node.name.text, null);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return bindings;
+}
+
+function resolveLexicalClass(
+  bindings: Map<ts.Node, Map<string, ts.Expression | null>>,
+  name: string,
+  reference?: ts.Identifier,
+): ts.Expression | undefined {
+  let scope = nearestLexicalScope(reference ?? bindings.keys().next().value!);
+  while (scope) {
+    const scopeBindings = bindings.get(scope);
+    if (scopeBindings?.has(name)) return scopeBindings.get(name) ?? undefined;
+    if (!scope.parent || scope === scope.parent) break;
+    scope = nearestLexicalScope(scope.parent);
+  }
+  return undefined;
 }
 
 function auditButtonSource(file: string, source: string): ButtonConsumer[] {
@@ -601,14 +745,7 @@ function auditButtonSource(file: string, source: string): ButtonConsumer[] {
     ts.ScriptKind.TSX,
   );
   const recipeClasses = cssButtonRecipeClasses();
-  const localInitializers = new Map<string, ts.Expression>();
-  const collectInitializers = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-      localInitializers.set(node.name.text, node.initializer);
-    }
-    ts.forEachChild(node, collectInitializers);
-  };
-  collectInitializers(sourceFile);
+  const lexicalBindings = buildLexicalBindings(sourceFile);
   const consumers: ButtonConsumer[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
@@ -620,7 +757,7 @@ function auditButtonSource(file: string, source: string): ButtonConsumer[] {
         const classAnalysis = analyzeClassExpression(
           classExpression,
           recipeClasses,
-          (name) => localInitializers.get(name),
+          (name, reference) => resolveLexicalClass(lexicalBindings, name, reference),
         );
         const violations: string[] = [];
         if (!classAttribute) violations.push("button is missing a className recipe");
@@ -952,6 +1089,18 @@ function mix(a: RGB, b: RGB, amount: number): RGB {
   ];
 }
 
+function gradientEndpoints(value: string, background: RGB, name: string): RGB[] {
+  const stops = Array.from(
+    value.matchAll(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/g),
+    ([, red, green, blue, alpha]) => ({
+      color: [Number(red), Number(green), Number(blue)] as RGB,
+      alpha: alpha === undefined ? 1 : Number(alpha),
+    }),
+  );
+  if (stops.length === 0) throw new Error(`${name} has no parseable color stops: ${value}`);
+  return stops.map((stop) => mix(background, stop.color, stop.alpha));
+}
+
 type ThemeName = keyof typeof themeDeclarations;
 
 function resolveThemeColor(value: string, theme: ThemeName, name: string): RGB {
@@ -1008,6 +1157,7 @@ describe("premium visual language contracts (#517)", () => {
   });
 
   it("treats opaque style expressions and unsafe paint branches conservatively", () => {
+    expect(READABLE_INK_VALUES.has("var(--ink-faint)"), "faint ink is never a blanket safe-list").toBe(false);
     expect(unsafeStyleExpression("{{ background: \"var(--primary-action)\" }}")).toBe(true);
     expect(unsafeStyleExpression("{condition ? { flex: 1 } : { color: \"#fff\" }}")).toBe(true);
     expect(unsafeStyleExpression("{{ ...buttonStyle, flex: 1 }}")).toBe(true);
@@ -1373,6 +1523,73 @@ describe("premium visual language contracts (#517)", () => {
     expect(buttonAuditViolations(fixture[3]!)).toEqual([]);
   });
 
+  it("audits every nested JSX shape and resolves class identifiers lexically", () => {
+    const nested = auditButtonSource(
+      "src/fixtures/nested-button-audit.tsx",
+      `
+        const moduleClass = "btn-primary";
+        const SessionRowLike = ({ records, descendantProps, active }: Props) => {
+          const moduleClass = active ? "btn-primary" : "btn-secondary";
+          return <>
+            <button className="session-recording-toggle">
+              <>
+                <span className="session-recording-meta">
+                  {records.map((record) => <span style={{ color: record.color }}>{record.label}</span>)}
+                  {active ? <em style={{ opacity: 0.8 }}>active</em> : <strong><i style={{ background: recordColor }}>idle</i></strong>}
+                  <span {...descendantProps}>spread</span>
+                  <span style={{ color: "var(--ink-faint)" }}>faint on tint</span>
+                </span>
+              </>
+            </button>
+            <button className="card">Unrelated surface class</button>
+            <button className={moduleClass}>Lexically safe local class</button>
+          </>;
+        };
+      `,
+    );
+    expect(nested).toHaveLength(3);
+    expect(buttonAuditViolations(nested[0]!)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("unsafe descendant style property color"),
+        expect.stringContaining("unsafe descendant style property opacity"),
+        expect.stringContaining("unsafe descendant style property background"),
+        expect.stringContaining("opaque descendant JSX spread"),
+        expect.stringContaining("unsafe descendant style property color"),
+      ]),
+    );
+    expect(buttonAuditViolations(nested[1]!)).toEqual([
+      expect.stringContaining("does not guarantee a CSS recipe"),
+    ]);
+    expect(buttonAuditViolations(nested[2]!)).toEqual([]);
+
+    const shadowed = auditButtonSource(
+      "src/fixtures/shadowed-button-audit.tsx",
+      `
+        const className = "btn-primary";
+        const Safe = () => {
+          const className = "card";
+          return <button className={className}>Shadowed unrelated class</button>;
+        };
+      `,
+    );
+    expect(shadowed).toHaveLength(1);
+    expect(buttonAuditViolations(shadowed[0]!)).toEqual([
+      expect.stringContaining("does not guarantee a CSS recipe"),
+    ]);
+
+    const parameterShadow = auditButtonSource(
+      "src/fixtures/parameter-shadow-button-audit.tsx",
+      `
+        const className = "btn-primary";
+        const Safe = ({ className }: Props) => <button className={className}>Parameter is opaque</button>;
+      `,
+    );
+    expect(parameterShadow).toHaveLength(1);
+    expect(buttonAuditViolations(parameterShadow[0]!)).toEqual([
+      expect.stringContaining("does not guarantee a CSS recipe"),
+    ]);
+  });
+
   it("keeps active phase chooser text readable while retaining each phase hue", () => {
     const phaseSource = readFileSync(join(SRC, "App.tsx"), "utf8");
     expect(phaseSource).not.toContain("color: p.color");
@@ -1410,6 +1627,10 @@ describe("premium visual language contracts (#517)", () => {
     expect(cssRuleBody(parsedCssRules, ".zone-focus-label")).toContain("color: var(--ink);");
     expect(cssRuleBody(parsedCssRules, ".zone-focus-action")).toContain("color: var(--ink);");
     expect(cssRuleBody(parsedCssRules, ".phone-workout-phase-label")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".phone-workout-phase-panel")).toContain(
+      "color-mix(in srgb, var(--workout-accent, var(--primary)) 18%",
+    );
+    expect(phoneSource).toContain('className="phone-workout-phase-panel"');
     expect(cssRuleBody(parsedCssRules, ".workout-action-label")).toContain("color: var(--ink);");
     expect(cssRuleBody(parsedCssRules, ".workout-action-button:hover:not(:disabled)")).toContain(
       "color-mix(in srgb, var(--workout-accent, var(--primary)) 12%",
@@ -1436,6 +1657,70 @@ describe("premium visual language contracts (#517)", () => {
         }
       }
     }
+  });
+
+  it("proves every supporting-text endpoint stays AA-readable in every theme/state", () => {
+    const phaseHues = ["#2E96F0", "#DDB13A", "#E5743A", "#7B83EB"];
+    const zoneHues = qualityHues;
+    const workoutHues = ["var(--success)", "var(--danger)", "var(--primary)"];
+    const minima: Record<string, number> = {};
+    const check = (theme: ThemeName, state: string, foreground: RGB, background: RGB) => {
+      const ratio = contrastRatio(foreground, background);
+      minima[`${theme}/${state}`] = Math.min(minima[`${theme}/${state}`] ?? Infinity, ratio);
+      expect(ratio, `${theme} ${state}`).toBeGreaterThanOrEqual(4.5);
+    };
+
+    for (const theme of Object.keys(themeDeclarations) as ThemeName[]) {
+      const ink = resolveThemeColor("var(--ink)", theme, `${theme} supporting ink`);
+      const muted = resolveThemeColor("var(--ink-muted)", theme, `${theme} disabled supporting ink`);
+      const surface = resolveThemeColor("var(--surface-1)", theme, `${theme} supporting surface`);
+      const canvas = resolveThemeColor("var(--canvas)", theme, `${theme} workout canvas`);
+
+      for (const hue of phaseHues) {
+        const phase = hexColor(hue, `${theme} phase hue ${hue}`);
+        check(theme, `phase/${hue}/normal`, ink, mix(surface, phase, 0.12));
+        check(theme, `phase/${hue}/hover`, ink, mix(surface, phase, 0.18));
+        check(theme, `phase/${hue}/active`, ink, mix(surface, phase, 0.18));
+        check(theme, `phase/${hue}/disabled`, muted, surface);
+      }
+      check(theme, "phase/inactive-hover", ink, mix(surface, resolveThemeColor("var(--primary)", theme, "phase hover"), 0.08));
+
+      for (const hue of zoneHues) {
+        const zone = resolveThemeColor(hue, theme, `${theme} zone hue ${hue}`);
+        check(theme, `zone/${hue}/normal`, ink, mix(surface, zone, 0.12));
+        check(theme, `zone/${hue}/hover`, ink, mix(surface, zone, 0.2));
+        check(theme, `zone/${hue}/active`, ink, mix(surface, zone, 0.24));
+        check(theme, `zone/${hue}/disabled`, muted, surface);
+      }
+
+      for (const hue of workoutHues) {
+        const accent = resolveThemeColor(hue, theme, `${theme} fullscreen hue ${hue}`);
+        check(theme, `fullscreen/${hue}/normal`, ink, mix(surface, accent, 0.18));
+        check(theme, `fullscreen/${hue}/hover`, ink, mix(surface, accent, 0.18));
+        check(theme, `fullscreen/${hue}/active`, ink, mix(surface, accent, 0.18));
+      }
+
+      for (const gradient of ["--gradient-interaction", "--gradient-readiness"] as const) {
+        for (const [index, endpoint] of gradientEndpoints(themeDeclarations[theme][gradient]!, canvas, `${theme} ${gradient}`).entries()) {
+          check(theme, `phone-card/${gradient}/${index}/normal`, ink, endpoint);
+          check(theme, `phone-card/${gradient}/${index}/hover`, ink, endpoint);
+          check(theme, `phone-card/${gradient}/${index}/active`, ink, endpoint);
+        }
+      }
+      check(theme, "phone-card/disabled", muted, surface);
+    }
+
+    expect(cssRuleBody(parsedCssRules, ".phase-option-current")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".phase-option-description")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".phase-option:disabled .phase-option-description")).toContain("color: var(--ink-muted);");
+    expect(cssRuleBody(parsedCssRules, ".zone-focus-kicker")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".zone-focus-reason")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".zone-focus-button:disabled .zone-focus-reason")).toContain("color: var(--ink-muted);");
+    expect(cssRuleBody(parsedCssRules, ".phone-workout-metadata")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".phone-workout-metadata-count")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".phone-workout-resume-meta")).toContain("color: var(--ink);");
+    expect(cssRuleBody(parsedCssRules, ".phone-workout-resume:disabled .phone-workout-resume-meta")).toContain("color: var(--ink-muted);");
+    expect(Object.values(minima).every((ratio) => ratio >= 4.5)).toBe(true);
   });
 
   it("keeps BoxChip wrappers and inner buttons equal-width and tappable", () => {
@@ -1770,6 +2055,38 @@ describe("premium visual language contracts (#517)", () => {
       "color: GrayText;",
     );
     expect(cssRuleBody(forcedRules, ".workout-action-button:focus-visible")).toContain(
+      "outline: 2px solid Highlight;",
+    );
+  });
+
+  it("keeps fullscreen hue metadata and resume text readable in forced colors", () => {
+    const forcedRules = cssRules(blockAfter(css, "@media (forced-colors: active) {"));
+    const panel = cssRuleBody(forcedRules, ".phone-workout-phase-panel");
+    expect(panel).toContain("background: Canvas;");
+    expect(panel).toContain("background-image: none;");
+    expect(panel).toContain("border-color: ButtonText;");
+    expect(panel).toContain("color: ButtonText;");
+    for (const selector of [
+      ".phone-workout-phase-panel .phone-workout-phase-label",
+      ".phone-workout-phase-panel .phone-workout-metadata",
+      ".phone-workout-phase-panel .phone-workout-metadata-count",
+    ]) {
+      expect(cssRuleBody(forcedRules, selector)).toContain("color: ButtonText;");
+    }
+
+    const resume = cssRuleBody(forcedRules, ".phone-workout-resume");
+    expect(resume).toContain("background: ButtonFace;");
+    expect(resume).toContain("border-color: ButtonText;");
+    expect(cssRuleBody(forcedRules, ".phone-workout-resume:hover:not(:disabled)")).toContain(
+      "background: Highlight;",
+    );
+    expect(cssRuleBody(forcedRules, ".phone-workout-resume:active:not(:disabled)")).toContain(
+      "color: HighlightText;",
+    );
+    expect(cssRuleBody(forcedRules, ".phone-workout-resume:disabled")).toContain(
+      "color: GrayText;",
+    );
+    expect(cssRuleBody(forcedRules, ".phone-workout-resume:focus-visible")).toContain(
       "outline: 2px solid Highlight;",
     );
   });

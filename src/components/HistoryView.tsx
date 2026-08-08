@@ -634,11 +634,11 @@ export default function HistoryView({
               disabled={assigning}
               onClick={() => void assignSelectionToSession(s.id)}
             >
-              <div style={{ fontSize: "var(--t-base)", fontWeight: 600, color: "var(--ink)" }}>
+              <div className="history-session-title">
                 {s.date} · {s.duration}min · RPE {s.rpe}
               </div>
               {s.note && (
-                <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
+                <div className="history-session-note">
                   {s.note}
                 </div>
               )}

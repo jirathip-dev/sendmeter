@@ -150,19 +150,11 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
 
       {/* Phase banner + big timer */}
       <div
+        className="phone-workout-phase-panel"
         style={{
-          flex: 1,
-          margin: "12px 0",
-          borderRadius: 20,
-          background: `color-mix(in srgb, ${accent} 18%, var(--surface-1))`,
-          border: `1px solid color-mix(in srgb, ${accent} 45%, transparent)`,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 4,
+          "--workout-accent": accent,
           animation: restOver ? "pulse 0.8s ease-in-out infinite" : undefined,
-        }}
+        } as CSSProperties}
       >
         <div className="phone-workout-phase-label">
           {climbing ? "CLIMBING" : restOver ? "REST OVER" : "RESTING"}
@@ -179,10 +171,10 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         >
           {climbing ? fmt(onWall) : fmt(Math.max(0, restRemaining))}
         </div>
-        <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>
+        <div className="phone-workout-metadata">
           {climbing ? "on the wall" : `rest target ${fmt(restTarget)}`}
           {" · "}
-          <span style={{ color: "var(--ink)", fontWeight: 600 }}>
+          <span className="phone-workout-metadata-count">
             {boulders} attempt{boulders === 1 ? "" : "s"}
           </span>
         </div>

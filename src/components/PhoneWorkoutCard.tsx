@@ -84,7 +84,7 @@ export default function PhoneWorkoutCard({
           <div className="card-title" style={{ marginBottom: 4 }}>
             Workout in progress
           </div>
-          <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>
+          <div className="phone-workout-resume-meta">
             {state.attempts.length} boulder{state.attempts.length === 1 ? "" : "s"} ·{" "}
             {climbing ? "climbing" : "resting"}
           </div>

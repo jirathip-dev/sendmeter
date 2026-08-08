@@ -596,10 +596,10 @@ input[type="number"] {
 .phase-option-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .phase-option-name { font-size: var(--t-base); font-weight: 700; color: var(--ink); }
 .phase-option-current {
-  color: var(--ink-muted); font-size: var(--t-eyebrow); text-transform: uppercase;
+  color: var(--ink); font-size: var(--t-eyebrow); text-transform: uppercase;
   letter-spacing: 0.08em;
 }
-.phase-option-description { margin-top: 2px; color: var(--ink-muted); font-size: var(--t-xs); }
+.phase-option-description { margin-top: 2px; color: var(--ink); font-size: var(--t-xs); }
 .phase-option:hover:not(:disabled) {
   border-color: var(--primary);
   background: color-mix(in srgb, var(--primary) 8%, var(--surface-1));
@@ -608,7 +608,7 @@ input[type="number"] {
 .phase-option:disabled { background: var(--surface-1); border-color: var(--border); color: var(--ink-faint); opacity: 1; cursor: default; }
 .phase-option:disabled .phase-option-name,
 .phase-option:disabled .phase-option-current,
-.phase-option:disabled .phase-option-description { color: var(--ink-faint); }
+.phase-option:disabled .phase-option-description { color: var(--ink-muted); }
 .phase-option[data-active="true"][data-phase="capacity"] {
   border-color: #2E96F0; background: color-mix(in srgb, #2E96F0 12%, var(--surface-1));
   box-shadow: 0 0 0 2px color-mix(in srgb, #2E96F0 20%, transparent);
@@ -696,6 +696,10 @@ input[type="number"] {
   margin-bottom: 8px; background: var(--canvas); border: 1px solid var(--card-border);
   border-radius: 10px; cursor: pointer; box-shadow: var(--shadow-card);
 }
+.history-session-title { color: var(--ink); font-size: var(--t-base); font-weight: 600; }
+.history-session-note { margin-top: 2px; color: var(--ink); font-size: var(--t-xs); }
+.history-session-option:disabled .history-session-title,
+.history-session-option:disabled .history-session-note { color: var(--ink-muted); }
 .history-session-option:disabled { cursor: default; opacity: 0.55; }
 .info-dot-button {
   width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border);
@@ -827,6 +831,10 @@ input[type="number"] {
   border-radius: 9px; border: 1px solid var(--border); background: var(--surface-1);
   font-family: inherit; cursor: pointer; text-align: left;
 }
+.session-recording-tag { flex: 1; color: var(--ink); font-size: var(--t-base); font-weight: 700; }
+.session-recording-meta { color: var(--ink); font-size: var(--t-xs); }
+.session-recording-best { color: var(--ink); font-weight: 700; }
+.session-recording-chevron { color: var(--ink); font-size: var(--t-2xs); }
 .tag-action-button {
   flex-shrink: 0; background: none; border: 1px solid var(--border);
   color: var(--ink-muted); padding: 5px 9px; border-radius: 7px;
@@ -844,6 +852,23 @@ input[type="number"] {
   margin-left: 15px; margin-top: 3px; padding: 0; background: none; border: none;
   color: var(--ink-faint); font-size: var(--t-2xs); font-family: inherit; cursor: pointer;
 }
+.account-fab:focus-visible,
+.error-retry:focus-visible,
+.error-x:focus-visible,
+.phase-control-button:focus-visible,
+.phase-dismiss-button:focus-visible,
+.force-setup-link:focus-visible,
+.force-open-link:focus-visible,
+.force-session-action:focus-visible,
+.modal-x:focus-visible,
+.apple-signin-button:focus-visible,
+.auth-mode-toggle:focus-visible,
+.session-recording-toggle:focus-visible,
+.tag-action-button:focus-visible,
+.nudge-x:focus-visible,
+.zone-holds-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 3px;
+}
 .zone-focus-button-host { display: block; margin-top: 12px; }
 .zone-focus-button {
   width: 100%; text-align: left; display: flex; align-items: center; gap: 10px;
@@ -853,11 +878,11 @@ input[type="number"] {
   color: var(--ink); cursor: pointer; font-family: inherit;
 }
 .zone-focus-copy { flex: 1; min-width: 0; }
-.zone-focus-kicker { color: var(--ink-muted); font-size: var(--t-eyebrow); }
+.zone-focus-kicker { color: var(--ink); font-size: var(--t-eyebrow); }
 .zone-focus-label {
   color: var(--ink); font-family: Inter, sans-serif; font-weight: 800; font-size: var(--t-md);
 }
-.zone-focus-reason { margin-top: 2px; color: var(--ink-muted); font-size: var(--t-2xs); }
+.zone-focus-reason { margin-top: 2px; color: var(--ink); font-size: var(--t-2xs); }
 .zone-focus-action { flex-shrink: 0; color: var(--ink); font-size: var(--t-xs); font-weight: 700; }
 .zone-focus-button:hover:not(:disabled) {
   background: color-mix(in srgb, var(--zone-focus-color, var(--info)) 20%, var(--surface-1));
@@ -873,10 +898,20 @@ input[type="number"] {
 .zone-focus-button:disabled .zone-focus-kicker,
 .zone-focus-button:disabled .zone-focus-label,
 .zone-focus-button:disabled .zone-focus-reason,
-.zone-focus-button:disabled .zone-focus-action { color: var(--ink-faint); }
+.zone-focus-button:disabled .zone-focus-action { color: var(--ink-muted); }
 .phone-workout-phase-label {
   color: var(--ink); font-family: Inter, sans-serif; font-weight: 800;
   letter-spacing: 0.08em; font-size: var(--t-lg);
+}
+.phone-workout-metadata {
+  color: var(--ink); font-size: var(--t-base);
+}
+.phone-workout-metadata-count { color: var(--ink); font-weight: 600; }
+.phone-workout-phase-panel {
+  flex: 1; margin: 12px 0; border-radius: 20px;
+  background: color-mix(in srgb, var(--workout-accent, var(--primary)) 18%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--workout-accent, var(--primary)) 45%, transparent);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
 }
 .workout-action-label {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -1006,11 +1041,19 @@ input[type="number"] {
   border: 1px solid color-mix(in srgb, var(--accent-interaction) 42%, var(--card-border));
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
+  cursor: pointer;
   transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface);
 }
 .phone-workout-resume.climbing { --accent-interaction: var(--accent-readiness); --card-gradient: var(--gradient-readiness); }
 .phone-workout-resume:hover { border-color: color-mix(in srgb, var(--accent-interaction) 60%, var(--card-border)); }
 .phone-workout-resume:active { transform: scale(0.995); box-shadow: var(--shadow-sm); }
+.phone-workout-resume:disabled {
+  background: var(--surface-1); background-image: none; border-color: var(--border);
+  color: var(--ink-muted); opacity: 1; cursor: default;
+}
+.phone-workout-resume:disabled .phone-workout-resume-meta,
+.phone-workout-resume:disabled .phone-workout-resume-action { color: var(--ink-muted); }
+.phone-workout-resume-meta { color: var(--ink); font-size: var(--t-base); }
 .phone-workout-resume-action { color: var(--ink); font-size: var(--t-base); font-weight: 700; }
 .force-connection-card {
   box-shadow: var(--shadow-card);
@@ -1518,6 +1561,12 @@ textarea.field { resize: none; }
     color: ButtonText;
     opacity: 1;
   }
+  .zone-focus-button .zone-focus-kicker,
+  .zone-focus-button .zone-focus-label,
+  .zone-focus-button .zone-focus-reason,
+  .zone-focus-button .zone-focus-action {
+    color: ButtonText;
+  }
   .zone-focus-button:hover:not(:disabled),
   .zone-focus-button:active:not(:disabled) {
     background: Highlight;
@@ -1582,6 +1631,58 @@ textarea.field { resize: none; }
   .workout-action-button:focus-visible {
     outline: 2px solid Highlight;
     outline-offset: 4px;
+  }
+  .phone-workout-resume {
+    background: ButtonFace;
+    background-image: none;
+    border-color: ButtonText;
+    color: ButtonText;
+    opacity: 1;
+  }
+  .phone-workout-resume:hover:not(:disabled),
+  .phone-workout-resume:active:not(:disabled) {
+    background: Highlight;
+    background-image: none;
+    border-color: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .phone-workout-resume .phone-workout-resume-meta,
+  .phone-workout-resume .phone-workout-resume-action {
+    color: ButtonText;
+  }
+  .phone-workout-resume:hover:not(:disabled) .phone-workout-resume-meta,
+  .phone-workout-resume:hover:not(:disabled) .phone-workout-resume-action,
+  .phone-workout-resume:active:not(:disabled) .phone-workout-resume-meta,
+  .phone-workout-resume:active:not(:disabled) .phone-workout-resume-action {
+    color: HighlightText;
+  }
+  .phone-workout-resume:disabled {
+    background: ButtonFace;
+    background-image: none;
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+  .phone-workout-resume:disabled .phone-workout-resume-meta,
+  .phone-workout-resume:disabled .phone-workout-resume-action {
+    color: GrayText;
+  }
+  .phone-workout-resume:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 3px;
+  }
+  .phone-workout-phase-panel {
+    background: Canvas;
+    background-image: none;
+    border-color: ButtonText;
+    color: ButtonText;
+    forced-color-adjust: none;
+  }
+  .phone-workout-phase-panel .phone-workout-phase-label,
+  .phone-workout-phase-panel .phone-workout-metadata,
+  .phone-workout-phase-panel .phone-workout-metadata-count {
+    color: ButtonText;
   }
   .box-chip[data-active="true"],
   .period-toggle[data-active="true"],
