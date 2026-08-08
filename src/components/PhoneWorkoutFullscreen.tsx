@@ -8,6 +8,7 @@ import {
 } from "../lib/fullscreenLayout";
 import { syncWorkoutActivity } from "../lib/liveActivity";
 import type { PhoneWorkoutAction, PhoneWorkoutState } from "../lib/phoneWorkout";
+import { SheetLayerProvider } from "./Sheet";
 
 type Running = Extract<PhoneWorkoutState, { phase: "running" }>;
 
@@ -105,16 +106,17 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
   const C = 2 * Math.PI * R;
 
   return createPortal(
-    <div
-      className="fullscreen-overlay"
-      style={{
-        // Whole screen takes the phase color, Timer-Plus style.
-        background: `color-mix(in srgb, ${accent} 12%, var(--canvas))`,
-        transition: "background 0.3s",
-        display: "flex",
-        justifyContent: "center",
-      }}
-    >
+    <SheetLayerProvider layer="fullscreen">
+      <div
+        className="fullscreen-overlay"
+        style={{
+          // Whole screen takes the phase color, Timer-Plus style.
+          background: `color-mix(in srgb, ${accent} 12%, var(--canvas))`,
+          transition: "background 0.3s",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
     <div
       style={{
         width: "100%",
@@ -291,8 +293,9 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         </button>
 
       </div>
-    </div>
-    </div>,
+      </div>
+      </div>
+    </SheetLayerProvider>,
     document.body,
   );
 }

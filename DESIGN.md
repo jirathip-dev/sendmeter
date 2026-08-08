@@ -256,10 +256,15 @@ GitHub-style daily-load calendar — the "how hard, how often" view.
 ## Detail sheets & full-height variant
 
 - Detail pages are bottom sheets (`Sheet`) — bottom-anchored on mobile, centered
-  dialog ≥720px, consistent with Log/Phases/Account.
+  dialog ≥720px, consistent with Log/Phases/Account. The handle, title, and
+  44px close action stay in a sticky top region while only the body scrolls;
+  vertical drag-to-dismiss starts from that region, leaving chart scrubbing
+  untouched.
 - `Sheet` accepts `fullHeight` → `.modal-sheet.full { height: 92dvh }` (86vh on
   desktop) so a sheet whose content loads async (e.g. Phases) doesn't jump its
-  height as data arrives.
+  height as data arrives. Sheets are dialogs with focus containment, opener
+  restoration, Escape handling, and background-scroll locking; nested sheets
+  stack without stealing the parent dialog's focus trap.
 
 ## Nav shape
 

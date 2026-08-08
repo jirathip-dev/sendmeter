@@ -60,17 +60,7 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
   const sorted = [...tags].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <Sheet onClose={onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-          marginBottom: 2,
-        }}
-      >
-        Manage tags
-      </div>
+    <Sheet title="Manage tags" onClose={onClose}>
       <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
         Rename updates every recording with that tag. Hiding keeps the data but
         drops the tag from the pickers and trend.
@@ -177,11 +167,6 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
         })}
       </div>
 
-      <div style={{ marginTop: 14 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Done
-        </button>
-      </div>
     </Sheet>
   );
 }

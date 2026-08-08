@@ -166,21 +166,11 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
   }
 
   return (
-    <Sheet onClose={onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-          marginBottom: 6,
-        }}
-      >
-        Trash
-      </div>
-      <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 16 }}>
-        Deleted sessions and Tindeq recordings stay here until you restore
-        or permanently delete them.
-      </div>
+    <Sheet
+      title="Trash"
+      subtitle="Deleted sessions and Tindeq recordings stay here until you restore or permanently delete them."
+      onClose={onClose}
+    >
 
         {loading && (
           <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>
@@ -319,11 +309,6 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
           </div>
         )}
 
-      <div style={{ marginTop: 14 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
     </Sheet>
   );
 }

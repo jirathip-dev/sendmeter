@@ -26,21 +26,11 @@ function Section({
 
 export default function HelpSheet({ onClose }: Props) {
   return (
-    <Sheet onClose={onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-          marginBottom: 4,
-        }}
-      >
-        Help & FAQ
-      </div>
-        <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)" }}>
-          How the numbers on your dashboard are actually computed.
-        </div>
-
+    <Sheet
+      title="Help & FAQ"
+      subtitle="How the numbers on your dashboard are actually computed."
+      onClose={onClose}
+    >
         <Section title="Readiness score">
           <p style={{ margin: 0 }}>
             A daily 0–100 score blending HRV, resting heart rate, and sleep
@@ -95,11 +85,6 @@ export default function HelpSheet({ onClose }: Props) {
           </p>
         </Section>
 
-      <div style={{ marginTop: 20 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
     </Sheet>
   );
 }

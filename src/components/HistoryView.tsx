@@ -617,10 +617,7 @@ export default function HistoryView({
 
       {/* Assign ticked recordings into an existing Tindeq session */}
       {assignOpen && (
-        <Sheet onClose={() => setAssignOpen(false)}>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800, marginBottom: 2 }}>
-            Assign to session
-          </div>
+        <Sheet title="Assign to session" onClose={() => setAssignOpen(false)}>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
             Move {selectedIds.size} recording{selectedIds.size === 1 ? "" : "s"} into an existing Tindeq session.
           </div>
@@ -655,11 +652,6 @@ export default function HistoryView({
               )}
             </button>
           ))}
-          <div style={{ marginTop: 8 }}>
-            <button className="btn-ghost" disabled={assigning} onClick={() => setAssignOpen(false)}>
-              Cancel
-            </button>
-          </div>
         </Sheet>
       )}
     </div>

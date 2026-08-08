@@ -57,6 +57,8 @@ describe("WhyZoneInfo (#292)", () => {
     expect(html).toContain("Why this session is ENDURANCE");
     expect(html).toContain("trailing-4-week, one-exercise window");
     expect(html).toContain("How a hold gets its zone");
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-label="Close Why this session is ENDURANCE"');
     // showTag is passed through — the recording's tag shows in the (closed)
     // per-zone hold list disclosure button text isn't rendered until opened,
     // but the panel itself must be present.

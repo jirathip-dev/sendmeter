@@ -439,17 +439,7 @@ function AuthedApp({
 
       {/* Log bottom sheet modal */}
       {showModal && (
-        <Sheet onClose={() => setShowModal(false)}>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--t-xl)",
-              fontWeight: 800,
-              marginBottom: 2,
-            }}
-          >
-            Log Session
-          </div>
+        <Sheet title="Log session" onClose={() => setShowModal(false)}>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
             Load = Duration × RPE
           </div>
@@ -464,34 +454,19 @@ function AuthedApp({
 
       {/* Phases bottom sheet — informational only (no tap-to-set) */}
       {showPhases && (
-        <Sheet fullHeight onClose={() => setShowPhases(false)}>
+        <Sheet title="Training phases" fullHeight onClose={() => setShowPhases(false)}>
           <PhasesView
             currentPhase={currentPhase}
             phasePeriods={phasePeriods}
             phaseStartDate={phaseStartDate}
           />
-          <div style={{ marginTop: 10 }}>
-            <button className="btn-ghost" onClick={() => setShowPhases(false)}>
-              Close
-            </button>
-          </div>
         </Sheet>
       )}
 
       {/* Compact phase switcher — the actual "change phase" control (the sheet
           above is reference only). */}
       {showPhaseChange && (
-        <Sheet onClose={() => setShowPhaseChange(false)}>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--t-xl)",
-              fontWeight: 800,
-              marginBottom: 2,
-            }}
-          >
-            Change phase
-          </div>
+        <Sheet title="Change phase" onClose={() => setShowPhaseChange(false)}>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
             Sets the training block your sessions log under.
           </div>
@@ -540,11 +515,6 @@ function AuthedApp({
                 </button>
               );
             })}
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <button className="btn-ghost" onClick={() => setShowPhaseChange(false)}>
-              Cancel
-            </button>
           </div>
         </Sheet>
       )}

@@ -14,6 +14,7 @@ import {
   type RoutineRunState,
 } from "../lib/routineRun";
 import type { RoutineStep } from "../types";
+import { SheetLayerProvider } from "./Sheet";
 
 interface Props {
   /// Name of the routine — shown in the top-bar eyebrow.
@@ -262,15 +263,16 @@ export default function RoutineFullscreen({
           : "var(--primary)";
 
   return createPortal(
-    <div
-      className="fullscreen-overlay"
-      style={{
-        background: `color-mix(in srgb, ${accent} 10%, var(--canvas))`,
-        transition: "background 0.3s",
-        display: "flex",
-        justifyContent: "center",
-      }}
-    >
+    <SheetLayerProvider layer="fullscreen">
+      <div
+        className="fullscreen-overlay"
+        style={{
+          background: `color-mix(in srgb, ${accent} 10%, var(--canvas))`,
+          transition: "background 0.3s",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
       <div
         style={{
           width: "100%",
@@ -408,7 +410,8 @@ export default function RoutineFullscreen({
           })}
         </div>
       </div>
-    </div>,
+      </div>
+    </SheetLayerProvider>,
     document.body,
   );
 }

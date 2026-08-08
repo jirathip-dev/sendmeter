@@ -6,17 +6,12 @@ import RecoveryStatsCard from "./RecoveryStatsCard";
 /// dashboard; the card is now a summary that drills into this.
 export default function RecoverySheet({ onClose }: { onClose: () => void }) {
   return (
-    <Sheet onClose={onClose}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800 }}>
-        Recovery Inputs
-      </div>
-      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 16 }}>
-        The raw HealthKit metrics your daily readiness score is computed from.
-      </div>
+    <Sheet
+      title="Recovery Inputs"
+      subtitle="The raw HealthKit metrics your daily readiness score is computed from."
+      onClose={onClose}
+    >
       <RecoveryStatsCard />
-      <div style={{ marginTop: 12 }}>
-        <button className="btn-ghost" onClick={onClose}>Close</button>
-      </div>
     </Sheet>
   );
 }

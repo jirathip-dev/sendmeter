@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { shouldDismissSheetGesture } from "./sheetGesture";
+import {
+  isSheetDragExcludedTarget,
+  shouldDismissSheetGesture,
+  shouldStartSheetDrag,
+} from "./sheetGesture";
 
 const dismissibleGesture = {
   dismissible: true,
@@ -61,5 +65,26 @@ describe("shouldDismissSheetGesture", () => {
         velocityPxPerMs: 1.2,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldStartSheetDrag", () => {
+  it("requires a downward gesture with clear vertical intent", () => {
+    expect(shouldStartSheetDrag({ dx: 0, dy: 8 })).toBe(true);
+    expect(shouldStartSheetDrag({ dx: 5, dy: 20 })).toBe(true);
+    expect(shouldStartSheetDrag({ dx: 18, dy: 20 })).toBe(false);
+    expect(shouldStartSheetDrag({ dx: 0, dy: -20 })).toBe(false);
+    expect(shouldStartSheetDrag({ dx: 0, dy: 7 })).toBe(false);
+  });
+});
+
+describe("isSheetDragExcludedTarget", () => {
+  it("protects controls, editable content, and horizontal chart surfaces", () => {
+    expect(isSheetDragExcludedTarget({ tagName: "button" })).toBe(true);
+    expect(isSheetDragExcludedTarget({ tagName: "input" })).toBe(true);
+    expect(isSheetDragExcludedTarget({ contentEditable: true })).toBe(true);
+    expect(isSheetDragExcludedTarget({ classes: ["chart-scrub"] })).toBe(true);
+    expect(isSheetDragExcludedTarget({ classes: ["sheet-no-drag"] })).toBe(true);
+    expect(isSheetDragExcludedTarget({ tagName: "div" })).toBe(false);
   });
 });
