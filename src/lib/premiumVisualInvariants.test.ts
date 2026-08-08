@@ -213,14 +213,6 @@ function isInlinePaintProperty(key: string): boolean {
   );
 }
 
-/** Dynamic hue variables are a safe data channel when a named semantic recipe
- * still owns the actual paint. Unknown custom properties remain opaque because
- * they could feed a background/color declaration through an unseen stylesheet.
- */
-function isHueCustomProperty(key: string): boolean {
-  return /^--(?:[a-z0-9]+-)*(?:hue|color|accent|tint)$/i.test(key) || key === "--color";
-}
-
 function matchingJsBrace(source: string, open: number): number {
   let depth = 1;
   let quote: "'" | '"' | "`" | null = null;
@@ -386,182 +378,308 @@ type LocalClassResolver = (name: string, reference?: ts.Identifier) => ts.Expres
 // named CSS recipe whose actual surface/state endpoints are tested below.
 const READABLE_INK_VALUES = new Set<string>();
 
+const CSS_STATE_PSEUDOS = new Set([
+  "active",
+  "disabled",
+  "focus",
+  "focus-visible",
+  "hover",
+]);
+const CSS_STATE_MODIFIER_CLASSES = new Set([
+  "active",
+  "climbing",
+  "danger",
+  "ready",
+  "resting",
+  "selected",
+]);
+
+function cssSelectorList(selector: string): string[] {
+  const branches: string[] = [];
+  let start = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let quote: CssQuote = null;
+  for (let cursor = 0; cursor < selector.length; cursor += 1) {
+    const character = selector[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(selector, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') quote = character;
+    else if (character === "(") parenDepth += 1;
+    else if (character === ")") parenDepth = Math.max(0, parenDepth - 1);
+    else if (character === "[") bracketDepth += 1;
+    else if (character === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+    else if (character === "," && parenDepth === 0 && bracketDepth === 0) {
+      branches.push(selector.slice(start, cursor).trim());
+      start = cursor + 1;
+    }
+  }
+  branches.push(selector.slice(start).trim());
+  return branches.filter(Boolean);
+}
+
+function cssSelectorCompounds(selector: string): string[] {
+  const compounds: string[] = [];
+  let start = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let quote: CssQuote = null;
+  const push = (end: number): void => {
+    const compound = selector.slice(start, end).trim();
+    if (compound) compounds.push(compound);
+  };
+  for (let cursor = 0; cursor < selector.length; cursor += 1) {
+    const character = selector[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(selector, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') quote = character;
+    else if (character === "(") parenDepth += 1;
+    else if (character === ")") parenDepth = Math.max(0, parenDepth - 1);
+    else if (character === "[") bracketDepth += 1;
+    else if (character === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+    else if (
+      parenDepth === 0 &&
+      bracketDepth === 0 &&
+      (character === ">" || character === "+" || character === "~" || /\s/.test(character))
+    ) {
+      push(cursor);
+      start = cursor + 1;
+    }
+  }
+  push(selector.length);
+  return compounds;
+}
+
+function cssClassNames(compound: string, topLevelOnly: boolean): string[] {
+  const names: string[] = [];
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let quote: CssQuote = null;
+  for (let cursor = 0; cursor < compound.length; cursor += 1) {
+    const character = compound[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(compound, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') quote = character;
+    else if (character === "(") parenDepth += 1;
+    else if (character === ")") parenDepth = Math.max(0, parenDepth - 1);
+    else if (character === "[") bracketDepth += 1;
+    else if (character === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+    else if (
+      character === "." &&
+      (!topLevelOnly || (parenDepth === 0 && bracketDepth === 0))
+    ) {
+      const match = compound.slice(cursor + 1).match(/^[A-Za-z_][\w-]*/);
+      if (match?.[0]) names.push(match[0]);
+    }
+  }
+  return names;
+}
+
+function cssTargetCompoundForBranch(branch: string): string | undefined {
+  return cssSelectorCompounds(branch).at(-1);
+}
+
+function cssPseudoFunctionBodies(compound: string): Array<{ name: string; body: string }> {
+  const functions: Array<{ name: string; body: string }> = [];
+  let quote: CssQuote = null;
+  for (let cursor = 0; cursor < compound.length; cursor += 1) {
+    const character = compound[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(compound, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (character !== ":") continue;
+    const match = compound.slice(cursor + 1).match(/^([A-Za-z-]+)\(/);
+    if (!match?.[1]) continue;
+    const open = cursor + 1 + match[0].length - 1;
+    let depth = 1;
+    let nestedQuote: CssQuote = null;
+    let close = open + 1;
+    for (; close < compound.length; close += 1) {
+      const nested = compound[close]!;
+      if (nestedQuote) {
+        if (nested === nestedQuote && !isEscaped(compound, close)) nestedQuote = null;
+        continue;
+      }
+      if (nested === "'" || nested === '"') nestedQuote = nested;
+      else if (nested === "(") depth += 1;
+      else if (nested === ")") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    if (depth === 0) {
+      functions.push({ name: match[1].toLowerCase(), body: compound.slice(open + 1, close) });
+      cursor = close;
+    }
+  }
+  return functions;
+}
+
+function cssTargetClassesInPseudo(compound: string): string[] {
+  const classes: string[] = [];
+  for (const fn of cssPseudoFunctionBodies(compound)) {
+    if (fn.name !== "is" && fn.name !== "where") continue;
+    for (const branch of cssSelectorList(fn.body)) {
+      const target = cssTargetCompoundForBranch(branch);
+      if (target) classes.push(...cssClassNames(target, true));
+    }
+  }
+  return classes;
+}
+
+function cssTargetClasses(compound: string): string[] {
+  const direct = cssClassNames(compound, true);
+  // A compound such as `.card.tappable` requires both classes. It may not
+  // lend the recipe to either class when the other half is absent; grouped
+  // direct targets are represented by separate selector branches instead.
+  if (direct.length > 1) return [];
+  return direct.length > 0 ? direct : cssTargetClassesInPseudo(compound);
+}
+
+function cssTargetClassesForState(compound: string): string[] {
+  const direct = cssClassNames(compound, true);
+  return direct.length > 0 ? direct : cssTargetClassesInPseudo(compound);
+}
+
+function cssTargetMatchesClass(compound: string, className: string): boolean {
+  return cssTargetClasses(compound).includes(className);
+}
+
+function cssSelectorTargetsClass(selector: string, className: string): boolean {
+  return cssSelectorList(selector).some((branch) => {
+    const target = cssTargetCompoundForBranch(branch);
+    return target ? cssTargetMatchesClass(target, className) : false;
+  });
+}
+
+function cssSelectorDirectlyOwnsClass(selector: string, className: string): boolean {
+  const branches = cssSelectorList(selector);
+  if (branches.length !== 1) return false;
+  const compounds = cssSelectorCompounds(branches[0]!);
+  if (compounds.length !== 1) return false;
+  const target = compounds[0]!;
+  const classes = cssTargetClassesForState(target);
+  return classes.length === 1 && classes[0] === className && cssTargetMatchesClass(target, className);
+}
+
+function cssDirectState(compound: string): boolean {
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let quote: CssQuote = null;
+  for (let cursor = 0; cursor < compound.length; cursor += 1) {
+    const character = compound[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(compound, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+    if (character === "(") {
+      parenDepth += 1;
+      continue;
+    }
+    if (character === ")") {
+      parenDepth = Math.max(0, parenDepth - 1);
+      continue;
+    }
+    if (character === "[") {
+      if (parenDepth === 0) {
+        const close = compound.indexOf("]", cursor + 1);
+        if (close >= 0 && /\b(?:data|aria)-[\w-]+\s*=/.test(compound.slice(cursor + 1, close))) {
+          return true;
+        }
+      }
+      bracketDepth += 1;
+      continue;
+    }
+    if (character === "]") {
+      bracketDepth = Math.max(0, bracketDepth - 1);
+      continue;
+    }
+    if (parenDepth !== 0 || bracketDepth !== 0) continue;
+    if (character === ":") {
+      const match = compound.slice(cursor + 1).match(/^([A-Za-z-]+)/);
+      if (match?.[1] && CSS_STATE_PSEUDOS.has(match[1].toLowerCase())) return true;
+    } else if (character === ".") {
+      const match = compound.slice(cursor + 1).match(/^([A-Za-z_][\w-]*)/);
+      if (match?.[1] && CSS_STATE_MODIFIER_CLASSES.has(match[1].toLowerCase())) return true;
+    }
+  }
+  return false;
+}
+
+function cssStateAlternativeForTarget(
+  alternative: string,
+  className: string,
+  outerTargetPresent: boolean,
+): boolean {
+  const compounds = cssSelectorCompounds(alternative);
+  if (compounds.length !== 1) return false;
+  const target = compounds[0]!;
+  const classes = cssTargetClassesForState(target);
+  if (classes.length > 0 && !classes.includes(className)) return false;
+  if (outerTargetPresent && classes.some((name) => name !== className)) return false;
+  return cssTargetStateForCompound(target, className);
+}
+
+function cssStatePseudoFunctionForTarget(
+  fn: { name: string; body: string },
+  className: string,
+  outerTargetPresent: boolean,
+): boolean {
+  // Exclusion and relational pseudo-functions describe predicates/descendants,
+  // never the state of the target button itself.
+  if (fn.name !== "is" && fn.name !== "where") return false;
+  const alternatives = cssSelectorList(fn.body);
+  if (alternatives.length === 0) return false;
+  const candidates = outerTargetPresent
+    ? alternatives
+    : alternatives.filter((alternative) => {
+        const target = cssTargetCompoundForBranch(alternative);
+        if (!target) return false;
+        const classes = cssTargetClassesForState(target);
+        return classes.length === 0 || classes.includes(className);
+      });
+  return candidates.length > 0 && candidates.every((alternative) =>
+    cssStateAlternativeForTarget(alternative, className, outerTargetPresent),
+  );
+}
+
+function cssTargetStateForCompound(compound: string, className: string): boolean {
+  if (cssDirectState(compound)) return true;
+  const outerTargetPresent = cssClassNames(compound, true).length > 0;
+  return cssPseudoFunctionBodies(compound).some((fn) =>
+    cssStatePseudoFunctionForTarget(fn, className, outerTargetPresent),
+  );
+}
+
+function cssSelectorStateForClass(selector: string, className: string): boolean {
+  return cssSelectorList(selector).some((branch) => {
+    const target = cssTargetCompoundForBranch(branch);
+    return Boolean(
+      target &&
+      cssTargetMatchesClass(target, className) &&
+      cssTargetStateForCompound(target, className),
+    );
+  });
+}
+
 function cssButtonRecipeClasses(rules: CssRule[] = parsedCssRules): Set<string> {
   const recipes = new Map<string, { paint: boolean; cursor: boolean; state: boolean }>();
   const paintPattern = /\b(?:background|background-image|background-color|border|border-color|border-image|color|opacity|box-shadow|outline|outline-color)\s*:/;
-  const statePattern = /(?::(?:hover|active|focus-visible|disabled)|\[(?:data|aria)-[\w-]+\s*=|\.(?:active|selected|ready|danger|climbing|resting)\b)/;
-  const selectorList = (selector: string): string[] => {
-    const branches: string[] = [];
-    let start = 0;
-    let parenDepth = 0;
-    let bracketDepth = 0;
-    let quote: CssQuote = null;
-    for (let cursor = 0; cursor < selector.length; cursor += 1) {
-      const character = selector[cursor]!;
-      if (quote) {
-        if (character === quote && !isEscaped(selector, cursor)) quote = null;
-        continue;
-      }
-      if (character === "'" || character === '"') {
-        quote = character;
-      } else if (character === "(") {
-        parenDepth += 1;
-      } else if (character === ")") {
-        parenDepth = Math.max(0, parenDepth - 1);
-      } else if (character === "[") {
-        bracketDepth += 1;
-      } else if (character === "]") {
-        bracketDepth = Math.max(0, bracketDepth - 1);
-      } else if (character === "," && parenDepth === 0 && bracketDepth === 0) {
-        branches.push(selector.slice(start, cursor).trim());
-        start = cursor + 1;
-      }
-    }
-    branches.push(selector.slice(start).trim());
-    return branches.filter(Boolean);
-  };
-  const selectorCompounds = (selector: string): string[] => {
-    const compounds: string[] = [];
-    let start = 0;
-    let parenDepth = 0;
-    let bracketDepth = 0;
-    let quote: CssQuote = null;
-    const push = (end: number): void => {
-      const compound = selector.slice(start, end).trim();
-      if (compound) compounds.push(compound);
-    };
-    for (let cursor = 0; cursor < selector.length; cursor += 1) {
-      const character = selector[cursor]!;
-      if (quote) {
-        if (character === quote && !isEscaped(selector, cursor)) quote = null;
-        continue;
-      }
-      if (character === "'" || character === '"') {
-        quote = character;
-      } else if (character === "(") {
-        parenDepth += 1;
-      } else if (character === ")") {
-        parenDepth = Math.max(0, parenDepth - 1);
-      } else if (character === "[") {
-        bracketDepth += 1;
-      } else if (character === "]") {
-        bracketDepth = Math.max(0, bracketDepth - 1);
-      } else if (
-        parenDepth === 0 &&
-        bracketDepth === 0 &&
-        (character === ">" || character === "+" || character === "~" || /\s/.test(character))
-      ) {
-        push(cursor);
-        start = cursor + 1;
-      }
-    }
-    push(selector.length);
-    return compounds;
-  };
-  const classNames = (compound: string, topLevelOnly: boolean): string[] => {
-    const names: string[] = [];
-    let parenDepth = 0;
-    let bracketDepth = 0;
-    let quote: CssQuote = null;
-    for (let cursor = 0; cursor < compound.length; cursor += 1) {
-      const character = compound[cursor]!;
-      if (quote) {
-        if (character === quote && !isEscaped(compound, cursor)) quote = null;
-        continue;
-      }
-      if (character === "'" || character === '"') {
-        quote = character;
-      } else if (character === "(") {
-        parenDepth += 1;
-      } else if (character === ")") {
-        parenDepth = Math.max(0, parenDepth - 1);
-      } else if (character === "[") {
-        bracketDepth += 1;
-      } else if (character === "]") {
-        bracketDepth = Math.max(0, bracketDepth - 1);
-      } else if (
-        character === "." &&
-        (!topLevelOnly || (parenDepth === 0 && bracketDepth === 0))
-      ) {
-        const match = compound.slice(cursor + 1).match(/^[A-Za-z_][\w-]*/);
-        if (match?.[0]) names.push(match[0]);
-      }
-    }
-    return names;
-  };
-  const targetCompoundForBranch = (branch: string): string | undefined =>
-    selectorCompounds(branch).at(-1);
-  const pseudoFunctionBodies = (compound: string): Array<{ name: string; body: string }> => {
-    const functions: Array<{ name: string; body: string }> = [];
-    let quote: CssQuote = null;
-    for (let cursor = 0; cursor < compound.length; cursor += 1) {
-      const character = compound[cursor]!;
-      if (quote) {
-        if (character === quote && !isEscaped(compound, cursor)) quote = null;
-        continue;
-      }
-      if (character === "'" || character === '"') {
-        quote = character;
-        continue;
-      }
-      if (character !== ":") continue;
-      const match = compound.slice(cursor + 1).match(/^([A-Za-z-]+)\(/);
-      if (!match?.[1]) continue;
-      const open = cursor + 1 + match[0].length - 1;
-      let depth = 1;
-      let nestedQuote: CssQuote = null;
-      let close = open + 1;
-      for (; close < compound.length; close += 1) {
-        const nested = compound[close]!;
-        if (nestedQuote) {
-          if (nested === nestedQuote && !isEscaped(compound, close)) nestedQuote = null;
-          continue;
-        }
-        if (nested === "'" || nested === '"') nestedQuote = nested;
-        else if (nested === "(") depth += 1;
-        else if (nested === ")") {
-          depth -= 1;
-          if (depth === 0) break;
-        }
-      }
-      if (depth === 0) {
-        functions.push({ name: match[1].toLowerCase(), body: compound.slice(open + 1, close) });
-        cursor = close;
-      }
-    }
-    return functions;
-  };
-  const targetClassesInPseudo = (compound: string): string[] => {
-    const classes: string[] = [];
-    for (const fn of pseudoFunctionBodies(compound)) {
-      const nested = selectorList(fn.body).flatMap((branch) => {
-        const target = targetCompoundForBranch(branch);
-        return target ? classNames(target, true) : [];
-      });
-      // :is/:where alternatives are direct targets; :not/:has classes are
-      // predicates/relations and therefore cannot be the button's target.
-      if (fn.name === "is" || fn.name === "where") classes.push(...nested);
-    }
-    return classes;
-  };
-  const targetMatchesClass = (compound: string, className: string): boolean => {
-    const topLevel = classNames(compound, true);
-    if (topLevel.length === 1) return topLevel[0] === className;
-    // :is/.where pseudo-functions can contain a grouped direct target. The
-    // compound remains rightmost, so nested alternatives are still targets;
-    // ancestor/descendant compounds have already been excluded by the caller.
-    return topLevel.length === 0 && targetClassesInPseudo(compound).includes(className);
-  };
-  const targetClass = (selector: string, className: string): boolean =>
-    selectorList(selector).some((branch) => {
-      const target = targetCompoundForBranch(branch);
-      return target ? targetMatchesClass(target, className) : false;
-    });
-  const stateForClass = (selector: string, className: string): boolean =>
-    selectorList(selector).some((branch) => {
-      const target = targetCompoundForBranch(branch);
-      return Boolean(target && targetMatchesClass(target, className) && statePattern.test(target));
-    });
   for (const rule of rules) {
     const paint = paintPattern.test(rule.body);
     const cursor = /\bcursor\s*:\s*(?:pointer|default)\b/.test(rule.body);
@@ -569,13 +687,14 @@ function cssButtonRecipeClasses(rules: CssRule[] = parsedCssRules): Set<string> 
       if (!match[1]) continue;
       const className = match[1];
       const recipe = recipes.get(className) ?? { paint: false, cursor: false, state: false };
-      if (!targetClass(rule.selector, className)) {
+      if (!cssSelectorTargetsClass(rule.selector, className)) {
         recipes.set(className, recipe);
         continue;
       }
+      const state = cssSelectorStateForClass(rule.selector, className);
       if (paint) recipe.paint = true;
-      if (!stateForClass(rule.selector, className) && cursor) recipe.cursor = true;
-      if (stateForClass(rule.selector, className) && rule.body.trim()) recipe.state = true;
+      if (!state && cursor) recipe.cursor = true;
+      if (state && rule.body.trim()) recipe.state = true;
       recipes.set(className, recipe);
     }
   }
@@ -734,7 +853,7 @@ function stylePaintViolations(
   expression: ts.Expression | undefined,
   sourceFile: ts.SourceFile,
   direct: boolean,
-  allowHueCustomProperty = false,
+  allowCustomProperty?: (name: string) => boolean,
 ): string[] {
   if (!expression) return ["missing style expression"];
   const current = unwrapTsExpression(expression);
@@ -743,18 +862,18 @@ function stylePaintViolations(
   }
   if (ts.isConditionalExpression(current)) {
     return [
-      ...stylePaintViolations(current.whenTrue, sourceFile, direct, allowHueCustomProperty),
-      ...stylePaintViolations(current.whenFalse, sourceFile, direct, allowHueCustomProperty),
+      ...stylePaintViolations(current.whenTrue, sourceFile, direct, allowCustomProperty),
+      ...stylePaintViolations(current.whenFalse, sourceFile, direct, allowCustomProperty),
     ];
   }
   if (ts.isBinaryExpression(current)) {
     if (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
-      return stylePaintViolations(current.right, sourceFile, direct, allowHueCustomProperty);
+      return stylePaintViolations(current.right, sourceFile, direct, allowCustomProperty);
     }
     if (current.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
       return [
-        ...stylePaintViolations(current.left, sourceFile, direct, allowHueCustomProperty),
-        ...stylePaintViolations(current.right, sourceFile, direct, allowHueCustomProperty),
+        ...stylePaintViolations(current.left, sourceFile, direct, allowCustomProperty),
+        ...stylePaintViolations(current.right, sourceFile, direct, allowCustomProperty),
       ];
     }
   }
@@ -777,7 +896,7 @@ function stylePaintViolations(
       continue;
     }
     if (key.startsWith("--")) {
-      if (direct && allowHueCustomProperty && isHueCustomProperty(key)) continue;
+      if (direct && allowCustomProperty?.(key)) continue;
       violations.push(`unsafe ${direct ? "button" : "descendant"} custom property ${key}`);
       continue;
     }
@@ -928,8 +1047,14 @@ function auditButtonSource(file: string, source: string): ButtonConsumer[] {
         }
         const style = jsxAttributeExpression(opening, "style");
         if (style) {
+          const allowedCustomProperty = (name: string): boolean =>
+            classAnalysis.guaranteedRecipe &&
+            [...classAnalysis.tokens].some(
+              (className) =>
+                recipeClasses.has(className) && cssTargetPaintVariables(className).has(name),
+            );
           violations.push(
-            ...stylePaintViolations(style, sourceFile, true, classAnalysis.guaranteedRecipe),
+            ...stylePaintViolations(style, sourceFile, true, allowedCustomProperty),
           );
         }
         violations.push(...descendantJsxPaintViolations(node, sourceFile));
@@ -1108,6 +1233,128 @@ function cssRules(source: string): CssRule[] {
 
   parseRange(0, source.length);
   return rules;
+}
+
+interface CssDeclaration {
+  property: string;
+  value: string;
+}
+
+/** Split declarations without letting quoted semicolons or nested functions
+ * change the declaration boundary. CSS nesting is ignored until its own
+ * parsed child rule; only top-level declarations can own a paint channel. */
+function cssDeclarations(source: string): CssDeclaration[] {
+  const body = stripCssComments(source);
+  const result: CssDeclaration[] = [];
+  let start = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let braceDepth = 0;
+  let quote: CssQuote = null;
+  const parse = (end: number): void => {
+    if (braceDepth !== 0) return;
+    const statement = body.slice(start, end).trim();
+    if (!statement) return;
+    let colon = -1;
+    let statementParen = 0;
+    let statementBracket = 0;
+    let statementQuote: CssQuote = null;
+    for (let cursor = 0; cursor < statement.length; cursor += 1) {
+      const character = statement[cursor]!;
+      if (statementQuote) {
+        if (character === statementQuote && !isEscaped(statement, cursor)) statementQuote = null;
+        continue;
+      }
+      if (character === "'" || character === '"') statementQuote = character;
+      else if (character === "(") statementParen += 1;
+      else if (character === ")") statementParen = Math.max(0, statementParen - 1);
+      else if (character === "[") statementBracket += 1;
+      else if (character === "]") statementBracket = Math.max(0, statementBracket - 1);
+      else if (character === ":" && statementParen === 0 && statementBracket === 0) {
+        colon = cursor;
+        break;
+      }
+    }
+    if (colon < 0) return;
+    const property = statement.slice(0, colon).trim();
+    if (!/^(?:--[A-Za-z0-9_-]+|-?[A-Za-z][A-Za-z0-9_-]*)$/.test(property)) return;
+    result.push({ property, value: statement.slice(colon + 1).trim() });
+  };
+  for (let cursor = 0; cursor < body.length; cursor += 1) {
+    const character = body[cursor]!;
+    if (quote) {
+      if (character === quote && !isEscaped(body, cursor)) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') quote = character;
+    else if (character === "(") parenDepth += 1;
+    else if (character === ")") parenDepth = Math.max(0, parenDepth - 1);
+    else if (character === "[") bracketDepth += 1;
+    else if (character === "]") bracketDepth = Math.max(0, bracketDepth - 1);
+    else if (character === "{") braceDepth += 1;
+    else if (character === "}") braceDepth = Math.max(0, braceDepth - 1);
+    else if (character === ";" && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      parse(cursor);
+      start = cursor + 1;
+    }
+  }
+  parse(body.length);
+  return result;
+}
+
+function isCssPaintProperty(property: string): boolean {
+  const normalized = property.toLowerCase();
+  return (
+    normalized === "color" ||
+    normalized === "opacity" ||
+    normalized === "box-shadow" ||
+    normalized.startsWith("background") ||
+    normalized.startsWith("border") ||
+    normalized.startsWith("outline") ||
+    [
+      "accent-color",
+      "caret-color",
+      "fill",
+      "filter",
+      "isolation",
+      "mask",
+      "mask-border",
+      "mask-border-source",
+      "mask-color",
+      "mask-image",
+      "mix-blend-mode",
+      "stroke",
+      "stroke-width",
+      "text-decoration-color",
+      "text-emphasis-color",
+      "text-shadow",
+      "-webkit-text-fill-color",
+      "-webkit-text-stroke",
+      "-webkit-text-stroke-color",
+      "-webkit-text-stroke-width",
+    ].includes(normalized)
+  );
+}
+
+/** Return custom channels used by paint declarations owned by a direct target
+ * recipe. A variable's spelling alone is never enough: its exact use must be
+ * in the target recipe's own paint declaration, not an ancestor/descendant or
+ * grouped selector that could accidentally lend a channel. */
+function cssTargetPaintVariables(
+  className: string,
+  rules: CssRule[] = parsedCssRules,
+): Set<string> {
+  const variables = new Set<string>();
+  for (const rule of rules) {
+    if (!cssSelectorDirectlyOwnsClass(rule.selector, className)) continue;
+    for (const declaration of cssDeclarations(rule.body)) {
+      if (!isCssPaintProperty(declaration.property)) continue;
+      for (const match of declaration.value.matchAll(/var\(\s*(--[A-Za-z0-9_-]+)/g)) {
+        if (match[1]) variables.add(match[1]);
+      }
+    }
+  }
+  return variables;
 }
 
 function cssRuleBody(rules: CssRule[], selector: string): string {
@@ -1763,6 +2010,24 @@ describe("premium visual language contracts (#517)", () => {
       .direct:hover, .grouped[data-active="true"] { color: var(--ink); }
       :is(.pseudo, .pseudo-alt) { background: var(--surface-1); cursor: pointer; }
       :is(.pseudo:hover, .pseudo-alt[data-active="true"]) { color: var(--ink); }
+      .mixed { background: var(--surface-1); cursor: pointer; }
+      .mixed:is(.mixed, .other:hover) { color: var(--ink); }
+      .where-mixed { background: var(--surface-1); cursor: pointer; }
+      .where-mixed:where(.where-mixed:hover, .other:hover) { color: var(--ink); }
+      .excluded-mixed { background: var(--surface-1); cursor: pointer; }
+      .excluded-mixed:not(.other:hover) { color: var(--ink); }
+      .relational-mixed { background: var(--surface-1); cursor: pointer; }
+      .relational-mixed:has(.child:hover) { color: var(--ink); }
+      .nested-mixed { background: var(--surface-1); cursor: pointer; }
+      .nested-mixed:is(:is(:hover, :focus-visible), :active) { color: var(--ink); }
+      .direct-mixed { background: var(--surface-1); cursor: pointer; }
+      .direct-mixed:hover, .direct-mixed[data-active="true"] { color: var(--ink); }
+      .function-mixed { background: var(--surface-1); cursor: pointer; }
+      .function-mixed:is(:hover, :focus-visible) { color: var(--ink); }
+      .where-direct { background: var(--surface-1); cursor: pointer; }
+      .where-direct:where(:active, [aria-pressed="true"]) { color: var(--ink); }
+      :is(.grouped-mixed:hover, .other:hover) { color: var(--ink); }
+      .grouped-mixed { background: var(--surface-1); cursor: pointer; }
       :not(.negative) { background: var(--surface-1); cursor: pointer; }
       :not(.negative:hover) { color: var(--ink); }
     `);
@@ -1777,7 +2042,72 @@ describe("premium visual language contracts (#517)", () => {
     expect(recipes.has("grouped"), "grouped direct target remains valid").toBe(true);
     expect(recipes.has("pseudo"), "pseudo-function direct target remains valid").toBe(true);
     expect(recipes.has("pseudo-alt"), "pseudo-function grouped target remains valid").toBe(true);
+    expect(recipes.has("mixed"), ":is mixed alternatives cannot lend other state").toBe(false);
+    expect(recipes.has("where-mixed"), ":where mixed alternatives cannot lend other state").toBe(false);
+    expect(recipes.has("excluded-mixed"), ":not relational state cannot count").toBe(false);
+    expect(recipes.has("relational-mixed"), ":has descendant state cannot count").toBe(false);
+    expect(recipes.has("nested-mixed"), "nested direct state pseudo-functions remain valid").toBe(true);
+    expect(recipes.has("direct-mixed"), "direct target state remains valid").toBe(true);
+    expect(recipes.has("function-mixed"), "direct :is state alternatives remain valid").toBe(true);
+    expect(recipes.has("where-direct"), "direct :where state alternatives remain valid").toBe(true);
+    expect(recipes.has("grouped-mixed"), "matching grouped target alternative remains valid").toBe(true);
     expect(recipes.has("negative"), "negated predicate cannot become a target recipe").toBe(false);
+  });
+
+  it("allows only exact custom channels consumed by the direct target recipe", () => {
+    const fixtureRules = cssRules(`
+      .safe { background: var(--direct-hue); cursor: pointer; }
+      .safe:hover { border-color: var(--direct-hover); }
+      .foreign { background: var(--foreign-hue); }
+      .ancestor .safe { background: var(--ancestor-hue); }
+      .safe .child { background: var(--descendant-hue); }
+      .safe, .grouped { background: var(--grouped-hue); }
+    `);
+    expect([...cssTargetPaintVariables("safe", fixtureRules)]).toEqual([
+      "--direct-hue",
+      "--direct-hover",
+    ]);
+    expect(cssTargetPaintVariables("safe", fixtureRules)).not.toContain("--foreign-hue");
+    expect(cssTargetPaintVariables("safe", fixtureRules)).not.toContain("--ancestor-hue");
+    expect(cssTargetPaintVariables("safe", fixtureRules)).not.toContain("--descendant-hue");
+    expect(cssTargetPaintVariables("safe", fixtureRules)).not.toContain("--grouped-hue");
+
+    // These are the real dynamic channels, so their safety follows the actual
+    // paint declaration rather than a spelling allowlist.
+    expect(cssTargetPaintVariables("box-chip")).toContain("--box-chip-hue");
+    expect(cssTargetPaintVariables("period-toggle")).toContain("--period-color");
+    expect(cssTargetPaintVariables("workout-action-button")).toContain("--workout-accent");
+    expect(cssTargetPaintVariables("zone-focus-button")).toContain("--zone-focus-color");
+
+    const validBoxChip = auditButtonSource(
+      "src/fixtures/box-chip-channel-button-audit.tsx",
+      `<button className="box-chip" style={{ "--box-chip-hue": hue }}>Hue</button>`,
+    );
+    expect(buttonAuditViolations(validBoxChip[0]!)).toEqual([]);
+
+    const validFullscreen = auditButtonSource(
+      "src/fixtures/fullscreen-channel-button-audit.tsx",
+      `<button className="workout-action-button" style={{ "--workout-accent": accent }}>Action</button>`,
+    );
+    expect(buttonAuditViolations(validFullscreen[0]!)).toEqual([]);
+
+    for (const property of ["--background-color", "--workout-accent", "--foo-tint", "--period-color"]) {
+      const unsafe = auditButtonSource(
+        `src/fixtures/unrelated-${property.slice(2)}-channel-button-audit.tsx`,
+        `<button className="box-chip" style={{ "${property}": hue }}>Unsafe</button>`,
+      );
+      expect(buttonAuditViolations(unsafe[0]!), property).toEqual([
+        expect.stringContaining(`unsafe button custom property ${property}`),
+      ]);
+    }
+
+    const unknownOnPrimary = auditButtonSource(
+      "src/fixtures/unknown-primary-channel-button-audit.tsx",
+      `<button className="btn-primary" style={{ "--box-chip-hue": hue }}>Wrong owner</button>`,
+    );
+    expect(buttonAuditViolations(unknownOnPrimary[0]!)).toEqual([
+      expect.stringContaining("unsafe button custom property --box-chip-hue"),
+    ]);
   });
 
   it("keeps active phase chooser text readable while retaining each phase hue", () => {
