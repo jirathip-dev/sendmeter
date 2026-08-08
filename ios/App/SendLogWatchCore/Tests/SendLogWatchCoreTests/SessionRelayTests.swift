@@ -83,10 +83,18 @@ final class SessionRelayDecodeTests: XCTestCase {
         // A phone build older than #265 still relays `refreshToken`. Decoding
         // must produce EXACTLY the same result as the payload without it —
         // i.e. the field is not read, not stored, and not consulted.
+        // Reuse one token for both contexts: JSONSerialization does not
+        // promise dictionary key order, so generating two otherwise identical
+        // JWTs can produce different access-token strings and make this test
+        // compare serializer order instead of the relay contract.
+        let accessToken = jwt()
         let withToken = SessionRelay.decode(
-            signedIn(["refreshToken": "rt-226-two-rotations-stale"]), now: 1_000
+            signedIn([
+                "accessToken": accessToken,
+                "refreshToken": "rt-226-two-rotations-stale"
+            ]), now: 1_000
         )
-        let without = SessionRelay.decode(signedIn(), now: 1_000)
+        let without = SessionRelay.decode(signedIn(["accessToken": accessToken]), now: 1_000)
         XCTAssertEqual(withToken, without)
     }
 

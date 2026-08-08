@@ -23,248 +23,102 @@ struct RepoRecordingUploader: TindeqRecordingUploading {
     }
 }
 
-/// Persist-first queue for individual Tindeq force recordings (#486),
-/// mirroring `OfflineQueue`/`PendingSessionQueue` exactly: `Repo.insertTindeqRecording`
-/// used to be a bare `try await …insert(…)` awaited directly by the Stop tap
-/// and the disconnect-salvage path — watchOS can suspend the app and freeze
-/// that in-flight request at the exact moment a max-effort rep finishes, and
-/// unlike a saved workout or gauge session there was no on-disk fallback at
-/// all, so the rep was gone outright. Every save is first serialized to
-/// Documents/pending-recordings/<uuid>.json, then uploaded and deleted on
-/// success. Drained oldest-first on launch / foreground / an accepted auth
-/// relay, same triggers as the other two queues.
+/// The production `EvictionReporting`: an evicted file was a queued, unsynced
+/// force recording, so its loss surfaces through the same durable one-shot
+/// notice the `.lost` enqueue path uses (#486 re-review R2, CLAUDE.md #264).
+/// A payload reclaim is a DIFFERENT, non-loss fact and gets its own notice
+/// (#491 review R1) — see `QuarantineTrimNotice` for why the two must never
+/// share copy.
+struct RecordingLossEvictionReporter: EvictionReporting {
+    func recordEviction() { RecordingLossNotice.record() }
+    func recordPayloadReclaim() { QuarantineTrimNotice.record() }
+}
+
+/// Persist-first queue for individual Tindeq force recordings (#486):
+/// `Repo.insertTindeqRecording` used to be a bare `try await …insert(…)`
+/// awaited directly by the Stop tap and the disconnect-salvage path — watchOS
+/// can suspend the app and freeze that in-flight request at the exact moment
+/// a max-effort rep finishes, and unlike a saved workout or gauge session
+/// there was no on-disk fallback at all, so the rep was gone outright. Every
+/// save is first serialized to Documents/pending-recordings/<uuid>.json, then
+/// uploaded and deleted on success. Drained oldest-first on launch /
+/// foreground / an accepted auth relay, same triggers as the other two
+/// queues.
 ///
-/// Retries are DELIBERATELY unbounded, matching the other two queues and NOT
-/// the bounded-ledger design `fix-475-queue-poison`'s review (finding F11)
-/// found unsafe: a counter that advances on transport-only or stale-auth
-/// failures permanently quarantines data that was never actually rejected —
-/// worse than the outage it exists to survive, because connectivity
-/// returning fixes an unbounded retry but does nothing for a quarantine.
-/// `drainPass` below `break`s the whole loop on ANY failure (network or
-/// auth) and tries again next drain, with no per-item failure count at all —
-/// the same shape `OfflineQueue`/`PendingSessionQueue` already use in this
-/// codebase, which never grew that ledger in the first place.
+/// Since #491 a thin shell over `UploadQueueEngine`, closing the #486 review
+/// F7 gap this issue was filed for: the copy shipped ledger-free ("break on
+/// any error", documented at the time as matching the other queues), so one
+/// permanently-rejected force recording parked the LARGEST payload of the
+/// three queues forever. The engine applies #475's full policy — and its F11
+/// exemption: only a failure the server actually evaluated advances the
+/// ledger; transport outages and stale tokens park-and-recover instead of
+/// quarantining, because a quarantine never heals on its own the way a
+/// returning network does.
+///
+/// This queue is also the one that opts into the engine's
+/// evict-oldest-on-refused-write persist path (#486 review F5/R1/R2) — see
+/// `UploadQueueEngine.writeWithEviction`.
 actor PendingRecordingQueue {
     static let shared = PendingRecordingQueue()
 
-    private var drainState = CoalescingDrain()
-    private let uploader: TindeqRecordingUploading
-    /// Test seam only — `nil` in production, which resolves against the real
-    /// `Documents` directory below. A test passes a scratch directory so
-    /// nothing here ever touches the real device/simulator filesystem.
-    private let baseDirOverride: URL?
+    private let engine: UploadQueueEngine<PendingTindeqRecording>
 
-    init(uploader: TindeqRecordingUploading = RepoRecordingUploader(), baseDir: URL? = nil) {
-        self.uploader = uploader
-        self.baseDirOverride = baseDir
+    init(
+        uploader: TindeqRecordingUploading = RepoRecordingUploader(),
+        baseDir: URL? = nil,
+        clock: QueueClock = SystemQueueClock(),
+        sessionRelay: SessionRelayRequesting = AuthManagerRelayRequester(),
+        scheduler: DrainScheduling = TaskDrainScheduler(),
+        fileIO: QueueFileIO = RealQueueFileIO(),
+        evictionReporter: EvictionReporting = RecordingLossEvictionReporter()
+    ) {
+        engine = UploadQueueEngine(
+            slot: .tindeqRecordings,
+            directoryName: "pending-recordings",
+            lastSyncFileName: "last-successful-sync-recordings.json",
+            upload: { try await uploader.upload($0.row) },
+            classify: { error, _ in UploadFailureMapping.classify(error) },
+            clock: clock,
+            baseDir: baseDir ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],
+            sessionRelay: sessionRelay,
+            scheduler: scheduler,
+            fileIO: fileIO,
+            evictsOldestOnRefusedWrite: true,
+            evictionReporter: evictionReporter
+        )
     }
 
-    private var pendingDir: URL {
-        let docs = baseDirOverride
-            ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let dir = docs.appendingPathComponent("pending-recordings", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
+    func pendingCount() async -> Int { await engine.pendingCount() }
 
-    /// Count of items pending for the currently signed-in account, PLUS any
-    /// item stranded while nobody is signed in (issue #189) — see
-    /// `OfflineQueue.pendingCount`'s doc for the full reasoning; identical
-    /// here.
-    func pendingCount() -> Int {
-        let currentUserId = WatchSessionStore.shared.userId
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
-            .filter { $0.pathExtension == "json" } ?? []
-        let count = files.filter { file in
-            guard
-                let data = try? Data(contentsOf: file),
-                let pending = try? decoder.decode(PendingTindeqRecording.self, from: data)
-            else { return true } // unreadable: retained and reported until a later build can decode it
-            return shouldDrain(itemUserId: pending.enqueuedUserId, currentUserId: currentUserId)
-                || currentUserId == nil
-        }.count
-        // Publish for the sync-readable stamp (#21): reading this actor is an
-        // await, which the WatchConnectivity send paths can't do.
-        PendingSyncCache.shared.record(count, for: .tindeqRecordings)
-        return count
-    }
+    @discardableResult
+    func quarantinedCount() async -> Int { await engine.quarantinedCount() }
 
-    /// Persist the recording and return as soon as it's on disk — the upload
-    /// runs in the background (the queue retries until it lands). If
-    /// persistence fails, keep the in-memory row alive long enough to attempt
-    /// the idempotent upload directly; only failure of both paths is `.lost`.
-    func enqueue(_ pending: PendingTindeqRecording) async -> QueuePersistOutcome {
-        var pending = pending
-        // Stamp which account is signed in right now (issue #158) — the
-        // relayed access token's `sub` claim, read synchronously from the
-        // Keychain cache (#265). Checked back in drain().
-        pending.enqueuedUserId = WatchSessionStore.shared.userId
+    func enqueue(_ pending: PendingTindeqRecording) async -> QueuePersistOutcome { await engine.enqueue(pending) }
 
-        switch PendingQueuePolicy.actionAfterPersist(persist(pending)) {
-        case .drainQueued:
-            Task { await drain() }
-            return .queued
-        case .uploadDirect:
-            do {
-                try await uploader.upload(pending.row)
-                return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: true)
-            } catch {
-                return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: false)
-            }
-        }
-    }
+    func drain() async { await engine.drain() }
+}
 
-    /// #486 review F5: encoding failure is a programmer error no eviction can
-    /// fix, so it's kept out of the retry loop below — only the actual disk
-    /// WRITE gets the eviction treatment.
-    private func persist(_ pending: PendingTindeqRecording) -> Bool {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let url = pendingDir.appendingPathComponent("\(pending.row.id.uuidString).json")
-        let persisted: Bool
-        if let data = try? encoder.encode(pending) {
-            persisted = writeWithEviction(data, to: url)
-        } else {
-            persisted = false
-        }
-        _ = pendingCount() // refresh the reported depth (#21)
-        Task { @MainActor in WatchBuild.reportQueueStatus() }
-        return persisted
-    }
+extension PendingRecordingQueue: QueueDepthReporting {
+    nonisolated var syncSlot: PendingSyncQueue { .tindeqRecordings }
+    func refreshReportedCounts() async { await engine.refreshReportedCounts() }
+}
 
-    /// #486 review F5: a refused write (disk full) is retried after dropping
-    /// the OLDEST other queued file, repeatedly, down to this new entry
-    /// alone — the same "the new recording wins" policy `recordingQueue.ts`
-    /// decided under CLAUDE.md #264 for the web queue: the new recording is
-    /// the rep the user just pulled and is still thinking about, while a
-    /// queued entry has by definition already failed to sync at least once.
-    /// Before this, a full `Documents` volume destroyed the NEWEST rep (via
-    /// the `.uploadDirect` → `.lost` fallback in `enqueue`) while every
-    /// older, already-failing entry survived untouched — the inverse of that
-    /// decision.
-    ///
-    /// #486 re-review R1: the first version of this loop was `while true`
-    /// with the removal wrapped in `try?` — if `removeItem` itself failed,
-    /// the same file was re-selected and re-attempted forever (proven:
-    /// 200,001 iterations, 59.6s, no exit). Run synchronously inside this
-    /// actor, that hang was worse than the disk-full case it was meant to
-    /// survive: `enqueue`/`drain`/`pendingCount` all block behind it, the
-    /// watch UI is stuck with `saving = true`, and the `.lost` reporting
-    /// path in `enqueue` can never be reached. Two independent fixes, both
-    /// required: (1) a removal failure now STOPS the loop instead of being
-    /// swallowed — it is information ("this file cannot be freed"), not
-    /// noise; (2) the loop is additionally bounded by the number of other
-    /// files present when it starts, so it cannot run away even if some
-    /// future change reintroduces a silent-failure path here.
-    ///
-    /// #486 re-review R2: the #264 half this was supposed to port —
-    /// `recordingQueue.ts:129-134`, "Each one is itself a lost rep, so
-    /// callers report it" — was dropped in translation. An evicted file WAS
-    /// a queued, unsynced recording; deleting it is a real loss, not routine
-    /// housekeeping, exactly like a `.lost` `enqueue` outcome. `defer`
-    /// reports it (via the same `RecordingLossNotice` one-shot the `.lost`
-    /// path already uses) whenever at least one eviction happened, on every
-    /// exit from this function — success or failure — because a file that
-    /// was deleted along the way is gone regardless of how the NEW entry's
-    /// own write ultimately turns out.
-    private func writeWithEviction(_ data: Data, to url: URL) -> Bool {
-        let maxAttempts = (((try? FileManager.default.contentsOfDirectory(
-            at: pendingDir, includingPropertiesForKeys: nil
-        )) ?? [])
-            .filter { $0.pathExtension == "json" && $0 != url }).count
+extension PendingTindeqRecording: QueueUploadItem {
+    var queueFileId: UUID { row.id }
 
-        var evictedCount = 0
-        defer {
-            if evictedCount > 0 {
-                RecordingLossNotice.record()
-            }
-        }
-
-        for _ in 0...maxAttempts {
-            do {
-                try data.write(to: url, options: .atomic)
-                return true
-            } catch {
-                guard let oldest = oldestOtherFile(excluding: url) else { return false }
-                do {
-                    try FileManager.default.removeItem(at: oldest)
-                    evictedCount += 1
-                } catch {
-                    // R1: a failed removal means this file cannot be freed —
-                    // looping back would just re-select it forever.
-                    return false
-                }
-            }
-        }
-        return false
-    }
-
-    private func oldestOtherFile(excluding url: URL) -> URL? {
-        let files = ((try? FileManager.default.contentsOfDirectory(
-            at: pendingDir, includingPropertiesForKeys: [.creationDateKey]
-        )) ?? [])
-            .filter { $0.pathExtension == "json" && $0 != url }
-        guard !files.isEmpty else { return nil }
-        return files.min { lhs, rhs in
-            let l = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-            let r = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-            return l < r
-        }
-    }
-
-    func drain() async {
-        guard drainState.request() == .start else { return }
-        // request() marks the actor as running before this first suspension.
-        repeat {
-            await drainPass()
-        } while drainState.completePass() == .rerun
-    }
-
-    private func drainPass() async {
-        let files = ((try? FileManager.default.contentsOfDirectory(
-            at: pendingDir, includingPropertiesForKeys: [.creationDateKey]
-        )) ?? [])
-            .filter { $0.pathExtension == "json" }
-            .sorted { lhs, rhs in
-                let l = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-                let r = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-                return l < r
-            }
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        for file in files {
-            guard
-                let data = try? Data(contentsOf: file),
-                let pending = try? decoder.decode(PendingTindeqRecording.self, from: data)
-            else {
-                // Never delete an unreadable or undecodable value (#287).
-                // It stays counted/published through PendingSyncCache and a
-                // later compatible build gets another chance to recover it.
-                continue
-            }
-            // Read fresh right before each file's check, not once before the
-            // loop (issue #158) — this is a non-@MainActor actor and `await`
-            // below is a suspension point, so a concurrent account switch
-            // could otherwise go unnoticed for the rest of the pass and let
-            // a recording queued under Account A upload under Account B.
-            let currentUserId = WatchSessionStore.shared.userId
-            guard shouldDrain(itemUserId: pending.enqueuedUserId, currentUserId: currentUserId) else {
-                // Queued under a different account (or nobody's signed in):
-                // leave the file on disk untouched and keep checking the
-                // rest — this is not a network/auth error, so don't `break`.
-                continue
-            }
-            do {
-                try await uploader.upload(pending.row)
-                try? FileManager.default.removeItem(at: file)
-            } catch {
-                break // no network (or auth) — stop, retry next drain
-            }
-        }
-        _ = pendingCount() // refresh the reported depth (#21)
-        await MainActor.run { WatchBuild.reportQueueStatus() }
+    /// The sample array IS the recording, so this queue does NOT strip at
+    /// quarantine time (see `stripsPayloadOnQuarantine`'s doc) — this hook
+    /// only fires as `writeWithEviction`'s disk-full last resort, where the
+    /// choice is a 20-times-rejected buffer versus a brand-new rep. The
+    /// summary stats (`durationMs`/`peakKg`/`avgKg`/`sampleCount`) survive,
+    /// so a later resurrected re-attempt still lands the History row's
+    /// headline numbers; `sampleCount` keeps describing what was measured,
+    /// while the empty `samples` (plus the record's `payloadDropped`) says
+    /// the curve itself was sacrificed.
+    func strippedOfHeavyPayload() -> PendingTindeqRecording? {
+        guard !row.samples.isEmpty else { return nil }
+        var stripped = self
+        stripped.row.samples = []
+        return stripped
     }
 }

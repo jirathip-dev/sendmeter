@@ -106,7 +106,7 @@ public nonisolated struct SessionLoadRow: Codable {
 /// same pattern as `WorkoutSaveBundle`). `date`/`durationMin`/`note` are
 /// captured synchronously at tap time so a delayed drain still logs the
 /// session against the moment it actually finished.
-public nonisolated struct PendingTindeqSession: Codable {
+public nonisolated struct PendingTindeqSession: Codable, Sendable {
     public var id: UUID
     public var date: String           // YYYY-MM-DD, captured at enqueue time
     public var durationMin: Int

@@ -74,8 +74,10 @@
 			</array>
 		</dict>
 		<!-- C617.1 — creationDateKey on files inside this app's own container:
-		     Services/OfflineQueue.swift + Services/PendingSessionQueue.swift sort
-		     Documents/pending{,-sessions}/*.json oldest-first before draining. -->
+		     Services/UploadQueueEngine.swift (the one queue implementation behind
+		     OfflineQueue / PendingSessionQueue / PendingRecordingQueue, #491) sorts
+		     Documents/pending{,-sessions,-recordings}/*.json oldest-first before
+		     draining and picks the oldest file when evicting. -->
 		<dict>
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>

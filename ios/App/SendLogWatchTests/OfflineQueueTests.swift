@@ -893,6 +893,104 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(pending, 1, "the item is still reported pending (#189) — only the retry-armed claim is false")
     }
 
+    // MARK: #481 / #491 review F1 — quarantine sheds the raw trace, keeps everything user-visible
+
+    /// Quarantine is retained indefinitely (nothing prunes it, #475 F8), and
+    /// `workout.raw` is the 1Hz debug trace — hundreds of KB per workout
+    /// with keepRawTrace on. #481's named cheap win: strip it BEFORE the
+    /// forever-write. Every user-visible field must survive the strip.
+    func testQuarantineStripsTheRawTraceButKeepsEveryUserVisibleField() async throws {
+        var poisoned = makeBundle(id: UUID(), attempts: [makePoisonedAttempt(workoutId: UUID())])
+        poisoned.workout.raw = [[0, 12.5, 0.4, 140], [1, 12.6, 0.5, 141]]
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(poisoned, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            poisoned.workout.id: StagedUploadError(stage: .climbAttempts, underlying: durationCheckViolation),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        await queue.drain()
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(poisoned.workout.id.uuidString).quarantine"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let record = try decoder.decode(QueueQuarantineRecord<WorkoutSaveBundle>.self, from: data)
+        XCTAssertNil(record.item.workout.raw, "the debug trace must not be stored forever")
+        XCTAssertEqual(record.payloadDropped, true, "the strip is recorded honestly on the record")
+        XCTAssertEqual(record.item.workout.id, poisoned.workout.id)
+        XCTAssertEqual(record.item.attempts.count, 1, "attempts — the training data — survive")
+        XCTAssertEqual(record.item.session.id, poisoned.session.id, "the session row survives")
+        XCTAssertEqual(record.reason, .schemaRejection)
+    }
+
+    /// A bundle with no trace to shed quarantines exactly as before — no
+    /// strip, no `payloadDropped` claim about a payload that never existed.
+    func testQuarantineOfATracelessBundleDoesNotClaimAStrip() async throws {
+        let poisoned = makeBundle(id: UUID(), attempts: [makePoisonedAttempt(workoutId: UUID())])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(poisoned, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            poisoned.workout.id: StagedUploadError(stage: .climbAttempts, underlying: durationCheckViolation),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        await queue.drain()
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(poisoned.workout.id.uuidString).quarantine"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let record = try decoder.decode(QueueQuarantineRecord<WorkoutSaveBundle>.self, from: data)
+        XCTAssertNil(record.payloadDropped)
+    }
+
+    // MARK: #491 — on-disk compatibility with pre-consolidation quarantine records
+
+    /// The generic engine reads/writes `QueueQuarantineRecord<Item>`, whose
+    /// on-disk shape must stay byte-compatible with the `QuarantinedUpload`
+    /// records #475 builds already wrote to real devices (same field names,
+    /// and the item under the legacy "bundle" key). Written HERE through the
+    /// legacy type itself — which is also why that type deliberately stays
+    /// in Models.swift — then read back through the real engine paths: the
+    /// count classifies it, and the F12 resurrection re-pends it.
+    func testAPre491QuarantineRecordStillCountsAndResurrects() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let legacyRecord = QuarantinedUpload(
+            bundle: bundle,
+            reason: .stuckRetrying,
+            stage: .session,
+            httpStatus: nil,
+            postgrestCode: "P0001",
+            errorMessage: "raise_exception",
+            attemptCount: QueueRetryPolicy.maxConsecutiveFailures,
+            quarantinedAt: now
+        )
+        try FileManager.default.createDirectory(at: pendingDir, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let url = pendingDir
+            .appendingPathComponent(bundle.workout.id.uuidString)
+            .appendingPathExtension("quarantine")
+        try encoder.encode(legacyRecord).write(to: url, options: .atomic)
+
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+        let counted = await queue.quarantinedCount()
+        XCTAssertEqual(counted, 1, "a legacy record must decode — an unreadable one would still count, but as the cautious schema-like default")
+
+        // Beyond the F12 backoff, a fresh launch must be able to read the
+        // legacy record well enough to resurrect and upload its bundle.
+        let uploader = ScriptedUploader(failing: [:])
+        let laterQueue = OfflineQueue(
+            uploader: uploader,
+            clock: FixedClock(now.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS + 1)),
+            baseDir: tempDir
+        )
+        await laterQueue.drain()
+        let uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(bundle.workout.id), "the legacy-quarantined workout must come back to life and land")
+        XCTAssertFalse(try filesOnDisk().contains("\(bundle.workout.id.uuidString).quarantine"))
+    }
+
     // MARK: #472b review F21 — a dropped scheduler callback must not disarm the backoff forever
 
     /// Exercises the REAL production `TaskDrainScheduler`, not a test
