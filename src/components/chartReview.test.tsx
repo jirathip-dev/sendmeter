@@ -433,17 +433,25 @@ describe("#516 chart review regressions", () => {
         onClose={() => {}}
       />,
     );
-    const weekly = container.querySelector('[aria-describedby^="weekly-load-summary-"]');
+    // Sheet's accessible initial-focus effect runs in a microtask; let it
+    // settle before moving focus to the chart surface.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Sheet portals its dialog to document.body, so scope this assertion to
+    // the mounted dialog instead of the caller's render container.
+    const dialog = document.body.querySelector('[role="dialog"]');
+    const weekly = dialog?.querySelector('[aria-describedby^="weekly-load-summary-"]');
     const weeklyDescription = weekly?.getAttribute("aria-describedby");
     expect(weeklyDescription).toMatch(/^weekly-load-summary-/);
-    expect(weeklyDescription && container.querySelector(`#${weeklyDescription}`)).not.toBeNull();
+    expect(weeklyDescription && dialog?.querySelector(`#${weeklyDescription}`)).not.toBeNull();
     const weekSurface = weekly as HTMLElement;
     expect(weekSurface?.getAttribute("role")).toBe("button");
     await act(async () => {
       weekSurface.focus();
       weekSurface.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
     });
-    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    expect(dialog?.querySelector('[role="status"]')).not.toBeNull();
   });
 
   it("owns heatmap pointer selection at the grid and navigates visual weeks/weekday rows", async () => {
