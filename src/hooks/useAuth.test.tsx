@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, createElement } from "react";
+import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Session } from "@supabase/supabase-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -155,5 +155,49 @@ describe("useAuth local auto-login", () => {
     expect(mocks.signInWithPassword).toHaveBeenCalledOnce();
     expect(latest?.loading).toBe(false);
     expect(latest?.session).toBe(cachedSession);
+  });
+
+  it("removes deferred watch listeners exactly once across StrictMode unmount", async () => {
+    mocks.getSessionWithDiagnostics.mockResolvedValue({ session: null });
+
+    let resolveFirst!: (handle: { remove: () => Promise<void> }) => void;
+    let resolveSecond!: (handle: { remove: () => Promise<void> }) => void;
+    const firstRequest = new Promise<{ remove: () => Promise<void> }>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondRequest = new Promise<{ remove: () => Promise<void> }>((resolve) => {
+      resolveSecond = resolve;
+    });
+    let requestIndex = 0;
+    mocks.onWatchSessionRequest.mockImplementation(() => {
+      requestIndex += 1;
+      return requestIndex === 1 ? firstRequest : secondRequest;
+    });
+    const firstHandle = { remove: vi.fn().mockResolvedValue(undefined) };
+    const secondHandle = { remove: vi.fn().mockResolvedValue(undefined) };
+
+    await act(async () => {
+      root.render(createElement(StrictMode, null, createElement(Probe)));
+      await Promise.resolve();
+    });
+    expect(mocks.onWatchSessionRequest).toHaveBeenCalledTimes(2);
+
+    // Both StrictMode effect instances unmount before native addListener
+    // resolves. The original request continuations must own those eventual
+    // handles; cleanup must not attach a second continuation.
+    await act(async () => {
+      root.unmount();
+      await Promise.resolve();
+    });
+    resolveFirst(firstHandle);
+    resolveSecond(secondHandle);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(firstHandle.remove).toHaveBeenCalledOnce();
+    expect(secondHandle.remove).toHaveBeenCalledOnce();
+    expect(mocks.unsubscribe).toHaveBeenCalledTimes(2);
   });
 });

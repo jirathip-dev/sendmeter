@@ -42,7 +42,6 @@ export function useAuth() {
       current: undefined as Session | null | undefined,
     };
     let authSubscription: { unsubscribe: () => void } | null = null;
-    let watchRequest: Promise<{ remove: () => void } | null> | null = null;
     let watchHandle: { remove: () => void } | null = null;
     let removeVisibilityListener: (() => void) | null = null;
 
@@ -189,9 +188,11 @@ export function useAuth() {
       // valid re-sends the same session, and an unchanged application context is
       // the leading explanation for the pull path never landing.
       //
-      // The handle is kept and detached below. Discarding it (the old behaviour)
-      // meant nothing could ever remove the listener.
-      watchRequest = onWatchSessionRequest(() => {
+      // The resolution continuation owns deferred cleanup: if this effect has
+      // already unmounted, it removes the eventual handle itself. Cleanup
+      // below only removes a handle that resolved while the effect was alive,
+      // so one native listener always has one removal path.
+      const watchRequest = onWatchSessionRequest(() => {
         void supabase.auth.getSession().then(({ data }) => {
           relaySessionToWatch(data.session, { guaranteed: true });
         });
@@ -227,7 +228,6 @@ export function useAuth() {
       authSubscription?.unsubscribe();
       removeVisibilityListener?.();
       if (watchHandle) void watchHandle.remove();
-      else if (watchRequest) void watchRequest.then((handle) => handle?.remove());
     };
   }, []);
 
