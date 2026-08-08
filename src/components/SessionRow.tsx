@@ -19,10 +19,10 @@ import type {
   TindeqSample,
   WorkoutDetail,
 } from "../types";
-import DetailPage from "./DetailPage";
 import EditRecordingSheet from "./EditRecordingSheet";
 import RecordingRow from "./RecordingRow";
 import RepBoxPlotChart from "./RepBoxPlotChart";
+import Sheet from "./Sheet";
 import WhyZoneInfo from "./WhyZoneInfo";
 import WorkoutDetailPanel from "./WorkoutDetailPanel";
 
@@ -415,14 +415,14 @@ export default function SessionRow({
         </button>
       </div>
 
-      {/* The session's own page — slides in from the right, swipe right to
-          go back (iOS push style). */}
+      {/* The session's own detail surface is a bottom sheet. Its charts stay
+          inside the scrolling body, away from the top-region drag stream. */}
       {detailOpen && (
-        <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default" }}>
-          <DetailPage
+          <Sheet
             title={s.typeLabel}
             subtitle={`${s.date} · ${s.duration}min · RPE ${s.rpe} · ${s.load} AU${s.note ? ` · ${s.note}` : ""}`}
             onClose={() => setDetailOpen(false)}
+            fullHeight
           >
             {isWorkout && (
               <>
@@ -490,8 +490,7 @@ export default function SessionRow({
                 ))}
               </>
             )}
-          </DetailPage>
-        </div>
+          </Sheet>
       )}
 
       {editingRec && (

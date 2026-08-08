@@ -17,17 +17,7 @@ interface Props {
 export default function SignOutPendingSheet({ count, onChoose }: Props) {
   const items = `${count} recording${count === 1 ? "" : "s"}`;
   return (
-    <Sheet onClose={() => onChoose("cancel")}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-          marginBottom: 6,
-        }}
-      >
-        {items} not uploaded
-      </div>
+    <Sheet title={`${items} not uploaded`} onClose={() => onChoose("cancel")}>
       <div
         style={{
           fontSize: "var(--t-sm)",

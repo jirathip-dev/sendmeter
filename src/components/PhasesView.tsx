@@ -63,7 +63,6 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
 
   return (
     <div>
-      <div className="section-head">PHASES</div>
       <div className="section-sub">
         Your training blocks — what each targets and when you ran it. Change the
         current phase from the phase strip on Home.

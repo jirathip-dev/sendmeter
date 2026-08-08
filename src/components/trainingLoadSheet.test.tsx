@@ -42,6 +42,9 @@ describe("TrainingLoadSheet", () => {
     );
 
     expect(html).toContain("Training Load");
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-label="Close Training Load"');
+    expect(html).toContain('class="modal-top"');
     expect(html).toContain("Weekly load");
     expect(html).toContain("Daily load");
     expect(html).toContain("Activity mix");

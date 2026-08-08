@@ -345,17 +345,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   );
 
   return (
-    <Sheet onClose={onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-        }}
-      >
-        Account
-      </div>
-
+    <Sheet title="Account" onClose={onClose}>
       {/* Tabs */}
       <div className="acct-tabs">
         {TABS.map((t) => (
@@ -670,11 +660,6 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         />
       )}
 
-      <div style={{ marginTop: 16 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
     </Sheet>
   );
 }

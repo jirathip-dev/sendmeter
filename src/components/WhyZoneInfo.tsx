@@ -59,21 +59,11 @@ export default function WhyZoneInfo({ zoneLabel, recs, defaultOpen = false }: Pr
         </button>
       </div>
       {open && (
-        <Sheet onClose={() => setOpen(false)}>
+        <Sheet title={`Why this session is ${zoneLabel}`} onClose={() => setOpen(false)}>
           {/* The trigger sits inside an uppercase eyebrow label — undo any
               inherited text styling for the sheet body (same reset as
               InfoDot). */}
           <div style={{ textTransform: "none", letterSpacing: "normal", textAlign: "left" }}>
-            <div
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--t-lg)",
-                fontWeight: 800,
-                marginBottom: 12,
-              }}
-            >
-              Why this session is {zoneLabel}
-            </div>
             <div
               style={{
                 fontSize: "var(--t-2xs)",
@@ -87,11 +77,6 @@ export default function WhyZoneInfo({ zoneLabel, recs, defaultOpen = false }: Pr
               balance card counts.
             </div>
             <ZoneBreakdownPanel recs={recs} showTag />
-            <div style={{ marginTop: 14 }}>
-              <button className="btn-ghost" onClick={() => setOpen(false)}>
-                Close
-              </button>
-            </div>
           </div>
         </Sheet>
       )}

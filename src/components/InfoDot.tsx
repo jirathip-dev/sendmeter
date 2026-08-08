@@ -240,20 +240,10 @@ export default function InfoDot({ topic }: { topic: InfoTopic }) {
         ?
       </button>
       {open && (
-        <Sheet onClose={() => setOpen(false)}>
+        <Sheet title={c.title} onClose={() => setOpen(false)}>
           {/* The dot often sits inside an uppercase eyebrow label — undo any
               inherited text styling for the sheet body. */}
           <div style={{ textTransform: "none", letterSpacing: "normal", textAlign: "left" }}>
-            <div
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--t-lg)",
-                fontWeight: 800,
-                marginBottom: 12,
-              }}
-            >
-              {c.title}
-            </div>
             {c.body.map((b) => (
               <div key={b.heading} style={{ marginBottom: 14 }}>
                 <div
@@ -272,11 +262,6 @@ export default function InfoDot({ topic }: { topic: InfoTopic }) {
                 </div>
               </div>
             ))}
-            <div style={{ marginTop: 14 }}>
-              <button className="btn-ghost" onClick={() => setOpen(false)}>
-                Close
-              </button>
-            </div>
           </div>
         </Sheet>
       )}

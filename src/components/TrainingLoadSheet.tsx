@@ -98,13 +98,11 @@ export default function TrainingLoadSheet({
   const mix = useMemo(() => activityMix(sessions, endDate), [sessions, endDate]);
 
   return (
-    <Sheet onClose={onClose}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 20, fontWeight: 800 }}>
-        Training Load
-      </div>
-      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 16 }}>
-        Your training volume in arbitrary units (AU).
-      </div>
+    <Sheet
+      title="Training Load"
+      subtitle="Your training volume in arbitrary units (AU)."
+      onClose={onClose}
+    >
 
       <div className="card">
         <div
@@ -262,11 +260,6 @@ export default function TrainingLoadSheet({
         )}
       </div>
 
-      <div style={{ marginTop: 12 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
     </Sheet>
   );
 }

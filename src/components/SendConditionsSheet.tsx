@@ -262,13 +262,11 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
     ? isTempRangeSaturated(cond.hist.tempMin, cond.hist.tempMax)
     : false;
   return (
-    <Sheet onClose={onClose}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800, marginBottom: 2 }}>
-        Send conditions
-      </div>
-      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 16 }}>
-        Friction is best when it's cool and dry — better grip, less sweat.
-      </div>
+    <Sheet
+      title="Send conditions"
+      subtitle="Friction is best when it's cool and dry — better grip, less sweat."
+      onClose={onClose}
+    >
 
       {cond ? (
         <>
@@ -466,9 +464,6 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
         <button className="btn-primary" disabled={loading} onClick={onRefresh} style={{ flex: 1 }}>
           {loading ? "Checking…" : cond ? "Refresh" : "Check conditions"}
-        </button>
-        <button className="btn-ghost" onClick={onClose} style={{ flex: 1 }}>
-          Close
         </button>
       </div>
     </Sheet>

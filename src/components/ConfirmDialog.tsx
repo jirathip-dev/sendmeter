@@ -32,17 +32,7 @@ export default function ConfirmDialog({
   onClose,
 }: Props) {
   return (
-    <Sheet onClose={busy ? undefined : onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-          marginBottom: 6,
-        }}
-      >
-        {title}
-      </div>
+    <Sheet title={title} onClose={busy ? undefined : onClose}>
       <div
         style={{
           fontSize: "var(--t-sm)",

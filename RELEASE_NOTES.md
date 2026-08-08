@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- History session details and Training balance now open as sticky-header bottom sheets, so chart scrubbing never swipes the detail surface away.
 - The app's typeface now ships inside the app instead of loading from Google Fonts — nothing is requested from Google on launch any more, and the font renders identically, works offline, and no longer depends on network conditions.
 - See your 28-day activity mix at a glance with a proportional training-load bar.
 - Filter History by session type and Force tag, including loose Force recordings.
