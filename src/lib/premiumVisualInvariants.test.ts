@@ -527,15 +527,20 @@ function cssPseudoFunctionBodies(compound: string): Array<{ name: string; body: 
 }
 
 function cssTargetClassesInPseudo(compound: string): string[] {
-  const classes: string[] = [];
+  const classes = new Set<string>();
   for (const fn of cssPseudoFunctionBodies(compound)) {
     if (fn.name !== "is" && fn.name !== "where") continue;
     for (const branch of cssSelectorList(fn.body)) {
       const target = cssTargetCompoundForBranch(branch);
-      if (target) classes.push(...cssClassNames(target, true));
+      if (!target) continue;
+      // Preserve each pseudo alternative's required compound. A selector such
+      // as `.compound.ready` is not a target for either individual class, so
+      // it must not be flattened into two apparently independent targets.
+      const targetClasses = cssClassNames(target, true);
+      if (targetClasses.length === 1) classes.add(targetClasses[0]!);
     }
   }
-  return classes;
+  return [...classes];
 }
 
 function cssTargetClasses(compound: string): string[] {
@@ -571,6 +576,14 @@ function cssSelectorDirectlyOwnsClass(selector: string, className: string): bool
   const target = compounds[0]!;
   const classes = cssTargetClassesForState(target);
   return classes.length === 1 && classes[0] === className && cssTargetMatchesClass(target, className);
+}
+
+function cssAlternativeTargetClasses(compound: string): string[] | null {
+  const direct = cssClassNames(compound, true);
+  // A multi-class compound is one required target, not a union of class
+  // alternatives. Returning null lets state attribution reject it too.
+  if (direct.length > 1) return null;
+  return direct.length > 0 ? direct : cssTargetClassesInPseudo(compound);
 }
 
 function cssDirectState(compound: string): boolean {
@@ -629,7 +642,8 @@ function cssStateAlternativeForTarget(
   const compounds = cssSelectorCompounds(alternative);
   if (compounds.length !== 1) return false;
   const target = compounds[0]!;
-  const classes = cssTargetClassesForState(target);
+  const classes = cssAlternativeTargetClasses(target);
+  if (classes === null) return false;
   if (classes.length > 0 && !classes.includes(className)) return false;
   if (outerTargetPresent && classes.some((name) => name !== className)) return false;
   return cssTargetStateForCompound(target, className);
@@ -650,7 +664,8 @@ function cssStatePseudoFunctionForTarget(
     : alternatives.filter((alternative) => {
         const target = cssTargetCompoundForBranch(alternative);
         if (!target) return false;
-        const classes = cssTargetClassesForState(target);
+        const classes = cssAlternativeTargetClasses(target);
+        if (classes === null) return false;
         return classes.length === 0 || classes.includes(className);
       });
   return candidates.length > 0 && candidates.every((alternative) =>
@@ -2002,8 +2017,8 @@ describe("premium visual language contracts (#517)", () => {
 
   it("attributes CSS recipes only to rightmost target compounds", () => {
     const fixtureRules = cssRules(`
-      .fake .child, .other { background: var(--surface-1); cursor: pointer; }
-      .fake:hover .child, .other:hover { color: var(--ink); }
+      .fake .child, .group-other { background: var(--surface-1); cursor: pointer; }
+      .fake:hover .child, .group-other:hover { color: var(--ink); }
       .fake + .sibling, .sibling + .neighbor { border: 1px solid var(--border); cursor: pointer; }
       .fake:active + .sibling, .sibling:hover + .neighbor { opacity: 1; }
       .direct, .grouped { background: var(--surface-1); cursor: pointer; }
@@ -2028,6 +2043,16 @@ describe("premium visual language contracts (#517)", () => {
       .where-direct:where(:active, [aria-pressed="true"]) { color: var(--ink); }
       :is(.grouped-mixed:hover, .other:hover) { color: var(--ink); }
       .grouped-mixed { background: var(--surface-1); cursor: pointer; }
+      :is(.compound.ready, .other.danger) { background: var(--surface-1); cursor: pointer; }
+      :is(.compound.ready:hover, .other.danger:focus-visible) { color: var(--ink); }
+      :where(.where-compound.selected, .where-other.active) { background: var(--surface-1); cursor: pointer; }
+      :where(.where-compound.selected:hover, .where-other.active:focus-visible) { color: var(--ink); }
+      :is(:where(.nested-compound.ready, .nested-other.active)) { background: var(--surface-1); cursor: pointer; }
+      :is(:where(.nested-compound.ready:hover, .nested-other.active:hover)) { color: var(--ink); }
+      .single-compound { background: var(--surface-1); cursor: pointer; }
+      :is(.single-compound:hover, .single-compound:focus-visible) { color: var(--ink); }
+      .single-where { background: var(--surface-1); cursor: pointer; }
+      :where(.single-where:active, .single-where[data-active="true"]) { color: var(--ink); }
       :not(.negative) { background: var(--surface-1); cursor: pointer; }
       :not(.negative:hover) { color: var(--ink); }
     `);
@@ -2037,7 +2062,7 @@ describe("premium visual language contracts (#517)", () => {
     expect(recipes.has("child"), "ancestor state cannot lend state to child").toBe(false);
     expect(recipes.has("sibling"), "ancestor state cannot lend state to sibling").toBe(false);
     expect(recipes.has("neighbor"), "sibling cannot lend paint to neighbor").toBe(false);
-    expect(recipes.has("other"), "grouped direct target remains valid").toBe(true);
+    expect(recipes.has("group-other"), "grouped direct target remains valid").toBe(true);
     expect(recipes.has("direct"), "direct target remains valid").toBe(true);
     expect(recipes.has("grouped"), "grouped direct target remains valid").toBe(true);
     expect(recipes.has("pseudo"), "pseudo-function direct target remains valid").toBe(true);
@@ -2051,6 +2076,22 @@ describe("premium visual language contracts (#517)", () => {
     expect(recipes.has("function-mixed"), "direct :is state alternatives remain valid").toBe(true);
     expect(recipes.has("where-direct"), "direct :where state alternatives remain valid").toBe(true);
     expect(recipes.has("grouped-mixed"), "matching grouped target alternative remains valid").toBe(true);
+    for (const className of [
+      "compound",
+      "ready",
+      "other",
+      "danger",
+      "where-compound",
+      "selected",
+      "where-other",
+      "active",
+      "nested-compound",
+      "nested-other",
+    ]) {
+      expect(recipes.has(className), `${className} cannot be flattened from a required compound`).toBe(false);
+    }
+    expect(recipes.has("single-compound"), "single-class :is alternatives remain valid").toBe(true);
+    expect(recipes.has("single-where"), "single-class :where alternatives remain valid").toBe(true);
     expect(recipes.has("negative"), "negated predicate cannot become a target recipe").toBe(false);
   });
 
