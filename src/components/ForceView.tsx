@@ -2020,7 +2020,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   }
 
   return (
-    <div>
+    <div className="force-view">
       <div className="section-head">
         FORCE{" "}
         {tindeq.fakeMode && (
@@ -2042,7 +2042,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           its live numbers here, read-only (the watch owns the session). */}
       {liveForce && (
         <div
-          className="card"
+          className="card surface-force"
           style={{
             marginBottom: 10,
             border: "1px solid color-mix(in srgb, var(--info) 45%, transparent)",
@@ -2155,17 +2155,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             </span>
           </span>
           <button
+            className="force-session-action"
             onClick={() => void endSession()}
-            style={{
-              background: "none",
-              border: "1px solid var(--ink-faint)",
-              color: "var(--ink-muted)",
-              padding: "6px 10px",
-              borderRadius: 6,
-              fontSize: "var(--t-2xs)",
-              cursor: "pointer",
-              fontFamily: "Inter, sans-serif",
-            }}
           >
             Finish
           </button>
@@ -2173,7 +2164,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       )}
 
       {status === "unsupported" && (
-        <div className="card">
+        <div className="card surface-force">
           <div
             style={{
               fontFamily: "Inter, sans-serif",
@@ -2215,8 +2206,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
 
       {sensorlessLaunchAvailable(status) && <>
         <button
-          className="btn-primary"
-          style={{ marginTop: 10, background: "var(--surface-2)", color: "var(--primary)", border: "1px solid var(--primary)" }}
+          className="btn-secondary"
+          style={{ marginTop: 10 }}
           disabled={!activeProtocol || !pendingTag.trim() || runActive}
           title={!activeProtocol ? "Choose a protocol preset first" : !pendingTag.trim() ? "Add an exercise first" : undefined}
           onClick={() => {
@@ -2285,7 +2276,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       {/* GLOBAL exercise + side: labels the next recording AND drives the
           target zones, trend and curve below. Always visible — this is also
           the only place a brand-new tag can be typed. */}
-      <div className="card" style={{ marginTop: 10 }}>
+      <div className="card surface-force" style={{ marginTop: 10 }}>
         <div
           style={{
             display: "flex",
@@ -2297,15 +2288,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           <div className="label-eyebrow">Exercise &amp; Side</div>
           {tagCounts.length > 0 && (
             <button
+              className="btn-ghost btn-inline"
               onClick={() => setShowTagManager(true)}
               style={{
-                background: "none",
-                border: "none",
-                color: "var(--primary)",
                 fontFamily: "Inter, sans-serif",
                 fontWeight: 700,
                 fontSize: "var(--t-xs)",
-                cursor: "pointer",
                 padding: 0,
               }}
             >
@@ -2351,17 +2339,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
                 {justSaved.peakKg?.toFixed(1)} kg
               </span>
               <button
+                className="force-session-action"
                 onClick={() => void undoJustSaved()}
-                style={{
-                  background: "none",
-                  border: "1px solid var(--ink-faint)",
-                  color: "var(--ink-muted)",
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  fontSize: "var(--t-2xs)",
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                }}
               >
                 Undo
               </button>
@@ -2465,7 +2444,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           silent consequence of navigating away. */}
       {unqueued.length > 0 && (
         <div
-          className="card"
+          className="card surface-caution"
           style={{
             marginTop: 10,
             borderColor: "var(--danger)",
@@ -2482,40 +2461,25 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             couldn&apos;t be queued for later either.{" "}
             {unqueued.length === 1 ? "It is" : "They are"} only held on this
             screen and will be lost when you leave it. Free up storage, then
-            retry.
+            Retry to preserve them; Discard permanently loses them now.
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button
+              type="button"
+              className="btn-primary btn-inline"
               onClick={() => void retryUnqueued()}
               disabled={retryingUnqueued}
-              style={{
-                flex: 1,
-                background: "var(--danger)",
-                border: "none",
-                color: "#fff",
-                padding: "8px 12px",
-                borderRadius: 8,
-                fontSize: "var(--t-xs)",
-                fontWeight: 700,
-                fontFamily: "Inter, sans-serif",
-                cursor: "pointer",
-              }}
+              aria-label={retryingUnqueued ? "Retrying unsaved recordings" : "Retry unsaved recordings"}
+              style={{ flex: 1 }}
             >
               {retryingUnqueued ? "Retrying…" : "Retry"}
             </button>
             <button
+              type="button"
+              className="btn-danger btn-inline"
               onClick={() => setUnqueued([])}
               disabled={retryingUnqueued}
-              style={{
-                background: "none",
-                border: "1px solid var(--ink-faint)",
-                color: "var(--ink-muted)",
-                padding: "8px 12px",
-                borderRadius: 8,
-                fontSize: "var(--t-xs)",
-                fontFamily: "Inter, sans-serif",
-                cursor: "pointer",
-              }}
+              aria-label="Discard unsaved recordings"
             >
               Discard
             </button>
@@ -2544,20 +2508,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
             <button
               key={mode}
               type="button"
-              className="tag"
+              className="tag protocol-mode-option"
+              data-mode={mode}
+              data-selected={protocolModality === mode ? "true" : "false"}
               disabled={runActive}
               aria-pressed={protocolModality === mode}
               onClick={() => selectProtocolModality(mode)}
-              style={{
-                background: protocolModality === mode
-                  ? mode === "static" ? "var(--success)" : "var(--primary)"
-                  : "var(--surface-1)",
-                color: protocolModality === mode ? "#fff" : "var(--ink-muted)",
-                border: `1px solid ${protocolModality === mode
-                  ? mode === "static" ? "var(--success)" : "var(--primary)"
-                  : "var(--border)"}`,
-                fontFamily: "Inter, sans-serif",
-              }}
             >{label}</button>
           ))}
         </div>
@@ -2616,7 +2572,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         />
       )}
       {zoneTag && capacityModality === "reverse_action" && (
-        <div className="card" style={{ color: "var(--ink-muted)", fontSize: "var(--t-xs)" }}>
+        <div className="card surface-force" style={{ color: "var(--ink-muted)", fontSize: "var(--t-xs)" }}>
           Static recommendations are hidden in Reverse Action mode. Its PR, Hill/CF model, and targets use Reverse Action capacity evidence only.
         </div>
       )}

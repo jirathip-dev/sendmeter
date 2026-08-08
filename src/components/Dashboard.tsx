@@ -84,7 +84,7 @@ export default function Dashboard({
           Both are slim/neutral context; the phase name carries the color. */}
       <div style={{ display: "flex", gap: 10, marginBottom: 10, alignItems: "stretch" }}>
         <div
-          className="phase-banner"
+          className="phase-banner surface-context"
           title="Phase details"
           // #171: tappable strip, not a button — opt into the delegated tick.
           data-haptic="light"
@@ -145,21 +145,11 @@ export default function Dashboard({
             </span>
             {/* The actual phase switcher — the strip/sheet are reference only. */}
             <button
+              className="phase-control-button"
+              data-phase={phase.id}
               onClick={(e) => {
                 e.stopPropagation();
                 onChangePhase();
-              }}
-              style={{
-                flexShrink: 0,
-                background: "var(--surface-1)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                padding: "5px 9px",
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--t-2xs)",
-                fontWeight: 600,
-                color: "var(--ink-muted)",
-                cursor: "pointer",
               }}
             >
               Change
@@ -192,42 +182,16 @@ export default function Dashboard({
           </span>
           <InfoDot topic="phaseStepBack" />
           <button
+            className="phase-control-button phase-control-button-accent"
+            data-phase={phase.id}
             onClick={onChangePhase}
-            style={{
-              flexShrink: 0,
-              background: "var(--surface-1)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              padding: "5px 9px",
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--t-2xs)",
-              fontWeight: 600,
-              color: phase.color,
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-            }}
           >
             Step back
           </button>
           <button
+            className="phase-dismiss-button"
             aria-label="Dismiss suggestion"
             onClick={dismissStepBack}
-            style={{
-              flexShrink: 0,
-              width: 22,
-              height: 22,
-              borderRadius: "50%",
-              border: "1px solid transparent",
-              background: "transparent",
-              color: "var(--ink-faint)",
-              fontSize: "var(--t-sm)",
-              lineHeight: 1,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 0,
-            }}
           >
             ×
           </button>
@@ -246,7 +210,7 @@ export default function Dashboard({
 
         {/* The summary remains visible; tapping anywhere except InfoDot opens detail. */}
         <div
-          className="card"
+          className="card surface-load"
           role="button"
           aria-label="Open training load details"
           tabIndex={0}

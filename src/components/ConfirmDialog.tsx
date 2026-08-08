@@ -7,8 +7,8 @@ interface Props {
   body: ReactNode;
   confirmLabel: string;
   cancelLabel?: string;
-  /// Confirm button uses the shared danger-button style (var(--danger),
-  /// white text) — matches TrashSheet's "Delete forever" and AccountSheet's
+  /// Confirm button uses the shared contrast-safe `.btn-danger` recipe —
+  /// matching TrashSheet's "Delete forever" and AccountSheet's
   /// "Yes, delete everything". Set false for a non-destructive confirm.
   danger?: boolean;
   /// While true, both buttons disable and the confirm label gets a trailing
@@ -58,7 +58,7 @@ export default function ConfirmDialog({
         {body}
       </div>
       <button
-        className={danger ? undefined : "btn-primary"}
+        className={danger ? "btn-danger" : "btn-primary"}
         // #171: the one confirm/destructive step gets the heavier tick, so
         // "delete forever" doesn't feel like the Cancel below it. While busy
         // the button is `disabled`, which the resolver reads as inert — no
@@ -66,23 +66,6 @@ export default function ConfirmDialog({
         data-haptic="medium"
         disabled={busy}
         onClick={onConfirm}
-        style={
-          danger
-            ? {
-                background: "var(--danger)",
-                color: "#ffffff",
-                border: "none",
-                padding: "13px 20px",
-                borderRadius: 8,
-                width: "100%",
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--t-base)",
-                fontWeight: 600,
-                cursor: busy ? "default" : "pointer",
-                opacity: busy ? 0.5 : 1,
-              }
-            : undefined
-        }
       >
         {busy ? `${confirmLabel}…` : confirmLabel}
       </button>

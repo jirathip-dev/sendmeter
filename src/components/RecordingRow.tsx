@@ -227,6 +227,8 @@ export default function RecordingRow({
       >
         {selectable && (
           <button
+            className="recording-select-button"
+            aria-pressed={selected}
             aria-label={selected ? "Deselect recording" : "Select recording"}
             onClick={(e) => {
               e.stopPropagation();
@@ -235,11 +237,7 @@ export default function RecordingRow({
             style={{
               width: 20,
               height: 20,
-              borderRadius: "50%",
               flexShrink: 0,
-              border: `2px solid ${selected ? "var(--primary)" : "var(--border)"}`,
-              background: selected ? "var(--primary)" : "transparent",
-              color: "#ffffff",
               fontSize: "var(--t-sm)",
               lineHeight: 1,
               cursor: "pointer",

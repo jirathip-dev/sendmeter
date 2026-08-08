@@ -189,8 +189,10 @@ describe("#516 chart review regressions", () => {
       act(() => button?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     }
     const activeChip = container.querySelector(".chart-period-chip") as HTMLButtonElement;
-    expect(activeChip.style.color).toMatch(/^var\(--chart-on-/);
-    expect(activeChip.style.minHeight).toBe("44px");
+    const activeChipHost = activeChip.parentElement as HTMLElement;
+    expect(activeChipHost.style.getPropertyValue("--period-color")).toMatch(/^var\(--chart-/);
+    expect(activeChip.classList.contains("period-toggle")).toBe(true);
+    expect(activeChip.getAttribute("data-active")).toBe("true");
     const overlays = Array.from(container.querySelectorAll("polyline[stroke-dasharray]"));
     expect(overlays).toHaveLength(Object.keys(CURVE_PERIOD_STYLES).length);
     expect(new Set(overlays.map((line) => line.getAttribute("stroke-dasharray"))).size).toBe(

@@ -103,7 +103,7 @@ export default function TargetZonesCard({
   const prehabT = model ? prehabTarget(model) : null;
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-force" style={{ marginTop: 10 }}>
       <div
         className="label-eyebrow"
         style={{

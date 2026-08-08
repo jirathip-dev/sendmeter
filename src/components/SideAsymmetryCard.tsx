@@ -33,7 +33,7 @@ export default function SideAsymmetryCard({
   const flag = imbalancePct >= 15; // asymmetry worth addressing
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-force" style={{ marginTop: 10 }}>
       <div className="label-eyebrow" style={{ marginBottom: 12 }}>
         {modality === "reverse_action" ? "Reverse Action" : "Static"} Left / Right asymmetry
       </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import {
   qualityRegions,
@@ -293,7 +293,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
       : [],
   );
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-force" style={{ marginTop: 10 }}>
       <div
         className="label-eyebrow"
         style={{
@@ -342,32 +342,29 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
                 const active = activePeriods.has(p.label);
                 const style = curvePeriodStyle(p.label);
                 return (
-                  <button
+                  <span
                     key={p.label}
-                    className="tag chart-period-chip"
-                    disabled={!has}
-                    onClick={() =>
-                      setActivePeriods((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(p.label)) next.delete(p.label);
-                        else next.add(p.label);
-                        return next;
-                      })
-                    }
-                    style={{
-                      background: active ? style.color : "var(--surface-1)",
-                      color: active ? style.foreground : has ? style.color : "var(--ink-faint)",
-                      border: `1px solid ${has ? style.color : "var(--border)"}`,
-                      opacity: has ? 1 : 0.4,
-                      cursor: has ? "pointer" : "default",
-                      fontFamily: "Inter, sans-serif",
-                      minHeight: 44,
-                      minWidth: 44,
-                    }}
+                    className="period-toggle-host"
+                    style={{ "--period-color": style.color } as CSSProperties}
                   >
-                    {p.label}
-                    {active && p.model?.cf != null && ` · CF ${p.model.cf.toFixed(1)}`}
-                  </button>
+                    <button
+                      className="tag chart-period-chip period-toggle"
+                      data-active={active ? "true" : "false"}
+                      data-available={has ? "true" : "false"}
+                      disabled={!has}
+                      onClick={() =>
+                        setActivePeriods((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(p.label)) next.delete(p.label);
+                          else next.add(p.label);
+                          return next;
+                        })
+                      }
+                    >
+                      {p.label}
+                      {active && p.model?.cf != null && ` · CF ${p.model.cf.toFixed(1)}`}
+                    </button>
+                  </span>
                 );
               })}
             </div>

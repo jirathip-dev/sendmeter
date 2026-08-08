@@ -108,14 +108,15 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
   return createPortal(
     <SheetLayerProvider layer="fullscreen">
       <div
-        className="fullscreen-overlay"
+        className="fullscreen-overlay phone-workout-fullscreen"
         style={{
+          "--workout-accent": accent,
           // Whole screen takes the phase color, Timer-Plus style.
           background: `color-mix(in srgb, ${accent} 12%, var(--canvas))`,
           transition: "background 0.3s",
           display: "flex",
           justifyContent: "center",
-        }}
+        } as CSSProperties}
       >
     <div
       style={{
@@ -142,9 +143,8 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
           </div>
         </div>
         <button
-          className="glass-pill"
+          className="glass-pill glass-pill-danger"
           onClick={() => dispatch({ type: "end", at: new Date().toISOString() })}
-          style={{ "--pill-tint": "var(--danger)" } as CSSProperties}
         >
           End
         </button>
@@ -152,21 +152,13 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
 
       {/* Phase banner + big timer */}
       <div
+        className="phone-workout-phase-panel"
         style={{
-          flex: 1,
-          margin: "12px 0",
-          borderRadius: 20,
-          background: `color-mix(in srgb, ${accent} 18%, var(--surface-1))`,
-          border: `1px solid color-mix(in srgb, ${accent} 45%, transparent)`,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 4,
+          "--workout-accent": accent,
           animation: restOver ? "pulse 0.8s ease-in-out infinite" : undefined,
-        }}
+        } as CSSProperties}
       >
-        <div style={{ fontFamily: "Inter, sans-serif", fontWeight: 800, letterSpacing: "0.08em", fontSize: "var(--t-lg)", color: accent }}>
+        <div className="phone-workout-phase-label">
           {climbing ? "CLIMBING" : restOver ? "REST OVER" : "RESTING"}
         </div>
         <div
@@ -181,10 +173,10 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
         >
           {climbing ? fmt(onWall) : fmt(Math.max(0, restRemaining))}
         </div>
-        <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>
+        <div className="phone-workout-metadata">
           {climbing ? "on the wall" : `rest target ${fmt(restTarget)}`}
           {" · "}
-          <span style={{ color: "var(--ink)", fontWeight: 600 }}>
+          <span className="phone-workout-metadata-count">
             {boulders} attempt{boulders === 1 ? "" : "s"}
           </span>
         </div>
@@ -195,23 +187,14 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
             {REST_TARGETS.map((s) => (
               <button
                 key={s}
+                className="rest-target-button"
+                data-selected={restTarget === s ? "true" : "false"}
                 onClick={() => {
                   setRestTarget(s);
                   localStorage.setItem(REST_KEY, String(s));
                   alertedForRef.current = null; // allow a fresh alert for the new target
                   // Lock-screen card reads the target from state — re-sync it.
                   void syncWorkoutActivity(state);
-                }}
-                style={{
-                  padding: "5px 11px",
-                  borderRadius: 999,
-                  fontFamily: "Inter, sans-serif",
-                  fontSize: "var(--t-sm)",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  border: `1px solid ${restTarget === s ? accent : "var(--border)"}`,
-                  background: restTarget === s ? `color-mix(in srgb, ${accent} 20%, transparent)` : "transparent",
-                  color: restTarget === s ? "var(--ink)" : "var(--ink-muted)",
                 }}
               >
                 {fmt(s)}
@@ -225,6 +208,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         {/* Big circular action button — ring shows rest progress */}
         <button
+          className="workout-action-button"
           onClick={() => {
             primeAudio();
             dispatch({
@@ -233,16 +217,10 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
             });
           }}
           style={{
-            position: "relative",
             // Shrinks with the viewport so it can never leave the screen on a
             // small phone (#221); pinned to the 132px design size above ~776px.
             width: clampCss(WORKOUT_ACTION_CIRCLE),
             height: clampCss(WORKOUT_ACTION_CIRCLE),
-            borderRadius: "50%",
-            border: "none",
-            background: "transparent",
-            cursor: "pointer",
-            flexShrink: 0,
           }}
         >
           {/* Sized by the button, not in px — the viewBox keeps the ring maths
@@ -263,21 +241,7 @@ export default function PhoneWorkoutFullscreen({ state, dispatch, onMinimize }: 
               />
             )}
           </svg>
-          <span
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexDirection: "column",
-              gap: 2,
-              color: accent,
-              fontFamily: "Inter, sans-serif",
-              fontWeight: 800,
-              fontSize: "var(--t-md)",
-            }}
-          >
+          <span className="workout-action-label">
             {climbing ? (
               <>
                 <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>

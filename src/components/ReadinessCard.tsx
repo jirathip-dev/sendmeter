@@ -50,7 +50,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
   if (metrics.length === 0) {
     return (
       <div
-        className={`card${onClick ? " tappable" : ""}`}
+        className={`card surface-readiness${onClick ? " tappable" : ""}`}
         onClick={onClick}
         onPointerDown={onClick ? spawnRipple : undefined}
       >
@@ -112,7 +112,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
 
   return (
     <div
-      className={`card${onClick ? " tappable" : ""}`}
+      className={`card surface-readiness${onClick ? " tappable" : ""}`}
       onClick={onClick}
       onPointerDown={onClick ? spawnRipple : undefined}
     >

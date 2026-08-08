@@ -217,25 +217,9 @@ export default function InfoDot({ topic }: { topic: InfoTopic }) {
     // bubble into the host card's onClick.
     <span style={{ display: "contents" }} onClick={(e) => e.stopPropagation()}>
       <button
+        className="info-dot-button"
         aria-label={`About: ${c.title}`}
         onClick={() => setOpen(true)}
-        style={{
-          width: 18,
-          height: 18,
-          borderRadius: "50%",
-          border: "1px solid var(--border)",
-          background: "transparent",
-          color: "var(--ink-faint)",
-          fontSize: "var(--t-xs)",
-          lineHeight: 1,
-          cursor: "pointer",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 0,
-          fontFamily: "Inter, sans-serif",
-          flexShrink: 0,
-        }}
       >
         ?
       </button>

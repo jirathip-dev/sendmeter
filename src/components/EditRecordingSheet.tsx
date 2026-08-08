@@ -91,17 +91,9 @@ export default function EditRecordingSheet({
           {recentTags.map((t) => (
             <button
               key={t}
+              className="recording-tag-option"
+              data-selected={tag === t ? "true" : "false"}
               onClick={() => setTag(t)}
-              style={{
-                padding: "4px 10px",
-                borderRadius: 999,
-                fontSize: "var(--t-xs)",
-                fontWeight: 600,
-                cursor: "pointer",
-                border: `1px solid ${tag === t ? "var(--info)" : "var(--border)"}`,
-                background: tag === t ? "rgba(123,131,235,0.12)" : "transparent",
-                color: tag === t ? "var(--ink)" : "var(--ink-muted)",
-              }}
             >
               {t}
             </button>
@@ -114,18 +106,9 @@ export default function EditRecordingSheet({
         {SIDES.map((s) => (
           <button
             key={s.value}
+            className="recording-side-option"
+            data-selected={side === s.value ? "true" : "false"}
             onClick={() => setSide(s.value)}
-            style={{
-              flex: 1,
-              padding: "9px 0",
-              borderRadius: 8,
-              fontSize: "var(--t-sm)",
-              fontWeight: 600,
-              cursor: "pointer",
-              border: `1px solid ${side === s.value ? "var(--warning)" : "var(--border)"}`,
-              background: side === s.value ? "rgba(221,177,58,0.12)" : "transparent",
-              color: side === s.value ? "var(--ink)" : "var(--ink-muted)",
-            }}
           >
             {s.label}
           </button>
@@ -146,18 +129,9 @@ export default function EditRecordingSheet({
             ).map(([v, label]) => (
               <button
                 key={v}
+                className="recording-scope-option"
+                data-selected={scope === v ? "true" : "false"}
                 onClick={() => setScope(v)}
-                style={{
-                  flex: 1,
-                  padding: "9px 0",
-                  borderRadius: 8,
-                  fontSize: "var(--t-sm)",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  border: `1px solid ${scope === v ? "var(--info)" : "var(--border)"}`,
-                  background: scope === v ? "rgba(123,131,235,0.12)" : "transparent",
-                  color: scope === v ? "var(--ink)" : "var(--ink-muted)",
-                }}
               >
                 {label}
               </button>

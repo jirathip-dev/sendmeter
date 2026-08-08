@@ -78,31 +78,19 @@ function TagGroup({
   return (
     <div style={{ marginBottom: 8 }}>
       <button
+        className="session-recording-toggle"
         onClick={() => setOpen((v) => !v)}
-        style={{
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "10px 12px",
-          borderRadius: 9,
-          border: "1px solid var(--border)",
-          background: "var(--surface-1)",
-          fontFamily: "inherit",
-          cursor: "pointer",
-          textAlign: "left",
-        }}
       >
-        <span style={{ fontSize: "var(--t-base)", fontWeight: 700, color: "var(--ink)", flex: 1 }}>
+        <span className="session-recording-tag">
           {tag || "untagged"}
         </span>
-        <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}>
+        <span className="session-recording-meta">
           {reverse.length === recs.length
             ? `${reverse.length} set${reverse.length === 1 ? "" : "s"}`
             : `${recs.length} entr${recs.length === 1 ? "y" : "ies"}`}
-          {manual.length ? ` · ${manual.length} manual` : ""}{best != null && <> · best <span style={{ color: "var(--success)", fontWeight: 700 }}>{best.toFixed(1)} kg</span></>}
+          {manual.length ? ` · ${manual.length} manual` : ""}{best != null && <> · best <span className="session-recording-best">{best.toFixed(1)} kg</span></>}
         </span>
-        <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)" }}>
+        <span className="session-recording-chevron">
           {open ? "▾" : "▸"}
         </span>
       </button>

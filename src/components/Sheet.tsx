@@ -361,7 +361,7 @@ export default function Sheet({
         }}
       >
         <div
-          className={`modal-sheet${fullHeight ? " full" : ""}`}
+          className={`modal-sheet premium-sheet${fullHeight ? " full" : ""}`}
           style={{
             transform: `translateY(${dragY}px)`,
             transition: dragY > 0 ? "none" : "transform 0.25s ease",
