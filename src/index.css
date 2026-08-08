@@ -587,6 +587,15 @@ input[type="number"] {
   padding: 16px 16px 8px;
   -webkit-overflow-scrolling: touch;
 }
+/* Sheets are body-portaled, while this is the app's real WebKit scroll root.
+   Keep the lock explicit for iOS rubber-band/pan handling as well as the
+   inline snapshot in sheetScrollLock.ts. */
+.content-area.sheet-scroll-locked {
+  overflow: hidden !important;
+  overscroll-behavior: none !important;
+  touch-action: none;
+  -webkit-overflow-scrolling: auto;
+}
 /* Only when nothing (no .topbar) precedes it — the login screen — does the
    content area itself need to clear the safe-area inset. */
 .app-shell > .content-area:first-child {

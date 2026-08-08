@@ -3,6 +3,7 @@ import { useContext, useEffect, useId, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { sheetHaptic, tapHaptic } from "../lib/haptics";
 import { wrapFocusIndex } from "../lib/sheetFocus";
+import { acquireSheetScrollLock } from "../lib/sheetScrollLock";
 import { SheetLayerContext, type SheetLayer } from "../lib/sheetLayer";
 import {
   isSheetDragExcludedTarget,
@@ -77,9 +78,6 @@ interface DragGesture {
   blocked: boolean;
 }
 
-let bodyLockCount = 0;
-let previousBodyOverflow = "";
-let previousDocumentOverflow = "";
 const sheetStack: HTMLElement[] = [];
 
 function focusableElements(root: HTMLElement): HTMLElement[] {
@@ -145,26 +143,11 @@ export default function Sheet({
     sheetHaptic();
   }, []);
 
-  // Lock both scrolling roots while any sheet is open. A count is required
-  // because session detail can open Edit Recording as a nested sheet.
+  // Lock the document and the app's actual `.content-area` scroll roots while
+  // any sheet is open. The shared acquisition count keeps nested sheets from
+  // unlocking the background when only the inner sheet closes (#515).
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    const body = document.body;
-    const documentElement = document.documentElement;
-    if (bodyLockCount === 0) {
-      previousBodyOverflow = body.style.overflow;
-      previousDocumentOverflow = documentElement.style.overflow;
-    }
-    bodyLockCount += 1;
-    body.style.overflow = "hidden";
-    documentElement.style.overflow = "hidden";
-    return () => {
-      bodyLockCount = Math.max(0, bodyLockCount - 1);
-      if (bodyLockCount === 0) {
-        body.style.overflow = previousBodyOverflow;
-        documentElement.style.overflow = previousDocumentOverflow;
-      }
-    };
+    return acquireSheetScrollLock();
   }, []);
 
   // Track the sheet stack so only the topmost nested dialog owns Escape and

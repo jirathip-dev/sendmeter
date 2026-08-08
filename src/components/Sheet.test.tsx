@@ -84,6 +84,57 @@ function dispatchPointer(
     expect(document.activeElement).toBe(dialog.querySelector(".modal-close"));
   });
 
+  it("locks the app scroll root through nested sheets and restores its prior state", async () => {
+    const appScrollRoot = document.createElement("div");
+    appScrollRoot.className = "content-area app-scroll-root";
+    appScrollRoot.style.overflowY = "auto";
+    appScrollRoot.scrollTop = 64;
+    document.body.appendChild(appScrollRoot);
+    const priorStyle = appScrollRoot.style.cssText;
+    const priorClass = appScrollRoot.className;
+
+    function Harness() {
+      const [outer, setOuter] = useState(true);
+      const [inner, setInner] = useState(false);
+      if (!outer) return null;
+      return (
+        <Sheet title="Outer" onClose={() => setOuter(false)}>
+          <button type="button" onClick={() => setInner(true)}>Open nested</button>
+          {inner && <Sheet title="Inner" onClose={() => setInner(false)}>Inner body</Sheet>}
+        </Sheet>
+      );
+    }
+
+    await render(<Harness />);
+    expect(appScrollRoot.style.overflow).toBe("hidden");
+    expect(appScrollRoot.classList.contains("sheet-scroll-locked")).toBe(true);
+
+    const opener = document.querySelector<HTMLButtonElement>("button:not(.modal-close)")!;
+    await act(async () => {
+      opener.click();
+      await Promise.resolve();
+    });
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(2);
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    expect(appScrollRoot.style.overflow).toBe("hidden");
+    expect(appScrollRoot.classList.contains("sheet-scroll-locked")).toBe(true);
+
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(appScrollRoot.style.cssText).toBe(priorStyle);
+    expect(appScrollRoot.className).toBe(priorClass);
+    expect(appScrollRoot.scrollTop).toBe(64);
+    appScrollRoot.remove();
+  });
+
   it("contains Tab focus and lets Escape dismiss the topmost dialog", async () => {
     const onClose = vi.fn();
     const dialog = await render(
