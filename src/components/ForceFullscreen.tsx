@@ -47,6 +47,7 @@ import type { GaugeTarget } from "./ForceCurveCard";
 import ReverseActionWorkDisplay from "./ReverseActionWorkDisplay";
 import ProtocolBadge from "./ProtocolBadge";
 import ConfirmDialog from "./ConfirmDialog";
+import { SheetLayerProvider } from "./Sheet";
 import {
   prescriptionForSegment,
   targetHoldSegment,
@@ -657,17 +658,18 @@ export default function ForceFullscreen({
     reverseWorking && pos ? (pos.seg as ReverseActionSegment) : null;
 
   return createPortal(
-    <div
-      className="fullscreen-overlay"
-      style={{
-        // The whole screen takes the phase color, Timer-Plus style.
-        background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 13 : 6}%, var(--canvas))`,
-        transition: "background 0.3s",
-        display: "flex",
-        justifyContent: "center",
-        overflowY: reverseWorking ? "hidden" : "auto",
-      }}
-    >
+    <SheetLayerProvider layer="fullscreen">
+      <div
+        className="fullscreen-overlay"
+        style={{
+          // The whole screen takes the phase color, Timer-Plus style.
+          background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 13 : 6}%, var(--canvas))`,
+          transition: "background 0.3s",
+          display: "flex",
+          justifyContent: "center",
+          overflowY: reverseWorking ? "hidden" : "auto",
+        }}
+      >
       <div
         style={{
           width: "100%",
@@ -1346,7 +1348,8 @@ export default function ForceFullscreen({
           )}
         </div>
       </div>
-    </div>,
+      </div>
+    </SheetLayerProvider>,
     document.body,
   );
 }

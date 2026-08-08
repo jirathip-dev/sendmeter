@@ -9,6 +9,7 @@ import {
 } from "../lib/cadenceOnlyRun";
 import type { NewTindeqRecording } from "../types";
 import ProtocolBadge from "./ProtocolBadge";
+import { SheetLayerProvider } from "./Sheet";
 
 export default function CadenceOnlyReverseActionFullscreen({
   run,
@@ -137,7 +138,7 @@ export default function CadenceOnlyReverseActionFullscreen({
     await persistDue(stoppedAt, true);
   }
 
-  return <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "var(--canvas)", padding: "max(14px, env(safe-area-inset-top)) 16px max(14px, env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 12, textAlign: "center" }}>
+  return <SheetLayerProvider layer="fullscreen"><div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "var(--canvas)", padding: "max(14px, env(safe-area-inset-top)) 16px max(14px, env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 12, textAlign: "center" }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
       <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
         <div style={{ fontWeight: 850, fontSize: "var(--t-lg)", overflowWrap: "anywhere" }}>{run.preset.name}</div>
@@ -192,5 +193,5 @@ export default function CadenceOnlyReverseActionFullscreen({
         });
       }}>{saving ? "Saving…" : "Save session"}</button>
     </div>}
-  </div>;
+  </div></SheetLayerProvider>;
 }

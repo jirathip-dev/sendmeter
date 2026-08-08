@@ -31,6 +31,7 @@ export default function ForceSetupGuide({ mode, sensor, onClose }: Props) {
       subtitle={copy.support}
       onClose={onClose}
       fullHeight
+      layer="fullscreen"
       className="force-setup-sheet"
     >
       <article className="force-setup-guide">

@@ -2,7 +2,8 @@
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import Sheet from "./Sheet";
+import Sheet, { SheetLayerProvider } from "./Sheet";
+import ConfirmDialog from "./ConfirmDialog";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,6 +37,33 @@ describe("Sheet", () => {
     });
     return document.querySelector<HTMLElement>('[role="dialog"]')!;
   }
+
+function dispatchPointer(
+  target: Element,
+  type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
+  {
+    pointerId = 1,
+    clientX = 20,
+    clientY = 100,
+    timeStamp = 0,
+  }: {
+    pointerId?: number;
+    clientX?: number;
+    clientY?: number;
+    timeStamp?: number;
+  } = {},
+) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  for (const [name, value] of Object.entries({
+    pointerId,
+    clientX,
+    clientY,
+    timeStamp,
+  })) {
+    Object.defineProperty(event, name, { configurable: true, value });
+  }
+  target.dispatchEvent(event);
+}
 
   it("renders an accessible sticky shell, locks background scroll, and focuses close", async () => {
     const dialog = await render(
@@ -78,6 +106,102 @@ describe("Sheet", () => {
 
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches the real drag and backdrop paths without stealing chart scrubs", async () => {
+    const onClose = vi.fn();
+    const dialog = await render(
+      <Sheet title="Pointer test" onClose={onClose}>
+        <button type="button">Action</button>
+      </Sheet>,
+    );
+    const top = dialog.querySelector<HTMLElement>(".modal-top")!;
+
+    await act(async () => {
+      dispatchPointer(top, "pointerdown", { clientY: 100, timeStamp: 0 });
+      dispatchPointer(top, "pointermove", { clientY: 210, timeStamp: 20 });
+      dispatchPointer(top, "pointerup", { clientY: 210, timeStamp: 20 });
+      await Promise.resolve();
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    onClose.mockClear();
+    await act(async () => {
+      dialog.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // A horizontal stream aimed at a chart-like element in the top region is
+    // deliberately excluded. This pins the target guard itself, not merely
+    // the fact that ordinary content lives below the drag region today.
+    onClose.mockClear();
+    const chart = document.createElement("div");
+    chart.className = "chart-scrub";
+    top.appendChild(chart);
+    await act(async () => {
+      dispatchPointer(chart, "pointerdown", { clientX: 10, clientY: 100, timeStamp: 40 });
+      dispatchPointer(chart, "pointermove", { clientX: 180, clientY: 105, timeStamp: 60 });
+      dispatchPointer(chart, "pointerup", { clientX: 180, clientY: 105, timeStamp: 60 });
+      await Promise.resolve();
+    });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("keeps fullscreen and nested sheets above their body-portaled opener", async () => {
+    function NestedFullscreenHarness() {
+      const [inner, setInner] = useState(false);
+      return (
+        <SheetLayerProvider layer="fullscreen">
+          <Sheet title="Force fullscreen" onClose={() => {}}>
+            <button type="button" onClick={() => setInner(true)}>
+              Open confirmation
+            </button>
+            {inner && (
+              <ConfirmDialog
+                title="Disconnect now?"
+                body="This ends the active force run."
+                confirmLabel="Disconnect"
+                onConfirm={() => setInner(false)}
+                onClose={() => setInner(false)}
+              />
+            )}
+          </Sheet>
+        </SheetLayerProvider>
+      );
+    }
+
+    await render(<NestedFullscreenHarness />);
+    const opener = document.querySelector<HTMLButtonElement>("button:not(.modal-close)")!;
+    await act(async () => {
+      opener.click();
+      await Promise.resolve();
+    });
+    const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"]')];
+    expect(dialogs).toHaveLength(2);
+    expect(dialogs.map((dialog) => dialog.dataset.sheetLayer)).toEqual([
+      "fullscreen",
+      "fullscreen",
+    ]);
+    expect(dialogs.every((dialog) => dialog.classList.contains("sheet-layer-fullscreen"))).toBe(true);
+    expect(dialogs[1]?.querySelector<HTMLElement>(".modal-close")?.style.fontFamily).toContain("Inter");
+    expect(dialogs[1]?.style.fontVariantNumeric).toBe("tabular-nums");
+    expect(dialogs[1]?.dataset.sheetTypography).toBe("inter-tabular");
+
+    // The semantic setup class is itself a safe fullscreen scope when used
+    // outside a provider, preserving the existing call-site contract.
+    await act(async () => {
+      root.unmount();
+      root = createRoot(container);
+      await Promise.resolve();
+    });
+    const setup = await render(
+      <Sheet title="How to set up" className="force-setup-sheet" onClose={() => {}}>
+        <span>Instructions</span>
+      </Sheet>,
+    );
+    expect(setup.dataset.sheetLayer).toBe("fullscreen");
+    expect(setup.classList.contains("sheet-layer-fullscreen")).toBe(true);
   });
 
   it("restores the opener and keeps required-choice sheets non-dismissible", async () => {

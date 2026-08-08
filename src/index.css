@@ -515,15 +515,25 @@ textarea.field { resize: none; }
   inset: 0;
   background: var(--overlay);
   z-index: 200;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+  font-variant-numeric: tabular-nums;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
   overflow: hidden;
 }
+/* Sheets opened from a body-portaled fullscreen surface must be in the same
+   top-level layer as that surface. The class is emitted by Sheet itself from
+   the inherited SheetLayerContext, so nested dialogs cannot regress to z-200
+   when a new call site is added. */
+.modal-bg.sheet-layer-default { z-index: 200; }
+.modal-bg.sheet-layer-fullscreen { z-index: 1300; }
 .modal-sheet {
   width: 100%;
   background: var(--canvas);
   color: var(--ink);
+  font-family: inherit;
+  font-variant-numeric: inherit;
   border-radius: 16px 16px 0 0;
   max-height: 92dvh;
   overflow: hidden;
@@ -573,13 +583,21 @@ textarea.field { resize: none; }
   padding: 0;
   background: var(--surface-1);
   color: var(--ink-muted);
-  font-family: Inter, sans-serif;
+  font-family: inherit;
+  font-variant-numeric: inherit;
   font-size: 26px;
   line-height: 1;
   cursor: pointer;
   touch-action: manipulation;
 }
 .modal-close:active { color: var(--ink); background: var(--surface-2); }
+.modal-sheet button,
+.modal-sheet input,
+.modal-sheet select,
+.modal-sheet textarea {
+  font-family: inherit;
+  font-variant-numeric: inherit;
+}
 .modal-content {
   min-height: 0;
   overflow-y: auto;
@@ -606,7 +624,9 @@ textarea.field { resize: none; }
 
 /* Protocol-specific Force setup guidance (#401, simplified by #430). Its
    code-native diagrams and copy stay available offline. */
-.modal-bg.force-setup-sheet { z-index: 1000; }
+/* Kept as a semantic hook for ForceSetupGuide; Sheet resolves this class to
+   the fullscreen layer even when it is rendered outside a provider. */
+.modal-bg.force-setup-sheet { z-index: 1300; }
 
 .force-setup-guide { max-width: 680px; margin: 0 auto; }
 .force-setup-guide-body { padding: 4px 2px 18px; }

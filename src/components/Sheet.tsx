@@ -1,8 +1,9 @@
 import { createPortal } from "react-dom";
-import { useEffect, useId, useRef, useState } from "react";
+import { useContext, useEffect, useId, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { sheetHaptic, tapHaptic } from "../lib/haptics";
 import { wrapFocusIndex } from "../lib/sheetFocus";
+import { SheetLayerContext, type SheetLayer } from "../lib/sheetLayer";
 import {
   isSheetDragExcludedTarget,
   shouldDismissSheetGesture,
@@ -23,12 +24,38 @@ export interface SheetProps {
   closeLabel?: string;
   /// Fix the sheet to full screen height instead of hugging its content.
   fullHeight?: boolean;
+  /// Place this sheet above a body-portaled fullscreen surface. When omitted,
+  /// a sheet inherits the nearest SheetLayerProvider, so dialogs opened from a
+  /// fullscreen flow cannot accidentally fall behind their opener.
+  layer?: SheetLayer;
   /// Optional scope for sheets that must sit above another fixed surface.
   className?: string;
   children: ReactNode;
 }
 
+/**
+ * Fullscreen surfaces render through their own body portal. React context is
+ * retained across portals, which lets every nested Sheet (including a
+ * ConfirmDialog) inherit the surface's stacking scope without requiring each
+ * call site to remember a z-index class.
+ */
+export function SheetLayerProvider({
+  layer,
+  children,
+}: {
+  layer: SheetLayer;
+  children: ReactNode;
+}) {
+  return (
+    <SheetLayerContext.Provider value={layer}>
+      {children}
+    </SheetLayerContext.Provider>
+  );
+}
+
 const FLICK_SAMPLE_MAX_AGE_MS = 100;
+const SHEET_FONT_STACK = "Inter, -apple-system, BlinkMacSystemFont, sans-serif";
+const SHEET_FONT_VARIANT = "tabular-nums";
 const FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "[href]",
@@ -88,9 +115,22 @@ export default function Sheet({
   ariaLabel,
   closeLabel,
   fullHeight,
+  layer,
   className,
   children,
 }: SheetProps) {
+  const inheritedLayer = useContext(SheetLayerContext);
+  const classTokens = className?.split(/\s+/).filter(Boolean) ?? [];
+  // Keep the established class name useful on its own, while allowing an
+  // explicit prop and the nearest fullscreen provider to handle every other
+  // nested path. This means a future setup sheet cannot regress by omitting a
+  // second, manually-maintained z-index declaration.
+  const resolvedLayer =
+    layer ??
+    (classTokens.includes("force-setup-sheet")
+      ? "fullscreen"
+      : inheritedLayer ?? "default");
+  const layerClass = `sheet-layer-${resolvedLayer}`;
   const [dragY, setDragY] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -297,64 +337,76 @@ export default function Sheet({
   }
 
   const sheet = (
-    <div
-      ref={rootRef}
-      className={`modal-bg${className ? ` ${className}` : ""}`}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={title ? titleId : undefined}
-      aria-label={dialogLabel}
-      data-haptic="off"
-      tabIndex={-1}
-      onClick={(event) => {
-        event.stopPropagation();
-        if (event.target !== event.currentTarget || !onClose) return;
-        tapHaptic();
-        onClose();
-      }}
-    >
+    <SheetLayerContext.Provider value={resolvedLayer}>
       <div
-        className={`modal-sheet${fullHeight ? " full" : ""}`}
+        ref={rootRef}
+        className={`modal-bg ${layerClass}${className ? ` ${className}` : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={title ? titleId : undefined}
+        aria-label={dialogLabel}
+        data-haptic="off"
+        data-sheet-layer={resolvedLayer}
+        data-sheet-typography="inter-tabular"
+        tabIndex={-1}
         style={{
-          transform: `translateY(${dragY}px)`,
-          transition: dragY > 0 ? "none" : "transform 0.25s ease",
+          fontFamily: SHEET_FONT_STACK,
+          fontVariantNumeric: SHEET_FONT_VARIANT,
+        }}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (event.target !== event.currentTarget || !onClose) return;
+          tapHaptic();
+          onClose();
         }}
       >
         <div
-          className="modal-top"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={(event) => finishDrag(event, false)}
-          onPointerCancel={(event) => finishDrag(event, true)}
+          className={`modal-sheet${fullHeight ? " full" : ""}`}
+          style={{
+            transform: `translateY(${dragY}px)`,
+            transition: dragY > 0 ? "none" : "transform 0.25s ease",
+          }}
         >
-          <div className="modal-handle" aria-hidden="true" />
-          <div className="modal-top-row">
-            {title ? (
-              <div className="modal-heading">
-                <h2 id={titleId} className="modal-title">
-                  {title}
-                </h2>
-                {subtitle && <div className="modal-subtitle">{subtitle}</div>}
-              </div>
-            ) : (
-              <span className="modal-title-spacer" aria-hidden="true" />
-            )}
-            {onClose && (
-              <button
-                ref={closeRef}
-                type="button"
-                className="modal-close"
-                aria-label={closeLabel ?? (title ? `Close ${title}` : "Close dialog")}
-                onClick={onClose}
-              >
-                ×
-              </button>
-            )}
+          <div
+            className="modal-top"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={(event) => finishDrag(event, false)}
+            onPointerCancel={(event) => finishDrag(event, true)}
+          >
+            <div className="modal-handle" aria-hidden="true" />
+            <div className="modal-top-row">
+              {title ? (
+                <div className="modal-heading">
+                  <h2 id={titleId} className="modal-title">
+                    {title}
+                  </h2>
+                  {subtitle && <div className="modal-subtitle">{subtitle}</div>}
+                </div>
+              ) : (
+                <span className="modal-title-spacer" aria-hidden="true" />
+              )}
+              {onClose && (
+                <button
+                  ref={closeRef}
+                  type="button"
+                  className="modal-close"
+                  aria-label={closeLabel ?? (title ? `Close ${title}` : "Close dialog")}
+                  style={{
+                    fontFamily: SHEET_FONT_STACK,
+                    fontVariantNumeric: SHEET_FONT_VARIANT,
+                  }}
+                  onClick={onClose}
+                >
+                  ×
+                </button>
+              )}
+            </div>
           </div>
+          <div className="modal-content">{children}</div>
         </div>
-        <div className="modal-content">{children}</div>
       </div>
-    </div>
+    </SheetLayerContext.Provider>
   );
 
   // Static markup tests and any non-DOM render keep the sheet in place. In a

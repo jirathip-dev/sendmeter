@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ProtocolSegment } from "../lib/protocol";
+import { SheetLayerProvider } from "./Sheet";
 import {
   confirmManualHold,
   canFailManualHold,
@@ -107,7 +108,8 @@ export default function ManualForceFullscreen({
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "var(--canvas)", padding: 20, overflowY: "auto" }}>
+    <SheetLayerProvider layer="fullscreen">
+      <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "var(--canvas)", padding: 20, overflowY: "auto" }}>
       <div style={{ maxWidth: 620, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button className="header-btn" disabled={saving} onClick={onCancel}>Cancel</button>
@@ -168,6 +170,7 @@ export default function ManualForceFullscreen({
           {timeline.filter((s) => s.phase === "hold").map((s, i) => <div key={`${s.set}-${s.rep}-${s.side}-${i}`} style={{ padding: "5px 0", color: state.status !== "finished" && timeline.indexOf(s) === state.index ? "var(--primary)" : "var(--ink-muted)" }}>Set {s.set} · Rep {s.rep}{s.side ? ` · ${s.side}` : ""} · {s.durS}s{targetKg(s.set) != null ? ` · ${targetKg(s.set)!.toFixed(1)} kg` : ""}</div>)}
         </div>
       </div>
-    </div>
+      </div>
+    </SheetLayerProvider>
   );
 }
