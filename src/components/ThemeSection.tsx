@@ -48,7 +48,9 @@ export default function ThemeSection() {
         {OPTIONS.map((o) => (
           <button
             key={o.value}
+            type="button"
             className={`theme-option${choice === o.value ? " selected" : ""}`}
+            aria-pressed={choice === o.value}
             onClick={() => select(o.value)}
           >
             {o.label}

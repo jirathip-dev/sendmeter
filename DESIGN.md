@@ -42,8 +42,9 @@ the one exception; they can't resolve CSS vars, so charts use literal hex).
 | `--ink` | `#182131` | `#F0F4FC` | Primary text |
 | `--ink-muted` | `#647087` | `#A6B2C7` | Labels, secondary text |
 | `--ink-faint` | `#8B96AA` | `#7F8CA5` | Tertiary/metadata, axis text |
-| `--primary` | `#5B5FC7` | `#5B5FC7` | CTAs, live force trace, active state, data series |
-| `--primary-hover` | `#4A4EB3` | `#858BEF` | Hover state |
+| `--primary` | `#5B5FC7` | `#7378E2` | Interaction accent, live force trace, active state, data series |
+| `--primary-action*` | `#4E53B9` → `#6A6E9F` | `#565BC1` → `#656999` | WCAG-AA-safe primary button fills (normal → disabled) |
+| `--primary-hover` | `#4A4EB3` | `#858BEF` | Decorative hover accent |
 | `--primary-accent` | `#4E53B9` | `#A3A8FF` | Primary used as text/underline (readable on the theme bg) |
 | `--info` | `#5964B7` | `#8A95EE` | Tags, secondary data series |
 | `--success` | `#1674BE` | `#58B8FF` | Readiness *Push*, optimal ACWR, in-zone force, positive deltas (electric blue) |
@@ -111,8 +112,9 @@ one place:
   `.surface-load`, `.surface-force`, `.surface-workout`) and layered
   `var(--shadow-card)`. The gradient stays at the edge of the hierarchy; values
   remain solid, highest-contrast content.
-- **Buttons**: `.btn-primary` = purple interaction gradient, white text,
-  tactile pressed/disabled states; `.btn-ghost` is a raised theme control.
+- **Buttons**: `.btn-primary` = a WCAG-AA-safe purple action gradient with
+  white text, tactile pressed/disabled states; `.btn-ghost` is a raised theme
+  control.
   `.btn-ghost` on chrome = chrome-border + chrome-ink; inside cards it
   inherits a light variant (`.card .btn-ghost`, `.modal-sheet .btn-ghost`).
 - **Modals**: theme-aware document panels (`.modal-sheet`) with a raised sheet
@@ -147,7 +149,8 @@ one place:
 - `--ink` on white: 17:1 (AAA). `--ink-muted` on white: 5.1:1 (AA).
 - `--primary` on white: 5.4:1 (AA) — safe for text links and labels.
 - On-chrome text uses `--chrome-ink` (13.9:1) / `--chrome-ink-muted` (7.0:1).
-- Focus: 2px `--primary` outline, 2px offset.
+- Focus: 2px `--focus-ring` outline, 3px offset; forced-colors uses native
+  Highlight/HighlightText for selected theme and focus state.
 - Touch targets ≥ 44px on interactive rows and nav.
 - Reduced motion: no animated transitions; live gauge still updates values
   (data updates are content, not decoration).

@@ -381,7 +381,7 @@ export default function HistoryView({
   ].sort((a, b) => b.sortKey.localeCompare(a.sortKey));
 
   return (
-    <div className="history-view">
+    <div className="history-view surface-history">
       <div
         style={{
           display: "flex",

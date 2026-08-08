@@ -41,9 +41,9 @@ export default function PhoneWorkoutCard({
           className="btn-primary"
           // #222: one timer at a time. Kept clickable while blocked (rather
           // than `disabled`) so the tap names the reason instead of doing
-          // nothing — the aria-disabled + dimming carry the "off" state.
+          // nothing — the aria-disabled state and semantic fill carry the
+          // "off" state.
           aria-disabled={blockedReason ? true : undefined}
-          style={blockedReason ? { opacity: 0.5 } : undefined}
           onClick={() => {
             if (blockedReason) {
               toast(blockedReason, "info");

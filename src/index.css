@@ -79,6 +79,18 @@
   --primary: #5B5FC7;
   --primary-hover: #4A4EB3;
   --primary-accent: #4E53B9; /* primary used as text/underline */
+  /* Action fills are deliberately darker than the decorative interaction
+     accent so white 13px labels stay above the WCAG AA 4.5:1 threshold even
+     at the lightest point of the button gradient. */
+  --primary-action: #4E53B9;
+  --primary-action-shade: #4549A8;
+  --primary-action-hover: #4449A8;
+  --primary-action-hover-shade: #3A3E97;
+  --primary-action-active: #3D429A;
+  --primary-action-active-shade: #343987;
+  --primary-action-disabled: #6A6E9F;
+  --primary-action-disabled-shade: #5D6193;
+  --primary-action-text: #FFFFFF;
   --info: #5964B7;
   /* Health scale, "cool = good": electric-blue = optimal, yellow = caution,
      orange = alert/high. No red or green anywhere — violet is interaction. */
@@ -159,6 +171,15 @@
   --primary: #7378E2;
   --primary-hover: #858BEF;
   --primary-accent: #A3A8FF;
+  --primary-action: #565BC1;
+  --primary-action-shade: #4B51B2;
+  --primary-action-hover: #6268D0;
+  --primary-action-hover-shade: #575DBF;
+  --primary-action-active: #4C52B6;
+  --primary-action-active-shade: #454BA8;
+  --primary-action-disabled: #656999;
+  --primary-action-disabled-shade: #5B5F90;
+  --primary-action-text: #FFFFFF;
   /* Health scale, brighter for dark surfaces */
   --success: #58B8FF;
   --warning: #F0C957;
@@ -208,6 +229,15 @@
     --primary: #7378E2;
     --primary-hover: #858BEF;
     --primary-accent: #A3A8FF;
+    --primary-action: #565BC1;
+    --primary-action-shade: #4B51B2;
+    --primary-action-hover: #6268D0;
+    --primary-action-hover-shade: #575DBF;
+    --primary-action-active: #4C52B6;
+    --primary-action-active-shade: #454BA8;
+    --primary-action-disabled: #656999;
+    --primary-action-disabled-shade: #5B5F90;
+    --primary-action-text: #FFFFFF;
     --success: #58B8FF;
     --warning: #F0C957;
     --danger: #F18A50;
@@ -510,6 +540,7 @@ input[type="number"] {
 .card.tappable:active { transform: scale(0.995); box-shadow: var(--shadow-sm); }
 .surface-context { --card-gradient: var(--gradient-interaction); }
 .surface-readiness { --card-gradient: var(--gradient-readiness); }
+.surface-caution { --card-gradient: var(--gradient-caution); }
 .surface-load { --card-gradient: var(--gradient-load); }
 .surface-force { --card-gradient: var(--gradient-force); }
 .surface-workout { --card-gradient: var(--gradient-interaction); }
@@ -531,11 +562,6 @@ input[type="number"] {
 }
 .force-connection-card:hover { box-shadow: var(--shadow-sm); }
 .force-connection-card:active { transform: scale(0.997); }
-.metric-value { font-variant-numeric: tabular-nums; letter-spacing: -0.045em; font-weight: 800; }
-.metric-value.readiness { color: var(--accent-readiness); }
-.metric-value.load { color: var(--accent-load); }
-.metric-value.force { color: var(--accent-force); }
-.metric-value.interaction { color: var(--accent-interaction); }
 .filter-chip {
   flex: 0 0 auto;
   min-height: 34px;
@@ -576,19 +602,36 @@ input[type="number"] {
 
 /* Buttons */
 .btn-primary {
-  background: var(--primary); color: #ffffff; border: 1px solid color-mix(in srgb, var(--primary) 72%, #10152a);
-  background-image: linear-gradient(135deg, color-mix(in srgb, var(--primary) 96%, white), var(--primary));
+  background: var(--primary-action); color: var(--primary-action-text); border: 1px solid var(--primary-action-shade);
+  background-image: linear-gradient(135deg, var(--primary-action), var(--primary-action-shade));
   padding: 14px 20px; border-radius: var(--radius-control); width: 100%;
   font-family: inherit; font-size: var(--t-base);
   font-weight: 600; letter-spacing: 0.02em; cursor: pointer;
-  box-shadow: 0 5px 12px color-mix(in srgb, var(--primary) 24%, transparent), inset 0 1px 0 rgba(255,255,255,0.24);
+  box-shadow: 0 5px 12px color-mix(in srgb, var(--primary-action) 24%, transparent), inset 0 1px 0 rgba(255,255,255,0.24);
   transition: transform var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
   -webkit-tap-highlight-color: transparent;
 }
-.btn-primary:hover:not(:disabled) { background: var(--primary-hover); background-image: linear-gradient(135deg, color-mix(in srgb, var(--primary-hover) 96%, white), var(--primary-hover)); box-shadow: 0 7px 16px color-mix(in srgb, var(--primary) 30%, transparent), inset 0 1px 0 rgba(255,255,255,0.26); }
-.btn-primary:active:not(:disabled) { transform: translateY(1px) scale(0.992); box-shadow: 0 2px 7px color-mix(in srgb, var(--primary) 20%, transparent), inset 0 1px 0 rgba(255,255,255,0.2); }
-.btn-primary:disabled { opacity: 0.5; cursor: default; }
-.btn-primary[aria-disabled="true"] { opacity: 0.5; }
+.btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--primary-action-hover);
+  background-image: linear-gradient(135deg, var(--primary-action-hover), var(--primary-action-hover-shade));
+  box-shadow: 0 7px 16px color-mix(in srgb, var(--primary-action-hover) 30%, transparent), inset 0 1px 0 rgba(255,255,255,0.26);
+}
+.btn-primary:active:not(:disabled):not([aria-disabled="true"]) {
+  background: var(--primary-action-active);
+  background-image: linear-gradient(135deg, var(--primary-action-active), var(--primary-action-active-shade));
+  transform: translateY(1px) scale(0.992);
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--primary-action-active) 20%, transparent), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"] {
+  background: var(--primary-action-disabled);
+  background-image: linear-gradient(135deg, var(--primary-action-disabled), var(--primary-action-disabled-shade));
+  border-color: var(--primary-action-disabled-shade);
+  color: var(--primary-action-text);
+  opacity: 1;
+  cursor: default;
+  box-shadow: var(--shadow-xs);
+}
 .btn-ghost {
   background: var(--canvas-raised); border: 1px solid var(--border); color: var(--ink-muted);
   padding: 13px 20px; border-radius: var(--radius-control); width: 100%;
@@ -658,7 +701,7 @@ textarea.field { resize: none; }
 .acwr-track { height: 10px; background: var(--surface-2); border-radius: 5px; overflow: visible; position: relative; margin: 12px 0 6px; }
 
 /* Session row */
-.session-row { display: flex; align-items: center; gap: 12px; padding: 13px 14px; background: var(--canvas); background-image: var(--gradient-neutral); color: var(--ink); border: 1px solid var(--card-border); border-radius: var(--radius-control); box-shadow: var(--shadow-card); margin-bottom: 8px; transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface); }
+.session-row { display: flex; align-items: center; gap: 12px; padding: 13px 14px; background: var(--canvas); background-image: var(--card-gradient, var(--gradient-neutral)); color: var(--ink); border: 1px solid var(--card-border); border-radius: var(--radius-control); box-shadow: var(--shadow-card); margin-bottom: 8px; transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface); }
 .session-row:hover { border-color: color-mix(in srgb, var(--accent-interaction) 18%, var(--card-border)); }
 .session-row:active { transform: scale(0.997); box-shadow: var(--shadow-sm); }
 .session-phase-bar { width: 3px; height: 38px; border-radius: 2px; flex-shrink: 0; }
@@ -739,7 +782,8 @@ textarea.field { resize: none; }
 
 /* User preference takes precedence over the decorative material treatment. */
 @media (prefers-contrast: more) {
-  :root {
+  :root,
+  :root[data-theme="light"] {
     --card-border: rgba(35,48,72,0.24);
     --chrome-border: rgba(35,48,72,0.3);
     --hairline: #CAD2E0;
@@ -750,6 +794,37 @@ textarea.field { resize: none; }
     --hairline: #52617A;
   }
   .card::before, .nav-item.active::before { opacity: 0.72; }
+}
+
+/* The system-dark theme is selected by a higher-specificity selector than
+   the light contrast defaults above. Keep that relationship explicit so a
+   user who requests both dark mode and stronger contrast receives the dark
+   borders regardless of whether the theme is explicit or OS-driven. */
+@media (prefers-contrast: more) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --card-border: rgba(231,239,255,0.3);
+    --chrome-border: rgba(231,239,255,0.34);
+    --hairline: #52617A;
+  }
+}
+
+/* Windows High Contrast / forced-colors users need a non-tint cue for the
+   selected appearance option, plus a focus ring that survives native color
+   substitution. */
+@media (forced-colors: active) {
+  .theme-option {
+    color: ButtonText;
+  }
+  .theme-option.selected {
+    background: Highlight;
+    border: 1px solid Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .theme-option:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 3px;
+  }
 }
 
 /* Protocol-specific Force setup guidance (#401, simplified by #430). Its
