@@ -28,9 +28,16 @@ import SwiftUI
 /// never swallowed" failure the notices exist to prevent. `LossNotice` below
 /// queues whatever `onAppear` consumed and a single `.alert` presents them
 /// one at a time, advancing on dismiss.
-enum LossNotice {
+enum LossNotice: Equatable {
     case gaugeSession
     case recording
+    /// #491 review R1: NOT a loss, despite the enum's name (kept for the
+    /// queue-of-one-alerts mechanism it rides) — the new rep was saved, and
+    /// an older recording the server had permanently rejected gave up its
+    /// stored force curve to make room. Must never reuse the loss copy:
+    /// telling a user a rep "is gone" when it is safely on disk is #264's
+    /// dishonesty mirrored.
+    case quarantineTrim
 
     /// #495 R4: `onAppear` used to ASSIGN the freshly consumed notices over
     /// `lossQueue` — if an earlier notice was still waiting (its alert was
@@ -45,13 +52,18 @@ enum LossNotice {
     /// anyway, and presenting it twice would claim two events we cannot
     /// actually distinguish.
     static func merged(existing: [LossNotice], consumed: [LossNotice]) -> [LossNotice] {
-        existing + consumed.filter { !existing.contains($0) }
+        var merged = existing
+        for notice in consumed where !merged.contains(notice) {
+            merged.append(notice)
+        }
+        return merged
     }
 
     var title: String {
         switch self {
         case .gaugeSession: return "Force session not saved"
         case .recording: return "A force rep was lost"
+        case .quarantineTrim: return "Made room for your new rep"
         }
     }
 
@@ -61,6 +73,8 @@ enum LossNotice {
             return "Your force recordings may appear ungrouped in History. Create a session for them on your phone."
         case .recording:
             return "A recording couldn't be saved to your watch or uploaded. It's gone — the rest of your session is unaffected."
+        case .quarantineTrim:
+            return "Your new rep was saved. Storage was full, so an older recording the server kept rejecting gave up its stored force curve — its summary numbers remain."
         }
     }
 }
@@ -106,6 +120,8 @@ struct HomeView: View {
             var consumed: [LossNotice] = []
             if GaugeSessionLossNotice.consume() { consumed.append(.gaugeSession) }
             if RecordingLossNotice.consume() { consumed.append(.recording) }
+            // Real losses first; the not-a-loss trim notice (#491 R1) last.
+            if QuarantineTrimNotice.consume() { consumed.append(.quarantineTrim) }
             // #495 R4: MERGE onto whatever is still waiting (see
             // `LossNotice.merged`) — assigning here dropped an un-presented
             // notice — and re-present whenever the queue is non-empty, even

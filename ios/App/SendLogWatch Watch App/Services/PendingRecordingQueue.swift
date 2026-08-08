@@ -26,8 +26,12 @@ struct RepoRecordingUploader: TindeqRecordingUploading {
 /// The production `EvictionReporting`: an evicted file was a queued, unsynced
 /// force recording, so its loss surfaces through the same durable one-shot
 /// notice the `.lost` enqueue path uses (#486 re-review R2, CLAUDE.md #264).
+/// A payload reclaim is a DIFFERENT, non-loss fact and gets its own notice
+/// (#491 review R1) — see `QuarantineTrimNotice` for why the two must never
+/// share copy.
 struct RecordingLossEvictionReporter: EvictionReporting {
     func recordEviction() { RecordingLossNotice.record() }
+    func recordPayloadReclaim() { QuarantineTrimNotice.record() }
 }
 
 /// Persist-first queue for individual Tindeq force recordings (#486):

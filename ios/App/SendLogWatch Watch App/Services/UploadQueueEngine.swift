@@ -52,14 +52,24 @@ struct RealQueueFileIO: QueueFileIO {
     }
 }
 
-/// The #264 reporting seam for the eviction path: destroying a queued entry
-/// to make room is a real loss and must surface (a durable one-shot notice —
-/// `RecordingLossNotice` in production), never pass as housekeeping. A
-/// protocol rather than a bare closure for the same cross-target isolation
-/// reason as `RetryAction` (see OfflineQueueSeams.swift): tests in
-/// `SendLogWatchTests` supply a recording stub.
+/// The #264 reporting seam for the eviction path's two DISTINCT outcomes —
+/// distinct because they must say different, true things to the user (#491
+/// review R1). A protocol rather than bare closures for the same
+/// cross-target isolation reason as `RetryAction` (see
+/// OfflineQueueSeams.swift): tests in `SendLogWatchTests` supply a recording
+/// stub.
 protocol EvictionReporting: Sendable {
+    /// A whole pending (never-rejected, unsynced) entry was destroyed to
+    /// make room — a real loss (`RecordingLossNotice` in production), never
+    /// housekeeping.
     func recordEviction()
+    /// #491 review R1: a quarantined record gave up its heavy payload so a
+    /// new entry could be saved. NOT a lost rep — the new entry WAS saved
+    /// and the old record survives with its summary — so this must never
+    /// reuse the loss copy: telling the user a rep "is gone" when it is
+    /// safely on disk is #264's dishonesty mirrored.
+    /// (`QuarantineTrimNotice` in production.)
+    func recordPayloadReclaim()
 }
 
 /// A quarantined item's on-disk record (#475, generalized by #491) — written
@@ -158,6 +168,18 @@ protocol QueueDepthReporting: Sendable {
 /// uploader and a scratch directory so the real `drainPass` control flow —
 /// not a reimplementation of it — is what gets exercised.
 actor UploadQueueEngine<Item: QueueUploadItem> {
+    /// The persist result carries the one side effect that cannot be reported
+    /// at the moment it happens: a quarantine payload may be reclaimed before
+    /// the new item's write gets its final answer. `QuarantineTrimNotice`
+    /// promises that the new rep is safe, so `enqueue` reports this bit only
+    /// after the new item is either on disk or uploaded by the direct
+    /// fallback. Whole pending-file evictions remain reportable immediately:
+    /// those entries are gone regardless of the new write's outcome.
+    private struct PersistResult {
+        let persisted: Bool
+        let payloadReclaimed: Bool
+    }
+
     /// Which `PendingSyncCache` slot this queue publishes to (#21).
     private let slot: PendingSyncQueue
     private let directoryName: String
@@ -335,6 +357,8 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// in the background (the queue retries until it lands). If persistence
     /// fails, keep the in-memory value alive long enough to attempt the
     /// idempotent upload directly; only failure of both paths is `.lost`.
+    /// A payload reclaim is reported only after one of those safe outcomes,
+    /// because its notice explicitly tells the user the new rep was saved.
     func enqueue(_ item: Item) async -> QueuePersistOutcome {
         var item = item
         // Stamp which account is signed in right now (issue #158) — the
@@ -342,13 +366,16 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         // Keychain cache (#265). Checked back in drain().
         item.enqueuedUserId = WatchSessionStore.shared.userId
 
-        switch PendingQueuePolicy.actionAfterPersist(persist(item)) {
+        let persistResult = persist(item)
+        switch PendingQueuePolicy.actionAfterPersist(persistResult.persisted) {
         case .drainQueued:
+            recordPayloadReclaimIfNeeded(persistResult)
             Task { await drain() }
             return .queued
         case .uploadDirect:
             do {
                 try await upload(item)
+                recordPayloadReclaimIfNeeded(persistResult)
                 return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: true)
             } catch {
                 return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: false)
@@ -359,31 +386,36 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// #486 review F5: encoding failure is a programmer error no eviction can
     /// fix, so it's kept out of the eviction loop — only the actual disk
     /// WRITE gets the eviction treatment (when this queue opted into it).
-    private func persist(_ item: Item) -> Bool {
+    private func persist(_ item: Item) -> PersistResult {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let url = pendingDir.appendingPathComponent("\(item.queueFileId.uuidString).json")
-        let persisted: Bool
+        let result: PersistResult
         if let data = try? encoder.encode(item) {
-            persisted = write(data, to: url)
+            result = write(data, to: url)
         } else {
-            persisted = false
+            result = PersistResult(persisted: false, payloadReclaimed: false)
         }
         _ = pendingCount() // refresh the reported depth (#21)
         Task { @MainActor in WatchBuild.reportQueueStatus() }
-        return persisted
+        return result
     }
 
-    private func write(_ data: Data, to url: URL) -> Bool {
+    private func write(_ data: Data, to url: URL) -> PersistResult {
         guard evictsOldestOnRefusedWrite else {
             do {
                 try fileIO.write(data, to: url)
-                return true
+                return PersistResult(persisted: true, payloadReclaimed: false)
             } catch {
-                return false
+                return PersistResult(persisted: false, payloadReclaimed: false)
             }
         }
         return writeWithEviction(data, to: url)
+    }
+
+    private func recordPayloadReclaimIfNeeded(_ result: PersistResult) {
+        guard result.payloadReclaimed else { return }
+        evictionReporter?.recordPayloadReclaim()
     }
 
     /// #486 review F5: a refused write (disk full) is retried after dropping
@@ -410,7 +442,7 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// file's deletion stays reserved for user sign-out (#273), and the
     /// evicted item's `.retry` ledger goes with it (metadata about a file
     /// that no longer exists).
-    private func writeWithEviction(_ data: Data, to url: URL) -> Bool {
+    private func writeWithEviction(_ data: Data, to url: URL) -> PersistResult {
         let directoryContents = ((try? FileManager.default.contentsOfDirectory(
             at: pendingDir, includingPropertiesForKeys: nil
         )) ?? [])
@@ -421,6 +453,12 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         let quarantineFileCount = directoryContents
             .filter { $0.pathExtension == quarantineExtension }.count
 
+        // Counted per stage because the two must be reported DIFFERENTLY
+        // (#491 review R1): an evicted pending file is a genuinely lost
+        // entry; a reclaimed quarantine payload is not — its entry survives
+        // and the new one was saved.
+        var pendingEvictions = 0
+        var payloadReclaims = 0
         let result = EvictingWrite.run(
             maxEvictions: otherFileCount + quarantineFileCount,
             write: { try fileIO.write(data, to: url) },
@@ -431,6 +469,7 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
                         try? self.fileIO.removeItem(
                             at: oldest.deletingPathExtension().appendingPathExtension(self.retryLedgerExtension)
                         )
+                        pendingEvictions += 1
                         return .evicted
                     } catch {
                         return .evictionRefused
@@ -445,15 +484,19 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
                 // so #273 ("only sign-out deletes a quarantined item")
                 // holds; only its buffer is sacrificed, and only at the
                 // moment it would otherwise cost data the user just
-                // produced. Reported through the same loss notice as an
-                // eviction, because it is one.
-                return self.reclaimOldestHeavyQuarantinePayload()
+                // produced.
+                let outcome = self.reclaimOldestHeavyQuarantinePayload()
+                if outcome == .evicted { payloadReclaims += 1 }
+                return outcome
             }
         )
-        if result.evictedCount > 0 {
+        if pendingEvictions > 0 {
             evictionReporter?.recordEviction()
         }
-        return result.persisted
+        return PersistResult(
+            persisted: result.persisted,
+            payloadReclaimed: payloadReclaims > 0
+        )
     }
 
     /// The disk-full last resort behind `writeWithEviction` (#491 review

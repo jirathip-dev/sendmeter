@@ -417,7 +417,11 @@ final class PendingRecordingQueueTests: XCTestCase {
     /// next appearance (#486 re-review R2 / CLAUDE.md #264).
     func testEvictionRecordsTheDurableRecordingLossNotice() async throws {
         _ = RecordingLossNotice.consume() // start from a clean flag
-        defer { _ = RecordingLossNotice.consume() } // never leak state to other tests
+        _ = QuarantineTrimNotice.consume()
+        defer {
+            _ = RecordingLossNotice.consume()
+            _ = QuarantineTrimNotice.consume()
+        } // never leak state to other tests
         let oldest = UUID()
         try writeFile(makePending(id: oldest, enqueuedUserId: testUserId), createdAt: Date())
         let queue = PendingRecordingQueue(
@@ -432,6 +436,7 @@ final class PendingRecordingQueueTests: XCTestCase {
         _ = await queue.enqueue(makePending(id: UUID(), enqueuedUserId: testUserId))
 
         XCTAssertTrue(RecordingLossNotice.consume(), "an evicted recording is a real loss and must set the durable notice")
+        XCTAssertFalse(QuarantineTrimNotice.consume(), "whole-entry eviction must not emit the payload-trim notice")
     }
 
     /// #491: recordings now carry per-item `.retry` ledgers, so evicting a
@@ -591,7 +596,111 @@ final class PendingRecordingQueueTests: XCTestCase {
         XCTAssertEqual(untouched.item.row.samples.count, heavySamples.count, "only as many payloads are reclaimed as the write actually needs")
         XCTAssertNil(untouched.payloadDropped)
 
-        XCTAssertEqual(reporter.count, 1, "a reclaimed payload is a real loss and reports like an eviction (#264)")
+        // #491 R1: a reclaim is reported — but as a TRIM, never as a lost
+        // rep: the new rep was saved (asserted above), so the loss copy
+        // would be false.
+        XCTAssertEqual(reporter.reclaimCount, 1, "the trimmed curve is reported exactly once")
+        XCTAssertEqual(reporter.count, 0, "no rep was lost, so the loss notice must not fire")
+    }
+
+    /// A persist that both evicts a whole pending recording AND trims a
+    /// quarantined one reports both facts — they are different events with
+    /// different truths, not one generic "something was destroyed".
+    func testAMixedEvictionAndReclaimReportsBothFactsSeparately() async throws {
+        let heavySamples: [[Double]] = (0..<200).map { [Double($0) * 10, 30 + Double($0 % 7)] }
+        let pendingVictim = UUID()
+        let quarantined = UUID()
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(makePending(id: pendingVictim, enqueuedUserId: testUserId), createdAt: base)
+        try writeQuarantineRecord(id: quarantined, samples: heavySamples, createdAt: base)
+
+        let fileIO = ScriptedFileIO(refuseWrites: 2, refuseOnlyPathExtension: "json")
+        let reporter = CountingEvictionReporter()
+        let uploader = ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet))
+        let queue = makeQueue(uploader: uploader, fileIO: fileIO, evictionReporter: reporter)
+
+        let incoming = UUID()
+        let outcome = await queue.enqueue(makePending(id: incoming, enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .queued)
+        XCTAssertFalse(try filesOnDisk().contains("\(pendingVictim.uuidString).json"), "the pending file went first")
+        XCTAssertEqual(try readQuarantineRecord(id: quarantined).payloadDropped, true, "then the quarantine payload")
+        XCTAssertEqual(reporter.count, 1, "the destroyed pending recording is a real loss")
+        XCTAssertEqual(reporter.reclaimCount, 1, "the trimmed quarantine payload is its own, different fact")
+    }
+
+    /// The production wiring for the reclaim notice (#491 R1): a reclaim
+    /// sets `QuarantineTrimNotice` — and must NOT set `RecordingLossNotice`,
+    /// whose alert says a rep "is gone" when the rep in question was just
+    /// saved.
+    func testAReclaimRecordsTheTrimNoticeAndNotTheLossNotice() async throws {
+        _ = RecordingLossNotice.consume() // start from clean flags
+        _ = QuarantineTrimNotice.consume()
+        defer {
+            _ = RecordingLossNotice.consume() // never leak state to other tests
+            _ = QuarantineTrimNotice.consume()
+        }
+        let heavySamples: [[Double]] = (0..<200).map { [Double($0) * 10, 30 + Double($0 % 7)] }
+        try writeQuarantineRecord(id: UUID(), samples: heavySamples, createdAt: Date())
+        let queue = PendingRecordingQueue(
+            uploader: ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet)),
+            baseDir: tempDir,
+            scheduler: DiscardingScheduler(),
+            fileIO: ScriptedFileIO(refuseWrites: 1, refuseOnlyPathExtension: "json")
+            // evictionReporter deliberately defaulted: this pins the
+            // production notice wiring, not a stub.
+        )
+
+        let outcome = await queue.enqueue(makePending(id: UUID(), enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .queued)
+        XCTAssertTrue(QuarantineTrimNotice.consume(), "the trim is reported through its own honest notice")
+        XCTAssertFalse(QuarantineTrimNotice.consume(), "a durable trim notice is one-shot")
+        XCTAssertFalse(RecordingLossNotice.consume(), "no rep was lost — the loss alert must not fire")
+    }
+
+    /// Reclaim can leave persistence refused after it has freed the old
+    /// curve. If the direct-upload fallback succeeds, the new rep is still
+    /// safe and the trim notice must be emitted after that success — not while
+    /// the write is still unresolved.
+    func testAReclaimReportsTrimAfterASuccessfulDirectFallback() async throws {
+        let quarantined = UUID()
+        let heavySamples: [[Double]] = (0..<200).map { [Double($0) * 10, 30 + Double($0 % 7)] }
+        try writeQuarantineRecord(id: quarantined, samples: heavySamples, createdAt: Date())
+        let fileIO = ScriptedFileIO(refuseWrites: 2, refuseOnlyPathExtension: "json")
+        let uploader = ScriptedUploader(failing: [:])
+        let reporter = CountingEvictionReporter()
+        let queue = makeQueue(uploader: uploader, fileIO: fileIO, evictionReporter: reporter)
+
+        let incoming = UUID()
+        let outcome = await queue.enqueue(makePending(id: incoming, enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .uploadedDirect)
+        let uploadedIds = await uploader.uploadedIds
+        XCTAssertTrue(uploadedIds.contains(incoming))
+        XCTAssertEqual(reporter.reclaimCount, 1, "the trim is reported only after the direct upload makes the new rep safe")
+        XCTAssertEqual(reporter.count, 0)
+    }
+
+    /// If both persistence and direct upload fail after reclaim, the new rep
+    /// is genuinely lost; the trim copy would falsely say it was saved, so no
+    /// trim notice may be emitted. The caller's ordinary `.lost` path owns
+    /// the true loss notice in this outcome.
+    func testAReclaimDoesNotReportTrimWhenTheNewRepIsUltimatelyLost() async throws {
+        let quarantined = UUID()
+        let heavySamples: [[Double]] = (0..<200).map { [Double($0) * 10, 30 + Double($0 % 7)] }
+        try writeQuarantineRecord(id: quarantined, samples: heavySamples, createdAt: Date())
+        let fileIO = ScriptedFileIO(refuseWrites: 2, refuseOnlyPathExtension: "json")
+        let uploader = ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet))
+        let reporter = CountingEvictionReporter()
+        let queue = makeQueue(uploader: uploader, fileIO: fileIO, evictionReporter: reporter)
+
+        let outcome = await queue.enqueue(makePending(id: UUID(), enqueuedUserId: testUserId))
+
+        XCTAssertEqual(outcome, .lost)
+        XCTAssertEqual(reporter.reclaimCount, 0, "the new rep was not safe, so the trim notice's copy would be false")
+        XCTAssertEqual(reporter.count, 0)
+        XCTAssertEqual(try readQuarantineRecord(id: quarantined).payloadDropped, true)
     }
 
     /// When every quarantined payload is already gone, the reclaim stage
@@ -698,20 +807,36 @@ private struct DiscardingScheduler: DrainScheduling {
     nonisolated func scheduleRetry(after delay: TimeInterval, _ action: RetryAction) {}
 }
 
-/// Records evictions synchronously — `EvictionReporting.recordEviction` is
-/// called from inside the actor's synchronous persist path.
+/// Records evictions and reclaims synchronously — both `EvictionReporting`
+/// methods are called from inside the actor's synchronous persist path. The
+/// two are counted separately because the whole point of #491 R1 is that
+/// they are different facts told differently.
 private final class CountingEvictionReporter: EvictionReporting, @unchecked Sendable {
     private let lock = NSLock()
     private var _count = 0
+    private var _reclaimCount = 0
+
     var count: Int {
         lock.lock()
         defer { lock.unlock() }
         return _count
     }
 
+    var reclaimCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return _reclaimCount
+    }
+
     func recordEviction() {
         lock.lock()
         _count += 1
+        lock.unlock()
+    }
+
+    func recordPayloadReclaim() {
+        lock.lock()
+        _reclaimCount += 1
         lock.unlock()
     }
 }

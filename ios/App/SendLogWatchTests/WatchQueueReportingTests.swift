@@ -56,14 +56,44 @@ final class LossNoticeMergeTests: XCTestCase {
         )
     }
 
+    func testDuplicateConsumedKindsAreNotDuplicated() {
+        XCTAssertEqual(
+            LossNotice.merged(
+                existing: [],
+                consumed: [.quarantineTrim, .quarantineTrim, .recording, .recording]
+            ),
+            [.quarantineTrim, .recording]
+        )
+    }
+
+    func testMixedNoticesKeepWaitingOrderThenConsumedOrder() {
+        // A notice already owed presentation stays first. New notices retain
+        // Home's deterministic loss → trim order after it.
+        XCTAssertEqual(
+            LossNotice.merged(
+                existing: [.gaugeSession],
+                consumed: [.recording, .quarantineTrim]
+            ),
+            [.gaugeSession, .recording, .quarantineTrim]
+        )
+    }
+
+    func testTrimCopySaysTheNewRepIsSafeAndTheOlderCurveWasTrimmed() {
+        let message = LossNotice.quarantineTrim.message
+        XCTAssertTrue(message.contains("Your new rep was saved"))
+        XCTAssertTrue(message.contains("older recording"))
+        XCTAssertTrue(message.contains("stored force curve"))
+        XCTAssertTrue(message.contains("summary numbers remain"))
+    }
+
     func testNothingWaitingAndNothingConsumedStaysEmpty() {
         XCTAssertEqual(LossNotice.merged(existing: [], consumed: []), [])
     }
 
     func testFreshConsumptionOntoAnEmptyQueueIsJustTheConsumedList() {
         XCTAssertEqual(
-            LossNotice.merged(existing: [], consumed: [.gaugeSession, .recording]),
-            [.gaugeSession, .recording]
+            LossNotice.merged(existing: [], consumed: [.gaugeSession, .recording, .quarantineTrim]),
+            [.gaugeSession, .recording, .quarantineTrim]
         )
     }
 }

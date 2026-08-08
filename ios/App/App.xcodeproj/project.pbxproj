@@ -58,6 +58,7 @@
 		E66495B25A205483CE4E7931 /* AttemptDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */; };
 		FA71E382BD9B0F1C7B31F810 /* TindeqHandsFreeIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 539E33D1C1B9F05EB7F17CF3 /* TindeqHandsFreeIntegrationTests.swift */; };
 		FC77AA55B93778230FFE028F /* HandsFreeForceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37BA8D61B308E48528541602 /* HandsFreeForceTests.swift */; };
+		F1552E1C44C340B2B93A4BD7 /* QuarantineTrimNoticeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C7B7F7381194B80AC49914B /* QuarantineTrimNoticeTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -203,6 +204,7 @@
 		D5F88EE79EE43D995B504A78 /* SendmeterWatchScreenshots.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendmeterWatchScreenshots.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F585400FD5CA4FD502C930ED /* SendmeterWatchScreenshots.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SendmeterWatchScreenshots.swift; sourceTree = "<group>"; };
 		F5E4D3C2B1A029384756A1B2 /* ACWRTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/ACWRTests.swift; sourceTree = "<group>"; };
+		5C7B7F7381194B80AC49914B /* QuarantineTrimNoticeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = QuarantineTrimNoticeTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -332,6 +334,7 @@
 				37BA8D61B308E48528541602 /* HandsFreeForceTests.swift */,
 				74ABFD8185F48343B43E5A2F /* PendingSessionQueueTests.swift */,
 				038DB65CCDE293930345E134 /* WatchQueueReportingTests.swift */,
+				5C7B7F7381194B80AC49914B /* QuarantineTrimNoticeTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = SOURCE_ROOT;
@@ -710,6 +713,7 @@
 				FC77AA55B93778230FFE028F /* HandsFreeForceTests.swift in Sources */,
 				1419D1F49942EC24402240AC /* PendingSessionQueueTests.swift in Sources */,
 				54FE0F4BE5552323CE5AF592 /* WatchQueueReportingTests.swift in Sources */,
+				F1552E1C44C340B2B93A4BD7 /* QuarantineTrimNoticeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
