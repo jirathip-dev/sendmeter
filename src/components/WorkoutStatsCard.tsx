@@ -46,11 +46,25 @@ function BarTrend({
   color: string;
   fmt: (v: number) => string;
 }) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
   const max = Math.max(1, ...rows.map((r) => r.value ?? 0));
   const interactive = rows.some((r) => r.tooltip);
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+    <div
+      role="group"
+      aria-label="Workout metric trend"
+      style={{ display: "flex", flexDirection: "column", gap: 3 }}
+      {...(interactive
+        ? {
+            role: "button" as const,
+            tabIndex: 0,
+            "aria-label": hovered !== null && rows[hovered]
+              ? `${rows[hovered]!.label}: ${rows[hovered]!.value !== null ? fmt(rows[hovered]!.value!) : "no data"}`
+              : "Workout metric trend; use arrow keys to inspect rows",
+            ...surfaceProps(rows.map((_, i) => i), rows.length, (i) => i + 0.5, "y"),
+          }
+        : {})}
+    >
       {rows.map((r, i) => (
         <div
           key={i}
@@ -59,9 +73,16 @@ function BarTrend({
             display: "flex",
             alignItems: "center",
             gap: 6,
+            minHeight: 44,
+            padding: 0,
+            border: 0,
+            background: "transparent",
+            color: "inherit",
+            font: "inherit",
+            appearance: "none",
+            textAlign: "left",
             cursor: interactive ? "pointer" : undefined,
           }}
-          {...(interactive ? hoverProps(i) : {})}
         >
           <span style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", width: 30, flexShrink: 0 }}>
             {r.label}
@@ -91,7 +112,7 @@ function BarTrend({
                   style={{
                     width: `${(r.value / max) * 100}%`,
                     height: "100%",
-                    background: color,
+                    background: `linear-gradient(90deg, color-mix(in srgb, ${color} 55%, var(--canvas)), ${color})`,
                     // Muting (#114) and hover de-emphasis compound: an
                     // unconfirmed bar stays dimmer than a confirmed one either way.
                     opacity:

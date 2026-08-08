@@ -1,6 +1,9 @@
 import { useMemo } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useChartHover } from "../hooks/useChartHover";
+import { useChartId } from "../hooks/useChartId";
 import { ACTIVITY_COLORS, activityColor, activityLabel } from "../lib/activityTypes";
+import { dateStr } from "../lib/dates";
 import ChartTooltip from "./ChartTooltip";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -13,14 +16,15 @@ const GAP = 2;
 // theme scale — cool blues/teals/purples + warm orange/amber, no red or green.
 const LEVEL_ALPHA = [0, 0.34, 0.55, 0.78, 1]; // index by level 0..4
 
-/// #RRGGBB → rgba() at the given alpha (CSS vars can't take a runtime alpha).
+/// Mix a colour token with transparency without forcing a component to know
+/// the current light/dark value. Legacy hex colours still work for callers
+/// that pass one directly.
 function withAlpha(hex: string, a: number): string {
+  if (hex.startsWith("var(")) {
+    return `color-mix(in srgb, ${hex} ${Math.round(a * 100)}%, transparent)`;
+  }
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
-}
-
-function fmt(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 interface Cell {
@@ -40,15 +44,19 @@ export default function ContributionHeatmap({
   values,
   weeks = 53,
   unit = "AU",
+  today: todayOverride,
 }: {
   values: Map<string, { total: number; type: string }>;
   weeks?: number;
   unit?: string;
+  /** Local Gregorian date used for deterministic rendering/tests. */
+  today?: Date;
 }) {
-  const [hovered, hoverProps] = useChartHover<string>();
+  const [hovered, , select, , surface2DProps] = useChartHover<string>();
+  const summaryId = useChartId("contribution-summary");
 
   const { columns, max } = useMemo(() => {
-    const today = new Date();
+    const today = todayOverride ? new Date(todayOverride) : new Date();
     today.setHours(0, 0, 0, 0);
     // End on the Saturday of the current week; start `weeks` Sundays back.
     const end = new Date(today);
@@ -62,7 +70,7 @@ export default function ContributionHeatmap({
     for (let w = 0; w < weeks; w++) {
       const col: Cell[] = [];
       for (let d = 0; d < 7; d++) {
-        const key = fmt(cur);
+        const key = dateStr(cur);
         const entry = values.get(key);
         const value = entry?.total ?? 0;
         if (value > mx) mx = value;
@@ -78,13 +86,63 @@ export default function ContributionHeatmap({
       cols.push(col);
     }
     return { columns: cols, max: Math.max(1, mx) };
-  }, [values, weeks]);
+  }, [todayOverride, values, weeks]);
 
   const level = (v: number) => (v <= 0 ? 0 : Math.min(4, Math.ceil((v / max) * 4)));
   const cellColor = (cell: Cell) =>
     cell.value <= 0
       ? "var(--surface-2)"
       : withAlpha(activityColor(cell.type), LEVEL_ALPHA[level(cell.value)]!);
+
+  const allCells = columns.flatMap((column, ci) =>
+    column.map((cell, di) => ({ cell, ci, di })),
+  );
+  const selectableCells = allCells.filter(({ cell }) => !cell.future);
+  const selectedCell = hovered === null
+    ? undefined
+    : allCells.find(({ cell }) => cell.key === hovered && !cell.future);
+  const selectAt = (ci: number, di: number) => {
+    const cell = columns[ci]?.[di];
+    if (cell && !cell.future) select(cell.key);
+  };
+  const availableInRow = (di: number, from: number, step: -1 | 1) => {
+    for (let ci = from; ci >= 0 && ci < columns.length; ci += step) {
+      const cell = columns[ci]?.[di];
+      if (cell && !cell.future) return { cell, ci, di };
+    }
+    return undefined;
+  };
+  const availableInColumn = (ci: number, from: number, step: -1 | 1) => {
+    for (let di = from; di >= 0 && di < 7; di += step) {
+      const cell = columns[ci]?.[di];
+      if (cell && !cell.future) return { cell, ci, di };
+    }
+    return undefined;
+  };
+  const onGridKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (selectableCells.length === 0) return;
+    const origin = selectedCell ?? selectableCells[0]!;
+    const isNavigation = event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End" || event.key === "Enter" || event.key === " ";
+    if (!isNavigation) return;
+    event.preventDefault();
+    let next = origin;
+    if (event.key === "ArrowLeft") {
+      next = availableInRow(origin.di, origin.ci - 1, -1) ?? origin;
+    } else if (event.key === "ArrowRight") {
+      next = availableInRow(origin.di, origin.ci + 1, 1) ?? origin;
+    } else if (event.key === "ArrowUp") {
+      next = availableInColumn(origin.ci, origin.di - 1, -1) ?? origin;
+    } else if (event.key === "ArrowDown") {
+      next = availableInColumn(origin.ci, origin.di + 1, 1) ?? origin;
+    } else if (event.key === "Home") {
+      next = availableInRow(origin.di, 0, 1) ?? origin;
+    } else if (event.key === "End") {
+      next = availableInRow(origin.di, columns.length - 1, -1) ?? origin;
+    }
+    // Enter/Space re-announces the current available cell. Every navigation
+    // path keeps the active descendant on a real, non-disabled gridcell.
+    selectAt(next.ci, next.di);
+  };
 
   // Activity types that actually appear (for the legend), in the palette order.
   const presentTypes = useMemo(() => {
@@ -117,7 +175,15 @@ export default function ContributionHeatmap({
   }, [columns]);
 
   return (
-    <div>
+    <div
+      role="group"
+      aria-label={`Training load contribution heatmap for ${columns.length} weeks`}
+      aria-describedby={summaryId}
+    >
+      <span id={summaryId} className="chart-a11y-summary">
+        Use the heatmap's single keyboard surface and arrow keys to inspect each day;
+        future days are unavailable.
+      </span>
       <div style={{ display: "flex", gap: 5 }}>
         {/* Weekday labels — absolutely pinned to the Mon/Wed/Fri cell-row
             centers so they track the (tiny, fluid) grid rows. A text-sized grid
@@ -164,32 +230,75 @@ export default function ContributionHeatmap({
           {/* Fluid grid: 1 column per week, square cells, fills the width */}
           <div
             className="chart-scrub"
+            data-chart-hit-surface="contribution-heatmap"
+            role="grid"
+            tabIndex={0}
+            aria-rowcount={7}
+            aria-colcount={columns.length}
+            aria-activedescendant={
+              selectedCell ? `${summaryId}-cell-${selectedCell.cell.key}` : undefined
+            }
+            aria-label={
+              selectedCell
+                ? `${selectedCell.cell.key}: ${selectedCell.cell.value > 0 ? `${selectedCell.cell.value} ${unit}${selectedCell.cell.type ? `, ${activityLabel(selectedCell.cell.type)}` : ""}` : "rest"}`
+                : "Daily training load; use arrow keys to inspect days"
+            }
+            aria-describedby={summaryId}
+            onKeyDown={onGridKeyDown}
+            {...surface2DProps(
+              allCells.map(({ cell }) => cell.key),
+              { width: columns.length, height: 7 },
+              (index) => {
+                const point = allCells[index]!;
+                return { x: point.ci + 0.5, y: point.di + 0.5 };
+              },
+              { isSelectable: (index) => !allCells[index]!.cell.future },
+            )}
             style={{
               display: "grid",
               gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
               columnGap: GAP,
+              gridTemplateRows: `repeat(7, auto)`,
+              rowGap: GAP,
+              minHeight: 44,
             }}
           >
-            {columns.map((col, ci) => {
-              const hAlign =
-                ci < columns.length / 3 ? "start" : ci > (columns.length * 2) / 3 ? "end" : "center";
-              return (
-                <div
-                  key={ci}
-                  style={{
-                    display: "grid",
-                    gridTemplateRows: "repeat(7, 1fr)",
-                    rowGap: GAP,
-                  }}
-                >
-                  {col.map((cell, di) => (
+            {Array.from({ length: 7 }, (_, di) => (
+              <div
+                key={di}
+                role="row"
+                aria-rowindex={di + 1}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
+                  columnGap: GAP,
+                  gridColumn: "1 / -1",
+                }}
+              >
+                {columns.map((col, ci) => {
+                  const cell = col[di]!;
+                  const hAlign =
+                    ci < columns.length / 3 ? "start" : ci > (columns.length * 2) / 3 ? "end" : "center";
+                  return (
                     <div
                       key={cell.key}
+                      id={`${summaryId}-cell-${cell.key}`}
+                      role="gridcell"
+                      aria-colindex={ci + 1}
+                      aria-selected={hovered === cell.key}
+                      aria-disabled={cell.future}
                       style={{
                         position: "relative",
                         aspectRatio: "1",
                         width: "100%",
+                        minWidth: 0,
+                        minHeight: 0,
+                        padding: 0,
+                        border: 0,
                         borderRadius: 2,
+                        appearance: "none",
+                        font: "inherit",
+                        color: "inherit",
                         // Future days are greyed out, not blank, so "today" reads
                         // as the leading edge of the grid (SL-68).
                         background: cell.future ? "var(--surface-1)" : cellColor(cell),
@@ -197,7 +306,9 @@ export default function ContributionHeatmap({
                         outline: hovered === cell.key ? "1.5px solid var(--ink)" : "none",
                         cursor: cell.future ? "default" : "pointer",
                       }}
-                      {...(cell.future ? {} : hoverProps(cell.key))}
+                      aria-label={cell.future
+                        ? `${cell.key}: unavailable (future)`
+                        : `${cell.key}: ${cell.value > 0 ? `${cell.value} ${unit}${cell.type ? `, ${activityLabel(cell.type)}` : ""}` : "rest"}`}
                     >
                       {hovered === cell.key && (
                         <ChartTooltip
@@ -210,10 +321,10 @@ export default function ContributionHeatmap({
                         </ChartTooltip>
                       )}
                     </div>
-                  ))}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            ))}
           </div>
         </div>
       </div>

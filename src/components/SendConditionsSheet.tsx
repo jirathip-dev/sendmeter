@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import Sheet from "./Sheet";
 import ChartTooltip from "./ChartTooltip";
 import { useChartHover } from "../hooks/useChartHover";
+import { chartColor } from "../lib/chartTheme";
 import { median } from "../lib/boxplot";
 import {
   humidityFrictionScore,
@@ -86,7 +87,7 @@ function DayComparisonChart({
 }) {
   const max = Math.max(1, ...days, score);
   const todayColor = percentileColor(percentile);
-  const [hoveredIdx, hoverProps] = useChartHover<number>();
+  const [hoveredIdx, , , surfaceProps] = useChartHover<number>();
   // Median of the days plotted — today is excluded, matching the banner's
   // "better than N of the last M days" which also ranks today *against* the
   // history rather than including it.
@@ -96,10 +97,28 @@ function DayComparisonChart({
   // Each label goes on the side facing away from the other line.
   const todayAbove = med === null || score >= med;
   return (
-    <div style={{ position: "relative", height: CHART_H, paddingRight: CHART_LABEL_GUTTER }}>
+    <div
+      role="group"
+      aria-label="Same-time-of-day send conditions comparison"
+      style={{ position: "relative", height: CHART_H, paddingRight: CHART_LABEL_GUTTER }}
+    >
       <div
         className="chart-scrub"
+        role="button"
+        tabIndex={0}
+        aria-label={
+          hoveredIdx === days.length
+            ? `Today: send conditions score ${score}`
+            : hoveredIdx !== null
+              ? `${sameHourDaysAgo(hoveredIdx, days.length)} days ago: send conditions score ${days[hoveredIdx]}`
+              : "Same-time-of-day send conditions data; use arrow keys to inspect days"
+        }
         style={{ display: "flex", alignItems: "flex-end", gap: 2, height: "100%", position: "relative" }}
+        {...surfaceProps(
+          days.map((_, i) => i).concat(days.length),
+          days.length + 1.3,
+          (i) => (i < days.length ? i + 0.5 : days.length + 0.65),
+        )}
       >
         {/* Median of the plotted days — the "typical day here" baseline. Dotted
             and muted so it reads as background reference, not as today. */}
@@ -110,7 +129,7 @@ function DayComparisonChart({
               left: 0,
               right: 0,
               bottom: `${medPct}%`,
-              borderTop: "1px dotted var(--ink-muted)",
+              borderTop: `1px dotted ${chartColor("reference")}`,
             }}
           />
         )}
@@ -137,9 +156,16 @@ function DayComparisonChart({
                 height: "100%",
                 display: "flex",
                 alignItems: "flex-end",
+                minHeight: 44,
+                minWidth: 0,
+                padding: 0,
+                border: 0,
+                background: "transparent",
+                color: "inherit",
+                font: "inherit",
+                appearance: "none",
                 cursor: "pointer",
               }}
-              {...hoverProps(i)}
             >
               {isHovered && (
                 <ChartTooltip align={i < 5 ? "start" : i > days.length - 5 ? "end" : "center"}>
@@ -151,7 +177,7 @@ function DayComparisonChart({
                   width: "100%",
                   height: `${(s / max) * 100}%`,
                   minHeight: s > 0 ? 2 : 0,
-                  background: "var(--ink-faint)",
+                  background: `linear-gradient(180deg, color-mix(in srgb, ${chartColor("reference")} 45%, var(--canvas)), ${chartColor("reference")})`,
                   opacity: hoveredIdx === null ? 0.55 : isHovered ? 0.85 : 0.35,
                   borderRadius: 2,
                   boxShadow: isHovered ? "0 0 0 1.5px var(--ink)" : "none",
@@ -169,9 +195,16 @@ function DayComparisonChart({
             height: "100%",
             display: "flex",
             alignItems: "flex-end",
+            minHeight: 44,
+            minWidth: 0,
+            padding: 0,
+            border: 0,
+            background: "transparent",
+            color: "inherit",
+            font: "inherit",
+            appearance: "none",
             cursor: "pointer",
           }}
-          {...hoverProps(days.length)}
         >
           {hoveredIdx === days.length && <ChartTooltip align="end">Today: {score}</ChartTooltip>}
           <div
@@ -179,7 +212,7 @@ function DayComparisonChart({
               width: "100%",
               height: `${(score / max) * 100}%`,
               minHeight: score > 0 ? 2 : 0,
-              background: todayColor,
+            background: `linear-gradient(180deg, color-mix(in srgb, ${todayColor} 62%, var(--canvas)), ${todayColor})`,
               outline: `2px solid ${todayColor}`,
               outlineOffset: 1,
               borderRadius: 2,
@@ -464,10 +497,10 @@ export default function SendConditionsSheet({ cond, loading, failed, onRefresh, 
       )}
 
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button className="btn-primary" disabled={loading} onClick={onRefresh} style={{ flex: 1 }}>
+        <button className="btn-primary" disabled={loading} onClick={onRefresh} style={{ flex: 1, minHeight: 44 }}>
           {loading ? "Checking…" : cond ? "Refresh" : "Check conditions"}
         </button>
-        <button className="btn-ghost" onClick={onClose} style={{ flex: 1 }}>
+        <button className="btn-ghost" onClick={onClose} style={{ flex: 1, minHeight: 44 }}>
           Close
         </button>
       </div>

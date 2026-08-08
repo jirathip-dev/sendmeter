@@ -1,6 +1,7 @@
 import { hrRecoveryBpm } from "../lib/workoutStats";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
 import {
   WORKOUT_CHART_PAD as PAD,
   attemptWindows,
@@ -8,6 +9,8 @@ import {
   workoutXTicks,
 } from "../lib/workoutChartAxis";
 import SvgChartTooltip from "./SvgChartTooltip";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import type { WorkoutAttempt, WorkoutHrSample, WorkoutSource } from "../types";
 
 interface Props {
@@ -44,7 +47,8 @@ export default function WorkoutHrChart({
   showTimeAxis,
   source,
 }: Props) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
+  const chartId = useChartId("workout-hr");
 
   const hrSamples = samples?.filter((s) => s.hr !== null) ?? [];
   const hrs = hrSamples.map((s) => s.hr!);
@@ -149,7 +153,14 @@ export default function WorkoutHrChart({
         </div>
       )}
       <div style={{ width: "100%" }}>
-        <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+        <svg
+          className="chart-scrub"
+          role="group"
+          aria-label="Workout heart rate timeline with climb and rest windows"
+          viewBox={`0 0 ${W} ${H}`}
+          style={{ width: "100%", display: "block" }}
+        >
+          <ChartDefs instanceId={chartId} />
           {/* Attempt segments (rest stays unshaded) */}
           {windows.map((w, i) => (
             <rect
@@ -158,7 +169,7 @@ export default function WorkoutHrChart({
               width={Math.max(1.5, px(w.end) - px(w.start))}
               y={PAD.top}
               height={baseline - PAD.top}
-              fill={w.manual ? "var(--warning)" : "var(--success)"}
+              fill={w.manual ? chartColor("caution") : chartColor("optimal")}
               opacity="0.12"
             />
           ))}
@@ -170,14 +181,14 @@ export default function WorkoutHrChart({
                 y1={py(v)}
                 x2={W - PAD.right}
                 y2={py(v)}
-                style={{ stroke: "var(--hairline)" }}
+                style={{ stroke: chartColor("grid") }}
                 strokeWidth={1}
               />
               <text
                 x={2}
                 y={py(v) + 2.5}
                 fontSize={7.5}
-                style={{ fill: "var(--ink-faint)" }}
+                style={{ fill: chartColor("axis") }}
               >
                 {Math.round(v)}
                 {i === yTicks.length - 1 ? "bpm" : ""}
@@ -191,7 +202,7 @@ export default function WorkoutHrChart({
                 x={px(t)}
                 y={H - 3}
                 fontSize={7.5}
-                style={{ fill: "var(--ink-faint)" }}
+                style={{ fill: chartColor("axis") }}
                 textAnchor={i === 0 ? "start" : i === xTicks.length - 1 ? "end" : "middle"}
               >
                 {fmtMinSec(t)}
@@ -201,29 +212,40 @@ export default function WorkoutHrChart({
           {runs.map((r, i) =>
             r.length < 2 ? null : (
               <g key={i}>
-                <path d={areaPath(r)} fill="#5B5FC7" opacity="0.12" />
+                <path d={areaPath(r)} fill={chartGradientUrl(chartId, "health-area")} />
                 <polyline
                   points={linePoints(r)}
                   fill="none"
-                  stroke="#5B5FC7"
+                  stroke={chartColor("health")}
                   strokeWidth="1.5"
                   vectorEffect="non-scaling-stroke"
                 />
               </g>
             ),
           )}
-          {/* Hover targets */}
-          {hoverIndices.map((i) => (
-            <circle
-              key={i}
-              cx={px(hrSamples[i]!.t)}
-              cy={py(hrSamples[i]!.hr!)}
-              r={8}
-              fill="transparent"
-              style={{ cursor: "pointer" }}
-              {...hoverProps(i)}
-            />
-          ))}
+          {/* One deterministic surface owns all scrub gestures. Visual marks
+              are intentionally not interactive, so dense samples cannot steal
+              a touch by DOM order. */}
+          {/* Keep the downsampled value (a source index) and its position
+              paired; ordinal positions would drift on long/nonuniform traces. */}
+          <rect
+            data-chart-hit-surface="workout-heart-rate"
+            className="chart-scrub"
+            x={PAD.left}
+            y={PAD.top}
+            width={W - PAD.left - PAD.right}
+            height={baseline - PAD.top}
+            fill="transparent"
+            role="button"
+            tabIndex={0}
+            aria-label={
+              hovered !== null && hoveredSample
+                ? `${fmtMinSec(hoveredSample.t)}: ${Math.round(hoveredSample.hr!)} bpm`
+                : "Workout heart rate data; use arrow keys to inspect samples"
+            }
+            style={{ cursor: "crosshair" }}
+            {...surfaceProps(hoverIndices, W, (index) => px(hrSamples[hoverIndices[index]!]!.t))}
+          />
           {hovered !== null && hoveredSample && (
             <>
               <line
@@ -231,7 +253,7 @@ export default function WorkoutHrChart({
                 y1={PAD.top}
                 x2={px(hoveredSample.t)}
                 y2={baseline}
-                style={{ stroke: "var(--ink-faint)" }}
+                style={{ stroke: chartColor("axis") }}
                 strokeDasharray="2 2"
                 strokeWidth={1}
               />
@@ -239,7 +261,7 @@ export default function WorkoutHrChart({
                 cx={px(hoveredSample.t)}
                 cy={py(hoveredSample.hr!)}
                 r={3}
-                fill="#5B5FC7"
+                fill={chartColor("focus")}
               />
               <SvgChartTooltip
                 x={px(hoveredSample.t)}

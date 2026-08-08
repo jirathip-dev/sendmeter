@@ -40,7 +40,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
   // `new Date()` is impure in render — freeze it once for this mount.
   const [now] = useState(() => new Date());
   const [detailOpen, setDetailOpen] = useState(false);
-  const [hovered, hoverProps] = useChartHover<TrainingQuality>();
+  const [hovered, , , surfaceProps] = useChartHover<TrainingQuality>();
   const sets = zoneTrainingSets(recordings, now, WINDOW_DAYS);
   const rec = recommendZone(sets, model);
   // Hold seconds + hold count behind each bar, for the tooltip — the same
@@ -81,8 +81,16 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
           tick. The click guard keeps a scrub from opening the detail page. */}
       <div
         className="chart-scrub"
+        role="button"
+        tabIndex={0}
+        aria-label={
+          hovered !== null
+            ? `${QUALITIES.find((q) => q.id === hovered)?.label ?? "Training balance"}: ${sets[hovered]} sets`
+            : `Training balance for ${exercise}, last four weeks; use arrow keys to inspect zones`
+        }
         style={{ display: "flex", flexDirection: "column", gap: 5 }}
         onClick={(e) => e.stopPropagation()}
+        {...surfaceProps(QUALITIES.map((q) => q.id), QUALITIES.length, (i) => i + 0.5, "y")}
       >
         {QUALITIES.map((q) => {
           const n = sets[q.id];
@@ -99,9 +107,15 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
+                minHeight: 44,
+                padding: "0 4px",
+                border: 0,
+                background: "transparent",
+                color: "inherit",
+                font: "inherit",
+                appearance: "none",
                 cursor: "pointer",
               }}
-              {...hoverProps(q.id)}
             >
               {hovered === q.id && (
                 // The card clips its overflow (`.card.tappable`), so the top
@@ -130,6 +144,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
                 {q.label}
               </span>
               <div
+                aria-hidden="true"
                 style={{
                   flex: 1,
                   height: 8,
@@ -142,7 +157,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
                   style={{
                     width: `${(n / maxSets) * 100}%`,
                     height: "100%",
-                    background: color,
+                    background: `linear-gradient(90deg, color-mix(in srgb, ${color} 60%, var(--canvas)), ${color})`,
                     borderRadius: 4,
                     opacity: hovered === null || hovered === q.id ? 1 : 0.45,
                   }}

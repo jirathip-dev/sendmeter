@@ -29,7 +29,7 @@ const ZONES = [
 ];
 
 export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate }: Props) {
-  const [hoveredPeriod, hoverPeriodProps] = useChartHover<number>();
+  const [hoveredPeriod, , , surfaceProps] = useChartHover<number>();
   const chronological = [...phasePeriods].sort((a, b) =>
     a.startedOn.localeCompare(b.startedOn),
   );
@@ -207,12 +207,25 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
               })()}
             <div
               className="chart-scrub"
+              role="button"
+              tabIndex={0}
+              aria-label={
+                hoveredPeriod !== null && segments[hoveredPeriod]
+                  ? `Phase ${segments[hoveredPeriod]!.p.phase} timeline segment`
+                  : "Phase timeline; use arrow keys to inspect periods"
+              }
               style={{
                 display: "flex",
-                height: 10,
+                height: 44,
+                alignItems: "center",
                 borderRadius: 3,
                 overflow: "hidden",
               }}
+              {...surfaceProps(
+                segments.map((_, i) => i),
+                100,
+                (i) => segments[i]!.startPct + segments[i]!.widthPct / 2,
+              )}
             >
               {segments.map(({ p, widthPct }, i) => {
                 const info = PHASES.find((x) => x.id === p.phase);
@@ -221,6 +234,7 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
                     key={p.id}
                     style={{
                       width: `${widthPct}%`,
+                      height: 10,
                       minWidth: 4,
                       background: info?.color ?? "var(--border)",
                       opacity:
@@ -234,7 +248,6 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
                       cursor: "pointer",
                       transition: "opacity 0.1s",
                     }}
-                    {...hoverPeriodProps(i)}
                   />
                 );
               })}
