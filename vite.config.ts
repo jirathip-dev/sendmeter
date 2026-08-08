@@ -47,5 +47,31 @@ export default defineConfig({
     // .claude holds agent worktrees (full repo copies) — without this,
     // `vitest run` picks up their test files too and double-counts the suite.
     exclude: ["**/node_modules/**", "**/dist/**", ".claude/**"],
+    // #489: a hang detector, NOT a performance budget. Vitest fails any test
+    // whose wall-clock elapsed exceeds this — including a synchronous test,
+    // checked when it returns — so the default 5s acted as an accidental
+    // wall-clock assertion on every test in the suite. On this machine
+    // wall-clock is not a proxy for cost: several agents plus xcodebuilds
+    // run concurrently (1-minute load 65–190 observed), and a starved worker
+    // can stall >5s mid-test, timing out sub-500ms tests. Measured under a
+    // SIGSTOP duty cycle standing in for scheduler starvation (implementer,
+    // then reproduced independently in the #489 review): at 5s, 6/6 runs
+    // failed with the reported "Test timed out in 5000ms" signature; 10s
+    // failed 3/5; 15s and 30s failed 0/5+. The worst legitimate test in the
+    // suite is ~1.1s, so 15s keeps ~13x headroom with the same measured
+    // starvation immunity as 30s at half the cost of a genuine hang
+    // (infinite loop / unresolved promise — the only thing this exists to
+    // catch). Performance is asserted as load-insensitive WORK COUNTS, never
+    // elapsed time: force-curve.test.ts pins the grid-search invocation
+    // count (1 + bootstrapSamples, the dominant cost — the guard the old 5s
+    // provided only by accident) alongside `meanMaxEvaluations` (signal
+    // preprocessing; invariant to bootstrapSamples, so it alone was never a
+    // cost guard). Don't lower this back to "catch slow tests" — that
+    // reintroduces the flake class.
+    testTimeout: 15_000,
+    // Same reasoning: the vitest default (10s) is one more wall-clock budget
+    // exposed to the same starvation, just with fewer chances to trip
+    // (hooks here are trivial). Kept consistent with testTimeout.
+    hookTimeout: 15_000,
   },
 });
