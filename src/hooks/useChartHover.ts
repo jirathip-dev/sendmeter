@@ -9,6 +9,11 @@ import {
 
 export type ChartAxis = "x" | "y";
 
+interface ChartSurface2DOptions {
+  /** Mark a nearest datum as unavailable without selecting it. */
+  isSelectable?: (index: number) => boolean;
+}
+
 /// Pure decision logic for #299: on touch, tapping a chart point leaves its
 /// tooltip up (no hover to clear it — see `onPointerLeave` below), so
 /// something else has to clear it when the user taps elsewhere in the app.
@@ -224,6 +229,7 @@ export function useChartHover<T = number>() {
     values: readonly T[],
     chartSize: { width: number; height: number },
     positionForIndex: (index: number) => { x: number; y: number },
+    options: ChartSurface2DOptions = {},
   ) {
     const positions = values.map((_, i) => positionForIndex(i));
     const chooseAt = (event: ReactPointerEvent) => {
@@ -238,7 +244,15 @@ export function useChartHover<T = number>() {
         rect,
         chartSize,
       );
-      if (index !== null) select(values[index]!);
+      if (index === null) return;
+      if (options.isSelectable && !options.isSelectable(index)) {
+        // A disabled/future datum owns its geometry but cannot become the
+        // selected value. Clear rather than falling through to an earlier
+        // available point, which would announce a misleading date.
+        setHovered(null);
+        return;
+      }
+      select(values[index]!);
     };
     return {
       onPointerEnter: (event: ReactPointerEvent) => {

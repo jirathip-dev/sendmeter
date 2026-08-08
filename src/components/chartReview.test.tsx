@@ -13,7 +13,7 @@ import WorkoutEffortChart from "./WorkoutEffortChart";
 import WorkoutHrChart from "./WorkoutHrChart";
 import RecoveryStatsCard from "./RecoveryStatsCard";
 import { useChartHover } from "../hooks/useChartHover";
-import { today } from "../lib/dates";
+import { dateStr, today } from "../lib/dates";
 import { CURVE_PERIOD_STYLES } from "../lib/chartPeriodStyles";
 import { WORKOUT_CHART_PAD } from "../lib/workoutChartAxis";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
@@ -58,6 +58,13 @@ const attempt: WorkoutAttempt = {
   effortScore: 7,
   source: "auto",
 };
+
+// Local constructors keep these fixtures Gregorian and independent of the
+// machine's current weekday; the component's explicit `today` prop freezes
+// the same local-day boundary in every render.
+const HEATMAP_SUNDAY = new Date(2026, 7, 2, 12);
+const HEATMAP_MIDWEEK = new Date(2026, 7, 5, 12);
+const HEATMAP_SATURDAY = new Date(2026, 7, 8, 12);
 
 function trendRecording(id: string, recordedAt: string, peakKg: number): TindeqRecordingMeta {
   return {
@@ -388,9 +395,9 @@ describe("#516 chart review regressions", () => {
   });
 
   it("exposes heatmap days and weekly load as keyboard-operable data points", async () => {
-    const values = new Map([[today(), { total: 100, type: "board" }]]);
+    const values = new Map([[dateStr(HEATMAP_MIDWEEK), { total: 100, type: "board" }]]);
     const heatmap = parse(
-      renderToStaticMarkup(<ContributionHeatmap values={values} weeks={1} />),
+      renderToStaticMarkup(<ContributionHeatmap values={values} weeks={1} today={HEATMAP_MIDWEEK} />),
     );
     const heatmapDescription = heatmap.querySelector('[role="group"]')?.getAttribute("aria-describedby");
     expect(heatmapDescription).toMatch(/^contribution-summary-/);
@@ -405,7 +412,7 @@ describe("#516 chart review regressions", () => {
 
     mountedRoot = mount(
       container,
-      <ContributionHeatmap values={values} weeks={1} />,
+      <ContributionHeatmap values={values} weeks={1} today={HEATMAP_MIDWEEK} />,
     );
     const heatmapDay = container.querySelector('[role="grid"]') as HTMLDivElement;
     expect(heatmapDay).toBeTruthy();
@@ -440,8 +447,11 @@ describe("#516 chart review regressions", () => {
   });
 
   it("owns heatmap pointer selection at the grid and navigates visual weeks/weekday rows", async () => {
-    const values = new Map([[today(), { total: 100, type: "board" }]]);
-    mountedRoot = mount(container, <ContributionHeatmap values={values} weeks={2} />);
+    const values = new Map([[dateStr(HEATMAP_MIDWEEK), { total: 100, type: "board" }]]);
+    mountedRoot = mount(
+      container,
+      <ContributionHeatmap values={values} weeks={2} today={HEATMAP_MIDWEEK} />,
+    );
     const grid = container.querySelector('[data-chart-hit-surface="contribution-heatmap"]') as HTMLDivElement;
     expect(grid.getAttribute("role")).toBe("grid");
     expect(grid.getAttribute("tabindex")).toBe("0");
@@ -459,22 +469,102 @@ describe("#516 chart review regressions", () => {
       y: 0,
       toJSON: () => ({}),
     });
-    await act(async () => grid.dispatchEvent(pointerEvent("pointermove", { pointerType: "mouse", clientX: 25, clientY: 50 })));
+    // Midweek layout: the second (current) week has Thu–Sat disabled.
+    await act(async () => grid.dispatchEvent(pointerEvent("pointermove", { pointerType: "mouse", clientX: 50, clientY: 350 })));
     const selectedAfterPointer = grid.querySelector('[role="gridcell"][aria-selected="true"]');
     expect(selectedAfterPointer).not.toBeNull();
     expect(grid.getAttribute("aria-activedescendant")).toBe(selectedAfterPointer?.id);
-    const firstKey = selectedAfterPointer?.getAttribute("aria-label");
+    expect(selectedAfterPointer?.getAttribute("aria-label")).toContain("2026-07-29");
+    // End chooses the same weekday's last available week; Home returns to its first.
+    await act(async () => grid.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+    expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')?.getAttribute("aria-label")).toContain("2026-08-05");
+    await act(async () => grid.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })));
+    expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')?.getAttribute("aria-label")).toContain("2026-07-29");
+    // Down into the future row clamps at the last available cell in this week.
+    await act(async () => grid.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
     await act(async () => grid.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
-    const selectedAfterDay = grid.querySelector('[role="gridcell"][aria-selected="true"]');
-    expect(selectedAfterDay?.getAttribute("aria-label")).not.toBe(firstKey);
-    await act(async () => grid.dispatchEvent(pointerEvent("pointermove", { pointerType: "mouse", clientX: 25, clientY: 650 })));
+    expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')?.getAttribute("aria-label")).toContain("2026-08-05");
+
+    // Saturday's current-week cell is the last available same-row datum.
+    await act(async () => grid.dispatchEvent(pointerEvent("pointermove", { pointerType: "mouse", clientX: 50, clientY: 650 })));
     const selectedAtWeekEdge = grid.querySelector('[role="gridcell"][aria-selected="true"]');
     const edgeKey = selectedAtWeekEdge?.getAttribute("aria-label");
+    await act(async () => grid.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+    expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')?.getAttribute("aria-label")).toBe(edgeKey);
     await act(async () => grid.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
-    const selectedAfterWeek = grid.querySelector('[role="gridcell"][aria-selected="true"]');
-    expect(selectedAfterWeek?.getAttribute("aria-label")).not.toBe(edgeKey);
-    await act(async () => grid.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
-    expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')).not.toBeNull();
+    expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')?.getAttribute("aria-label")).toBe(edgeKey);
+
+    // The future cell owns this geometry but clears selection/status rather
+    // than falling back to the previous week's Saturday.
+    await act(async () => grid.dispatchEvent(pointerEvent("pointermove", { pointerType: "mouse", clientX: 150, clientY: 650 })));
+    expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')).toBeNull();
+    expect(grid.getAttribute("aria-activedescendant")).toBeNull();
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(Array.from(grid.querySelectorAll('[role="gridcell"]')).some((cell) =>
+      cell.getAttribute("aria-label") === "2026-08-08: unavailable (future)",
+    )).toBe(true);
+    await act(async () => grid.dispatchEvent(pointerEvent("pointerdown", { pointerType: "touch", clientX: 150, clientY: 650 })));
+    await act(async () => grid.dispatchEvent(pointerEvent("pointermove", { pointerType: "touch", clientX: 150, clientY: 650 })));
+    await act(async () => grid.dispatchEvent(pointerEvent("pointerup", { pointerType: "touch", clientX: 150, clientY: 650 })));
+    expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')).toBeNull();
+  });
+
+  it("freezes one-week Sunday, midweek, and Saturday layouts independent of the clock", () => {
+    for (const [date, futureCount] of [
+      [HEATMAP_SUNDAY, 6],
+      [HEATMAP_MIDWEEK, 3],
+      [HEATMAP_SATURDAY, 0],
+    ] as const) {
+      const values = new Map([[dateStr(date), { total: 100, type: "board" }]]);
+      const root = parse(
+        renderToStaticMarkup(<ContributionHeatmap values={values} weeks={1} today={date} />),
+      );
+      const grid = root.querySelector('[role="grid"]');
+      expect(grid?.getAttribute("aria-colcount")).toBe("1");
+      expect(grid?.querySelectorAll('[role="gridcell"][aria-disabled="true"]').length).toBe(futureCount);
+      expect(grid?.querySelector(`[aria-label^="${dateStr(date)}:"]`)).not.toBeNull();
+    }
+  });
+
+  it("moves one visual week for Sunday, midweek, and Saturday regardless of today", async () => {
+    const cases = [
+      { date: HEATMAP_SUNDAY, weekday: 0, previous: "2026-07-26", current: "2026-08-02" },
+      { date: HEATMAP_MIDWEEK, weekday: 3, previous: "2026-07-29", current: "2026-08-05" },
+      { date: HEATMAP_SATURDAY, weekday: 6, previous: "2026-08-01", current: "2026-08-08" },
+    ] as const;
+
+    for (const { date, weekday, previous, current } of cases) {
+      mountedRoot = mount(
+        container,
+        <ContributionHeatmap values={new Map()} weeks={2} today={date} />,
+      );
+      const grid = container.querySelector('[data-chart-hit-surface="contribution-heatmap"]') as HTMLDivElement;
+      vi.spyOn(grid, "getBoundingClientRect").mockReturnValue({
+        left: 0,
+        top: 0,
+        width: 200,
+        height: 700,
+        right: 200,
+        bottom: 700,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      });
+      await act(async () => grid.dispatchEvent(pointerEvent("pointermove", {
+        pointerType: "mouse",
+        clientX: 50,
+        clientY: ((weekday + 0.5) / 7) * 700,
+      })));
+      expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')?.getAttribute("aria-label"))
+        .toContain(previous);
+      await act(async () => grid.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+      expect(grid.querySelector('[role="gridcell"][aria-selected="true"]')?.getAttribute("aria-label"))
+        .toContain(current);
+
+      act(() => mountedRoot?.unmount());
+      mountedRoot = null;
+      container.replaceChildren();
+    }
   });
 
   it("switches chart tokens with explicit themes and keeps ForceGauge canvas palette reactive", async () => {
