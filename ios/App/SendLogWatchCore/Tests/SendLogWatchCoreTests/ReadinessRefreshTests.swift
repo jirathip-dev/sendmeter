@@ -215,6 +215,117 @@ final class ReadinessRefreshTests: XCTestCase {
         )
     }
 
+    func testAccountTransitionResetsTimestampOwnershipForLaterBResults() {
+        let accountA = UUID(uuidString: "00000000-0000-0000-0000-000000000041")!
+        let accountB = UUID(uuidString: "00000000-0000-0000-0000-000000000042")!
+        let firstB = ReadinessRefreshResult(
+            request: ReadinessRefreshRequest(
+                requestId: "b-first",
+                reason: .foreground,
+                sentAt: 100
+            ),
+            startedAt: 101,
+            completedAt: 110,
+            status: .success,
+            freshness: .fresh,
+            accountUserId: accountB
+        )
+        let laterB = ReadinessRefreshResult(
+            request: ReadinessRefreshRequest(
+                requestId: "b-later",
+                reason: .statusRefresh,
+                sentAt: 120
+            ),
+            startedAt: 121,
+            completedAt: 130,
+            status: .success,
+            freshness: .fresh,
+            accountUserId: accountB
+        )
+
+        // Force A → B after A's wall-clock completion fence. The first B
+        // result must replace the baseline; retaining max(A, B) would reject
+        // the later valid B result even though it is newer than B's own pass.
+        var fence: TimeInterval? = 1_000
+        var owner: UUID? = accountA
+        func accept(
+            _ result: ReadinessRefreshResult,
+            account: UUID,
+            fence: inout TimeInterval?,
+            owner: inout UUID?
+        ) -> Bool {
+            guard ReadinessResultGate.shouldApply(
+                result,
+                activeRequestId: nil,
+                lastAppliedCompletedAt: fence,
+                currentAccountUserId: account,
+                lastAppliedAccountUserId: owner
+            ) else { return false }
+            fence = owner == account
+                ? max(fence ?? 0, result.completedAt)
+                : result.completedAt
+            owner = account
+            return true
+        }
+
+        XCTAssertTrue(accept(firstB, account: accountB, fence: &fence, owner: &owner))
+        XCTAssertEqual(fence, firstB.completedAt)
+        XCTAssertEqual(owner, accountB)
+        XCTAssertTrue(accept(laterB, account: accountB, fence: &fence, owner: &owner))
+        XCTAssertEqual(fence, laterB.completedAt)
+    }
+
+    func testSignOutOwnerFenceRejectsDelayedStampedResultAfterQuarantineLoss() {
+        let account = UUID(uuidString: "00000000-0000-0000-0000-000000000043")!
+        let delayed = ReadinessRefreshResult(
+            request: ReadinessRefreshRequest(
+                requestId: "pre-signout",
+                reason: .foreground,
+                sentAt: 900
+            ),
+            startedAt: 901,
+            completedAt: 902,
+            status: .success,
+            freshness: .fresh,
+            accountUserId: account
+        )
+
+        // No readiness result had been applied before sign-out, so the only
+        // durable protection is the outgoing account owner plus sign-out
+        // timestamp. Simulate timeout/quarantine expiry by dropping the ID.
+        var fence: TimeInterval? = nil
+        var owner: UUID?
+        var quarantined = Set([delayed.requestId])
+        let outgoingAccount = account
+        fence = max(fence ?? 0, 1_000)
+        owner = outgoingAccount
+        quarantined.removeAll()
+        XCTAssertTrue(quarantined.isEmpty)
+
+        // The same account signs back in with no active request. The owner
+        // fence must reject the delayed pre-signout stamped result; without
+        // the captured owner, the account transition bypasses this timestamp.
+        XCTAssertFalse(
+            ReadinessResultGate.shouldApply(
+                delayed,
+                activeRequestId: nil,
+                lastAppliedCompletedAt: fence,
+                currentAccountUserId: account,
+                lastAppliedAccountUserId: owner
+            )
+        )
+        XCTAssertTrue(
+            ReadinessResultGate.shouldApply(
+                delayed,
+                activeRequestId: nil,
+                lastAppliedCompletedAt: fence,
+                currentAccountUserId: account,
+                lastAppliedAccountUserId: nil
+            ),
+            "the regression must fail if sign-out forgets the outgoing account owner"
+        )
+    }
+
     func testReadinessResultMergesIntoSignedInApplicationContext() {
         var context = ReadinessApplicationContext()
         let account = "00000000-0000-0000-0000-0000000000c1"

@@ -230,8 +230,11 @@ final class AuthManager: NSObject {
             lastRelayAt = Date()
             lastRejection = nil
             queuedRequest = false
+            let outgoingAccountUserId = WatchSessionStore.shared.userId
             signOutLocally()
-            ReadinessManager.current?.signOutLocally()
+            ReadinessManager.current?.signOutLocally(
+                outgoingAccountUserId: outgoingAccountUserId
+            )
             Self.log.info("relay: phone signed out")
         case let .rejected(reason):
             // A readiness-only merged context has no auth event; an already

@@ -125,20 +125,28 @@ final class ReadinessManager {
     }
 
     func receive(_ result: ReadinessRefreshResult) {
-        guard acceptsResults,
+        guard let currentAccountUserId = WatchSessionStore.shared.userId,
+              acceptsResults,
               !ignoredRequestIds.contains(result.requestId),
               ReadinessResultGate.shouldApply(
                   result,
                   activeRequestId: activeRequestId,
                   lastAppliedCompletedAt: lastAppliedCompletedAt,
-                  currentAccountUserId: WatchSessionStore.shared.userId,
+                  currentAccountUserId: currentAccountUserId,
                   activeRequestAccountUserId: activeRequestAccountUserId,
                   lastAppliedAccountUserId: lastAppliedAccountUserId
               )
         else { return }
 
-        lastAppliedCompletedAt = max(lastAppliedCompletedAt ?? 0, result.completedAt)
-        lastAppliedAccountUserId = WatchSessionStore.shared.userId
+        if lastAppliedAccountUserId == currentAccountUserId {
+            lastAppliedCompletedAt = max(lastAppliedCompletedAt ?? 0, result.completedAt)
+        } else {
+            // A's timestamp belongs to A. Once B owns the gate, start B's
+            // monotonic baseline at B's first accepted completion rather than
+            // carrying A's larger wall-clock value into B forever.
+            lastAppliedCompletedAt = result.completedAt
+        }
+        lastAppliedAccountUserId = currentAccountUserId
         lastResultAt = Date(timeIntervalSince1970: result.completedAt)
         timeoutTask?.cancel()
         timeoutTask = nil
@@ -201,13 +209,14 @@ final class ReadinessManager {
     /// result gate, fencing every A request/result and clearing its observable
     /// and widget state before B can publish.
     func resetForAccountTransition() {
-        signOutLocally()
+        signOutLocally(outgoingAccountUserId: WatchSessionStore.shared.userId)
     }
 
     /// Sign-out invalidates an in-flight request and quarantines its late
     /// result. The watch keeps no bearer refresh credential and does not ask
     /// the old request to write anything after the account is gone.
-    func signOutLocally() {
+    func signOutLocally(outgoingAccountUserId: UUID? = nil) {
+        let outgoingAccountUserId = outgoingAccountUserId ?? WatchSessionStore.shared.userId
         if let activeRequestId { ignoredRequestIds.insert(activeRequestId) }
         if let queuedFallbackRequestId { ignoredRequestIds.insert(queuedFallbackRequestId) }
         timeoutTask?.cancel()
@@ -229,9 +238,13 @@ final class ReadinessManager {
             lastAppliedCompletedAt ?? 0,
             Date().timeIntervalSince1970
         )
-        // Keep lastAppliedAccountUserId as the previous account so that the
-        // next account bypasses only the previous account's timestamp fence;
-        // an old same-account completion after sign-out still remains stale.
+        // The owner must survive even when no readiness result was applied
+        // before sign-out. Otherwise a delayed stamped pre-signout result
+        // could be accepted after the same account signs back in once request
+        // quarantine has expired.
+        if let outgoingAccountUserId {
+            lastAppliedAccountUserId = outgoingAccountUserId
+        }
         syncState = .authRequired
         errorMsg = nil
         // Keep this explicit at the coordinator boundary: callers can invoke

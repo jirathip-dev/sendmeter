@@ -162,7 +162,7 @@ describe("watch-triggered readiness architecture (#520)", () => {
     expect(contract).toMatch(/accountUserId/);
     expect(contract).toMatch(/activeRequestAccountUserId/);
     expect(contract).toMatch(/activeRequestId, activeRequestId != result.requestId/);
-    expect(manager).toMatch(/currentAccountUserId: WatchSessionStore\.shared\.userId/);
+    expect(manager).toMatch(/currentAccountUserId: currentAccountUserId/);
     expect(manager).toMatch(/activeRequestAccountUserId: activeRequestAccountUserId/);
     expect(manager).toMatch(/lastAppliedAccountUserId: lastAppliedAccountUserId/);
   });
@@ -187,14 +187,32 @@ describe("watch-triggered readiness architecture (#520)", () => {
 
   it("closes readiness and widget publication at local sign-out", () => {
     const manager = source(READINESS_MANAGER);
-    const signOut = manager.match(/func signOutLocally\(\)[\s\S]*?\n {4}}/)?.[0] ?? "";
+    const signOut = manager.match(/func signOutLocally\([^)]*\)[\s\S]*?\n {4}}/)?.[0] ?? "";
     expect(signOut).toMatch(/acceptsResults = false/);
     expect(signOut).toMatch(/snapshot = WidgetSnapshot\.empty/);
     expect(signOut).toMatch(/result = nil/);
     expect(signOut).toMatch(/lastResultAt = nil/);
     expect(signOut).toMatch(/WidgetStore\.clear\(\)/);
     expect(signOut).toMatch(/WidgetBridge\.invalidate\(\)/);
-    expect(manager).toMatch(/guard acceptsResults/);
+    expect(signOut).toMatch(/if let outgoingAccountUserId/);
+    expect(signOut).toMatch(/lastAppliedAccountUserId = outgoingAccountUserId/);
+    expect(manager).toMatch(/guard let currentAccountUserId[\s\S]*?acceptsResults/);
+
+    const auth = source(AUTH_MANAGER);
+    const apply = auth.match(/private func apply\(_ context: \[String: Any\]\)[\s\S]*?\n {4}}/)?.[0] ?? "";
+    const signedOut = apply.match(/case \.signedOut:[\s\S]*?Self\.log\.info\("relay: phone signed out"\)/)?.[0] ?? "";
+    const capture = signedOut.indexOf("let outgoingAccountUserId = WatchSessionStore.shared.userId");
+    expect(capture).toBeGreaterThanOrEqual(0);
+    expect(capture).toBeLessThan(signedOut.indexOf("signOutLocally()"));
+    expect(signedOut).toMatch(/signOutLocally\(\s*outgoingAccountUserId: outgoingAccountUserId/);
+  });
+
+  it("resets the B timestamp baseline after an account transition", () => {
+    const manager = source(READINESS_MANAGER);
+    const receive = manager.match(/func receive\(_ result: ReadinessRefreshResult\)[\s\S]*?\n {4}}/)?.[0] ?? "";
+    expect(receive).toMatch(/if lastAppliedAccountUserId == currentAccountUserId/);
+    expect(receive).toMatch(/lastAppliedCompletedAt = result\.completedAt/);
+    expect(receive).toMatch(/lastAppliedAccountUserId = currentAccountUserId/);
   });
 
   it("validates a combined auth/readiness context before opening the result gate", () => {
