@@ -362,6 +362,59 @@ final class ReadinessRefreshTests: XCTestCase {
         )
     }
 
+    func testColdLaunchRestoresPersistedJWTSubjectBeforeReadinessWork() throws {
+        let firstUser = UUID(uuidString: "00000000-0000-0000-0000-000000000011")!
+        let secondUser = UUID(uuidString: "00000000-0000-0000-0000-000000000012")!
+        let persistedToken = Self.jwt(subject: firstUser, expiresAt: 2_000)
+        let claims = try XCTUnwrap(AccessTokenClaims(jwt: persistedToken))
+
+        var epoch = ReadinessAccountEpoch()
+        XCTAssertEqual(epoch.restoreSession(userId: claims.userId), .accountChanged)
+        let restored = try XCTUnwrap(epoch.identity(tokenGeneration: 1))
+        XCTAssertEqual(restored.userId, firstUser)
+        XCTAssertEqual(epoch.identity(tokenGeneration: 1), restored)
+
+        // A new bearer for the same subject keeps the account epoch, while a
+        // real account transition rejects every identity captured at launch.
+        XCTAssertEqual(epoch.setSession(userId: firstUser), .sameAccount)
+        XCTAssertEqual(epoch.currentEpoch, restored.accountEpoch)
+        XCTAssertEqual(epoch.setSession(userId: secondUser), .accountChanged)
+        XCTAssertNotEqual(epoch.currentEpoch, restored.accountEpoch)
+        XCTAssertFalse(
+            ReadinessRefreshDeliveryGate.allows(
+                capturedEpoch: restored.accountEpoch,
+                currentEpoch: epoch.currentEpoch,
+                isSignedOut: epoch.isSignedOut
+            )
+        )
+    }
+
+    func testTokenGenerationIdentifiesBearerRotationWithoutChangingAccount() throws {
+        let user = UUID(uuidString: "00000000-0000-0000-0000-000000000013")!
+        var epoch = ReadinessAccountEpoch()
+        XCTAssertEqual(epoch.restoreSession(userId: user), .accountChanged)
+
+        let firstBearer = try XCTUnwrap(epoch.identity(tokenGeneration: 1))
+        let refreshedBearer = try XCTUnwrap(epoch.identity(tokenGeneration: 2))
+        XCTAssertEqual(firstBearer.accountEpoch, refreshedBearer.accountEpoch)
+        XCTAssertEqual(firstBearer.userId, refreshedBearer.userId)
+        XCTAssertNotEqual(firstBearer.tokenGeneration, refreshedBearer.tokenGeneration)
+        XCTAssertFalse(
+            ReadinessRefreshDeliveryGate.allows(
+                captured: firstBearer,
+                current: refreshedBearer,
+                isSignedOut: false
+            )
+        )
+        XCTAssertFalse(
+            ReadinessRefreshDeliveryGate.allows(
+                captured: firstBearer,
+                current: nil,
+                isSignedOut: true
+            )
+        )
+    }
+
     func testSignedOutWinsAnInterleavingBeforeDirectResultPublication() {
         let user = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
         var epoch = ReadinessAccountEpoch()
@@ -465,5 +518,16 @@ final class ReadinessRefreshTests: XCTestCase {
         XCTAssertEqual(ReadinessRefreshResult(message: result.message())?.status, .authRequired)
         XCTAssertEqual(ReadinessRefreshResult(message: result.message())?.freshness, .offline)
         XCTAssertEqual(ReadinessRefreshResult(message: result.message())?.errorCode, "auth-required")
+    }
+
+    private static func jwt(subject: UUID, expiresAt: Int) -> String {
+        let payload = try! JSONSerialization.data(
+            withJSONObject: ["sub": subject.uuidString, "exp": expiresAt]
+        )
+        let encoded = payload.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        return "header.\(encoded).signature"
     }
 }

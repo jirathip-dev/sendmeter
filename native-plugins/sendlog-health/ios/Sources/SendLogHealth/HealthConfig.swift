@@ -1,7 +1,7 @@
 import Foundation
-import Supabase
+import PostgREST
 
-/// The plugin owns its own Supabase client (separate from the WebView's
+/// The plugin owns a narrow PostgREST client (separate from the WebView's
 /// supabase-js session, which native code — especially a background wake —
 /// can't reach). The access token is handed in via the auth relay
 /// (`SendLogHealth.setSession`), mirroring the watch auth bridge. The URL and
@@ -31,47 +31,40 @@ enum HealthConfig {
     private static let supabaseAnonKey = "sb_publishable_eHRHTelsNVGOcURw4q9a1Q_r6sas-rp"
     #endif
 
-    /// ONE client, `private`, with no auth session of its own (#265, #502).
-    /// It sends the relayed access token as a bearer token and nothing else;
-    /// there is no `AuthClient` here to refresh, recover or rotate anything.
+    /// Every request gets a fresh private PostgREST client bound to the access
+    /// token captured by its owning readiness flight (#520). The pinned
+    /// supabase-swift SDK exposes this constructor directly in its PostgREST
+    /// product, so this path does not create the full SDK client/auth surface.
+    /// There is no auth session of its own and no live Keychain-backed provider
+    /// here: an old request can therefore never start using a new account's
+    /// bearer after a session transition.
     ///
-    /// This costs nothing in capability. Under #196 the data client already
-    /// refused to refresh, so a background wake whose relayed token had
-    /// expired already failed with a 401 and waited for the next foreground
-    /// relay. The only behaviour removed is the refresh that
-    /// `auth.setSession` could perform — the one nobody wanted.
+    /// A client is cheap compared with a HealthKit read and keeps the bearer
+    /// binding explicit at every PostgREST call site. The only native auth
+    /// capability remains access-token transport; no refresh token is stored
+    /// or handed to the SDK.
     ///
     /// `private` is the #502 change: the rest of this plugin can no longer
-    /// name the client, alias it, or reach any auth accessor through it —
-    /// the compiler enforces what #196's convention and #488's text scans
-    /// could not. Everything goes through `from(_:)` below, whose
-    /// `PostgrestQueryBuilder` has no member path back to the client or to
-    /// `.auth`. The residual trusted surface is THIS FILE, which
+    /// name or mutate the client. Everything goes through `from(_:)` below,
+    /// whose `PostgrestQueryBuilder` has no member path back to the client.
+    /// The residual trusted surface is THIS FILE, which
     /// `src/lib/nativeAuthInvariants.test.ts`'s (much smaller) pin scans.
-    private static let client: SupabaseClient = {
-        let authOptions = SupabaseClientOptions.AuthOptions(
-            // Argument order is enforced by the initialiser.
-            autoRefreshToken: false,
-            accessToken: { HealthSessionStore.shared.accessToken }
+    private static func client(accessToken: String) -> PostgrestClient {
+        PostgrestClient(
+            url: supabaseURL.appendingPathComponent("rest/v1"),
+            headers: [
+                "apikey": supabaseAnonKey,
+                "Authorization": "Bearer \(accessToken)",
+                "X-Client-Info": "sendmeter-health-plugin"
+            ]
         )
-        // Names this process in Supabase's logs (#265 asked for origin
-        // attribution): a request from the health plugin is now
-        // distinguishable from one made by the WebView or the watch.
-        let globalOptions = SupabaseClientOptions.GlobalOptions(
-            headers: ["X-Client-Info": "sendmeter-health-plugin"]
-        )
-        return SupabaseClient(
-            supabaseURL: supabaseURL,
-            supabaseKey: supabaseAnonKey,
-            options: SupabaseClientOptions(auth: authOptions, global: globalOptions)
-        )
-    }()
+    }
 
     /// The façade's entire data surface: a PostgREST query builder for one
-    /// table. Deliberately the ONLY non-private member — anything new this
-    /// plugin needs from the SDK gets its own narrow accessor here, never
-    /// the client itself.
-    static func from(_ table: String) -> PostgrestQueryBuilder {
-        client.from(table)
+    /// table and one captured bearer. Deliberately the ONLY non-private member
+    /// — anything new this plugin needs from the SDK gets its own narrow
+    /// accessor here, never the client itself.
+    static func from(_ table: String, accessToken: String) -> PostgrestQueryBuilder {
+        client(accessToken: accessToken).from(table)
     }
 }

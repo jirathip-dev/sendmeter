@@ -187,13 +187,18 @@ final class AuthManager: NSObject {
     @MainActor
     private func apply(_ context: [String: Any]) {
         // Readiness results share the phone's latest application context with
-        // the access-token relay. Parse that typed payload first; it does not
-        // affect auth decoding and keeps a cold watch from needing a second
-        // readiness fetch.
-        ReadinessManager.current?.receive(context)
+        // the access-token relay. Decode auth first: a malformed/stale
+        // signedIn dictionary must not open the readiness result gate and let
+        // untrusted fields masquerade as a valid account.
         let outcome = SessionRelay.decode(context, now: now)
         switch outcome {
         case let .signedIn(session):
+            // Open the result gate before parsing the combined context: a
+            // cold watch may receive auth + readiness in one payload, and the
+            // readiness result must not be discarded while the auth state is
+            // being adopted.
+            ReadinessManager.current?.activateForSignedInSession()
+            ReadinessManager.current?.receive(context)
             WidgetBridge.activate()
             lastRelayAt = Date()
             lastRejection = nil
@@ -221,6 +226,13 @@ final class AuthManager: NSObject {
             ReadinessManager.current?.signOutLocally()
             Self.log.info("relay: phone signed out")
         case let .rejected(reason):
+            // A readiness-only merged context has no auth event; an already
+            // signed-in watch may still consume its typed result. Any
+            // rejected auth relay is otherwise ignored, so stale/malformed
+            // signedIn payloads cannot publish readiness before validation.
+            if reason == .notARelay {
+                ReadinessManager.current?.receive(context)
+            }
             // `notARelay` is not an auth payload at all — some other
             // application context. Recording it would only add noise.
             guard reason != .notARelay else { return }

@@ -27,6 +27,27 @@ public struct ReadinessTaskGate: Equatable, Sendable {
     }
 }
 
+/// Identity of one native session binding. The bearer itself deliberately does
+/// not cross into this core package or onto WatchConnectivity; native callers
+/// keep that value in their private request binding. `tokenGeneration` lets a
+/// same-user access-token rotation invalidate work that captured the previous
+/// bearer without pretending that the user changed accounts.
+public struct ReadinessSessionIdentity: Equatable, Sendable {
+    public let accountEpoch: UInt64
+    public let tokenGeneration: UInt64
+    public let userId: UUID?
+
+    public init(
+        accountEpoch: UInt64,
+        tokenGeneration: UInt64,
+        userId: UUID?
+    ) {
+        self.accountEpoch = accountEpoch
+        self.tokenGeneration = tokenGeneration
+        self.userId = userId
+    }
+}
+
 /// Account identity epoch for native consumers that receive access-token-only
 /// relays. A token rotation for the same JWT subject keeps the epoch stable;
 /// a different subject or explicit clear advances it. Results captured under
@@ -47,6 +68,19 @@ public struct ReadinessAccountEpoch: Equatable, Sendable {
     public var isSignedOut: Bool { !hasSession }
     public var currentUserId: UUID? { userId }
 
+    /// The identity a native request may capture. A token generation is kept
+    /// separate from the account epoch: rotating a bearer for the same JWT
+    /// subject does not discard account-scoped state, but it must not let a
+    /// newly-created request join work bound to the old bearer.
+    public func identity(tokenGeneration: UInt64) -> ReadinessSessionIdentity? {
+        guard hasSession else { return nil }
+        return ReadinessSessionIdentity(
+            accountEpoch: epoch,
+            tokenGeneration: tokenGeneration,
+            userId: userId
+        )
+    }
+
     /// `nil` user IDs are treated as unknown identities. Repeated malformed
     /// tokens must not be mistaken for a same-user refresh and allowed to
     /// retain an old account's result cache.
@@ -59,6 +93,15 @@ public struct ReadinessAccountEpoch: Equatable, Sendable {
         hasSession = true
         self.userId = userId
         return .accountChanged
+    }
+
+    /// Restore the account epoch from the persisted native access-token
+    /// subject during a cold launch. This is intentionally the same transition
+    /// rule as a live relay, so a restored account cannot share an epoch with a
+    /// stale pre-restart signed-out state.
+    @discardableResult
+    public mutating func restoreSession(userId: UUID?) -> SessionChange {
+        setSession(userId: userId)
     }
 
     /// Clearing always advances the epoch, even if already signed out, so a
@@ -84,5 +127,13 @@ public enum ReadinessRefreshDeliveryGate {
         isSignedOut: Bool
     ) -> Bool {
         !isSignedOut && capturedEpoch == currentEpoch
+    }
+
+    public static func allows(
+        captured: ReadinessSessionIdentity,
+        current: ReadinessSessionIdentity?,
+        isSignedOut: Bool
+    ) -> Bool {
+        !isSignedOut && current == captured
     }
 }

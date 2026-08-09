@@ -217,7 +217,7 @@ const FACADES = [
     file: join(HEALTH_PLUGIN, "HealthConfig.swift"),
     allowedLines: new Set([
       "enum HealthConfig {",
-      "static func from(_ table: String) -> PostgrestQueryBuilder {",
+      "static func from(_ table: String, accessToken: String) -> PostgrestQueryBuilder {",
     ]),
   },
 ];
@@ -515,17 +515,36 @@ describe("the refreshing accessor is unreachable by construction (#502)", () => 
   // The positive match is only a label on one façade fact, not independent
   // or compensating enforcement.
 
-  it("each façade holds its client in a `private static let` (line-anchored — a comment quoting this phrase cannot satisfy it)", () => {
+  it("each façade keeps its client constructor private (line-anchored — a comment quoting this phrase cannot satisfy it)", () => {
     // `^\s*` + `m`: only a line whose first non-whitespace text IS the
     // declaration matches. A `//`/`///` comment line starts with slashes and
     // never matches (#502 review F2 defeated the previous whole-file match
-    // with exactly such a comment).
+    // with exactly such a comment). The health façade constructs an
+    // immutable bearer-bound client per request, so its private declaration
+    // is a function rather than a mutable-token singleton.
     for (const { file } of FACADES) {
       const raw = readFileSync(file, "utf8");
       expect(raw, file.slice(REPO.length + 1)).toMatch(
-        /^\s*private static let client: SupabaseClient\b/m,
+        /^\s*private static (?:let client: SupabaseClient\b|func client\(accessToken: String\) -> (?:SupabaseClient|PostgrestClient)\s*\{)/m,
       );
     }
+  });
+
+  it("health requests use a fresh bearer-bound PostgREST client, never the full auth surface", () => {
+    const health = readFileSync(
+      join(HEALTH_PLUGIN, "HealthConfig.swift"),
+      "utf8",
+    );
+    expect(health).toMatch(/import PostgREST/);
+    expect(health).toMatch(
+      /private static func client\(accessToken: String\) -> PostgrestClient\s*\{/,
+    );
+    expect(health).toMatch(/appendingPathComponent\("rest\/v1"\)/);
+    expect(health).toMatch(/"apikey": supabaseAnonKey/);
+    expect(health).toMatch(/"Authorization": "Bearer \\\(accessToken\)"/);
+    expect(health).toMatch(/"X-Client-Info": "sendmeter-health-plugin"/);
+    expect(health).not.toMatch(/\bSupabaseClient(?:Options)?\b/);
+    expect(health).not.toMatch(/\bAuthOptions\b|\bautoRefreshToken\b/);
   });
 
   it("no file outside the façades even names `SupabaseClient` (raw text — nothing can hide an occurrence)", () => {
@@ -701,17 +720,22 @@ describe("no session-consuming native client may hold or spend a refresh token (
     expect(offenders).toEqual([]);
   });
 
-  it("configures each façade's client with a non-refreshing accessToken provider", () => {
+  it("binds each façade's client to an access token without a refreshing session", () => {
     // The seam that makes "no AuthClient" structural rather than incidental:
-    // a client built with an `accessToken` provider never consults an
-    // AuthClient, so there is no session for the SDK to recover or renew.
-    // Scoped to the façades because the #502 checks above pin them as the
-    // only two client-construction sites.
-    for (const { file } of FACADES) {
-      expect(swiftCodeForAccessorScan(file), file.slice(REPO.length + 1)).toMatch(
-        /accessToken:\s*\{/,
-      );
-    }
+    // the watch's long-lived client uses an accessToken provider, while the
+    // health plugin's direct PostgREST client carries an immutable bearer
+    // header. Neither path has a session for the SDK to recover or renew.
+    const watch = swiftCodeForAccessorScan(
+      join(WATCH_APP, "Services", "SupabaseService.swift"),
+    );
+    expect(watch).toMatch(/accessToken:\s*\{/);
+
+    const health = readFileSync(
+      join(HEALTH_PLUGIN, "HealthConfig.swift"),
+      "utf8",
+    );
+    expect(health).toMatch(/"Authorization":\s*"Bearer \\\(accessToken\)"/);
+    expect(health).not.toMatch(/accessToken:\s*\{/);
   });
 });
 

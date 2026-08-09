@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const REPO = join(import.meta.dirname, "..", "..");
 const WATCH_APP = join(REPO, "ios", "App", "SendLogWatch Watch App");
 const READINESS_MANAGER = join(WATCH_APP, "Services", "ReadinessManager.swift");
+const AUTH_MANAGER = join(WATCH_APP, "Services", "AuthManager.swift");
 const WIDGET_BRIDGE = join(WATCH_APP, "Services", "WidgetBridge.swift");
 const HEALTH_PLUGIN = join(
   REPO,
@@ -60,7 +61,7 @@ describe("watch-triggered readiness architecture (#520)", () => {
 
     const healthSources = swiftFiles(HEALTH_PLUGIN).map(source).join("\n");
     expect(healthSources).toMatch(/HealthKitReader/);
-    expect(healthSources).toMatch(/\.from\("health_metrics"\)/);
+    expect(healthSources).toMatch(/\.from\("health_metrics", accessToken: binding\.accessToken\)/);
     expect(healthSources).toMatch(/\.upsert\(/);
   });
 
@@ -121,6 +122,80 @@ describe("watch-triggered readiness architecture (#520)", () => {
     expect(commit.indexOf("await computeACWR()"), "snapshot must be read after ACWR await").toBeLessThan(
       commit.indexOf("var snap = WidgetStore.load()"),
     );
+  });
+
+  it("restores the cold native account and binds every Supabase request", () => {
+    const health = source(HEALTH_MANAGER);
+    const coldInit = health.match(/private init\(\)[\s\S]*?func requestAuthorization/)?.[0] ?? "";
+    expect(coldInit).toMatch(/HealthSessionStore\.shared\.accessToken/);
+    expect(coldInit).toMatch(/AccessTokenClaims\(jwt: persisted\)/);
+    expect(coldInit).toMatch(/accountEpoch\.restoreSession/);
+    expect(coldInit).toMatch(/HealthSessionStore\.shared\.isSignedOut/);
+    expect(health).toMatch(/HealthSessionBinding/);
+    expect(health).toMatch(/requestedBinding: HealthSessionBinding\?/);
+    expect(health).toMatch(/\.from\("health_metrics", accessToken: binding\.accessToken\)/);
+    expect(health).toMatch(/\.from\("sessions", accessToken: binding\.accessToken\)/);
+
+    const setSession = health.match(/func setSession\(accessToken: String\)[\s\S]*?\n {4}}/)?.[0] ?? "";
+    expect(setSession.indexOf("invalidateFlight()"), "old flight must be invalidated before bearer exposure").toBeGreaterThanOrEqual(0);
+    expect(setSession.indexOf("invalidateFlight()"), "old flight must be invalidated before bearer exposure").toBeLessThan(
+      setSession.indexOf("HealthSessionStore.shared.store(accessToken)"),
+    );
+    expect(setSession).toMatch(/clearRequestState\(\)/);
+  });
+
+  it("never re-enters sessionLock through the account-ownership helper", () => {
+    const health = source(HEALTH_MANAGER);
+    const handle = health.match(
+      /private func handleWatchRequest[\s\S]*?private func deliverWatchResult/,
+    )?.[0] ?? "";
+    expect(handle).toMatch(/let result = await task\.value/);
+    expect(handle).toMatch(
+      /let result = await task\.value[\s\S]*?guard ownsAccount\(requestIdentity\)/,
+    );
+    expect(handle).toMatch(
+      /sessionLock\.lock\(\)[\s\S]*?guard ownsAccountLocked\(requestIdentity\)/,
+    );
+    expect(handle).not.toMatch(
+      /sessionLock\.lock\(\)[\s\S]*?guard ownsAccount\(requestIdentity\)/,
+    );
+    expect(health).toMatch(/private func ownsAccountLocked\(/);
+  });
+
+  it("closes readiness and widget publication at local sign-out", () => {
+    const manager = source(READINESS_MANAGER);
+    const signOut = manager.match(/func signOutLocally\(\)[\s\S]*?\n {4}}/)?.[0] ?? "";
+    expect(signOut).toMatch(/acceptsResults = false/);
+    expect(signOut).toMatch(/snapshot = WidgetSnapshot\.empty/);
+    expect(signOut).toMatch(/result = nil/);
+    expect(signOut).toMatch(/lastResultAt = nil/);
+    expect(signOut).toMatch(/WidgetStore\.clear\(\)/);
+    expect(signOut).toMatch(/WidgetBridge\.invalidate\(\)/);
+    expect(manager).toMatch(/guard acceptsResults/);
+  });
+
+  it("validates a combined auth/readiness context before opening the result gate", () => {
+    const auth = source(AUTH_MANAGER);
+    const apply = auth.match(/private func apply\(_ context: \[String: Any\]\)[\s\S]*?\n {4}}/)?.[0] ?? "";
+    expect(apply.indexOf("SessionRelay.decode"), "auth must decode before readiness publication").toBeGreaterThanOrEqual(0);
+    expect(apply.indexOf("SessionRelay.decode"), "auth must decode before readiness publication").toBeLessThan(
+      apply.indexOf("activateForSignedInSession()"),
+    );
+    expect(apply).toMatch(/if reason == \.notARelay/);
+  });
+
+  it("flushes a durable, fresh-stamped signedOut context after WC activation", () => {
+    const bridge = source(join(AUTH_BRIDGE, "Plugin.swift"));
+    const activation = bridge.match(
+      /activationDidCompleteWith activationState:[\s\S]*?public func sessionDidBecomeInactive/,
+    )?.[0] ?? "";
+    expect(activation).toMatch(/activationState == \.activated/);
+    expect(bridge).toMatch(/signedOutKey/);
+    expect(activation).toMatch(
+      /relay\(\s*\["event": "signedOut"\][\s\S]*?guaranteed: true[\s\S]*?requireSignedOut: true/,
+    );
+    expect(bridge).toMatch(/stampedPayload\["relayId"\] = UUID\(\)\.uuidString/);
+    expect(bridge).toMatch(/stampedPayload\["relayedAt"\] = Date\(\)\.timeIntervalSince1970/);
   });
 
   it("linearizes signedOut before readiness direct publication", () => {

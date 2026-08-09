@@ -24,6 +24,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Capacitor", package: "capacitor-swift-pm"),
                 .product(name: "Cordova", package: "capacitor-swift-pm"),
+                .product(name: "PostgREST", package: "supabase-swift"),
                 .product(name: "Supabase", package: "supabase-swift"),
                 .product(name: "SendLogHealthCore", package: "sendlog-health-core"),
                 .product(name: "SendlogAuthBridge", package: "sendlog-auth-bridge"),

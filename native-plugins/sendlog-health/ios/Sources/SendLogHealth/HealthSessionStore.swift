@@ -12,8 +12,9 @@ import Supabase
 /// that, which is what #196 discovered; #265 removes the credential instead of
 /// forbidding the call.
 ///
-/// Reads must be synchronous: `HealthConfig`'s `accessToken` provider runs on
-/// every request, including on a background HealthKit wake.
+/// Reads must be synchronous: a cold native launch restores the JWT subject
+/// before any readiness request can publish, while each request captures its
+/// bearer before leaving the session lock.
 ///
 /// Lives in its own file on purpose (#502): the pin in
 /// `src/lib/nativeAuthInvariants.test.ts` holds `HealthConfig.swift`'s whole
@@ -28,6 +29,10 @@ final class HealthSessionStore: @unchecked Sendable {
 
     private let storage = KeychainLocalStorage(service: "com.jirathip.sendlog.health.relay")
     private let key = "relayed-access-token"
+    /// Shared with the auth bridge. This durable marker prevents a stale
+    /// bearer surviving a process restart from resurrecting a signed-out
+    /// readiness account before the next WebView relay arrives.
+    private let signedOutKey = "sendmeter.authBridge.signedOut"
 
     private let lock = NSLock()
     private var cached: String?
@@ -53,6 +58,7 @@ final class HealthSessionStore: @unchecked Sendable {
         loaded = true
         lock.unlock()
         try? storage.store(key: key, value: Data(token.utf8))
+        UserDefaults.standard.set(false, forKey: signedOutKey)
     }
 
     func clear() {
@@ -61,6 +67,11 @@ final class HealthSessionStore: @unchecked Sendable {
         loaded = true
         lock.unlock()
         try? storage.remove(key: key)
+        UserDefaults.standard.set(true, forKey: signedOutKey)
+    }
+
+    var isSignedOut: Bool {
+        UserDefaults.standard.bool(forKey: signedOutKey)
     }
 
     /// Deletes whatever supabase-swift's `AuthClient` persisted under its

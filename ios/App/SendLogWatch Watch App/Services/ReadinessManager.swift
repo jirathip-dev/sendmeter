@@ -52,11 +52,19 @@ final class ReadinessManager {
     private var timeoutTask: Task<Void, Never>?
     private var lastSentAt: TimeInterval?
     private var ignoredRequestIds = Set<String>()
+    /// Results received before a signed-in relay are held at the transport
+    /// boundary. Sign-out closes this gate so a late direct/context result
+    /// cannot repopulate the observable snapshot or widget store.
+    private var acceptsResults = false
 
     init() {
+        let hasPersistedSession = WatchSessionStore.shared.current != nil
         let cached = ScreenshotFixtures.enabled
             ? ScreenshotFixtures.status
-            : WidgetStore.load()
+            : hasPersistedSession ? WidgetStore.load() : .empty
+        if !hasPersistedSession && !ScreenshotFixtures.enabled {
+            WidgetStore.clear()
+        }
         snapshot = cached
         if cached.readiness != nil || cached.readinessZone != nil {
             result = ReadinessDisplay(
@@ -65,7 +73,16 @@ final class ReadinessManager {
                 driver: cached.readiness == nil ? "Cached" : "Cached (\(cached.updatedAtDateString))"
             )
         }
+        acceptsResults = hasPersistedSession
         Self.current = self
+    }
+
+    /// Opens the result gate after AuthManager has accepted a fresh phone
+    /// signedIn relay. A prior sign-out deliberately clears all observable and
+    /// widget state, so the next account starts from an empty snapshot.
+    func activateForSignedInSession() {
+        acceptsResults = true
+        WidgetBridge.activate()
     }
 
     /// Called by app launch/foreground/status appear. The coalescer marks the
@@ -100,7 +117,8 @@ final class ReadinessManager {
     }
 
     func receive(_ result: ReadinessRefreshResult) {
-        guard !ignoredRequestIds.contains(result.requestId),
+        guard acceptsResults,
+              !ignoredRequestIds.contains(result.requestId),
               ReadinessResultGate.shouldApply(
                   result,
                   activeRequestId: activeRequestId,
@@ -176,8 +194,25 @@ final class ReadinessManager {
         activeRequest = nil
         queuedFallbackRequestId = nil
         coalescer.cancel()
+        acceptsResults = false
+        snapshot = WidgetSnapshot.empty
+        result = nil
+        lastResultAt = nil
+        // Keep a wall-clock fence as well as the request-ID quarantine: a
+        // result that completed before sign-out may have no active request ID
+        // left to mark, but it must still be rejected after the next account
+        // signs in.
+        lastAppliedCompletedAt = max(
+            lastAppliedCompletedAt ?? 0,
+            Date().timeIntervalSince1970
+        )
         syncState = .authRequired
         errorMsg = nil
+        // Keep this explicit at the coordinator boundary: callers can invoke
+        // sign-out without going through AuthManager, and no stale readiness
+        // or ACWR snapshot may remain visible to the separate widget process.
+        WidgetStore.clear()
+        WidgetBridge.invalidate()
     }
 
     var syncLabel: String {

@@ -401,9 +401,16 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
     private func relay(
         _ context: [String: Any],
         guaranteed: Bool = false,
-        immediateReadiness: Bool = false
+        immediateReadiness: Bool = false,
+        requireSignedOut: Bool = false
     ) {
         readinessLock.lock()
+        if requireSignedOut,
+           !applicationContext.isSignedOut,
+           !UserDefaults.standard.bool(forKey: signedOutKey) {
+            readinessLock.unlock()
+            return
+        }
         let payload = applicationContext.update(context)
         let signedOut = applicationContext.isSignedOut
         if signedOut {
@@ -447,7 +454,21 @@ extension SendLogAuthBridge: WCSessionDelegate {
         _ session: WCSession,
         activationDidCompleteWith activationState: WCSessionActivationState,
         error: Error?
-    ) {}
+    ) {
+        guard activationState == .activated else { return }
+
+        // `updateApplicationContext` is durable only after activation. If a
+        // phone signed out while WC was inactive (or the process restarted
+        // before the old clear could be delivered), flush a fresh-stamped
+        // signedOut payload through both the latest-state and guaranteed
+        // queues now. `relay` re-checks the locked logical context, stamps
+        // fresh relayId/relayedAt values, and cannot resurrect readiness.
+        relay(
+            ["event": "signedOut"],
+            guaranteed: true,
+            requireSignedOut: true
+        )
+    }
 
     public func sessionDidBecomeInactive(_ session: WCSession) {}
 
