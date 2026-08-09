@@ -24,21 +24,44 @@ final class SendmeterScreenshots: XCTestCase {
         snapshot("02-history")
 
         app.buttons["Force"].tap()
-        XCTAssertTrue(app.buttons["Connect Progressor"].waitForExistence(timeout: 20))
+        // The redesigned Force flow starts with exercise + protocol setup and
+        // only presents the Progressor connection action once those inputs are
+        // ready. Anchor the overview capture to the stable screen heading so
+        // copy and connection-state changes cannot break App Store generation.
+        XCTAssertTrue(app.staticTexts["FORCE"].waitForExistence(timeout: 20))
         snapshot("03-force-overview")
 
-        let curveInfo = app.buttons["About: How the Force Curve works"]
         let webView = app.webViews.firstMatch
+        // WKWebView exposes the card's composed visible label on some iOS
+        // runtimes instead of its aria-label. Match the stable product term
+        // across either representation.
+        let staticInsights = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS[c] %@", "Static capacity"))
+            .firstMatch
+        for _ in 0..<14 where !staticInsights.isHittable {
+            webView.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(staticInsights.isHittable, "The Static capacity card should be visible")
+        staticInsights.tap()
+
+        XCTAssertTrue(
+            app.buttons["Close Static capacity"].waitForExistence(timeout: 10),
+            "The Static capacity bottom sheet should open"
+        )
+        let curveInfo = app.buttons["About: How the Force Curve works"]
         for _ in 0..<14 where !curveInfo.isHittable {
+            // With the sheet open, its full-height body owns this gesture and
+            // the page beneath remains locked.
             webView.swipeUp(velocity: .fast)
         }
         XCTAssertTrue(curveInfo.isHittable, "The populated force curve should be visible")
 
-        // The iPad's two-column desktop layout reaches its natural scroll
-        // boundary with the curve just below center; phones can frame it
-        // higher. Both limits keep the complete chart in the capture.
+        // The sticky sheet header intentionally consumes more vertical room
+        // than the old page-level chart. Keep the curve near center on phones
+        // and allow the iPad's two-column layout to settle just below it;
+        // both limits retain the complete chart and the persistent close UI.
         let deviceName = ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? ""
-        let curveFrameLimit = app.windows.firstMatch.frame.height * (deviceName.hasPrefix("iPad") ? 0.60 : 0.45)
+        let curveFrameLimit = app.windows.firstMatch.frame.height * (deviceName.hasPrefix("iPad") ? 0.60 : 0.55)
         for _ in 0..<4 where curveInfo.frame.midY > curveFrameLimit {
             webView.swipeUp(velocity: .fast)
         }
