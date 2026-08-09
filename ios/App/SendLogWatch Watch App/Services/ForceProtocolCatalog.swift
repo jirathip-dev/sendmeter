@@ -27,13 +27,21 @@ final class ForceProtocolCatalog {
         let fetchedAt: Date
     }
 
-    private static let cacheKey = "forceProtocolCatalog.v1"
-    private static let selectedKey = "lastForceProtocolId"
+    // The old v1 keys were global to the watch install. They are deliberately
+    // not migrated: there is no owner identity in those values, so adopting
+    // them after an account switch would be an account-data leak. Every value
+    // written by this catalog is scoped to the stable relayed user id below.
+    private static let cacheKeyPrefix = "forceProtocolCatalog.v2.cache."
+    private static let selectedKeyPrefix = "forceProtocolCatalog.v2.selected."
     private static let maxAttempts = 3
     private static let perAttemptTimeoutSeconds: Double = 6
     private static let retryDelaysMs: [UInt64] = [250, 750]
 
     private let defaults: UserDefaults
+    @ObservationIgnored private let accountIdProvider: @Sendable () -> UUID?
+    @ObservationIgnored private let fetchProtocols: @Sendable () async throws -> [WatchForceProtocol]
+    @ObservationIgnored private var scopedUserId: UUID?
+    @ObservationIgnored private var didSynchronizeAccountScope = false
     private(set) var myProtocols: [WatchForceProtocol] = []
     private(set) var fetchedAt: Date?
     private(set) var status: Status = .loading
@@ -44,14 +52,22 @@ final class ForceProtocolCatalog {
     var suggested: [WatchForceProtocol] { [.movementStarter] }
 
     var selected: WatchForceProtocol {
+        synchronizeAccountScope()
         allProtocols.first { $0.id == selectedId } ?? .movementStarter
     }
 
-    var allProtocols: [WatchForceProtocol] { suggested + myProtocols }
+    var allProtocols: [WatchForceProtocol] {
+        synchronizeAccountScope()
+        return suggested + myProtocols
+    }
 
-    var hasCachedSnapshot: Bool { fetchedAt != nil }
+    var hasCachedSnapshot: Bool {
+        synchronizeAccountScope()
+        return fetchedAt != nil
+    }
 
     var statusText: String? {
+        synchronizeAccountScope()
         switch status {
         case .loading:
             return "Syncing protocols…"
@@ -66,24 +82,64 @@ final class ForceProtocolCatalog {
         }
     }
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        accountIdProvider: @escaping @Sendable () -> UUID? = { WatchSessionStore.shared.userId },
+        fetchProtocols: @escaping @Sendable () async throws -> [WatchForceProtocol] = {
+            try await Repo.fetchTindeqPresets()
+        }
+    ) {
         self.defaults = defaults
-        selectedId = defaults.string(forKey: Self.selectedKey)
-            ?? WatchForceProtocol.movementStarter.id
-        restoreCache()
+        self.accountIdProvider = accountIdProvider
+        self.fetchProtocols = fetchProtocols
+        scopedUserId = accountIdProvider()
+        selectedId = WatchForceProtocol.movementStarter.id
+        didSynchronizeAccountScope = true
+        restoreCache(for: scopedUserId)
     }
 
     func select(_ protocolValue: WatchForceProtocol) {
+        synchronizeAccountScope()
+        guard allProtocols.contains(where: { $0.id == protocolValue.id }) else {
+            selectedId = WatchForceProtocol.movementStarter.id
+            persistSelection()
+            return
+        }
         selectedId = protocolValue.id
-        defaults.set(selectedId, forKey: Self.selectedKey)
+        persistSelection()
+    }
+
+    /// Rebinds the in-memory catalog before any view can render rows from the
+    /// previous account. `AuthManager` stores the new relay before publishing
+    /// its state, but this synchronous seam also protects direct navigation and
+    /// offline/auth-failure transitions that happen without a view update.
+    func synchronizeAccountScope() {
+        let currentUserId = accountIdProvider()
+        guard !didSynchronizeAccountScope || currentUserId != scopedUserId else { return }
+
+        didSynchronizeAccountScope = true
+        scopedUserId = currentUserId
+        refreshGeneration &+= 1
+        myProtocols = []
+        fetchedAt = nil
+        errorMessage = nil
+        selectedId = WatchForceProtocol.movementStarter.id
+        status = .loading
+        restoreCache(for: currentUserId)
     }
 
     func refresh() async {
-        refreshGeneration += 1
+        // This must happen before setting loading or starting a request, so a
+        // refresh begun during account transition cannot expose the old rows.
+        synchronizeAccountScope()
+        refreshGeneration &+= 1
         let generation = refreshGeneration
         status = .loading
         errorMessage = nil
 
+        // Capture the injected Sendable operation, rather than `self`, before
+        // handing it to the timeout task group which may run off the actor.
+        let fetch = fetchProtocols
         var fetched: [WatchForceProtocol]?
         var lastError: Error?
         var sawUnauthenticatedEmpty = false
@@ -94,7 +150,7 @@ final class ForceProtocolCatalog {
             do {
                 fetched = try await withTimeout(
                     seconds: Self.perAttemptTimeoutSeconds,
-                    operation: { try await Repo.fetchTindeqPresets() }
+                    operation: { try await fetch() }
                 )
                 // A non-empty response is unambiguous, so stop immediately.
                 // Empty responses still get the remaining retries because they
@@ -157,17 +213,28 @@ final class ForceProtocolCatalog {
     }
 
     private func isCurrent(_ generation: Int) -> Bool {
-        !Task.isCancelled && generation == refreshGeneration
+        guard !Task.isCancelled && generation == refreshGeneration else { return false }
+        guard accountIdProvider() == scopedUserId else {
+            synchronizeAccountScope()
+            return false
+        }
+        return true
     }
 
-    private func restoreCache() {
+    private func restoreCache(for userId: UUID?) {
+        guard let userId else {
+            status = .loading
+            return
+        }
         guard
-            let data = defaults.data(forKey: Self.cacheKey),
+            let data = defaults.data(forKey: Self.cacheKey(for: userId)),
             let cache = try? JSONDecoder().decode(Cache.self, from: data)
         else {
             status = .loading
             return
         }
+        selectedId = defaults.string(forKey: Self.selectedKey(for: userId))
+            ?? WatchForceProtocol.movementStarter.id
         myProtocols = cache.protocols
         fetchedAt = cache.fetchedAt
         status = .cached
@@ -175,16 +242,29 @@ final class ForceProtocolCatalog {
     }
 
     private func persistCache() {
-        guard let fetchedAt else { return }
+        guard let fetchedAt, let userId = scopedUserId else { return }
         let cache = Cache(protocols: myProtocols, fetchedAt: fetchedAt)
         if let data = try? JSONEncoder().encode(cache) {
-            defaults.set(data, forKey: Self.cacheKey)
+            defaults.set(data, forKey: Self.cacheKey(for: userId))
         }
+    }
+
+    private func persistSelection() {
+        guard let userId = scopedUserId else { return }
+        defaults.set(selectedId, forKey: Self.selectedKey(for: userId))
     }
 
     private func reconcileSelection() {
         guard !allProtocols.contains(where: { $0.id == selectedId }) else { return }
         selectedId = WatchForceProtocol.movementStarter.id
-        defaults.set(selectedId, forKey: Self.selectedKey)
+        persistSelection()
+    }
+
+    private static func cacheKey(for userId: UUID) -> String {
+        cacheKeyPrefix + userId.uuidString.lowercased()
+    }
+
+    private static func selectedKey(for userId: UUID) -> String {
+        selectedKeyPrefix + userId.uuidString.lowercased()
     }
 }

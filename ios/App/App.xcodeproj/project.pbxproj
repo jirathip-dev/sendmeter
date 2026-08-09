@@ -40,6 +40,7 @@
 		6352C4B663C906E80F5F0280 /* PendingTindeqRecordingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CAA7BB196064905A0427D09 /* PendingTindeqRecordingTests.swift */; };
 		69ECCBC95C0D80B03512206A /* PendingQueuePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */; };
 		703E0DDDB01CECCD44C5799A /* TagReconciliationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */; };
+		80DC27B0A88456BA04ED783E /* ForceProtocolCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 868B947F60DEE41E3FBB2B55 /* ForceProtocolCatalogTests.swift */; };
 		82F4391EF9C94876CD04F862 /* WorkoutSavePathResetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B8CA96E0F5FACEF50EEC31 /* WorkoutSavePathResetTests.swift */; };
 		83A8F2ED6C251F2C6FE27CC2 /* GuidedForceRunTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8592A49F0E87BCE3DF9310D /* GuidedForceRunTimingTests.swift */; };
 		84A773B1BB150F1AB8E722B3 /* SendLogWatchWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 4ED1337E0BF37CC3D16491E5 /* SendLogWatchWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -201,6 +202,7 @@
 		6CA278E81C6E14A40B4C9C69 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		74ABFD8185F48343B43E5A2F /* PendingSessionQueueTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PendingSessionQueueTests.swift; sourceTree = "<group>"; };
 		8614150FD3E09A3D22D3EB3B /* WorkoutSaveBundleDecodeCompatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkoutSaveBundleDecodeCompatTests.swift; sourceTree = "<group>"; };
+		868B947F60DEE41E3FBB2B55 /* ForceProtocolCatalogTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ForceProtocolCatalogTests.swift; sourceTree = "<group>"; };
 		906892CDB6C18118BDF95638 /* RPEDepletionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/RPEDepletionTests.swift; sourceTree = "<group>"; };
 		929803D573A0FA4074230787 /* DateExtensionsTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/DateExtensionsTests.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
@@ -356,6 +358,7 @@
 				D8592A49F0E87BCE3DF9310D /* GuidedForceRunTimingTests.swift */,
 				B72C3B7A2DA2A55CF06D773B /* MovementSetMetricsTests.swift */,
 				31A1EB3CD36C29EFEE9ED771 /* GuidedForcePolicyTests.swift */,
+				868B947F60DEE41E3FBB2B55 /* ForceProtocolCatalogTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = SOURCE_ROOT;
@@ -742,6 +745,7 @@
 				83A8F2ED6C251F2C6FE27CC2 /* GuidedForceRunTimingTests.swift in Sources */,
 				B2BDC891B802A9C5B86D735B /* MovementSetMetricsTests.swift in Sources */,
 				DFB64FDAEB1AB019AD0AA7AE /* GuidedForcePolicyTests.swift in Sources */,
+				80DC27B0A88456BA04ED783E /* ForceProtocolCatalogTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

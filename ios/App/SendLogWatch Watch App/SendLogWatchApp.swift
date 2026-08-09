@@ -58,5 +58,11 @@ struct SendLogWatchApp: App {
                 guidedForceRunner.refresh()
             }
         }
+        // AuthManager stores the relay before publishing this state. Rebind
+        // the catalog in the same synchronous turn so a new account can never
+        // render the previous account's cached protocol rows or selection.
+        .onChange(of: auth.state) { _, _ in
+            forceProtocolCatalog.synchronizeAccountScope()
+        }
     }
 }
