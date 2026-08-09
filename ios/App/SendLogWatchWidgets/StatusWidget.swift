@@ -30,7 +30,6 @@ struct StatusProvider: TimelineProvider {
 
 struct StatusWidgetView: View {
     @Environment(\.widgetFamily) private var family
-    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     let snap: WidgetSnapshot
 
     private var readinessText: String { snap.readiness.map(String.init) ?? "—" }
@@ -95,10 +94,7 @@ struct StatusWidgetView: View {
                     .frame(width: 43, height: 43)
                         Text(readinessZone ?? (snap.readiness == nil ? "No data" : "No zone"))
                             .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(readinessColor(
-                                snap.readinessZone,
-                                reducedLuminance: isLuminanceReduced
-                            ))
+                            .foregroundStyle(readinessColor(snap.readinessZone))
                         .lineLimit(1)
                         .accessibilityHidden(true)
                 }
@@ -116,7 +112,7 @@ struct StatusWidgetView: View {
                             .font(.system(size: 9, weight: .semibold))
                             .lineLimit(1)
                     }
-                    .foregroundStyle(acwrColor(risk, reducedLuminance: isLuminanceReduced))
+                    .foregroundStyle(acwrColor(risk))
                     .accessibilityHidden(true)
 
                     ACWRRiskTrackView(value: snap.acwr, bandHeight: 6)

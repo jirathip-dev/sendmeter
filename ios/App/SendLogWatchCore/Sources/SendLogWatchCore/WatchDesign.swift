@@ -19,6 +19,11 @@ public enum WatchDesignTokens {
     /// becoming a burn-in/battery liability on top of it.
     public static let alwaysOnAccentScale: Double = 0.42
 
+    /// Small semantic labels and symbols need at least AA contrast even when
+    /// the watch is in Always-On. Decorative accents can be dimmed, but a
+    /// foreground that is only 42% of the accent is not a readable foreground.
+    public static let minimumForegroundContrast: Double = 4.5
+
     // Deep OLED-safe canvas and raised surfaces. These are sRGB values so the
     // SwiftUI target can translate them to Color while Core tests their
     // contrast and dimmed behavior without importing SwiftUI.
@@ -49,6 +54,43 @@ public enum WatchDesignTokens {
 
     public static func accent(_ color: PhaseRGB, reducedLuminance: Bool) -> PhaseRGB {
         color.scaled(accentScale(reducedLuminance: reducedLuminance))
+    }
+
+    /// Resolve a semantic accent for text or an icon on a dark surface. This
+    /// intentionally does not apply `alwaysOnAccentScale`: foreground pixels
+    /// are sparse, while preserving their contrast is essential. If a token
+    /// falls short on the lightest card, move it minimally toward the side of
+    /// the contrast range that improves readability. The result stays in the
+    /// same hue family and is deterministic in both app targets.
+    public static func readableForeground(_ color: PhaseRGB, on surface: PhaseRGB) -> PhaseRGB {
+        guard color.contrastRatio(to: surface) < minimumForegroundContrast else {
+            return color
+        }
+
+        let target = PhaseRGB.white.contrastRatio(to: surface) >= PhaseRGB.black.contrastRatio(to: surface)
+            ? PhaseRGB.white
+            : PhaseRGB.black
+        var lower = 0.0
+        var upper = 1.0
+        for _ in 0..<24 {
+            let amount = (lower + upper) / 2
+            let candidate = mix(color, target, amount: amount)
+            if candidate.contrastRatio(to: surface) >= minimumForegroundContrast {
+                upper = amount
+            } else {
+                lower = amount
+            }
+        }
+        return mix(color, target, amount: upper)
+    }
+
+    private static func mix(_ color: PhaseRGB, _ target: PhaseRGB, amount: Double) -> PhaseRGB {
+        let amount = min(max(amount, 0), 1)
+        return PhaseRGB(
+            color.red + (target.red - color.red) * amount,
+            color.green + (target.green - color.green) * amount,
+            color.blue + (target.blue - color.blue) * amount
+        )
     }
 
     /// The reduced variant keeps semantic hue while cutting emitted light.

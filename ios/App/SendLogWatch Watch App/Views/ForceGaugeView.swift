@@ -273,19 +273,40 @@ struct ForceGaugeView: View {
         // setupContent's for fitting the smallest watch without scrolling.
         if tindeq.sessionId != nil || (fixtureVisual?.sessionCount ?? 0) > 0 {
             WatchCard(accent: WatchPalette.primary) {
-                HStack(spacing: 7) {
-                    WatchStateChip(
-                        state: .ready,
-                        title: "Session · \(fixtureVisual?.sessionCount ?? tindeq.sessionCount)",
-                        compact: true
-                    )
-                    Spacer(minLength: 0)
-                    Button("Finish") { finish() }
-                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.primary))
-                        .disabled(tindeq.saving)
+                // The chip plus a 44pt Finish target is wider than the inner
+                // card on a 40mm watch once the button's label padding is
+                // included. ViewThatFits keeps the compact row on Ultra and
+                // deliberately stacks it before SwiftUI can compress either
+                // essential control on SE.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 7) {
+                        sessionChip
+                        Spacer(minLength: 0)
+                        finishButton
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        sessionChip
+                        finishButton
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             }
         }
+    }
+
+    private var sessionChip: some View {
+        WatchStateChip(
+            state: .ready,
+            title: "Session · \(fixtureVisual?.sessionCount ?? tindeq.sessionCount)",
+            compact: true
+        )
+    }
+
+    private var finishButton: some View {
+        Button("Finish") { finish() }
+            .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.primary)))
+            .disabled(tindeq.saving)
+            .accessibilityIdentifier("force-session-finish")
     }
 
     private func finish() {
@@ -362,7 +383,7 @@ struct ForceGaugeView: View {
                     .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
 
                     Button("Arm hands-free") { tindeq.armHandsFree() }
-                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.secondary))
+                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.secondary)))
                         .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
                 if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
@@ -387,7 +408,7 @@ struct ForceGaugeView: View {
                 if tindeq.lowBattery {
                     Label("Low battery", systemImage: "battery.25")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WatchPalette.warning)
+                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                 }
@@ -399,7 +420,7 @@ struct ForceGaugeView: View {
                 if tindeq.lowBattery {
                     Image(systemName: "battery.25")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WatchPalette.warning)
+                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
                         .frame(width: 22, height: 22)
                         .accessibilityLabel("Low battery")
                 }
@@ -412,7 +433,7 @@ struct ForceGaugeView: View {
                     if tindeq.lowBattery {
                         Image(systemName: "battery.25")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(WatchPalette.warning)
+                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
                             .frame(width: 22, height: 22)
                             .accessibilityLabel("Low battery")
                     }
@@ -434,7 +455,7 @@ struct ForceGaugeView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .frame(width: 44, height: 44)
         }
-        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.danger))
+        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.danger)))
         .accessibilityLabel("Disconnect Progressor")
         .accessibilityIdentifier("disconnect-progressor")
     }
@@ -532,7 +553,9 @@ struct ForceGaugeView: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(WatchSecondaryButtonStyle(tint: isPlaceholder ? WatchPalette.textSecondary : WatchPalette.force))
+        .buttonStyle(WatchSecondaryButtonStyle(
+            tint: isPlaceholder ? WatchPalette.textSecondary : WatchPalette.foreground(WatchDesignTokens.force)
+        ))
         .frame(minHeight: 44)
         .accessibilityLabel(label)
         .accessibilityIdentifier("force-\(label.lowercased())-picker")
@@ -560,7 +583,7 @@ struct ForceGaugeView: View {
         (Text(String(format: "%.1f", currentKg))
             .font(.system(size: 42, weight: .heavy, design: .rounded))
             .monospacedDigit()
-            .foregroundStyle(WatchPalette.force)
+            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
         + Text(" kg").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
             .lineLimit(1)
             .minimumScaleFactor(0.7)
@@ -587,6 +610,7 @@ struct ForceGaugeView: View {
 
         Button("Stop & Save") { tindeq.stopAndSave(reason: .userTapped) }
             .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
+            .accessibilityIdentifier("force-stop-save")
     }
 }
 
@@ -614,7 +638,7 @@ private struct OptionPickerList: View {
                         Spacer(minLength: 4)
                         if o.value == selection {
                             Image(systemName: "checkmark")
-                                .foregroundStyle(WatchPalette.force)
+                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
                         }
                     }
                     .frame(minHeight: 44)

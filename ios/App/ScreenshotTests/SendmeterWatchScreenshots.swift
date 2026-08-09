@@ -92,6 +92,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
         let forceStates: [(fixture: String, identifier: String)] = [
             ("forceIdle", "Connect Progressor"),
             ("forceConnecting", "Connecting…"),
+            ("forceConnected", "force-session-finish"),
             ("forceLive", "Stop & Save"),
             ("forceSaved", "watch-banner-success"),
             ("forceError", "watch-banner-danger"),
@@ -114,6 +115,31 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 app.swipeUp()
                 assertFullyVisible(exercise, in: app, fixture: item.fixture)
                 assertFullyVisible(side, in: app, fixture: item.fixture)
+            }
+            if item.fixture == "forceConnected" {
+                let finish = app.buttons["force-session-finish"]
+                let exercise = app.buttons["force-exercise-picker"]
+                let side = app.buttons["force-side-picker"]
+                let disconnect = app.buttons["disconnect-progressor"]
+                for control in [finish, exercise, side, disconnect] {
+                    XCTAssertTrue(
+                        control.waitForExistence(timeout: 5),
+                        "fixture \(item.fixture) should expose \(control.identifier)"
+                    )
+                }
+                // The fixture starts at the session row, then proves the
+                // setup controls remain reachable after the narrow 40mm
+                // layout has been scrolled. The same assertions run on Ultra.
+                assertFullyVisible(finish, in: app, fixture: item.fixture)
+                app.swipeUp()
+                assertFullyVisible(exercise, in: app, fixture: item.fixture)
+                assertFullyVisible(side, in: app, fixture: item.fixture)
+                assertFullyVisible(disconnect, in: app, fixture: item.fixture)
+            }
+            if item.fixture == "forceLive" {
+                let stopAndSave = app.buttons["force-stop-save"]
+                XCTAssertTrue(stopAndSave.waitForExistence(timeout: 5))
+                assertFullyVisible(stopAndSave, in: app, fixture: item.fixture)
             }
             app.terminate()
         }
@@ -160,7 +186,9 @@ final class SendmeterWatchScreenshots: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 5))
         let frame = element.frame
         let bounds = window.frame
+        XCTAssertTrue(element.isHittable, "fixture \(fixture) control is not hittable")
         XCTAssertGreaterThanOrEqual(frame.height, 44, "fixture \(fixture) control lost its 44pt hit target")
+        XCTAssertGreaterThanOrEqual(frame.width, 44, "fixture \(fixture) control lost its 44pt horizontal hit target")
         XCTAssertGreaterThanOrEqual(frame.minX, bounds.minX, "fixture \(fixture) control is clipped on the left")
         XCTAssertLessThanOrEqual(frame.maxX, bounds.maxX, "fixture \(fixture) control is clipped on the right")
         XCTAssertGreaterThanOrEqual(frame.minY, bounds.minY, "fixture \(fixture) control is clipped above")

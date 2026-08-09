@@ -188,7 +188,7 @@ private struct ActionsView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "scalemass")
                                 .font(.system(size: 18, weight: .bold))
-                                .foregroundStyle(WatchPalette.force)
+                                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Force Gauge")
@@ -215,7 +215,7 @@ private struct ActionsView: View {
                         HStack(spacing: 10) {
                             Image(systemName: "figure.climbing")
                                 .font(.system(size: 18, weight: .bold))
-                                .foregroundStyle(WatchPalette.secondary)
+                                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.secondary))
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Climb Workout")

@@ -68,10 +68,10 @@ struct StatusView: View {
                     Spacer(minLength: 4)
                     WatchStateChip(state: statusChip.state, title: statusChip.title, compact: true)
                 }
-                WatchCard(accent: readinessColor(snap.readinessZone, reducedLuminance: isLuminanceReduced)) {
+                WatchCard(accent: readinessAccent(snap.readinessZone, reducedLuminance: isLuminanceReduced)) {
                     readiness
                 }
-                WatchCard(accent: acwrColor(
+                WatchCard(accent: acwrAccent(
                     StatusPresentation.acwrRiskBand(snap.acwr),
                     reducedLuminance: isLuminanceReduced
                 )) {
@@ -110,10 +110,7 @@ struct StatusView: View {
                        snap.readiness != nil {
                         Text(zone)
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(readinessColor(
-                                snap.readinessZone,
-                                reducedLuminance: isLuminanceReduced
-                            ))
+                            .foregroundStyle(readinessColor(snap.readinessZone))
                     } else if snap.readiness != nil {
                         Text("Zone unavailable")
                             .font(.system(size: 11, weight: .semibold))
@@ -145,11 +142,11 @@ struct StatusView: View {
                 Text(snap.acwr.map { String(format: "%.2f", $0) } ?? "—")
                     .font(.system(size: 28, weight: .heavy, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(acwrColor(risk, reducedLuminance: isLuminanceReduced))
+                    .foregroundStyle(acwrColor(risk))
                 if let risk {
                     Text(risk.label)
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(acwrColor(risk, reducedLuminance: isLuminanceReduced))
+                        .foregroundStyle(acwrColor(risk))
                 }
             }
             .accessibilityHidden(true)

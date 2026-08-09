@@ -7,27 +7,47 @@ import SwiftUI
 ///
 /// KEEP IN SYNC with the identical copy in the SendLogWatchWidgets target.
 extension Color {
-    static let statusLow = WatchPalette.primary
-    static let statusOptimal = WatchPalette.secondary
-    static let statusCaution = WatchPalette.warning
-    static let statusHigh = WatchPalette.danger
+    static let statusLow = WatchPalette.foreground(WatchDesignTokens.primary)
+    static let statusOptimal = WatchPalette.foreground(WatchDesignTokens.secondary)
+    static let statusCaution = WatchPalette.foreground(WatchDesignTokens.warning)
+    static let statusHigh = WatchPalette.foreground(WatchDesignTokens.danger)
 }
 
-func acwrColor(_ risk: ACWRRiskBand?, reducedLuminance: Bool = false) -> Color {
+private func acwrToken(_ risk: ACWRRiskBand?) -> PhaseRGB? {
     switch risk {
-    case .low: WatchPalette.accent(WatchDesignTokens.primary, reducedLuminance: reducedLuminance)
-    case .optimal: WatchPalette.accent(WatchDesignTokens.secondary, reducedLuminance: reducedLuminance)
-    case .caution: WatchPalette.accent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
-    case .high: WatchPalette.accent(WatchDesignTokens.danger, reducedLuminance: reducedLuminance)
-    case nil: .secondary
+    case .low: WatchDesignTokens.primary
+    case .optimal: WatchDesignTokens.secondary
+    case .caution: WatchDesignTokens.warning
+    case .high: WatchDesignTokens.danger
+    case nil: nil
     }
 }
 
-func readinessColor(_ zone: String?, reducedLuminance: Bool = false) -> Color {
+func acwrColor(_ risk: ACWRRiskBand?) -> Color {
+    guard let token = acwrToken(risk) else { return .secondary }
+    return WatchPalette.foreground(token)
+}
+
+func acwrAccent(_ risk: ACWRRiskBand?, reducedLuminance: Bool) -> Color {
+    guard let token = acwrToken(risk) else { return .secondary }
+    return WatchPalette.accent(token, reducedLuminance: reducedLuminance)
+}
+
+private func readinessToken(_ zone: String?) -> PhaseRGB? {
     switch zone?.lowercased() {
-    case "push": WatchPalette.accent(WatchDesignTokens.secondary, reducedLuminance: reducedLuminance)
-    case "maintain": WatchPalette.accent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
-    case "recover": WatchPalette.accent(WatchDesignTokens.danger, reducedLuminance: reducedLuminance)
-    default: .secondary
+    case "push": WatchDesignTokens.secondary
+    case "maintain": WatchDesignTokens.warning
+    case "recover": WatchDesignTokens.danger
+    default: nil
     }
+}
+
+func readinessColor(_ zone: String?) -> Color {
+    guard let token = readinessToken(zone) else { return .secondary }
+    return WatchPalette.foreground(token)
+}
+
+func readinessAccent(_ zone: String?, reducedLuminance: Bool) -> Color {
+    guard let token = readinessToken(zone) else { return .secondary }
+    return WatchPalette.accent(token, reducedLuminance: reducedLuminance)
 }

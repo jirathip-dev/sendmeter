@@ -152,7 +152,7 @@ struct WorkoutLiveView: View {
                     workout.endAndSave()
                 }
                 .font(.system(size: 12, weight: .semibold))
-                .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.danger))
+                .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.danger)))
                 .frame(minWidth: 44, minHeight: 44)
                 // Phone's "act now" orange (#277 follow-up) — ending a
                 // workout is the same weight of action as the phone
@@ -219,7 +219,7 @@ struct WorkoutLiveView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "heart.fill")
                         .font(.footnote)
-                        .foregroundStyle(WatchPalette.danger)
+                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.danger))
                     Text(heartRate.map { "\(Int($0.rounded()))" } ?? "--")
                         .font(.body).monospacedDigit()
                 }

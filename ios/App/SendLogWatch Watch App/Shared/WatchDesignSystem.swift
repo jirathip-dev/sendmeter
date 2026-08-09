@@ -9,12 +9,20 @@ enum WatchPalette {
         Color(red: rgb.red, green: rgb.green, blue: rgb.blue)
     }
 
-    /// Semantic accents have one reduced-luminance conversion point shared by
-    /// chips, banners and status visuals. Surfaces intentionally stay on the
-    /// fixed canvas/card values so Always-On retains enough hierarchy.
+    /// Decorative semantic accents have one reduced-luminance conversion point
+    /// shared by cards, strokes and gradients. Semantic text and symbols must
+    /// use `foreground` below instead: dimming a sparse foreground pixel to
+    /// 42% makes small labels and icons disappear in Always-On.
     static func accent(_ rgb: PhaseRGB, reducedLuminance: Bool = false) -> Color {
         let adjusted = WatchDesignTokens.accent(rgb, reducedLuminance: reducedLuminance)
         return color(adjusted)
+    }
+
+    /// Readable semantic foregrounds stay at full emission and are nudged only
+    /// when needed to meet AA against the lightest shared card surface. The
+    /// same resolver is used by the app and widget copies of the palette.
+    static func foreground(_ rgb: PhaseRGB, on surface: PhaseRGB = WatchDesignTokens.cardStrong) -> Color {
+        color(WatchDesignTokens.readableForeground(rgb, on: surface))
     }
 
     static let canvas = color(WatchDesignTokens.canvas)
@@ -32,17 +40,21 @@ enum WatchPalette {
     static let textSecondary = Color.white.opacity(0.72)
     static let textTertiary = Color.white.opacity(0.48)
 
-    static func color(for state: WatchVisualState, reducedLuminance: Bool = false) -> Color {
+    private static func token(for state: WatchVisualState) -> PhaseRGB {
         switch state {
-        case .ready: accent(WatchDesignTokens.success, reducedLuminance: reducedLuminance)
-        case .syncing: accent(WatchDesignTokens.secondary, reducedLuminance: reducedLuminance)
-        case .offline: accent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
-        case .cached: accent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
-        case .stale: accent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
-        case .success: accent(WatchDesignTokens.success, reducedLuminance: reducedLuminance)
-        case .warning: accent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
-        case .danger: accent(WatchDesignTokens.danger, reducedLuminance: reducedLuminance)
+        case .ready, .success: WatchDesignTokens.success
+        case .syncing: WatchDesignTokens.secondary
+        case .offline, .cached, .stale, .warning: WatchDesignTokens.warning
+        case .danger: WatchDesignTokens.danger
         }
+    }
+
+    static func foreground(for state: WatchVisualState) -> Color {
+        foreground(token(for: state))
+    }
+
+    static func accent(for state: WatchVisualState, reducedLuminance: Bool) -> Color {
+        accent(token(for: state), reducedLuminance: reducedLuminance)
     }
 
     static func screenGradient(luminanceReduced: Bool) -> LinearGradient {
@@ -148,7 +160,10 @@ struct WatchStateChip: View {
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     private var tint: Color {
-        WatchPalette.color(for: state, reducedLuminance: isLuminanceReduced)
+        WatchPalette.foreground(for: state)
+    }
+    private var fillTint: Color {
+        WatchPalette.accent(for: state, reducedLuminance: isLuminanceReduced)
     }
     private var displayTitle: String { title ?? state.label }
 
@@ -160,8 +175,8 @@ struct WatchStateChip: View {
             .minimumScaleFactor(0.72)
             .padding(.horizontal, compact ? 7 : 9)
             .frame(minHeight: compact ? 24 : 28)
-            .background(Capsule().fill(tint.opacity(0.16)))
-            .overlay(Capsule().stroke(tint.opacity(0.42), lineWidth: 0.8))
+            .background(Capsule().fill(fillTint.opacity(0.16)))
+            .overlay(Capsule().stroke(fillTint.opacity(0.42), lineWidth: 0.8))
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(displayTitle)
             .accessibilityValue(state.label)
@@ -178,12 +193,13 @@ struct WatchStateBanner: View {
     var actionDisabled = false
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
-    private var tint: Color {
-        WatchPalette.color(for: state, reducedLuminance: isLuminanceReduced)
+    private var tint: Color { WatchPalette.foreground(for: state) }
+    private var accent: Color {
+        WatchPalette.accent(for: state, reducedLuminance: isLuminanceReduced)
     }
 
     var body: some View {
-        WatchCard(accent: tint) {
+        WatchCard(accent: accent) {
             HStack(alignment: .top, spacing: 9) {
                 Image(systemName: state.symbolName)
                     .font(.system(size: 16, weight: .bold))
@@ -310,12 +326,13 @@ struct WatchLoadingState: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
-    private var tint: Color {
+    private var tint: Color { WatchPalette.foreground(WatchDesignTokens.secondary) }
+    private var accent: Color {
         WatchPalette.accent(WatchDesignTokens.secondary, reducedLuminance: isLuminanceReduced)
     }
 
     var body: some View {
-        WatchCard(accent: tint) {
+        WatchCard(accent: accent) {
             HStack(spacing: 9) {
                 if reduceMotion {
                     Image(systemName: "arrow.triangle.2.circlepath")

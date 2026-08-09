@@ -62,4 +62,44 @@ final class WatchDesignTests: XCTestCase {
             )
         }
     }
+
+    func testReadableForegroundMeetsAAForEverySemanticAccentAndSurface() {
+        let surfaces = [
+            WatchDesignTokens.canvas,
+            WatchDesignTokens.canvasRaised,
+            WatchDesignTokens.card,
+            WatchDesignTokens.cardStrong,
+        ]
+
+        for accent in WatchDesignTokens.semanticAccents {
+            for surface in surfaces {
+                let foreground = WatchDesignTokens.readableForeground(accent, on: surface)
+                XCTAssertGreaterThanOrEqual(
+                    foreground.contrastRatio(to: surface),
+                    WatchDesignTokens.minimumForegroundContrast,
+                    "semantic accent \(accent) must remain readable on surface \(surface)"
+                )
+            }
+        }
+    }
+
+    func testReducedAccentIsDecorativeOnlyAndCannotBeUsedAsForeground() {
+        for accent in WatchDesignTokens.semanticAccents {
+            let reduced = WatchDesignTokens.accent(accent, reducedLuminance: true)
+            XCTAssertLessThan(
+                reduced.contrastRatio(to: WatchDesignTokens.card),
+                WatchDesignTokens.minimumForegroundContrast,
+                "the 42% accent is intentionally not an accessible text/icon colour"
+            )
+        }
+
+        let foreground = WatchDesignTokens.readableForeground(
+            WatchDesignTokens.primary,
+            on: WatchDesignTokens.card
+        )
+        XCTAssertGreaterThanOrEqual(
+            foreground.contrastRatio(to: WatchDesignTokens.card),
+            WatchDesignTokens.minimumForegroundContrast
+        )
+    }
 }

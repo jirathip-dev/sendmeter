@@ -18,7 +18,10 @@ struct ReadinessRingView: View {
     private var progress: Double? { StatusPresentation.readinessProgress(score) }
     private var zoneLabel: String? { StatusPresentation.readinessZoneLabel(zone) }
     private var readinessTint: Color {
-        readinessColor(zone, reducedLuminance: isLuminanceReduced)
+        readinessColor(zone)
+    }
+    private var readinessAccentTint: Color {
+        readinessAccent(zone, reducedLuminance: isLuminanceReduced)
     }
 
     private var accessibilityValue: String {
@@ -38,8 +41,8 @@ struct ReadinessRingView: View {
                     .stroke(
                         AngularGradient(
                             colors: isLuminanceReduced
-                                ? [readinessTint, readinessTint]
-                                : [readinessTint, designAccent(WatchDesignTokens.secondary, reducedLuminance: false), readinessTint],
+                                ? [readinessAccentTint, readinessAccentTint]
+                                : [readinessAccentTint, designAccent(WatchDesignTokens.secondary, reducedLuminance: false), readinessAccentTint],
                             center: .center
                         ),
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
@@ -84,16 +87,16 @@ struct ACWRRiskTrackView: View {
                 if let position {
                     HStack(spacing: 0) {
                         Rectangle()
-                            .fill(acwrColor(.low, reducedLuminance: isLuminanceReduced))
+                            .fill(acwrAccent(.low, reducedLuminance: isLuminanceReduced))
                             .frame(width: width * 0.40)
                         Rectangle()
-                            .fill(acwrColor(.optimal, reducedLuminance: isLuminanceReduced))
+                            .fill(acwrAccent(.optimal, reducedLuminance: isLuminanceReduced))
                             .frame(width: width * 0.25)
                         Rectangle()
-                            .fill(acwrColor(.caution, reducedLuminance: isLuminanceReduced))
+                            .fill(acwrAccent(.caution, reducedLuminance: isLuminanceReduced))
                             .frame(width: width * 0.10)
                         Rectangle()
-                            .fill(acwrColor(.high, reducedLuminance: isLuminanceReduced))
+                            .fill(acwrAccent(.high, reducedLuminance: isLuminanceReduced))
                             .frame(width: width * 0.25)
                     }
                     .frame(height: bandHeight)

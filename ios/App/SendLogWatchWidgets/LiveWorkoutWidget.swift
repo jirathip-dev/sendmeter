@@ -23,14 +23,16 @@ struct LiveProvider: TimelineProvider {
 
 struct LiveWorkoutView: View {
     @Environment(\.widgetFamily) private var family
-    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     let snap: WidgetSnapshot
 
     private func phaseColor(climbing: Bool) -> Color {
         let base = climbing
             ? PhaseRGB(0x4F / 255, 0xB0 / 255, 0xFF / 255)
             : PhaseRGB(0x5B / 255, 0x5F / 255, 0xC7 / 255)
-        let adjusted = WatchDesignTokens.accent(base, reducedLuminance: isLuminanceReduced)
+        // This is a sparse 11pt semantic label/icon, not a decorative fill.
+        // Keep its contrast in Always-On; only actual fills/glows use the 42%
+        // reduced-luminance accent scale.
+        let adjusted = WatchDesignTokens.readableForeground(base, on: WatchDesignTokens.canvas)
         return Color(red: adjusted.red, green: adjusted.green, blue: adjusted.blue)
     }
 

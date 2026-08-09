@@ -22,6 +22,7 @@ enum ScreenshotFixtureState: String, CaseIterable {
     case workoutError
     case forceIdle
     case forceConnecting
+    case forceConnected
     case forceLive
     case forceSaved
     case forceError
@@ -181,6 +182,8 @@ enum ScreenshotFixtures {
             ScreenshotForceVisual(status: .idle, tag: "", side: "", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
         case .forceConnecting:
             ScreenshotForceVisual(status: .connecting, tag: "", side: "", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
+        case .forceConnected:
+            ScreenshotForceVisual(status: .connected, tag: "Crimp edge", side: "Left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 3, savedMessage: nil, errorMessage: nil)
         case .forceLive:
             ScreenshotForceVisual(status: .measuring, tag: "Crimp edge", side: "Left", currentKg: 34.7, peakKg: 38.2, elapsedS: 7.4, sessionCount: 3, savedMessage: nil, errorMessage: nil)
         case .forceSaved:
