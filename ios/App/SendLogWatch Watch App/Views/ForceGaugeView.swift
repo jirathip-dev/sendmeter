@@ -16,6 +16,7 @@ struct ForceGaugeView: View {
     // App-level so the connection + gauge session survive leaving this screen
     // (SL-58 #5). The finish prompt is presented from RootView.
     @Environment(TindeqManager.self) private var tindeq
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
 
     // Exercise setup — set once before the first rep, tweak side between reps.
@@ -37,6 +38,17 @@ struct ForceGaugeView: View {
 
     private let sparkTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
+    private var fixtureVisual: ScreenshotForceVisual? { ScreenshotFixtures.force }
+    private var visibleStatus: TindeqManager.Status {
+        switch fixtureVisual?.status {
+        case .idle: .idle
+        case .connecting: .connecting
+        case .connected: .connected
+        case .measuring: .measuring
+        case nil: tindeq.status
+        }
+    }
+
     var body: some View {
         ScrollViewReader { proxy in
             Group {
@@ -46,7 +58,7 @@ struct ForceGaugeView: View {
                 // scroll position mid-hang. Every other state keeps the
                 // ScrollView (loading/empty/error states legitimately may
                 // need it).
-                if tindeq.status == .measuring {
+                if visibleStatus == .measuring {
                     VStack(spacing: 4) {
                         measuringContent
                     }
@@ -60,32 +72,45 @@ struct ForceGaugeView: View {
                             Color.clear.frame(height: 1).id("gaugeTop")
                             // Session controls hide while measuring — the live gauge owns
                             // the screen; they come back the moment the rep stops.
-                            if tindeq.status != .unsupported && tindeq.status != .measuring {
+                            if visibleStatus != .unsupported && visibleStatus != .measuring {
                                 sessionBar
                             }
 
-                            switch tindeq.status {
+                            switch visibleStatus {
                             case .unsupported:
-                                Text(tindeq.errorMsg ?? "Bluetooth unavailable")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
+                                WatchStateBanner(
+                                    state: .danger,
+                                    title: "Bluetooth unavailable",
+                                    message: tindeq.errorMsg ?? "Turn on Bluetooth to connect a Progressor."
+                                )
 
                             case .idle:
+                                WatchCard(accent: WatchPalette.force) {
+                                    VStack(alignment: .leading, spacing: 7) {
+                                        WatchStateChip(state: .ready, title: "Force gauge ready", compact: true)
+                                        Text("Connect your Progressor to measure a repeatable hold.")
+                                            .font(.system(.footnote, design: .rounded))
+                                            .foregroundStyle(WatchPalette.textSecondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
                                 Button("Connect Progressor") { tindeq.connect() }
-                                    .buttonStyle(.borderedProminent)
-                                    .tint(SendmeterColor.primary)
-                                if let msg = tindeq.errorMsg {
-                                    Text(msg).font(.footnote).foregroundStyle(SendmeterColor.danger)
+                                    .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
+                                if let msg = fixtureVisual?.errorMessage ?? tindeq.errorMsg {
+                                    WatchStateBanner(state: .danger, title: "Could not connect", message: msg)
                                 }
 
                             case .scanning, .connecting:
-                                ProgressView()
-                                Text(tindeq.status == .scanning ? "Scanning…" : "Connecting…")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
+                                WatchLoadingState(
+                                    title: tindeq.status == .scanning ? "Scanning for Progressor…" : "Connecting…",
+                                    message: "Keep the gauge nearby."
+                                )
 
                             case .connected:
                                 setupContent
+                                if let msg = fixtureVisual?.errorMessage {
+                                    WatchStateBanner(state: .danger, title: "Could not save", message: msg)
+                                }
 
                             case .measuring:
                                 // Unreachable — measuring renders in the non-scrolling
@@ -93,27 +118,21 @@ struct ForceGaugeView: View {
                                 EmptyView()
                             }
 
-                            if let savedMsg = tindeq.savedMsg {
+                            if let savedMsg = fixtureVisual?.savedMessage ?? tindeq.savedMsg {
                                 // Least essential line in the stack (issue #149
                                 // follow-up) — kept last so it's the first thing
                                 // to scroll off if the combo still overflows the
                                 // smallest watch, and capped to one line so a
                                 // long tag name can't silently wrap into a
                                 // second line and blow the budget.
-                                Text(savedMsg)
-                                    .font(.caption2)
-                                    .foregroundStyle(
-                                        tindeq.saving
-                                            ? Color.secondary
-                                            : savedMsg.hasPrefix("Rep not saved")
-                                                ? SendmeterColor.danger
-                                                : savedMsg.hasPrefix("Saved")
-                                                    ? SendmeterColor.success
-                                                    : Color.secondary
-                                    )
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.7)
-                                    .truncationMode(.tail)
+                                WatchStateBanner(
+                                    state: tindeq.saving
+                                        ? .syncing
+                                        : savedMsg.hasPrefix("Rep not saved") ? .danger
+                                            : savedMsg.hasPrefix("Saved") ? .success : .warning,
+                                    title: savedMsg,
+                                    message: nil
+                                )
                             }
                         }
                     }
@@ -125,7 +144,11 @@ struct ForceGaugeView: View {
                 // Guarded to the scrolling branch: the "gaugeTop" anchor doesn't
                 // exist while measuring owns the screen non-scrolling.
                 if status != .measuring {
-                    withAnimation { proxy.scrollTo("gaugeTop", anchor: .top) }
+                    if reduceMotion {
+                        proxy.scrollTo("gaugeTop", anchor: .top)
+                    } else {
+                        withAnimation { proxy.scrollTo("gaugeTop", anchor: .top) }
+                    }
                 }
                 // A connect is a fresh chance to win the tag fetch (auth relay may
                 // have settled since launch) — but not if a fetch is already in
@@ -145,13 +168,23 @@ struct ForceGaugeView: View {
         // Hide the nav bar while measuring to reclaim vertical space for the
         // live gauge — it returns the moment the rep stops (status flips back
         // to .connected).
-        .toolbar(tindeq.status == .measuring ? .hidden : .visible, for: .navigationBar)
+        .toolbar(visibleStatus == .measuring ? .hidden : .visible, for: .navigationBar)
+        .watchCanvas()
         .onReceive(sparkTimer) { _ in
             if tindeq.status == .measuring {
                 sparkSamples = tindeq.recentSamples()
             }
         }
         .task {
+            if let fixtureVisual {
+                tag = fixtureVisual.tag
+                side = fixtureVisual.side
+                recentTags = fixtureVisual.tag.isEmpty ? [] : [fixtureVisual.tag, "Pinch block", "Half crimp"]
+                tagsLoading = false
+                tindeq.liveTag = tag
+                tindeq.liveSide = side
+                return
+            }
             // Last-used tag/side restore instantly — no network needed to start.
             if tag.isEmpty { tag = UserDefaults.standard.string(forKey: LAST_TAG_KEY) ?? "" }
             if side.isEmpty { side = UserDefaults.standard.string(forKey: LAST_SIDE_KEY) ?? "" }
@@ -238,17 +271,19 @@ struct ForceGaugeView: View {
         // on the setup screen for every rep after the first, stacked above the
         // pickers + Start, so its own footprint matters just as much as
         // setupContent's for fitting the smallest watch without scrolling.
-        if tindeq.sessionId != nil {
-            HStack {
-                Circle().fill(SendmeterColor.primary).frame(width: 5, height: 5)
-                Text("Session · \(tindeq.sessionCount)")
-                    .font(.caption2)
-                Spacer()
-                Button("Finish") { finish() }
-                    .font(.caption2)
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                    .disabled(tindeq.saving)
+        if tindeq.sessionId != nil || (fixtureVisual?.sessionCount ?? 0) > 0 {
+            WatchCard(accent: WatchPalette.primary) {
+                HStack(spacing: 7) {
+                    WatchStateChip(
+                        state: .ready,
+                        title: "Session · \(fixtureVisual?.sessionCount ?? tindeq.sessionCount)",
+                        compact: true
+                    )
+                    Spacer(minLength: 0)
+                    Button("Finish") { finish() }
+                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.primary))
+                        .disabled(tindeq.saving)
+                }
             }
         }
     }
@@ -280,90 +315,81 @@ struct ForceGaugeView: View {
         // sit outside it, and the saved-message line — deliberately last in
         // the outer stack — is the one that scrolls off first if the
         // smallest watch still can't fit everything at once.
-        VStack(spacing: 3) {
-            HStack {
-                Circle().fill(SendmeterColor.success).frame(width: 6, height: 6)
-                Text("connected")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if tindeq.lowBattery {
-                    Image(systemName: "battery.25")
-                        .foregroundStyle(SendmeterColor.warning)
+        WatchCard(accent: WatchPalette.force) {
+            VStack(spacing: 5) {
+                HStack {
+                    WatchStateChip(state: .ready, title: "Connected", compact: true)
+                    Spacer()
+                    if tindeq.lowBattery {
+                        Label("Low battery", systemImage: "battery.25")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(WatchPalette.warning)
+                    }
+                    Button {
+                        disconnectTapped()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.danger))
+                    .accessibilityLabel("Disconnect Progressor")
                 }
-                Button {
-                    disconnectTapped()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .tint(SendmeterColor.danger)
-            }
 
-            // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
-            // free text drifts from the app's tag set. New tags are created in the
-            // iPhone/web Force tab; the watch selects from what already exists.
-            if tagsLoading && recentTags.isEmpty {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
-                    Text("Loading exercises…")
+                // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
+                // free text drifts from the app's tag set. New tags are created in the
+                // iPhone/web Force tab; the watch selects from what already exists.
+                if tagsLoading && recentTags.isEmpty {
+                    WatchLoadingState(title: "Loading exercises…")
+                    sidePickerTitled
+                } else if recentTags.isEmpty {
+                    WatchStateBanner(
+                        state: .warning,
+                        title: "No exercises yet",
+                        message: "Create an exercise in the iPhone app, then try again.",
+                        actionTitle: "Retry",
+                        action: { loadTags() }
+                    )
+                    sidePickerTitled
+                } else {
+                    // One row for both, so connected + pickers + Start fit a 40mm
+                    // screen without scrolling (#279). Neither carries a visible
+                    // title at that width — the selected values are the labels,
+                    // and VoiceOver still hears "Exercise" / "Side".
+                    HStack(spacing: 4) {
+                        exercisePicker
+                        sidePickerCompact
+                            .frame(width: 60)
+                    }
+                }
+
+                if tindeq.handsFreeRequested {
+                    Button { tindeq.cancelHandsFree() } label: {
+                        Text(tindeq.saving ? "Saving…" : "Armed — pull to start")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.success))
+                    .disabled(tindeq.saving)
+                    .accessibilityHint("Tap to disarm hands-free mode")
+                } else {
+                    Button { tindeq.start() } label: {
+                        Text("Start")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
+                    .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    Button("Arm hands-free") { tindeq.armHandsFree() }
+                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.secondary))
+                        .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
+                    Text("Pick an exercise to start.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
-                sidePickerTitled
-            } else if recentTags.isEmpty {
-                Text("No exercise tags found — record once in the iPhone app, or check the phone app is signed in.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Button("Retry") { loadTags() }
-                    .font(.caption2)
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                sidePickerTitled
-            } else {
-                // One row for both, so connected + pickers + Start fit a 40mm
-                // screen without scrolling (#279). Neither carries a visible
-                // title at that width — the selected values are the labels,
-                // and VoiceOver still hears "Exercise" / "Side".
-                HStack(spacing: 4) {
-                    exercisePicker
-                    sidePickerCompact
-                        .frame(width: 60)
-                }
-            }
-
-            if tindeq.handsFreeRequested {
-                Button { tindeq.cancelHandsFree() } label: {
-                    Text(tindeq.saving ? "Saving…" : "Armed — pull to start")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(SendmeterColor.success)
-                .disabled(tindeq.saving)
-                .accessibilityHint("Tap to disarm hands-free mode")
-            } else {
-                Button { tindeq.start() } label: {
-                    Text("Start")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(SendmeterColor.primary)
-                .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
-
-                Button("Arm hands-free") { tindeq.armHandsFree() }
-                    .font(.caption)
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
-                Text("Pick an exercise to start.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -416,8 +442,8 @@ struct ForceGaugeView: View {
             }
         }
         .pickerStyle(.navigationLink)
-        .font(.caption2)
-        .controlSize(.small)
+        .font(.system(.footnote, design: .rounded).weight(.semibold))
+        .frame(minHeight: 44)
     }
 
     private func sideLabel(_ value: String) -> String {
@@ -445,8 +471,8 @@ struct ForceGaugeView: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.bordered)
-        .controlSize(.mini)
+        .buttonStyle(WatchSecondaryButtonStyle(tint: isPlaceholder ? WatchPalette.textSecondary : WatchPalette.force))
+        .frame(minHeight: 44)
         .accessibilityLabel(label)
     }
 
@@ -454,33 +480,39 @@ struct ForceGaugeView: View {
 
     @ViewBuilder
     private var measuringContent: some View {
+        let currentKg = fixtureVisual?.currentKg ?? tindeq.currentKg
+        let peakKg = fixtureVisual?.peakKg ?? tindeq.peakKg
+        let elapsedS = fixtureVisual?.elapsedS ?? tindeq.elapsedMs / 1000
+        let displayTag = fixtureVisual?.tag.isEmpty == false ? fixtureVisual!.tag : tag
         HStack {
-            Circle().fill(SendmeterColor.primary).frame(width: 8, height: 8)
-            Text(tag)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            WatchStateChip(state: .syncing, title: "Measuring", compact: true)
+            Spacer(minLength: 4)
+            Text(displayTag)
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .foregroundStyle(WatchPalette.textSecondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .truncationMode(.tail)
-            Spacer()
         }
 
-        (Text(String(format: "%.1f", tindeq.currentKg))
+        (Text(String(format: "%.1f", currentKg))
             .font(.system(size: 42, weight: .heavy, design: .rounded))
             .monospacedDigit()
-        + Text(" kg").font(.footnote).foregroundStyle(.secondary))
+            .foregroundStyle(WatchPalette.force)
+        + Text(" kg").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
             .lineLimit(1)
             .minimumScaleFactor(0.7)
 
         // Hold time — the primary live number after force, so it reads at a
         // glance mid-hang.
         HStack(alignment: .firstTextBaseline) {
-            Text("peak \(String(format: "%.1f", tindeq.peakKg))")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            Text("peak \(String(format: "%.1f", peakKg))")
+                .font(.system(.footnote, design: .rounded).weight(.semibold))
+                .foregroundStyle(WatchPalette.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             Spacer()
-            (Text(String(format: "%.1f", tindeq.elapsedMs / 1000))
+            (Text(String(format: "%.1f", elapsedS))
                 .font(.system(size: 26, weight: .bold, design: .rounded))
                 .monospacedDigit()
             + Text(" s").font(.footnote).foregroundStyle(.secondary))
@@ -492,8 +524,7 @@ struct ForceGaugeView: View {
             .frame(minHeight: 28, maxHeight: 50)
 
         Button("Stop & Save") { tindeq.stopAndSave(reason: .userTapped) }
-            .buttonStyle(.borderedProminent)
-            .tint(SendmeterColor.primary)
+            .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
     }
 }
 
@@ -521,12 +552,15 @@ private struct OptionPickerList: View {
                         Spacer(minLength: 4)
                         if o.value == selection {
                             Image(systemName: "checkmark")
-                                .foregroundStyle(SendmeterColor.primary)
+                                .foregroundStyle(WatchPalette.force)
                         }
                     }
+                    .frame(minHeight: 44)
                 }
             }
         }
         .navigationTitle(title)
+        .scrollContentBackground(.hidden)
+        .watchCanvas()
     }
 }

@@ -28,13 +28,33 @@ struct StatusView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 9) {
-                readiness
-                Divider()
-                acwr
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center) {
+                    WatchEyebrow(text: "Today")
+                    Spacer(minLength: 4)
+                    if refreshing || ScreenshotFixtures.state == .statusSyncing {
+                        WatchStateChip(state: .syncing, title: "Updating", compact: true)
+                    } else if ScreenshotFixtures.state == .statusOffline {
+                        WatchStateChip(state: .offline, title: "Offline", compact: true)
+                    } else if snap.updatedAt == 0 {
+                        WatchStateChip(state: .warning, title: "No data", compact: true)
+                    } else {
+                        WatchStateChip(state: .ready, title: "Synced", compact: true)
+                    }
+                }
+                WatchCard(accent: readinessColor(snap.readinessZone)) {
+                    readiness
+                }
+                WatchCard(accent: acwrColor(StatusPresentation.acwrRiskBand(snap.acwr))) {
+                    acwr
+                }
             }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .scrollIndicators(.hidden)
+        .watchCanvas()
         .task { await refresh() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await refresh() } }
@@ -126,16 +146,13 @@ struct StatusView: View {
     // MARK: Pieces
 
     private func eyebrow(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(.secondary)
-            .accessibilityHidden(true)
+        WatchEyebrow(text: text)
     }
 
     private func hint(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11))
-            .foregroundStyle(.tertiary)
+            .font(.system(.caption2, design: .rounded))
+            .foregroundStyle(WatchPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityHidden(true)
     }

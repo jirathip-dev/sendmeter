@@ -12,6 +12,7 @@ struct ReadinessRingView: View {
     var lineWidth: CGFloat = 7
     var valueFontSize: CGFloat = 24
     var emptyAccessibilityHint: String? = nil
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     private var progress: Double? { StatusPresentation.readinessProgress(score) }
     private var zoneLabel: String? { StatusPresentation.readinessZoneLabel(zone) }
@@ -31,7 +32,12 @@ struct ReadinessRingView: View {
                 Circle()
                     .trim(from: 0, to: progress)
                     .stroke(
-                        readinessColor(zone),
+                        AngularGradient(
+                            colors: isLuminanceReduced
+                                ? [readinessColor(zone), readinessColor(zone)]
+                                : [readinessColor(zone), WatchPalette.secondary, readinessColor(zone)],
+                            center: .center
+                        ),
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
@@ -39,7 +45,7 @@ struct ReadinessRingView: View {
             Text(score.map(String.init) ?? "—")
                 .font(.system(size: valueFontSize, weight: .heavy, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(score == nil ? Color.secondary : readinessColor(zone))
+                .foregroundStyle(score == nil ? WatchPalette.textSecondary : readinessColor(zone))
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Readiness")

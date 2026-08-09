@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Apple Watch screens now use a consistent glanceable visual language with clearer state cues, larger action targets, and safer reduced-motion and Always-On fallbacks across status, workout, and Force flows.
 - Sendmeter's Home, Workout, Force, and History surfaces now share a richer light and dark visual system, with clearer metric accents, tactile controls, more dimensional cards and sheets, and theme-aware browser/PWA chrome while keeping the same information density.
 - Charts now share a restrained, theme-aware visual system with clearer focus, reference bands, gradients, and selected-point emphasis across readiness, load, workouts, Force, and History.
 - History session details and Training balance now open as sticky-header bottom sheets, so chart scrubbing never swipes the detail surface away.

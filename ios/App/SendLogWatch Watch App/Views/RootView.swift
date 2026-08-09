@@ -20,7 +20,9 @@ struct RootView: View {
 
     @ViewBuilder
     var body: some View {
-        if ScreenshotFixtures.enabled {
+        if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .waiting {
+            WaitingForPhoneView()
+        } else if ScreenshotFixtures.enabled {
             signedInContent
         } else {
             switch auth.state {

@@ -20,13 +20,33 @@ struct WaitingForPhoneView: View {
     // signedOut relay (WorkoutManager is App-scoped, above this switch); this
     // makes that survival actually reachable from here too.
     @Environment(WorkoutManager.self) private var workout
-    @State private var pendingUploads = 0
+    @State private var pendingUploads = ScreenshotFixtures.waitingPendingUploads ?? 0
+
+    private var fixtureWaiting: Bool { ScreenshotFixtures.state == .waiting }
+    private var isSyncing: Bool { fixtureWaiting ? ScreenshotFixtures.waitingSyncing : auth.syncing }
+    private var rejectionMessage: String? {
+        ScreenshotFixtures.waitingRejectionMessage ?? auth.lastRejection?.watchMessage
+    }
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 10) {
-                Text("SENDMETER")
-                    .font(.headline)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("SENDMETER")
+                            .font(.system(.headline, design: .rounded).weight(.heavy))
+                            .tracking(1.1)
+                        Text("Companion watch")
+                            .font(.caption2)
+                            .foregroundStyle(WatchPalette.textTertiary)
+                    }
+                    Spacer(minLength: 4)
+                    WatchStateChip(
+                        state: isSyncing ? .syncing : .offline,
+                        title: isSyncing ? "Checking" : "Waiting",
+                        compact: true
+                    )
+                }
 
                 if workout.isRunning {
                     workoutRunningBanner
@@ -38,10 +58,11 @@ struct WaitingForPhoneView: View {
                 // is the one screen shown for the entire duration nobody's
                 // signed in, exactly when it matters most.
                 if pendingUploads > 0 {
-                    Text("\(pendingUploads) workout\(pendingUploads == 1 ? "" : "s") waiting to upload — they'll go up once your iPhone signs this watch in")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.center)
+                    WatchStateBanner(
+                        state: .offline,
+                        title: "\(pendingUploads) save\(pendingUploads == 1 ? "" : "s") waiting",
+                        message: "They upload when your iPhone signs this watch in."
+                    )
                 }
 
                 // No dedicated "Signing in from your iPhone…" state any more
@@ -51,43 +72,53 @@ struct WaitingForPhoneView: View {
                 // expense of the one the user is actually here to read. The
                 // explanation stays put; the spinner below it is the only thing
                 // that comes and goes.
-                Text(explanation)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                WatchCard(accent: WatchPalette.secondary) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        WatchEyebrow(text: "Sign in from iPhone")
+                        Text(explanation)
+                            .font(.system(.footnote, design: .rounded).weight(.semibold))
+                            .foregroundStyle(WatchPalette.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Open Sendmeter on your iPhone. This watch uses its session — there is no separate watch login.")
+                            .font(.system(.caption2, design: .rounded))
+                            .foregroundStyle(WatchPalette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
 
-                if auth.syncing {
-                    ProgressView()
-                        .controlSize(.small)
+                if isSyncing {
+                    WatchLoadingState(title: "Asking your iPhone…")
                 }
 
                 // The refusal reason, when there was one — the difference
                 // between "your phone isn't answering" and "your phone
                 // answered with something this watch can't use" is the whole
                 // diagnosis, and it used to be invisible.
-                if let rejection = auth.lastRejection {
-                    Text(rejection.watchMessage)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
-                        .multilineTextAlignment(.center)
+                if let rejectionMessage {
+                    WatchStateBanner(
+                        state: .danger,
+                        title: "Could not use that relay",
+                        message: rejectionMessage
+                    )
                 }
 
-                Text("Open Sendmeter on your iPhone. This watch signs in from it — there's no separate watch login.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.center)
-
                 Button("Try Again") { auth.requestSessionFromPhone(force: true) }
-                    .font(.footnote)
-                    .disabled(auth.syncing)
+                    .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.primary))
+                    .disabled(isSyncing)
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 5)
         }
+        .scrollIndicators(.hidden)
+        .watchCanvas()
         // Ask the moment this screen appears (covers a bootstrap request made
         // before WCSession finished activating). Throttled in AuthManager, so
         // this coinciding with the launch ask costs one message, not two.
-        .onAppear { auth.requestSessionFromPhone() }
+        .onAppear {
+            if !fixtureWaiting { auth.requestSessionFromPhone() }
+        }
         .task {
+            guard !fixtureWaiting else { return }
             async let workouts = OfflineQueue.shared.pendingCount()
             async let sessions = PendingSessionQueue.shared.pendingCount()
             async let recordings = PendingRecordingQueue.shared.pendingCount()
@@ -96,7 +127,8 @@ struct WaitingForPhoneView: View {
     }
 
     private var explanation: String {
-        auth.lastRelayAt == nil
+        if fixtureWaiting { return "Waiting for your iPhone to send a sign-in." }
+        return auth.lastRelayAt == nil
             ? "Waiting for your iPhone to send a sign-in."
             : "Your iPhone's last sign-in has expired. Asking it for a new one."
     }
@@ -107,20 +139,13 @@ struct WaitingForPhoneView: View {
     /// screen's toolbar button.
     @ViewBuilder
     private var workoutRunningBanner: some View {
-        VStack(spacing: 6) {
-            Label("Workout running", systemImage: "figure.climbing")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.orange)
-            Text("\(workout.liveAttempts) boulder\(workout.liveAttempts == 1 ? "" : "s") so far")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Button(workout.ending ? "Ending…" : "End Workout") {
-                workout.endAndSave()
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(workout.ending)
-        }
-        .padding(.bottom, 4)
+        WatchStateBanner(
+            state: .warning,
+            title: "Workout running",
+            message: "\(workout.liveAttempts) boulder\(workout.liveAttempts == 1 ? "" : "s") so far.",
+            actionTitle: workout.ending ? "Ending…" : "End Workout",
+            action: { workout.endAndSave() },
+            actionDisabled: workout.ending
+        )
     }
 }

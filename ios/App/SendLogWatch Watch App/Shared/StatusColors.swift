@@ -7,10 +7,10 @@ import SwiftUI
 ///
 /// KEEP IN SYNC with the identical copy in the SendLogWatchWidgets target.
 extension Color {
-    static let statusLow = Color(red: 0x7B / 255, green: 0x83 / 255, blue: 0xEB / 255)
-    static let statusOptimal = Color(red: 0x4F / 255, green: 0xB0 / 255, blue: 0xFF / 255)
-    static let statusCaution = Color(red: 0xE8 / 255, green: 0xC2 / 255, blue: 0x4E / 255)
-    static let statusHigh = Color(red: 0xF0 / 255, green: 0x86 / 255, blue: 0x4C / 255)
+    static let statusLow = WatchPalette.primary
+    static let statusOptimal = WatchPalette.secondary
+    static let statusCaution = WatchPalette.warning
+    static let statusHigh = WatchPalette.danger
 }
 
 func acwrColor(_ risk: ACWRRiskBand?) -> Color {

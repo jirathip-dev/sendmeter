@@ -1,16 +1,15 @@
 import SendLogWatchCore
 import SwiftUI
 
-/// Health-scale colours for the glanceable status values. These mirror the
-/// dark-theme web tokens: violet for low load, blue for optimal/push, yellow
-/// for caution/maintain and orange for high/recover.
+/// Health-scale colours for the glanceable status values. Keep these sourced
+/// from the Core palette so complications and the full watch app never drift.
 ///
-/// KEEP IN SYNC with the identical copy in the SendLogWatchWidgets target.
+/// Keep the semantic mapping in sync with the full watch app's StatusColors.
 extension Color {
-    static let statusLow = Color(red: 0x7B / 255, green: 0x83 / 255, blue: 0xEB / 255)
-    static let statusOptimal = Color(red: 0x4F / 255, green: 0xB0 / 255, blue: 0xFF / 255)
-    static let statusCaution = Color(red: 0xE8 / 255, green: 0xC2 / 255, blue: 0x4E / 255)
-    static let statusHigh = Color(red: 0xF0 / 255, green: 0x86 / 255, blue: 0x4C / 255)
+    static let statusLow = Color(red: WatchDesignTokens.primary.red, green: WatchDesignTokens.primary.green, blue: WatchDesignTokens.primary.blue)
+    static let statusOptimal = Color(red: WatchDesignTokens.secondary.red, green: WatchDesignTokens.secondary.green, blue: WatchDesignTokens.secondary.blue)
+    static let statusCaution = Color(red: WatchDesignTokens.warning.red, green: WatchDesignTokens.warning.green, blue: WatchDesignTokens.warning.blue)
+    static let statusHigh = Color(red: WatchDesignTokens.danger.red, green: WatchDesignTokens.danger.green, blue: WatchDesignTokens.danger.blue)
 }
 
 func acwrColor(_ risk: ACWRRiskBand?) -> Color {
