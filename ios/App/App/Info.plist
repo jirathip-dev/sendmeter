@@ -44,7 +44,9 @@
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Sendmeter only reads from Apple Health to compute your recovery score; it does not write any data back to Health.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Uses your location to show local temperature and humidity as climbing send conditions.</string>
+	<string>Sendmeter uses your location only when you check Send Conditions to show local temperature and humidity; it does not track you in the background.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Sendmeter uses your location only when you check Send Conditions to show local temperature and humidity; it does not track you in the background.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>

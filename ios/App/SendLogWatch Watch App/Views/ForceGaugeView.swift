@@ -79,7 +79,7 @@ struct ForceGaugeView: View {
                 // need it).
                 if visibleStatus == .measuring {
                     VStack(spacing: 4) {
-                        measuringContent
+                        measuringContent(availableSize: geometry.size)
                     }
                 } else {
                     ScrollView {
@@ -212,6 +212,15 @@ struct ForceGaugeView: View {
                 side = fixtureVisual.side
                 recentTags = fixtureVisual.tag.isEmpty ? [] : [fixtureVisual.tag, "Pinch block", "Half crimp"]
                 tagsLoading = false
+                if fixtureVisual.status == .measuring {
+                    // A deterministic live pull makes the 40mm trace visible
+                    // in UI-test evidence without requiring Bluetooth.
+                    sparkSamples = [
+                        (0.0, 0.0), (0.2, 5.8), (0.4, 12.4), (0.6, 18.9),
+                        (0.8, 15.7), (1.0, 23.6), (1.2, 20.8), (1.4, 27.1),
+                        (1.6, 24.9), (1.8, 28.4), (2.0, 26.8),
+                    ]
+                }
                 tindeq.liveTag = tag
                 tindeq.liveSide = side
                 return
@@ -912,11 +921,18 @@ struct ForceGaugeView: View {
     // MARK: Measuring — the live gauge owns the whole screen.
 
     @ViewBuilder
-    private var measuringContent: some View {
+    private func measuringContent(availableSize: CGSize) -> some View {
         let currentKg = fixtureVisual?.currentKg ?? tindeq.currentKg
         let peakKg = fixtureVisual?.peakKg ?? tindeq.peakKg
         let elapsedS = fixtureVisual?.elapsedS ?? tindeq.elapsedMs / 1000
         let displayTag = fixtureVisual?.tag.isEmpty == false ? fixtureVisual!.tag : tag
+        let forceReadout = (Text(String(format: "%.1f", currentKg))
+            .font(.system(size: 42, weight: .heavy, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+        + Text(" kg").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
         HStack {
             WatchStateChip(state: .syncing, title: "Measuring", compact: true)
             Spacer(minLength: 4)
@@ -928,13 +944,25 @@ struct ForceGaugeView: View {
                 .truncationMode(.tail)
         }
 
-        (Text(String(format: "%.1f", currentKg))
-            .font(.system(size: 42, weight: .heavy, design: .rounded))
-            .monospacedDigit()
-            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
-        + Text(" kg").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
+        if isMicroSetupSize(availableSize) {
+            // Preserve the live trace on 40mm without spending another row:
+            // the translucent readout floats over a compact accent line.
+            ZStack {
+                Sparkline(samples: sparkSamples)
+                    .frame(height: 32)
+                    .opacity(0.68)
+                forceReadout
+                    .padding(.horizontal, 6)
+                    .background(WatchPalette.canvas.opacity(0.82), in: Capsule())
+            }
+            // 47pt is deliberate: watchOS draws the primary button's focus
+            // edge half a point beyond its layout frame on the 40mm canvas.
+            // This preserves a full-size trace/readout while keeping that
+            // rendered hit surface inside the 197pt viewport.
+            .frame(maxWidth: .infinity, minHeight: 47, maxHeight: 47)
+        } else {
+            forceReadout
+        }
 
         // Hold time — the primary live number after force, so it reads at a
         // glance mid-hang.
@@ -953,8 +981,13 @@ struct ForceGaugeView: View {
                 .minimumScaleFactor(0.7)
         }
 
-        Sparkline(samples: sparkSamples)
-            .frame(minHeight: 28, maxHeight: 50)
+        // The live screen is intentionally non-scrolling so Stop & Save can
+        // never move out of reach mid-pull. Larger watches have room for a
+        // dedicated trace; 40mm renders the same samples behind the readout.
+        if !isMicroSetupSize(availableSize) {
+            Sparkline(samples: sparkSamples)
+                .frame(minHeight: 28, maxHeight: 50)
+        }
 
         Button("Stop & Save") { tindeq.stopAndSave(reason: .userTapped) }
             .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
