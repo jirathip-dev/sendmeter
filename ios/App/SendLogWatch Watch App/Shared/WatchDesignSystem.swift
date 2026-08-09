@@ -296,9 +296,13 @@ struct WatchPageControl: View {
                 )
             }
         }
-        .padding(3)
-        .background(Capsule().fill(WatchPalette.card.opacity(0.9)))
-        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 3)
+        .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
+        .background {
+            Capsule()
+                .fill(WatchPalette.card.opacity(0.9))
+                .padding(.vertical, 4)
+        }
     }
 }
 
@@ -314,23 +318,26 @@ private struct WatchPageControlItem: View {
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 10, weight: labelWeight, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(
-                    minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
-                    maxWidth: .infinity,
-                    minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
-                )
+            ZStack {
+                Capsule()
+                    .fill(fill)
+                    .overlay(Capsule().stroke(Color.white.opacity(strokeOpacity), lineWidth: 0.7))
+                Text(label)
+                    .font(.system(size: 9, weight: labelWeight, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 34)
         }
         .buttonStyle(.plain)
+        .frame(
+            minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
+            maxWidth: .infinity,
+            minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
+        )
         .foregroundStyle(foreground)
-        .background {
-            Capsule()
-                .fill(fill)
-                .overlay(Capsule().stroke(Color.white.opacity(strokeOpacity), lineWidth: 0.7))
-        }
+        .contentShape(Rectangle())
         .accessibilityLabel("Show \(label)")
         .accessibilityValue(isSelected ? "Selected" : "Not selected")
         .accessibilityAddTraits(isSelected ? .isSelected : [])

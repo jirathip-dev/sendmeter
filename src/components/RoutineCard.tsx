@@ -521,10 +521,9 @@ export default function RoutineCard({
           </div>
         </div>
       ) : selected ? (
-        <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+        <div className="routine-action-row">
           <button
             className="btn-primary"
-            style={{ flex: 1 }}
             // #222: one timer at a time. Kept clickable while blocked (rather
             // than `disabled`) so the tap names the reason instead of doing
             // nothing — the aria-disabled state and semantic fill carry the

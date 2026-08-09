@@ -77,6 +77,7 @@ function dispatchPointer(
     expect(dialog.getAttribute("aria-labelledby")).toBe(title?.id);
     expect(title?.textContent).toBe("Session detail");
     expect(dialog.querySelector(".modal-top")).toBeTruthy();
+    expect(dialog.querySelector(".modal-handle")).toBeNull();
     expect(dialog.querySelector(".modal-content")).toBeTruthy();
     expect(dialog.querySelector(".modal-close")).toBeTruthy();
     expect(document.body.style.overflow).toBe("hidden");

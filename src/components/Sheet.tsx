@@ -357,7 +357,6 @@ export default function Sheet({
             onPointerUp={(event) => finishDrag(event, false)}
             onPointerCancel={(event) => finishDrag(event, true)}
           >
-            <div className="modal-handle" aria-hidden="true" />
             <div className="modal-top-row">
               {title ? (
                 <div className="modal-heading">
