@@ -7,45 +7,29 @@ import WidgetKit
 /// push everything they need into the shared App Group snapshot (WidgetStore)
 /// and ask WidgetKit to reload.
 enum WidgetBridge {
-    /// Refresh the glanceable status — readiness (from the iPhone's synced row)
-    /// + ACWR (computed here) — then reload. Call after a readiness sync / on
-    /// foreground.
-    @discardableResult
-    static func refreshStatus() async -> WatchStatusRefreshOutcome {
+    /// Refresh the glanceable status — readiness from the typed iPhone result
+    /// + ACWR (computed here) — then reload. There is intentionally no
+    /// watch-side `health_metrics` fetch: the readiness coordinator is the one
+    /// request/result path, and this method only fills the independent ACWR.
+    static func refreshStatus(readiness: ReadinessSnapshot? = nil) async {
         var snap = WidgetStore.load()
-        var healthSucceeded = false
-        var acwrSucceeded = false
-        do {
-            let row = try await Repo.fetchLatestHealthMetric()
-            // A successful empty response clears an old reading. A network
-            // error keeps the last snapshot instead of pretending "no data".
-            snap.readiness = row?.readiness
-            snap.readinessZone = row?.readiness == nil ? nil : row?.zone
-            healthSucceeded = true
-        } catch {
-            // Preserve the last known status while offline.
+        if let readiness {
+            // A successful result is authoritative, including a nil score
+            // (the phone may have no HealthKit signal yet). An absent result
+            // leaves the cached score visible while offline.
+            snap.readiness = readiness.readiness
+            snap.readinessZone = readiness.readiness == nil ? nil : readiness.zone
         }
         do {
             let ratio = try await computeACWR()
             snap.acwr = ratio
             snap.acwrRisk = StatusPresentation.acwrRiskBand(ratio)?.rawValue
-            acwrSucceeded = true
         } catch {
             // Preserve the last known status while offline.
         }
-        // The timestamp is a claim that both independent status values came
-        // from this refresh. Keep the old timestamp after a partial/network
-        // failure so a cached snapshot remains useful without becoming a
-        // falsely green "Synced" state in StatusView or widgets.
-        if healthSucceeded && acwrSucceeded {
-            snap.updatedAt = Date().timeIntervalSince1970
-        }
+        snap.updatedAt = Date().timeIntervalSince1970
         WidgetStore.save(snap)
         WidgetCenter.shared.reloadAllTimelines()
-        return WatchStatusRefreshOutcome(
-            healthSucceeded: healthSucceeded,
-            acwrSucceeded: acwrSucceeded
-        )
     }
 
     /// Merge the live-workout fields and reload. Call on discrete changes

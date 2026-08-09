@@ -1,6 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import type { Session } from "@supabase/supabase-js";
 import { SendLogHealth } from "sendlog-health";
+import type { ReadinessRefreshResult } from "sendlog-health";
 import { fetchTodayHealthSignature } from "./repo/health";
 import { healthSignaturesEqual } from "./healthSignature";
 
@@ -29,7 +30,7 @@ export function healthLastSyncedAt(): number | null {
 /// "Health data cleared · resyncing" toast from AccountSheet. Source alone is
 /// no longer sufficient to gate the foreground toast, though — see `changed`
 /// below (#146).
-export type HealthSyncSource = "background" | "foreground" | "resync";
+export type HealthSyncSource = "background" | "foreground" | "resync" | "watch";
 
 /// Records that a sync attempt happened (drives the "Last synced Xm ago" line
 /// on ReadinessCard, unconditionally — that's correct/wanted feedback for
@@ -52,6 +53,30 @@ function recordHealthSync(source: HealthSyncSource, changed = false): void {
   }
 }
 
+let readinessListenerStarted = false;
+
+/// Native watch requests execute entirely in the iPhone plugin. This listener
+/// is only the phone-UI notification/re-read hook; it does not perform HealthKit
+/// work and never carries credentials or raw samples. The local latest-result
+/// read covers a result that completed before the WebView mounted its listener.
+function ensureReadinessListener(): void {
+  if (!IS_NATIVE || readinessListenerStarted) return;
+  readinessListenerStarted = true;
+  void SendLogHealth.addListener(
+    "readinessRefresh",
+    (result: ReadinessRefreshResult) => {
+      if (result.status === "success") recordHealthSync("watch", true);
+    },
+  );
+  void SendLogHealth.getLatestReadiness()
+    .then((result) => {
+      if (result?.status === "success") recordHealthSync("watch", true);
+    })
+    .catch(() => {
+      // A pre-#520 native shell simply has no method/result yet.
+    });
+}
+
 /// Hand the native health plugin the current access token so its own Supabase
 /// client can read sessions / write health_metrics — including on a
 /// background wake, when the WebView's supabase-js session isn't reachable.
@@ -64,6 +89,7 @@ function recordHealthSync(source: HealthSyncSource, changed = false): void {
 /// here owns rotation.
 export function relayHealthSession(session: Session | null): void {
   if (!IS_NATIVE) return;
+  ensureReadinessListener();
   if (session) {
     void SendLogHealth.setSession({ accessToken: session.access_token });
   } else {

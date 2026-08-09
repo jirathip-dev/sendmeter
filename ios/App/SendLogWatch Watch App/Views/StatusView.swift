@@ -5,31 +5,20 @@ import SwiftUI
 /// ACWR — the two numbers worth a wrist-raise before deciding what to do.
 ///
 /// Renders straight out of the App Group snapshot, the same one the
-/// complications read: `WidgetBridge.refreshStatus()` already fetches the
-/// iPhone-computed readiness row and computes ACWR on-watch, so this page adds
-/// no second fetch path — it shows what's cached, asks for a refresh on appear
-/// and on foreground, and re-reads.
-///
-/// SendLogWatchApp also refreshes on foreground (for the complications, which
-/// need it whether or not this page is on screen), so a foreground costs two
-/// round trips rather than one. Deliberate: they're two small queries, and the
-/// alternative — reading the store and hoping the app-level refresh has already
-/// landed — is exactly the staleness this page is supposed to avoid.
-///
-/// `ReadinessManager` deliberately isn't used here: it covers readiness only,
-/// and mixing it with the snapshot's ACWR would put two sources of truth on one
-/// screen, free to disagree.
+/// complications read. `ReadinessManager` requests the iPhone-owned HealthKit
+/// sync and applies its typed result to this snapshot; ACWR remains the
+/// independent watch-local calculation. Cached values stay visible while a
+/// request is in flight or the phone is offline.
 struct StatusView: View {
-    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
-    @State private var snap = ScreenshotFixtures.enabled
-        ? ScreenshotFixtures.status
-        : WidgetStore.load()
-    @State private var refreshing = false
-    @State private var refreshState: WatchStatusRefreshState = .notAttempted
+    @Environment(ReadinessManager.self) private var readinessManager
+
+    private var snap: WidgetSnapshot {
+        ScreenshotFixtures.enabled ? ScreenshotFixtures.status : readinessManager.snapshot
+    }
 
     private var statusChip: (state: WatchVisualState, title: String) {
-        if refreshing || ScreenshotFixtures.state == .statusSyncing {
+        if ScreenshotFixtures.state == .statusSyncing {
             return (.syncing, "Updating")
         }
         if ScreenshotFixtures.enabled {
@@ -48,15 +37,21 @@ struct StatusView: View {
                 break
             }
         }
-        switch refreshState {
-        case .synced:
+        switch readinessManager.syncState {
+        case .fresh:
             return (.ready, "Synced")
-        case .cached, .notAttempted:
+        case .cached, .idle:
             return snap.updatedAt == 0 ? (.warning, "No data") : (.cached, "Cached")
         case .offline:
             return (.offline, "Offline")
-        case .refreshing:
+        case .syncing:
             return (.syncing, "Updating")
+        case .authRequired:
+            return (.warning, "Phone needed")
+        case .failed:
+            return (.warning, "Retry")
+        case .unsupported:
+            return (.warning, "Update phone")
         }
     }
 
@@ -84,9 +79,9 @@ struct StatusView: View {
         }
         .scrollIndicators(.hidden)
         .watchCanvas()
-        .task { await refresh() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await refresh() } }
+        .task {
+            guard !ScreenshotFixtures.enabled else { return }
+            readinessManager.request(reason: .statusRefresh)
         }
     }
 
@@ -130,6 +125,13 @@ struct StatusView: View {
             // Health; the ring helper draws a neutral outline, not a zero.
             if snap.readiness == nil {
                 hint("Open Sendmeter on your iPhone to sync Health")
+            }
+            if !ScreenshotFixtures.enabled {
+                Text(readinessManager.syncLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(readinessManager.syncLabel)
             }
         }
     }
@@ -186,18 +188,4 @@ struct StatusView: View {
             .accessibilityHidden(true)
     }
 
-    // MARK: Refresh
-
-    private func refresh() async {
-        // Fastlane launches the real view hierarchy with deterministic data.
-        // Do not replace that fixture with an unauthenticated network result.
-        guard !ScreenshotFixtures.enabled else { return }
-        guard !refreshing else { return }
-        refreshing = true
-        refreshState = .refreshing
-        defer { refreshing = false }
-        let outcome = await WidgetBridge.refreshStatus()
-        snap = WidgetStore.load()
-        refreshState = .after(outcome, hasCachedSnapshot: snap.updatedAt > 0)
-    }
 }

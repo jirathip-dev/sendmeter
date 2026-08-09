@@ -181,6 +181,11 @@ final class AuthManager: NSObject {
     /// login form and no explanation (#266).
     @MainActor
     private func apply(_ context: [String: Any]) {
+        // Readiness results share the phone's latest application context with
+        // the access-token relay. Parse that typed payload first; it does not
+        // affect auth decoding and keeps a cold watch from needing a second
+        // readiness fetch.
+        ReadinessManager.current?.receive(context)
         let outcome = SessionRelay.decode(context, now: now)
         switch outcome {
         case let .signedIn(session):
@@ -192,6 +197,7 @@ final class AuthManager: NSObject {
             syncing = false
             state = SessionRelay.state(for: session, now: now)
             Self.log.info("relay accepted (relayId \(session.relayId ?? "none"))")
+            ReadinessManager.current?.connectivityChanged()
             // A stale-token pass may still be suspended in either queue. A
             // coalesced request guarantees a fresh-token follow-up pass.
             Task {
@@ -206,6 +212,7 @@ final class AuthManager: NSObject {
             lastRejection = nil
             queuedRequest = false
             signOutLocally()
+            ReadinessManager.current?.signOutLocally()
             Self.log.info("relay: phone signed out")
         case let .rejected(reason):
             // `notARelay` is not an auth payload at all — some other
@@ -277,11 +284,22 @@ extension AuthManager: WCSessionDelegate {
         // itself if the clock-derived state says the token is stale.
         Task { @MainActor in
             self.refreshState()
+            ReadinessManager.current?.connectivityChanged()
         }
     }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         Task { @MainActor in self.apply(applicationContext) }
+    }
+
+    /// Reachable phone result path. The auth bridge intentionally uses the
+    /// same generic WatchConnectivity delegate channel for readiness replies;
+    /// `ReadinessManager` owns freshness, idempotency, and late-result gates.
+    func session(
+        _ session: WCSession,
+        didReceiveMessage message: [String: Any]
+    ) {
+        Task { @MainActor in ReadinessManager.current?.receive(message) }
     }
 
     /// Guaranteed-delivery variant. The phone answers a `requestSession` this
@@ -300,6 +318,7 @@ extension AuthManager: WCSessionDelegate {
         guard session.isReachable else { return }
         Task { @MainActor in
             self.refreshState()
+            ReadinessManager.current?.connectivityChanged()
         }
     }
 }

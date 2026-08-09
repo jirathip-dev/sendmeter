@@ -194,6 +194,11 @@ export function useAuth() {
       // so one native listener always has one removal path.
       const watchRequest = onWatchSessionRequest(() => {
         void supabase.auth.getSession().then(({ data }) => {
+          // A readiness request may have reached the native phone while the
+          // WebView was briefly stale too. Relay the same fresh access token to
+          // both native consumers before the health manager retries; neither
+          // side ever receives a refresh token.
+          relayHealthSession(data.session);
           relaySessionToWatch(data.session, { guaranteed: true });
         });
       });

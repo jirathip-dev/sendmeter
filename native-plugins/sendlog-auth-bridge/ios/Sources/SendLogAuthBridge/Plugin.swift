@@ -196,8 +196,8 @@ private enum QuarantinedStuckSyncStore {
 /// session copy in the WebView, and this plugin's only job is forwarding it
 /// over WatchConnectivity. `updateApplicationContext` is opportunistic
 /// (delivered next time the watch is reachable/launches), not a push — the
-/// watch reads `receivedApplicationContext` synchronously at its own launch
-/// too, so it never depends on catching a live delegate callback.
+/// watch reads its persisted incoming application context synchronously at its
+/// own launch, so it never depends on catching a live delegate callback.
 @objc(SendLogAuthBridge)
 public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "SendLogAuthBridge"
@@ -216,7 +216,36 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
         return WCSession.default
     }
 
+    /// The latest auth relay and readiness result are merged into one
+    /// application context so a watch that was unreachable during the request
+    /// still receives both its access-token context and compact snapshot on
+    /// next activation. The pure merge rules live in SendLogWatchCore and are
+    /// tested without WatchConnectivity.
+    private let readinessLock = NSLock()
+    private var applicationContext = ReadinessApplicationContext()
+
     override public func load() {
+        // `applicationContext` is the phone's own last outgoing context and
+        // survives a phone process restart. Seed the logical auth/readiness
+        // state from it before registering any publisher so a background
+        // watch result cannot replace the signed-in context with a
+        // readiness-only payload. The counterpart's incoming direction must
+        // not seed this state. Reconciliation strips old relay stamps;
+        // signedOut is a hard reset and cannot resurrect stale state.
+        let session = self.session
+        if let session {
+            readinessLock.lock()
+            _ = applicationContext.reconcile(session.applicationContext)
+            readinessLock.unlock()
+        }
+
+        SendLogReadinessBridge.registerResultPublisher { [weak self] result, immediate in
+            self?.publishReadinessResult(result, immediate: immediate)
+        }
+        SendLogReadinessBridge.registerSessionRequestHandler { [weak self] in
+            self?.notifyListeners("sessionRequested", data: ["reason": "readiness"])
+        }
+
         guard let session else { return }
         session.delegate = self
         session.activate()
@@ -253,6 +282,9 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func clearSession(_ call: CAPPluginCall) {
+        readinessLock.lock()
+        applicationContext = ReadinessApplicationContext()
+        readinessLock.unlock()
         relay(["event": "signedOut"])
         call.resolve()
     }
@@ -354,13 +386,46 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
     /// stay context-only on purpose — they fire on every foreground, and
     /// queueing each one would build a backlog of dead tokens for a watch
     /// that's been in a drawer.
-    private func relay(_ context: [String: Any], guaranteed: Bool = false) {
-        guard let session, session.activationState == .activated else { return }
-        var payload = context
-        payload["relayId"] = UUID().uuidString
-        payload["relayedAt"] = Date().timeIntervalSince1970
-        try? session.updateApplicationContext(payload)
-        if guaranteed { session.transferUserInfo(payload) }
+    /// The readiness result's direct reply is sent while the same lock guards
+    /// the logical state update. If a signedOut transition won the race, the
+    /// result is reduced to a signedOut context and no direct result can
+    /// resurrect the old watch state.
+    private func relay(
+        _ context: [String: Any],
+        guaranteed: Bool = false,
+        immediateReadiness: Bool = false
+    ) {
+        readinessLock.lock()
+        let payload = applicationContext.update(context)
+        let signedOut = applicationContext.isSignedOut
+        guard let session, session.activationState == .activated else {
+            readinessLock.unlock()
+            return
+        }
+        var stampedPayload = payload
+        stampedPayload["relayId"] = UUID().uuidString
+        stampedPayload["relayedAt"] = Date().timeIntervalSince1970
+        try? session.updateApplicationContext(stampedPayload)
+        if guaranteed { session.transferUserInfo(stampedPayload) }
+
+        if immediateReadiness,
+           !signedOut,
+           context["kind"] as? String == ReadinessRefreshResult.kind,
+           session.isReachable {
+            var direct = context
+            direct["relayId"] = UUID().uuidString
+            direct["relayedAt"] = Date().timeIntervalSince1970
+            session.sendMessage(direct, replyHandler: nil, errorHandler: nil)
+        }
+        readinessLock.unlock()
+    }
+
+    /// Stores the result in latest application context and, when the watch
+    /// asked over a reachable `sendMessage`, sends a direct fast-path copy as
+    /// well. The direct dictionary is intentionally compact and has no health
+    /// raw samples or credentials; context retains only the latest result.
+    private func publishReadinessResult(_ result: [String: Any], immediate: Bool) {
+        relay(result, immediateReadiness: immediate)
     }
 }
 
@@ -393,7 +458,18 @@ extension SendLogAuthBridge: WCSessionDelegate {
         _ session: WCSession,
         didReceiveMessage message: [String: Any]
     ) {
-        handleWatchMessage(message)
+        handleWatchMessage(message, replyHandler: nil)
+    }
+
+    /// Reachable request path. The reply handler is passed through the narrow
+    /// generic bridge seam; the health plugin executes the request on the
+    /// iPhone even if the WebView is suspended.
+    public func session(
+        _ session: WCSession,
+        didReceiveMessage message: [String: Any],
+        replyHandler: @escaping ([String: Any]) -> Void
+    ) {
+        handleWatchMessage(message, replyHandler: replyHandler)
     }
 
     /// Queued (guaranteed-delivery) variant — used when the phone wasn't
@@ -403,10 +479,13 @@ extension SendLogAuthBridge: WCSessionDelegate {
         _ session: WCSession,
         didReceiveUserInfo userInfo: [String: Any] = [:]
     ) {
-        handleWatchMessage(userInfo)
+        handleWatchMessage(userInfo, replyHandler: nil)
     }
 
-    private func handleWatchMessage(_ message: [String: Any]) {
+    private func handleWatchMessage(
+        _ message: [String: Any],
+        replyHandler: (([String: Any]) -> Void)? = nil
+    ) {
         // #228: every watch→phone message carries the watch's build. Recorded
         // before the kind switch, so a message this build doesn't understand
         // still tells us which watch build sent it.
@@ -432,6 +511,9 @@ extension SendLogAuthBridge: WCSessionDelegate {
         // pairing/install state may also have changed.
         if buildChanged || pendingChanged || quarantinedChanged || quarantinedStuckChanged || kind == "requestSession" || kind == "queueStatus" {
             notifyListeners("watchInfoChanged", data: [:])
+        }
+        if SendLogReadinessBridge.route(message, replyHandler: replyHandler) {
+            return
         }
         guard let kind else { return }
         switch kind {

@@ -19,6 +19,7 @@ CI, dependency updates, and refactors unless users experience a change.
   duplicate or out-of-order updates, and close decisively even when a late
   live packet arrives; Workout shows whether its live link is direct or
   catching up through the server.
+- Watch readiness now asks the paired iPhone to refresh Health data immediately, keeps the cached score visible while it syncs or is offline, and updates the watch complication and open phone dashboard from the same result.
 - Sendmeter's Home, Workout, Force, and History surfaces now share a richer light and dark visual system, with clearer metric accents, tactile controls, more dimensional cards and sheets, and theme-aware browser/PWA chrome while keeping the same information density.
 - Charts now share a restrained, theme-aware visual system with clearer focus, reference bands, gradients, and selected-point emphasis across readiness, load, workouts, Force, and History.
 - History session details and Training balance now open as sticky-header bottom sheets, so chart scrubbing never swipes the detail surface away.

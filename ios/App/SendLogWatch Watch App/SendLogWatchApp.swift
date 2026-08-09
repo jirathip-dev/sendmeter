@@ -1,8 +1,10 @@
 import SwiftUI
+import SendLogWatchCore
 
 @main
 struct SendLogWatchApp: App {
     @State private var auth = AuthManager()
+    @State private var readiness = ReadinessManager()
     // Owned here (not in ForceGaugeView) so the Progressor stays connected and
     // the active gauge session survives navigating away from the Force screen
     // (SL-58 #5). The disconnect-mid-session prompt is presented from RootView.
@@ -20,8 +22,12 @@ struct SendLogWatchApp: App {
         WindowGroup {
             RootView()
                 .environment(auth)
+                .environment(readiness)
                 .environment(tindeq)
                 .environment(workout)
+                .task { @MainActor in
+                    readiness.request(reason: .launch)
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -33,8 +39,12 @@ struct SendLogWatchApp: App {
                 Task { await PendingSessionQueue.shared.drain() }
                 Task { await PendingRecordingQueue.shared.drain() }
                 Task { await WatchBuild.refreshAndReportQueueStatus() }
-                // Keep the complications/Smart-Stack readiness + ACWR fresh.
-                Task { await WidgetBridge.refreshStatus() }
+                // One watch-triggered path keeps the cached score, widgets,
+                // and open status UI in sync; there is no duplicate foreground
+                // health_metrics fetch from the app scene.
+                Task { @MainActor in
+                    readiness.request(reason: .foreground)
+                }
             }
         }
     }
