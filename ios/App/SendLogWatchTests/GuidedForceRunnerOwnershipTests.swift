@@ -66,16 +66,20 @@ final class GuidedForceRunnerOwnershipTests: XCTestCase {
         XCTAssertEqual(manager.status, .idle)
         XCTAssertNil(manager.sessionId)
         XCTAssertEqual(manager.sessionCount, 0)
-        XCTAssertEqual(await recordingQueue.count(), 0)
-        XCTAssertEqual(await sessionQueue.count(), 0)
+        let recordingCountAfterDiscard = await recordingQueue.count()
+        let sessionCountAfterDiscard = await sessionQueue.count()
+        XCTAssertEqual(recordingCountAfterDiscard, 0)
+        XCTAssertEqual(sessionCountAfterDiscard, 0)
 
         // A late BLE callback must remain inside the explicit no-save seam.
         manager.handleTransportDisconnect(
             error: NSError(domain: "BLE", code: -1),
             wasIntentionalOverride: false
         )
-        XCTAssertEqual(await recordingQueue.count(), 0)
-        XCTAssertEqual(await sessionQueue.count(), 0)
+        let recordingCountAfterLateCallback = await recordingQueue.count()
+        let sessionCountAfterLateCallback = await sessionQueue.count()
+        XCTAssertEqual(recordingCountAfterLateCallback, 0)
+        XCTAssertEqual(sessionCountAfterLateCallback, 0)
         XCTAssertTrue(manager.recentSamples().isEmpty)
     }
 
@@ -110,8 +114,10 @@ final class GuidedForceRunnerOwnershipTests: XCTestCase {
         XCTAssertFalse(runner.isActive)
         XCTAssertNil(runner.runState)
         XCTAssertEqual(manager.status, .idle)
-        XCTAssertEqual(await recordingQueue.count(), 0)
-        XCTAssertEqual(await sessionQueue.count(), 0)
+        let recordingCountAfterSignOut = await recordingQueue.count()
+        let sessionCountAfterSignOut = await sessionQueue.count()
+        XCTAssertEqual(recordingCountAfterSignOut, 0)
+        XCTAssertEqual(sessionCountAfterSignOut, 0)
     }
 
     func testAccountChangeDiscardsActiveCadenceRunWithoutSaving() async {
@@ -143,8 +149,10 @@ final class GuidedForceRunnerOwnershipTests: XCTestCase {
         XCTAssertEqual(manager.status, .idle)
         XCTAssertNil(manager.sessionId)
         XCTAssertEqual(manager.sessionCount, 0)
-        XCTAssertEqual(await recordingQueue.count(), 0)
-        XCTAssertEqual(await sessionQueue.count(), 0)
+        let recordingCountAfterCadenceDiscard = await recordingQueue.count()
+        let sessionCountAfterCadenceDiscard = await sessionQueue.count()
+        XCTAssertEqual(recordingCountAfterCadenceDiscard, 0)
+        XCTAssertEqual(sessionCountAfterCadenceDiscard, 0)
     }
 
     func testSignedOutCannotStartGuidedRunWithoutStableOwner() async {
@@ -173,8 +181,10 @@ final class GuidedForceRunnerOwnershipTests: XCTestCase {
         )
         XCTAssertNil(runner.ownerUserId)
         XCTAssertEqual(manager.status, .connected)
-        XCTAssertEqual(await recordingQueue.count(), 0)
-        XCTAssertEqual(await sessionQueue.count(), 0)
+        let recordingCountAfterRejectedStart = await recordingQueue.count()
+        let sessionCountAfterRejectedStart = await sessionQueue.count()
+        XCTAssertEqual(recordingCountAfterRejectedStart, 0)
+        XCTAssertEqual(sessionCountAfterRejectedStart, 0)
     }
 
     func testAccountChangeInvalidatesBlockedRecordingCompletionAndKeepsOwnerStamp() async throws {
@@ -217,13 +227,15 @@ final class GuidedForceRunnerOwnershipTests: XCTestCase {
         let pendingRows = await recordingQueue.snapshot()
         let pending = try XCTUnwrap(pendingRows.first)
         XCTAssertEqual(pending.enqueuedUserId, accountA)
-        XCTAssertEqual(await sessionQueue.count(), 0)
+        let sessionCountBeforeRelease = await sessionQueue.count()
+        XCTAssertEqual(sessionCountBeforeRelease, 0)
 
         await recordingQueue.releaseAll()
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertEqual(manager.sessionCount, 0)
         XCTAssertNil(manager.sessionId)
-        XCTAssertEqual(await sessionQueue.count(), 0)
+        let sessionCountAfterRelease = await sessionQueue.count()
+        XCTAssertEqual(sessionCountAfterRelease, 0)
         XCTAssertEqual(commands, [.startWeight, .stop])
     }
 
