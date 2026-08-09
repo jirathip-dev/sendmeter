@@ -69,6 +69,14 @@ enum ScreenshotFixtures {
         return args.indices.contains(index + 1) && args[index + 1] == "YES"
     }()
 
+    /// Dynamic Type is injected inside the fixture hierarchy instead of via
+    /// the simulator's accessibility launch argument. The latter can race
+    /// watchOS Carousel's accessibility session during UI-test startup and
+    /// leave a green test with a stale Back/clock-only framebuffer.
+    static var accessibilityLarge: Bool {
+        enabled && ProcessInfo.processInfo.arguments.contains("-sendmeter-accessibility-large")
+    }
+
     static var state: ScreenshotFixtureState {
         guard enabled,
               let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-sendmeter-fixture"),

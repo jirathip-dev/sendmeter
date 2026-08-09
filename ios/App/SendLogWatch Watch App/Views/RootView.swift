@@ -24,7 +24,7 @@ struct RootView: View {
         if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .waiting {
             WaitingForPhoneView()
         } else if ScreenshotFixtures.enabled {
-            signedInSurface
+            screenshotSignedInSurface
         } else {
             switch auth.state {
             case .signedOut:
@@ -36,6 +36,16 @@ struct RootView: View {
             case .signedIn(_, _):
                 signedInSurface
             }
+        }
+    }
+
+    @ViewBuilder
+    private var screenshotSignedInSurface: some View {
+        if ScreenshotFixtures.accessibilityLarge {
+            signedInSurface
+                .environment(\.dynamicTypeSize, .accessibility3)
+        } else {
+            signedInSurface
         }
     }
 

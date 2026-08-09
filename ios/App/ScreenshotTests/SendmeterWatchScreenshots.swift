@@ -1,32 +1,44 @@
 import XCTest
+import CoreGraphics
+import ImageIO
+import UIKit
+
+private enum ForceScreenshotCaptureError: Error {
+    case emptyFrame
+}
 
 @MainActor
 final class SendmeterWatchScreenshots: XCTestCase {
     /// The 40mm release gate: the primary setup path must fit before any
     /// scrolling, including with an accessibility Dynamic Type category.
-    /// The same test is executed twice after setting the simulator text size;
-    /// each run retains a real screen capture in its xcresult bundle.
+    /// The same test is executed twice after setting the fixture's Dynamic
+    /// Type environment; each run retains a real screen capture in its
+    /// xcresult bundle.
     func testForceSetupPrimaryPathFitsWithoutScroll() throws {
         try assertForceSetupPrimaryPathFits(
-            preferredContentSizeCategory: nil,
+            accessibilityLarge: false,
             captureName: "40mm-force-setup-default"
         )
     }
 
     func testForceSetupAccessibilityLargeTextFitsWithoutScroll() throws {
         try assertForceSetupPrimaryPathFits(
-            preferredContentSizeCategory: "UICTContentSizeCategoryAccessibilityL",
+            accessibilityLarge: true,
             captureName: "40mm-force-setup-accessibility-large"
         )
     }
 
     private func assertForceSetupPrimaryPathFits(
-        preferredContentSizeCategory: String?,
+        accessibilityLarge: Bool,
         captureName: String
     ) throws {
         let app = launchFixture(
             "forceSetup",
-            preferredContentSizeCategory: preferredContentSizeCategory
+            accessibilityLarge: accessibilityLarge
+        )
+        XCTAssertTrue(
+            app.wait(for: .runningForeground, timeout: 10),
+            "40mm setup fixture must remain foreground before navigation"
         )
         openActions(app)
         app.staticTexts["Force Gauge"].tap()
@@ -40,15 +52,42 @@ final class SendmeterWatchScreenshots: XCTestCase {
             .matching(NSPredicate(format: "label == %@", "Start selected protocol"))
             .firstMatch
 
-        for control in [exercise, side, protocolChange, start] {
-            XCTAssertTrue(
-                control.waitForExistence(timeout: 10),
-                "40mm setup should expose \(control.identifier) before any scroll"
-            )
-            assertFullyVisible(control, in: app, fixture: "forceSetup")
-        }
+        let controls = [exercise, side, protocolChange, start]
+        var validatedPNGData: Data?
+        for _ in 0..<3 {
+            // A watch can remain in reduced-luminance/AOD after the navigation
+            // tap even while its accessibility tree is current. Wake only the
+            // non-control chrome, then reassert every setup control before capture.
+            let wakeChrome = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.17))
+            wakeChrome.tap()
+            Thread.sleep(forTimeInterval: 0.2)
+            wakeChrome.tap()
 
-        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            for control in controls {
+                XCTAssertTrue(
+                    control.waitForExistence(timeout: 10),
+                    "40mm setup should expose \(control.identifier) before any scroll"
+                )
+                assertFullyVisible(control, in: app, fixture: "forceSetup")
+            }
+
+            Thread.sleep(forTimeInterval: 1)
+            let screenshot = app.screenshot()
+            if let pngData = screenshot.image.pngData(),
+               let source = CGImageSourceCreateWithData(pngData as CFData, nil),
+               let encodedImage = CGImageSourceCreateImageAtIndex(source, 0, nil),
+               hasMagentaStartSurface(encodedImage) {
+                validatedPNGData = pngData
+                break
+            }
+        }
+        guard let validatedPNGData else {
+            XCTFail("40mm setup screenshot never rendered the magenta Start surface")
+            throw ForceScreenshotCaptureError.emptyFrame
+        }
+        // Attach the exact validated PNG bytes; screenshot/image convenience
+        // initializers can re-read or re-render the watch framebuffer while it dims.
+        let capture = XCTAttachment(data: validatedPNGData, uniformTypeIdentifier: "public.png")
         capture.name = captureName
         capture.lifetime = .keepAlways
         add(capture)
@@ -222,16 +261,13 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
     private func launchFixture(
         _ fixture: String,
-        preferredContentSizeCategory: String? = nil
+        accessibilityLarge: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
         setupSnapshot(app, waitForAnimations: false)
         app.launchArguments.append(contentsOf: ["-sendmeter-fixture", fixture])
-        if let preferredContentSizeCategory {
-            app.launchArguments.append(contentsOf: [
-                "-UIPreferredContentSizeCategoryName",
-                preferredContentSizeCategory,
-            ])
+        if accessibilityLarge {
+            app.launchArguments.append("-sendmeter-accessibility-large")
         }
         app.launch()
         return app
@@ -255,4 +291,42 @@ final class SendmeterWatchScreenshots: XCTestCase {
         XCTAssertGreaterThanOrEqual(frame.minY, bounds.minY, "fixture \(fixture) control is clipped above")
         XCTAssertLessThanOrEqual(frame.maxY, bounds.maxY, "fixture \(fixture) control is clipped below")
     }
+
+    private func hasMagentaStartSurface(_ image: CGImage) -> Bool {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return false }
+
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = rgba.withUnsafeMutableBytes { rawBuffer -> Bool in
+            guard let baseAddress = rawBuffer.baseAddress,
+                  let context = CGContext(
+                      data: baseAddress,
+                      width: width,
+                      height: height,
+                      bitsPerComponent: 8,
+                      bytesPerRow: width * 4,
+                      space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else {
+                return false
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return false }
+
+        var magentaPixels = 0
+        for offset in stride(from: 0, to: rgba.count, by: 4) {
+            let red = Int(rgba[offset])
+            let green = Int(rgba[offset + 1])
+            let blue = Int(rgba[offset + 2])
+            if red >= 180, blue >= 130, green <= 170,
+               red >= green + 45, blue >= green + 20 {
+                magentaPixels += 1
+            }
+        }
+        return magentaPixels >= max(512, width * height / 100)
+    }
+
 }
