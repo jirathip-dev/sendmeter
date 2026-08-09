@@ -203,7 +203,9 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 let side = app.buttons["force-side-picker"]
                 XCTAssertTrue(exercise.waitForExistence(timeout: 5))
                 XCTAssertTrue(side.waitForExistence(timeout: 5))
-                app.swipeUp()
+                for _ in 0..<4 where !exercise.isHittable || !side.isHittable {
+                    app.swipeUp(velocity: .slow)
+                }
                 assertFullyVisible(exercise, in: app, fixture: item.fixture)
                 assertFullyVisible(side, in: app, fixture: item.fixture)
             }
@@ -211,26 +213,59 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 let finish = app.buttons["force-session-finish"]
                 let exercise = app.buttons["force-exercise-picker"]
                 let side = app.buttons["force-side-picker"]
-                let disconnect = app.buttons["disconnect-progressor"]
-                for control in [finish, exercise, side, disconnect] {
+                // watchOS can drop a Button's identifier when ViewThatFits
+                // selects a fallback branch, while retaining its production
+                // accessibility label. Accept either semantic path.
+                let disconnect = app.buttons
+                    .matching(
+                        NSPredicate(
+                            format: "identifier == %@ OR label == %@",
+                            "disconnect-progressor",
+                            "Disconnect Progressor"
+                        )
+                    )
+                    .firstMatch
+                for control in [finish, exercise, side] {
                     XCTAssertTrue(
                         control.waitForExistence(timeout: 5),
                         "fixture \(item.fixture) should expose \(control.identifier)"
                     )
                 }
                 // The fixture starts at the session row, then proves the
-                // setup controls remain reachable after the narrow 40mm
-                // layout has been scrolled. The same assertions run on Ultra.
+                // setup controls remain reachable through the narrow 40mm
+                // layout. Exercise/Side and the secondary disconnect action
+                // occupy intentionally different scroll positions, so prove
+                // each position independently. The same assertions run on
+                // Ultra.
                 assertFullyVisible(finish, in: app, fixture: item.fixture)
-                app.swipeUp()
+                for _ in 0..<4 where !exercise.isHittable || !side.isHittable {
+                    app.swipeUp(velocity: .slow)
+                }
                 assertFullyVisible(exercise, in: app, fixture: item.fixture)
                 assertFullyVisible(side, in: app, fixture: item.fixture)
+                // SwiftUI does not instantiate the micro layout's secondary
+                // controls until their scroll region approaches the viewport.
+                for _ in 0..<6 where !disconnect.isHittable {
+                    app.swipeUp(velocity: .slow)
+                }
+                XCTAssertTrue(
+                    disconnect.waitForExistence(timeout: 5),
+                    "fixture \(item.fixture) should expose \(disconnect.identifier) after scrolling"
+                )
                 assertFullyVisible(disconnect, in: app, fixture: item.fixture)
             }
             if item.fixture == "forceLive" {
                 let stopAndSave = app.buttons["force-stop-save"]
                 XCTAssertTrue(stopAndSave.waitForExistence(timeout: 5))
+                let viewport = app.windows.firstMatch.frame
+                for _ in 0..<3 where !stopAndSave.isHittable || stopAndSave.frame.maxY > viewport.maxY {
+                    app.swipeUp(velocity: .slow)
+                }
                 assertFullyVisible(stopAndSave, in: app, fixture: item.fixture)
+                let evidence = XCTAttachment(screenshot: app.screenshot())
+                evidence.name = "force-live-trace"
+                evidence.lifetime = .keepAlways
+                add(evidence)
             }
             app.terminate()
         }

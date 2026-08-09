@@ -34,6 +34,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Watch: Stop & Save now stays fully visible during a live Force pull on 40mm watches, with the live force trace compactly layered behind the readout instead of pushing the action offscreen.
 - Watch readiness now keeps the signed-in account and widget state consistent across phone restarts, token refreshes, and sign-out while the paired devices reconnect.
 - Watch: an upload the server permanently rejects no longer blocks the queued force recordings and gauge sessions behind it indefinitely — after around twenty rejected sync attempts (spread over roughly an hour of automatic retries) it is set aside, kept on the watch, and given another chance about a week later, letting the rest of the queue sync; network outages and expired sign-ins still just wait and recover with nothing set aside. If the watch's storage then fills with set-aside recordings, saving a brand-new rep now trims the stored force curve of the oldest long-rejected recording instead of losing the new rep — and the watch says exactly that: the new rep is safe, the older recording keeps its summary numbers. A watch alert about a lost force rep can also no longer be silently skipped when another alert was already waiting.
 - Linking loose Force recordings to a session (the "link to this session" nudge, and History's "Assign to session") is now all-or-nothing — a failure partway through no longer leaves recordings regrouped without the session actually reflecting them.

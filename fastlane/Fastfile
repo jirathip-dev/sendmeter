@@ -15,6 +15,10 @@ SCREENSHOT_DERIVED_DATA = File.join(
   Dir.home,
   "Library/Developer/Xcode/DerivedData/SendmeterScreenshots"
 ).freeze
+WATCH_SCREENSHOT_DEVICES = [
+  "Apple Watch SE 3 (40mm)",
+  "Apple Watch Ultra 3 (49mm)",
+].freeze
 
 def ensure_screenshot_simulator(name, platform)
   devices = JSON.parse(`xcrun simctl list devices available -j`).fetch("devices")
@@ -74,14 +78,15 @@ def prepare_local_screenshot_fixture
   end
 end
 
-def verify_screenshot_output
+def verify_screenshot_output(devices: nil)
   expected = {
     "iPhone 17 Pro Max" => { count: 4, size: [1320, 2868] },
     "iPhone 13 Pro Max" => { count: 4, size: [1284, 2778] },
     "iPad Pro 13-inch (M5)" => { count: 4, size: [2064, 2752] },
-    "Apple Watch SE (40mm)" => { count: 2, size: [324, 394] },
+    "Apple Watch SE 3 (40mm)" => { count: 2, size: [324, 394] },
     "Apple Watch Ultra 3 (49mm)" => { count: 2, size: [422, 514] },
   }
+  expected.select! { |device, _| devices.include?(device) } if devices
 
   expected.each do |device, requirement|
     files = Dir[File.join(SCREENSHOT_OUTPUT, "**", "#{device}-*.png")].sort
@@ -101,13 +106,32 @@ def verify_screenshot_output
   end
 end
 
+def capture_watch_screenshot_output
+  capture_screenshots(
+    project: XCODEPROJ,
+    scheme: "Sendmeter Watch Screenshots",
+    configuration: "Debug",
+    devices: WATCH_SCREENSHOT_DEVICES,
+    languages: ["en-US"],
+    output_directory: SCREENSHOT_OUTPUT,
+    derived_data_path: SCREENSHOT_DERIVED_DATA,
+    clear_previous_screenshots: false,
+    erase_simulator: true,
+    reinstall_app: true,
+    concurrent_simulators: false,
+    number_of_retries: 1,
+    stop_after_first_error: true,
+    skip_open_summary: true
+  )
+end
+
 platform :ios do
   desc "Reset local fixtures and capture App Store iPhone, iPad + watch screenshots"
   lane :screenshots do
     ensure_screenshot_simulator("iPhone 17 Pro Max", "iOS")
     ensure_screenshot_simulator("iPhone 13 Pro Max", "iOS")
     ensure_screenshot_simulator("iPad Pro 13-inch (M5)", "iOS")
-    ensure_screenshot_simulator("Apple Watch SE (40mm)", "watchOS")
+    ensure_screenshot_simulator("Apple Watch SE 3 (40mm)", "watchOS")
     ensure_screenshot_simulator("Apple Watch Ultra 3 (49mm)", "watchOS")
     prepare_local_screenshot_fixture
 
@@ -143,25 +167,20 @@ platform :ios do
     # the same named/organized output as iPhone instead of a one-off simctl
     # command. Run the compact SE before Ultra so the 40mm layout proof fails
     # fast; both devices execute the same production fixture/AX matrix.
-    capture_screenshots(
-      project: XCODEPROJ,
-      scheme: "Sendmeter Watch Screenshots",
-      configuration: "Debug",
-      devices: ["Apple Watch SE (40mm)", "Apple Watch Ultra 3 (49mm)"],
-      languages: ["en-US"],
-      output_directory: SCREENSHOT_OUTPUT,
-      derived_data_path: SCREENSHOT_DERIVED_DATA,
-      clear_previous_screenshots: false,
-      erase_simulator: true,
-      reinstall_app: true,
-      concurrent_simulators: false,
-      number_of_retries: 1,
-      stop_after_first_error: true,
-      skip_open_summary: true
-    )
+    capture_watch_screenshot_output
 
     verify_screenshot_output
     UI.success("Verified App Store screenshots in #{SCREENSHOT_OUTPUT}")
+  end
+
+  desc "Regenerate and verify only the App Store watch screenshots"
+  lane :watch_screenshots do
+    WATCH_SCREENSHOT_DEVICES.each do |device|
+      ensure_screenshot_simulator(device, "watchOS")
+    end
+    capture_watch_screenshot_output
+    verify_screenshot_output(devices: WATCH_SCREENSHOT_DEVICES)
+    UI.success("Verified App Store watch screenshots in #{SCREENSHOT_OUTPUT}")
   end
 
   desc "Build the web app, sync Capacitor, and ship a build to TestFlight"
