@@ -289,10 +289,6 @@ struct ForceProtocolChooserView: View {
     }
 
     var body: some View {
-        // A chooser can be reached directly from a navigation destination,
-        // before RootView has had a chance to redraw after a relay change.
-        // Swap the account-scoped cache before reading any rows below.
-        catalog.synchronizeAccountScope()
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 catalogStatus
