@@ -116,8 +116,7 @@ struct HomeView: View {
                 labels: ["Status", "Actions"],
                 onSelect: { selection = $0 == 0 ? .status : .actions }
             )
-            .padding(.horizontal, 8)
-            .padding(.top, 2)
+            .padding(.horizontal, 18)
             TabView(selection: $selection) {
                 StatusView()
                     .tag(WatchHomePage.status)

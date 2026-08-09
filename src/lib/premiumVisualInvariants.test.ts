@@ -2844,3 +2844,26 @@ describe("premium visual language contracts (#517)", () => {
     expect(pwaThemeColors?.[2]).toBe("#0E121B");
   });
 });
+
+describe("compact release surface invariants", () => {
+  it("keeps selected routine actions inside a shrinkable grid", () => {
+    const routine = component("RoutineCard.tsx");
+    expect(routine).toContain('className="routine-action-row"');
+    expect(css).toMatch(
+      /\.routine-action-row\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*0\.82fr\)\s+minmax\(0,\s*1\.18fr\);/s,
+    );
+    expect(css).toMatch(/\.routine-action-row\s*>\s*button\s*\{[^}]*min-width:\s*0;/s);
+    expect(css).not.toMatch(/\.routine-new-button\s*\{[^}]*width:\s*auto;/s);
+  });
+
+  it("uses the whole compact sheet header as the drag region without a duplicate handle or top inset", () => {
+    const sheet = component("Sheet.tsx");
+    expect(sheet).toContain('className="modal-top"');
+    expect(sheet).toContain("onPointerDown={onPointerDown}");
+    expect(sheet).not.toContain("modal-handle");
+    expect(css).not.toContain(".modal-handle");
+    const modalTop = blockAfter(css, ".modal-top {");
+    expect(modalTop).toContain("padding: 14px 16px 12px");
+    expect(modalTop).not.toContain("safe-area-inset-top");
+  });
+});
