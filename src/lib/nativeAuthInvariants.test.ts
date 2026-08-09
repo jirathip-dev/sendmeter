@@ -785,8 +785,14 @@ describe("useAuth detaches every listener it attaches (#266)", () => {
     // The handle used to be discarded inside `onWatchSessionRequest`, so the
     // effect's cleanup — which does unsubscribe the other three — had nothing
     // to remove and every remount left another listener on a stale closure.
-    expect(src).toMatch(/=\s*onWatchSessionRequest\(/);
-    expect(src).toMatch(/watchRequest\.then\(\(handle\) => handle\?\.remove\(\)\)/);
+    // Deferred cleanup belongs to the request's resolution continuation; the
+    // effect cleanup only owns handles that resolved while it was alive. This
+    // prevents a pending handle from receiving two remove() calls at unmount.
+    expect(src).toMatch(/const watchRequest = onWatchSessionRequest\(/);
+    expect(src).toMatch(/void watchRequest\.then\(\(handle\) => \{/);
+    expect(src).toMatch(/if \(!aliveRef\.current\) \{[\s\S]*void handle\.remove\(\)/);
+    expect(src).toMatch(/if \(watchHandle\) void watchHandle\.remove\(\);/);
+    expect(src).not.toMatch(/watchRequest\.then\(\(handle\) => handle\?\.remove\(\)\)/);
   });
 });
 

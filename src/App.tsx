@@ -439,17 +439,7 @@ function AuthedApp({
 
       {/* Log bottom sheet modal */}
       {showModal && (
-        <Sheet onClose={() => setShowModal(false)}>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--t-xl)",
-              fontWeight: 800,
-              marginBottom: 2,
-            }}
-          >
-            Log Session
-          </div>
+        <Sheet title="Log session" onClose={() => setShowModal(false)}>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
             Load = Duration × RPE
           </div>
@@ -464,34 +454,19 @@ function AuthedApp({
 
       {/* Phases bottom sheet — informational only (no tap-to-set) */}
       {showPhases && (
-        <Sheet fullHeight onClose={() => setShowPhases(false)}>
+        <Sheet title="Training phases" fullHeight onClose={() => setShowPhases(false)}>
           <PhasesView
             currentPhase={currentPhase}
             phasePeriods={phasePeriods}
             phaseStartDate={phaseStartDate}
           />
-          <div style={{ marginTop: 10 }}>
-            <button className="btn-ghost" onClick={() => setShowPhases(false)}>
-              Close
-            </button>
-          </div>
         </Sheet>
       )}
 
       {/* Compact phase switcher — the actual "change phase" control (the sheet
           above is reference only). */}
       {showPhaseChange && (
-        <Sheet onClose={() => setShowPhaseChange(false)}>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--t-xl)",
-              fontWeight: 800,
-              marginBottom: 2,
-            }}
-          >
-            Change phase
-          </div>
+        <Sheet title="Change phase" onClose={() => setShowPhaseChange(false)}>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
             Sets the training block your sessions log under.
           </div>
@@ -500,6 +475,10 @@ function AuthedApp({
               const active = p.id === currentPhase;
               return (
                 <button
+                  className="phase-option"
+                  data-phase={p.id}
+                  data-active={active ? "true" : "false"}
+                  aria-pressed={active}
                   key={p.id}
                   onClick={() => {
                     if (!active) {
@@ -508,43 +487,23 @@ function AuthedApp({
                     }
                     setShowPhaseChange(false);
                   }}
-                  style={{
-                    textAlign: "left",
-                    padding: "12px 14px",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                    background: active ? p.bg : "var(--surface-1)",
-                    border: `1px solid ${active ? p.color : "var(--border)"}`,
-                    fontFamily: "inherit",
-                  }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <span style={{ fontSize: "var(--t-base)", fontWeight: 700, color: p.color }}>
+                  <div className="phase-option-heading">
+                    <span className="phase-option-name">
                       {p.name}
                     </span>
                     {active && (
-                      <span style={{ fontSize: "var(--t-eyebrow)", color: p.color, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      <span className="phase-option-current">
                         Current
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
+                  <div className="phase-option-description">
                     {p.desc}
                   </div>
                 </button>
               );
             })}
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <button className="btn-ghost" onClick={() => setShowPhaseChange(false)}>
-              Cancel
-            </button>
           </div>
         </Sheet>
       )}

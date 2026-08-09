@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import type { ForceCurveModel, PeriodCurve } from "../lib/force-curve";
 import {
   qualityRegions,
@@ -8,8 +8,15 @@ import {
 import { QUALITY_COLORS } from "../lib/zoneSelection";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
 import InfoDot from "./InfoDot";
 import SvgChartTooltip from "./SvgChartTooltip";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
+import {
+  curvePeriodStyle,
+  type CurvePeriodStyle,
+} from "../lib/chartPeriodStyles";
 import type { ForceCapacityModality } from "../types";
 
 export interface GaugeTarget {
@@ -31,20 +38,9 @@ interface Props {
   modality: ForceCapacityModality;
 }
 
-/// One hue per trailing window — hex literals because SVG attributes can't
-/// resolve CSS vars (matches the palette's chart convention).
-const PERIOD_COLORS: Record<string, string> = {
-  "30d": "#2E96F0",
-  "90d": "#7B83EB",
-  "180d": "#DDB13A",
-  "1y": "#E0913D",
-  "2y": "#E5743A",
-  "3y": "#8E8E93",
-};
-
 interface Overlay {
   label: string;
-  color: string;
+  style: CurvePeriodStyle;
   model: ForceCurveModel;
 }
 
@@ -53,7 +49,8 @@ const H = 130;
 const PAD = { top: 10, bottom: 18, left: 30, right: 8 };
 
 function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Overlay[] }) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
+  const chartId = useChartId("force-curve");
   const pts = model.points;
   const tMin = Math.log10(pts[0]!.windowS);
   const tMax = Math.log10(Math.max(pts[pts.length - 1]!.windowS, 10));
@@ -95,7 +92,14 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
   const xTicks = [1, 10, 60, 120].filter((t) => Math.log10(t) <= tMax + 0.01);
 
   return (
-    <svg className="chart-scrub" viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+    <svg
+      className="chart-scrub"
+      role="group"
+      aria-label="Force duration curve with quality regions, measured envelope, and confidence band"
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ width: "100%", display: "block" }}
+    >
+      <ChartDefs instanceId={chartId} />
       <g aria-label="Training quality regions">
         {qualityRegions(model, 10 ** tMin, 10 ** tMax, yMax).map((r, i) => (
           <rect
@@ -117,14 +121,14 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
             y1={py(v)}
             x2={W - PAD.right}
             y2={py(v)}
-            style={{ stroke: "var(--hairline)" }}
+            style={{ stroke: chartColor("grid") }}
             strokeWidth={1}
           />
           <text
             x={2}
             y={py(v) + (i === yTicks.length - 1 ? 4 : i === 0 ? -2 : 2.5)}
             fontSize={7.5}
-            style={{ fill: "var(--ink-faint)" }}
+            style={{ fill: chartColor("axis") }}
           >
             {v.toFixed(0)}
             {i === yTicks.length - 1 ? "kg" : ""}
@@ -138,7 +142,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           y1={PAD.top}
           x2={px(t)}
           y2={H - PAD.bottom}
-          style={{ stroke: "var(--hairline)" }}
+          style={{ stroke: chartColor("grid") }}
           strokeWidth={1}
         />
       ))}
@@ -149,7 +153,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
             y1={py(model.cf)}
             x2={W - PAD.right}
             y2={py(model.cf)}
-            stroke="#E0913D"
+            stroke={chartColor("caution")}
             strokeWidth={1}
             strokeDasharray="4 3"
           />
@@ -157,7 +161,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
             x={W - PAD.right}
             y={py(model.cf) - 4}
             fontSize={8}
-            fill="#E0913D"
+            fill={chartColor("caution")}
             textAnchor="end"
           >
             CF {model.cf.toFixed(1)}kg
@@ -171,7 +175,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           cx={px(p.windowS)}
           cy={py(p.kg)}
           r={1.4}
-          fill="#7B83EB"
+          fill={chartColor("forceSecondary")}
           opacity={0.3}
         />
       ))}
@@ -179,8 +183,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
         <polygon
           aria-label="95% bootstrap confidence band"
           points={bandPolygon}
-          fill="#7B83EB"
-          opacity={0.14}
+          fill={chartGradientUrl(chartId, "reference-band")}
         />
       )}
       {/* Curve-shift overlays: each active trailing window's fit (SL-80c) */}
@@ -189,9 +192,9 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           key={o.label}
           points={displayCurve(o.model)}
           fill="none"
-          stroke={o.color}
+          stroke={o.style.color}
           strokeWidth={1.2}
-          strokeDasharray="5 3"
+          strokeDasharray={o.style.dash}
           opacity={0.75}
           vectorEffect="non-scaling-stroke"
         />
@@ -201,22 +204,31 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           aria-label={`${model.capabilityFit?.family ?? "Measured"} capability curve`}
           points={displayed}
           fill="none"
-          stroke="#5B5FC7"
+          stroke={chartColor("force")}
           strokeWidth={1.5}
           opacity={0.8}
           vectorEffect="non-scaling-stroke"
         />
       )}
       {pts.map((p, i) => (
-        <circle
-          key={p.windowS}
-          cx={px(p.windowS)}
-          cy={py(p.kg)}
-          r={hovered === i ? 5 : 3}
-          fill="#7B83EB"
-          style={{ cursor: "pointer", transition: "r 0.1s" }}
-          {...hoverProps(i)}
-        />
+        <g key={p.windowS}>
+          {hovered === i && (
+            <circle
+              cx={px(p.windowS)}
+              cy={py(p.kg)}
+              r={9}
+              fill={chartGradientUrl(chartId, "selected-halo")}
+              aria-hidden="true"
+            />
+          )}
+          <circle
+            cx={px(p.windowS)}
+            cy={py(p.kg)}
+            r={hovered === i ? 5 : 3}
+            fill={chartColor("forceSecondary")}
+            style={{ pointerEvents: "none", transition: "r 0.1s" }}
+          />
+        </g>
       ))}
       {xTicks.map((t) => (
         <text
@@ -224,7 +236,7 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           x={px(t)}
           y={H - 5}
           fontSize={8}
-          style={{ fill: "var(--ink-faint)" }}
+          style={{ fill: chartColor("axis") }}
           textAnchor="middle"
         >
           {t}s
@@ -236,11 +248,29 @@ function CurvePlot({ model, overlays }: { model: ForceCurveModel; overlays: Over
           y1={PAD.top}
           x2={px(pts[hovered]!.windowS)}
           y2={H - PAD.bottom}
-          style={{ stroke: "var(--ink-faint)" }}
+          style={{ stroke: chartColor("axis") }}
           strokeDasharray="2 2"
           strokeWidth={1}
         />
       )}
+      <rect
+        data-chart-hit-surface="force-curve"
+        className="chart-scrub"
+        x={PAD.left}
+        y={PAD.top}
+        width={W - PAD.left - PAD.right}
+        height={H - PAD.top - PAD.bottom}
+        fill="transparent"
+        role="button"
+        tabIndex={0}
+        aria-label={
+          hovered !== null && pts[hovered]
+            ? `${pts[hovered]!.windowS}s force ${pts[hovered]!.kg.toFixed(1)} kg`
+            : "Force duration curve data; use arrow keys to inspect durations"
+        }
+        style={{ cursor: "crosshair" }}
+        {...surfaceProps(pts.map((_, i) => i), W, (i) => px(pts[i]!.windowS))}
+      />
       {hovered !== null && pts[hovered] && (
         <SvgChartTooltip
           x={px(pts[hovered]!.windowS)}
@@ -259,11 +289,11 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
   const [activePeriods, setActivePeriods] = useState<Set<string>>(new Set());
   const overlays: Overlay[] = periods.flatMap((p) =>
     activePeriods.has(p.label) && p.model
-      ? [{ label: p.label, color: PERIOD_COLORS[p.label] ?? "#8E8E93", model: p.model }]
+      ? [{ label: p.label, style: curvePeriodStyle(p.label), model: p.model }]
       : [],
   );
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-force" style={{ marginTop: 10 }}>
       <div
         className="label-eyebrow"
         style={{
@@ -310,32 +340,31 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
               {periods.map((p) => {
                 const has = p.model !== null;
                 const active = activePeriods.has(p.label);
-                const color = PERIOD_COLORS[p.label] ?? "#8E8E93";
+                const style = curvePeriodStyle(p.label);
                 return (
-                  <button
+                  <span
                     key={p.label}
-                    className="tag"
-                    disabled={!has}
-                    onClick={() =>
-                      setActivePeriods((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(p.label)) next.delete(p.label);
-                        else next.add(p.label);
-                        return next;
-                      })
-                    }
-                    style={{
-                      background: active ? color : "var(--surface-1)",
-                      color: active ? "#ffffff" : has ? color : "var(--ink-faint)",
-                      border: `1px solid ${has ? color : "var(--border)"}`,
-                      opacity: has ? 1 : 0.4,
-                      cursor: has ? "pointer" : "default",
-                      fontFamily: "Inter, sans-serif",
-                    }}
+                    className="period-toggle-host"
+                    style={{ "--period-color": style.color } as CSSProperties}
                   >
-                    {p.label}
-                    {active && p.model?.cf != null && ` · CF ${p.model.cf.toFixed(1)}`}
-                  </button>
+                    <button
+                      className="tag chart-period-chip period-toggle"
+                      data-active={active ? "true" : "false"}
+                      data-available={has ? "true" : "false"}
+                      disabled={!has}
+                      onClick={() =>
+                        setActivePeriods((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(p.label)) next.delete(p.label);
+                          else next.add(p.label);
+                          return next;
+                        })
+                      }
+                    >
+                      {p.label}
+                      {active && p.model?.cf != null && ` · CF ${p.model.cf.toFixed(1)}`}
+                    </button>
+                  </span>
                 );
               })}
             </div>

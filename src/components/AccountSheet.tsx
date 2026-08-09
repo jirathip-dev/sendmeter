@@ -345,17 +345,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   );
 
   return (
-    <Sheet onClose={onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-        }}
-      >
-        Account
-      </div>
-
+    <Sheet title="Account" onClose={onClose}>
       {/* Tabs */}
       <div className="acct-tabs">
         {TABS.map((t) => (
@@ -421,14 +411,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                           </div>
                         </div>
                         <button
-                          className="btn-ghost btn-inline"
+                          className="btn-danger btn-inline"
                           disabled={removingId === p.id}
                           onClick={() => void runRemovePasskey(p.id)}
-                          style={{
-                            flexShrink: 0,
-                            color: "var(--danger)",
-                            borderColor: "rgba(229,116,58,0.35)",
-                          }}
+                          style={{ flexShrink: 0 }}
                         >
                           {removingId === p.id ? "Removing…" : "Remove"}
                         </button>
@@ -600,9 +586,9 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
             <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
               {eyebrow("Danger zone", true)}
               {!showDanger ? (
-                <button
-                  className="btn-ghost btn-inline"
-                  style={{ color: "var(--ink-muted)", fontSize: "var(--t-sm)" }}
+                  <button
+                    className="btn-ghost btn-inline"
+                    style={{ fontSize: "var(--t-sm)" }}
                   onClick={() => setShowDanger(true)}
                 >
                   Reveal delete option
@@ -614,20 +600,9 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                     recording, workout, and health metric. There is no undo.
                   </div>
                   <button
+                    className="btn-danger"
                     disabled={deleting}
                     onClick={() => void runDelete()}
-                    style={{
-                      background: "var(--danger)",
-                      color: "#ffffff",
-                      border: "none",
-                      padding: "13px 20px",
-                      borderRadius: 8,
-                      width: "100%",
-                      fontFamily: "Inter, sans-serif",
-                      fontSize: "var(--t-base)",
-                      fontWeight: 500,
-                      cursor: "pointer",
-                    }}
                   >
                     {deleting ? "Deleting…" : "Yes, delete everything"}
                   </button>
@@ -643,8 +618,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 </div>
               ) : (
                 <button
-                  className="btn-ghost"
-                  style={{ borderColor: "rgba(229,116,58,0.35)", color: "var(--danger)" }}
+                  className="btn-danger btn-inline"
                   onClick={() => setConfirmingDelete(true)}
                 >
                   Delete account…
@@ -670,11 +644,6 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         />
       )}
 
-      <div style={{ marginTop: 16 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
     </Sheet>
   );
 }

@@ -144,20 +144,9 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
           Cancel
         </button>
         <button
+          className="btn-danger btn-inline"
           disabled={busyId === id}
           onClick={() => void handlePurge()}
-          style={{
-            background: "var(--danger)",
-            color: "#ffffff",
-            border: "none",
-            padding: "8px 14px",
-            borderRadius: 8,
-            fontFamily: "Inter, sans-serif",
-            fontSize: "var(--t-xs)",
-            fontWeight: 600,
-            cursor: "pointer",
-            whiteSpace: "nowrap",
-          }}
         >
           {busyId === id ? "Deleting…" : "Delete forever"}
         </button>
@@ -166,21 +155,11 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
   }
 
   return (
-    <Sheet onClose={onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-          marginBottom: 6,
-        }}
-      >
-        Trash
-      </div>
-      <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 16 }}>
-        Deleted sessions and Tindeq recordings stay here until you restore
-        or permanently delete them.
-      </div>
+    <Sheet
+      title="Trash"
+      subtitle="Deleted sessions and Tindeq recordings stay here until you restore or permanently delete them."
+      onClose={onClose}
+    >
 
         {loading && (
           <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>
@@ -230,14 +209,11 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
                     Restore
                   </button>
                   <button
+                    className="btn-danger btn-inline trash-purge-button"
                     onClick={() => setConfirmPurge({ kind: "session", id: s.id })}
                     disabled={busyId === s.id}
                     style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--danger)",
                       fontSize: "var(--t-lg)",
-                      cursor: "pointer",
                       padding: 4,
                     }}
                     title="Delete forever"
@@ -290,16 +266,13 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
                     Restore
                   </button>
                   <button
+                    className="btn-danger btn-inline trash-purge-button"
                     onClick={() =>
                       setConfirmPurge({ kind: "recording", id: r.id })
                     }
                     disabled={busyId === r.id}
                     style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--danger)",
                       fontSize: "var(--t-lg)",
-                      cursor: "pointer",
                       padding: 4,
                     }}
                     title="Delete forever"
@@ -319,11 +292,6 @@ export default function TrashSheet({ onClose, onSessionRestored }: Props) {
           </div>
         )}
 
-      <div style={{ marginTop: 14 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
     </Sheet>
   );
 }

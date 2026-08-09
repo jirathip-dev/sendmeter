@@ -137,7 +137,7 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
   }
 
   return (
-    <div>
+    <div className="workout-view">
       <div className="section-head">WORKOUT</div>
       <div className="section-sub">
         Live watch tracking, phone logging, and your recent climbs.
@@ -198,7 +198,7 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
       <WorkoutStatsCard sessions={sessions} />
 
       {/* Manual entry — the Log Session sheet (moved from Home) */}
-      <div className="card" style={{ marginTop: 2 }}>
+      <div className="card surface-workout" style={{ marginTop: 2 }}>
         <div className="card-title" style={{ marginBottom: 8 }}>
           Log a past workout
         </div>

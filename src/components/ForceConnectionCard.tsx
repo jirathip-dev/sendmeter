@@ -18,7 +18,7 @@ export default function ForceConnectionCard({
       : "var(--info)";
 
   return (
-    <div style={{
+    <div className="force-connection-card" style={{
       width: "100%",
       background: "var(--canvas)",
       border: `1px solid color-mix(in srgb, ${tone} 45%, transparent)`,
@@ -41,33 +41,21 @@ export default function ForceConnectionCard({
           Progressor <span style={{ color: "var(--ink-muted)" }}>· {status}</span>
         </div>
         <button
+          className="force-setup-link"
           type="button"
           disabled={locked}
           onClick={onOpenSetup}
           aria-label="Open equipment setup guidance"
-          style={{
-            display: "block",
-            marginTop: 3,
-            padding: 0,
-            border: 0,
-            background: "none",
-            color: "var(--ink-muted)",
-            fontFamily: "inherit",
-            fontSize: "var(--t-xs)",
-            fontWeight: 650,
-            cursor: locked ? "default" : "pointer",
-            textAlign: "left",
-          }}
         >
           How to set up
         </button>
       </div>
       <button
+        className="force-open-link"
         type="button"
         onClick={onOpenGauge}
-        style={{ border: 0, padding: "8px 0", background: "none", cursor: "pointer", fontFamily: "inherit" }}
       >
-        <span style={{ color: "var(--primary)", fontWeight: 700, fontSize: "var(--t-base)", whiteSpace: "nowrap" }}>
+        <span className="force-open-link-label">
           Open gauge ›
         </span>
       </button>

@@ -152,7 +152,7 @@ export default function TagSideEditor({
             active={side === o.value}
             onClick={() => onSide(o.value)}
             disabled={locked}
-            style={{ flex: 1 }}
+            style={{ flex: 1, minWidth: 0 }}
           />
         ))}
       </div>

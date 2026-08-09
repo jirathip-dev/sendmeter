@@ -1,4 +1,5 @@
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
 import { parseLocalDate, relativeDayLabel } from "../lib/dates";
 import {
   PROJECTION_DAYS,
@@ -9,6 +10,8 @@ import {
 import { ewmaLoadState, getACWRStatus } from "../lib/metrics";
 import type { Phase, Session } from "../types";
 import InfoDot from "./InfoDot";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 
 const W = 300;
 // The extra height belongs entirely to the two-row axis: H - PAD.bottom
@@ -43,6 +46,7 @@ function headline(p: AcwrProjection, phaseName: string): string {
 }
 
 export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string }) {
+  const chartId = useChartId("acwr-projection");
   const values = p.days.map((d) => d.acwr);
   const lo = Math.min(...values, p.band?.low ?? Infinity);
   const hi = Math.max(...values, p.band?.high ?? -Infinity);
@@ -58,7 +62,13 @@ export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string
     : 0;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }} aria-hidden="true">
+    <svg
+      role="img"
+      aria-label="Projected ACWR over the next seven days"
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ width: "100%", display: "block" }}
+    >
+      <ChartDefs instanceId={chartId} />
       {p.band !== null && (
         <>
           {/* The phase's target band — deliberately the phase band, not the
@@ -68,8 +78,7 @@ export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string
             y={py(p.band.high)}
             width={W - PAD.left - PAD.right}
             height={Math.max(py(p.band.low) - py(p.band.high), 1)}
-            fill="var(--success)"
-            opacity={0.14}
+            fill={chartGradientUrl(chartId, "reference-band")}
           />
           {[p.band.high, p.band.low].map((v) => (
             <g key={v}>
@@ -78,7 +87,7 @@ export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string
                 y1={py(v)}
                 x2={W - PAD.right}
                 y2={py(v)}
-                stroke="var(--success)"
+                stroke={chartColor("optimal")}
                 strokeWidth={1}
                 opacity={0.5}
               />
@@ -100,7 +109,7 @@ export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string
       <polyline
         points={p.days.map(point).join(" ")}
         fill="none"
-        stroke="var(--ink-muted)"
+        stroke={chartColor("reference")}
         strokeWidth={2}
         strokeDasharray="3 4"
         strokeLinecap="round"
@@ -112,7 +121,7 @@ export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string
           y1={PAD.top}
           x2={px(crossing.dayOffset)}
           y2={H - PAD.bottom}
-          stroke="var(--ink-faint)"
+          stroke={chartColor("axis")}
           strokeWidth={1}
           strokeDasharray="2 3"
         />
@@ -120,13 +129,14 @@ export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string
 
       {/* Today is the only real number on the chart — solid, colored by its
           risk status, and the only labelled value. */}
+      <circle cx={px(0)} cy={py(p.days[0]!.acwr)} r={7} fill={chartGradientUrl(chartId, "selected-halo")} aria-hidden="true" />
       <circle cx={px(0)} cy={py(p.days[0]!.acwr)} r={4} fill={todayColor} />
       <text
         x={px(0)}
         y={H - 4}
         textAnchor="start"
         fontSize={9}
-        fill="var(--ink-faint)"
+        fill={chartColor("axis")}
         data-axis-label="now"
       >
         Now {p.days[0]!.acwr.toFixed(2)}
@@ -137,7 +147,7 @@ export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string
           y={H - 16}
           textAnchor="middle"
           fontSize={9}
-          fill="var(--ink-faint)"
+          fill={chartColor("axis")}
           data-axis-label="crossing"
         >
           {parseLocalDate(crossing.date).toLocaleDateString(undefined, { weekday: "short" })}
@@ -148,7 +158,7 @@ export function Chart({ p, todayColor }: { p: AcwrProjection; todayColor: string
         y={H - 4}
         textAnchor="end"
         fontSize={9}
-        fill="var(--ink-faint)"
+        fill={chartColor("axis")}
         data-axis-label="horizon"
       >
         +{PROJECTION_DAYS}d

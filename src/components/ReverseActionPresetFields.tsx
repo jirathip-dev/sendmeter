@@ -1,4 +1,3 @@
-import type { CSSProperties } from "react";
 import type { ReverseActionToleranceMode } from "../types";
 import NumInput from "./NumInput";
 
@@ -124,20 +123,9 @@ export default function ReverseActionPresetFields(props: Props) {
         ).map(([mode, label]) => (
           <button
             key={mode}
-            className="tag"
+            className="tag tolerance-mode-option"
+            data-selected={props.toleranceMode === mode ? "true" : "false"}
             onClick={() => props.onToleranceMode(mode)}
-            style={
-              {
-                background:
-                  props.toleranceMode === mode ? "var(--info)" : "var(--surface-1)",
-                color: props.toleranceMode === mode ? "#ffffff" : "var(--ink-muted)",
-                border: `1px solid ${
-                  props.toleranceMode === mode ? "var(--info)" : "var(--border)"
-                }`,
-                cursor: "pointer",
-                fontFamily: "Inter, sans-serif",
-              } as CSSProperties
-            }
           >
             {label}
           </button>

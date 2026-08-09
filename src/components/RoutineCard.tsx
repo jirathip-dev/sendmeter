@@ -329,7 +329,7 @@ export default function RoutineCard({
   }
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-workout" style={{ marginTop: 10 }}>
       <div className="card-title" style={{ marginBottom: 8 }}>
         Routines
       </div>
@@ -457,7 +457,6 @@ export default function RoutineCard({
                   className="del-btn"
                   aria-label="Remove step"
                   disabled={steps.length === 1}
-                  style={{ opacity: steps.length === 1 ? 0.3 : 1 }}
                   onClick={() => setSteps((list) => list.filter((_, j) => j !== i))}
                 >
                   ×
@@ -525,10 +524,11 @@ export default function RoutineCard({
         <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
           <button
             className="btn-primary"
-            style={blockedReason ? { flex: 1, opacity: 0.5 } : { flex: 1 }}
+            style={{ flex: 1 }}
             // #222: one timer at a time. Kept clickable while blocked (rather
             // than `disabled`) so the tap names the reason instead of doing
-            // nothing — the aria-disabled + dimming carry the "off" state.
+            // nothing — the aria-disabled state and semantic fill carry the
+            // "off" state.
             aria-disabled={blockedReason ? true : undefined}
             onClick={() => {
               if (blockedReason) {
@@ -546,12 +546,7 @@ export default function RoutineCard({
             Start Routine
           </button>
           <button
-            className="btn-ghost"
-            style={
-              blockedReason
-                ? { width: "auto", flexShrink: 0, whiteSpace: "nowrap", opacity: 0.5 }
-                : { width: "auto", flexShrink: 0, whiteSpace: "nowrap" }
-            }
+            className="btn-ghost routine-new-button"
             aria-disabled={blockedReason ? true : undefined}
             onClick={() => {
               if (blockedReason) {
@@ -568,7 +563,7 @@ export default function RoutineCard({
         <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
           <button
             className="btn-primary"
-            style={blockedReason ? { flex: 1, opacity: 0.5 } : { flex: 1 }}
+            style={{ flex: 1 }}
             aria-disabled={blockedReason ? true : undefined}
             onClick={() => {
               if (blockedReason) {

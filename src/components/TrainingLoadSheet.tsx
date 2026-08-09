@@ -1,8 +1,10 @@
 import { useMemo } from "react";
 import { useChartHover } from "../hooks/useChartHover";
+import { useChartId } from "../hooks/useChartId";
 import { today } from "../lib/dates";
 import { activityMix } from "../lib/trainingLoad";
 import { activityColor } from "../lib/activityTypes";
+import { chartColor } from "../lib/chartTheme";
 import type { Session, WeeklyLoad } from "../types";
 import ChartTooltip from "./ChartTooltip";
 import ContributionHeatmap from "./ContributionHeatmap";
@@ -74,7 +76,8 @@ export default function TrainingLoadSheet({
   sessions: Session[];
   onClose: () => void;
 }) {
-  const [hoveredWeek, hoverWeekProps] = useChartHover<number>();
+  const [hoveredWeek, , , surfaceProps] = useChartHover<number>();
+  const weeklySummaryId = useChartId("weekly-load-summary");
   const maxW = Math.max(...weeklyLoads.map((week) => week.total), 1);
   const current = weeklyLoads[weeklyLoads.length - 1]?.total ?? 0;
   const previous = weeklyLoads[weeklyLoads.length - 2]?.total ?? 0;
@@ -98,13 +101,11 @@ export default function TrainingLoadSheet({
   const mix = useMemo(() => activityMix(sessions, endDate), [sessions, endDate]);
 
   return (
-    <Sheet onClose={onClose}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: 20, fontWeight: 800 }}>
-        Training Load
-      </div>
-      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 16 }}>
-        Your training volume in arbitrary units (AU).
-      </div>
+    <Sheet
+      title="Training Load"
+      subtitle="Your training volume in arbitrary units (AU)."
+      onClose={onClose}
+    >
 
       <div className="card">
         <div
@@ -131,8 +132,21 @@ export default function TrainingLoadSheet({
         </div>
         <div
           className="chart-scrub"
+          role="button"
+          tabIndex={0}
+          aria-label={
+            hoveredWeek !== null && weeklyLoads[hoveredWeek]
+              ? `${weeklyLoads[hoveredWeek]!.label}: ${weeklyLoads[hoveredWeek]!.total.toLocaleString()} AU`
+              : "Weekly training load data; use arrow keys to inspect weeks"
+          }
+          aria-describedby={weeklySummaryId}
           style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 88 }}
+          {...surfaceProps(weeklyLoads.map((_, i) => i), weeklyLoads.length, (i) => i + 0.5)}
         >
+          <span id={weeklySummaryId} className="chart-a11y-summary">
+            Use the weekly load chart's single keyboard surface and arrow keys to
+            inspect each week's total and change from the prior week.
+          </span>
           {weeklyLoads.map((week, index) => {
             const delta = index > 0 ? weekDelta(week.total, weeklyLoads[index - 1]!.total) : null;
             return (
@@ -146,9 +160,16 @@ export default function TrainingLoadSheet({
                   alignItems: "center",
                   gap: 4,
                   height: "100%",
+                  minHeight: 44,
+                  minWidth: 0,
+                  padding: 0,
+                  border: 0,
+                  background: "transparent",
+                  color: "inherit",
+                  font: "inherit",
+                  appearance: "none",
                   justifyContent: "flex-end",
                 }}
-                {...hoverWeekProps(index)}
               >
                 {hoveredWeek === index && (
                   <ChartTooltip
@@ -175,11 +196,11 @@ export default function TrainingLoadSheet({
                   {week.total.toLocaleString()}
                 </span>
                 <div
+                  aria-hidden="true"
                   style={{
                     width: "100%",
                     height: Math.max((week.total / maxW) * 64, 2),
-                    background:
-                      index === weeklyLoads.length - 1 ? "var(--success)" : "var(--border)",
+                    background: `linear-gradient(180deg, color-mix(in srgb, ${index === weeklyLoads.length - 1 ? chartColor("optimal") : chartColor("load")} 58%, var(--canvas)), ${index === weeklyLoads.length - 1 ? chartColor("optimal") : chartColor("load")})`,
                     borderRadius: 3,
                     opacity: hoveredWeek === null || hoveredWeek === index ? 1 : 0.5,
                     boxShadow: hoveredWeek === index ? "0 0 0 1.5px var(--ink)" : "none",
@@ -262,11 +283,6 @@ export default function TrainingLoadSheet({
         )}
       </div>
 
-      <div style={{ marginTop: 12 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
     </Sheet>
   );
 }

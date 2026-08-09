@@ -4,7 +4,10 @@ import { holdOrigin } from "../lib/zoneBreakdown";
 import { zoneColor } from "../lib/zoneSelection";
 import { useChartHover } from "../hooks/useChartHover";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
 import SvgChartTooltip from "./SvgChartTooltip";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 import type { TindeqRecordingMeta, TindeqSample } from "../types";
 import ReverseActionSetDetail from "./ReverseActionSetDetail";
 
@@ -30,7 +33,8 @@ const H = 80;
 const PAD = { top: 6, right: 6, bottom: 14, left: 26 };
 
 function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
+  const chartId = useChartId("recording");
   // The trace spans the full card width: measure the container and use its
   // real width as the viewBox width (a fixed 300px viewBox letterboxed
   // inside wide desktop cards).
@@ -50,6 +54,8 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
   if (samples.length < 2) return null;
 
   const points = samples.map((s) => `${px(s.t).toFixed(1)},${py(s.kg).toFixed(1)}`).join(" ");
+  const baseline = H - PAD.bottom;
+  const areaPath = `M ${px(samples[0]!.t).toFixed(1)},${baseline} ${points} L ${px(samples.at(-1)!.t).toFixed(1)},${baseline} Z`;
 
   const yTicks = [0, kgMax / 2, kgMax];
   const xTicks = [0, tMax / 2, tMax];
@@ -69,9 +75,12 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
     <div ref={hostRef} style={{ width: "100%" }}>
     <svg
       className="chart-scrub"
+      role="group"
+      aria-label="Force recording trace"
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", height: H, display: "block", marginTop: 10 }}
     >
+      <ChartDefs instanceId={chartId} />
       {yTicks.map((v, i) => (
         <g key={`y-${i}`}>
           <line
@@ -79,14 +88,14 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
             y1={py(v)}
             x2={W - PAD.right}
             y2={py(v)}
-            style={{ stroke: "var(--hairline)" }}
+            style={{ stroke: chartColor("grid") }}
             strokeWidth={1}
           />
           <text
             x={2}
             y={py(v) + (i === yTicks.length - 1 ? 4 : i === 0 ? -2 : 2.5)}
             fontSize={7.5}
-            style={{ fill: "var(--ink-faint)" }}
+            style={{ fill: chartColor("axis") }}
           >
             {v.toFixed(0)}
             {i === yTicks.length - 1 ? "kg" : ""}
@@ -99,30 +108,20 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
           x={px(t)}
           y={H - 3}
           fontSize={7.5}
-          style={{ fill: "var(--ink-faint)" }}
+          style={{ fill: chartColor("axis") }}
           textAnchor={i === 0 ? "start" : i === xTicks.length - 1 ? "end" : "middle"}
         >
           {(t / 1000).toFixed(1)}s
         </text>
       ))}
+      <path d={areaPath} fill={chartGradientUrl(chartId, "force-area")} />
       <polyline
         points={points}
         fill="none"
-        stroke="#5B5FC7"
+        stroke={chartColor("force")}
         strokeWidth="1.5"
         vectorEffect="non-scaling-stroke"
       />
-      {hoverIndices.map((i) => (
-        <circle
-          key={i}
-          cx={px(samples[i]!.t)}
-          cy={py(samples[i]!.kg)}
-          r={7}
-          fill="transparent"
-          style={{ cursor: "pointer" }}
-          {...hoverProps(i)}
-        />
-      ))}
       {hovered !== null && hoveredSample && (
         <>
           <line
@@ -130,7 +129,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
             y1={PAD.top}
             x2={px(hoveredSample.t)}
             y2={H - PAD.bottom}
-            style={{ stroke: "var(--ink-faint)" }}
+            style={{ stroke: chartColor("axis") }}
             strokeDasharray="2 2"
             strokeWidth={1}
           />
@@ -138,7 +137,7 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
             cx={px(hoveredSample.t)}
             cy={py(hoveredSample.kg)}
             r={3}
-            fill="#5B5FC7"
+            fill={chartColor("focus")}
           />
           <SvgChartTooltip
             x={px(hoveredSample.t)}
@@ -149,6 +148,27 @@ function SamplesPreview({ samples }: { samples: TindeqSample[] }) {
           />
         </>
       )}
+      {/* Values are source indices, so positionForIndex must dereference the
+          selected source sample rather than treating the shortened list's
+          ordinal as a raw sample index. */}
+      <rect
+        data-chart-hit-surface="recording-trace"
+        className="chart-scrub"
+        x={PAD.left}
+        y={PAD.top}
+        width={W - PAD.left - PAD.right}
+        height={H - PAD.top - PAD.bottom}
+        fill="transparent"
+        role="button"
+        tabIndex={0}
+        aria-label={
+          hoveredSample
+            ? `${(hoveredSample.t / 1000).toFixed(1)}s: ${hoveredSample.kg.toFixed(1)} kg`
+            : "Force recording trace; use arrow keys to inspect samples"
+        }
+        style={{ cursor: "crosshair" }}
+        {...surfaceProps(hoverIndices, W, (i) => px(samples[hoverIndices[i]!]!.t))}
+      />
     </svg>
     </div>
   );
@@ -207,6 +227,8 @@ export default function RecordingRow({
       >
         {selectable && (
           <button
+            className="recording-select-button"
+            aria-pressed={selected}
             aria-label={selected ? "Deselect recording" : "Select recording"}
             onClick={(e) => {
               e.stopPropagation();
@@ -215,11 +237,7 @@ export default function RecordingRow({
             style={{
               width: 20,
               height: 20,
-              borderRadius: "50%",
               flexShrink: 0,
-              border: `2px solid ${selected ? "var(--primary)" : "var(--border)"}`,
-              background: selected ? "var(--primary)" : "transparent",
-              color: "#ffffff",
               fontSize: "var(--t-sm)",
               lineHeight: 1,
               cursor: "pointer",

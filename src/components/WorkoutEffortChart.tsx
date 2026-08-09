@@ -1,4 +1,5 @@
 import { useChartHover } from "../hooks/useChartHover";
+import { useChartId } from "../hooks/useChartId";
 import { useSvgScale } from "../hooks/useSvgScale";
 import {
   WORKOUT_CHART_PAD as PAD,
@@ -7,6 +8,8 @@ import {
   workoutXTicks,
 } from "../lib/workoutChartAxis";
 import SvgChartTooltip from "./SvgChartTooltip";
+import ChartDefs from "./ChartDefs";
+import { chartColor } from "../lib/chartTheme";
 import type { WorkoutAttempt } from "../types";
 
 interface Props {
@@ -36,7 +39,8 @@ export default function WorkoutEffortChart({
   width: W,
   showTimeAxis,
 }: Props) {
-  const [hovered, hoverProps] = useChartHover<number>();
+  const [hovered, , , surfaceProps] = useChartHover<number>();
+  const chartId = useChartId("workout-effort");
   const { x: px, y: py } = useSvgScale(W, H, PAD, 0, tMax, 0, EFFORT_MAX);
 
   const baseline = H - PAD.bottom;
@@ -65,9 +69,12 @@ export default function WorkoutEffortChart({
   return (
     <svg
       className="chart-scrub"
+      role="group"
+      aria-label="Workout attempt effort timeline"
       viewBox={`0 0 ${W} ${H}`}
       style={{ width: "100%", display: "block" }}
     >
+      <ChartDefs instanceId={chartId} />
       {/* Gridlines + y labels (same gutter as the HR chart) */}
       {yTicks.map((v, i) => (
         <g key={`y-${i}`}>
@@ -76,10 +83,10 @@ export default function WorkoutEffortChart({
             y1={py(v)}
             x2={W - PAD.right}
             y2={py(v)}
-            style={{ stroke: "var(--hairline)" }}
+            style={{ stroke: chartColor("grid") }}
             strokeWidth={1}
           />
-          <text x={2} y={py(v) + 2.5} fontSize={7.5} style={{ fill: "var(--ink-faint)" }}>
+          <text x={2} y={py(v) + 2.5} fontSize={7.5} style={{ fill: chartColor("axis") }}>
             {v}
             {i === yTicks.length - 1 ? "eff" : ""}
           </text>
@@ -92,7 +99,7 @@ export default function WorkoutEffortChart({
             x={px(t)}
             y={H - 3}
             fontSize={7.5}
-            style={{ fill: "var(--ink-faint)" }}
+            style={{ fill: chartColor("axis") }}
             textAnchor={i === 0 ? "start" : i === all.length - 1 ? "end" : "middle"}
           >
             {fmtMinSec(t)}
@@ -106,25 +113,32 @@ export default function WorkoutEffortChart({
           width={b.w}
           height={baseline - b.top}
           rx={1.5}
-          fill={b.manual ? "var(--warning)" : "var(--success)"}
+          fill={b.manual ? chartColor("caution") : chartColor("optimal")}
           opacity={hovered === null || hovered === b.i ? 1 : 0.5}
           stroke={hovered === b.i ? "var(--ink)" : "none"}
           strokeWidth={hovered === b.i ? 1 : 0}
         />
       ))}
-      {/* Hit areas — widened past thin bars so short climbs stay tappable */}
-      {bars.map((b) => (
-        <rect
-          key={`hit-${b.i}`}
-          x={b.cx - Math.max(b.w, 10) / 2}
-          y={PAD.top}
-          width={Math.max(b.w, 10)}
-          height={baseline - PAD.top}
-          fill="transparent"
-          style={{ cursor: "pointer" }}
-          {...hoverProps(b.i)}
-        />
-      ))}
+      {/* One surface keeps ownership nearest-first and gives keyboard users a
+          single predictable stop even when attempts are only a few pixels wide. */}
+      <rect
+        data-chart-hit-surface="workout-effort"
+        className="chart-scrub"
+        x={PAD.left}
+        y={PAD.top}
+        width={W - PAD.left - PAD.right}
+        height={baseline - PAD.top}
+        fill="transparent"
+        role="button"
+        tabIndex={0}
+        aria-label={
+          hoveredBar
+            ? `Attempt ${hoveredBar.i + 1}${hoveredBar.a.effortScore != null ? `, effort ${hoveredBar.a.effortScore.toFixed(1)}` : ""}`
+            : "Workout attempt effort data; use arrow keys to inspect attempts"
+        }
+        style={{ cursor: "crosshair" }}
+        {...surfaceProps(bars.map((b) => b.i), W, (i) => bars[i]!.cx)}
+      />
       {hoveredBar && (
         <SvgChartTooltip
           x={hoveredBar.cx}

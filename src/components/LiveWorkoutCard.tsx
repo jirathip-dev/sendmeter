@@ -31,7 +31,7 @@ export default function LiveWorkoutCard({
 
   return (
     <div
-      className="card tappable"
+      className="card surface-workout tappable"
       onClick={onOpen}
       style={{
         marginBottom: 12,

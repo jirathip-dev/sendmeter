@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ROUTINE_TIMER_FONT, heroFontCss } from "../lib/fullscreenLayout";
 import { useWakeLock } from "../hooks/useWakeLock";
@@ -14,6 +14,7 @@ import {
   type RoutineRunState,
 } from "../lib/routineRun";
 import type { RoutineStep } from "../types";
+import { SheetLayerProvider } from "./Sheet";
 
 interface Props {
   /// Name of the routine — shown in the top-bar eyebrow.
@@ -262,15 +263,16 @@ export default function RoutineFullscreen({
           : "var(--primary)";
 
   return createPortal(
-    <div
-      className="fullscreen-overlay"
-      style={{
-        background: `color-mix(in srgb, ${accent} 10%, var(--canvas))`,
-        transition: "background 0.3s",
-        display: "flex",
-        justifyContent: "center",
-      }}
-    >
+    <SheetLayerProvider layer="fullscreen">
+      <div
+        className="fullscreen-overlay"
+        style={{
+          background: `color-mix(in srgb, ${accent} 10%, var(--canvas))`,
+          transition: "background 0.3s",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
       <div
         style={{
           width: "100%",
@@ -297,10 +299,9 @@ export default function RoutineFullscreen({
             </div>
           </div>
           <button
-            className="glass-pill"
+            className="glass-pill glass-pill-primary"
             onClick={skip}
             disabled={done}
-            style={{ "--pill-tint": "var(--primary)" } as CSSProperties}
           >
             Skip
           </button>
@@ -366,9 +367,9 @@ export default function RoutineFullscreen({
           )}
           {!done && (
             <button
-              className="glass-pill"
+              className={`glass-pill ${paused ? "glass-pill-success" : "glass-pill-warning"}`}
               onClick={togglePause}
-              style={{ marginTop: 6, "--pill-tint": paused ? "var(--success)" : "var(--warning)" } as CSSProperties}
+              style={{ marginTop: 6 }}
             >
               {paused ? "Resume" : "Pause"}
             </button>
@@ -408,7 +409,8 @@ export default function RoutineFullscreen({
           })}
         </div>
       </div>
-    </div>,
+      </div>
+    </SheetLayerProvider>,
     document.body,
   );
 }

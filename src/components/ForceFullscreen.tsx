@@ -47,6 +47,7 @@ import type { GaugeTarget } from "./ForceCurveCard";
 import ReverseActionWorkDisplay from "./ReverseActionWorkDisplay";
 import ProtocolBadge from "./ProtocolBadge";
 import ConfirmDialog from "./ConfirmDialog";
+import { SheetLayerProvider } from "./Sheet";
 import {
   prescriptionForSegment,
   targetHoldSegment,
@@ -657,17 +658,18 @@ export default function ForceFullscreen({
     reverseWorking && pos ? (pos.seg as ReverseActionSegment) : null;
 
   return createPortal(
-    <div
-      className="fullscreen-overlay"
-      style={{
-        // The whole screen takes the phase color, Timer-Plus style.
-        background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 13 : 6}%, var(--canvas))`,
-        transition: "background 0.3s",
-        display: "flex",
-        justifyContent: "center",
-        overflowY: reverseWorking ? "hidden" : "auto",
-      }}
-    >
+    <SheetLayerProvider layer="fullscreen">
+      <div
+        className="fullscreen-overlay"
+        style={{
+          // The whole screen takes the phase color, Timer-Plus style.
+          background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 13 : 6}%, var(--canvas))`,
+          transition: "background 0.3s",
+          display: "flex",
+          justifyContent: "center",
+          overflowY: reverseWorking ? "hidden" : "auto",
+        }}
+      >
       <div
         style={{
           width: "100%",
@@ -745,8 +747,8 @@ export default function ForceFullscreen({
           )}
           <button
             onClick={handleDisconnectTap}
-            className="glass-pill"
-            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)", "--pill-tint": "var(--danger)" } as CSSProperties}
+            className="glass-pill glass-pill-danger"
+            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
           >
             Disconnect
           </button>
@@ -1169,7 +1171,7 @@ export default function ForceFullscreen({
                   primeAudio();
                   onPause();
                 }}
-                className="glass-pill"
+                className={`glass-pill ${paused ? "glass-pill-success" : "glass-pill-warning"}`}
                 style={
                   {
                     padding: "9px 18px",
@@ -1177,7 +1179,6 @@ export default function ForceFullscreen({
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
-                    "--pill-tint": paused ? "var(--success)" : "var(--warning)",
                   } as CSSProperties
                 }
               >
@@ -1190,7 +1191,7 @@ export default function ForceFullscreen({
               </button>
               <button
                 onClick={onSkip}
-                className="glass-pill"
+                className="glass-pill glass-pill-info"
                 style={
                   {
                     padding: "9px 18px",
@@ -1198,7 +1199,6 @@ export default function ForceFullscreen({
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
-                    "--pill-tint": "var(--info)",
                   } as CSSProperties
                 }
               >
@@ -1236,24 +1236,11 @@ export default function ForceFullscreen({
               }
             }}
             disabled={measuring ? saving : armed ? false : counting ? false : !canStart}
+            className={`force-action-button ${measuring || armed || counting ? "danger" : "ready"}`}
             style={{
               width: clampCss(FORCE_ACTION_CIRCLE),
               height: clampCss(FORCE_ACTION_CIRCLE),
               flexShrink: 0,
-              borderRadius: "50%",
-              border: `3px solid ${measuring || armed || counting ? "var(--danger)" : "var(--success)"}`,
-              background: `color-mix(in srgb, ${measuring || armed || counting ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
-              color: measuring || armed || counting ? "var(--danger)" : "var(--success)",
-              cursor: "pointer",
-              fontFamily: "Inter, sans-serif",
-              fontWeight: 800,
-              fontSize: "var(--t-md)",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 3,
-              opacity: (measuring ? saving : armed ? false : counting ? false : !canStart) ? 0.45 : 1,
             }}
           >
             {measuring ? (
@@ -1346,7 +1333,8 @@ export default function ForceFullscreen({
           )}
         </div>
       </div>
-    </div>,
+      </div>
+    </SheetLayerProvider>,
     document.body,
   );
 }

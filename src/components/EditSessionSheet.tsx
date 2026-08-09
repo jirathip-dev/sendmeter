@@ -40,28 +40,11 @@ export default function EditSessionSheet({ session, onSave, onClose }: Props) {
   }
 
   return (
-    <Sheet onClose={onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-          marginBottom: 2,
-        }}
-      >
-        Edit Session
-      </div>
-      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
-        {session.date}
-        {session.workoutSource && (
-          <span>
-            {" "}
-            · {session.workoutSource === "watch" ? "auto-tracked" : "phone"}{" "}
-            workout — stays flagged after editing
-          </span>
-        )}
-      </div>
-
+    <Sheet
+      title="Edit session"
+      subtitle={`${session.date}${session.workoutSource ? ` · ${session.workoutSource === "watch" ? "auto-tracked" : "phone"} workout — stays flagged after editing` : ""}`}
+      onClose={onClose}
+    >
       <span className="field-label">Session Type</span>
       <select
         className="field"
