@@ -124,6 +124,18 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 XCTAssertTrue(actionsPage.waitForExistence(timeout: 5))
                 assertFullyVisible(statusPage, in: app, fixture: item.fixture)
                 assertFullyVisible(actionsPage, in: app, fixture: item.fixture)
+                let readiness = app.descendants(matching: .any)
+                    .matching(identifier: "readiness-ring").firstMatch
+                XCTAssertTrue(readiness.waitForExistence(timeout: 5))
+                XCTAssertLessThanOrEqual(
+                    statusPage.frame.maxY,
+                    readiness.frame.minY,
+                    "home page selector must stay above readiness content"
+                )
+                XCTAssertFalse(
+                    statusPage.frame.intersects(readiness.frame),
+                    "home page selector must never obscure readiness content"
+                )
                 actionsPage.tap()
                 XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 5))
                 statusPage.tap()
