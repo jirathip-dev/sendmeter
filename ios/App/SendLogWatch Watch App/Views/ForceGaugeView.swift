@@ -317,24 +317,7 @@ struct ForceGaugeView: View {
         // smallest watch still can't fit everything at once.
         WatchCard(accent: WatchPalette.force) {
             VStack(spacing: 5) {
-                HStack {
-                    WatchStateChip(state: .ready, title: "Connected", compact: true)
-                    Spacer()
-                    if tindeq.lowBattery {
-                        Label("Low battery", systemImage: "battery.25")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(WatchPalette.warning)
-                    }
-                    Button {
-                        disconnectTapped()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.danger))
-                    .accessibilityLabel("Disconnect Progressor")
-                }
+                connectionRow
 
                 // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
                 // free text drifts from the app's tag set. New tags are created in the
@@ -352,15 +335,12 @@ struct ForceGaugeView: View {
                     )
                     sidePickerTitled
                 } else {
-                    // One row for both, so connected + pickers + Start fit a 40mm
-                    // screen without scrolling (#279). Neither carries a visible
-                    // title at that width — the selected values are the labels,
-                    // and VoiceOver still hears "Exercise" / "Side".
-                    HStack(spacing: 4) {
-                        exercisePicker
-                        sidePickerCompact
-                            .frame(width: 60)
-                    }
+                    // Prefer one row, but let the controls stack when their
+                    // measured content cannot fit on a 40mm card. The
+                    // navigation links keep their 44pt targets in either
+                    // layout, so a narrow display never clips an essential
+                    // exercise/side control.
+                    compactPickers
                 }
 
                 if tindeq.handsFreeRequested {
@@ -390,6 +370,87 @@ struct ForceGaugeView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
+            }
+        }
+    }
+
+    /// The battery label and disconnect action used to compete with the
+    /// connected chip for the narrowest card width. ViewThatFits keeps the
+    /// compact row on larger watches, then falls back to two short rows before
+    /// SwiftUI can truncate or clip the destructive control.
+    @ViewBuilder
+    private var connectionRow: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                WatchStateChip(state: .ready, title: "Connected", compact: true)
+                Spacer(minLength: 0)
+                if tindeq.lowBattery {
+                    Label("Low battery", systemImage: "battery.25")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(WatchPalette.warning)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                disconnectButton
+            }
+            HStack(spacing: 4) {
+                WatchStateChip(state: .ready, title: "Connected", compact: true)
+                Spacer(minLength: 0)
+                if tindeq.lowBattery {
+                    Image(systemName: "battery.25")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(WatchPalette.warning)
+                        .frame(width: 22, height: 22)
+                        .accessibilityLabel("Low battery")
+                }
+                disconnectButton
+            }
+            VStack(spacing: 2) {
+                HStack(spacing: 4) {
+                    WatchStateChip(state: .ready, title: "Connected", compact: true)
+                    Spacer(minLength: 0)
+                    if tindeq.lowBattery {
+                        Image(systemName: "battery.25")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(WatchPalette.warning)
+                            .frame(width: 22, height: 22)
+                            .accessibilityLabel("Low battery")
+                    }
+                }
+                HStack {
+                    Spacer(minLength: 0)
+                    disconnectButton
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var disconnectButton: some View {
+        Button {
+            disconnectTapped()
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 44, height: 44)
+        }
+        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.danger))
+        .accessibilityLabel("Disconnect Progressor")
+        .accessibilityIdentifier("disconnect-progressor")
+    }
+
+    @ViewBuilder
+    private var compactPickers: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                exercisePicker
+                    .layoutPriority(1)
+                sidePickerCompact
+                    .frame(width: 56)
+            }
+            VStack(spacing: 4) {
+                exercisePicker
+                sidePickerCompact
             }
         }
     }
@@ -474,6 +535,7 @@ struct ForceGaugeView: View {
         .buttonStyle(WatchSecondaryButtonStyle(tint: isPlaceholder ? WatchPalette.textSecondary : WatchPalette.force))
         .frame(minHeight: 44)
         .accessibilityLabel(label)
+        .accessibilityIdentifier("force-\(label.lowercased())-picker")
     }
 
     // MARK: Measuring — the live gauge owns the whole screen.

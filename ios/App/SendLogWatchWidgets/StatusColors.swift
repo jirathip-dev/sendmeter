@@ -12,21 +12,26 @@ extension Color {
     static let statusHigh = Color(red: WatchDesignTokens.danger.red, green: WatchDesignTokens.danger.green, blue: WatchDesignTokens.danger.blue)
 }
 
-func acwrColor(_ risk: ACWRRiskBand?) -> Color {
+func designAccent(_ rgb: PhaseRGB, reducedLuminance: Bool) -> Color {
+    let adjusted = WatchDesignTokens.accent(rgb, reducedLuminance: reducedLuminance)
+    return Color(red: adjusted.red, green: adjusted.green, blue: adjusted.blue)
+}
+
+func acwrColor(_ risk: ACWRRiskBand?, reducedLuminance: Bool = false) -> Color {
     switch risk {
-    case .low: .statusLow
-    case .optimal: .statusOptimal
-    case .caution: .statusCaution
-    case .high: .statusHigh
+    case .low: designAccent(WatchDesignTokens.primary, reducedLuminance: reducedLuminance)
+    case .optimal: designAccent(WatchDesignTokens.secondary, reducedLuminance: reducedLuminance)
+    case .caution: designAccent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
+    case .high: designAccent(WatchDesignTokens.danger, reducedLuminance: reducedLuminance)
     case nil: .secondary
     }
 }
 
-func readinessColor(_ zone: String?) -> Color {
+func readinessColor(_ zone: String?, reducedLuminance: Bool = false) -> Color {
     switch zone?.lowercased() {
-    case "push": .statusOptimal
-    case "maintain": .statusCaution
-    case "recover": .statusHigh
+    case "push": designAccent(WatchDesignTokens.secondary, reducedLuminance: reducedLuminance)
+    case "maintain": designAccent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
+    case "recover": designAccent(WatchDesignTokens.danger, reducedLuminance: reducedLuminance)
     default: .secondary
     }
 }

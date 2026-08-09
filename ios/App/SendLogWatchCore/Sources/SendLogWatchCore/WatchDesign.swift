@@ -40,9 +40,20 @@ public enum WatchDesignTokens {
         primary, secondary, success, warning, danger, force,
     ]
 
+    /// The single luminance decision shared by the app and widget targets.
+    /// Always-On/reduced-luminance rendering keeps the semantic hue, but caps
+    /// the accent at 42% of its normal sRGB emission.
+    public static func accentScale(reducedLuminance: Bool) -> Double {
+        reducedLuminance ? alwaysOnAccentScale : 1
+    }
+
+    public static func accent(_ color: PhaseRGB, reducedLuminance: Bool) -> PhaseRGB {
+        color.scaled(accentScale(reducedLuminance: reducedLuminance))
+    }
+
     /// The reduced variant keeps semantic hue while cutting emitted light.
     public static func alwaysOn(_ color: PhaseRGB) -> PhaseRGB {
-        color.scaled(alwaysOnAccentScale)
+        accent(color, reducedLuminance: true)
     }
 }
 /// State language used by chips, banners and accessibility labels throughout
@@ -51,6 +62,7 @@ public enum WatchVisualState: String, CaseIterable, Sendable {
     case ready
     case syncing
     case offline
+    case cached
     case stale
     case success
     case warning
@@ -61,6 +73,7 @@ public enum WatchVisualState: String, CaseIterable, Sendable {
         case .ready: "Ready"
         case .syncing: "Syncing"
         case .offline: "Offline"
+        case .cached: "Cached"
         case .stale: "Needs attention"
         case .success: "Saved"
         case .warning: "Caution"
@@ -73,10 +86,44 @@ public enum WatchVisualState: String, CaseIterable, Sendable {
         case .ready: "checkmark.circle.fill"
         case .syncing: "arrow.triangle.2.circlepath"
         case .offline: "icloud.slash"
+        case .cached: "clock.arrow.circlepath"
         case .stale: "clock.badge.exclamationmark"
         case .success: "checkmark.circle.fill"
         case .warning: "exclamationmark.triangle.fill"
         case .danger: "xmark.octagon.fill"
         }
+    }
+}
+
+/// The two status queries are independent, so callers can preserve whichever
+/// half succeeded while still making a partial refresh explicit to the UI.
+public struct WatchStatusRefreshOutcome: Equatable, Sendable {
+    public let healthSucceeded: Bool
+    public let acwrSucceeded: Bool
+
+    public init(healthSucceeded: Bool, acwrSucceeded: Bool) {
+        self.healthSucceeded = healthSucceeded
+        self.acwrSucceeded = acwrSucceeded
+    }
+
+    public var isComplete: Bool { healthSucceeded && acwrSucceeded }
+}
+
+/// Presentation state for the status chip. A cached snapshot is deliberately
+/// distinct from a completed refresh: a stale value is useful offline, but it
+/// must never claim the same green "Synced" state as a fresh response.
+public enum WatchStatusRefreshState: String, Equatable, Sendable {
+    case notAttempted
+    case refreshing
+    case synced
+    case cached
+    case offline
+
+    public static func after(
+        _ outcome: WatchStatusRefreshOutcome,
+        hasCachedSnapshot: Bool
+    ) -> WatchStatusRefreshState {
+        if outcome.isComplete { return .synced }
+        return hasCachedSnapshot ? .cached : .offline
     }
 }

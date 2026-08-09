@@ -17,6 +17,9 @@ struct ReadinessRingView: View {
 
     private var progress: Double? { StatusPresentation.readinessProgress(score) }
     private var zoneLabel: String? { StatusPresentation.readinessZoneLabel(zone) }
+    private var readinessTint: Color {
+        readinessColor(zone, reducedLuminance: isLuminanceReduced)
+    }
 
     private var accessibilityValue: String {
         guard let score else {
@@ -35,8 +38,8 @@ struct ReadinessRingView: View {
                     .stroke(
                         AngularGradient(
                             colors: isLuminanceReduced
-                                ? [readinessColor(zone), readinessColor(zone)]
-                                : [readinessColor(zone), .statusOptimal, readinessColor(zone)],
+                                ? [readinessTint, readinessTint]
+                                : [readinessTint, designAccent(WatchDesignTokens.secondary, reducedLuminance: false), readinessTint],
                             center: .center
                         ),
                         style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
@@ -46,7 +49,7 @@ struct ReadinessRingView: View {
             Text(score.map(String.init) ?? "—")
                 .font(.system(size: valueFontSize, weight: .heavy, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(score == nil ? Color.white.opacity(0.72) : readinessColor(zone))
+                .foregroundStyle(score == nil ? Color.white.opacity(0.72) : readinessTint)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Readiness")
@@ -62,6 +65,7 @@ struct ACWRRiskTrackView: View {
     let value: Double?
     var bandHeight: CGFloat = 7
     var emptyAccessibilityHint: String? = nil
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     private var position: Double? { StatusPresentation.acwrTrackPosition(value) }
     private var risk: ACWRRiskBand? { StatusPresentation.acwrRiskBand(value) }
@@ -79,10 +83,18 @@ struct ACWRRiskTrackView: View {
             ZStack(alignment: .leading) {
                 if let position {
                     HStack(spacing: 0) {
-                        Rectangle().fill(Color.statusLow).frame(width: width * 0.40)
-                        Rectangle().fill(Color.statusOptimal).frame(width: width * 0.25)
-                        Rectangle().fill(Color.statusCaution).frame(width: width * 0.10)
-                        Rectangle().fill(Color.statusHigh).frame(width: width * 0.25)
+                        Rectangle()
+                            .fill(acwrColor(.low, reducedLuminance: isLuminanceReduced))
+                            .frame(width: width * 0.40)
+                        Rectangle()
+                            .fill(acwrColor(.optimal, reducedLuminance: isLuminanceReduced))
+                            .frame(width: width * 0.25)
+                        Rectangle()
+                            .fill(acwrColor(.caution, reducedLuminance: isLuminanceReduced))
+                            .frame(width: width * 0.10)
+                        Rectangle()
+                            .fill(acwrColor(.high, reducedLuminance: isLuminanceReduced))
+                            .frame(width: width * 0.25)
                     }
                     .frame(height: bandHeight)
                     .clipShape(Capsule())

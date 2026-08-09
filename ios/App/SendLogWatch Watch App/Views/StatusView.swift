@@ -21,10 +21,44 @@ import SwiftUI
 /// screen, free to disagree.
 struct StatusView: View {
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @State private var snap = ScreenshotFixtures.enabled
         ? ScreenshotFixtures.status
         : WidgetStore.load()
     @State private var refreshing = false
+    @State private var refreshState: WatchStatusRefreshState = .notAttempted
+
+    private var statusChip: (state: WatchVisualState, title: String) {
+        if refreshing || ScreenshotFixtures.state == .statusSyncing {
+            return (.syncing, "Updating")
+        }
+        if ScreenshotFixtures.enabled {
+            switch ScreenshotFixtures.state {
+            case .statusOffline:
+                return (.offline, "Offline")
+            case .statusCached:
+                return (.cached, "Cached")
+            case .statusEmpty:
+                return (.warning, "No data")
+            case .status:
+                // The normal fixture has no network task by design; keep the
+                // curated screenshot's completed state deterministic.
+                return (.ready, "Synced")
+            default:
+                break
+            }
+        }
+        switch refreshState {
+        case .synced:
+            return (.ready, "Synced")
+        case .cached, .notAttempted:
+            return snap.updatedAt == 0 ? (.warning, "No data") : (.cached, "Cached")
+        case .offline:
+            return (.offline, "Offline")
+        case .refreshing:
+            return (.syncing, "Updating")
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -32,20 +66,15 @@ struct StatusView: View {
                 HStack(alignment: .center) {
                     WatchEyebrow(text: "Today")
                     Spacer(minLength: 4)
-                    if refreshing || ScreenshotFixtures.state == .statusSyncing {
-                        WatchStateChip(state: .syncing, title: "Updating", compact: true)
-                    } else if ScreenshotFixtures.state == .statusOffline {
-                        WatchStateChip(state: .offline, title: "Offline", compact: true)
-                    } else if snap.updatedAt == 0 {
-                        WatchStateChip(state: .warning, title: "No data", compact: true)
-                    } else {
-                        WatchStateChip(state: .ready, title: "Synced", compact: true)
-                    }
+                    WatchStateChip(state: statusChip.state, title: statusChip.title, compact: true)
                 }
-                WatchCard(accent: readinessColor(snap.readinessZone)) {
+                WatchCard(accent: readinessColor(snap.readinessZone, reducedLuminance: isLuminanceReduced)) {
                     readiness
                 }
-                WatchCard(accent: acwrColor(StatusPresentation.acwrRiskBand(snap.acwr))) {
+                WatchCard(accent: acwrColor(
+                    StatusPresentation.acwrRiskBand(snap.acwr),
+                    reducedLuminance: isLuminanceReduced
+                )) {
                     acwr
                 }
             }
@@ -81,7 +110,10 @@ struct StatusView: View {
                        snap.readiness != nil {
                         Text(zone)
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(readinessColor(snap.readinessZone))
+                            .foregroundStyle(readinessColor(
+                                snap.readinessZone,
+                                reducedLuminance: isLuminanceReduced
+                            ))
                     } else if snap.readiness != nil {
                         Text("Zone unavailable")
                             .font(.system(size: 11, weight: .semibold))
@@ -113,11 +145,11 @@ struct StatusView: View {
                 Text(snap.acwr.map { String(format: "%.2f", $0) } ?? "—")
                     .font(.system(size: 28, weight: .heavy, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(acwrColor(risk))
+                    .foregroundStyle(acwrColor(risk, reducedLuminance: isLuminanceReduced))
                 if let risk {
                     Text(risk.label)
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(acwrColor(risk))
+                        .foregroundStyle(acwrColor(risk, reducedLuminance: isLuminanceReduced))
                 }
             }
             .accessibilityHidden(true)
@@ -165,8 +197,10 @@ struct StatusView: View {
         guard !ScreenshotFixtures.enabled else { return }
         guard !refreshing else { return }
         refreshing = true
+        refreshState = .refreshing
         defer { refreshing = false }
-        await WidgetBridge.refreshStatus()
+        let outcome = await WidgetBridge.refreshStatus()
         snap = WidgetStore.load()
+        refreshState = .after(outcome, hasCachedSnapshot: snap.updatedAt > 0)
     }
 }

@@ -10,6 +10,7 @@ enum ScreenshotFixtureState: String, CaseIterable {
     case statusEmpty
     case statusSyncing
     case statusOffline
+    case statusCached
     case waiting
     case actions
     case actionsOffline
@@ -91,6 +92,13 @@ enum ScreenshotFixtures {
                 workoutActive: false, boulders: 0, climbing: false,
                 phaseSinceEpoch: nil, restTargetS: 180, updatedAt: 0
             )
+        case .statusCached:
+            return WidgetSnapshot(
+                readiness: 64, readinessZone: "Maintain",
+                acwr: 1.31, acwrRisk: "Caution",
+                workoutActive: false, boulders: 0, climbing: false,
+                phaseSinceEpoch: nil, restTargetS: 180, updatedAt: 1_788_000_000
+            )
         default:
             return WidgetSnapshot(
                 readiness: 82, readinessZone: "Push",
@@ -161,6 +169,10 @@ enum ScreenshotFixtures {
             )
         default: nil
         }
+    }
+
+    static var workoutRestTargetS: Int? {
+        state == .workoutRest ? 180 : nil
     }
 
     static var force: ScreenshotForceVisual? {

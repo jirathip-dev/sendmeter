@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SwiftUI
 import WidgetKit
 
@@ -20,18 +21,18 @@ struct LiveProvider: TimelineProvider {
     }
 }
 
-/// The phone fullscreen's climbing/resting hues (dark theme `--success` /
-/// `--primary`, #277 follow-up) — this target doesn't link SendLogWatchCore,
-/// so the two literals are duplicated from `WorkoutPhasePalette.phoneSuccess`
-/// / `.phonePrimary` there. KEEP IN SYNC.
-private extension Color {
-    static let phaseClimbing = Color(red: 0x4F / 255, green: 0xB0 / 255, blue: 0xFF / 255)
-    static let phaseResting = Color(red: 0x5B / 255, green: 0x5F / 255, blue: 0xC7 / 255)
-}
-
 struct LiveWorkoutView: View {
     @Environment(\.widgetFamily) private var family
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     let snap: WidgetSnapshot
+
+    private func phaseColor(climbing: Bool) -> Color {
+        let base = climbing
+            ? PhaseRGB(0x4F / 255, 0xB0 / 255, 0xFF / 255)
+            : PhaseRGB(0x5B / 255, 0x5F / 255, 0xC7 / 255)
+        let adjusted = WatchDesignTokens.accent(base, reducedLuminance: isLuminanceReduced)
+        return Color(red: adjusted.red, green: adjusted.green, blue: adjusted.blue)
+    }
 
     private var phaseStart: Date {
         Date(timeIntervalSince1970: snap.phaseSinceEpoch ?? Date().timeIntervalSince1970)
@@ -76,10 +77,10 @@ struct LiveWorkoutView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 4) {
                         Image(systemName: "figure.climbing")
-                            .foregroundStyle(snap.climbing ? Color.phaseClimbing : Color.phaseResting)
+                            .foregroundStyle(phaseColor(climbing: snap.climbing))
                         Text(snap.climbing ? "CLIMBING" : "RESTING")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(snap.climbing ? Color.phaseClimbing : Color.phaseResting)
+                            .foregroundStyle(phaseColor(climbing: snap.climbing))
                         Spacer()
                         Text("\(snap.boulders)")
                             .font(.system(size: 14, weight: .heavy)).monospacedDigit()

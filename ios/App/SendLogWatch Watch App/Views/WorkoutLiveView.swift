@@ -16,8 +16,10 @@ struct WorkoutLiveView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let restTargets = [60, 120, 180, 300]
+    @State private var fixtureRestTargetS: Int? = ScreenshotFixtures.workoutRestTargetS
 
     private var fixtureVisual: ScreenshotWorkoutVisual? { ScreenshotFixtures.workout }
+    private var visibleRestTargetS: Int { fixtureRestTargetS ?? workout.restTargetS }
     private var currentScreen: WorkoutScreen {
         ScreenshotFixtures.workoutScreen ?? Self.screen(for: workout)
     }
@@ -313,16 +315,21 @@ struct WorkoutLiveView: View {
     @ViewBuilder
     private func phaseTimer(phase: WorkoutPhase, fill: PhaseFill) -> some View {
         if let fixtureVisual {
-            phaseBand(phase: phase, fill: fill) {
-                VStack(spacing: 0) {
-                    Text(phase == .climbing ? "CLIMBING" : phase == .restOver ? "REST OVER" : "RESTING")
-                        .font(.system(size: 11, weight: .bold))
-                        .lineLimit(1)
-                    Text(fixtureVisual.currentTimer)
-                        .font(.system(size: 34, weight: .heavy, design: .rounded))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.65)
+            VStack(spacing: 3) {
+                phaseBand(phase: phase, fill: fill) {
+                    VStack(spacing: 0) {
+                        Text(phase == .climbing ? "CLIMBING" : phase == .restOver ? "REST OVER" : "RESTING")
+                            .font(.system(size: 11, weight: .bold))
+                            .lineLimit(1)
+                        Text(fixtureVisual.currentTimer)
+                            .font(.system(size: 34, weight: .heavy, design: .rounded))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.65)
+                    }
+                }
+                if fixtureVisual.phase == .resting {
+                    restTargetControls
                 }
             }
         } else if phase == .climbing, let since = workout.climbingSince {
@@ -357,33 +364,42 @@ struct WorkoutLiveView: View {
                             .multilineTextAlignment(.center)
                     }
                 }
-                // Rest-target chips (1/2/3/5m) — obvious selector like the
-                // phone's; persisted + mirrored via the live heartbeat. They
-                // stay OUTSIDE the band: it holds what the phase *is*, not the
-                // controls that change it. The selected chip is neutral, not
-                // blue, so it reads as chosen next to a blue RESTING band.
-                ScrollView(.horizontal) {
-                    HStack(spacing: 4) {
-                        ForEach(restTargets, id: \.self) { t in
-                            let selected = workout.restTargetS == t
-                            Button("\(t / 60)m") {
-                                // Reschedules the rest alarm itself (#476 F5:
-                                // hoisted into WorkoutManager's `restTargetS.didSet`).
-                                workout.restTargetS = t
-                            }
-                            .font(.system(size: 11, weight: selected ? .bold : .regular))
-                            .buttonStyle(
-                                WatchSecondaryButtonStyle(
-                                    tint: selected ? WatchPalette.textPrimary : WatchPalette.textTertiary
-                                )
-                            )
-                            .frame(minWidth: 44, minHeight: 44)
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden)
+                restTargetControls
             }
         }
+    }
+
+    /// Rest target controls are shared by the real workout and the screenshot
+    /// fixture. Keeping one production control path makes the fixture useful
+    /// for catching small-screen clipping and selection regressions instead of
+    /// merely drawing a row of labels.
+    @ViewBuilder
+    private var restTargetControls: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 4) {
+                ForEach(restTargets, id: \.self) { t in
+                    let selected = visibleRestTargetS == t
+                    Button("\(t / 60)m") {
+                        workout.restTargetS = t
+                        if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .workoutRest {
+                            fixtureRestTargetS = t
+                        }
+                    }
+                    .font(.system(size: 11, weight: selected ? .bold : .regular))
+                    .buttonStyle(
+                        WatchSecondaryButtonStyle(
+                            tint: selected ? WatchPalette.textPrimary : WatchPalette.textTertiary
+                        )
+                    )
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityIdentifier("rest-target-\(t)")
+                    .accessibilityLabel("Rest \(t / 60) minutes")
+                    .accessibilityValue(selected ? "Selected" : "Not selected")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
+                }
+            }
+        }
+        .scrollIndicators(.hidden)
     }
 
     private func timeString(_ t: TimeInterval) -> String {

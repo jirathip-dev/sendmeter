@@ -13,21 +13,21 @@ extension Color {
     static let statusHigh = WatchPalette.danger
 }
 
-func acwrColor(_ risk: ACWRRiskBand?) -> Color {
+func acwrColor(_ risk: ACWRRiskBand?, reducedLuminance: Bool = false) -> Color {
     switch risk {
-    case .low: .statusLow
-    case .optimal: .statusOptimal
-    case .caution: .statusCaution
-    case .high: .statusHigh
+    case .low: WatchPalette.accent(WatchDesignTokens.primary, reducedLuminance: reducedLuminance)
+    case .optimal: WatchPalette.accent(WatchDesignTokens.secondary, reducedLuminance: reducedLuminance)
+    case .caution: WatchPalette.accent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
+    case .high: WatchPalette.accent(WatchDesignTokens.danger, reducedLuminance: reducedLuminance)
     case nil: .secondary
     }
 }
 
-func readinessColor(_ zone: String?) -> Color {
+func readinessColor(_ zone: String?, reducedLuminance: Bool = false) -> Color {
     switch zone?.lowercased() {
-    case "push": .statusOptimal
-    case "maintain": .statusCaution
-    case "recover": .statusHigh
+    case "push": WatchPalette.accent(WatchDesignTokens.secondary, reducedLuminance: reducedLuminance)
+    case "maintain": WatchPalette.accent(WatchDesignTokens.warning, reducedLuminance: reducedLuminance)
+    case "recover": WatchPalette.accent(WatchDesignTokens.danger, reducedLuminance: reducedLuminance)
     default: .secondary
     }
 }

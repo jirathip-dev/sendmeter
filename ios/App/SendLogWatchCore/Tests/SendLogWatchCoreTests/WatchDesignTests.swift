@@ -9,7 +9,7 @@ final class WatchDesignTests: XCTestCase {
 
     func testSemanticStatesHaveStableAccessibleLanguage() {
         XCTAssertEqual(WatchVisualState.allCases.map(\.label), [
-            "Ready", "Syncing", "Offline", "Needs attention", "Saved", "Caution", "Error",
+            "Ready", "Syncing", "Offline", "Cached", "Needs attention", "Saved", "Caution", "Error",
         ])
         XCTAssertEqual(
             Set(WatchVisualState.allCases.map(\.symbolName)).count,
@@ -26,6 +26,31 @@ final class WatchDesignTests: XCTestCase {
             XCTAssertEqual(dimmed.green / color.green, WatchDesignTokens.alwaysOnAccentScale, accuracy: 1e-9)
             XCTAssertEqual(dimmed.blue / color.blue, WatchDesignTokens.alwaysOnAccentScale, accuracy: 1e-9)
         }
+    }
+
+    func testAccentScaleUsesFullBrightnessOutsideReducedLuminance() {
+        XCTAssertEqual(WatchDesignTokens.accentScale(reducedLuminance: false), 1)
+        XCTAssertEqual(
+            WatchDesignTokens.accentScale(reducedLuminance: true),
+            WatchDesignTokens.alwaysOnAccentScale
+        )
+
+        let bright = WatchDesignTokens.accent(WatchDesignTokens.force, reducedLuminance: false)
+        let dimmed = WatchDesignTokens.accent(WatchDesignTokens.force, reducedLuminance: true)
+        XCTAssertEqual(bright, WatchDesignTokens.force)
+        XCTAssertEqual(dimmed, WatchDesignTokens.alwaysOn(WatchDesignTokens.force))
+    }
+
+    func testRefreshFailureNeverClaimsSynced() {
+        let success = WatchStatusRefreshOutcome(healthSucceeded: true, acwrSucceeded: true)
+        let partial = WatchStatusRefreshOutcome(healthSucceeded: true, acwrSucceeded: false)
+        let failure = WatchStatusRefreshOutcome(healthSucceeded: false, acwrSucceeded: false)
+
+        XCTAssertEqual(WatchStatusRefreshState.after(success, hasCachedSnapshot: true), .synced)
+        XCTAssertEqual(WatchStatusRefreshState.after(partial, hasCachedSnapshot: true), .cached)
+        XCTAssertEqual(WatchStatusRefreshState.after(partial, hasCachedSnapshot: false), .offline)
+        XCTAssertEqual(WatchStatusRefreshState.after(failure, hasCachedSnapshot: false), .offline)
+        XCTAssertNotEqual(WatchStatusRefreshState.after(partial, hasCachedSnapshot: true), .synced)
     }
 
     func testBrightTextHasLegibleContrastOnEverySurface() {

@@ -113,7 +113,9 @@ struct HomeView: View {
                 ActionsView()
                     .tag(WatchHomePage.actions)
             }
-            .tabViewStyle(.page)
+            // The explicit selector below is the only pagination affordance;
+            // the native dots duplicate it and consume scarce 40mm height.
+            .tabViewStyle(.page(indexDisplayMode: .never))
             WatchPageControl(
                 selection: selection == .status ? 0 : 1,
                 labels: ["Status", "Actions"],

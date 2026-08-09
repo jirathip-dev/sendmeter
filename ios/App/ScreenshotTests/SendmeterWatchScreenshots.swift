@@ -12,6 +12,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
             ("statusEmpty", "watch-state-warning"),
             ("statusSyncing", "watch-state-syncing"),
             ("statusOffline", "watch-state-offline"),
+            ("statusCached", "watch-state-cached"),
             ("waiting", "watch-state-syncing"),
         ]
 
@@ -24,6 +25,18 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     .waitForExistence(timeout: 10),
                 "fixture \(item.fixture) should expose \(item.identifier)"
             )
+            if item.fixture == "status" {
+                XCTAssertEqual(app.pageIndicators.count, 0, "explicit page selector must replace native dots")
+                let statusPage = app.buttons["Show Status"]
+                let actionsPage = app.buttons["Show Actions"]
+                XCTAssertTrue(statusPage.waitForExistence(timeout: 5))
+                XCTAssertTrue(actionsPage.waitForExistence(timeout: 5))
+                assertFullyVisible(statusPage, in: app, fixture: item.fixture)
+                assertFullyVisible(actionsPage, in: app, fixture: item.fixture)
+                actionsPage.tap()
+                XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 5))
+                statusPage.tap()
+            }
             app.terminate()
         }
 
@@ -61,6 +74,18 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     .waitForExistence(timeout: 10),
                 "fixture \(item.fixture) should expose \(item.identifier)"
             )
+            if item.fixture == "workoutRest" {
+                let oneMinute = app.buttons["rest-target-60"]
+                let twoMinutes = app.buttons["rest-target-120"]
+                XCTAssertTrue(oneMinute.waitForExistence(timeout: 5))
+                XCTAssertTrue(twoMinutes.waitForExistence(timeout: 5))
+                assertFullyVisible(oneMinute, in: app, fixture: item.fixture)
+                assertFullyVisible(twoMinutes, in: app, fixture: item.fixture)
+                XCTAssertEqual(twoMinutes.value as? String, "Not selected")
+                twoMinutes.tap()
+                XCTAssertEqual(twoMinutes.value as? String, "Selected")
+                XCTAssertEqual(oneMinute.value as? String, "Not selected")
+            }
             app.terminate()
         }
 
@@ -68,7 +93,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
             ("forceIdle", "Connect Progressor"),
             ("forceConnecting", "Connecting…"),
             ("forceLive", "Stop & Save"),
-            ("forceSaved", "watch-state-success"),
+            ("forceSaved", "watch-banner-success"),
             ("forceError", "watch-banner-danger"),
         ]
         for item in forceStates {
@@ -81,6 +106,15 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     .waitForExistence(timeout: 10),
                 "fixture \(item.fixture) should expose \(item.identifier)"
             )
+            if item.fixture == "forceSaved" {
+                let exercise = app.buttons["force-exercise-picker"]
+                let side = app.buttons["force-side-picker"]
+                XCTAssertTrue(exercise.waitForExistence(timeout: 5))
+                XCTAssertTrue(side.waitForExistence(timeout: 5))
+                app.swipeUp()
+                assertFullyVisible(exercise, in: app, fixture: item.fixture)
+                assertFullyVisible(side, in: app, fixture: item.fixture)
+            }
             app.terminate()
         }
     }
@@ -119,5 +153,17 @@ final class SendmeterWatchScreenshots: XCTestCase {
     private func openActions(_ app: XCUIApplication) {
         app.swipeLeft()
         XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 10))
+    }
+
+    private func assertFullyVisible(_ element: XCUIElement, in app: XCUIApplication, fixture: String) {
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        let frame = element.frame
+        let bounds = window.frame
+        XCTAssertGreaterThanOrEqual(frame.height, 44, "fixture \(fixture) control lost its 44pt hit target")
+        XCTAssertGreaterThanOrEqual(frame.minX, bounds.minX, "fixture \(fixture) control is clipped on the left")
+        XCTAssertLessThanOrEqual(frame.maxX, bounds.maxX, "fixture \(fixture) control is clipped on the right")
+        XCTAssertGreaterThanOrEqual(frame.minY, bounds.minY, "fixture \(fixture) control is clipped above")
+        XCTAssertLessThanOrEqual(frame.maxY, bounds.maxY, "fixture \(fixture) control is clipped below")
     }
 }

@@ -10,14 +10,18 @@ enum WidgetBridge {
     /// Refresh the glanceable status — readiness (from the iPhone's synced row)
     /// + ACWR (computed here) — then reload. Call after a readiness sync / on
     /// foreground.
-    static func refreshStatus() async {
+    @discardableResult
+    static func refreshStatus() async -> WatchStatusRefreshOutcome {
         var snap = WidgetStore.load()
+        var healthSucceeded = false
+        var acwrSucceeded = false
         do {
             let row = try await Repo.fetchLatestHealthMetric()
             // A successful empty response clears an old reading. A network
             // error keeps the last snapshot instead of pretending "no data".
             snap.readiness = row?.readiness
             snap.readinessZone = row?.readiness == nil ? nil : row?.zone
+            healthSucceeded = true
         } catch {
             // Preserve the last known status while offline.
         }
@@ -25,12 +29,23 @@ enum WidgetBridge {
             let ratio = try await computeACWR()
             snap.acwr = ratio
             snap.acwrRisk = StatusPresentation.acwrRiskBand(ratio)?.rawValue
+            acwrSucceeded = true
         } catch {
             // Preserve the last known status while offline.
         }
-        snap.updatedAt = Date().timeIntervalSince1970
+        // The timestamp is a claim that both independent status values came
+        // from this refresh. Keep the old timestamp after a partial/network
+        // failure so a cached snapshot remains useful without becoming a
+        // falsely green "Synced" state in StatusView or widgets.
+        if healthSucceeded && acwrSucceeded {
+            snap.updatedAt = Date().timeIntervalSince1970
+        }
         WidgetStore.save(snap)
         WidgetCenter.shared.reloadAllTimelines()
+        return WatchStatusRefreshOutcome(
+            healthSucceeded: healthSucceeded,
+            acwrSucceeded: acwrSucceeded
+        )
     }
 
     /// Merge the live-workout fields and reload. Call on discrete changes
