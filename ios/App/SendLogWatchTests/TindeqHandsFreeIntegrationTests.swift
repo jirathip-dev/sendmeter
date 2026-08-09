@@ -409,13 +409,15 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
     }
 
     func testGuidedFinishAndNextStartInOneDelayedTickShareSessionDespitePendingSave() async throws {
+        let account = UUID()
         let recordings = BlockingRecordingQueueSpy()
         let sessions = SessionQueueSpy()
         var commands: [Tindeq.Cmd] = []
         let manager = TindeqManager(
             recordingQueue: recordings,
             sessionQueue: sessions,
-            commandWriter: { commands.append($0) }
+            commandWriter: { commands.append($0) },
+            userIdProvider: { account }
         )
         let protocolValue = WatchForceProtocol(
             id: "zero-rest-boundary",
@@ -430,7 +432,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
             cadenceReturnS: 2,
             prepareS: 5
         )
-        let runner = GuidedForceRunner()
+        let runner = GuidedForceRunner(userIdProvider: { account })
 
         XCTAssertTrue(
             runner.start(
@@ -474,6 +476,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
     }
 
     func testLegacyOverCapMovementPresetIsNormalizedBeforeGuidedSave() async throws {
+        let account = UUID()
         let json = Data("""
         {
           "id": "legacy-long-movement",
@@ -500,9 +503,10 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         let manager = TindeqManager(
             recordingQueue: recordings,
             sessionQueue: sessions,
-            commandWriter: { _ in }
+            commandWriter: { _ in },
+            userIdProvider: { account }
         )
-        let runner = GuidedForceRunner()
+        let runner = GuidedForceRunner(userIdProvider: { account })
         XCTAssertTrue(
             runner.start(
                 protocolValue: protocolValue,

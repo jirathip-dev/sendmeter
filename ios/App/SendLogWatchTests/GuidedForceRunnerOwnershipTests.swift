@@ -289,8 +289,9 @@ final class GuidedForceRunnerOwnershipTests: XCTestCase {
         let startedAt = try XCTUnwrap(runner.runState?.startedAt)
         feed(manager, [(12, 0), (25, 100_000)])
         runner.advance(to: startedAt.addingTimeInterval(movementProtocol.durationS))
-        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
-        try await waitUntil { await sessionQueue.count() == 1 }
+        try await waitUntil {
+            await sessionQueue.count() == 1 && manager.sessionCount == 0 && !manager.saving
+        }
 
         XCTAssertEqual(runner.phase, .completed)
         XCTAssertNil(runner.errorMessage)
