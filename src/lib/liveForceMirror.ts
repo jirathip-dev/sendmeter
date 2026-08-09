@@ -49,6 +49,16 @@ export interface LiveForceMirrorState {
   cursor: LiveForceCursor;
 }
 
+/// Empty cursor state for a newly authenticated account. The hook applies
+/// this before installing the next account's listener; otherwise a prior
+/// account's terminal/high-sequence cursor could reject a valid new run.
+export function emptyLiveForceMirrorState(): LiveForceMirrorState {
+  return {
+    beat: null,
+    cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null },
+  };
+}
+
 export interface LiveForceReduceResult {
   state: LiveForceMirrorState;
   accepted: boolean;

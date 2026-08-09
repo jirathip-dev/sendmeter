@@ -4,6 +4,7 @@ import {
   STALE_MS,
   SPARK_WINDOW_MS,
   isFresh,
+  emptyLiveForceMirrorState,
   mergeForceBeat,
   reduceForceBeat,
   type LiveForce,
@@ -242,5 +243,26 @@ describe("reduceForceBeat", () => {
     expect(fresh.state.beat?.spark).toEqual([{ atMs: 100_000, kg: 20 }]);
     const old = reduceForceBeat(fresh.state, msg({ run_id: "force-run-1", sequence: 9, updated_at: 99 }));
     expect(old.accepted).toBe(false);
+  });
+
+  it("resets the ordering cursor when the authenticated account changes", () => {
+    const accountA = reduceForceBeat(
+      emptyLiveForceMirrorState(),
+      msg({ run_id: "account-a-run", sequence: 99, updated_at: 200 }),
+    ).state;
+    // B may legitimately have an older wall clock than A; only an account
+    // reset can make its first sequence eligible.
+    expect(
+      reduceForceBeat(
+        accountA,
+        msg({ run_id: "account-b-run", sequence: 1, updated_at: 100 }),
+      ).accepted,
+    ).toBe(false);
+    const accountB = reduceForceBeat(
+      emptyLiveForceMirrorState(),
+      msg({ run_id: "account-b-run", sequence: 1, updated_at: 100 }),
+    );
+    expect(accountB.accepted).toBe(true);
+    expect(accountB.state.cursor.runId).toBe("account-b-run");
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
 import { supabase } from "../lib/supabase";
@@ -7,6 +7,7 @@ import type { LiveWorkout } from "../types";
 import { subscribePluginListener } from "./pluginListener";
 import {
   messageToLive,
+  emptyLiveWorkoutMirrorState,
   reduceLiveWorkout,
   rowToLive,
   visibleLiveWorkout,
@@ -42,17 +43,32 @@ export function useLiveWorkout(
   const [hrLog, setHrLog] = useState<HrLog>({ id: "", pts: [] });
   const [syncState, setSyncState] = useState<LiveWorkoutSyncState>("server-fallback");
   const [now, setNow] = useState(() => Date.now());
-  const mirrorRef = useRef<LiveWorkoutMirrorState>({
-    row: null,
-    hrLog: { id: "", pts: [] },
-    source: "server-fallback",
-  });
+  const mirrorRef = useRef<LiveWorkoutMirrorState>(emptyLiveWorkoutMirrorState());
+  const activeUserIdRef = useRef(userId);
+  const [renderedUserId, setRenderedUserId] = useState(userId);
+  // A prop change renders once before passive effect cleanup. Hide the old
+  // account immediately, then reset the ref/state in a layout effect before
+  // the browser can paint or a new listener can publish data.
+  const accountTransition = renderedUserId !== userId;
+
+  if (accountTransition) {
+    setRenderedUserId(userId);
+    setRow(null);
+    setHrLog({ id: "", pts: [] });
+    setSyncState("server-fallback");
+  }
+
+  useLayoutEffect(() => {
+    activeUserIdRef.current = userId;
+    mirrorRef.current = emptyLiveWorkoutMirrorState();
+  }, [userId]);
 
   useEffect(() => {
+    const effectUserId = userId;
     let cancelled = false;
 
     function ingest(next: LiveWorkout, source: LiveWorkoutSource) {
-      if (cancelled) return;
+      if (cancelled || activeUserIdRef.current !== effectUserId) return;
       const reduced = reduceLiveWorkout(mirrorRef.current, next, source);
       if (!reduced.accepted) return;
       mirrorRef.current = reduced.state;
@@ -110,6 +126,14 @@ export function useLiveWorkout(
     };
   }, [userId]);
 
-  const [visible, series] = visibleLiveWorkout(row, hrLog, now);
-  return [visible, series, syncState];
+  const [visible, series] = visibleLiveWorkout(
+    accountTransition ? null : row,
+    accountTransition ? { id: "", pts: [] } : hrLog,
+    now,
+  );
+  return [
+    visible,
+    series,
+    accountTransition ? "server-fallback" : syncState,
+  ];
 }

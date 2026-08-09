@@ -288,7 +288,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const handsFreeArmInFlightRef = useRef(false);
   // Watch gauge mirror (SL-87) — non-null while the watch's Progressor
   // screen is connected/measuring and the phone is WC-reachable.
-  const liveForce = useLiveForce();
+  const liveForce = useLiveForce(userId);
   // The just-auto-saved recording, shown as a confirmation so the user can
   // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
   // prompt — a rep now saves the moment you stop, using the tag set beforehand.

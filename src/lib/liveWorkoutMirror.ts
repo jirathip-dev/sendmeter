@@ -25,6 +25,18 @@ export interface LiveWorkoutMirrorState {
   source: LiveWorkoutSource;
 }
 
+/// Empty cursor state for a newly authenticated account. Hooks reset this
+/// value before subscribing to the next user's channel so an older account's
+/// high sequence can never reject the new account's first (possibly older)
+/// run.
+export function emptyLiveWorkoutMirrorState(): LiveWorkoutMirrorState {
+  return {
+    row: null,
+    hrLog: { id: "", pts: [] },
+    source: "server-fallback",
+  };
+}
+
 export interface LiveWorkoutReduceResult {
   state: LiveWorkoutMirrorState;
   accepted: boolean;

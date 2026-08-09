@@ -9,6 +9,7 @@ import {
   preferFresher,
   rowToLive,
   acceptsLiveWorkout,
+  emptyLiveWorkoutMirrorState,
   reduceLiveWorkout,
   visibleLiveWorkout,
   type HrLog,
@@ -147,6 +148,30 @@ describe("preferFresher", () => {
     expect(result.state.row).toBe(next);
     expect(result.state.source).toBe("watch-direct");
     expect(result.state.hrLog.pts).toEqual([{ t: Date.parse(T1), hr: 125 }]);
+  });
+
+  it("resets the ordering cursor when the authenticated account changes", () => {
+    const accountA = reduceLiveWorkout(
+      emptyLiveWorkoutMirrorState(),
+      row({ runId: "account-a-run", sequence: 99, startedAt: T2 }),
+      "watch-direct",
+    ).state;
+    // Without an account reset, B's older wall-clock run would be rejected as
+    // an older different run by A's cursor.
+    expect(
+      reduceLiveWorkout(
+        accountA,
+        row({ runId: "account-b-run", sequence: 1, startedAt: T0 }),
+        "server-fallback",
+      ).accepted,
+    ).toBe(false);
+    const accountB = reduceLiveWorkout(
+      emptyLiveWorkoutMirrorState(),
+      row({ runId: "account-b-run", sequence: 1, startedAt: T0 }),
+      "server-fallback",
+    );
+    expect(accountB.accepted).toBe(true);
+    expect(accountB.state.row?.runId).toBe("account-b-run");
   });
 });
 
