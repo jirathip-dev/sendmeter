@@ -303,7 +303,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
           alignItems: "center",
         }}
       >
-        <span>{modality === "reverse_action" ? "Reverse Action" : "Static"} Hill / CF · {tag}</span>
+        <span>{modality === "reverse_action" ? "Movement (legacy)" : "Static"} Hill / CF · {tag}</span>
         <InfoDot topic="forceCurve" />
       </div>
 
@@ -313,7 +313,7 @@ export default function ForceCurveCard({ tag, model, periods, computing, error, 
             {computing
               ? "Computing your force–duration curve…"
               : error ??
-                `This ${modality === "reverse_action" ? "Reverse Action" : "Static"} model uses only matching measured capacity evidence. Hill/CF estimates never cross between execution types.`}
+                `This ${modality === "reverse_action" ? "legacy movement" : "Static"} model uses only matching measured capacity evidence. New resisted-movement work never feeds Hill/CF.`}
           </div>
         </div>
       ) : (

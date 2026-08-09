@@ -71,14 +71,14 @@ export default function ReverseActionPresetFields(props: Props) {
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
         <NumberField
-          label="Out s"
+          label="Concentric s"
           value={props.cadenceOutS}
           onChange={props.onCadenceOutS}
           min={0.5}
           max={30}
         />
         <NumberField
-          label="Return s"
+          label="Eccentric s"
           value={props.cadenceReturnS}
           onChange={props.onCadenceReturnS}
           min={0.5}

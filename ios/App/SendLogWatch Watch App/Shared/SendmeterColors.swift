@@ -1,3 +1,4 @@
+import SendLogWatchCore
 import SwiftUI
 
 /// Sendmeter's dark-theme interaction palette for native watch surfaces.

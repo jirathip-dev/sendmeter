@@ -284,7 +284,7 @@ export default function RecordingRow({
                   border: "1px solid color-mix(in srgb, var(--primary) 35%, transparent)",
                 }}
               >
-                REVERSE ACTION
+                MOVEMENT
               </span>
             )}
             {reverseAction && rec.capacityEvidence === true && (

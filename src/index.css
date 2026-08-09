@@ -2427,3 +2427,175 @@ textarea.field { resize: none; }
   font-size: var(--t-lg); line-height: 1; cursor: pointer; padding: 0 2px; opacity: 0.7;
   -webkit-tap-highlight-color: transparent;
 }
+
+/* Force phone hierarchy (#508–510): configuration, one selected protocol,
+   immediate launch, then a compact progress surface. */
+.force-selected-protocol { margin-top: 12px; }
+.force-selected-protocol-head,
+.force-progress-heading,
+.force-suggested-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.force-selected-protocol-name,
+.force-progress-title {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: var(--t-lg);
+  line-height: 1.25;
+  font-weight: 750;
+}
+.force-selected-protocol-copy {
+  margin-top: 7px;
+  color: var(--ink-muted);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+.force-protocol-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5em, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.force-protocol-actions-single { grid-template-columns: 1fr; }
+.force-choose-protocol,
+.force-clear-protocol { width: 100%; min-height: 44px; }
+.force-lock-note,
+.force-cadence-note,
+.force-picker-empty,
+.force-progress-empty {
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  line-height: 1.45;
+}
+.force-lock-note { margin-top: 6px; }
+.force-start-actions { display: grid; gap: 8px; margin-top: 10px; }
+.force-start-primary,
+.force-start-secondary { width: 100%; min-height: 50px; font-size: var(--t-md); }
+.force-cadence-note { margin-top: 7px; }
+.force-error { margin-top: 8px; color: var(--danger); font-size: var(--t-xs); }
+.force-sheet-section-title {
+  margin: 0 0 10px;
+  color: var(--ink-muted);
+  font-size: var(--t-2xs);
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.force-my-protocols { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--hairline); }
+.force-suggested-movement {
+  display: flex;
+  width: 100%;
+  min-height: 96px;
+  margin-top: 10px;
+  padding: 16px;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.force-suggested-movement[aria-pressed="true"] { border-color: var(--success); }
+.force-suggested-title { font-size: var(--t-md); font-weight: 750; }
+.force-suggested-kicker {
+  margin-top: 7px;
+  color: var(--primary);
+  font-size: var(--t-eyebrow);
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.force-suggested-copy { margin-top: 4px; color: var(--ink-muted); font-size: var(--t-sm); }
+.force-suggested-help {
+  margin-top: 7px;
+  color: var(--ink-faint);
+  font-size: var(--t-xs);
+  line-height: 1.45;
+}
+.force-new-protocol-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.force-new-protocol-actions > button { min-height: 44px; }
+.preset-select-control {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  min-height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.preset-select-control:disabled { cursor: default; }
+.preset-select-control:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.force-progress-card {
+  display: block;
+  width: 100%;
+  min-height: 148px;
+  margin-top: 14px;
+  padding: 16px;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.force-progress-stack { margin-top: 18px; }
+.force-progress-grid { display: grid; gap: 10px; margin-top: 8px; }
+.force-progress-movement .force-mini-bars > span { background: var(--primary); }
+.movement-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10em, 1fr));
+  gap: 10px;
+}
+.movement-insight-grid > div {
+  display: flex;
+  min-height: 82px;
+  padding: 14px;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
+}
+.movement-insight-grid b { color: var(--ink); font-size: var(--t-xl); }
+.movement-insight-grid span { margin-top: 4px; color: var(--ink-faint); font-size: var(--t-xs); }
+.force-progress-explainer { color: var(--ink-muted); font-size: var(--t-xs); line-height: 1.5; }
+.force-progress-card:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 34%, var(--card-border)); }
+.force-progress-card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.force-progress-chevron { color: var(--ink-faint); font-size: 28px; line-height: 1; }
+.force-progress-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(6em, 1fr)); gap: 8px; margin-top: 14px; }
+.force-progress-metrics span { display: flex; flex-direction: column; gap: 2px; }
+.force-progress-metrics b { font-size: var(--t-xl); font-weight: 800; }
+.force-progress-metrics small { color: var(--ink-faint); font-size: var(--t-2xs); }
+.force-mini-bars {
+  display: flex;
+  height: 30px;
+  margin-top: 12px;
+  align-items: end;
+  gap: 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+.force-mini-bars > span {
+  flex: 1;
+  min-width: 5px;
+  max-width: 28px;
+  border-radius: 3px 3px 0 0;
+  background: var(--primary);
+}
+.force-progress-empty { display: block; margin-top: 14px; }
+
+@media (min-width: 720px) {
+  .force-start-actions { grid-template-columns: 1fr 1fr; }
+  .force-progress-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (forced-colors: active) {
+  .force-suggested-movement[aria-pressed="true"] { outline: 2px solid Highlight; }
+  .force-mini-bars > span { background: Highlight; }
+}

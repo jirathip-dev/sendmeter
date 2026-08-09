@@ -1570,6 +1570,33 @@ const actualPeriodHues = periodSemanticNames.map((name) =>
 );
 
 describe("premium visual language contracts (#517)", () => {
+  it("keeps the Force phone hierarchy on shared premium surfaces", () => {
+    const forceView = component("ForceView.tsx");
+    const picker = component("ForceProtocolPickerSheet.tsx");
+    const progress = component("ForceProgressCard.tsx");
+    const presets = component("PresetManager.tsx");
+    expect(forceView).toContain("<SelectedProtocolCard");
+    expect(forceView).toContain('className="btn-primary force-start-primary"');
+    expect(forceView).not.toContain('aria-label="Protocol mode"');
+    expect(picker).toContain('fullHeight className="force-protocol-sheet"');
+    expect(picker).toContain("Suggested");
+    expect(picker).toContain("My protocols");
+    expect(progress).toContain('id="force-progress-title"');
+    expect(progress).toContain('title="Static capacity"');
+    expect(progress).toContain('title="Resisted movement"');
+    const movementDetail = progress.slice(progress.indexOf('detail === "movement"'));
+    expect(movementDetail).not.toContain("ForceCurveCard");
+    expect(movementDetail).not.toContain("SideAsymmetryCard");
+    expect(presets).toContain('className="preset-select-control"');
+    expect(presets).toContain("aria-pressed={selected}");
+    expect(css).toContain(".force-choose-protocol,\n.force-clear-protocol { width: 100%; min-height: 44px;");
+    expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(6em, 1fr));");
+    expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(8.5em, 1fr));");
+    expect(css).toContain("grid-template-columns: repeat(auto-fit, minmax(10em, 1fr));");
+    expect(css).not.toContain(".movement-insight-grid { grid-template-columns: repeat(3");
+    expect(css).toContain(".force-start-primary,");
+  });
+
   it("bounds CSS parsing around comments, strings, and neighboring rules", () => {
     const fixture = `
       /* } { .fake { } */
@@ -1745,20 +1772,6 @@ describe("premium visual language contracts (#517)", () => {
         percentages: [0.18, 0.26],
       },
       {
-        name: "static protocol mode",
-        selector: '.protocol-mode-option[data-selected="true"][data-mode="static"]',
-        hover: '.protocol-mode-option[data-selected="true"][data-mode="static"]:hover:not(:disabled)',
-        hues: ["var(--success)"],
-        percentages: [0.18, 0.26],
-      },
-      {
-        name: "reverse-action protocol mode",
-        selector: '.protocol-mode-option[data-selected="true"][data-mode="reverse_action"]',
-        hover: '.protocol-mode-option[data-selected="true"][data-mode="reverse_action"]:hover:not(:disabled)',
-        hues: ["var(--primary)"],
-        percentages: [0.18, 0.26],
-      },
-      {
         name: "preset target mode",
         selector: '.preset-target-mode[data-selected="true"]',
         hover: '.preset-target-mode[data-selected="true"]:hover:not(:disabled)',
@@ -1836,7 +1849,6 @@ describe("premium visual language contracts (#517)", () => {
       "period-toggle",
       "preset-basis-option",
       "tolerance-mode-option",
-      "protocol-mode-option",
       "preset-target-mode",
       "recording-tag-option",
       "recording-side-option",
@@ -2425,7 +2437,7 @@ describe("premium visual language contracts (#517)", () => {
   it("maps Force recovery meaning to the correct action hierarchy", () => {
     const source = component("ForceView.tsx");
     const recoveryStart = source.indexOf('className="card surface-caution"');
-    const recoveryEnd = source.indexOf("/* Protocols:", recoveryStart);
+    const recoveryEnd = source.indexOf("<SelectedProtocolCard", recoveryStart);
     expect(recoveryStart).toBeGreaterThanOrEqual(0);
     expect(recoveryEnd).toBeGreaterThan(recoveryStart);
 
@@ -2510,14 +2522,6 @@ describe("premium visual language contracts (#517)", () => {
         ".tolerance-mode-option:disabled",
         ".tolerance-mode-option:focus-visible",
         ".tolerance-mode-option:hover:not(:disabled)",
-      ],
-      [
-        "protocol mode",
-        ".protocol-mode-option",
-        '.protocol-mode-option[data-selected="true"]',
-        ".protocol-mode-option:disabled",
-        ".protocol-mode-option:focus-visible",
-        ".protocol-mode-option:hover:not(:disabled)",
       ],
       [
         "preset target",

@@ -16,6 +16,14 @@ struct SendLogWatchApp: App {
     // HKWorkoutSession with no reachable End control. Hoisted to App scope,
     // matching `tindeq` above — the asymmetry between the two was the bug.
     @State private var workout = WorkoutManager()
+    // The read-only Force catalog lives at app scope so a navigation pop does
+    // not throw away a fresh response while the gauge remains connected. Its
+    // cache/selection are still persisted independently for relaunch recovery.
+    @State private var forceProtocolCatalog = ForceProtocolCatalog()
+    // Guided Force runs outlive the setup navigation destination. Keeping the
+    // request/state here lets RootView switch to the runner without retaining
+    // a closure captured by a view that may have disappeared.
+    @State private var guidedForceRunner = GuidedForceRunner()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -25,6 +33,8 @@ struct SendLogWatchApp: App {
                 .environment(readiness)
                 .environment(tindeq)
                 .environment(workout)
+                .environment(forceProtocolCatalog)
+                .environment(guidedForceRunner)
                 .task { @MainActor in
                     readiness.request(reason: .launch)
                 }
@@ -45,6 +55,7 @@ struct SendLogWatchApp: App {
                 Task { @MainActor in
                     readiness.request(reason: .foreground)
                 }
+                guidedForceRunner.refresh()
             }
         }
     }

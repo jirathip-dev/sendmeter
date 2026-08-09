@@ -908,8 +908,8 @@ export default function ForceFullscreen({
               >
                 {pos.seg.phase === "move"
                   ? pos.seg.direction === "out"
-                    ? "OUT"
-                    : "RETURN"
+                    ? "CONCENTRIC"
+                    : "ECCENTRIC"
                   : meta.label}
                 {holdSide && ` · ${holdSide.toUpperCase()}`}
                 {pos.seg.phase === "switch" && pos.seg.side && ` → ${pos.seg.side.toUpperCase()}`}
@@ -1015,7 +1015,7 @@ export default function ForceFullscreen({
                     <ProtocolBadge mode={protocol.protocolMode ?? "hold"} quality={protocolQuality} />{" "}
                     {protocol.protocolMode === "reverse_action" ? (
                       <>
-                        · {protocol.cadenceOutS ?? 3}s OUT / {protocol.cadenceReturnS ?? 3}s RETURN · {protocol.reps} rep{protocol.reps === 1 ? "" : "s"} × {protocol.sets} set{protocol.sets === 1 ? "" : "s"} · ~
+                        · {protocol.cadenceOutS ?? 3}s CONCENTRIC / {protocol.cadenceReturnS ?? 3}s ECCENTRIC · {protocol.reps} rep{protocol.reps === 1 ? "" : "s"} × {protocol.sets} set{protocol.sets === 1 ? "" : "s"} · ~
                         {Math.round(timelineDurationS(timeline) / 60)}min
                         <br />one continuous raw trace saves per set
                       </>
@@ -1208,7 +1208,7 @@ export default function ForceFullscreen({
             </div>
           )}
           <button
-            aria-label={measuring && protocol?.protocolMode === "reverse_action" ? "Emergency stop and save partial Reverse Action set" : undefined}
+            aria-label={measuring && protocol?.protocolMode === "reverse_action" ? "Emergency stop and save partial resisted-movement set" : undefined}
             onClick={() => {
               if (measuring) {
                 onStop();

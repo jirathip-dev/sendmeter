@@ -82,6 +82,12 @@ final class WorkoutManager: NSObject {
     private let tunables: Tunables
     private var detector: AttemptDetector
     private let healthStore = HKHealthStore()
+    /// Internal authorization seam for the app-target tests. Production leaves
+    /// this nil and uses the real HealthKit request below; tests inject a
+    /// deterministic failure so start-guard behavior never depends on host
+    /// HealthKit entitlements or an OS authorization prompt.
+    @ObservationIgnored
+    var authorizationRequestOverride: (() async throws -> Void)?
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
     private let altimeter = CMAltimeter()
@@ -215,6 +221,10 @@ final class WorkoutManager: NSObject {
     }
 
     func requestAuthorization() async throws {
+        if let authorizationRequestOverride {
+            try await authorizationRequestOverride()
+            return
+        }
         let share: Set<HKSampleType> = [HKObjectType.workoutType()]
         let read: Set<HKObjectType> = [
             HKQuantityType(.heartRate),

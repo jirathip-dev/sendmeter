@@ -69,6 +69,7 @@ final class TindeqManager: NSObject {
     private var t0us: UInt32?
     private var samples: [(t: Double, kg: Double)] = []
     private var repClaims = HandsFreeForceRepClaims()
+    private var guidedClaims = GuidedForceSaveClaims()
     private var saveOperationsInFlight = 0
     private var finishAfterSaves = false
     private var savedMsgGeneration = 0
@@ -143,6 +144,7 @@ final class TindeqManager: NSObject {
         sessionStartedAt = nil
         sessionCount = 0
         depletion.reset()
+        guidedClaims.reset()
     }
 
     /// Fold one just-saved rep into the session's W' depletion (#280). Called
@@ -232,6 +234,7 @@ final class TindeqManager: NSObject {
         stopUITimer()
         measuring = false
         repClaims.discard()
+        guidedClaims.discardActive()
         if let p = peripheral {
             // Flag only when a delegate callback will follow, so it can't go
             // stale and mask a later real drop.
@@ -250,7 +253,7 @@ final class TindeqManager: NSObject {
     }
 
     func start() {
-        guard status == .connected, !handsFreeRequested, !saving else { return }
+        guard status == .connected, !handsFreeRequested, !saving, guidedClaims.active == nil else { return }
         savedMsgGeneration += 1
         savedMsg = nil
         resetRecordingBuffer()
@@ -267,7 +270,8 @@ final class TindeqManager: NSObject {
     /// does not append them to `samples`; the claimed Start transition resets
     /// the buffer/t0 and only then promotes the stream to a recording.
     func armHandsFree() {
-        guard status == .connected, !handsFreeRequested, !saving, !trimmedLiveTag.isEmpty else { return }
+        guard status == .connected, !handsFreeRequested, !saving,
+              guidedClaims.active == nil, !trimmedLiveTag.isEmpty else { return }
         savedMsgGeneration += 1
         savedMsg = nil
         handsFreeRequested = true
@@ -322,6 +326,161 @@ final class TindeqManager: NSObject {
             note: "",
             rearmHandsFreeAfterStop: handsFreeRequested ? reason : nil
         )
+    }
+
+    // MARK: Guided protocol persistence
+
+    /// Begin one measured resisted-movement set as one continuous BLE trace.
+    /// Run/set identity and all mutable picker/protocol context are claimed
+    /// synchronously before the transport is started.
+    @discardableResult
+    func startMeasuredMovementSet(
+        protocolValue: WatchForceProtocol,
+        runId: UUID,
+        set: Int,
+        tag: String,
+        side: String,
+        zone: String? = nil,
+        targetBand: MovementTargetBand? = nil
+    ) -> Bool {
+        guard let context = GuidedForceRecordingContext.movementSet(
+            protocolValue: protocolValue,
+            runId: runId,
+            set: set,
+            tag: tag.trimmingCharacters(in: .whitespaces),
+            side: side,
+            zone: zone,
+            targetBand: targetBand
+        ) else { return false }
+        return beginGuidedMeasured(context)
+    }
+
+    /// Begin one measured static hold. Each rep is independently identified
+    /// and saved, matching the existing web protocol row shape.
+    @discardableResult
+    func startMeasuredStaticHold(
+        protocolValue: WatchForceProtocol,
+        runId: UUID,
+        set: Int,
+        rep: Int,
+        tag: String,
+        side: String,
+        zone: String? = nil,
+        targetBand: MovementTargetBand? = nil
+    ) -> Bool {
+        guard let context = GuidedForceRecordingContext.staticHold(
+            protocolValue: protocolValue,
+            runId: runId,
+            set: set,
+            rep: rep,
+            tag: tag.trimmingCharacters(in: .whitespaces),
+            side: side,
+            zone: zone,
+            targetBand: targetBand
+        ) else { return false }
+        return beginGuidedMeasured(context)
+    }
+
+    private func beginGuidedMeasured(_ context: GuidedForceRecordingContext) -> Bool {
+        guard status == .connected, !handsFreeRequested, !saving,
+              repClaims.active == nil, !context.tag.isEmpty,
+              guidedClaims.begin(context: context) != nil
+        else { return false }
+        savedMsgGeneration += 1
+        savedMsg = nil
+        resetRecordingBuffer()
+        write(.startWeight)
+        measuring = true
+        status = .measuring
+        startUITimer()
+        pushForceBeat()
+        return true
+    }
+
+    @discardableResult
+    func finishMeasuredMovementSet() -> Bool {
+        finishGuidedMeasured(expected: .movementSet, outcome: nil, note: "")
+    }
+
+    @discardableResult
+    func finishMeasuredStaticHold(outcome: String? = nil) -> Bool {
+        finishGuidedMeasured(expected: .staticHold, outcome: outcome, note: "")
+    }
+
+    private func finishGuidedMeasured(
+        expected: GuidedForceRecordingKind,
+        outcome: String?,
+        note: String
+    ) -> Bool {
+        guard guidedClaims.active?.context.kind == expected,
+              let claim = guidedClaims.claimFinish()
+        else { return false }
+        let plannedEndMs = Double(claim.context.plannedDurationMs)
+        guard let summary = stopTransport(endMs: plannedEndMs),
+              let completion = guidedForceCompletion(
+                  context: claim.context,
+                  actualDurationMs: summary.durationMs
+              )
+        else { return false }
+        persistGuidedMeasured(
+            summary,
+            claim: claim,
+            completion: completion,
+            outcome: outcome,
+            note: note,
+            rememberSelection: true
+        )
+        return true
+    }
+
+    /// Save one sensorless movement set. The stable row claim is consumed
+    /// synchronously; persistence then uses the same durable queue as measured
+    /// work but never manufactures samples, force values, or metrics.
+    @discardableResult
+    func saveCadenceOnlyMovementSet(
+        protocolValue: WatchForceProtocol,
+        runId: UUID,
+        set: Int,
+        tag: String,
+        side: String,
+        zone: String? = nil,
+        actualDurationMs: Int
+    ) -> Bool {
+        guard let context = GuidedForceRecordingContext.movementSet(
+            protocolValue: protocolValue,
+            runId: runId,
+            set: set,
+            tag: tag.trimmingCharacters(in: .whitespaces),
+            side: side,
+            zone: zone,
+            targetBand: nil
+        ), !context.tag.isEmpty,
+           let completion = guidedForceCompletion(
+               context: context, actualDurationMs: actualDurationMs
+           ),
+           let claim = guidedClaims.claimCadenceOnly(context: context)
+        else { return false }
+        let groupId = ensureSession()
+        let row = Repo.makeCadenceOnlyMovementRow(
+            claim: claim, completion: completion, groupId: groupId
+        )
+        persistPreparedRecording(
+            row,
+            displayPeakKg: nil,
+            depletion: nil,
+            lostSavedMessage: "Movement set was not saved",
+            lostErrorMessage: "Set not saved — couldn't write to the watch.",
+            rememberSelection: true,
+            rearmHandsFreeAfterStop: nil
+        )
+        return true
+    }
+
+    /// Finish the gauge session after every guided row has reached a durable
+    /// queued/direct-upload outcome. `logSessionNow` already owns the in-flight
+    /// gate, so this is intentionally a named API rather than a second path.
+    func finishGuidedRun() {
+        logSessionNow()
     }
 
     private func stopTransport(endMs: Double? = nil) -> StoppedRecording? {
@@ -391,7 +550,12 @@ final class TindeqManager: NSObject {
             self.beatTick += 1
             if self.beatTick % 5 == 0 { self.pushForceBeat() }
             if TindeqRecordingLimit.shouldStop(elapsedMs: last.t), self.measuring {
-                if self.handsFreeRequested {
+                if let guidedKind = self.guidedClaims.active?.context.kind {
+                    switch guidedKind {
+                    case .movementSet: _ = self.finishMeasuredMovementSet()
+                    case .staticHold: _ = self.finishMeasuredStaticHold()
+                    }
+                } else if self.handsFreeRequested {
                     self.stopAndSave(reason: .cappedAt30Min)
                 } else {
                     // Preserve the pre-existing manual cap behavior: it stops
@@ -638,6 +802,65 @@ final class TindeqManager: NSObject {
             side: claim.side,
             groupId: groupId
         )
+        persistPreparedRecording(
+            row,
+            displayPeakKg: summary.peakKg,
+            depletion: (summary.peakKg, summary.durationMs, claim.tag),
+            lostSavedMessage: lostSavedMessage,
+            lostErrorMessage: lostErrorMessage,
+            rememberSelection: rememberSelection,
+            rearmHandsFreeAfterStop: rearmHandsFreeAfterStop
+        )
+    }
+
+    private func persistGuidedMeasured(
+        _ summary: StoppedRecording,
+        claim: GuidedForceRecordingClaim,
+        completion: GuidedForceCompletion,
+        outcome: String?,
+        note: String,
+        rememberSelection: Bool
+    ) {
+        let context = claim.context
+        let metrics: MovementSetMetrics? = context.kind == .movementSet
+            ? movementSetMetrics(
+                samples: summary.samples.map { MovementSample(tMs: $0.t, kg: $0.kg) },
+                band: context.targetBand,
+                plannedDurationMs: Double(context.plannedDurationMs)
+            )
+            : nil
+        let row = Repo.makeGuidedMeasuredRecordingRow(
+            summary,
+            claim: claim,
+            completion: completion,
+            groupId: ensureSession(),
+            metrics: metrics,
+            outcome: outcome,
+            note: note
+        )
+        persistPreparedRecording(
+            row,
+            displayPeakKg: summary.peakKg,
+            depletion: (summary.peakKg, completion.actualDurationMs, context.tag),
+            lostSavedMessage: "Guided recording was not saved",
+            lostErrorMessage: "Recording not saved — couldn't write to the watch.",
+            rememberSelection: rememberSelection,
+            rearmHandsFreeAfterStop: nil
+        )
+    }
+
+    /// Queue persistence is the durability boundary for every recording
+    /// modality. A queued or directly-uploaded row counts into the gauge
+    /// session; a `.lost` row never does.
+    private func persistPreparedRecording(
+        _ row: TindeqRecordingInsert,
+        displayPeakKg: Double?,
+        depletion: (peakKg: Double, durationMs: Int, tag: String)?,
+        lostSavedMessage: String,
+        lostErrorMessage: String?,
+        rememberSelection: Bool,
+        rearmHandsFreeAfterStop: HandsFreeStopReason?
+    ) {
         saveOperationsInFlight += 1
         saving = true
         savedMsg = "Saving…"
@@ -648,20 +871,26 @@ final class TindeqManager: NSObject {
                 if let lostErrorMessage { errorMsg = lostErrorMessage }
                 RecordingLossNotice.record()
             } else {
-                let tagLabel = claim.tag.isEmpty ? "" : " · \(claim.tag)"
-                savedMsg = String(format: "Saved · %.1f kg%@", summary.peakKg, tagLabel)
+                let tagLabel = row.tag.isEmpty ? "" : " · \(row.tag)"
+                if let displayPeakKg {
+                    savedMsg = String(format: "Saved · %.1f kg%@", displayPeakKg, tagLabel)
+                } else {
+                    savedMsg = "Saved\(tagLabel)"
+                }
                 sessionCount += 1
                 // Count changes are discrete mirror transitions, not a
                 // telemetry update that may wait behind the coalescing lane.
                 pushForceBeat()
-                recordRepDepletion(
-                    peakKg: summary.peakKg,
-                    durationMs: summary.durationMs,
-                    tag: claim.tag
-                )
+                if let depletion {
+                    recordRepDepletion(
+                        peakKg: depletion.peakKg,
+                        durationMs: depletion.durationMs,
+                        tag: depletion.tag
+                    )
+                }
                 if rememberSelection {
-                    UserDefaults.standard.set(claim.tag, forKey: "lastTindeqTag")
-                    UserDefaults.standard.set(claim.side, forKey: "lastTindeqSide")
+                    UserDefaults.standard.set(row.tag, forKey: "lastTindeqTag")
+                    UserDefaults.standard.set(row.side, forKey: "lastTindeqSide")
                 }
             }
             saveOperationsInFlight -= 1
@@ -825,6 +1054,11 @@ extension TindeqManager: CBCentralManagerDelegate {
         let wasIntentional = wasIntentionalOverride ?? intentionalDisconnect
         intentionalDisconnect = false
         if error != nil { errorMsg = "Device disconnected" }
+        // Capture the kind before salvage consumes the synchronous claim. A
+        // movement run may continue with cadence-only sets after this trace is
+        // queued, so it must keep the same manager-owned session open; static
+        // salvage is terminal and can finish/log the session here.
+        let guidedKind = guidedClaims.active?.context.kind
         // Finish-on-disconnect: an unplanned drop mid-session with saved reps
         // surfaces the log prompt (mirrors the web status→idle effect). SL-58 #5.
         // Issue #151: a drop mid-hold used to silently lose the in-flight rep —
@@ -832,12 +1066,24 @@ extension TindeqManager: CBCentralManagerDelegate {
         // start() wiped it. Salvage it like a manual Stop & Save when there's
         // enough of a hold to be worth keeping; otherwise fall back to the
         // existing drop-with-saved-reps prompt unchanged.
-        if TindeqSalvagePolicy.shouldSalvage(
+        if shouldSalvageGuidedForce(
+            wasIntentional: wasIntentional,
+            hasActiveClaim: guidedClaims.active != nil,
+            wasMeasuring: wasMeasuring,
+            sampleCount: samples.count
+        ), let summary = makeSummary() {
+            salvageInterruptedGuidedRecording(
+                summary,
+                finishSessionAfterSave: GuidedForceDisconnectPolicy
+                    .shouldFinishSessionAfterSalvage(kind: guidedKind)
+            )
+        } else if guidedClaims.active == nil, TindeqSalvagePolicy.shouldSalvage(
             wasIntentional: wasIntentional, wasMeasuring: wasMeasuring, sampleCount: samples.count
         ), let summary = makeSummary() {
             salvageInterruptedRecording(summary)
         } else if !wasIntentional, sessionId != nil, sessionCount > 0 {
             repClaims.discard()
+            guidedClaims.discardActive()
             // #280: the drop used to raise the finish prompt at the root. It
             // now logs the session itself at the predicted RPE — the user may
             // be nowhere near the watch when the Progressor dies, and a
@@ -845,8 +1091,50 @@ extension TindeqManager: CBCentralManagerDelegate {
             logSessionNow()
         } else {
             repClaims.discard()
+            guidedClaims.discardActive()
         }
         pushForceBeat()
+    }
+
+    /// Salvage one interrupted guided trace through the same synchronous
+    /// claim and durable queue path as an explicit finish. The active claim is
+    /// consumed before persistence starts, so duplicate CoreBluetooth
+    /// disconnect callbacks cannot create a second row.
+    func salvageInterruptedGuidedRecording(
+        _ summary: StoppedRecording,
+        finishSessionAfterSave: Bool = true
+    ) {
+        guard let claim = guidedClaims.claimFinish(),
+              let completion = guidedForceCompletion(
+                  context: claim.context,
+                  actualDurationMs: summary.durationMs
+              )
+        else {
+            RecordingLossNotice.record()
+            if finishSessionAfterSave {
+                logSessionNow()
+            }
+            errorMsg = "Interrupted guided recording was not saved — recovery state was missing."
+            return
+        }
+        currentKg = 0
+        peakKg = summary.peakKg
+        elapsedMs = Double(summary.durationMs)
+        samples.removeAll()
+        persistGuidedMeasured(
+            summary,
+            claim: claim,
+            completion: completion,
+            outcome: nil,
+            note: "Recovered after connection loss",
+            rememberSelection: false
+        )
+        // Static salvage is terminal and logs once after the durable enqueue;
+        // movement salvage deliberately leaves this session open so the
+        // runner can queue later cadence-only sets into the same group.
+        if finishSessionAfterSave {
+            logSessionNow()
+        }
     }
 
     /// Salvages the in-flight rep after an unplanned BLE drop mid-hold

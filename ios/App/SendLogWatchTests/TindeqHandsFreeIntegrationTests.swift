@@ -44,7 +44,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertEqual(first.tag, "Half crimp")
         XCTAssertEqual(first.side, "left")
         XCTAssertEqual(first.groupId, manager.sessionId)
-        XCTAssertEqual(first.peakKg, 30, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(first.peakKg), 30, accuracy: 0.01)
         XCTAssertEqual(first.durationMs, 200, "the 1.5 s low-force grace tail is not recorded")
         XCTAssertFalse(first.samples.contains { $0[1] == 50 }, "armed samples must never leak into the rep")
         XCTAssertTrue(manager.predictedRPE.fromCurve)
@@ -308,6 +308,104 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertFalse(manager.savedMsg?.localizedCaseInsensitiveContains("pull") ?? true)
         XCTAssertEqual(manager.errorMsg, "Rep not saved — couldn't write to the watch.")
         XCTAssertTrue(RecordingLossNotice.consume())
+    }
+
+    func testGuidedMovementDisconnectKeepsSessionOpenForLaterCadenceSets() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in }
+        )
+        let protocolValue = WatchForceProtocol.movementStarter
+        let runId = UUID()
+
+        XCTAssertTrue(
+            manager.startMeasuredMovementSet(
+                protocolValue: protocolValue,
+                runId: runId,
+                set: 1,
+                tag: "Half crimp",
+                side: "left"
+            )
+        )
+        feed(manager, [(5, 0), (20, 5_000_000), (18, 15_000_000)])
+        manager.handleTransportDisconnect(
+            error: NSError(domain: "BLE", code: -1),
+            wasIntentionalOverride: false
+        )
+
+        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
+        let groupId = try XCTUnwrap(manager.sessionId)
+        let sessionsBeforeFinish = await sessions.count()
+        XCTAssertEqual(sessionsBeforeFinish, 0, "movement salvage must not log early")
+
+        XCTAssertTrue(
+            manager.saveCadenceOnlyMovementSet(
+                protocolValue: protocolValue,
+                runId: runId,
+                set: 2,
+                tag: "Half crimp",
+                side: "left",
+                actualDurationMs: 40_000
+            )
+        )
+        try await waitUntil { manager.sessionCount == 2 && !manager.saving }
+        let rows = await recordings.snapshot().map(\.row)
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertTrue(rows.allSatisfy { $0.groupId == groupId })
+        XCTAssertNil(rows[1].peakKg, "cadence-only continuation must have no force claim")
+
+        manager.logSessionNow()
+        try await waitUntil { await sessions.count() == 1 }
+        let loggedSessions = await sessions.snapshot()
+        let logged = try XCTUnwrap(loggedSessions.first)
+        XCTAssertEqual(logged.groupId, groupId)
+        XCTAssertEqual(logged.note, "2 recordings")
+    }
+
+    func testGuidedStaticDisconnectSalvageRemainsTerminalAndLogsOnce() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in }
+        )
+        let protocolValue = WatchForceProtocol(
+            id: "static-regression",
+            name: "Static regression",
+            holdS: 10,
+            reps: 1,
+            sets: 1,
+            restRepsS: 0,
+            restSetsS: 0
+        )
+
+        XCTAssertTrue(
+            manager.startMeasuredStaticHold(
+                protocolValue: protocolValue,
+                runId: UUID(),
+                set: 1,
+                rep: 1,
+                tag: "Half crimp",
+                side: "left"
+            )
+        )
+        feed(manager, [(5, 0), (25, 5_000_000), (20, 8_000_000)])
+        manager.handleTransportDisconnect(
+            error: NSError(domain: "BLE", code: -1),
+            wasIntentionalOverride: false
+        )
+
+        try await waitUntil { await sessions.count() == 1 && !manager.saving }
+        let recordingCount = await recordings.count()
+        XCTAssertEqual(recordingCount, 1)
+        XCTAssertNil(manager.sessionId, "terminal static salvage logs and clears the session")
+        let loggedSessions = await sessions.snapshot()
+        let logged = try XCTUnwrap(loggedSessions.first)
+        XCTAssertEqual(logged.note, "1 recording")
     }
 
     private func feed(_ manager: TindeqManager, _ samples: [(Float, UInt32)]) {

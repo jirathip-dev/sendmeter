@@ -36,7 +36,7 @@ describe("Reverse Action History presentation", () => {
   it("renders absent legacy values honestly and labels prescribed markers", () => {
     expect(reverseActionMetricItems(null, null).every((item) => item.value === "—")).toBe(true);
     expect(cadenceMarkerLabel({ tMs: 3_000, rep: 2, direction: "return" })).toBe(
-      "2 RETURN",
+      "2 ECCENTRIC",
     );
   });
 });

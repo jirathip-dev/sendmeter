@@ -15,6 +15,7 @@ struct RootView: View {
     @Environment(AuthManager.self) private var auth
     @Environment(TindeqManager.self) private var tindeq
     @Environment(WorkoutManager.self) private var workout
+    @Environment(GuidedForceRunner.self) private var guidedForceRunner
     @State private var path: [WatchDest] = []
     @State private var homePage: WatchHomePage = .status
 
@@ -23,7 +24,7 @@ struct RootView: View {
         if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .waiting {
             WaitingForPhoneView()
         } else if ScreenshotFixtures.enabled {
-            signedInContent
+            signedInSurface
         } else {
             switch auth.state {
             case .signedOut:
@@ -33,8 +34,17 @@ struct RootView: View {
             // HomeView shows the "waiting for iPhone" banner instead of throwing
             // the user back to a sign-in screen (#265's offline window).
             case .signedIn(_, _):
-                signedInContent
+                signedInSurface
             }
+        }
+    }
+
+    @ViewBuilder
+    private var signedInSurface: some View {
+        if guidedForceRunner.isActive {
+            GuidedForceRunnerView()
+        } else {
+            signedInContent
         }
     }
 

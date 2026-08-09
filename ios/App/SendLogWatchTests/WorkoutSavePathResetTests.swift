@@ -2,6 +2,18 @@ import Foundation
 import XCTest
 @testable import SendLogWatch_Watch_App
 
+private enum WorkoutSavePathAuthorizationFailure: Error {
+    case unavailable
+}
+
+private func makeAuthorizationFailingWorkoutManager() -> WorkoutManager {
+    let manager = WorkoutManager()
+    manager.authorizationRequestOverride = {
+        throw WorkoutSavePathAuthorizationFailure.unavailable
+    }
+    return manager
+}
+
 /// Review finding F1 (#476): once `WorkoutManager` is App-scoped, its
 /// save-outcome fields outlive any single workout. `start()` must decide the
 /// fate of each of them explicitly — clearing the per-save transients, but
@@ -37,7 +49,7 @@ final class WorkoutSavePathResetTests: XCTestCase {
     /// happened to reset it), but `justSaved` covering a running N+1 with a
     /// "Saved ✓" flash (no End control) was scenario C of the review.
     func testStartClearsPerSaveTransientsFromAPreviousWorkout() async {
-        let manager = WorkoutManager()
+        let manager = makeAuthorizationFailingWorkoutManager()
         manager.justSaved = true
         manager.stillQueued = true
         manager.ending = true
@@ -57,7 +69,7 @@ final class WorkoutSavePathResetTests: XCTestCase {
     /// discard it either — it's the only in-memory copy of that workout's
     /// unsaved data.
     func testStartSucceedsWithAStaleFailedBundlePresentAndPreservesIt() async {
-        let manager = WorkoutManager()
+        let manager = makeAuthorizationFailingWorkoutManager()
         let stale = sampleBundle()
         manager.failedBundle = stale
 

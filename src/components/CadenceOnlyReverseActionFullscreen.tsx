@@ -121,7 +121,7 @@ export default function CadenceOnlyReverseActionFullscreen({
   const instruction = position.finished
     ? "COMPLETE"
     : segment?.phase === "move"
-      ? segment.direction === "out" ? "OUT" : "RETURN"
+      ? segment.direction === "out" ? "CONCENTRIC" : "ECCENTRIC"
       : segment?.phase === "setRest" ? "SET REST" : "PREPARE";
 
   async function stop() {

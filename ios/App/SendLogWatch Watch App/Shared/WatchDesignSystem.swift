@@ -288,35 +288,52 @@ struct WatchPageControl: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
-                Button {
-                    onSelect(index)
-                } label: {
-                    Text(label)
-                        .font(.system(size: 10, weight: index == selection ? .bold : .medium, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .frame(
-                            maxWidth: .infinity,
-                            minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
-                            minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
-                        )
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(index == selection ? WatchPalette.textPrimary : WatchPalette.textTertiary)
-                .background {
-                    Capsule()
-                        .fill(index == selection ? WatchPalette.primary.opacity(0.72) : Color.white.opacity(0.06))
-                        .overlay(Capsule().stroke(Color.white.opacity(index == selection ? 0.24 : 0.1), lineWidth: 0.7))
-                }
-                .accessibilityLabel("Show \(label)")
-                .accessibilityValue(index == selection ? "Selected" : "Not selected")
-                .accessibilityAddTraits(index == selection ? .isSelected : [])
+            ForEach(labels.indices, id: \.self) { index in
+                WatchPageControlItem(
+                    label: labels[index],
+                    isSelected: index == selection,
+                    action: { onSelect(index) }
+                )
             }
         }
         .padding(3)
         .background(Capsule().fill(WatchPalette.card.opacity(0.9)))
         .frame(maxWidth: .infinity)
+    }
+}
+
+private struct WatchPageControlItem: View {
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    private var labelWeight: Font.Weight { isSelected ? .bold : .medium }
+    private var foreground: Color { isSelected ? WatchPalette.textPrimary : WatchPalette.textTertiary }
+    private var fill: Color { isSelected ? WatchPalette.primary.opacity(0.72) : Color.white.opacity(0.06) }
+    private var strokeOpacity: Double { isSelected ? 0.24 : 0.1 }
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 10, weight: labelWeight, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(
+                    minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
+                    maxWidth: .infinity,
+                    minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
+                )
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(foreground)
+        .background {
+            Capsule()
+                .fill(fill)
+                .overlay(Capsule().stroke(Color.white.opacity(strokeOpacity), lineWidth: 0.7))
+        }
+        .accessibilityLabel("Show \(label)")
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

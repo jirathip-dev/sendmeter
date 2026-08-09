@@ -67,6 +67,22 @@ export function isMeasuredRecording<T extends { source?: "dynamometer" | "manual
   return rec.source !== "manual" && rec.peakKg != null && rec.avgKg != null;
 }
 
+/**
+ * Capacity models are isometric-only. Resisted-movement traces remain useful
+ * for their own completion, mean-force, stability, accuracy and drift trends,
+ * but contraction mode changes the task enough that they must never become a
+ * Static PR, Hill/CF fit point, or left/right capacity comparison.
+ */
+export function isStaticCapacityEvidence<
+  T extends ZonedHold & { source?: "dynamometer" | "manual"; peakKg?: number | null; avgKg?: number | null },
+>(rec: T): rec is T & { peakKg: number; avgKg: number } {
+  return (
+    recordingCapacityModality(rec) === "static" &&
+    isEffortRecording(rec) &&
+    isMeasuredRecording(rec)
+  );
+}
+
 /// THE read path for "which zone is this hold" (#259). Prefers the zone the
 /// recording was performed under; falls back to inferring it from duration
 /// when there is none — which is every recording made before the column
@@ -174,14 +190,11 @@ export function effortPeakKg<
   side: TindeqSide | null,
   modality: ForceCapacityModality = "static",
 ): number | null {
-  if (tag === null) return null;
+  if (tag === null || modality !== "static") return null;
   const matches = recs.filter((r): r is T & { peakKg: number; avgKg: number } =>
     r.tag === tag &&
     (side === null || r.side === side) &&
-    recordingCapacityModality(r) === modality &&
-    isEffortRecording(r) &&
-    isMeasuredRecording(r) &&
-    (modality === "static" || r.capacityEvidence !== false),
+    isStaticCapacityEvidence(r),
   );
   return matches.length ? Math.max(...matches.map((r) => r.peakKg)) : null;
 }
@@ -205,23 +218,17 @@ export function curveCandidateRecordings<
   side: TindeqSide | null,
   modality: ForceCapacityModality = "static",
 ): (T & { peakKg: number; avgKg: number })[] {
-  if (tag === null) return [];
+  if (tag === null || modality !== "static") return [];
   return recs.filter((r): r is T & { peakKg: number; avgKg: number } =>
     r.tag === tag &&
     (side === null || r.side === side) &&
-    recordingCapacityModality(r) === modality &&
-    isEffortRecording(r) &&
-    isMeasuredRecording(r) &&
+    isStaticCapacityEvidence(r) &&
     // #486: excludes a whole-buffer salvage/recovery blob from the curve fit
     // (and, since pickCurveRecordings only ever sees this function's output,
     // from its "3 longest efforts regardless of load" guarantee too) without
     // touching PR/trend/asymmetry/balance, which stay on `isEffortRecording`
     // alone above.
-    !isRecoveredRecording(r) &&
-    // New ordinary Reverse Action prescriptions stamp false so they cannot
-    // improve the curve they were prescribed from. Null/undefined preserves
-    // existing measured Reverse Action rows as historical evidence.
-    (modality === "static" || r.capacityEvidence !== false),
+    !isRecoveredRecording(r),
   );
 }
 

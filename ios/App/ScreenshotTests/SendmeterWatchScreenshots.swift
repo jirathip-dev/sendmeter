@@ -2,6 +2,58 @@ import XCTest
 
 @MainActor
 final class SendmeterWatchScreenshots: XCTestCase {
+    /// The 40mm release gate: the primary setup path must fit before any
+    /// scrolling, including with an accessibility Dynamic Type category.
+    /// The same test is executed twice after setting the simulator text size;
+    /// each run retains a real screen capture in its xcresult bundle.
+    func testForceSetupPrimaryPathFitsWithoutScroll() throws {
+        try assertForceSetupPrimaryPathFits(
+            preferredContentSizeCategory: nil,
+            captureName: "40mm-force-setup-default"
+        )
+    }
+
+    func testForceSetupAccessibilityLargeTextFitsWithoutScroll() throws {
+        try assertForceSetupPrimaryPathFits(
+            preferredContentSizeCategory: "UICTContentSizeCategoryAccessibilityL",
+            captureName: "40mm-force-setup-accessibility-large"
+        )
+    }
+
+    private func assertForceSetupPrimaryPathFits(
+        preferredContentSizeCategory: String?,
+        captureName: String
+    ) throws {
+        let app = launchFixture(
+            "forceSetup",
+            preferredContentSizeCategory: preferredContentSizeCategory
+        )
+        openActions(app)
+        app.staticTexts["Force Gauge"].tap()
+
+        let exercise = app.buttons["force-exercise-picker"]
+        let side = app.buttons["force-side-picker"]
+        let protocolChange = app.buttons
+            .matching(NSPredicate(format: "label == %@", "Selected protocol, Movement Starter"))
+            .firstMatch
+        let start = app.buttons
+            .matching(NSPredicate(format: "label == %@", "Start selected protocol"))
+            .firstMatch
+
+        for control in [exercise, side, protocolChange, start] {
+            XCTAssertTrue(
+                control.waitForExistence(timeout: 10),
+                "40mm setup should expose \(control.identifier) before any scroll"
+            )
+            assertFullyVisible(control, in: app, fixture: "forceSetup")
+        }
+
+        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        capture.name = captureName
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     /// Keep the fixture matrix exercised without adding extra App Store
     /// screenshots. Every state still launches the production hierarchy and
     /// checks the semantic state affordance that the design system promises;
@@ -168,10 +220,19 @@ final class SendmeterWatchScreenshots: XCTestCase {
         snapshot("02-watch-actions")
     }
 
-    private func launchFixture(_ fixture: String) -> XCUIApplication {
+    private func launchFixture(
+        _ fixture: String,
+        preferredContentSizeCategory: String? = nil
+    ) -> XCUIApplication {
         let app = XCUIApplication()
         setupSnapshot(app, waitForAnimations: false)
         app.launchArguments.append(contentsOf: ["-sendmeter-fixture", fixture])
+        if let preferredContentSizeCategory {
+            app.launchArguments.append(contentsOf: [
+                "-UIPreferredContentSizeCategoryName",
+                preferredContentSizeCategory,
+            ])
+        }
         app.launch()
         return app
     }
