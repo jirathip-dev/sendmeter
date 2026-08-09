@@ -622,7 +622,7 @@ final class HealthSyncManager {
     private func captureSessionBinding() -> HealthSessionBinding? {
         sessionLock.lock()
         defer { sessionLock.unlock() }
-        captureSessionBindingLocked()
+        return captureSessionBindingLocked()
     }
 
     private func captureSessionBindingLocked() -> HealthSessionBinding? {
