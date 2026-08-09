@@ -193,17 +193,25 @@ final class AuthManager: NSObject {
         let outcome = SessionRelay.decode(context, now: now)
         switch outcome {
         case let .signedIn(session):
-            // Open the result gate before parsing the combined context: a
-            // cold watch may receive auth + readiness in one payload, and the
-            // readiness result must not be discarded while the auth state is
-            // being adopted.
+            // WatchConnectivity application context is latest-only: a direct
+            // A → B signedIn relay may skip the intermediate signedOut event.
+            // Compare the persisted account before consuming any combined
+            // readiness result, so A's observable/widget state and requests
+            // are fenced before B opens the gate.
+            if WatchSessionStore.shared.userId != session.userId {
+                ReadinessManager.current?.resetForAccountTransition()
+            }
+            WatchSessionStore.shared.store(session)
+            // Open the result gate only after the current account is durable.
+            // This preserves the watch-before-health race: a B result can be
+            // accepted as soon as it arrives, while a late A result fails the
+            // account stamp gate.
             ReadinessManager.current?.activateForSignedInSession()
             ReadinessManager.current?.receive(context)
             WidgetBridge.activate()
             lastRelayAt = Date()
             lastRejection = nil
             queuedRequest = false
-            WatchSessionStore.shared.store(session)
             syncTimeout?.cancel()
             syncing = false
             state = SessionRelay.state(for: session, now: now)

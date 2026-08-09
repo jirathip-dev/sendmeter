@@ -722,6 +722,7 @@ final class HealthSyncManager {
                     completedAt: now,
                     status: .failed,
                     freshness: .offline,
+                    accountUserId: binding?.identity.userId,
                     errorCode: "unavailable",
                     errorMessage: "The phone readiness service is unavailable."
                 )
@@ -813,6 +814,7 @@ final class HealthSyncManager {
         binding: HealthSessionBinding?
     ) async -> ReadinessRefreshResult {
         let startedAt = Date().timeIntervalSince1970
+        let accountUserId = binding?.identity.userId
         do {
             // A request task can be scheduled after clearSession() has
             // cancelled the old task, before Swift observes cancellation.
@@ -832,7 +834,8 @@ final class HealthSyncManager {
                 startedAt: startedAt,
                 status: .success,
                 freshness: outcome.freshness,
-                snapshot: outcome.snapshot
+                snapshot: outcome.snapshot,
+                accountUserId: accountUserId
             )
         } catch is CancellationError {
             return ReadinessRefreshResult(
@@ -840,6 +843,7 @@ final class HealthSyncManager {
                 startedAt: startedAt,
                 status: .cancelled,
                 freshness: .offline,
+                accountUserId: accountUserId,
                 errorCode: "cancelled",
                 errorMessage: "The readiness refresh was cancelled."
             )
@@ -849,6 +853,7 @@ final class HealthSyncManager {
                 startedAt: startedAt,
                 status: .authRequired,
                 freshness: .offline,
+                accountUserId: accountUserId,
                 errorCode: "auth-required",
                 errorMessage: "Open Sendmeter on your iPhone to refresh Health."
             )
@@ -858,6 +863,7 @@ final class HealthSyncManager {
                 startedAt: startedAt,
                 status: .failed,
                 freshness: .offline,
+                accountUserId: accountUserId,
                 errorCode: "sync-failed",
                 errorMessage: "The iPhone could not refresh readiness."
             )

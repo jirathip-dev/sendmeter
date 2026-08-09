@@ -47,8 +47,16 @@ final class ReadinessManager {
     private var coalescer = ReadinessRefreshCoalescer()
     private var activeRequest: ReadinessRefreshRequest?
     private var activeRequestId: String?
+    /// Legacy unstamped results may only match a request created for the
+    /// currently accepted account; this prevents a same-ID old reply from
+    /// crossing the direct A → B transition in a forced interleaving test.
+    private var activeRequestAccountUserId: UUID?
     private var queuedFallbackRequestId: String?
     private var lastAppliedCompletedAt: TimeInterval?
+    /// Completion timestamps are scoped to the account that produced them;
+    /// the timestamp fence itself survives sign-out, but a new account's
+    /// stamped result must not be compared against the old account's clock.
+    private var lastAppliedAccountUserId: UUID?
     private var timeoutTask: Task<Void, Never>?
     private var lastSentAt: TimeInterval?
     private var ignoredRequestIds = Set<String>()
@@ -122,11 +130,15 @@ final class ReadinessManager {
               ReadinessResultGate.shouldApply(
                   result,
                   activeRequestId: activeRequestId,
-                  lastAppliedCompletedAt: lastAppliedCompletedAt
+                  lastAppliedCompletedAt: lastAppliedCompletedAt,
+                  currentAccountUserId: WatchSessionStore.shared.userId,
+                  activeRequestAccountUserId: activeRequestAccountUserId,
+                  lastAppliedAccountUserId: lastAppliedAccountUserId
               )
         else { return }
 
         lastAppliedCompletedAt = max(lastAppliedCompletedAt ?? 0, result.completedAt)
+        lastAppliedAccountUserId = WatchSessionStore.shared.userId
         lastResultAt = Date(timeIntervalSince1970: result.completedAt)
         timeoutTask?.cancel()
         timeoutTask = nil
@@ -169,6 +181,7 @@ final class ReadinessManager {
 
         activeRequestId = nil
         activeRequest = nil
+        activeRequestAccountUserId = nil
         if coalescer.isRunning {
             switch coalescer.complete() {
             case .idle:
@@ -182,6 +195,15 @@ final class ReadinessManager {
         }
     }
 
+    /// A signedIn relay can move directly from account A to B: application
+    /// context is latest-only, so the watch may never observe an intermediate
+    /// signedOut event. AuthManager calls this before storing B or opening the
+    /// result gate, fencing every A request/result and clearing its observable
+    /// and widget state before B can publish.
+    func resetForAccountTransition() {
+        signOutLocally()
+    }
+
     /// Sign-out invalidates an in-flight request and quarantines its late
     /// result. The watch keeps no bearer refresh credential and does not ask
     /// the old request to write anything after the account is gone.
@@ -193,6 +215,7 @@ final class ReadinessManager {
         activeRequestId = nil
         activeRequest = nil
         queuedFallbackRequestId = nil
+        activeRequestAccountUserId = nil
         coalescer.cancel()
         acceptsResults = false
         snapshot = WidgetSnapshot.empty
@@ -206,6 +229,9 @@ final class ReadinessManager {
             lastAppliedCompletedAt ?? 0,
             Date().timeIntervalSince1970
         )
+        // Keep lastAppliedAccountUserId as the previous account so that the
+        // next account bypasses only the previous account's timestamp fence;
+        // an old same-account completion after sign-out still remains stale.
         syncState = .authRequired
         errorMsg = nil
         // Keep this explicit at the coordinator boundary: callers can invoke
@@ -284,6 +310,7 @@ final class ReadinessManager {
         let request = ReadinessRefreshRequest(reason: reason)
         activeRequest = request
         activeRequestId = request.requestId
+        activeRequestAccountUserId = WatchSessionStore.shared.userId
         syncState = .syncing
         errorMsg = nil
         send(request)

@@ -39,13 +39,20 @@ public struct ReadinessApplicationContext {
         if sanitized["event"] as? String == "signedIn" {
             isSignedOut = false
             authPayload = Self.authOnly(sanitized)
-            readinessPayload = Self.readinessOnly(sanitized)
+            let candidate = Self.readinessOnly(sanitized)
+            readinessPayload = Self.resultBelongsToAuth(candidate, authPayload: authPayload)
+                ? candidate
+                : nil
             return mergedPayload
         }
 
         guard !isSignedOut else { return signedOutPayload }
         if sanitized["kind"] as? String == ReadinessRefreshResult.kind {
-            readinessPayload = Self.readinessOnly(sanitized)
+            let candidate = Self.readinessOnly(sanitized)
+            guard Self.resultBelongsToAuth(candidate, authPayload: authPayload) else {
+                return mergedPayload
+            }
+            readinessPayload = candidate
         }
         return mergedPayload
     }
@@ -64,16 +71,31 @@ public struct ReadinessApplicationContext {
         }
 
         if sanitized["event"] as? String == "signedIn" {
-            if let oldUserId = authPayload?["userId"] as? String,
-               let newUserId = sanitized["userId"] as? String,
-               oldUserId != newUserId {
+            let oldUserId = authPayload?["userId"] as? String
+            let newUserId = sanitized["userId"] as? String
+            if oldUserId != newUserId {
                 readinessPayload = nil
             }
             isSignedOut = false
             authPayload = Self.authOnly(sanitized)
+            if let candidate = Self.readinessOnly(sanitized) {
+                readinessPayload = Self.resultBelongsToAuth(
+                    candidate,
+                    authPayload: authPayload
+                ) ? candidate : nil
+            } else if let current = readinessPayload,
+                      !Self.resultBelongsToAuth(current, authPayload: authPayload) {
+                // A same-user auth relay without a result must not preserve a
+                // legacy/unscoped payload left by an older phone build.
+                readinessPayload = nil
+            }
         } else if sanitized["kind"] as? String == ReadinessRefreshResult.kind {
             guard !isSignedOut else { return signedOutPayload }
-            readinessPayload = Self.readinessOnly(sanitized)
+            let candidate = Self.readinessOnly(sanitized)
+            guard Self.resultBelongsToAuth(candidate, authPayload: authPayload) else {
+                return mergedPayload
+            }
+            readinessPayload = candidate
         }
 
         return mergedPayload
@@ -125,11 +147,31 @@ public struct ReadinessApplicationContext {
         }
     }
 
+    /// A phone result stamped for another account must not enter the durable
+    /// merged context, even if a stale completion somehow reaches the bridge
+    /// after a direct A → B signedIn relay. An unstamped legacy result is not
+    /// durable either: this state machine has no active-request identity, so
+    /// only the watch's direct-reply gate may adopt one for an explicit
+    /// current-account request.
+    private static func resultBelongsToAuth(
+        _ result: [String: Any]?,
+        authPayload: [String: Any]?
+    ) -> Bool {
+        guard let result,
+              let accountUserId = result["accountUserId"] as? String else { return false }
+        guard let resultUserId = UUID(uuidString: accountUserId),
+              let authUserId = authPayload?["userId"] as? String,
+              let authUserId = UUID(uuidString: authUserId) else {
+            return false
+        }
+        return resultUserId == authUserId
+    }
+
     private enum ReadinessRefreshResultKeys {
         static let all: Set<String> = [
             "kind", "schemaVersion", "requestId", "reason", "sentAt",
             "startedAt", "completedAt", "status", "freshness", "snapshot",
-            "errorCode", "errorMessage",
+            "accountUserId", "errorCode", "errorMessage",
         ]
     }
 }

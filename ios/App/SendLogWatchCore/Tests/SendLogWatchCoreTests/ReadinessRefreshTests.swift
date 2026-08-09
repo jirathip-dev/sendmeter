@@ -110,12 +110,118 @@ final class ReadinessRefreshTests: XCTestCase {
         XCTAssertEqual(decoded, result)
     }
 
+    func testResultCarriesAccountStampAndRejectsCrossAccountOrLegacyLateResults() {
+        let accountA = UUID(uuidString: "00000000-0000-0000-0000-000000000021")!
+        let accountB = UUID(uuidString: "00000000-0000-0000-0000-000000000022")!
+        let request = ReadinessRefreshRequest(
+            requestId: "account-stamped",
+            reason: .foreground,
+            sentAt: 300
+        )
+        let stamped = ReadinessRefreshResult(
+            request: request,
+            startedAt: 301,
+            completedAt: 302,
+            status: .success,
+            freshness: .fresh,
+            accountUserId: accountA
+        )
+        XCTAssertEqual(
+            ReadinessRefreshResult(message: stamped.message())?.accountUserId,
+            accountA
+        )
+        XCTAssertNotNil(
+            try? PropertyListSerialization.data(
+                fromPropertyList: stamped.message(),
+                format: .binary,
+                options: 0
+            )
+        )
+        XCTAssertTrue(
+            ReadinessResultGate.shouldApply(
+                stamped,
+                activeRequestId: nil,
+                lastAppliedCompletedAt: nil,
+                currentAccountUserId: accountA,
+                activeRequestAccountUserId: nil
+            )
+        )
+        XCTAssertFalse(
+            ReadinessResultGate.shouldApply(
+                stamped,
+                activeRequestId: nil,
+                lastAppliedCompletedAt: nil,
+                currentAccountUserId: accountB,
+                activeRequestAccountUserId: nil
+            )
+        )
+
+        // The completion fence is account-scoped: a B result remains valid
+        // even when A's sign-out fence is newer than B's cached completion.
+        let olderButCurrentB = ReadinessRefreshResult(
+            request: request,
+            startedAt: 10,
+            completedAt: 11,
+            status: .success,
+            freshness: .cached,
+            accountUserId: accountB
+        )
+        XCTAssertTrue(
+            ReadinessResultGate.shouldApply(
+                olderButCurrentB,
+                activeRequestId: nil,
+                lastAppliedCompletedAt: 999,
+                currentAccountUserId: accountB,
+                activeRequestAccountUserId: nil,
+                lastAppliedAccountUserId: accountA
+            )
+        )
+        XCTAssertFalse(
+            ReadinessResultGate.shouldApply(
+                olderButCurrentB,
+                activeRequestId: "newer-b-request",
+                lastAppliedCompletedAt: 999,
+                currentAccountUserId: accountB,
+                activeRequestAccountUserId: accountB,
+                lastAppliedAccountUserId: accountA
+            ),
+            "an older stamped B context result must not supersede active B request"
+        )
+
+        let legacy = ReadinessRefreshResult(
+            request: request,
+            startedAt: 303,
+            completedAt: 304,
+            status: .success,
+            freshness: .cached
+        )
+        XCTAssertTrue(
+            ReadinessResultGate.shouldApply(
+                legacy,
+                activeRequestId: request.requestId,
+                lastAppliedCompletedAt: nil,
+                currentAccountUserId: accountB,
+                activeRequestAccountUserId: accountB,
+                lastAppliedAccountUserId: accountA
+            )
+        )
+        XCTAssertFalse(
+            ReadinessResultGate.shouldApply(
+                legacy,
+                activeRequestId: nil,
+                lastAppliedCompletedAt: nil,
+                currentAccountUserId: accountB
+            )
+        )
+    }
+
     func testReadinessResultMergesIntoSignedInApplicationContext() {
         var context = ReadinessApplicationContext()
+        let account = "00000000-0000-0000-0000-0000000000c1"
         let signedIn: [String: Any] = [
             "event": "signedIn",
             "accessToken": "access-token-1",
-            "userId": "user-1",
+            "userId": account,
             "expiresAt": 900.0,
         ]
         XCTAssertEqual(context.update(signedIn)["accessToken"] as? String, "access-token-1")
@@ -127,13 +233,14 @@ final class ReadinessRefreshTests: XCTestCase {
             completedAt: 502,
             status: .success,
             freshness: .fresh,
-            snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 82, zone: "maintain")
+            snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 82, zone: "maintain"),
+            accountUserId: UUID(uuidString: account)
         )
         let merged = context.update(readiness.message())
 
         XCTAssertEqual(merged["event"] as? String, "signedIn")
         XCTAssertEqual(merged["accessToken"] as? String, "access-token-1")
-        XCTAssertEqual(merged["userId"] as? String, "user-1")
+        XCTAssertEqual(merged["userId"] as? String, account)
         XCTAssertEqual(merged["kind"] as? String, ReadinessRefreshResult.kind)
         XCTAssertEqual((merged["snapshot"] as? [String: Any])?["readiness"] as? Int, 82)
         XCTAssertNotNil(
@@ -148,14 +255,128 @@ final class ReadinessRefreshTests: XCTestCase {
         let refreshed = context.update([
             "event": "signedIn",
             "accessToken": "access-token-2",
-            "userId": "user-1",
+            "userId": account,
             "expiresAt": 1_000.0,
         ])
         XCTAssertEqual(refreshed["accessToken"] as? String, "access-token-2")
         XCTAssertEqual(refreshed["kind"] as? String, ReadinessRefreshResult.kind)
     }
 
+    func testDirectSignedInAccountSwitchClearsCachedReadinessWithoutSignedOut() {
+        var context = ReadinessApplicationContext()
+        let accountA = "00000000-0000-0000-0000-0000000000a1"
+        let accountB = "00000000-0000-0000-0000-0000000000b2"
+        _ = context.update([
+            "event": "signedIn",
+            "accessToken": "account-a-token",
+            "userId": accountA,
+            "expiresAt": 1_000.0,
+        ])
+        let requestA = ReadinessRefreshRequest(
+            requestId: "account-a-result",
+            reason: .foreground,
+            sentAt: 1_001
+        )
+        _ = context.update(
+            ReadinessRefreshResult(
+                request: requestA,
+                startedAt: 1_002,
+                completedAt: 1_003,
+                status: .success,
+                freshness: .fresh,
+                snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 91, zone: "push"),
+                accountUserId: UUID(uuidString: accountA)
+            ).message()
+        )
+
+        let switched = context.update([
+            "event": "signedIn",
+            "accessToken": "account-b-token",
+            "userId": accountB,
+            "expiresAt": 2_000.0,
+        ])
+        XCTAssertEqual(switched["event"] as? String, "signedIn")
+        XCTAssertEqual(switched["userId"] as? String, accountB)
+        XCTAssertNil(switched["kind"])
+        XCTAssertNil(switched["snapshot"])
+        XCTAssertFalse(context.isSignedOut)
+
+        // A stale stamped A result cannot re-enter the durable merged context
+        // after B is current, while a B result remains publishable.
+        let lateA = ReadinessRefreshResult(
+            request: ReadinessRefreshRequest(
+                requestId: "late-a",
+                reason: .foreground,
+                sentAt: 2_001
+            ),
+            startedAt: 2_002,
+            completedAt: 2_003,
+            status: .success,
+            freshness: .fresh,
+            snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 12, zone: "recover"),
+            accountUserId: UUID(uuidString: accountA)
+        )
+        XCTAssertNil(context.update(lateA.message())["kind"])
+        XCTAssertNil(context.reconcile(lateA.message())["kind"])
+
+        let currentB = ReadinessRefreshResult(
+            request: ReadinessRefreshRequest(
+                requestId: "current-b",
+                reason: .foreground,
+                sentAt: 2_004
+            ),
+            startedAt: 2_005,
+            completedAt: 2_006,
+            status: .success,
+            freshness: .fresh,
+            snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 78, zone: "maintain"),
+            accountUserId: UUID(uuidString: accountB)
+        )
+        let acceptedB = context.update(currentB.message())
+        XCTAssertEqual(acceptedB["kind"] as? String, ReadinessRefreshResult.kind)
+        XCTAssertEqual((acceptedB["snapshot"] as? [String: Any])?["readiness"] as? Int, 78)
+        let reconciledB = context.reconcile(currentB.message())
+        XCTAssertEqual(reconciledB["kind"] as? String, ReadinessRefreshResult.kind)
+    }
+
+    func testLegacyResultIsOnlyAdoptableByAnExplicitActiveRequest() {
+        var context = ReadinessApplicationContext()
+        _ = context.update([
+            "event": "signedIn",
+            "accessToken": "current-token",
+            "userId": "00000000-0000-0000-0000-0000000000f1",
+            "expiresAt": 2_000.0,
+        ])
+        let legacy = ReadinessRefreshResult(
+            request: ReadinessRefreshRequest(
+                requestId: "legacy-context",
+                reason: .foreground,
+                sentAt: 1_000
+            ),
+            startedAt: 1_001,
+            completedAt: 1_002,
+            status: .success,
+            freshness: .cached,
+            snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 42, zone: "recover")
+        )
+
+        XCTAssertNil(context.update(legacy.message())["kind"])
+        XCTAssertNil(context.reconcile(legacy.message())["kind"])
+
+        let account = UUID(uuidString: "00000000-0000-0000-0000-0000000000f1")!
+        XCTAssertTrue(
+            ReadinessResultGate.shouldApply(
+                legacy,
+                activeRequestId: legacy.requestId,
+                lastAppliedCompletedAt: nil,
+                currentAccountUserId: account,
+                activeRequestAccountUserId: account
+            )
+        )
+    }
+
     func testColdStartReconcilesCombinedAuthAndReadinessBeforePublication() {
+        let account = "00000000-0000-0000-0000-0000000000d1"
         let request = ReadinessRefreshRequest(requestId: "cold-1", reason: .foreground, sentAt: 700)
         let result = ReadinessRefreshResult(
             request: request,
@@ -163,12 +384,13 @@ final class ReadinessRefreshTests: XCTestCase {
             completedAt: 702,
             status: .success,
             freshness: .fresh,
-            snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 77, zone: "push")
+            snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 77, zone: "push"),
+            accountUserId: UUID(uuidString: account)
         )
         var persisted: [String: Any] = [
             "event": "signedIn",
             "accessToken": "persisted-access-token",
-            "userId": "persisted-user",
+            "userId": account,
             "expiresAt": 1_500.0,
             "relayId": "old-relay",
             "relayedAt": 703.0,
@@ -183,7 +405,7 @@ final class ReadinessRefreshTests: XCTestCase {
         XCTAssertFalse(context.isSignedOut)
         XCTAssertEqual(cold["event"] as? String, "signedIn")
         XCTAssertEqual(cold["accessToken"] as? String, "persisted-access-token")
-        XCTAssertEqual(cold["userId"] as? String, "persisted-user")
+        XCTAssertEqual(cold["userId"] as? String, account)
         XCTAssertEqual(cold["kind"] as? String, ReadinessRefreshResult.kind)
         XCTAssertNil(cold["relayId"])
         XCTAssertNil(cold["relayedAt"])
@@ -206,7 +428,8 @@ final class ReadinessRefreshTests: XCTestCase {
                 completedAt: 706,
                 status: .success,
                 freshness: .cached,
-                snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 76, zone: "maintain")
+                snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 76, zone: "maintain"),
+                accountUserId: UUID(uuidString: account)
             ).message()
         )
         XCTAssertEqual(followUp["event"] as? String, "signedIn")
@@ -216,10 +439,11 @@ final class ReadinessRefreshTests: XCTestCase {
 
     func testSignedOutApplicationContextClearsAuthAndReadinessBeforeNextAccount() {
         var context = ReadinessApplicationContext()
+        let oldAccount = "00000000-0000-0000-0000-0000000000e1"
         _ = context.update([
             "event": "signedIn",
             "accessToken": "old-access-token",
-            "userId": "old-user",
+            "userId": oldAccount,
             "expiresAt": 900.0,
         ])
         let request = ReadinessRefreshRequest(requestId: "merge-2", reason: .foreground, sentAt: 600)
@@ -230,7 +454,8 @@ final class ReadinessRefreshTests: XCTestCase {
                 completedAt: 602,
                 status: .success,
                 freshness: .fresh,
-                snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 61, zone: "recover")
+                snapshot: ReadinessSnapshot(date: "2026-08-09", readiness: 61, zone: "recover"),
+                accountUserId: UUID(uuidString: oldAccount)
             ).message()
         )
 

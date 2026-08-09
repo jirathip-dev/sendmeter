@@ -142,6 +142,29 @@ describe("watch-triggered readiness architecture (#520)", () => {
       setSession.indexOf("HealthSessionStore.shared.store(accessToken)"),
     );
     expect(setSession).toMatch(/clearRequestState\(\)/);
+    expect(health).toMatch(/accountUserId: accountUserId/);
+    expect(health).toMatch(/accountUserId: binding\?\.identity\.userId/);
+  });
+
+  it("binds watch results to the accepted account before timestamp coalescing", () => {
+    const contract = source(
+      join(
+        REPO,
+        "ios",
+        "App",
+        "SendLogWatchCore",
+        "Sources",
+        "SendLogWatchCore",
+        "ReadinessRefresh.swift",
+      ),
+    );
+    const manager = source(READINESS_MANAGER);
+    expect(contract).toMatch(/accountUserId/);
+    expect(contract).toMatch(/activeRequestAccountUserId/);
+    expect(contract).toMatch(/activeRequestId, activeRequestId != result.requestId/);
+    expect(manager).toMatch(/currentAccountUserId: WatchSessionStore\.shared\.userId/);
+    expect(manager).toMatch(/activeRequestAccountUserId: activeRequestAccountUserId/);
+    expect(manager).toMatch(/lastAppliedAccountUserId: lastAppliedAccountUserId/);
   });
 
   it("never re-enters sessionLock through the account-ownership helper", () => {
@@ -182,6 +205,22 @@ describe("watch-triggered readiness architecture (#520)", () => {
       apply.indexOf("activateForSignedInSession()"),
     );
     expect(apply).toMatch(/if reason == \.notARelay/);
+  });
+
+  it("fences A before opening B readiness on a direct signedIn switch", () => {
+    const auth = source(AUTH_MANAGER);
+    const apply = auth.match(/private func apply\(_ context: \[String: Any\]\)[\s\S]*?\n {4}}/)?.[0] ?? "";
+    const priorUser = apply.indexOf("WatchSessionStore.shared.userId");
+    const reset = apply.indexOf("resetForAccountTransition()");
+    const store = apply.indexOf("WatchSessionStore.shared.store(session)");
+    const activate = apply.indexOf("activateForSignedInSession()");
+    const receive = apply.indexOf("ReadinessManager.current?.receive(context)");
+    expect(priorUser).toBeGreaterThanOrEqual(0);
+    expect(reset).toBeGreaterThan(priorUser);
+    expect(store).toBeGreaterThan(reset);
+    expect(activate).toBeGreaterThan(store);
+    expect(receive).toBeGreaterThan(activate);
+    expect(source(READINESS_MANAGER)).toMatch(/func resetForAccountTransition\(\)/);
   });
 
   it("flushes a durable, fresh-stamped signedOut context after WC activation", () => {

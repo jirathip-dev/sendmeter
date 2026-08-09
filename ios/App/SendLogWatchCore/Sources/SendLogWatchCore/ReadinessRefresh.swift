@@ -181,6 +181,10 @@ public struct ReadinessRefreshResult: Codable, Equatable, Sendable {
     public let status: ReadinessRefreshStatus
     public let freshness: ReadinessFreshness
     public let snapshot: ReadinessSnapshot?
+    /// UUID of the account whose immutable phone-side bearer produced this
+    /// result. Nil is retained only for legacy phone replies; current phone
+    /// executions always stamp it from their captured session binding.
+    public let accountUserId: UUID?
     /// Stable, actionable category (for example `auth-required`), never a
     /// token, raw HealthKit value, or server response body.
     public let errorCode: String?
@@ -193,6 +197,7 @@ public struct ReadinessRefreshResult: Codable, Equatable, Sendable {
         status: ReadinessRefreshStatus,
         freshness: ReadinessFreshness,
         snapshot: ReadinessSnapshot? = nil,
+        accountUserId: UUID? = nil,
         errorCode: String? = nil,
         errorMessage: String? = nil,
         schemaVersion: Int = currentSchemaVersion
@@ -206,6 +211,7 @@ public struct ReadinessRefreshResult: Codable, Equatable, Sendable {
         self.status = status
         self.freshness = freshness
         self.snapshot = snapshot
+        self.accountUserId = accountUserId
         self.errorCode = errorCode
         self.errorMessage = errorMessage
     }
@@ -224,6 +230,9 @@ public struct ReadinessRefreshResult: Codable, Equatable, Sendable {
             "status": status.rawValue,
             "freshness": freshness.rawValue,
         ]
+        if let accountUserId {
+            out["accountUserId"] = accountUserId.uuidString
+        }
         if let snapshot {
             var snapshotMessage: [String: Any] = ["date": snapshot.date]
             if let readiness = snapshot.readiness {
@@ -261,6 +270,15 @@ public struct ReadinessRefreshResult: Codable, Equatable, Sendable {
             ?? startedAt
         let freshness = (message["freshness"] as? String)
             .flatMap(ReadinessFreshness.init(rawValue:)) ?? .unknown
+        let rawAccountUserId = message["accountUserId"] as? String
+        if message["accountUserId"] != nil && rawAccountUserId == nil {
+            return nil
+        }
+        if let rawAccountUserId,
+           UUID(uuidString: rawAccountUserId) == nil {
+            return nil
+        }
+        let accountUserId = rawAccountUserId.flatMap(UUID.init(uuidString:))
 
         var snapshot: ReadinessSnapshot?
         if let raw = message["snapshot"] as? [String: Any],
@@ -287,6 +305,7 @@ public struct ReadinessRefreshResult: Codable, Equatable, Sendable {
         self.status = status
         self.freshness = freshness
         self.snapshot = snapshot
+        self.accountUserId = accountUserId
         self.errorCode = message["errorCode"] as? String
         self.errorMessage = message["errorMessage"] as? String
     }
@@ -308,6 +327,60 @@ public enum ReadinessResultGate {
             return false
         }
         return true
+    }
+
+    /// Account-aware result gate. A stamped result must belong to the
+    /// currently accepted watch account. A legacy unstamped result is safe
+    /// only while the exact request it names is still active; once a request
+    /// has completed, or an account transition has cleared it, an old result
+    /// cannot be adopted by the replacement account.
+    ///
+    /// `lastAppliedAccountUserId` scopes the completion timestamp to the
+    /// account that produced it. A completion fence is still installed when
+    /// account A is cleared, but a fresh stamped B result must not be rejected
+    /// merely because its timestamp predates the local fence (for example,
+    /// when B's latest application context was produced just before the
+    /// direct auth relay reached the watch).
+    public static func shouldApply(
+        _ result: ReadinessRefreshResult,
+        activeRequestId: String?,
+        lastAppliedCompletedAt: TimeInterval?,
+        currentAccountUserId: UUID?,
+        activeRequestAccountUserId: UUID? = nil,
+        lastAppliedAccountUserId: UUID? = nil
+    ) -> Bool {
+        guard let currentAccountUserId else { return false }
+        // A newer in-flight request always owns the result slot, including
+        // during an account transition. The cross-account timestamp bypass
+        // below must never let an older stamped application-context result
+        // supersede that active request.
+        if let activeRequestId, activeRequestId != result.requestId {
+            return false
+        }
+        if let accountUserId = result.accountUserId {
+            guard accountUserId == currentAccountUserId else { return false }
+        } else {
+            // An unstamped legacy reply can only be tied to the explicitly
+            // active request. The request ID is reset during a transition,
+            // so this remains safe even when the old completion timestamp is
+            // not comparable across accounts.
+            guard activeRequestId == result.requestId,
+                  activeRequestAccountUserId == currentAccountUserId else {
+                return false
+            }
+        }
+
+        // The timestamp is meaningful only within one account. A different
+        // account (or a first account after a durable sign-out) must be able
+        // to accept its own stamped/captured result despite the old fence.
+        guard lastAppliedAccountUserId == currentAccountUserId else {
+            return true
+        }
+        return shouldApply(
+            result,
+            activeRequestId: activeRequestId,
+            lastAppliedCompletedAt: lastAppliedCompletedAt
+        )
     }
 }
 
