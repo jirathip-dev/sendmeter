@@ -464,8 +464,9 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         try await waitUntil { await recordings.count() == 2 && manager.saving }
         await recordings.releaseAll()
 
-        try await waitUntil { manager.sessionCount == 2 && !manager.saving }
-        try await waitUntil { await sessions.count() == 1 }
+        try await waitUntil {
+            await sessions.count() == 1 && manager.sessionCount == 0 && !manager.saving
+        }
         let rows = await recordings.snapshot().map(\.row)
         XCTAssertEqual(rows.count, 2, "finish/start boundary must not drop or duplicate a row")
         XCTAssertEqual(Set(rows.compactMap(\.groupId)).count, 1)
@@ -520,8 +521,9 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         feed(manager, [(12, 0), (25, 100_000)])
         runner.advance(to: startedAt.addingTimeInterval(protocolValue.durationS))
 
-        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
-        try await waitUntil { await sessions.count() == 1 }
+        try await waitUntil {
+            await sessions.count() == 1 && manager.sessionCount == 0 && !manager.saving
+        }
         let rows = await recordings.snapshot().map(\.row)
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows[0].plannedDurationMs, 1_740_000)
