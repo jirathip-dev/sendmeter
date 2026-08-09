@@ -1,9 +1,21 @@
 import { describe, it, expect } from "vitest";
 import type { LiveForceMessage } from "sendlog-auth-bridge";
-import { STALE_MS, SPARK_WINDOW_MS, isFresh, mergeForceBeat, type LiveForce } from "./liveForceMirror";
+import {
+  STALE_MS,
+  SPARK_WINDOW_MS,
+  isFresh,
+  emptyLiveForceMirrorState,
+  mergeForceBeat,
+  reduceForceBeat,
+  type LiveForce,
+} from "./liveForceMirror";
 
 function msg(overrides: Partial<LiveForceMessage> = {}): LiveForceMessage {
   return {
+    run_id: "force-run-1",
+    sequence: 1,
+    event: "telemetry",
+    terminal: false,
     status: "measuring",
     kg: 20,
     peak_kg: 25,
@@ -24,6 +36,10 @@ describe("mergeForceBeat", () => {
 
   it("returns null on an idle beat regardless of the previous beat", () => {
     const prev: LiveForce = {
+      runId: "force-run-1",
+      sequence: 1,
+      event: "telemetry",
+      terminal: false,
       status: "measuring",
       kg: 10,
       peakKg: 10,
@@ -58,7 +74,7 @@ describe("mergeForceBeat", () => {
     // plus one new point.
     const second = mergeForceBeat(
       first,
-      msg({ updated_at: 101, elapsed_ms: 3000, spark: [[1000, 99], [2000, 20]] }),
+      msg({ sequence: 2, updated_at: 101, elapsed_ms: 3000, spark: [[1000, 99], [2000, 20]] }),
     );
     // originMs = 101_000 - 3000 = 98_000; resent point at atMs 99_000 (kg 99
     // overwrites 15), new point at atMs 100_000 (kg 20 overwrites 18).
@@ -77,6 +93,7 @@ describe("mergeForceBeat", () => {
     const second = mergeForceBeat(
       first,
       msg({
+        sequence: 2,
         updated_at: (SPARK_WINDOW_MS + 5000) / 1000,
         elapsed_ms: 0,
         spark: [],
@@ -93,7 +110,7 @@ describe("mergeForceBeat", () => {
     );
     const second = mergeForceBeat(
       first,
-      msg({ updated_at: SPARK_WINDOW_MS / 1000, elapsed_ms: 0, spark: [] }),
+      msg({ sequence: 2, updated_at: SPARK_WINDOW_MS / 1000, elapsed_ms: 0, spark: [] }),
     );
     expect(second?.spark).toEqual([{ atMs: 0, kg: 10 }]);
   });
@@ -111,7 +128,7 @@ describe("mergeForceBeat", () => {
       null,
       msg({ updated_at: 10, elapsed_ms: 0, spark: [[0, 10]] }),
     );
-    const withoutSpark = msg({ updated_at: 11, elapsed_ms: 0, spark: undefined });
+    const withoutSpark = msg({ sequence: 2, updated_at: 11, elapsed_ms: 0, spark: undefined });
     const second = mergeForceBeat(first, withoutSpark);
     expect(second?.spark).toEqual([{ atMs: 10_000, kg: 10 }]);
   });
@@ -128,6 +145,10 @@ describe("mergeForceBeat", () => {
 
 describe("isFresh", () => {
   const beat: LiveForce = {
+    runId: "force-run-1",
+    sequence: 1,
+    event: "telemetry",
+    terminal: false,
     status: "measuring",
     kg: 10,
     peakKg: 10,
@@ -145,5 +166,103 @@ describe("isFresh", () => {
 
   it("is stale just past the staleness window", () => {
     expect(isFresh(beat, 10_000 + STALE_MS + 1)).toBe(false);
+  });
+});
+
+describe("reduceForceBeat", () => {
+  it("rejects duplicate and out-of-order telemetry", () => {
+    const first = mergeForceBeat(null, msg({ sequence: 4, updated_at: 100 }));
+    expect(first).not.toBeNull();
+    const duplicate = mergeForceBeat(first, msg({ sequence: 4, updated_at: 101, kg: 99 }));
+    expect(duplicate).toBe(first);
+    const older = mergeForceBeat(first, msg({ sequence: 3, updated_at: 102, kg: 98 }));
+    expect(older).toBe(first);
+  });
+
+  it("keeps a terminal cursor so a late measuring beat cannot reopen the mirror", () => {
+    const first = mergeForceBeat(null, msg({ sequence: 1, updated_at: 100 }));
+    const terminal = reduceForceBeat(
+      {
+        beat: first,
+        cursor: { runId: "force-run-1", sequence: 1, terminal: false, updatedAtMs: 100_000 },
+      },
+      msg({ sequence: 2, status: "idle", event: "end", terminal: true, updated_at: 101 }),
+    );
+    expect(terminal.accepted).toBe(true);
+    expect(terminal.state.beat).toBeNull();
+    const late = reduceForceBeat(terminal.state, msg({ sequence: 3, updated_at: 102 }));
+    expect(late.accepted).toBe(false);
+    expect(late.state).toBe(terminal.state);
+  });
+
+  it("rotates a legacy force identity only on a fresh connected transition", () => {
+    const initial = reduceForceBeat(
+      { beat: null, cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null } },
+      { ...msg({ run_id: undefined, sequence: undefined, status: "connected", updated_at: 100 }) },
+    );
+    const terminal = reduceForceBeat(initial.state, {
+      ...msg({ run_id: undefined, sequence: undefined, status: "idle", updated_at: 101 }),
+    });
+    const late = reduceForceBeat(terminal.state, {
+      ...msg({ run_id: undefined, sequence: undefined, status: "measuring", updated_at: 102 }),
+    });
+    expect(late.accepted).toBe(false);
+    const fresh = reduceForceBeat(terminal.state, {
+      ...msg({ run_id: undefined, sequence: undefined, status: "connected", updated_at: 102 }),
+    });
+    expect(fresh.accepted).toBe(true);
+    expect(fresh.state.cursor.runId).not.toBe(terminal.state.cursor.runId);
+  });
+
+  it("normalizes UUID casing on the force cursor", () => {
+    const first = reduceForceBeat(
+      { beat: null, cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null } },
+      msg({ run_id: "ABCDEFAB-ABCD-4ABC-8ABC-ABCDEFABCDEF", sequence: 1 }),
+    );
+    const next = reduceForceBeat(first.state, msg({
+      run_id: "abcdefab-abcd-4abc-8abc-abcdefabcdef",
+      sequence: 2,
+      updated_at: 1001,
+    }));
+    expect(next.accepted).toBe(true);
+    expect(next.state.cursor.runId).toBe("abcdefab-abcd-4abc-8abc-abcdefabcdef");
+  });
+
+  it("starts a fresh spark buffer for a fresh run and rejects an old run packet", () => {
+    const first = reduceForceBeat(
+      {
+        beat: null,
+        cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null },
+      },
+      msg({ sequence: 8, updated_at: 100, spark: [[0, 10]] }),
+    );
+    const fresh = reduceForceBeat(first.state, {
+      ...msg({ run_id: "force-run-2", sequence: 1, updated_at: 101, spark: [[0, 20]] }),
+    });
+    expect(fresh.accepted).toBe(true);
+    expect(fresh.state.beat?.spark).toEqual([{ atMs: 100_000, kg: 20 }]);
+    const old = reduceForceBeat(fresh.state, msg({ run_id: "force-run-1", sequence: 9, updated_at: 99 }));
+    expect(old.accepted).toBe(false);
+  });
+
+  it("resets the ordering cursor when the authenticated account changes", () => {
+    const accountA = reduceForceBeat(
+      emptyLiveForceMirrorState(),
+      msg({ run_id: "account-a-run", sequence: 99, updated_at: 200 }),
+    ).state;
+    // B may legitimately have an older wall clock than A; only an account
+    // reset can make its first sequence eligible.
+    expect(
+      reduceForceBeat(
+        accountA,
+        msg({ run_id: "account-b-run", sequence: 1, updated_at: 100 }),
+      ).accepted,
+    ).toBe(false);
+    const accountB = reduceForceBeat(
+      emptyLiveForceMirrorState(),
+      msg({ run_id: "account-b-run", sequence: 1, updated_at: 100 }),
+    );
+    expect(accountB.accepted).toBe(true);
+    expect(accountB.state.cursor.runId).toBe("account-b-run");
   });
 });

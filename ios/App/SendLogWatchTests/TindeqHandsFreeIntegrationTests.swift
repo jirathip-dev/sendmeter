@@ -44,7 +44,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertEqual(first.tag, "Half crimp")
         XCTAssertEqual(first.side, "left")
         XCTAssertEqual(first.groupId, manager.sessionId)
-        XCTAssertEqual(first.peakKg, 30, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(first.peakKg), 30, accuracy: 0.01)
         XCTAssertEqual(first.durationMs, 200, "the 1.5 s low-force grace tail is not recorded")
         XCTAssertFalse(first.samples.contains { $0[1] == 50 }, "armed samples must never leak into the rep")
         XCTAssertTrue(manager.predictedRPE.fromCurve)
@@ -310,6 +310,227 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertTrue(RecordingLossNotice.consume())
     }
 
+    func testGuidedMovementDisconnectKeepsSessionOpenForLaterCadenceSets() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in }
+        )
+        let protocolValue = WatchForceProtocol.movementStarter
+        let runId = UUID()
+
+        XCTAssertTrue(
+            manager.startMeasuredMovementSet(
+                protocolValue: protocolValue,
+                runId: runId,
+                set: 1,
+                tag: "Half crimp",
+                side: "left"
+            )
+        )
+        feed(manager, [(5, 0), (20, 5_000_000), (18, 15_000_000)])
+        manager.handleTransportDisconnect(
+            error: NSError(domain: "BLE", code: -1),
+            wasIntentionalOverride: false
+        )
+
+        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
+        let groupId = try XCTUnwrap(manager.sessionId)
+        let sessionsBeforeFinish = await sessions.count()
+        XCTAssertEqual(sessionsBeforeFinish, 0, "movement salvage must not log early")
+
+        XCTAssertTrue(
+            manager.saveCadenceOnlyMovementSet(
+                protocolValue: protocolValue,
+                runId: runId,
+                set: 2,
+                tag: "Half crimp",
+                side: "left",
+                actualDurationMs: 40_000
+            )
+        )
+        try await waitUntil { manager.sessionCount == 2 && !manager.saving }
+        let rows = await recordings.snapshot().map(\.row)
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertTrue(rows.allSatisfy { $0.groupId == groupId })
+        XCTAssertNil(rows[1].peakKg, "cadence-only continuation must have no force claim")
+
+        manager.logSessionNow()
+        try await waitUntil { await sessions.count() == 1 }
+        let loggedSessions = await sessions.snapshot()
+        let logged = try XCTUnwrap(loggedSessions.first)
+        XCTAssertEqual(logged.groupId, groupId)
+        XCTAssertEqual(logged.note, "2 recordings")
+    }
+
+    func testGuidedStaticDisconnectSalvageRemainsTerminalAndLogsOnce() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in }
+        )
+        let protocolValue = WatchForceProtocol(
+            id: "static-regression",
+            name: "Static regression",
+            holdS: 10,
+            reps: 1,
+            sets: 1,
+            restRepsS: 0,
+            restSetsS: 0
+        )
+
+        XCTAssertTrue(
+            manager.startMeasuredStaticHold(
+                protocolValue: protocolValue,
+                runId: UUID(),
+                set: 1,
+                rep: 1,
+                tag: "Half crimp",
+                side: "left"
+            )
+        )
+        feed(manager, [(5, 0), (25, 5_000_000), (20, 8_000_000)])
+        manager.handleTransportDisconnect(
+            error: NSError(domain: "BLE", code: -1),
+            wasIntentionalOverride: false
+        )
+
+        try await waitUntil { await sessions.count() == 1 && !manager.saving }
+        let recordingCount = await recordings.count()
+        XCTAssertEqual(recordingCount, 1)
+        XCTAssertNil(manager.sessionId, "terminal static salvage logs and clears the session")
+        let loggedSessions = await sessions.snapshot()
+        let logged = try XCTUnwrap(loggedSessions.first)
+        XCTAssertEqual(logged.note, "1 recording")
+    }
+
+    func testGuidedFinishAndNextStartInOneDelayedTickShareSessionDespitePendingSave() async throws {
+        let account = UUID()
+        let recordings = BlockingRecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        var commands: [Tindeq.Cmd] = []
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { commands.append($0) },
+            userIdProvider: { account }
+        )
+        let protocolValue = WatchForceProtocol(
+            id: "zero-rest-boundary",
+            name: "Zero rest boundary",
+            holdS: 1,
+            reps: 1,
+            sets: 2,
+            restRepsS: 0,
+            restSetsS: 0,
+            mode: .reverseAction,
+            cadenceOutS: 2,
+            cadenceReturnS: 2,
+            prepareS: 5
+        )
+        let runner = GuidedForceRunner(userIdProvider: { account })
+
+        XCTAssertTrue(
+            runner.start(
+                protocolValue: protocolValue,
+                tag: "Half crimp",
+                side: "left",
+                manager: manager
+            )
+        )
+        let startedAt = try XCTUnwrap(runner.runState?.startedAt)
+
+        // A delayed foreground tick crosses set 1's finish and set 2's start
+        // in the same ordered event list. Keep set 1's queue await pending so
+        // the regression proves transport readiness is not row durability.
+        runner.advance(to: startedAt.addingTimeInterval(5.1))
+        feed(manager, [(12, 0), (25, 100_000)])
+        runner.advance(to: startedAt.addingTimeInterval(9.1))
+        try await waitUntil { await recordings.count() == 1 && manager.saving }
+        XCTAssertNotEqual(runner.phase, .failed)
+        XCTAssertTrue(runner.isMeasured, "set 2 must own the transport immediately")
+        XCTAssertEqual(manager.status, .measuring)
+        XCTAssertEqual(commands, [.startWeight, .stop, .startWeight])
+
+        // Finish set 2 through the same late tick, then release both immutable
+        // row writes. The manager's finish gate must log one session only after
+        // both rows are durable, retaining the original group id.
+        feed(manager, [(10, 0), (20, 100_000)])
+        runner.advance(to: startedAt.addingTimeInterval(protocolValue.durationS))
+        try await waitUntil { await recordings.count() == 2 && manager.saving }
+        await recordings.releaseAll()
+
+        try await waitUntil {
+            await sessions.count() == 1 && manager.sessionCount == 0 && !manager.saving
+        }
+        let rows = await recordings.snapshot().map(\.row)
+        XCTAssertEqual(rows.count, 2, "finish/start boundary must not drop or duplicate a row")
+        XCTAssertEqual(Set(rows.compactMap(\.groupId)).count, 1)
+        XCTAssertEqual(Set(rows.compactMap(\.setNo)), Set([1, 2]))
+        let loggedSessionCount = await sessions.count()
+        XCTAssertEqual(loggedSessionCount, 1)
+        XCTAssertEqual(runner.phase, .completed)
+    }
+
+    func testLegacyOverCapMovementPresetIsNormalizedBeforeGuidedSave() async throws {
+        let account = UUID()
+        let json = Data("""
+        {
+          "id": "legacy-long-movement",
+          "name": "Legacy long movement",
+          "hold_s": 40,
+          "reps": 50,
+          "sets": 1,
+          "rest_reps_s": 0,
+          "rest_sets_s": 0,
+          "target_kg": null,
+          "target_pct": null,
+          "protocol_mode": "reverse_action",
+          "cadence_out_s": 30,
+          "cadence_return_s": 30,
+          "prepare_s": 5
+        }
+        """.utf8)
+        let protocolValue = try JSONDecoder().decode(WatchForceProtocol.self, from: json)
+        XCTAssertEqual(protocolValue.reps, 29)
+        XCTAssertLessThan(protocolValue.movementSetDurationS, 1_800)
+
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
+            userIdProvider: { account }
+        )
+        let runner = GuidedForceRunner(userIdProvider: { account })
+        XCTAssertTrue(
+            runner.start(
+                protocolValue: protocolValue,
+                tag: "Half crimp",
+                side: "left",
+                manager: manager
+            )
+        )
+        let startedAt = try XCTUnwrap(runner.runState?.startedAt)
+        runner.advance(to: startedAt.addingTimeInterval(5.1))
+        feed(manager, [(12, 0), (25, 100_000)])
+        runner.advance(to: startedAt.addingTimeInterval(protocolValue.durationS))
+
+        try await waitUntil {
+            await sessions.count() == 1 && manager.sessionCount == 0 && !manager.saving
+        }
+        let rows = await recordings.snapshot().map(\.row)
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].plannedDurationMs, 1_740_000)
+        XCTAssertEqual(rows[0].setNo, 1)
+        XCTAssertEqual(runner.phase, .completed)
+    }
+
     private func feed(_ manager: TindeqManager, _ samples: [(Float, UInt32)]) {
         var data = Data([0x01, UInt8(samples.count * 8)])
         for (kg, us) in samples {
@@ -350,6 +571,27 @@ private actor RecordingQueueSpy: TindeqRecordingQueueing {
 
     func count() -> Int { items.count }
     func snapshot() -> [PendingTindeqRecording] { items }
+}
+
+private actor BlockingRecordingQueueSpy: TindeqRecordingQueueing {
+    private var items: [PendingTindeqRecording] = []
+    private var waiters: [CheckedContinuation<QueuePersistOutcome, Never>] = []
+
+    func enqueue(_ pending: PendingTindeqRecording) async -> QueuePersistOutcome {
+        items.append(pending)
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func count() -> Int { items.count }
+    func snapshot() -> [PendingTindeqRecording] { items }
+
+    func releaseAll() {
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume(returning: .queued) }
+    }
 }
 
 private actor SessionQueueSpy: TindeqSessionQueueing {

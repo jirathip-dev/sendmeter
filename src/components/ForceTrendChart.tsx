@@ -395,7 +395,7 @@ export default function ForceTrendChart({
         }}
       >
         <div className="label-eyebrow">
-          {modality === "reverse_action" ? "Reverse Action" : "Static"} Peak Force Trend
+          {modality === "reverse_action" ? "Resisted movement" : "Static"} Peak Force Trend
           {selectedTag && (
             <span style={{ color: "var(--ink-faint)" }}>
               {" "}

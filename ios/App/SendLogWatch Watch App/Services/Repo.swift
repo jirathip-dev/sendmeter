@@ -9,6 +9,17 @@ enum Repo {
 
     // MARK: Tindeq recordings (identical shape to the web app's inserts)
 
+    /// Read-only protocol catalog for the watch. Authoring remains on the
+    /// phone/web app; the watch only selects and runs rows already saved there.
+    static func fetchTindeqPresets() async throws -> [WatchForceProtocol] {
+        try await SupabaseService
+            .from("tindeq_presets")
+            .select("id, name, hold_s, holds_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides, protocol_mode, cadence_out_s, cadence_return_s, tolerance_mode, tolerance_value, prepare_s, setup_note, capacity_evidence")
+            .order("created_at", ascending: true)
+            .execute()
+            .value
+    }
+
     /// Builds the insert row from a stopped recording (#486) — pulled out of
     /// `insertTindeqRecording` so `PendingRecordingQueue`'s callers can build
     /// the durable payload synchronously, before ever touching the network.
@@ -34,6 +45,98 @@ enum Repo {
             side: side,
             groupId: groupId,
             samples: r.samples.map { [$0.t, $0.kg] }
+        )
+    }
+
+    /// Complete guided measured-row shape. The claim already contains the
+    /// stable id plus run/set/rep and picker snapshot; completion is derived
+    /// before this pure builder is called, so no live manager state leaks into
+    /// an async queue operation.
+    static func makeGuidedMeasuredRecordingRow(
+        _ r: StoppedRecording,
+        claim: GuidedForceRecordingClaim,
+        completion: GuidedForceCompletion,
+        groupId: UUID,
+        metrics: MovementSetMetrics?,
+        outcome: String? = nil,
+        note: String = ""
+    ) -> TindeqRecordingInsert {
+        let context = claim.context
+        return TindeqRecordingInsert(
+            id: claim.id,
+            durationMs: completion.actualDurationMs,
+            peakKg: r.peakKg,
+            avgKg: r.avgKg,
+            sampleCount: r.samples.count,
+            note: note,
+            tag: context.tag,
+            side: context.side,
+            groupId: groupId,
+            samples: r.samples.map { [$0.t, $0.kg] },
+            protocolRunId: context.key.runId,
+            setNo: context.key.set,
+            repNo: context.key.rep,
+            zone: context.zone,
+            source: "dynamometer",
+            outcome: outcome,
+            plannedDurationMs: context.plannedDurationMs,
+            actualDurationMs: completion.actualDurationMs,
+            protocolMode: context.kind == .movementSet ? "reverse_action" : "hold",
+            targetKg: context.targetBand?.kg,
+            targetLowKg: context.targetBand?.lowKg,
+            targetHighKg: context.targetBand?.highKg,
+            cadenceOutS: context.cadenceOutS,
+            cadenceReturnS: context.cadenceReturnS,
+            cadenceMarkers: completion.cadenceMarkers,
+            setMetrics: metrics,
+            setupNote: context.setupNote.isEmpty ? nil : context.setupNote,
+            capacityEvidence: context.capacityEvidence,
+            completedReps: completion.completedReps,
+            completionStatus: completion.status?.rawValue
+        )
+    }
+
+    /// Sensorless movement is cadence-only: one manual row per set, with no
+    /// invented force values, samples, or set metrics. Capacity evidence is
+    /// forced false to satisfy the modality contract even if the source preset
+    /// was authored as a measured capacity effort.
+    static func makeCadenceOnlyMovementRow(
+        claim: GuidedForceRecordingClaim,
+        completion: GuidedForceCompletion,
+        groupId: UUID
+    ) -> TindeqRecordingInsert {
+        let context = claim.context
+        return TindeqRecordingInsert(
+            id: claim.id,
+            durationMs: completion.actualDurationMs,
+            peakKg: nil,
+            avgKg: nil,
+            sampleCount: 0,
+            note: "Cadence only · force not measured",
+            tag: context.tag,
+            side: context.side,
+            groupId: groupId,
+            samples: [],
+            protocolRunId: context.key.runId,
+            setNo: context.key.set,
+            repNo: nil,
+            zone: context.zone,
+            source: "manual",
+            outcome: nil,
+            plannedDurationMs: context.plannedDurationMs,
+            actualDurationMs: completion.actualDurationMs,
+            protocolMode: "reverse_action",
+            targetKg: nil,
+            targetLowKg: nil,
+            targetHighKg: nil,
+            cadenceOutS: context.cadenceOutS,
+            cadenceReturnS: context.cadenceReturnS,
+            cadenceMarkers: completion.cadenceMarkers,
+            setMetrics: nil,
+            setupNote: context.setupNote.isEmpty ? nil : context.setupNote,
+            capacityEvidence: false,
+            completedReps: completion.completedReps,
+            completionStatus: completion.status?.rawValue
         )
     }
 

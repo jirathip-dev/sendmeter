@@ -19,4 +19,26 @@ final class TindeqRecordingLimitTests: XCTestCase {
             )
         )
     }
+
+    func testMovementNormalizationLeavesBoundaryHeadroom() {
+        XCTAssertEqual(TindeqRecordingLimit.maxMovementSetS, 1_799)
+        XCTAssertEqual(
+            TindeqRecordingLimit.maxMovementReps(
+                cadenceOutS: 30,
+                cadenceReturnS: 30
+            ),
+            29
+        )
+        XCTAssertLessThan(
+            Double(
+                TindeqRecordingLimit.maxMovementReps(
+                    cadenceOutS: 30,
+                    cadenceReturnS: 30
+                )
+            ) * 60,
+            maxRecordingSeconds
+        )
+    }
+
+    private var maxRecordingSeconds: Double { TindeqRecordingLimit.maxRecordingMs / 1_000 }
 }

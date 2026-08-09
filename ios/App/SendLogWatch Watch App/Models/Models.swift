@@ -158,8 +158,8 @@ nonisolated struct TindeqRecordingInsert: Codable {
     /// `insertRecording` (#106): `id` is set here, not left to the default.
     var id: UUID
     var durationMs: Int
-    var peakKg: Double
-    var avgKg: Double
+    var peakKg: Double?
+    var avgKg: Double?
     var sampleCount: Int
     var note: String
     var tag: String
@@ -167,13 +167,53 @@ nonisolated struct TindeqRecordingInsert: Codable {
     var groupId: UUID?         // gauge session
     var samples: [[Double]]
 
+    // Guided-protocol provenance. Optional defaults preserve old free-hold
+    // queue files; guided constructors fill every applicable database field.
+    var protocolRunId: UUID? = nil
+    var setNo: Int? = nil
+    var repNo: Int? = nil
+    var zone: String? = nil
+    var source: String? = nil
+    var outcome: String? = nil
+    var plannedDurationMs: Int? = nil
+    var actualDurationMs: Int? = nil
+    var protocolMode: String? = nil
+    var targetKg: Double? = nil
+    var targetLowKg: Double? = nil
+    var targetHighKg: Double? = nil
+    var cadenceOutS: Double? = nil
+    var cadenceReturnS: Double? = nil
+    var cadenceMarkers: [WatchCadenceMarker]? = nil
+    var setMetrics: MovementSetMetrics? = nil
+    var setupNote: String? = nil
+    var capacityEvidence: Bool? = nil
+    var completedReps: Int? = nil
+    var completionStatus: String? = nil
+
     enum CodingKeys: String, CodingKey {
-        case id, note, samples, tag, side
+        case id, note, samples, tag, side, zone, source, outcome
         case durationMs = "duration_ms"
         case peakKg = "peak_kg"
         case avgKg = "avg_kg"
         case sampleCount = "sample_count"
         case groupId = "group_id"
+        case protocolRunId = "protocol_run_id"
+        case setNo = "set_no"
+        case repNo = "rep_no"
+        case plannedDurationMs = "planned_duration_ms"
+        case actualDurationMs = "actual_duration_ms"
+        case protocolMode = "protocol_mode"
+        case targetKg = "target_kg"
+        case targetLowKg = "target_low_kg"
+        case targetHighKg = "target_high_kg"
+        case cadenceOutS = "cadence_out_s"
+        case cadenceReturnS = "cadence_return_s"
+        case cadenceMarkers = "cadence_markers"
+        case setMetrics = "set_metrics"
+        case setupNote = "setup_note"
+        case capacityEvidence = "capacity_evidence"
+        case completedReps = "completed_reps"
+        case completionStatus = "completion_status"
     }
 }
 
@@ -246,6 +286,15 @@ nonisolated struct HealthMetricRow: Codable {
 nonisolated struct LiveWorkoutUpsert: Codable {
     var userId: UUID
     var workoutId: UUID
+    /// #521: both transport paths use the workout id as their run identity.
+    /// Kept as a distinct field so the wire contract is explicit and can
+    /// evolve independently of the database primary key.
+    var runId: UUID
+    /// Strictly increasing within runId. Gaps are valid when a telemetry beat
+    /// is coalesced before transport.
+    var sequence: Int = 1
+    var event: String = "telemetry"
+    var terminal: Bool = false
     var status: String         // "live" | "ended"
     var startedAt: Date
     var hr: Double?
@@ -261,9 +310,10 @@ nonisolated struct LiveWorkoutUpsert: Codable {
     var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case status, hr, climbing
+        case status, hr, climbing, sequence, event, terminal
         case userId = "user_id"
         case workoutId = "workout_id"
+        case runId = "run_id"
         case startedAt = "started_at"
         case attemptCount = "attempt_count"
         case activeKcal = "active_kcal"
@@ -295,6 +345,10 @@ nonisolated struct LiveWorkoutUpsert: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(userId, forKey: .userId)
         try container.encode(workoutId, forKey: .workoutId)
+        try container.encode(runId, forKey: .runId)
+        try container.encode(sequence, forKey: .sequence)
+        try container.encode(event, forKey: .event)
+        try container.encode(terminal, forKey: .terminal)
         try container.encode(status, forKey: .status)
         try container.encode(startedAt, forKey: .startedAt)
         try container.encode(hr, forKey: .hr) // explicit null, not omitted, when nil

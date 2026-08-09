@@ -40,7 +40,7 @@ interface Props {
 export default function WorkoutView({ userId, currentPhase, sessions, onLog }: Props) {
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
-  const [live] = useLiveWorkout(userId);
+  const [live, , liveSyncState] = useLiveWorkout(userId);
   const [phone, dispatch] = usePhoneWorkout();
   const [error, setError] = useState<string | null>(null);
   // A running phone workout takes over full-screen; "minimize" drops back to
@@ -143,7 +143,13 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
         Live watch tracking, phone logging, and your recent climbs.
       </div>
 
-      {live && <LiveWorkoutCard live={live} onOpen={() => setLiveOpen(true)} />}
+      {live && (
+        <LiveWorkoutCard
+          live={live}
+          syncState={liveSyncState}
+          onOpen={() => setLiveOpen(true)}
+        />
+      )}
       {live && liveOpen && (
         <LiveWorkoutFullscreen live={live} onMinimize={() => setLiveOpen(false)} />
       )}

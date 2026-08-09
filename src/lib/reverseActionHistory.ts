@@ -66,5 +66,5 @@ export function reverseActionMetricItems(
 }
 
 export function cadenceMarkerLabel(marker: CadenceMarker): string {
-  return `${marker.rep} ${marker.direction === "out" ? "OUT" : "RETURN"}`;
+  return `${marker.rep} ${marker.direction === "out" ? "CONCENTRIC" : "ECCENTRIC"}`;
 }

@@ -82,6 +82,12 @@ final class WorkoutManager: NSObject {
     private let tunables: Tunables
     private var detector: AttemptDetector
     private let healthStore = HKHealthStore()
+    /// Internal authorization seam for the app-target tests. Production leaves
+    /// this nil and uses the real HealthKit request below; tests inject a
+    /// deterministic failure so start-guard behavior never depends on host
+    /// HealthKit entitlements or an OS authorization prompt.
+    @ObservationIgnored
+    var authorizationRequestOverride: (() async throws -> Void)?
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
     private let altimeter = CMAltimeter()
@@ -117,6 +123,10 @@ final class WorkoutManager: NSObject {
     // Generated at start so the live_workouts heartbeat and the final
     // climb_workouts row share one id (web correlation).
     private var workoutId = UUID()
+    /// #521: both WatchConnectivity and Supabase carry the same run identity
+    /// and sequence. Allocation happens synchronously on the manager's state
+    /// owner before either transport task can suspend.
+    private var liveMirrorSequence = LiveMirrorSequence(runId: UUID())
     private var liveSync: LiveWorkoutSync?
     private var fusionTick = 0
     /// Sample-timestamped, monotonic HR — see `HeartRateTimeline`'s doc
@@ -211,6 +221,10 @@ final class WorkoutManager: NSObject {
     }
 
     func requestAuthorization() async throws {
+        if let authorizationRequestOverride {
+            try await authorizationRequestOverride()
+            return
+        }
         let share: Set<HKSampleType> = [HKObjectType.workoutType()]
         let read: Set<HKObjectType> = [
             HKQuantityType(.heartRate),
@@ -286,6 +300,7 @@ final class WorkoutManager: NSObject {
         restStartedAt = nil
         fusionTick = 0
         workoutId = UUID()
+        liveMirrorSequence = LiveMirrorSequence(runId: workoutId)
         // #477: a previous workout's partial-flush bookkeeping must not
         // carry into this one — a leftover `partialFlushSuspended = true`
         // would silently disable durable flushing for the entire next
@@ -366,6 +381,9 @@ final class WorkoutManager: NSObject {
             startMotion()
             startFusion()
             isRunning = true
+            // Start is discrete and must reach the phone without waiting for
+            // the first five-second heartbeat.
+            pushBeat(event: .start)
             refitRPEModelIfStale()
             // Surface the live workout in the Smart Stack / complications.
             WidgetBridge.updateLiveWorkout(
@@ -398,7 +416,7 @@ final class WorkoutManager: NSObject {
         manualClimbing = detector.snapshot.isClimbing
         relativeAltitude = detector.snapshot.localHeightM
         liveAttempts = detector.liveAttemptCount
-        pushBeat()
+        pushBeat(event: .phase)
         WidgetBridge.updateLiveWorkout(
             active: true,
             boulders: liveAttempts,
@@ -426,22 +444,28 @@ final class WorkoutManager: NSObject {
     /// Snapshot state and fire one best-effort live heartbeat — over Supabase
     /// (web mirror + fallback) AND, when the phone is reachable, directly over
     /// WatchConnectivity for a sub-second in-app mirror (no network hop).
-    private func pushBeat() {
+    private func pushBeat(event: LiveMirrorEvent = .telemetry) {
         guard let sync = liveSync else { return }
-        let hr = heartRate
+        // Sequence exhaustion is astronomically unlikely, but it must fail
+        // closed rather than repeat Int.max and make a receiver accept a
+        // duplicate terminal/live transition.
+        guard let beat = liveMirrorSequence.nextIfAvailable(event: event) else { return }
+        let terminal = beat.terminal
+        let hr = terminal ? nil : heartRate
         let count = liveAttempts
-        let kcal = activeKcal
-        let gain = detector.totalElevationGainM
-        let climbing = detector.snapshot.isClimbing
-        let cs = climbingSince
-        let rs = restStartedAt
-        let rt = restTargetS
+        let kcal = terminal ? nil : activeKcal
+        let gain = terminal ? 0 : detector.totalElevationGainM
+        let climbing = terminal ? false : detector.snapshot.isClimbing
+        let cs = terminal ? nil : climbingSince
+        let rs = terminal ? nil : restStartedAt
+        let rt = terminal ? nil : restTargetS
         let started = startDate ?? Date()
         Task {
             await sync.beat(
                 hr: hr, attemptCount: count, activeKcal: kcal,
                 elevationGainM: gain, climbing: climbing,
-                climbingSince: cs, restStartedAt: rs, restTargetS: rt
+                climbingSince: cs, restStartedAt: rs, restTargetS: rt,
+                sequence: beat.sequence, event: beat.event, terminal: terminal
             )
         }
         // Bluetooth-fast path: same shape as the live_workouts row (dates as
@@ -451,14 +475,15 @@ final class WorkoutManager: NSObject {
         if session.activationState == .activated, session.isReachable {
             var msg: [String: Any] = [
                 "kind": "liveWorkout",
-                "status": "live",
+                "status": terminal ? "ended" : "live",
                 "started_at": started.timeIntervalSince1970,
-                "attempt_count": count,
+                "attempt_count": terminal ? 0 : count,
                 "climbing": climbing,
                 "elevation_gain_m": gain,
-                "rest_target_s": rt,
                 "updated_at": Date().timeIntervalSince1970,
             ]
+            msg.merge(beat.wireFields) { _, new in new }
+            if let rt { msg["rest_target_s"] = rt }
             // #477 review F1: omitting the key here (rather than sending
             // NSNull()) is deliberately left as-is — `messageToLive` on the
             // phone reads `msg.hr ?? null` in JS, where an absent key is
@@ -647,17 +672,10 @@ final class WorkoutManager: NSObject {
         cancelRestAlarm() // no more rest to alarm for once the workout is ending
         altimeter.stopRelativeAltitudeUpdates()
         motion.stopDeviceMotionUpdates()
-        // Close the phone's WC mirror immediately (Supabase markEnded follows).
-        let wc = WCSession.default
-        if wc.activationState == .activated, wc.isReachable {
-            wc.sendMessage(
-                WatchBuild.stamp(
-                    ["kind": "liveWorkout", "status": "ended",
-                     "updated_at": Date().timeIntervalSince1970]
-                ),
-                replyHandler: nil, errorHandler: nil
-            )
-        }
+        // Close the phone's WC mirror immediately. The same terminal beat is
+        // queued into the actor-backed Supabase path; the actor waits behind
+        // any in-flight telemetry so the durable row cannot be reopened.
+        pushBeat(event: .end)
         // Stamped now — before the network wait below, not after it, so a
         // slow partial can no longer inflate the saved duration.
         let endDate = Date()
@@ -862,19 +880,28 @@ final class WorkoutManager: NSObject {
             }
             // Publish the observable phase only after its clock is ready.
             manualClimbing = after.isClimbing
-            pushBeat()
+            pushBeat(event: .phase)
         }
         // #476: liveAttemptCount can cross AttemptDetector's post-filter
         // threshold mid-attempt with no phase transition (see
         // WidgetCountSync's doc comment) — pushing only on `stateChanged`
         // left the widget's boulder count stuck until the attempt ended.
         if WidgetCountSync.shouldPush(stateChanged: stateChanged, countBefore: countBefore, countAfter: countAfter) {
-            WidgetBridge.updateLiveWorkout(
-                active: true, boulders: countAfter,
-                climbing: after.isClimbing,
-                phaseSince: after.isClimbing ? climbingSince : restStartedAt,
-                restTargetS: restTargetS
-            )
+            // Sensor fusion callbacks are not actor-isolated. Hop to the
+            // widget bridge's main-actor gate so sign-out/new-refresh
+            // ownership is checked on the same executor as its store write.
+            let phaseSince = after.isClimbing ? climbingSince : restStartedAt
+            let climbing = after.isClimbing
+            let target = restTargetS
+            Task { @MainActor in
+                WidgetBridge.updateLiveWorkout(
+                    active: true, boulders: countAfter,
+                    climbing: climbing,
+                    phaseSince: phaseSince,
+                    restTargetS: target
+                )
+            }
+            if !stateChanged { pushBeat(event: .count) }
         }
 
         if tunables.keepRawTrace && fusionTick % tunables.rawTraceStride == 0 {

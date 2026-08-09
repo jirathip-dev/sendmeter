@@ -121,30 +121,96 @@ final class WorkoutOwnershipTests: XCTestCase {
 /// the run loop kept firing. `WorkoutStartGuardTests` (SendLogWatchCore)
 /// proves the guard mechanism in isolation; this proves `WorkoutManager.start()`
 /// actually wires it in on the production entry point. It doesn't assert on
-/// `fusionTimer`/HealthKit directly — this test host has no HealthKit
-/// entitlement, so `requestAuthorization()` reliably throws before
-/// `startFusion()` would ever run, on both old and new code — the accepted-
-/// start count is the guard's own bookkeeping and is unaffected by that.
+/// `fusionTimer`/HealthKit directly: the concurrent test gates its injected
+/// authorization failure and the restart test throws immediately, so the
+/// accepted-start count exercises the guard without depending on host
+/// entitlements or an OS authorization prompt.
 @MainActor
 final class WorkoutManagerDoubleStartTests: XCTestCase {
     func testConcurrentDoubleStartIsAcceptedExactlyOnce() async throws {
-        let manager = WorkoutManager()
+        let gate = AuthorizationGate()
+        let manager = makeAuthorizationFailingManager(gate: gate)
         async let first: Void = manager.start()
-        async let second: Void = manager.start()
-        _ = await (first, second)
+
+        // Do not rely on async-let scheduling or a timing yield: the first
+        // authorization call must be known to be inside its suspension before
+        // the second start is invoked.
+        await gate.waitUntilEntered()
+        await manager.start()
+        await gate.release()
+        _ = await first
+
         XCTAssertEqual(
             manager.acceptedStartCount, 1,
-            "a concurrent double-tap on Start must reach the HealthKit-setup/timer path exactly once"
+            "a concurrent double-tap on Start must pass the start guard exactly once"
         )
     }
 
     /// A start that fully completes (or fails and unwinds) must release the
     /// guard so a legitimate NEXT start — not a racing double-tap — still works.
     func testStartGuardReleasesAfterCompletionForALegitimateRestart() async throws {
-        let manager = WorkoutManager()
+        let manager = makeAuthorizationFailingManager()
         await manager.start()
         await manager.start()
         XCTAssertEqual(manager.acceptedStartCount, 2)
+    }
+
+    private func makeAuthorizationFailingManager(gate: AuthorizationGate? = nil) -> WorkoutManager {
+        let manager = WorkoutManager()
+        if let gate {
+            manager.authorizationRequestOverride = {
+                await gate.enter()
+                await gate.waitUntilReleased()
+                throw AuthorizationFailure.unavailable
+            }
+        } else {
+            manager.authorizationRequestOverride = {
+                // Immediate deterministic failure; this never touches HealthKit.
+                throw AuthorizationFailure.unavailable
+            }
+        }
+        return manager
+    }
+
+    private enum AuthorizationFailure: Error {
+        case unavailable
+    }
+}
+
+/// A test-only async barrier for holding the first authorization call exactly
+/// across the second `start()` invocation. It has no production counterpart.
+private actor AuthorizationGate {
+    private var entered = false
+    private var released = false
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func enter() {
+        entered = true
+        let waiters = entryWaiters
+        entryWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitUntilEntered() async {
+        if entered { return }
+        await withCheckedContinuation { continuation in
+            entryWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilReleased() async {
+        if released { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 }
 

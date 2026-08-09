@@ -14,6 +14,12 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Apple Watch screens now use a consistent glanceable visual language with clearer state cues, larger action targets, and safer reduced-motion and Always-On fallbacks across status, workout, and Force flows.
+- Watch workout and Force mirrors now keep a stable run identity, ignore
+  duplicate or out-of-order updates, and close decisively even when a late
+  live packet arrives; Workout shows whether its live link is direct or
+  catching up through the server.
+- Watch readiness now asks the paired iPhone to refresh Health data immediately, keeps the cached score visible while it syncs or is offline, and updates the watch complication and open phone dashboard from the same result.
 - Sendmeter's Home, Workout, Force, and History surfaces now share a richer light and dark visual system, with clearer metric accents, tactile controls, more dimensional cards and sheets, and theme-aware browser/PWA chrome while keeping the same information density.
 - Charts now share a restrained, theme-aware visual system with clearer focus, reference bands, gradients, and selected-point emphasis across readiness, load, workouts, Force, and History.
 - History session details and Training balance now open as sticky-header bottom sheets, so chart scrubbing never swipes the detail surface away.
@@ -22,11 +28,13 @@ CI, dependency updates, and refactors unless users experience a change.
 - Filter History by session type and Force tag, including loose Force recordings.
 - Force: Hands-free mode now runs every static sensor protocol pull-by-pull, records completed and early-release outcomes, and waits safely for unload before the next rep.
 - Force equipment setup is now concise, optional guidance without checklists or training blockers.
-- Switch the Force protocol list clearly between Static and Reverse Action modes, with color-coded badges and mode-matched presets.
+- Force now puts exercise, one selected protocol, Start, and two compact progress previews in the main flow; Suggested and custom protocols live in one chooser, including a 3-second concentric / 1-second eccentric Movement Starter. Resisted movement tracks completion and execution quality without changing Static PR, Hill/CF, or asymmetry.
+- Apple Watch Force now offers the same read-only Suggested and saved-protocol chooser, runs guided Static or resisted-movement sessions from a glanceable timer, and can follow Movement Starter cadence without a connected force sensor while clearly marking force as unmeasured.
 - Force: shortened the brief pause after Stop while your force curve recomputes, without changing any of the numbers it produces.
 
 ### Fixed
 
+- Watch readiness now keeps the signed-in account and widget state consistent across phone restarts, token refreshes, and sign-out while the paired devices reconnect.
 - Watch: an upload the server permanently rejects no longer blocks the queued force recordings and gauge sessions behind it indefinitely — after around twenty rejected sync attempts (spread over roughly an hour of automatic retries) it is set aside, kept on the watch, and given another chance about a week later, letting the rest of the queue sync; network outages and expired sign-ins still just wait and recover with nothing set aside. If the watch's storage then fills with set-aside recordings, saving a brand-new rep now trims the stored force curve of the oldest long-rejected recording instead of losing the new rep — and the watch says exactly that: the new rep is safe, the older recording keeps its summary numbers. A watch alert about a lost force rep can also no longer be silently skipped when another alert was already waiting.
 - Linking loose Force recordings to a session (the "link to this session" nudge, and History's "Assign to session") is now all-or-nothing — a failure partway through no longer leaves recordings regrouped without the session actually reflecting them.
 - Account: "Clear health data & resync" no longer shows a permanent "resync failed" warning for an account with no Health history to rebuild in the first place — it now says plainly that there was nothing to clear, instead of either claiming a resync it can't confirm or sending you to a "run it again" remedy that won't help. The success message on web now correctly says to open the iPhone app to resync instead of claiming this device will do it.
@@ -41,6 +49,9 @@ CI, dependency updates, and refactors unless users experience a change.
 - History: a type or Force tag filter now resets to "All" for good when its last matching recording or session is removed, instead of silently re-applying itself once matching data reappears.
 - History: recordings grouped into a session no longer vanish for good if that session is later deleted; deleting a ticked recording now immediately updates the bulk-action count instead of leaving a stuck button; and "Assign…" no longer writes to a recording that was ticked then deleted.
 - Force: a non-hands-free run right after a hands-free run no longer plays stray "done" cues or shows a stale danger banner on segment transitions.
+- Force: resisted-movement presets now keep every continuous set within the Progressor's 30-minute recording window, including older presets opened on the Watch.
+- Watch: a zero-rest resisted-movement boundary no longer loses the next set while the previous recording is still being queued; both sets stay in one Force session.
+- Watch: switching accounts during a guided Force run now discards the in-progress trace without saving it under the next account; same-account offline runs continue normally.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
 - History: the Type and Force-tag filter chip rows no longer show a scrollbar over the chips; they still scroll by touch/trackpad when they overflow.
@@ -65,7 +76,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### What’s New in This Version
 
-- Train Reverse Action protocols with or without a Tindeq: cadence-only sessions save progress, while measured results stay separate from Static holds.
+- Train resisted-movement protocols with or without a Tindeq: cadence-only sessions save progress, while measured results stay separate from Static holds.
 - Set up Force sessions with clearer equipment guidance and repeatable reference marks.
 - Open the ACWR card for weekly, daily, and 28-day training-load details.
 - Let Apple Watch detect bouldering attempts automatically from wrist motion, height, and heart-rate changes.

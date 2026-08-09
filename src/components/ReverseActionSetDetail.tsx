@@ -61,7 +61,7 @@ function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSamp
     <div ref={hostRef} style={{ width: "100%", overflowX: "auto" }}>
       <svg
         role="img"
-        aria-label={`Reverse Action set ${rec.setNo ?? 1} force trace with ${markers.length} prescribed cadence markers`}
+        aria-label={`Resisted-movement set ${rec.setNo ?? 1} force trace with ${markers.length} prescribed cadence markers`}
         viewBox={`0 0 ${W} ${H}`}
         style={{ width: W, height: H, display: "block" }}
       >
@@ -181,7 +181,7 @@ export default function ReverseActionSetDetail({
     return <div style={{ marginTop: 10, padding: 10, borderRadius: 9, background: "var(--surface-1)", color: "var(--ink-muted)", fontSize: "var(--t-xs)", lineHeight: 1.55 }}>
       <strong style={{ color: "var(--ink)" }}>Cadence only · clock-guided, not detected</strong><br />
       Set {rec.setNo ?? 1} · {rec.completedReps ?? 0} completed rep{rec.completedReps === 1 ? "" : "s"} · {rec.completionStatus ?? "partial"} · {((rec.actualDurationMs ?? rec.durationMs) / 1_000).toFixed(1)}s actual / {((rec.plannedDurationMs ?? rec.durationMs) / 1_000).toFixed(1)}s planned
-      {rec.cadenceOutS != null && rec.cadenceReturnS != null ? ` · ${rec.cadenceOutS}s OUT / ${rec.cadenceReturnS}s RETURN` : ""}
+      {rec.cadenceOutS != null && rec.cadenceReturnS != null ? ` · ${rec.cadenceOutS}s CONCENTRIC / ${rec.cadenceReturnS}s ECCENTRIC` : ""}
       <br />Equipment resistance{rec.setupNote ? ` · ${rec.setupNote}` : " · setup not recorded"}. No force, target band, or movement detection was recorded.
     </div>;
   }
@@ -192,7 +192,7 @@ export default function ReverseActionSetDetail({
           ? `Target ${rec.targetKg.toFixed(1)} kg${rec.targetLowKg != null && rec.targetHighKg != null ? ` (${rec.targetLowKg.toFixed(1)}–${rec.targetHighKg.toFixed(1)})` : ""}`
           : "Equipment resistance · no kg target"}
         {rec.cadenceOutS != null && rec.cadenceReturnS != null
-          ? ` · ${rec.cadenceOutS}s OUT / ${rec.cadenceReturnS}s RETURN`
+          ? ` · ${rec.cadenceOutS}s CONCENTRIC / ${rec.cadenceReturnS}s ECCENTRIC`
           : ""}
       </div>
       <Trace rec={rec} samples={samples} />
@@ -225,7 +225,7 @@ export default function ReverseActionSetDetail({
         ))}
       </div>
       <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8, lineHeight: 1.45 }}>
-        Markers are the prescribed OUT/RETURN clock; force alone does not detect joint position.
+        Markers are the prescribed concentric/eccentric clock; force alone does not detect joint position.
         {rec.setupNote ? ` Setup: ${rec.setupNote}` : ""}
       </div>
     </div>

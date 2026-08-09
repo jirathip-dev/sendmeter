@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TindeqPreset } from "../types";
 import {
   buildCadenceOnlySetRecording,
+  cadenceOnlyTimeline,
   cadenceOnlyPlannedEndMs,
   cadenceOnlyPlannedDurationMs,
   cadenceOnlyPosition,
@@ -80,5 +81,24 @@ describe("cadence-only Reverse Action run (#422)", () => {
     saveCadenceOnlyRun(stopped);
     expect(loadCadenceOnlyRun()).toEqual(stopped);
     expect(cadenceOnlyRunComplete(stopped, stopped.endedMs! - stopped.startedMs)).toBe(false);
+  });
+
+  it("normalizes an over-cap persisted preset before rebuilding its timeline", () => {
+    let stored: string | null = null;
+    vi.stubGlobal("localStorage", {
+      getItem: () => stored,
+      setItem: (_key: string, value: string) => { stored = value; },
+      removeItem: () => { stored = null; },
+    });
+    const legacy = {
+      ...state,
+      preset: { ...state.preset, reps: 50, cadenceOutS: 30, cadenceReturnS: 30 },
+    };
+    saveCadenceOnlyRun(legacy);
+
+    const restored = loadCadenceOnlyRun();
+    expect(restored?.preset.reps).toBe(29);
+    expect(cadenceOnlyPlannedDurationMs(restored!)).toBe(3_495_000);
+    expect(cadenceOnlyTimeline(restored!).filter((segment) => segment.phase === "move" && segment.set === 1)).toHaveLength(58);
   });
 });

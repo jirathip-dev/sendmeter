@@ -2,6 +2,7 @@ import type { TindeqPreset } from "../types";
 import { predictCapability } from "./force-curve";
 import type { CapabilityFit } from "./capabilityModel";
 import type { PlanPreset } from "./presetPlan";
+import { normalizeMovementPreset } from "./movementProtocol";
 
 /// Guided-protocol timeline (pure — testable). A preset expands into a flat
 /// list of timed segments; the UI and the per-rep recorder both walk it, so
@@ -143,9 +144,11 @@ export function commitHoldEdit(
 /// the exact figure.
 export function protocolDurationS(p: TindeqPreset): number {
   if (p.protocolMode === "reverse_action") {
+    const normalized = normalizeMovementPreset(p);
     const setWork =
-      p.reps * ((p.cadenceOutS ?? 3) + (p.cadenceReturnS ?? 3));
-    return p.sets * setWork + (p.sets - 1) * p.restSetsS;
+      normalized.reps *
+      ((normalized.cadenceOutS ?? 3) + (normalized.cadenceReturnS ?? 3));
+    return normalized.sets * setWork + (normalized.sets - 1) * normalized.restSetsS;
   }
   const holdWork = holdsForSets(p).reduce((sum, h) => sum + p.reps * h, 0);
   const setWork = holdWork + p.sets * (p.reps - 1) * p.restRepsS;
@@ -156,7 +159,9 @@ export function protocolDurationS(p: TindeqPreset): number {
 /// targets one hold; Reverse Action targets the whole continuous movement set.
 export function prescriptionWorkS(p: PlanPreset, set: number): number {
   if (p.protocolMode === "reverse_action") {
-    return p.reps * ((p.cadenceOutS ?? 3) + (p.cadenceReturnS ?? 3));
+    const normalized = normalizeMovementPreset(p);
+    return normalized.reps *
+      ((normalized.cadenceOutS ?? 3) + (normalized.cadenceReturnS ?? 3));
   }
   return holdForSet(p, set);
 }

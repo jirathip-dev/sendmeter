@@ -248,8 +248,10 @@ fastlane snapshot UI-test schemes sequentially. It produces:
   scale the 6.9" set down;
 - the same four screens in portrait on iPad Pro 13-inch (M5, 2064×2752),
   satisfying App Store Connect's required 13-inch iPad display set;
-- two real watch-app screens on Apple Watch Ultra 3 (422×514), with deterministic
-  readiness/ACWR fixture values enabled only by snapshot's launch argument.
+- two real watch-app screens on Apple Watch SE (40mm, 324×394) and Apple Watch
+  Ultra 3 (49mm, 422×514), with deterministic readiness/ACWR fixture values
+  enabled only by snapshot's launch argument; the shared fixture matrix also
+  checks every essential Force control at 44pt on both sizes.
 
 Outputs land in `fastlane/screenshots/en-US/`. The lane fails if the expected
 count or pixel dimensions drift. The directory and HTML summary are gitignored:

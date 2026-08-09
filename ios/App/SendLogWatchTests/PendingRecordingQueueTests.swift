@@ -115,6 +115,22 @@ final class PendingRecordingQueueTests: XCTestCase {
         XCTAssertTrue(try filesOnDisk().contains("\(id.uuidString).json"))
     }
 
+    func testEnqueuePreservesExplicitOwnerStampAcrossAccountChange() async throws {
+        let accountA = UUID()
+        let accountB = UUID()
+        signIn(as: accountB)
+        let id = UUID()
+        let uploader = ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet))
+        let queue = makeQueue(uploader: uploader)
+
+        _ = await queue.enqueue(makePending(id: id, enqueuedUserId: accountA))
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(id.uuidString).json"))
+        let decoded = try JSONDecoder().decode(PendingTindeqRecording.self, from: data)
+        XCTAssertEqual(decoded.enqueuedUserId, accountA)
+        XCTAssertNotEqual(decoded.enqueuedUserId, accountB)
+    }
+
     // MARK: - drain: the happy path
 
     func testDrainUploadsAndDeletesOnSuccess() async throws {
@@ -588,7 +604,12 @@ final class PendingRecordingQueueTests: XCTestCase {
         XCTAssertEqual(reclaimed.item.row.samples.isEmpty, true, "the OLDEST quarantined record's payload is what gets sacrificed")
         XCTAssertEqual(reclaimed.payloadDropped, true, "the sacrifice is recorded on the record itself")
         XCTAssertEqual(reclaimed.item.row.id, oldQuarantined, "the record survives — reclaim is a payload strip, not a delete (#273)")
-        XCTAssertEqual(reclaimed.item.row.peakKg, 34.5, accuracy: 0.001, "summary stats survive for the eventual re-attempt")
+        XCTAssertEqual(
+            try XCTUnwrap(reclaimed.item.row.peakKg),
+            34.5,
+            accuracy: 0.001,
+            "summary stats survive for the eventual re-attempt"
+        )
         XCTAssertEqual(reclaimed.reason, .stuckRetrying)
         XCTAssertEqual(reclaimed.attemptCount, QueueRetryPolicy.maxConsecutiveFailures)
 

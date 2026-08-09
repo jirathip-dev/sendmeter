@@ -363,8 +363,14 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         var item = item
         // Stamp which account is signed in right now (issue #158) — the
         // relayed access token's `sub` claim, read synchronously from the
-        // Keychain cache (#265). Checked back in drain().
-        item.enqueuedUserId = WatchSessionStore.shared.userId
+        // Keychain cache (#265). A caller that captured an explicit owner
+        // before an async hop wins over the current account; overwriting it
+        // here would turn an Account-A row into an Account-B row. Legacy/nil
+        // callers still receive the current synchronous stamp. Checked back
+        // in drain().
+        if item.enqueuedUserId == nil {
+            item.enqueuedUserId = WatchSessionStore.shared.userId
+        }
 
         let persistResult = persist(item)
         switch PendingQueuePolicy.actionAfterPersist(persistResult.persisted) {

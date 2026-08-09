@@ -9,10 +9,10 @@ import XCTest
 /// the phone heartbeat (the standing acceptance rule for this fix wave).
 ///
 /// Neither defect is reachable through a real `HKWorkoutSession` in this test
-/// host (no HealthKit entitlement — `requestAuthorization()` throws before
-/// `start()` ever reaches `startFusion()`/HealthKit's delegate, same
-/// limitation `WorkoutManagerDoubleStartTests` documents). Both fixes add a
-/// small, deliberate seam instead: `performFusionTick(now:)` /
+/// host. The start-reset cases inject a deterministic authorization failure
+/// through the manager's test seam; the other cases use the manager's own
+/// production methods directly. Both fixes add a small, deliberate seam:
+/// `performFusionTick(now:)` /
 /// `acceptHeartRate(_:)` are the manager's own production methods (the
 /// HealthKit delegate calls the latter after extracting a `HeartRateSample`
 /// from `HKStatistics`, which cannot be constructed off-device), and
@@ -146,13 +146,25 @@ final class WorkoutManagerHRMissingDateIntervalTests: XCTestCase {
     /// `start()` must reset the flag, or a real occurrence in workout N
     /// silently suppresses the diagnostic for every later workout too.
     func testStartResetsTheOneShotFlagForANewWorkout() async {
-        let manager = WorkoutManager()
+        let manager = makeAuthorizationFailingWorkoutManager()
         manager.reportHRMissingDateIntervalOnce()
         XCTAssertTrue(manager.hrMissingDateIntervalLogged)
 
-        await manager.start() // fails at HK auth in this host, but the reset block runs unconditionally first
+        await manager.start() // injected auth fails after the unconditional reset block
         XCTAssertFalse(manager.hrMissingDateIntervalLogged, "a new workout must get its own one-shot report, not inherit the previous workout's")
     }
+}
+
+private enum WorkoutManagerAuthorizationFailure: Error {
+    case unavailable
+}
+
+private func makeAuthorizationFailingWorkoutManager() -> WorkoutManager {
+    let manager = WorkoutManager()
+    manager.authorizationRequestOverride = {
+        throw WorkoutManagerAuthorizationFailure.unavailable
+    }
+    return manager
 }
 
 /// Actor-serialized event log for asserting cross-task ordering
@@ -385,8 +397,8 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
     /// the process. `start()` always bumps `startGuard`'s generation and
     /// resets `startDate`/partial-flush bookkeeping regardless of whether
     /// `requestAuthorization()` later succeeds (review finding F7 in this
-    /// same file), which is exactly what this test host can drive without a
-    /// HealthKit entitlement.
+    /// same file); the injected failure lets this test drive that reset without
+    /// HealthKit.
     ///
     /// Reaching the final assertion at all — without the process crashing —
     /// is most of the proof; the assertion itself additionally confirms the
@@ -394,13 +406,12 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
     /// stale handler didn't leave anything wedged.
     @MainActor
     func testStalePartialFlushCompletionAfterANewStartDoesNotCorruptTheNextWorkoutsDrain() async {
-        let manager = WorkoutManager()
+        let manager = makeAuthorizationFailingWorkoutManager()
 
-        // Get workout N running (without HealthKit): start() resets
-        // startDate to nil unconditionally before HK setup even attempts,
-        // then always fails at requestAuthorization() in this host — set
-        // startDate manually afterward to simulate a workout that DID get
-        // going at whatever generation start() just stamped.
+        // Get workout N running without HealthKit: start() resets startDate
+        // to nil before authorization, then the injected failure unwinds
+        // deterministically. Set startDate manually afterward to simulate a
+        // workout that DID get going at whatever generation start() stamped.
         await manager.start()
         manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
         let workoutNGeneration = manager.acceptedStartCount
@@ -458,7 +469,7 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
     /// ORIGINAL still-running workout must still be able to flush afterward.
     @MainActor
     func testARejectedStartWithAFlushInFlightDoesNotWedgeDurableFlushingForTheStillRunningWorkout() async {
-        let manager = WorkoutManager()
+        let manager = makeAuthorizationFailingWorkoutManager()
         manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
         manager.isRunning = true // workout N is live — no HealthKit needed for this
 

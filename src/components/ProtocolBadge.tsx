@@ -1,4 +1,5 @@
 import type { TindeqProtocolMode } from "../types";
+import { MOVEMENT_LABEL } from "../lib/movementProtocol";
 
 export default function ProtocolBadge({
   mode,
@@ -17,7 +18,7 @@ export default function ProtocolBadge({
           ? "color-mix(in srgb, var(--primary) 14%, var(--surface-1))"
           : "color-mix(in srgb, var(--success) 14%, var(--surface-1))",
       }}>
-        {mode === "reverse_action" ? "REVERSE ACTION" : "STATIC"}
+        {mode === "reverse_action" ? MOVEMENT_LABEL : "STATIC"}
       </span>
       {quality && <span style={{
         borderRadius: 999, padding: "3px 8px", fontSize: "var(--t-2xs)",

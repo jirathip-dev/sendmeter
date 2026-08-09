@@ -47,6 +47,10 @@ enum WidgetStore {
         guard let data = try? JSONEncoder().encode(snap) else { return }
         defaults?.set(data, forKey: key)
     }
+
+    static func clear() {
+        defaults?.removeObject(forKey: key)
+    }
 }
 
 /// Deep-link URLs the quick-launch widgets open the app to. RootView routes on

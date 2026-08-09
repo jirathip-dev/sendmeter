@@ -45,7 +45,10 @@ export interface BuildReverseActionRecordingInput {
   set: number;
   physicalEndMs?: number;
   protocolShiftS?: number;
-  targetBand: ReverseActionTargetBand;
+  /// Optional for measured resisted movement. A target-free set still keeps
+  /// its raw trace and completion/stability metrics; target accuracy remains
+  /// null rather than inventing a load.
+  targetBand: ReverseActionTargetBand | null;
   cadenceOutS: number;
   cadenceReturnS: number;
   base: Pick<
@@ -319,9 +322,9 @@ export function buildReverseActionSetRecording(
     setNo: input.set,
     samples: slice.samples,
     protocolMode: "reverse_action",
-    targetKg: input.targetBand.kg,
-    targetLowKg: input.targetBand.lowKg,
-    targetHighKg: input.targetBand.highKg,
+    targetKg: input.targetBand?.kg ?? null,
+    targetLowKg: input.targetBand?.lowKg ?? null,
+    targetHighKg: input.targetBand?.highKg ?? null,
     cadenceOutS: input.cadenceOutS,
     cadenceReturnS: input.cadenceReturnS,
     cadenceMarkers: slice.markers,
@@ -365,7 +368,6 @@ export function buildUnclaimedReverseActionSalvage(
     const key = reverseActionSetKey(input.runId, set);
     if (input.claims.has(key)) continue;
     const targetBand = input.targetBandForSet(set);
-    if (!targetBand) continue;
     let id = input.ids.get(key);
     if (!id) {
       id = input.createId();

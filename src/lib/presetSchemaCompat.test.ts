@@ -119,9 +119,9 @@ describe("Reverse Action preset schema rollout (#400)", () => {
     expect(preReversePresetRow(ordinary)).toEqual({ name: "Repeaters" });
     expect(() =>
       preReversePresetRow({ ...ordinary, protocol_mode: "reverse_action" }),
-    ).toThrow(/does not support Reverse Action/);
+    ).toThrow(/does not support resisted-movement/);
     expect(() => preReversePresetRow({ ...ordinary, setup_note: "red spring" })).toThrow(
-      /does not support Reverse Action/,
+      /does not support resisted-movement/,
     );
   });
 });
@@ -160,7 +160,7 @@ describe("capacity-evidence preset schema rollout (#422)", () => {
       name: "Spring",
     });
     expect(() => preCapacityPresetRow({ name: "Test", capacity_evidence: true })).toThrow(
-      /capacity evidence/,
+      /movement metadata/,
     );
   });
 });

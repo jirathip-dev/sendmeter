@@ -13,8 +13,16 @@ struct WorkoutLiveView: View {
     /// saturated colour block left at full value on top of that is a burn-in
     /// and battery liability — the palette has a reduced variant for it (#243).
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let restTargets = [60, 120, 180, 300]
+    @State private var fixtureRestTargetS: Int? = ScreenshotFixtures.workoutRestTargetS
+
+    private var fixtureVisual: ScreenshotWorkoutVisual? { ScreenshotFixtures.workout }
+    private var visibleRestTargetS: Int { fixtureRestTargetS ?? workout.restTargetS }
+    private var currentScreen: WorkoutScreen {
+        ScreenshotFixtures.workoutScreen ?? Self.screen(for: workout)
+    }
 
     // #476 review finding F1: `WorkoutScreenSelection` (SendLogWatchCore) is
     // the single, unit-tested source of this decision — this is a thin
@@ -29,7 +37,7 @@ struct WorkoutLiveView: View {
     // make Start permanently unreachable once a save was `.lost`.
     var body: some View {
         Group {
-            switch Self.screen(for: workout) {
+            switch currentScreen {
             case .live: liveContent
             case .saved: savedContent
             case .start: startContent
@@ -39,8 +47,9 @@ struct WorkoutLiveView: View {
         // rather than insetting it, so "Climb" was being drawn straight
         // through the elapsed-time readout — and once the band says RESTING
         // next to an End button, the title is telling nobody anything.
-        .navigationTitle(workout.isRunning ? "" : "Climb")
-        .navigationBarBackButtonHidden(workout.isRunning)
+        .navigationTitle(currentScreen == .live ? "" : "Climb")
+        .navigationBarBackButtonHidden(currentScreen == .live)
+        .watchCanvas()
     }
 
     /// The exact decision `body` renders, as a testable seam (#476 R3a):
@@ -63,53 +72,57 @@ struct WorkoutLiveView: View {
     /// short of a successful retry.
     @ViewBuilder
     private var failedSaveBanner: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 20))
-                .foregroundStyle(.red)
-            Text("Last workout not saved").font(.footnote.weight(.semibold))
-            Button(workout.ending ? "Retrying…" : "Retry Save") {
-                workout.retryFailedSave()
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(workout.ending)
-        }
-        .padding(.bottom, 6)
+        WatchStateBanner(
+            state: .danger,
+            title: "Last workout not saved",
+            message: "Your workout stays on the watch until a retry succeeds.",
+            actionTitle: workout.ending ? "Retrying…" : "Retry Save",
+            action: { workout.retryFailedSave() },
+            actionDisabled: workout.ending
+        )
     }
 
     @ViewBuilder
     private var savedContent: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 34))
-                .foregroundStyle(.green)
-            Text(workout.stillQueued ? "Saved to watch" : "Saved").font(.headline)
-            Text(workout.stillQueued ? "uploads when signed in" : "Set RPE on your phone")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        let queued = fixtureVisual?.stillQueued ?? workout.stillQueued
+        WatchCard(accent: WatchPalette.success) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    WatchStateChip(state: .success, title: queued ? "Saved on watch" : "Saved")
+                    Spacer(minLength: 0)
+                }
+                Text(queued ? "Uploads when signed in" : "Set RPE on your phone")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .foregroundStyle(WatchPalette.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
     @ViewBuilder
     private var startContent: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             // #476 review finding F1: a failed save from a previous workout
             // is additive here, never blocking — see `failedSaveBanner`'s
             // doc comment.
             if workout.failedBundle != nil {
                 failedSaveBanner
             }
-            Text("Tracks heart rate, wrist motion and altitude to count your boulders automatically.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
+            WatchCard(accent: WatchPalette.secondary) {
+                VStack(alignment: .leading, spacing: 7) {
+                    WatchStateChip(state: .ready, title: "Ready to climb", compact: true)
+                    Text("Tracks heart rate, wrist motion and altitude to count your boulders automatically.")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(WatchPalette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Button("Start Workout") {
                 Task { await workout.start() }
             }
-            .buttonStyle(.borderedProminent)
-            if let msg = workout.errorMsg {
-                Text(msg).font(.footnote).foregroundStyle(.red)
+            .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.secondary))
+            if let msg = fixtureVisual?.errorMessage ?? workout.errorMsg {
+                WatchStateBanner(state: .danger, title: "Workout could not start", message: msg)
             }
         }
     }
@@ -126,7 +139,7 @@ struct WorkoutLiveView: View {
     @ViewBuilder
     private var liveContent: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            let phase = workout.livePhase(at: context.date)
+            let phase = fixtureVisual?.phase ?? workout.livePhase(at: context.date)
             // Resolved once per tick and threaded down, so the band and the
             // text on it can never be read from two different resolutions.
             let fill = WorkoutPhasePalette.fill(for: phase, luminanceReduced: isLuminanceReduced)
@@ -139,8 +152,8 @@ struct WorkoutLiveView: View {
                     workout.endAndSave()
                 }
                 .font(.system(size: 12, weight: .semibold))
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
+                .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.danger)))
+                .frame(minWidth: 44, minHeight: 44)
                 // Phone's "act now" orange (#277 follow-up) — ending a
                 // workout is the same weight of action as the phone
                 // fullscreen's Stop pill, and it now sits on black rather
@@ -180,13 +193,18 @@ struct WorkoutLiveView: View {
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(color(fill.band))
-                    .animation(.easeInOut(duration: WorkoutPhasePalette.transitionSeconds), value: phase)
+                    .fill(WatchPalette.phaseGradient(color(fill.band), luminanceReduced: isLuminanceReduced))
+                    .animation(
+                        reduceMotion ? nil : .easeInOut(duration: WorkoutPhasePalette.transitionSeconds),
+                        value: phase
+                    )
             )
     }
 
     @ViewBuilder
     private func liveStack(phase: WorkoutPhase, fill: PhaseFill) -> some View {
+        let heartRate = fixtureVisual?.heartRate ?? workout.heartRate
+        let elapsed = fixtureVisual?.elapsed ?? workout.elapsed
         // Spacing is 2, not the usual 4: RESTING stacks the HR line, the band,
         // the rest chips and the action row, and on a 40mm screen the gaps are
         // the difference between the button clearing the bottom edge and
@@ -201,11 +219,11 @@ struct WorkoutLiveView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "heart.fill")
                         .font(.footnote)
-                        .foregroundStyle(.red)
-                    Text(workout.heartRate.map { "\(Int($0.rounded()))" } ?? "--")
+                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.danger))
+                    Text(heartRate.map { "\(Int($0.rounded()))" } ?? "--")
                         .font(.body).monospacedDigit()
                 }
-                Text(timeString(workout.elapsed))
+                Text(timeString(elapsed))
                     .font(.footnote).monospacedDigit()
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
@@ -231,6 +249,10 @@ struct WorkoutLiveView: View {
     /// button stays optically centred whatever the numbers do.
     @ViewBuilder
     private var actionRow: some View {
+        let attempts = fixtureVisual?.attempts ?? workout.liveAttempts
+        let isClimbing = fixtureVisual?.phase == .climbing || (fixtureVisual == nil && workout.manualClimbing)
+        let kcal = fixtureVisual?.activeKcal ?? workout.activeKcal
+        let altitude = fixtureVisual?.altitude ?? workout.relativeAltitude
         HStack(spacing: 4) {
             VStack(alignment: .leading, spacing: 0) {
                 Text("BOULDERS")
@@ -238,7 +260,7 @@ struct WorkoutLiveView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Text("\(workout.liveAttempts)")
+                Text("\(attempts)")
                     .font(.title3).monospacedDigit()
                     .lineLimit(1)
             }
@@ -253,7 +275,7 @@ struct WorkoutLiveView: View {
             Button {
                 workout.toggleManualAttempt()
             } label: {
-                Image(systemName: workout.manualClimbing ? "stop.fill" : "play.fill")
+                Image(systemName: isClimbing ? "stop.fill" : "play.fill")
                     .font(.system(size: 16, weight: .bold))
                     .frame(width: 44, height: 44)
             }
@@ -261,17 +283,17 @@ struct WorkoutLiveView: View {
             .buttonBorderShape(.circle)
             // Same hues as the phase band (#277 follow-up): stop reads "act
             // now" like rest-over, play reads "go" like climbing.
-            .tint(color(workout.manualClimbing ? WorkoutPhasePalette.phoneDanger : WorkoutPhasePalette.phoneSuccess))
+            .tint(color(isClimbing ? WorkoutPhasePalette.phoneDanger : WorkoutPhasePalette.phoneSuccess))
             .fixedSize()
-            .accessibilityLabel(workout.manualClimbing ? "Stop boulder" : "Start boulder")
+            .accessibilityLabel(isClimbing ? "Stop boulder" : "Start boulder")
 
             VStack(alignment: .trailing, spacing: 0) {
-                Text("\(Int(workout.activeKcal)) kcal")
+                Text("\(Int(kcal)) kcal")
                     .font(.system(size: 11)).monospacedDigit()
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Text(String(format: "%.1fm", workout.relativeAltitude))
+                Text(String(format: "%.1fm", altitude))
                     .font(.system(size: 11)).monospacedDigit()
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -292,14 +314,36 @@ struct WorkoutLiveView: View {
     // countdown still fills most of the band's width.
     @ViewBuilder
     private func phaseTimer(phase: WorkoutPhase, fill: PhaseFill) -> some View {
-        if phase == .climbing, let since = workout.climbingSince {
+        if let fixtureVisual {
+            VStack(spacing: 3) {
+                phaseBand(phase: phase, fill: fill) {
+                    VStack(spacing: 0) {
+                        Text(phase == .climbing ? "CLIMBING" : phase == .restOver ? "REST OVER" : "RESTING")
+                            .font(.system(size: 11, weight: .bold))
+                            .lineLimit(1)
+                        Text(fixtureVisual.currentTimer)
+                            .font(.system(size: 34, weight: .heavy, design: .rounded))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.65)
+                    }
+                }
+                if fixtureVisual.phase == .resting {
+                    restTargetControls
+                }
+            }
+        } else if phase == .climbing, let since = workout.climbingSince {
             phaseBand(phase: phase, fill: fill) {
                 VStack(spacing: 0) {
                     Text("CLIMBING")
                         .font(.system(size: 11, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                     Text(timerInterval: since...since.addingTimeInterval(3600), countsDown: false)
                         .font(.system(size: 34, weight: .heavy, design: .rounded))
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
                         .multilineTextAlignment(.center)
                 }
             }
@@ -310,33 +354,52 @@ struct WorkoutLiveView: View {
                     VStack(spacing: 0) {
                         Text(phase == .restOver ? "REST OVER" : "RESTING")
                             .font(.system(size: 11, weight: .bold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                         Text(timerInterval: rest...end, countsDown: true)
                             .font(.system(size: 34, weight: .heavy, design: .rounded))
                             .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.65)
                             .multilineTextAlignment(.center)
                     }
                 }
-                // Rest-target chips (1/2/3/5m) — obvious selector like the
-                // phone's; persisted + mirrored via the live heartbeat. They
-                // stay OUTSIDE the band: it holds what the phase *is*, not the
-                // controls that change it. The selected chip is neutral, not
-                // blue, so it reads as chosen next to a blue RESTING band.
-                HStack(spacing: 4) {
-                    ForEach(restTargets, id: \.self) { t in
-                        let selected = workout.restTargetS == t
-                        Button("\(t / 60)m") {
-                            // Reschedules the rest alarm itself (#476 F5:
-                            // hoisted into WorkoutManager's `restTargetS.didSet`).
-                            workout.restTargetS = t
+                restTargetControls
+            }
+        }
+    }
+
+    /// Rest target controls are shared by the real workout and the screenshot
+    /// fixture. Keeping one production control path makes the fixture useful
+    /// for catching small-screen clipping and selection regressions instead of
+    /// merely drawing a row of labels.
+    @ViewBuilder
+    private var restTargetControls: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 4) {
+                ForEach(restTargets, id: \.self) { t in
+                    let selected = visibleRestTargetS == t
+                    Button("\(t / 60)m") {
+                        workout.restTargetS = t
+                        if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .workoutRest {
+                            fixtureRestTargetS = t
                         }
-                        .font(.system(size: 11, weight: selected ? .bold : .regular))
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-                        .tint(selected ? .white : .gray)
                     }
+                    .font(.system(size: 11, weight: selected ? .bold : .regular))
+                    .buttonStyle(
+                        WatchSecondaryButtonStyle(
+                            tint: selected ? WatchPalette.textPrimary : WatchPalette.textTertiary
+                        )
+                    )
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityIdentifier("rest-target-\(t)")
+                    .accessibilityLabel("Rest \(t / 60) minutes")
+                    .accessibilityValue(selected ? "Selected" : "Not selected")
+                    .accessibilityAddTraits(selected ? .isSelected : [])
                 }
             }
         }
+        .scrollIndicators(.hidden)
     }
 
     private func timeString(_ t: TimeInterval) -> String {

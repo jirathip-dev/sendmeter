@@ -17,6 +17,7 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "syncNow", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearAndResync", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startBackgroundSync", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getLatestReadiness", returnType: CAPPluginReturnPromise),
     ]
 
     private let manager = HealthSyncManager.shared
@@ -33,6 +34,10 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
         // No rotating credential may survive on this device — including one
         // left in the Keychain by a build that predates #265.
         HealthSessionStore.shared.purgeLegacySupabaseKeychain()
+        manager.installReadinessBridge()
+        manager.setReadinessResultHandler { [weak self] result in
+            self?.notifyListeners("readinessRefresh", data: result.message())
+        }
     }
 
     @objc func requestAuthorization(_ call: CAPPluginCall) {
@@ -58,6 +63,16 @@ public class SendLogHealth: CAPPlugin, CAPBridgedPlugin {
     @objc func clearSession(_ call: CAPPluginCall) {
         manager.clearSession()
         call.resolve()
+    }
+
+    /// Returns the latest compact native result so a phone UI opened after a
+    /// background HealthKit wake can re-read without making a duplicate fetch.
+    @objc func getLatestReadiness(_ call: CAPPluginCall) {
+        if let result = manager.latestReadinessResult() {
+            call.resolve(result.message())
+        } else {
+            call.resolve([:])
+        }
     }
 
     // #109: `trigger` is read from the JS-facing call, NOT assumed —

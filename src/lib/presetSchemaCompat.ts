@@ -199,7 +199,7 @@ export function legacyPresetRow<Row extends { holds_s: number[] | null }>(
 }
 
 export const REVERSE_ACTION_REQUIRES_MIGRATION =
-  "This server does not support Reverse Action presets yet. An administrator must apply the reverse_action_protocol migration before this preset can be saved.";
+  "This server does not support resisted-movement presets yet. An administrator must apply the movement protocol migration before this preset can be saved.";
 
 type ReverseActionPresetRow = {
   protocol_mode: string;
@@ -242,7 +242,7 @@ export function preReversePresetRow<Row extends ReverseActionPresetRow>(
 }
 
 export const CAPACITY_EVIDENCE_REQUIRES_MIGRATION =
-  "This server does not support Reverse Action capacity evidence yet. An administrator must apply the reverse_action_modalities_and_cadence migration before this preset can be saved.";
+  "This server does not support movement metadata yet. An administrator must apply the reverse_action_modalities_and_cadence migration before this preset can be saved.";
 
 /// Remove only #422's opt-in field for a server that already supports #400.
 /// False is the schema default and can be represented faithfully; true must

@@ -142,6 +142,41 @@ describe("Reverse Action cadence", () => {
     });
     expect(built?.setMetrics?.cadenceAdherencePct).toBe(100);
   });
+
+  it("builds a measured set without inventing a force target", () => {
+    const timeline = buildReverseActionTimeline({ ...prescription, sets: 1 });
+    const built = buildReverseActionSetRecording({
+      id: "target-free-set",
+      samples: [
+        { t: 5_000, kg: 12 },
+        { t: 10_000, kg: 14 },
+        { t: 15_000, kg: 13 },
+      ],
+      timeline,
+      set: 1,
+      targetBand: null,
+      cadenceOutS: 3,
+      cadenceReturnS: 2,
+      base: {
+        note: "",
+        tag: "Resisted curl",
+        side: "left",
+        groupId: "group-1",
+        protocolRunId: "run-1",
+        zone: null,
+        setupNote: "red spring",
+      },
+    });
+    expect(built).toMatchObject({
+      targetKg: null,
+      targetLowKg: null,
+      targetHighKg: null,
+      protocolMode: "reverse_action",
+      avgKg: 13.25,
+    });
+    expect(built?.setMetrics?.inTargetPct).toBeNull();
+    expect(built?.setMetrics?.cadenceAdherencePct).toBe(100);
+  });
 });
 
 describe("Reverse Action target and set metrics", () => {

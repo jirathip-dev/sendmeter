@@ -92,9 +92,9 @@ struct StatusWidgetView: View {
                         valueFontSize: 16
                     )
                     .frame(width: 43, height: 43)
-                    Text(readinessZone ?? (snap.readiness == nil ? "No data" : "No zone"))
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(readinessColor(snap.readinessZone))
+                        Text(readinessZone ?? (snap.readiness == nil ? "No data" : "No zone"))
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(readinessColor(snap.readinessZone))
                         .lineLimit(1)
                         .accessibilityHidden(true)
                 }

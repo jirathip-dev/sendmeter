@@ -7,27 +7,47 @@ import SwiftUI
 ///
 /// KEEP IN SYNC with the identical copy in the SendLogWatchWidgets target.
 extension Color {
-    static let statusLow = Color(red: 0x7B / 255, green: 0x83 / 255, blue: 0xEB / 255)
-    static let statusOptimal = Color(red: 0x4F / 255, green: 0xB0 / 255, blue: 0xFF / 255)
-    static let statusCaution = Color(red: 0xE8 / 255, green: 0xC2 / 255, blue: 0x4E / 255)
-    static let statusHigh = Color(red: 0xF0 / 255, green: 0x86 / 255, blue: 0x4C / 255)
+    static let statusLow = WatchPalette.foreground(WatchDesignTokens.primary)
+    static let statusOptimal = WatchPalette.foreground(WatchDesignTokens.secondary)
+    static let statusCaution = WatchPalette.foreground(WatchDesignTokens.warning)
+    static let statusHigh = WatchPalette.foreground(WatchDesignTokens.danger)
+}
+
+private func acwrToken(_ risk: ACWRRiskBand?) -> PhaseRGB? {
+    switch risk {
+    case .low: WatchDesignTokens.primary
+    case .optimal: WatchDesignTokens.secondary
+    case .caution: WatchDesignTokens.warning
+    case .high: WatchDesignTokens.danger
+    case nil: nil
+    }
 }
 
 func acwrColor(_ risk: ACWRRiskBand?) -> Color {
-    switch risk {
-    case .low: .statusLow
-    case .optimal: .statusOptimal
-    case .caution: .statusCaution
-    case .high: .statusHigh
-    case nil: .secondary
+    guard let token = acwrToken(risk) else { return .secondary }
+    return WatchPalette.foreground(token)
+}
+
+func acwrAccent(_ risk: ACWRRiskBand?, reducedLuminance: Bool) -> Color {
+    guard let token = acwrToken(risk) else { return .secondary }
+    return WatchPalette.accent(token, reducedLuminance: reducedLuminance)
+}
+
+private func readinessToken(_ zone: String?) -> PhaseRGB? {
+    switch zone?.lowercased() {
+    case "push": WatchDesignTokens.secondary
+    case "maintain": WatchDesignTokens.warning
+    case "recover": WatchDesignTokens.danger
+    default: nil
     }
 }
 
 func readinessColor(_ zone: String?) -> Color {
-    switch zone?.lowercased() {
-    case "push": .statusOptimal
-    case "maintain": .statusCaution
-    case "recover": .statusHigh
-    default: .secondary
-    }
+    guard let token = readinessToken(zone) else { return .secondary }
+    return WatchPalette.foreground(token)
+}
+
+func readinessAccent(_ zone: String?, reducedLuminance: Bool) -> Color {
+    guard let token = readinessToken(zone) else { return .secondary }
+    return WatchPalette.accent(token, reducedLuminance: reducedLuminance)
 }

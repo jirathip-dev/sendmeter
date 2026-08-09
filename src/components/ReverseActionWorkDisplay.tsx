@@ -12,7 +12,7 @@ const ZONE = {
 function instruction(segment: ReverseActionSegment | null, done: boolean): string {
   if (done) return "SET COMPLETE";
   if (!segment) return "PREPARE";
-  if (segment.phase === "move") return segment.direction === "out" ? "OUT" : "RETURN";
+  if (segment.phase === "move") return segment.direction === "out" ? "CONCENTRIC" : "ECCENTRIC";
   return segment.phase === "setRest" ? "SET REST" : "PREPARE";
 }
 
@@ -36,7 +36,7 @@ export default function ReverseActionWorkDisplay(props: {
       <div aria-live="assertive" style={{ fontSize: "clamp(1.8rem, 9vw, 3.1rem)", fontWeight: 900, letterSpacing: ".08em", color: moving ? "var(--success)" : "var(--warning)", lineHeight: 1 }}>{instruction(props.segment, props.done)}</div>
       <div style={{ fontSize: "clamp(1.8rem, 9vw, 3.1rem)", fontWeight: 900, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{Math.max(0, props.remainingS ?? 0).toFixed(1)}<span style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>s</span></div>
     </div>
-    <div role="meter" aria-label="Reverse Action force target" aria-valuemin={0} aria-valuemax={Math.max(props.highKg * 1.5, props.currentKg, 1)} aria-valuenow={Math.max(0, props.currentKg)} aria-valuetext={`${zone.label}; target ${props.lowKg.toFixed(1)} to ${props.highKg.toFixed(1)} kilograms`} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+    <div role="meter" aria-label="Resisted-movement force target" aria-valuemin={0} aria-valuemax={Math.max(props.highKg * 1.5, props.currentKg, 1)} aria-valuenow={Math.max(0, props.currentKg)} aria-valuetext={`${zone.label}; target ${props.lowKg.toFixed(1)} to ${props.highKg.toFixed(1)} kilograms`} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
       <div style={{ borderRadius: 12, padding: "7px 10px", background: "var(--surface-1)" }}>
         <div className="label-eyebrow">CURRENT</div>
         <div style={{ fontSize: "clamp(1.8rem, 10vw, 3.2rem)", fontWeight: 900, lineHeight: 1 }}>{props.currentKg.toFixed(1)}<span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)" }}> kg</span></div>

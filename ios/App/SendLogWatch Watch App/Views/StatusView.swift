@@ -5,39 +5,83 @@ import SwiftUI
 /// ACWR — the two numbers worth a wrist-raise before deciding what to do.
 ///
 /// Renders straight out of the App Group snapshot, the same one the
-/// complications read: `WidgetBridge.refreshStatus()` already fetches the
-/// iPhone-computed readiness row and computes ACWR on-watch, so this page adds
-/// no second fetch path — it shows what's cached, asks for a refresh on appear
-/// and on foreground, and re-reads.
-///
-/// SendLogWatchApp also refreshes on foreground (for the complications, which
-/// need it whether or not this page is on screen), so a foreground costs two
-/// round trips rather than one. Deliberate: they're two small queries, and the
-/// alternative — reading the store and hoping the app-level refresh has already
-/// landed — is exactly the staleness this page is supposed to avoid.
-///
-/// `ReadinessManager` deliberately isn't used here: it covers readiness only,
-/// and mixing it with the snapshot's ACWR would put two sources of truth on one
-/// screen, free to disagree.
+/// complications read. `ReadinessManager` requests the iPhone-owned HealthKit
+/// sync and applies its typed result to this snapshot; ACWR remains the
+/// independent watch-local calculation. Cached values stay visible while a
+/// request is in flight or the phone is offline.
 struct StatusView: View {
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var snap = ScreenshotFixtures.enabled
-        ? ScreenshotFixtures.status
-        : WidgetStore.load()
-    @State private var refreshing = false
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(ReadinessManager.self) private var readinessManager
+
+    private var snap: WidgetSnapshot {
+        ScreenshotFixtures.enabled ? ScreenshotFixtures.status : readinessManager.snapshot
+    }
+
+    private var statusChip: (state: WatchVisualState, title: String) {
+        if ScreenshotFixtures.state == .statusSyncing {
+            return (.syncing, "Updating")
+        }
+        if ScreenshotFixtures.enabled {
+            switch ScreenshotFixtures.state {
+            case .statusOffline:
+                return (.offline, "Offline")
+            case .statusCached:
+                return (.cached, "Cached")
+            case .statusEmpty:
+                return (.warning, "No data")
+            case .status:
+                // The normal fixture has no network task by design; keep the
+                // curated screenshot's completed state deterministic.
+                return (.ready, "Synced")
+            default:
+                break
+            }
+        }
+        switch readinessManager.syncState {
+        case .fresh:
+            return (.ready, "Synced")
+        case .cached, .idle:
+            return snap.updatedAt == 0 ? (.warning, "No data") : (.cached, "Cached")
+        case .offline:
+            return (.offline, "Offline")
+        case .syncing:
+            return (.syncing, "Updating")
+        case .authRequired:
+            return (.warning, "Phone needed")
+        case .failed:
+            return (.warning, "Retry")
+        case .unsupported:
+            return (.warning, "Update phone")
+        }
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 9) {
-                readiness
-                Divider()
-                acwr
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center) {
+                    WatchEyebrow(text: "Today")
+                    Spacer(minLength: 4)
+                    WatchStateChip(state: statusChip.state, title: statusChip.title, compact: true)
+                }
+                WatchCard(accent: readinessAccent(snap.readinessZone, reducedLuminance: isLuminanceReduced)) {
+                    readiness
+                }
+                WatchCard(accent: acwrAccent(
+                    StatusPresentation.acwrRiskBand(snap.acwr),
+                    reducedLuminance: isLuminanceReduced
+                )) {
+                    acwr
+                }
             }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task { await refresh() }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active { Task { await refresh() } }
+        .scrollIndicators(.hidden)
+        .watchCanvas()
+        .task {
+            guard !ScreenshotFixtures.enabled else { return }
+            readinessManager.request(reason: .statusRefresh)
         }
     }
 
@@ -81,6 +125,13 @@ struct StatusView: View {
             // Health; the ring helper draws a neutral outline, not a zero.
             if snap.readiness == nil {
                 hint("Open Sendmeter on your iPhone to sync Health")
+            }
+            if !ScreenshotFixtures.enabled {
+                Text(readinessManager.syncLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(readinessManager.syncLabel)
             }
         }
     }
@@ -126,30 +177,15 @@ struct StatusView: View {
     // MARK: Pieces
 
     private func eyebrow(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(.secondary)
-            .accessibilityHidden(true)
+        WatchEyebrow(text: text)
     }
 
     private func hint(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11))
-            .foregroundStyle(.tertiary)
+            .font(.system(.caption2, design: .rounded))
+            .foregroundStyle(WatchPalette.textTertiary)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityHidden(true)
     }
 
-    // MARK: Refresh
-
-    private func refresh() async {
-        // Fastlane launches the real view hierarchy with deterministic data.
-        // Do not replace that fixture with an unauthenticated network result.
-        guard !ScreenshotFixtures.enabled else { return }
-        guard !refreshing else { return }
-        refreshing = true
-        defer { refreshing = false }
-        await WidgetBridge.refreshStatus()
-        snap = WidgetStore.load()
-    }
 }

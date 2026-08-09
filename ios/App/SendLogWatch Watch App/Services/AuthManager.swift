@@ -95,6 +95,11 @@ final class AuthManager: NSObject {
             // an explicit event may end the fallback chain.
             if !context.isEmpty { apply(context) }
         }
+        if WatchSessionStore.shared.current == nil {
+            WidgetBridge.invalidate()
+        } else {
+            WidgetBridge.activate()
+        }
         refreshState()
         startPolling()
     }
@@ -181,17 +186,37 @@ final class AuthManager: NSObject {
     /// login form and no explanation (#266).
     @MainActor
     private func apply(_ context: [String: Any]) {
+        // Readiness results share the phone's latest application context with
+        // the access-token relay. Decode auth first: a malformed/stale
+        // signedIn dictionary must not open the readiness result gate and let
+        // untrusted fields masquerade as a valid account.
         let outcome = SessionRelay.decode(context, now: now)
         switch outcome {
         case let .signedIn(session):
+            // WatchConnectivity application context is latest-only: a direct
+            // A → B signedIn relay may skip the intermediate signedOut event.
+            // Compare the persisted account before consuming any combined
+            // readiness result, so A's observable/widget state and requests
+            // are fenced before B opens the gate.
+            if WatchSessionStore.shared.userId != session.userId {
+                ReadinessManager.current?.resetForAccountTransition()
+            }
+            WatchSessionStore.shared.store(session)
+            // Open the result gate only after the current account is durable.
+            // This preserves the watch-before-health race: a B result can be
+            // accepted as soon as it arrives, while a late A result fails the
+            // account stamp gate.
+            ReadinessManager.current?.activateForSignedInSession()
+            ReadinessManager.current?.receive(context)
+            WidgetBridge.activate()
             lastRelayAt = Date()
             lastRejection = nil
             queuedRequest = false
-            WatchSessionStore.shared.store(session)
             syncTimeout?.cancel()
             syncing = false
             state = SessionRelay.state(for: session, now: now)
             Self.log.info("relay accepted (relayId \(session.relayId ?? "none"))")
+            ReadinessManager.current?.connectivityChanged()
             // A stale-token pass may still be suspended in either queue. A
             // coalesced request guarantees a fresh-token follow-up pass.
             Task {
@@ -205,9 +230,20 @@ final class AuthManager: NSObject {
             lastRelayAt = Date()
             lastRejection = nil
             queuedRequest = false
+            let outgoingAccountUserId = WatchSessionStore.shared.userId
             signOutLocally()
+            ReadinessManager.current?.signOutLocally(
+                outgoingAccountUserId: outgoingAccountUserId
+            )
             Self.log.info("relay: phone signed out")
         case let .rejected(reason):
+            // A readiness-only merged context has no auth event; an already
+            // signed-in watch may still consume its typed result. Any
+            // rejected auth relay is otherwise ignored, so stale/malformed
+            // signedIn payloads cannot publish readiness before validation.
+            if reason == .notARelay {
+                ReadinessManager.current?.receive(context)
+            }
             // `notARelay` is not an auth payload at all — some other
             // application context. Recording it would only add noise.
             guard reason != .notARelay else { return }
@@ -226,6 +262,7 @@ final class AuthManager: NSObject {
     @MainActor
     func signOutLocally() {
         WatchSessionStore.shared.clear()
+        WidgetBridge.invalidate()
         state = .signedOut
         syncing = false
         syncTimeout?.cancel()
@@ -277,11 +314,22 @@ extension AuthManager: WCSessionDelegate {
         // itself if the clock-derived state says the token is stale.
         Task { @MainActor in
             self.refreshState()
+            ReadinessManager.current?.connectivityChanged()
         }
     }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         Task { @MainActor in self.apply(applicationContext) }
+    }
+
+    /// Reachable phone result path. The auth bridge intentionally uses the
+    /// same generic WatchConnectivity delegate channel for readiness replies;
+    /// `ReadinessManager` owns freshness, idempotency, and late-result gates.
+    func session(
+        _ session: WCSession,
+        didReceiveMessage message: [String: Any]
+    ) {
+        Task { @MainActor in ReadinessManager.current?.receive(message) }
     }
 
     /// Guaranteed-delivery variant. The phone answers a `requestSession` this
@@ -300,6 +348,7 @@ extension AuthManager: WCSessionDelegate {
         guard session.isReachable else { return }
         Task { @MainActor in
             self.refreshState()
+            ReadinessManager.current?.connectivityChanged()
         }
     }
 }

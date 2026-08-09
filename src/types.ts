@@ -387,6 +387,16 @@ export interface WorkoutListItem {
 /// while a workout is running (SL-41 live mirror).
 export interface LiveWorkout {
   workoutId: string;
+  /// Stable run identity carried by both the WC and Supabase paths. Current
+  /// watch builds use the workout UUID; the mirror keeps it separate so a
+  /// future transport can reuse the same contract without relying on a row's
+  /// primary-key shape.
+  runId: string;
+  /// Strictly increasing within runId. Null only for rows written by a
+  /// pre-#521 watch/build; those rows fall back to updatedAt ordering.
+  sequence: number | null;
+  event: "start" | "telemetry" | "phase" | "count" | "end";
+  terminal: boolean;
   status: "live" | "ended";
   startedAt: string;
   hr: number | null;

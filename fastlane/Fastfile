@@ -79,6 +79,7 @@ def verify_screenshot_output
     "iPhone 17 Pro Max" => { count: 4, size: [1320, 2868] },
     "iPhone 13 Pro Max" => { count: 4, size: [1284, 2778] },
     "iPad Pro 13-inch (M5)" => { count: 4, size: [2064, 2752] },
+    "Apple Watch SE (40mm)" => { count: 2, size: [324, 394] },
     "Apple Watch Ultra 3 (49mm)" => { count: 2, size: [422, 514] },
   }
 
@@ -106,6 +107,7 @@ platform :ios do
     ensure_screenshot_simulator("iPhone 17 Pro Max", "iOS")
     ensure_screenshot_simulator("iPhone 13 Pro Max", "iOS")
     ensure_screenshot_simulator("iPad Pro 13-inch (M5)", "iOS")
+    ensure_screenshot_simulator("Apple Watch SE (40mm)", "watchOS")
     ensure_screenshot_simulator("Apple Watch Ultra 3 (49mm)", "watchOS")
     prepare_local_screenshot_fixture
 
@@ -139,12 +141,13 @@ platform :ios do
 
     # snapshot supports watchOS UI-test destinations, so the companion uses
     # the same named/organized output as iPhone instead of a one-off simctl
-    # command. Ultra 3 is Apple's current highest-resolution accepted watch.
+    # command. Run the compact SE before Ultra so the 40mm layout proof fails
+    # fast; both devices execute the same production fixture/AX matrix.
     capture_screenshots(
       project: XCODEPROJ,
       scheme: "Sendmeter Watch Screenshots",
       configuration: "Debug",
-      devices: ["Apple Watch Ultra 3 (49mm)"],
+      devices: ["Apple Watch SE (40mm)", "Apple Watch Ultra 3 (49mm)"],
       languages: ["en-US"],
       output_directory: SCREENSHOT_OUTPUT,
       derived_data_path: SCREENSHOT_DERIVED_DATA,

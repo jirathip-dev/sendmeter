@@ -11,6 +11,7 @@ import {
   isEffortRecording,
   isMeasuredRecording,
   isRecoveredRecording,
+  isStaticCapacityEvidence,
   recommendZone,
   recordingCapacityModality,
   recordingZone,
@@ -30,7 +31,7 @@ describe("isMeasuredRecording (#367)", () => {
   });
 });
 
-describe("capacity modality partitioning (#422)", () => {
+describe("Static-only capacity evidence (#510)", () => {
   const measured = (
     id: string,
     protocolMode?: "hold" | "reverse_action",
@@ -54,29 +55,27 @@ describe("capacity modality partitioning (#422)", () => {
     expect(recordingCapacityModality({ protocolMode: "reverse_action" })).toBe("reverse_action");
   });
 
-  it("never lets Static and Reverse Action rows enter each other's curve or PR", () => {
+  it("never lets resisted-movement rows enter Static curve or PR models", () => {
     const rows = [measured("legacy"), measured("hold", "hold"), measured("reverse", "reverse_action")];
     expect(curveCandidateRecordings(rows, "FDP", "left", "static").map((r) => r.id)).toEqual([
       "legacy",
       "hold",
     ]);
-    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action").map((r) => r.id)).toEqual([
-      "reverse",
-    ]);
+    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action")).toEqual([]);
     expect(effortPeakKg(rows, "FDP", "left", "static")).toBe(30);
-    expect(effortPeakKg(rows, "FDP", "left", "reverse_action")).toBe(30);
+    expect(effortPeakKg(rows, "FDP", "left", "reverse_action")).toBeNull();
+    expect(isStaticCapacityEvidence(rows[0]!)).toBe(true);
+    expect(isStaticCapacityEvidence(rows[2]!)).toBe(false);
   });
 
-  it("keeps historical Reverse Action evidence but excludes new ordinary prescribed sets", () => {
+  it("excludes historical, explicit-capacity, and ordinary movement rows alike", () => {
     const rows = [
       measured("historical", "reverse_action", null),
       measured("capacity", "reverse_action", true),
       measured("ordinary", "reverse_action", false),
     ];
-    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action").map((r) => r.id)).toEqual([
-      "historical",
-      "capacity",
-    ]);
+    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action")).toEqual([]);
+    expect(rows.every((row) => !isStaticCapacityEvidence(row))).toBe(true);
   });
 
   it("excludes cadence-only rows from both models regardless of stamped mode", () => {

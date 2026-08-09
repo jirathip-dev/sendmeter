@@ -5,10 +5,10 @@ import SwiftUI
 /// am I in — and page 2 is the things you can start. Swiping starts nothing;
 /// page 2 has the same taps it always had.
 ///
-/// Horizontal `.page` paging, not `.verticalPage`: page 2 is a List and page 1
-/// scrolls when the text wraps, and both of those are driven by the Digital
-/// Crown — vertical paging would fight the scroll on every page. Sideways also
-/// matches the mental model better, since neither page is "below" the other.
+/// Horizontal `.page` paging, not `.verticalPage`: both pages scroll vertically
+/// when text wraps, and that scrolling is driven by the Digital Crown — vertical
+/// paging would fight the scroll on every page. Sideways also matches the mental
+/// model better, since neither page is "below" the other.
 ///
 /// This stays the root of RootView's NavigationStack, so the two
 /// `NavigationLink(value:)`s below and the complication deep links push onto
@@ -100,12 +100,12 @@ struct HomeView: View {
     var body: some View {
         VStack(spacing: 2) {
             if workout.isRunning {
-                Label("Workout running — tap Climb Workout to end it", systemImage: "figure.climbing")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 2)
+                WatchStateBanner(
+                    state: .warning,
+                    title: "Workout in progress",
+                    message: "Open Climb Workout to end it safely."
+                )
+                .padding(.horizontal, 4)
             }
             TabView(selection: $selection) {
                 StatusView()
@@ -113,9 +113,19 @@ struct HomeView: View {
                 ActionsView()
                     .tag(WatchHomePage.actions)
             }
-            .tabViewStyle(.page)
+            // The explicit selector below is the only pagination affordance;
+            // the native dots duplicate it and consume scarce 40mm height.
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            WatchPageControl(
+                selection: selection == .status ? 0 : 1,
+                labels: ["Status", "Actions"],
+                onSelect: { selection = $0 == 0 ? .status : .actions }
+            )
+            .padding(.horizontal, 8)
+            .padding(.bottom, 2)
         }
         .navigationTitle("Sendmeter")
+        .watchCanvas()
         .onAppear {
             var consumed: [LossNotice] = []
             if GaugeSessionLossNotice.consume() { consumed.append(.gaugeSession) }
@@ -165,38 +175,101 @@ private struct ActionsView: View {
     /// asserting it for every stale reading.
     @State private var retryScheduled = false
 
+    private var visiblePendingUploads: Int { ScreenshotFixtures.actionPendingUploads ?? pendingUploads }
+
     var body: some View {
-        List {
-            NavigationLink(value: WatchDest.force) {
-                Label("Force Gauge", systemImage: "scalemass")
-            }
+        ScrollView {
+            VStack(spacing: 8) {
+                WatchEyebrow(text: "Start a session")
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            NavigationLink(value: WatchDest.workout) {
-                Label("Climb Workout", systemImage: "figure.climbing")
-            }
+                WatchCard(accent: WatchPalette.force) {
+                    NavigationLink(value: WatchDest.force) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "scalemass")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Force Gauge")
+                                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                                Text("Measure a hold with Progressor")
+                                    .font(.caption2)
+                                    .foregroundStyle(WatchPalette.textSecondary)
+                                    .lineLimit(2)
+                                    .minimumScaleFactor(0.75)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(WatchPalette.textTertiary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens force gauge setup")
+                }
 
-            // The "workout running" hint lives in HomeView now, above the
-            // pager (#476 review finding F4) — it needs to be visible on
-            // whichever page a status/force deep link lands on, not just here.
+                WatchCard(accent: WatchPalette.secondary) {
+                    NavigationLink(value: WatchDest.workout) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "figure.climbing")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.secondary))
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Climb Workout")
+                                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                                Text("Count boulders and track effort")
+                                    .font(.caption2)
+                                    .foregroundStyle(WatchPalette.textSecondary)
+                                    .lineLimit(2)
+                                    .minimumScaleFactor(0.75)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(WatchPalette.textTertiary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens climb workout")
+                }
 
-            if pendingUploads > 0 {
-                Label("\(pendingUploads) pending upload\(pendingUploads == 1 ? "" : "s")", systemImage: "icloud.and.arrow.up")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-            }
+                // The "workout running" hint lives in HomeView now, above the
+                // pager (#476 review finding F4) — it needs to be visible on
+                // whichever page a status/force deep link lands on, not just here.
 
-            // The offline window (#265): the relayed access token has expired
-            // and only the phone can supply another. Recording still works —
-            // everything is persist-first and drains later — so say that
-            // rather than dumping the user on a sign-in screen mid-session.
-            if auth.needsTokenForDisplay && !ScreenshotFixtures.enabled {
-                Label(
-                    "Waiting for iPhone — new saves upload once it's in range",
-                    systemImage: "iphone.badge.exclamationmark"
-                )
-                .font(.footnote)
-                .foregroundStyle(.orange)
-            } else if case let .stale(lastSuccessfulSyncAt)? = syncFreshness, !ScreenshotFixtures.enabled {
+                if visiblePendingUploads > 0, ScreenshotFixtures.actionState == nil {
+                    WatchStateBanner(
+                        state: .offline,
+                        title: "\(visiblePendingUploads) upload\(visiblePendingUploads == 1 ? "" : "s") waiting",
+                        message: "Saved on the watch; they upload when your iPhone is in range."
+                    )
+                }
+
+                if let actionState = ScreenshotFixtures.actionState {
+                    WatchStateBanner(
+                        state: actionState,
+                        title: actionState == .syncing ? "Syncing uploads" : "Offline saves",
+                        message: actionState == .syncing
+                            ? "Your latest save is being sent to the iPhone."
+                            : "\(visiblePendingUploads) saves stay on the watch until the connection recovers."
+                    )
+                }
+
+                // The offline window (#265): the relayed access token has expired
+                // and only the phone can supply another. Recording still works —
+                // everything is persist-first and drains later — so say that
+                // rather than dumping the user on a sign-in screen mid-session.
+                if auth.needsTokenForDisplay && !ScreenshotFixtures.enabled {
+                    WatchStateBanner(
+                        state: .offline,
+                        title: "Waiting for iPhone",
+                        message: "New saves upload once it is in range."
+                    )
+                } else if case let .stale(lastSuccessfulSyncAt)? = syncFreshness, !ScreenshotFixtures.enabled {
                 // #472b: a different signal from the row above — items are
                 // waiting AND the queue hasn't landed anything in a while,
                 // which `auth.needsToken` alone wouldn't catch (a queue can
@@ -207,12 +280,12 @@ private struct ActionsView: View {
                 // yet" — the case where nothing is actually retrying, F18).
                 // Same honest-states rule as everywhere else here: never
                 // having synced reads as stale, not as quiet/healthy.
-                Label(
-                    staleSyncMessage(lastSuccessfulSyncAt, retryScheduled: retryScheduled),
-                    systemImage: "exclamationmark.arrow.triangle.2.circlepath"
-                )
-                .font(.footnote)
-                .foregroundStyle(.orange)
+                    WatchStateBanner(
+                        state: .stale,
+                        title: staleSyncMessage(lastSuccessfulSyncAt, retryScheduled: retryScheduled),
+                        message: "Pending uploads stay on the watch until the connection recovers."
+                    )
+                }
             }
 
             // No Sign Out here, and none anywhere else on the watch (#278).
@@ -223,7 +296,11 @@ private struct ActionsView: View {
             // footer went with it: automatic sign-in is the normal path and
             // doesn't need narrating.
         }
+        .scrollIndicators(.hidden)
+        .padding(.horizontal, 4)
+        .watchCanvas()
         .task {
+            guard ScreenshotFixtures.actionState == nil else { return }
             // #472b review F19: `syncFreshness` is scoped to `OfflineQueue`
             // ALONE, matching `lastSuccessfulSyncAt()`'s own source — joining
             // it with `PendingSessionQueue`'s count (which has no relation to
