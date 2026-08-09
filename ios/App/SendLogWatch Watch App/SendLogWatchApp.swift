@@ -63,6 +63,7 @@ struct SendLogWatchApp: App {
         // render the previous account's cached protocol rows or selection.
         .onChange(of: auth.state) { _, _ in
             forceProtocolCatalog.synchronizeAccountScope()
+            guidedForceRunner.authStateDidChange(to: auth.state)
         }
     }
 }

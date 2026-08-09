@@ -88,6 +88,30 @@ final class PendingSessionQueueTests: XCTestCase {
         XCTAssertTrue(try filesOnDisk().contains("\(id.uuidString).json"))
     }
 
+    func testEnqueuePreservesExplicitOwnerStampAcrossAccountChange() async throws {
+        let accountA = UUID()
+        let accountB = UUID()
+        WatchSessionStore.shared.store(
+            RelayedSession(
+                accessToken: "test-access-token-\(accountB.uuidString)",
+                userId: accountB,
+                expiresAt: Date().addingTimeInterval(3600).timeIntervalSince1970
+            )
+        )
+        let id = UUID()
+        let uploader = ScriptedSessionUploader(failing: [id: URLError(.notConnectedToInternet)])
+        let queue = makeQueue(uploader: uploader)
+        var pending = makeSession(id: id)
+        pending.enqueuedUserId = accountA
+
+        _ = await queue.enqueue(pending)
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(id.uuidString).json"))
+        let decoded = try JSONDecoder().decode(PendingTindeqSession.self, from: data)
+        XCTAssertEqual(decoded.enqueuedUserId, accountA)
+        XCTAssertNotEqual(decoded.enqueuedUserId, accountB)
+    }
+
     func testDrainUploadsAndDeletesOnSuccess() async throws {
         let id = UUID()
         try writeFile(makeSession(id: id), createdAt: Date())

@@ -49,6 +49,9 @@ CI, dependency updates, and refactors unless users experience a change.
 - History: a type or Force tag filter now resets to "All" for good when its last matching recording or session is removed, instead of silently re-applying itself once matching data reappears.
 - History: recordings grouped into a session no longer vanish for good if that session is later deleted; deleting a ticked recording now immediately updates the bulk-action count instead of leaving a stuck button; and "Assign…" no longer writes to a recording that was ticked then deleted.
 - Force: a non-hands-free run right after a hands-free run no longer plays stray "done" cues or shows a stale danger banner on segment transitions.
+- Force: resisted-movement presets now keep every continuous set within the Progressor's 30-minute recording window, including older presets opened on the Watch.
+- Watch: a zero-rest resisted-movement boundary no longer loses the next set while the previous recording is still being queued; both sets stay in one Force session.
+- Watch: switching accounts during a guided Force run now discards the in-progress trace without saving it under the next account; same-account offline runs continue normally.
 - Force: a BLE disconnect during the first rep of a session now auto-logs the recovered session to History instead of silently dropping it until a later disconnect.
 - Force: retrying unsaved recordings no longer discards a rep that failed to save while the retry was in progress, and a single-sample recording can no longer get permanently stuck failing to sync.
 - History: the Type and Force-tag filter chip rows no longer show a scrollbar over the chips; they still scroll by touch/trackpad when they overflow.

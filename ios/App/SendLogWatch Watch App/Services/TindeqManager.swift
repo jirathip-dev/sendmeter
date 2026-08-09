@@ -78,6 +78,12 @@ final class TindeqManager: NSObject {
     private let armTimeoutSeconds: TimeInterval
     private let recordingQueue: any TindeqRecordingQueueing
     private let sessionQueue: any TindeqSessionQueueing
+    /// Read synchronously before any queue actor hop. The default reads the
+    /// relayed identity cache; tests inject a changing owner to pin the
+    /// account-switch boundary.
+    private let userIdProvider: @Sendable () -> UUID?
+    private var persistenceOwnerUserId: UUID?
+    private var persistenceOwnerAssigned = false
     /// Test seam: production writes through CoreBluetooth; watch target tests
     /// inject this observer so the real command ordering is inspectable.
     private let commandWriter: ((Tindeq.Cmd) -> Void)?
@@ -105,17 +111,27 @@ final class TindeqManager: NSObject {
     // Distinguishes an app-initiated disconnect from a real BLE drop, so only
     // the latter triggers the finish-on-disconnect prompt.
     private var intentionalDisconnect = false
+    // Account transitions are a hard no-save boundary. Keep this latched
+    // until the next explicit connect so a late CoreBluetooth callback cannot
+    // turn the old account's cleared trace into a salvage row.
+    private var discardWithoutSavingActive = false
+    // Save tasks outlive the transport, so account transitions advance this
+    // token. Completions from the old run must not restore counts/depletion or
+    // trigger a deferred session log under the next account.
+    private var persistenceGeneration = 0
 
     init(
         recordingQueue: any TindeqRecordingQueueing = PendingRecordingQueue.shared,
         sessionQueue: any TindeqSessionQueueing = PendingSessionQueue.shared,
         armTimeoutSeconds: TimeInterval = 10 * 60,
-        commandWriter: ((Tindeq.Cmd) -> Void)? = nil
+        commandWriter: ((Tindeq.Cmd) -> Void)? = nil,
+        userIdProvider: @escaping @Sendable () -> UUID? = { WatchSessionStore.shared.userId }
     ) {
         self.recordingQueue = recordingQueue
         self.sessionQueue = sessionQueue
         self.armTimeoutSeconds = armTimeoutSeconds
         self.commandWriter = commandWriter
+        self.userIdProvider = userIdProvider
         self.fakeTransportConnected = commandWriter != nil
         super.init()
         // A command writer is a complete fake transport for unit tests.
@@ -194,26 +210,34 @@ final class TindeqManager: NSObject {
             clearSession()
             return
         }
-        let pending = PendingTindeqSession.build(
+        var pending = PendingTindeqSession.build(
             sessionStartedAt: sessionStartedAt,
             recordingCount: sessionCount,
             rpe: predictedRPE.rpe,
             groupId: groupId
         )
+        // Capture A before the actor hop. UploadQueueEngine preserves this
+        // explicit stamp, so a delayed enqueue cannot become a B session.
+        pending.enqueuedUserId = persistenceOwnerAssigned
+            ? persistenceOwnerUserId
+            : userIdProvider()
         clearSession()
-        Task {
+        let generation = persistenceGeneration
+        Task { @MainActor in
+            guard generation == persistenceGeneration else { return }
             let outcome = await sessionQueue.enqueue(pending)
+            guard generation == persistenceGeneration else { return }
             guard outcome == .lost else { return }
-            await MainActor.run {
-                self.errorMsg = "Force session couldn't be saved"
-                GaugeSessionLossNotice.record()
-            }
+            self.errorMsg = "Force session couldn't be saved"
+            GaugeSessionLossNotice.record()
         }
     }
 
     // MARK: Controls
 
     func connect() {
+        discardWithoutSavingActive = false
+        intentionalDisconnect = false
         errorMsg = nil
         resetForceMirrorPipeline()
         forceMirrorSequence = LiveMirrorSequence(runId: UUID())
@@ -245,6 +269,59 @@ final class TindeqManager: NSObject {
         fakeTransportConnected = false
         controlChar = nil
         status = .idle
+        pushForceBeat()
+    }
+
+    /// Binds guided persistence to the account that owned the run snapshot.
+    /// Direct/manual manager callers leave this unset and use the current
+    /// relayed identity at their synchronous save boundary instead.
+    func setPersistenceOwner(_ userId: UUID?) {
+        persistenceOwnerUserId = userId
+        persistenceOwnerAssigned = true
+    }
+
+    func clearPersistenceOwner() {
+        persistenceOwnerUserId = nil
+        persistenceOwnerAssigned = false
+    }
+
+    /// Synchronously tears down an account's transport and claims without
+    /// entering any salvage or persistence path. Account changes use this
+    /// instead of `disconnect()`: the latter is an ordinary transport
+    /// boundary whose delegate callback may salvage an interrupted trace.
+    ///
+    /// This is intentionally idempotent. In-flight queue completions are
+    /// invalidated so they cannot resurrect manager state or finish a session
+    /// after the run has been handed to another account.
+    func discardWithoutSaving() {
+        discardWithoutSavingActive = true
+        intentionalDisconnect = true
+        persistenceGeneration &+= 1
+
+        let wasMeasuring = measuring
+        cancelHandsFree()
+        stopUITimer()
+        if wasMeasuring { write(.stop) }
+        measuring = false
+        central?.stopScan()
+        if let p = peripheral { central?.cancelPeripheralConnection(p) }
+        peripheral = nil
+        fakeTransportConnected = false
+        controlChar = nil
+        status = .idle
+
+        resetRecordingBuffer()
+        repClaims.discard()
+        guidedClaims.discardActive()
+        clearSession()
+        saveOperationsInFlight = 0
+        finishAfterSaves = false
+        saving = false
+        savedMsg = nil
+        savedMsgGeneration &+= 1
+        errorMsg = nil
+        persistenceOwnerUserId = nil
+        persistenceOwnerAssigned = false
         pushForceBeat()
     }
 
@@ -382,7 +459,12 @@ final class TindeqManager: NSObject {
     }
 
     private func beginGuidedMeasured(_ context: GuidedForceRecordingContext) -> Bool {
-        guard status == .connected, !handsFreeRequested, !saving,
+        // `saving` is immutable-row durability, not transport readiness. A
+        // delayed guided tick can finish set N and start set N+1 in one
+        // synchronous event list (especially with zero rest). The first row
+        // is already claimed and has its own durable id/group; blocking the
+        // next BLE start here would leave Core's next boundary unsaved.
+        guard status == .connected, !handsFreeRequested,
               repClaims.active == nil, !context.tag.isEmpty,
               guidedClaims.begin(context: context) != nil
         else { return false }
@@ -861,11 +943,21 @@ final class TindeqManager: NSObject {
         rememberSelection: Bool,
         rearmHandsFreeAfterStop: HandsFreeStopReason?
     ) {
+        // Both the queue owner and the completion generation are captured on
+        // this synchronous MainActor turn, before the first await.
+        let enqueuedUserId = persistenceOwnerAssigned
+            ? persistenceOwnerUserId
+            : userIdProvider()
+        let generation = persistenceGeneration
         saveOperationsInFlight += 1
         saving = true
         savedMsg = "Saving…"
         Task { @MainActor in
-            let outcome = await recordingQueue.enqueue(PendingTindeqRecording(row: row))
+            guard generation == persistenceGeneration else { return }
+            let outcome = await recordingQueue.enqueue(
+                PendingTindeqRecording(row: row, enqueuedUserId: enqueuedUserId)
+            )
+            guard generation == persistenceGeneration else { return }
             if outcome == .lost {
                 savedMsg = lostSavedMessage
                 if let lostErrorMessage { errorMsg = lostErrorMessage }
@@ -1035,6 +1127,10 @@ extension TindeqManager: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
+        // An explicit discard clears `self.peripheral` before CoreBluetooth
+        // delivers this callback. Ignore a stale callback so an old transport
+        // cannot take a later connection offline.
+        guard self.peripheral === peripheral else { return }
         handleTransportDisconnect(error: error)
     }
 
@@ -1042,6 +1138,21 @@ extension TindeqManager: CBCentralManagerDelegate {
     /// the salvage/auto-log flow behind this seam lets tests exercise the
     /// actual manager logic without constructing an Apple-owned CBPeripheral.
     func handleTransportDisconnect(error: Error?, wasIntentionalOverride: Bool? = nil) {
+        if discardWithoutSavingActive {
+            // `discardWithoutSaving()` already performed every cleanup
+            // operation synchronously. A queued delegate callback must not
+            // salvage or log anything after AuthManager changes users.
+            stopUITimer()
+            measuring = false
+            resetRecordingBuffer()
+            repClaims.discard()
+            guidedClaims.discardActive()
+            peripheral = nil
+            fakeTransportConnected = false
+            controlChar = nil
+            status = .idle
+            return
+        }
         // Keep samples so an interrupted recording can still be saved.
         stopUITimer()
         let wasMeasuring = measuring

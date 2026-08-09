@@ -30,7 +30,12 @@ final class GuidedForceRunner {
     private(set) var side = ""
     private(set) var errorMessage: String?
     private(set) var completionMessage: String?
+    /// Stable account identity captured with the protocol/run snapshot. Token
+    /// freshness is intentionally not part of this value: an expired token
+    /// for the same user must remain able to run offline.
+    private(set) var ownerUserId: UUID?
 
+    @ObservationIgnored private let userIdProvider: @Sendable () -> UUID?
     private var manager: TindeqManager?
     private var tickTask: Task<Void, Never>?
     private var sessionFinishIssued = false
@@ -42,6 +47,12 @@ final class GuidedForceRunner {
     private var finishedKeys = Set<GuidedForceRecordingKey>()
     private var cadenceSavedKeys = Set<GuidedForceRecordingKey>()
     private var messageGeneration = 0
+
+    init(
+        userIdProvider: @escaping @Sendable () -> UUID? = { WatchSessionStore.shared.userId }
+    ) {
+        self.userIdProvider = userIdProvider
+    }
 
     private enum ActiveExecution: Equatable {
         case measured(kind: GuidedForceRecordingKind, key: GuidedForceRecordingKey, startedS: Double)
@@ -141,6 +152,13 @@ final class GuidedForceRunner {
             failBeforeStart("Choose an exercise before starting.")
             return false
         }
+        guard let ownerUserId = userIdProvider() else {
+            // Queue `nil` is reserved for legacy/unattributed files. A new
+            // guided run must have a stable owner so an async enqueue can
+            // never be adopted by whichever account signs in later.
+            failBeforeStart("Sign in on your iPhone before starting a guided Force protocol.")
+            return false
+        }
         switch guidedForceStartEligibility(
             for: protocolValue,
             sensorConnected: manager.status == .connected
@@ -161,9 +179,11 @@ final class GuidedForceRunner {
         let startedAt = Date()
         self.protocolValue = protocolValue
         self.runId = id
+        self.ownerUserId = ownerUserId
         self.tag = normalizedTag
         self.side = side
         self.manager = manager
+        manager.setPersistenceOwner(ownerUserId)
         self.errorMessage = nil
         self.completionMessage = nil
         self.sessionFinishIssued = false
@@ -193,11 +213,22 @@ final class GuidedForceRunner {
     /// emits them in order and the runner handles each synchronously.
     func refresh() {
         guard isActive else { return }
+        guard ensureRunOwnership() else { return }
         tick(now: Date())
+    }
+
+    /// Deterministic wall-clock seam used by the app-target integration tests.
+    /// Production foreground/timer paths call `refresh()`, while this keeps a
+    /// delayed boundary test from sleeping through a whole protocol.
+    func advance(to now: Date) {
+        guard isActive else { return }
+        guard ensureRunOwnership() else { return }
+        tick(now: now)
     }
 
     func stop() {
         guard isActive, var state = runState else { return }
+        guard ensureRunOwnership() else { return }
         stopRequested = true
         phase = .stopping
         handleDisconnectIfNeeded()
@@ -245,6 +276,7 @@ final class GuidedForceRunner {
 
     private func tick(now: Date) {
         guard isActive, var state = runState else { return }
+        guard ensureRunOwnership() else { return }
 
         handleDisconnectIfNeeded()
         guard isActive else { return }
@@ -459,6 +491,70 @@ final class GuidedForceRunner {
         manager?.logSessionNow()
     }
 
+    /// Called synchronously by the app-owned auth relay observer. A token
+    /// refresh for the same user is safe and leaves the run untouched; a new
+    /// user (including signed out) invalidates the run before RootView can
+    /// continue ticking it under the new account.
+    func authStateDidChange(to state: WatchAuthState) {
+        // Keep watching the manager after the visual run reaches a terminal
+        // phase: its queue/session task may still be in flight, and an
+        // account switch in that window must invalidate the old generation.
+        guard ownerUserId != nil || manager != nil else { return }
+        guard state.userId == ownerUserId else {
+            discardRunForAccountChange()
+            return
+        }
+    }
+
+    private func ensureRunOwnership() -> Bool {
+        guard isActive else { return true }
+        guard userIdProvider() == ownerUserId else {
+            discardRunForAccountChange()
+            return false
+        }
+        return true
+    }
+
+    /// Drops all in-memory state and the manager's active transport/claim. It
+    /// deliberately does not call `logSessionNow()`: doing so after AuthManager
+    /// switched accounts could stamp an account-A run with account-B's token.
+    private func discardRunForAccountChange() {
+        guard manager != nil || ownerUserId != nil else { return }
+        let wasActive = isActive
+        tickTask?.cancel()
+        tickTask = nil
+
+        let oldManager = manager
+        oldManager?.discardWithoutSaving()
+
+        runState = nil
+        snapshot = nil
+        activeExecution = nil
+        manager = nil
+        ownerUserId = nil
+        runId = nil
+        protocolValue = nil
+        tag = ""
+        side = ""
+        cadenceOnlyRun = false
+        sessionFinishIssued = true
+        stopRequested = false
+        startedKeys.removeAll(keepingCapacity: true)
+        finishedKeys.removeAll(keepingCapacity: true)
+        cadenceSavedKeys.removeAll(keepingCapacity: true)
+        guard wasActive else {
+            // A completed/failed UI may outlive its queue task. Invalidate the
+            // old manager silently, but never replace a genuine terminal
+            // result with a false account-change failure much later.
+            return
+        }
+        let discardMessage = "Protocol discarded because the signed-in account changed."
+        errorMessage = discardMessage
+        completionMessage = nil
+        phase = .failed
+        publishMessage(discardMessage, generation: messageGeneration + 1)
+    }
+
     private func failBeforeStart(_ message: String) {
         errorMessage = message
         completionMessage = nil
@@ -472,6 +568,7 @@ final class GuidedForceRunner {
         phase = .failed
         tickTask?.cancel()
         finishSessionIfNeeded()
+        manager?.clearPersistenceOwner()
         publishMessage(message, generation: messageGeneration + 1)
     }
 
@@ -481,6 +578,7 @@ final class GuidedForceRunner {
     ) {
         tickTask?.cancel()
         tickTask = nil
+        manager?.clearPersistenceOwner()
         completionMessage = message
         publishMessage(message, generation: messageGeneration + 1)
         runState = nil

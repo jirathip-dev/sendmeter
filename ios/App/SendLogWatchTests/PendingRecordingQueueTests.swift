@@ -115,6 +115,22 @@ final class PendingRecordingQueueTests: XCTestCase {
         XCTAssertTrue(try filesOnDisk().contains("\(id.uuidString).json"))
     }
 
+    func testEnqueuePreservesExplicitOwnerStampAcrossAccountChange() async throws {
+        let accountA = UUID()
+        let accountB = UUID()
+        signIn(as: accountB)
+        let id = UUID()
+        let uploader = ScriptedUploader(failingAllWith: URLError(.notConnectedToInternet))
+        let queue = makeQueue(uploader: uploader)
+
+        _ = await queue.enqueue(makePending(id: id, enqueuedUserId: accountA))
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(id.uuidString).json"))
+        let decoded = try JSONDecoder().decode(PendingTindeqRecording.self, from: data)
+        XCTAssertEqual(decoded.enqueuedUserId, accountA)
+        XCTAssertNotEqual(decoded.enqueuedUserId, accountB)
+    }
+
     // MARK: - drain: the happy path
 
     func testDrainUploadsAndDeletesOnSuccess() async throws {

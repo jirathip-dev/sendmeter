@@ -34,6 +34,35 @@ final class ForceProtocolTests: XCTestCase {
         XCTAssertEqual(WatchForceProtocol.movementStarter.durationS, 245)
     }
 
+    func testLegacyOverCapMovementPresetIsNormalizedBeforeRuntime() throws {
+        let json = Data("""
+        {
+          "id": "legacy-movement",
+          "name": "Long movement",
+          "hold_s": 40,
+          "reps": 50,
+          "sets": 1,
+          "rest_reps_s": 0,
+          "rest_sets_s": 0,
+          "target_kg": null,
+          "target_pct": null,
+          "protocol_mode": "reverse_action",
+          "cadence_out_s": 30,
+          "cadence_return_s": 30,
+          "prepare_s": 5
+        }
+        """.utf8)
+
+        let decoded = try JSONDecoder().decode(WatchForceProtocol.self, from: json)
+
+        XCTAssertEqual(decoded.reps, 29)
+        XCTAssertEqual(decoded.cadenceOutS, 30)
+        XCTAssertEqual(decoded.cadenceReturnS, 30)
+        XCTAssertEqual(decoded.movementSetDurationS, 1_740)
+        XCTAssertTrue(decoded.movementSetWithinTindeqCap)
+        XCTAssertLessThan(decoded.movementSetDurationS, 1_800)
+    }
+
     func testMovementTimelineHasExactDirectionsAndCounts() {
         let timeline = WatchForceProtocol.movementStarter.timeline
 

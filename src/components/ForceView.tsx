@@ -30,6 +30,7 @@ import {
   presetTargetKg,
   timelineAt,
 } from "../lib/protocol";
+import { normalizeMovementPreset } from "../lib/movementProtocol";
 import { nextLockedCapabilityFit } from "../lib/capabilityFitLock";
 import {
   curveCandidateRecordings,
@@ -374,12 +375,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   }
   function selectPreset(p: TindeqPreset | null) {
     clearAdaptiveStatic();
-    if (p) {
-      const nextModality = presetModality(p);
+    const normalizedPreset = p ? normalizeMovementPreset(p) : null;
+    if (normalizedPreset) {
+      const nextModality = presetModality(normalizedPreset);
       setProtocolModality(nextModality);
       saveProtocolModality(nextModality);
     }
-    const next = withPresetSelected({ zoneSel, preset }, p);
+    const next = withPresetSelected({ zoneSel, preset }, normalizedPreset);
     setPreset(next.preset);
     // Selecting a custom preset must also clear a post-fit zone notice when
     // the zone was already null, so this write is intentionally unconditional.

@@ -16,6 +16,7 @@
 		2FEC1DFCEBB8AE841B0DD4E3 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 4CCE65502100282783D5231B /* PrivacyInfo.xcprivacy */; };
 		328AD2C63004617A00E07518 /* SendLogWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 328AD0DC30045D4800E07518 /* SendLogWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		357C5FB63BBA35E5A26C3E3C /* LiveWorkoutUpsertEncodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D25FA550666EBB825642076A /* LiveWorkoutUpsertEncodingTests.swift */; };
+		36FA170B7A251B81A1502E7B /* GuidedForceRunnerOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220863B963764B1C32974A33 /* GuidedForceRunnerOwnershipTests.swift */; };
 		37845A5B0C017FA359DFDF8E /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6CA278E81C6E14A40B4C9C69 /* Foundation.framework */; };
 		3A856EED4D66D4946E91DCAA /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 481650BBB5C256BE2759C477 /* Foundation.framework */; };
 		3D2E258EE085F4CDEEDE765F /* PendingRecordingQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A753F3846B503B8E1997ACA /* PendingRecordingQueueTests.swift */; };
@@ -169,6 +170,7 @@
 		16352DB60DA7C8E5216936B4 /* SendmeterScreenshots.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendmeterScreenshots.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1656D7A7F87A58F009959FCB /* AttemptDetectorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/AttemptDetectorTests.swift; sourceTree = "<group>"; };
 		194478CD0ED3E2CB144F0FA3 /* GuidedForceHapticPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuidedForceHapticPolicyTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/GuidedForceHapticPolicyTests.swift; sourceTree = "<group>"; };
+		220863B963764B1C32974A33 /* GuidedForceRunnerOwnershipTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GuidedForceRunnerOwnershipTests.swift; sourceTree = "<group>"; };
 		2603B66689B80B4680D137B4 /* GuidedForcePersistenceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuidedForcePersistenceTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/GuidedForcePersistenceTests.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		31A1EB3CD36C29EFEE9ED771 /* GuidedForcePolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuidedForcePolicyTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/GuidedForcePolicyTests.swift; sourceTree = "<group>"; };
@@ -359,6 +361,7 @@
 				B72C3B7A2DA2A55CF06D773B /* MovementSetMetricsTests.swift */,
 				31A1EB3CD36C29EFEE9ED771 /* GuidedForcePolicyTests.swift */,
 				868B947F60DEE41E3FBB2B55 /* ForceProtocolCatalogTests.swift */,
+				220863B963764B1C32974A33 /* GuidedForceRunnerOwnershipTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = SOURCE_ROOT;
@@ -746,6 +749,7 @@
 				B2BDC891B802A9C5B86D735B /* MovementSetMetricsTests.swift in Sources */,
 				DFB64FDAEB1AB019AD0AA7AE /* GuidedForcePolicyTests.swift in Sources */,
 				80DC27B0A88456BA04ED783E /* ForceProtocolCatalogTests.swift in Sources */,
+				36FA170B7A251B81A1502E7B /* GuidedForceRunnerOwnershipTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

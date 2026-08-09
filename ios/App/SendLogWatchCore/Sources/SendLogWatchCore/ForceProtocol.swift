@@ -140,11 +140,17 @@ public struct WatchForceProtocol: Sendable, Codable, Equatable, Identifiable {
         setupNote: String = "",
         capacityEvidence: Bool = false
     ) {
+        let normalized = Self.normalizedMovementParameters(
+            mode: mode,
+            reps: reps,
+            cadenceOutS: cadenceOutS,
+            cadenceReturnS: cadenceReturnS
+        )
         self.id = id
         self.name = name
         self.holdS = holdS
         self.holdsS = holdsS
-        self.reps = reps
+        self.reps = normalized.reps
         self.sets = sets
         self.restRepsS = restRepsS
         self.restSetsS = restSetsS
@@ -155,8 +161,8 @@ public struct WatchForceProtocol: Sendable, Codable, Equatable, Identifiable {
         self.targetCurve = targetCurve
         self.alternateSides = alternateSides
         self.mode = mode
-        self.cadenceOutS = cadenceOutS
-        self.cadenceReturnS = cadenceReturnS
+        self.cadenceOutS = normalized.cadenceOutS
+        self.cadenceReturnS = normalized.cadenceReturnS
         self.toleranceMode = toleranceMode
         self.toleranceValue = toleranceValue
         self.prepareS = prepareS
@@ -195,6 +201,18 @@ public struct WatchForceProtocol: Sendable, Codable, Equatable, Identifiable {
     /// Exact wall-clock duration, including the preparation countdown.
     public var durationS: Double {
         timeline.last.map { $0.startS + $0.durationS } ?? 0
+    }
+
+    /// Continuous measured/cadence work in one Reverse Action set. A static
+    /// protocol saves one hold per recording, so its set work is not subject
+    /// to this per-recording movement cap.
+    public var movementSetDurationS: Double {
+        guard mode == .reverseAction else { return 0 }
+        return Double(reps) * (cadenceOutS + cadenceReturnS)
+    }
+
+    public var movementSetWithinTindeqCap: Bool {
+        mode != .reverseAction || movementSetDurationS <= 1_800
     }
 
     /// Pure expansion used by countdown UIs. Movement sets are continuous and
@@ -320,7 +338,7 @@ public struct WatchForceProtocol: Sendable, Codable, Equatable, Identifiable {
         name = try values.decode(String.self, forKey: .name)
         holdS = try values.decode(Double.self, forKey: .holdS)
         holdsS = try values.decodeIfPresent([Double].self, forKey: .holdsS)
-        reps = try values.decode(Int.self, forKey: .reps)
+        let decodedReps = try values.decode(Int.self, forKey: .reps)
         sets = try values.decode(Int.self, forKey: .sets)
         restRepsS = try values.decode(Double.self, forKey: .restRepsS)
         restSetsS = try values.decode(Double.self, forKey: .restSetsS)
@@ -335,13 +353,48 @@ public struct WatchForceProtocol: Sendable, Codable, Equatable, Identifiable {
 
         let decodedMode = try values.decodeIfPresent(String.self, forKey: .mode)
         mode = decodedMode == Mode.reverseAction.rawValue ? .reverseAction : .hold
-        cadenceOutS = try values.decodeIfPresent(Double.self, forKey: .cadenceOutS) ?? 3
-        cadenceReturnS = try values.decodeIfPresent(Double.self, forKey: .cadenceReturnS) ?? 3
+        let decodedCadenceOutS = try values.decodeIfPresent(Double.self, forKey: .cadenceOutS) ?? 3
+        let decodedCadenceReturnS = try values.decodeIfPresent(Double.self, forKey: .cadenceReturnS) ?? 3
+        let normalized = Self.normalizedMovementParameters(
+            mode: mode,
+            reps: decodedReps,
+            cadenceOutS: decodedCadenceOutS,
+            cadenceReturnS: decodedCadenceReturnS
+        )
+        reps = normalized.reps
+        cadenceOutS = normalized.cadenceOutS
+        cadenceReturnS = normalized.cadenceReturnS
         let decodedTolerance = try values.decodeIfPresent(String.self, forKey: .toleranceMode)
         toleranceMode = decodedTolerance == ToleranceMode.kg.rawValue ? .kg : .percent
         toleranceValue = try values.decodeIfPresent(Double.self, forKey: .toleranceValue) ?? 10
         prepareS = try values.decodeIfPresent(Double.self, forKey: .prepareS) ?? 5
         setupNote = try values.decodeIfPresent(String.self, forKey: .setupNote) ?? ""
         capacityEvidence = try values.decodeIfPresent(Bool.self, forKey: .capacityEvidence) ?? false
+    }
+
+    private static func normalizedMovementParameters(
+        mode: Mode,
+        reps: Int,
+        cadenceOutS: Double,
+        cadenceReturnS: Double
+    ) -> (reps: Int, cadenceOutS: Double, cadenceReturnS: Double) {
+        guard mode == .reverseAction else {
+            return (reps, cadenceOutS, cadenceReturnS)
+        }
+        let out = boundedMovementCadence(cadenceOutS)
+        let back = boundedMovementCadence(cadenceReturnS)
+        let maxReps = TindeqRecordingLimit.maxMovementReps(
+            cadenceOutS: out,
+            cadenceReturnS: back
+        )
+        return (max(1, min(maxReps, reps)), out, back)
+    }
+
+    private static func boundedMovementCadence(_ value: Double) -> Double {
+        guard value.isFinite else { return 3 }
+        return min(
+            max(value, TindeqRecordingLimit.minMovementCadenceS),
+            TindeqRecordingLimit.maxMovementCadenceS
+        )
     }
 }

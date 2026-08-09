@@ -38,6 +38,10 @@ import ReverseActionPresetFields from "./ReverseActionPresetFields";
 import ProtocolBadge from "./ProtocolBadge";
 import { presetModality, protocolModeFor } from "../lib/protocolModeContext";
 import type { ForceCapacityModality } from "../types";
+import {
+  movementSetExceedsTindeqCap,
+  TINDEQ_MAX_MOVEMENT_SET_S,
+} from "../lib/movementProtocol";
 
 interface Props {
   selectedId: string | null;
@@ -327,9 +331,15 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   }
 
   async function save() {
-    setSaving(true);
     setError(null);
     const draft = draftPlanPreset();
+    if (movementSetExceedsTindeqCap(draft)) {
+      setError(
+        `Each resisted-movement set must be ${TINDEQ_MAX_MOVEMENT_SET_S / 60} minutes or less for Progressor. Lower reps or cadence and save again.`,
+      );
+      return;
+    }
+    setSaving(true);
     const fields: Omit<TindeqPreset, "id"> = {
       name: name.trim() || `${draft.holdS}s × ${reps} × ${sets}`,
       ...draft,
@@ -579,6 +589,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
 
   function renderForm() {
     const curveCopy = curveHoldCopy(varyHolds, holdS);
+    const draft = draftPlanPreset();
     return (
         <div className="card">
           <span className="field-label" style={{ marginTop: 0 }}>Name (optional)</span>
@@ -645,7 +656,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                   ))}
                 </div>
               )}
-              <PresetPlanChart preset={draftPlanPreset()} refs={presetRefs} />
+              <PresetPlanChart preset={draft} refs={presetRefs} />
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 <NumField label="Rest / rep s" value={restRepsS} onChange={setRestRepsS} min={0} max={600} />
                 <NumField label="Rest / set s" value={restSetsS} onChange={setRestSetsS} min={0} max={1200} />

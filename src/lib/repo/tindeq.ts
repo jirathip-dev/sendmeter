@@ -24,6 +24,7 @@ import {
   parseCadenceMarkers,
   parseReverseActionSetMetrics,
 } from "../reverseAction";
+import { normalizeMovementPreset } from "../movementProtocol";
 
 const RECORDING_COLS =
   "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no, protocol_mode, target_kg, target_low_kg, target_high_kg, cadence_out_s, cadence_return_s, cadence_markers, set_metrics, setup_note, capacity_evidence, completed_reps, completion_status";
@@ -339,7 +340,7 @@ type PresetRow = LegacyPresetRow & {
 };
 
 function toPreset(r: PresetRow): TindeqPreset {
-  return {
+  return normalizeMovementPreset({
     id: r.id,
     name: r.name,
     holdS: r.hold_s,
@@ -362,32 +363,36 @@ function toPreset(r: PresetRow): TindeqPreset {
     prepareS: r.prepare_s ?? 5,
     setupNote: r.setup_note ?? "",
     capacityEvidence: r.capacity_evidence ?? false,
-  };
+  });
 }
 
 function presetToRow(p: Omit<TindeqPreset, "id">) {
+  // Keep direct callers and schema-fallback writes on the same <=30m/set
+  // contract as the editor. Historical rows are normalized on read; a stale
+  // in-memory draft is normalized here before it can be written back.
+  const normalized = normalizeMovementPreset({ id: "draft", ...p });
   return {
-    name: p.name,
-    hold_s: p.holdS,
-    holds_s: p.holdsS,
-    reps: p.reps,
-    sets: p.sets,
-    rest_reps_s: p.restRepsS,
-    rest_sets_s: p.restSetsS,
-    target_kg: p.targetKg,
-    target_pct: p.targetPct,
-    pct_basis: p.pctBasis,
-    pct_step: p.pctStep,
-    target_curve: p.targetCurve,
-    alternate_sides: p.alternateSides,
-    protocol_mode: p.protocolMode ?? "hold",
-    cadence_out_s: p.cadenceOutS ?? 3,
-    cadence_return_s: p.cadenceReturnS ?? 3,
-    tolerance_mode: p.toleranceMode ?? "percent",
-    tolerance_value: p.toleranceValue ?? 10,
-    prepare_s: p.prepareS ?? 5,
-    setup_note: p.setupNote ?? "",
-    capacity_evidence: p.capacityEvidence ?? false,
+    name: normalized.name,
+    hold_s: normalized.holdS,
+    holds_s: normalized.holdsS,
+    reps: normalized.reps,
+    sets: normalized.sets,
+    rest_reps_s: normalized.restRepsS,
+    rest_sets_s: normalized.restSetsS,
+    target_kg: normalized.targetKg,
+    target_pct: normalized.targetPct,
+    pct_basis: normalized.pctBasis,
+    pct_step: normalized.pctStep,
+    target_curve: normalized.targetCurve,
+    alternate_sides: normalized.alternateSides,
+    protocol_mode: normalized.protocolMode ?? "hold",
+    cadence_out_s: normalized.cadenceOutS ?? 3,
+    cadence_return_s: normalized.cadenceReturnS ?? 3,
+    tolerance_mode: normalized.toleranceMode ?? "percent",
+    tolerance_value: normalized.toleranceValue ?? 10,
+    prepare_s: normalized.prepareS ?? 5,
+    setup_note: normalized.setupNote ?? "",
+    capacity_evidence: normalized.capacityEvidence ?? false,
   };
 }
 

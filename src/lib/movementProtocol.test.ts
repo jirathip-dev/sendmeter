@@ -6,7 +6,11 @@ import {
   MOVEMENT_PROTOCOL_LABELS,
   MOVEMENT_STARTER_PRESET,
   RESISTED_MOVEMENT_LABEL,
+  movementSetDurationS,
+  movementSetExceedsTindeqCap,
+  normalizeMovementPreset,
   protocolSummary,
+  TINDEQ_MAX_MOVEMENT_SET_S,
 } from "./movementProtocol";
 
 describe("movement protocol", () => {
@@ -67,5 +71,25 @@ describe("movement protocol", () => {
         sets: 1,
       }),
     ).toBe("7s hold · 5 reps × 1 set");
+  });
+
+  it("rejects an over-cap movement draft and normalizes legacy rows below the BLE boundary", () => {
+    const overCap = {
+      ...MOVEMENT_STARTER_PRESET,
+      reps: 50,
+      cadenceOutS: 30,
+      cadenceReturnS: 30,
+    };
+
+    expect(movementSetDurationS(overCap)).toBe(3_000);
+    expect(movementSetExceedsTindeqCap(overCap)).toBe(true);
+
+    const normalized = normalizeMovementPreset(overCap);
+    expect(normalized.reps).toBe(29);
+    expect(normalized.cadenceOutS).toBe(30);
+    expect(normalized.cadenceReturnS).toBe(30);
+    expect(movementSetDurationS(normalized)).toBe(1_740);
+    expect(movementSetDurationS(normalized)).toBeLessThan(TINDEQ_MAX_MOVEMENT_SET_S);
+    expect(movementSetExceedsTindeqCap(normalized)).toBe(false);
   });
 });
