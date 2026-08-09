@@ -107,24 +107,35 @@ struct HomeView: View {
                 )
                 .padding(.horizontal, 4)
             }
-            TabView(selection: $selection) {
-                StatusView()
-                    .tag(WatchHomePage.status)
-                ActionsView()
-                    .tag(WatchHomePage.actions)
-            }
-            // The explicit selector below is the only pagination affordance;
-            // the native dots duplicate it and consume scarce 40mm height.
-            .tabViewStyle(.page(indexDisplayMode: .never))
+            // Keep the explicit page selector above the page viewport. When
+            // it followed TabView, watchOS let the page paint beyond its
+            // proposed bounds, making this control appear to cover the
+            // readiness/Force cards on both 40mm and 49mm watches.
             WatchPageControl(
                 selection: selection == .status ? 0 : 1,
                 labels: ["Status", "Actions"],
                 onSelect: { selection = $0 == 0 ? .status : .actions }
             )
             .padding(.horizontal, 8)
-            .padding(.bottom, 2)
+            .padding(.top, 2)
+            TabView(selection: $selection) {
+                StatusView()
+                    .tag(WatchHomePage.status)
+                ActionsView()
+                    .tag(WatchHomePage.actions)
+            }
+            // The explicit selector above is the only pagination affordance;
+            // the native dots duplicate it and consume scarce 40mm height.
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            // Page-style TabView does not reliably clip its children on
+            // watchOS; make the ownership boundary explicit so scrollable
+            // cards can never render through the selector again.
+            .clipped()
         }
-        .navigationTitle("Sendmeter")
+        // The home title duplicated the app identity while consuming the
+        // exact vertical budget the 40mm status card needs. The system time
+        // remains visible; pushed screens still provide their own titles.
+        .toolbar(.hidden, for: .navigationBar)
         .watchCanvas()
         .onAppear {
             var consumed: [LossNotice] = []
