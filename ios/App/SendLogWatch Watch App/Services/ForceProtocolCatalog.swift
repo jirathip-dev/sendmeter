@@ -53,7 +53,7 @@ final class ForceProtocolCatalog {
 
     var selected: WatchForceProtocol {
         synchronizeAccountScope()
-        allProtocols.first { $0.id == selectedId } ?? .movementStarter
+        return allProtocols.first { $0.id == selectedId } ?? .movementStarter
     }
 
     var allProtocols: [WatchForceProtocol] {
