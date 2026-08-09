@@ -87,6 +87,25 @@ final class ReadinessRefreshTests: XCTestCase {
             )
         )
 
+        let failed = ReadinessRefreshResult(
+            request: request,
+            startedAt: 203,
+            completedAt: 204,
+            status: .failed,
+            freshness: .offline,
+            errorCode: "sync-failed",
+            errorMessage: "The iPhone could not refresh readiness."
+        )
+        let failedMessage = failed.message()
+        XCTAssertNil(failedMessage["snapshot"])
+        XCTAssertNotNil(
+            try? PropertyListSerialization.data(
+                fromPropertyList: failedMessage,
+                format: .binary,
+                options: 0
+            )
+        )
+
         let decoded = ReadinessRefreshResult(message: message)
         XCTAssertEqual(decoded, result)
     }
@@ -246,20 +265,132 @@ final class ReadinessRefreshTests: XCTestCase {
         XCTAssertFalse(context.isSignedOut)
     }
 
+    func testColdSignedOutContextCannotResurrectStaleAuthOrReadiness() {
+        var context = ReadinessApplicationContext()
+        let signedOut = context.reconcile([
+            "event": "signedOut",
+            "accessToken": "stale-token",
+            "kind": ReadinessRefreshResult.kind,
+            "snapshot": ["date": "2026-08-09", "readiness": 99],
+        ])
+
+        XCTAssertTrue(context.isSignedOut)
+        XCTAssertEqual(signedOut["event"] as? String, "signedOut")
+        XCTAssertNil(signedOut["accessToken"])
+        XCTAssertNil(signedOut["kind"])
+        XCTAssertNil(context.authPayload)
+        XCTAssertNil(context.readinessPayload)
+
+        let late = context.update([
+            "kind": ReadinessRefreshResult.kind,
+            "requestId": "cold-late",
+            "status": "success",
+        ])
+        XCTAssertEqual(late["event"] as? String, "signedOut")
+        XCTAssertNil(late["kind"])
+    }
+
     func testCoalescerRunsAtMostOneFollowUpAndKeepsStrongestReason() {
         var coalescer = ReadinessRefreshCoalescer()
         XCTAssertEqual(coalescer.request(reason: .launch), .start)
         XCTAssertTrue(coalescer.isRunning)
 
-        XCTAssertEqual(coalescer.request(reason: .foreground), .queued)
-        XCTAssertEqual(coalescer.request(reason: .launch), .queued)
-        XCTAssertEqual(coalescer.request(reason: .statusRefresh), .queued)
-        XCTAssertEqual(coalescer.request(reason: .foreground), .queued)
+        // An arbitrary trigger storm coalesces to one follow-up, preserving
+        // the strongest reason seen during the first pass.
+        for reason in [
+            ReadinessRefreshReason.foreground,
+            .launch,
+            .statusRefresh,
+            .foreground,
+            .launch,
+            .statusRefresh,
+        ] {
+            XCTAssertEqual(coalescer.request(reason: reason), .queued)
+        }
 
+        var passes = 1
         XCTAssertEqual(coalescer.complete(), .rerun(.statusRefresh))
-        XCTAssertEqual(coalescer.request(reason: .statusRefresh), .start)
+        XCTAssertTrue(coalescer.isRunning)
+
+        // New triggers during the authorized follow-up cannot create a third
+        // pass. The owner executes the rerun directly, without request().
+        for _ in 0..<20 {
+            XCTAssertEqual(coalescer.request(reason: .foreground), .queued)
+        }
+        passes += 1
         XCTAssertEqual(coalescer.complete(), .idle)
         XCTAssertFalse(coalescer.isRunning)
+        XCTAssertEqual(passes, 2)
+    }
+
+    func testTaskGateRejectsOldFlightAfterClearAndReplacement() {
+        var gate = ReadinessTaskGate()
+        let oldFlight = gate.begin()
+
+        // Force the exact clear → new-flight interleaving: the old task may
+        // still be running when the replacement acquires ownership.
+        gate.invalidate()
+        let newFlight = gate.begin()
+
+        XCTAssertFalse(gate.isCurrent(oldFlight))
+        XCTAssertTrue(gate.isCurrent(newFlight))
+    }
+
+    func testSameUserTokenRefreshKeepsEpochButAccountSwitchInvalidatesIt() {
+        let firstUser = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let secondUser = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        var epoch = ReadinessAccountEpoch()
+
+        XCTAssertEqual(epoch.setSession(userId: firstUser), .accountChanged)
+        let captured = epoch.currentEpoch
+        XCTAssertTrue(epoch.owns(captured))
+
+        // A rotated access token has the same subject and must not make an
+        // in-flight same-account result look like an old account's result.
+        XCTAssertEqual(epoch.setSession(userId: firstUser), .sameAccount)
+        XCTAssertEqual(epoch.currentEpoch, captured)
+        XCTAssertTrue(epoch.owns(captured))
+
+        XCTAssertEqual(epoch.setSession(userId: secondUser), .accountChanged)
+        XCTAssertFalse(epoch.owns(captured))
+        XCTAssertFalse(
+            ReadinessRefreshDeliveryGate.allows(
+                capturedEpoch: captured,
+                currentEpoch: epoch.currentEpoch,
+                isSignedOut: epoch.isSignedOut
+            )
+        )
+    }
+
+    func testSignedOutWinsAnInterleavingBeforeDirectResultPublication() {
+        let user = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+        var epoch = ReadinessAccountEpoch()
+        XCTAssertEqual(epoch.setSession(userId: user), .accountChanged)
+        let captured = epoch.currentEpoch
+
+        // The result finished, then sign-out won before the direct send. The
+        // final gate must suppress both the direct snapshot and context event.
+        epoch.clearSession()
+        XCTAssertTrue(epoch.isSignedOut)
+        XCTAssertFalse(
+            ReadinessRefreshDeliveryGate.allows(
+                capturedEpoch: captured,
+                currentEpoch: epoch.currentEpoch,
+                isSignedOut: epoch.isSignedOut
+            )
+        )
+    }
+
+    func testWidgetTaskGateRejectsCommitAfterSignOutAndPreservesNewOwner() {
+        var gate = ReadinessTaskGate()
+        let refresh = gate.begin()
+        gate.invalidate()
+
+        XCTAssertFalse(gate.isCurrent(refresh))
+
+        let nextRefresh = gate.begin()
+        XCTAssertFalse(gate.isCurrent(refresh))
+        XCTAssertTrue(gate.isCurrent(nextRefresh))
     }
 
     func testCancellationDropsQueuedFollowUp() {

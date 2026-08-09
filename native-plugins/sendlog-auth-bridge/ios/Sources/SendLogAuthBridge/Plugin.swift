@@ -223,6 +223,11 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
     /// tested without WatchConnectivity.
     private let readinessLock = NSLock()
     private var applicationContext = ReadinessApplicationContext()
+    /// `updateApplicationContext` can only persist a sign-out once
+    /// WatchConnectivity is activated. Keep the logical hard-reset durable so
+    /// a process restart cannot seed a stale signed-in outgoing context before
+    /// the next auth event gets a chance to relay.
+    private let signedOutKey = "sendmeter.authBridge.signedOut"
 
     override public func load() {
         // `applicationContext` is the phone's own last outgoing context and
@@ -233,11 +238,13 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
         // not seed this state. Reconciliation strips old relay stamps;
         // signedOut is a hard reset and cannot resurrect stale state.
         let session = self.session
-        if let session {
-            readinessLock.lock()
+        readinessLock.lock()
+        if UserDefaults.standard.bool(forKey: signedOutKey) {
+            _ = applicationContext.reconcile(["event": "signedOut"])
+        } else if let session {
             _ = applicationContext.reconcile(session.applicationContext)
-            readinessLock.unlock()
         }
+        readinessLock.unlock()
 
         SendLogReadinessBridge.registerResultPublisher { [weak self] result, immediate in
             self?.publishReadinessResult(result, immediate: immediate)
@@ -282,9 +289,10 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func clearSession(_ call: CAPPluginCall) {
-        readinessLock.lock()
-        applicationContext = ReadinessApplicationContext()
-        readinessLock.unlock()
+        // `relay` performs the signedOut state transition and transport send
+        // while holding the same lock as readiness publication. Resetting the
+        // in-memory merger first would leave a window where a late readiness
+        // result could be sent directly before the signedOut context won.
         relay(["event": "signedOut"])
         call.resolve()
     }
@@ -398,6 +406,11 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
         readinessLock.lock()
         let payload = applicationContext.update(context)
         let signedOut = applicationContext.isSignedOut
+        if signedOut {
+            UserDefaults.standard.set(true, forKey: signedOutKey)
+        } else if context["event"] as? String == "signedIn" {
+            UserDefaults.standard.set(false, forKey: signedOutKey)
+        }
         guard let session, session.activationState == .activated else {
             readinessLock.unlock()
             return

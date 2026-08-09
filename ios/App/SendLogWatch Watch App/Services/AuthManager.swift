@@ -95,6 +95,11 @@ final class AuthManager: NSObject {
             // an explicit event may end the fallback chain.
             if !context.isEmpty { apply(context) }
         }
+        if WatchSessionStore.shared.current == nil {
+            WidgetBridge.invalidate()
+        } else {
+            WidgetBridge.activate()
+        }
         refreshState()
         startPolling()
     }
@@ -189,6 +194,7 @@ final class AuthManager: NSObject {
         let outcome = SessionRelay.decode(context, now: now)
         switch outcome {
         case let .signedIn(session):
+            WidgetBridge.activate()
             lastRelayAt = Date()
             lastRejection = nil
             queuedRequest = false
@@ -233,6 +239,7 @@ final class AuthManager: NSObject {
     @MainActor
     func signOutLocally() {
         WatchSessionStore.shared.clear()
+        WidgetBridge.invalidate()
         state = .signedOut
         syncing = false
         syncTimeout?.cancel()

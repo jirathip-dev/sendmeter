@@ -74,12 +74,7 @@ final class ReadinessManager {
         guard !ScreenshotFixtures.enabled else { return }
         switch coalescer.request(reason: reason) {
         case .start:
-            let request = ReadinessRefreshRequest(reason: reason)
-            activeRequest = request
-            activeRequestId = request.requestId
-            syncState = .syncing
-            errorMsg = nil
-            send(request)
+            startRequest(reason: reason)
         case .queued:
             // One follow-up is enough for a launch + foreground + status
             // storm; the pure coalescer retains the strongest reason.
@@ -161,9 +156,10 @@ final class ReadinessManager {
             case .idle:
                 break
             case let .rerun(reason):
-                // `complete` leaves the coalescer idle so this starts exactly one
-                // fresh follow-up, even if many triggers arrived during the pass.
-                Task { @MainActor in self.request(reason: reason) }
+                // `complete` keeps the coalescer owned by this manager while
+                // authorizing one follow-up. Start it directly; re-entering
+                // request(reason:) would merely queue another reason forever.
+                startRequest(reason: reason)
             }
         }
     }
@@ -244,6 +240,18 @@ final class ReadinessManager {
     private var supportedSession: WCSession? {
         guard WCSession.isSupported() else { return nil }
         return WCSession.default
+    }
+
+    /// Starts an already-authorized pass. Callers use `request(reason:)` for
+    /// the initial pass and call this directly for the coalescer's one queued
+    /// follow-up, while the coalescer remains in its single-flight state.
+    private func startRequest(reason: ReadinessRefreshReason) {
+        let request = ReadinessRefreshRequest(reason: reason)
+        activeRequest = request
+        activeRequestId = request.requestId
+        syncState = .syncing
+        errorMsg = nil
+        send(request)
     }
 
     private func queueFallback(_ request: ReadinessRefreshRequest) {

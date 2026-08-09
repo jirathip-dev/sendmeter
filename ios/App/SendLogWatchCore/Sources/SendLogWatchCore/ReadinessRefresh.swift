@@ -328,6 +328,7 @@ public struct ReadinessRefreshCoalescer: Equatable, Sendable {
 
     private var running = false
     private var queuedReason: ReadinessRefreshReason?
+    private var followUpConsumed = false
 
     /// Lets an owner apply a result received while the watch was cold without
     /// attempting to complete a flight that never started in this process.
@@ -338,6 +339,7 @@ public struct ReadinessRefreshCoalescer: Equatable, Sendable {
     public mutating func request(reason: ReadinessRefreshReason) -> Request {
         guard running else {
             running = true
+            followUpConsumed = false
             return .start
         }
         // Preserve the strongest reason seen during the active pass. This is
@@ -354,14 +356,16 @@ public struct ReadinessRefreshCoalescer: Equatable, Sendable {
 
     public mutating func complete() -> Completion {
         precondition(running, "cannot complete an idle readiness refresh")
-        guard let queuedReason else {
+        guard let queuedReason, !followUpConsumed else {
             running = false
+            self.queuedReason = nil
             return .idle
         }
         self.queuedReason = nil
-        // The caller starts the follow-up by calling request(reason:). Mark
-        // the completed pass idle first so that call is a real new flight.
-        running = false
+        // Keep the single-flight owner running while it executes the already
+        // authorized follow-up. Calling request(reason:) here would only
+        // queue another reason, so owners must continue directly instead.
+        followUpConsumed = true
         return .rerun(queuedReason)
     }
 
@@ -371,6 +375,7 @@ public struct ReadinessRefreshCoalescer: Equatable, Sendable {
     public mutating func cancel() {
         running = false
         queuedReason = nil
+        followUpConsumed = false
     }
 
     private static func stronger(

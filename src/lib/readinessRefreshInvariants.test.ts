@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const REPO = join(import.meta.dirname, "..", "..");
 const WATCH_APP = join(REPO, "ios", "App", "SendLogWatch Watch App");
 const READINESS_MANAGER = join(WATCH_APP, "Services", "ReadinessManager.swift");
+const WIDGET_BRIDGE = join(WATCH_APP, "Services", "WidgetBridge.swift");
 const HEALTH_PLUGIN = join(
   REPO,
   "native-plugins",
@@ -20,6 +21,15 @@ const AUTH_BRIDGE = join(
   "ios",
   "Sources",
   "SendLogAuthBridge",
+);
+const HEALTH_MANAGER = join(
+  REPO,
+  "native-plugins",
+  "sendlog-health",
+  "ios",
+  "Sources",
+  "SendLogHealth",
+  "HealthSyncManager.swift",
 );
 
 function swiftFiles(dir: string): string[] {
@@ -90,5 +100,38 @@ describe("watch-triggered readiness architecture (#520)", () => {
     expect(contract).toMatch(/startedAt/);
     expect(contract).toMatch(/completedAt/);
     expect(contract).toMatch(/freshness/);
+  });
+
+  it("gates native flight/account publication and widget task commits", () => {
+    const health = source(HEALTH_MANAGER);
+    expect(health).toMatch(/ReadinessTaskGate/);
+    expect(health).toMatch(/ReadinessAccountEpoch/);
+    expect(health).toMatch(/deliverWatchResult/);
+    expect(health).toMatch(/ReadinessRefreshDeliveryGate\.allows/);
+    expect(health).toMatch(/flightOwner\.isCurrent\(owner\)/);
+    expect(health).toMatch(/flightOwner\.invalidate\(\)/);
+
+    const widgets = source(WIDGET_BRIDGE);
+    expect(widgets).toMatch(/refreshTask/);
+    expect(widgets).toMatch(/refreshGate\.isCurrent\(owner\)/);
+    expect(widgets).toMatch(/WidgetStore\.clear\(\)/);
+    expect(widgets).toMatch(/var snap = WidgetStore\.load\(\)/);
+    const commit = widgets.match(/private static func commitStatus[\s\S]*?\n {4}}/)?.[0] ?? "";
+    expect(commit).toMatch(/await computeACWR\(\)/);
+    expect(commit.indexOf("await computeACWR()"), "snapshot must be read after ACWR await").toBeLessThan(
+      commit.indexOf("var snap = WidgetStore.load()"),
+    );
+  });
+
+  it("linearizes signedOut before readiness direct publication", () => {
+    const bridge = source(join(AUTH_BRIDGE, "Plugin.swift"));
+    const clear = bridge.match(/@objc func clearSession[\s\S]*?call\.resolve\(\)/)?.[0] ?? "";
+    expect(clear).toMatch(/relay\(\["event": "signedOut"\]\)/);
+    expect(clear).not.toMatch(/applicationContext\s*=\s*ReadinessApplicationContext/);
+    const relay = bridge.match(/private func relay\([\s\S]*?\n {4}}/)?.[0] ?? "";
+    expect(relay).toMatch(/!signedOut/);
+    expect(relay).toMatch(/applicationContext\.update\(context\)/);
+    expect(bridge).toMatch(/signedOutKey/);
+    expect(bridge).toMatch(/UserDefaults\.standard\.bool\(forKey: signedOutKey\)/);
   });
 });

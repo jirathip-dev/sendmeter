@@ -877,12 +877,20 @@ final class WorkoutManager: NSObject {
         // WidgetCountSync's doc comment) — pushing only on `stateChanged`
         // left the widget's boulder count stuck until the attempt ended.
         if WidgetCountSync.shouldPush(stateChanged: stateChanged, countBefore: countBefore, countAfter: countAfter) {
-            WidgetBridge.updateLiveWorkout(
-                active: true, boulders: countAfter,
-                climbing: after.isClimbing,
-                phaseSince: after.isClimbing ? climbingSince : restStartedAt,
-                restTargetS: restTargetS
-            )
+            // Sensor fusion callbacks are not actor-isolated. Hop to the
+            // widget bridge's main-actor gate so sign-out/new-refresh
+            // ownership is checked on the same executor as its store write.
+            let phaseSince = after.isClimbing ? climbingSince : restStartedAt
+            let climbing = after.isClimbing
+            let target = restTargetS
+            Task { @MainActor in
+                WidgetBridge.updateLiveWorkout(
+                    active: true, boulders: countAfter,
+                    climbing: climbing,
+                    phaseSince: phaseSince,
+                    restTargetS: target
+                )
+            }
             if !stateChanged { pushBeat(event: .count) }
         }
 

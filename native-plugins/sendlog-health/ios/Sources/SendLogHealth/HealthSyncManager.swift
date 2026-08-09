@@ -2,10 +2,14 @@ import Foundation
 import HealthKit
 import Supabase
 import SendLogHealthCore
+import struct SendLogWatchCore.AccessTokenClaims
 import struct SendLogWatchCore.ReadinessSnapshot
 import struct SendLogWatchCore.ReadinessRefreshRequest
 import struct SendLogWatchCore.ReadinessRefreshResult
 import struct SendLogWatchCore.ReadinessRefreshCoalescer
+import struct SendLogWatchCore.ReadinessTaskGate
+import struct SendLogWatchCore.ReadinessAccountEpoch
+import enum SendLogWatchCore.ReadinessRefreshDeliveryGate
 import enum SendLogWatchCore.ReadinessRefreshReason
 import enum SendLogWatchCore.ReadinessRefreshStatus
 import enum SendLogWatchCore.ReadinessFreshness
@@ -106,6 +110,16 @@ private struct HealthSyncOutcome: Sendable {
     let freshness: ReadinessFreshness
 }
 
+private struct RequestTaskEntry {
+    let epoch: UInt64
+    let task: Task<ReadinessRefreshResult, Never>
+}
+
+private struct RequestResultEntry {
+    let epoch: UInt64
+    let result: ReadinessRefreshResult
+}
+
 /// Orchestrates iPhone-side readiness: read HealthKit → ACWR from the user's
 /// sessions → RecoveryEngine → upsert health_metrics. The iPhone is the sole
 /// writer (the watch only reads the score back for display), so there's no
@@ -123,15 +137,16 @@ final class HealthSyncManager {
     // start parallel writers.
     private let flightLock = NSLock()
     private var flightState = ReadinessRefreshCoalescer()
+    private var flightOwner = ReadinessTaskGate()
     private var inFlight: Task<HealthSyncOutcome, Error>?
 
     private let requestLock = NSLock()
-    private var requestTasks: [String: Task<ReadinessRefreshResult, Never>] = [:]
-    private var requestResults: [String: ReadinessRefreshResult] = [:]
+    private var requestTasks: [String: RequestTaskEntry] = [:]
+    private var requestResults: [String: RequestResultEntry] = [:]
     private var resultHandler: ((ReadinessRefreshResult) -> Void)?
     private let latestResultKey = "sendmeter.health.latestReadinessResult"
     private let sessionLock = NSLock()
-    private var sessionGeneration = 0
+    private var accountEpoch = ReadinessAccountEpoch()
 
     func requestAuthorization() async throws {
         try await reader.requestAuthorization()
@@ -141,10 +156,22 @@ final class HealthSyncManager {
     /// at all, where `auth.setSession` used to spend a `GET /user` on every
     /// relay (and refresh outright if the token it was handed had expired).
     func setSession(accessToken: String) {
-        HealthSessionStore.shared.store(accessToken)
+        // A rotated access token for the same JWT subject is not an account
+        // transition. A different/unknown subject starts a new epoch and
+        // evicts all old request/result state before IDs can be reused.
+        let userId = AccessTokenClaims(jwt: accessToken)?.userId
         sessionLock.lock()
-        sessionGeneration &+= 1
+        let change = accountEpoch.setSession(userId: userId)
+        // Keep the epoch transition and bearer replacement in the same
+        // critical section. A request that observes the new epoch therefore
+        // cannot still pick up the previous account's token.
+        HealthSessionStore.shared.store(accessToken)
         sessionLock.unlock()
+        if change == .accountChanged {
+            invalidateFlight()
+            clearRequestState()
+            UserDefaults.standard.removeObject(forKey: latestResultKey)
+        }
     }
 
     /// Forgets this client's stored token — called when the phone signs out,
@@ -153,18 +180,11 @@ final class HealthSyncManager {
     /// server-side, and this client has no session of its own to end.
     func clearSession() {
         sessionLock.lock()
-        sessionGeneration &+= 1
+        accountEpoch.clearSession()
         sessionLock.unlock()
         HealthSessionStore.shared.clear()
-        flightLock.lock()
-        inFlight?.cancel()
-        inFlight = nil
-        flightState.cancel()
-        flightLock.unlock()
-        requestLock.lock()
-        requestTasks.removeAll()
-        requestResults.removeAll()
-        requestLock.unlock()
+        invalidateFlight()
+        clearRequestState()
         UserDefaults.standard.removeObject(forKey: latestResultKey)
     }
 
@@ -175,16 +195,20 @@ final class HealthSyncManager {
         SendLogReadinessBridge.registerRequestHandler { [weak self] request, replyHandler in
             Task { [weak self] in
                 guard let self else { return }
-                let requestGeneration = self.sessionGenerationValue()
-                let result = await self.handleWatchRequest(request)
-                replyHandler?(result.message())
-                // A sign-out/new-account transition may race the HealthKit or
-                // Supabase work. The old request may still need a terminal
-                // reply so WatchConnectivity does not retry forever, but it
-                // must never repopulate the signed-out bridge context or
-                // notify the new phone UI.
-                guard self.isSessionGenerationCurrent(requestGeneration) else { return }
-                SendLogReadinessBridge.publish(result, immediate: replyHandler != nil)
+                let requestEpoch = self.accountEpochValue()
+                let result = await self.handleWatchRequest(
+                    request,
+                    accountEpoch: requestEpoch
+                )
+                // The epoch check and both direct/context publications are
+                // one session-locked decision. A clear/new-account call that
+                // wins first suppresses the old snapshot entirely; it is not
+                // safe to send a terminal success reply from the old account.
+                self.deliverWatchResult(
+                    result,
+                    accountEpoch: requestEpoch,
+                    replyHandler: replyHandler
+                )
             }
         }
     }
@@ -200,9 +224,11 @@ final class HealthSyncManager {
 
     func latestReadinessResult() -> ReadinessRefreshResult? {
         requestLock.lock()
-        if let latest = requestResults.values.max(by: { $0.completedAt < $1.completedAt }) {
+        if let latest = requestResults.values.max(by: {
+            $0.result.completedAt < $1.result.completedAt
+        }) {
             requestLock.unlock()
-            return latest
+            return latest.result
         }
         requestLock.unlock()
         guard let data = UserDefaults.standard.data(forKey: latestResultKey) else {
@@ -242,12 +268,13 @@ final class HealthSyncManager {
         flightLock.lock()
         switch flightState.request(reason: reason) {
         case .start:
+            let owner = flightOwner.begin()
             // Set `inFlight` before creating the task's first await. A second
             // foreground callback therefore joins this exact task instead of
             // launching another HealthKit read/upsert pair.
             let newTask = Task { [weak self] in
                 guard let self else { throw HealthSyncUnavailableError() }
-                return try await self.runFlight(trigger: trigger)
+                return try await self.runFlight(trigger: trigger, owner: owner)
             }
             inFlight = newTask
             task = newTask
@@ -256,6 +283,7 @@ final class HealthSyncManager {
             // fallback explicit so an unexpected teardown fails safely rather
             // than force-unwrapping an optional from a background callback.
             guard let existing = inFlight else {
+                flightOwner.invalidate()
                 flightState.cancel()
                 flightLock.unlock()
                 throw HealthSyncUnavailableError()
@@ -271,28 +299,26 @@ final class HealthSyncManager {
     /// One coalesced flight may contain at most one follow-up pass. Auth
     /// expiry gets one fresh-token relay/retry inside that flight; it never
     /// hands a refresh token to the native side.
-    private func runFlight(trigger: SyncTrigger) async throws -> HealthSyncOutcome {
+    private func runFlight(
+        trigger: SyncTrigger,
+        owner: ReadinessTaskGate.Token
+    ) async throws -> HealthSyncOutcome {
         var lastOutcome: HealthSyncOutcome?
         var lastError: Error?
         var authRelayAttempted = false
+        var nextTrigger = trigger
 
         while true {
-            if Task.isCancelled {
-                flightLock.lock()
-                flightState.cancel()
-                inFlight = nil
-                flightLock.unlock()
+            if Task.isCancelled || !isCurrentFlight(owner) {
+                abandonFlight(owner)
                 throw CancellationError()
             }
             do {
-                lastOutcome = try await performPass(trigger: trigger)
+                lastOutcome = try await performPass(trigger: nextTrigger)
                 lastError = nil
             } catch {
-                if Task.isCancelled {
-                    flightLock.lock()
-                    flightState.cancel()
-                    inFlight = nil
-                    flightLock.unlock()
+                if error is CancellationError || Task.isCancelled || !isCurrentFlight(owner) {
+                    abandonFlight(owner)
                     throw CancellationError()
                 }
                 if ReadinessRefreshRetryPolicy.shouldRelayAuth(
@@ -302,7 +328,7 @@ final class HealthSyncManager {
                     authRelayAttempted = true
                     do {
                         try await waitForFreshAccessToken()
-                        lastOutcome = try await performPass(trigger: trigger)
+                        lastOutcome = try await performPass(trigger: nextTrigger)
                         lastError = nil
                     } catch {
                         lastOutcome = nil
@@ -314,28 +340,31 @@ final class HealthSyncManager {
                 }
             }
 
-            if Task.isCancelled {
-                flightLock.lock()
-                flightState.cancel()
-                inFlight = nil
-                flightLock.unlock()
+            if Task.isCancelled || !isCurrentFlight(owner) {
+                abandonFlight(owner)
                 throw CancellationError()
             }
 
             flightLock.lock()
+            guard flightOwner.isCurrent(owner) else {
+                flightLock.unlock()
+                throw CancellationError()
+            }
             let completion = flightState.complete()
             switch completion {
             case .idle:
                 inFlight = nil
+                flightOwner.invalidate()
                 flightLock.unlock()
                 if let lastOutcome { return lastOutcome }
                 throw lastError ?? HealthSyncUnavailableError()
-            case .rerun:
-                // Keep the next pass in the same single-flight owner. Marking
-                // it running while still locked closes the tiny race where a
-                // new caller could otherwise create a parallel task between
-                // `complete()` and the follow-up request.
-                _ = flightState.request(reason: .foreground)
+            case let .rerun(reason):
+                // `complete()` keeps the coalescer running for this already
+                // authorized follow-up. Do not call request() here: that
+                // would re-queue a reason and make every completion rerun.
+                // Preserve the stronger/manual trigger selected by the
+                // coalescer for the next pass.
+                nextTrigger = reason == .statusRefresh ? .manual : .automatic
                 flightLock.unlock()
             }
         }
@@ -344,7 +373,7 @@ final class HealthSyncManager {
     private func performPass(trigger: SyncTrigger) async throws -> HealthSyncOutcome {
         let today = Date().localDateString
         sessionLock.lock()
-        let generation = sessionGeneration
+        let epoch = accountEpoch.currentEpoch
         sessionLock.unlock()
         guard HealthSessionStore.shared.accessToken != nil else {
             throw HealthAuthRequiredError()
@@ -391,7 +420,7 @@ final class HealthSyncManager {
         }
 
         sessionLock.lock()
-        let stillCurrentBeforeWrite = generation == sessionGeneration
+        let stillCurrentBeforeWrite = accountEpoch.owns(epoch)
         sessionLock.unlock()
         guard stillCurrentBeforeWrite, HealthSessionStore.shared.accessToken != nil else {
             throw CancellationError()
@@ -403,7 +432,7 @@ final class HealthSyncManager {
             .execute()
 
         sessionLock.lock()
-        let stillCurrentGeneration = generation == sessionGeneration
+        let stillCurrentGeneration = accountEpoch.owns(epoch)
         sessionLock.unlock()
         guard stillCurrentGeneration, HealthSessionStore.shared.accessToken != nil else {
             throw CancellationError()
@@ -436,30 +465,68 @@ final class HealthSyncManager {
         throw HealthAuthRequiredError()
     }
 
-    private func sessionGenerationValue() -> Int {
+    private func accountEpochValue() -> UInt64 {
         sessionLock.lock()
         defer { sessionLock.unlock() }
-        return sessionGeneration
+        return accountEpoch.currentEpoch
     }
 
-    private func isSessionGenerationCurrent(_ generation: Int) -> Bool {
-        sessionLock.lock()
-        defer { sessionLock.unlock() }
-        return generation == sessionGeneration
+    private func isCurrentFlight(_ owner: ReadinessTaskGate.Token) -> Bool {
+        flightLock.lock()
+        defer { flightLock.unlock() }
+        return flightOwner.isCurrent(owner)
     }
 
-    private func handleWatchRequest(_ request: ReadinessRefreshRequest) async -> ReadinessRefreshResult {
-        sessionLock.lock()
-        let requestGeneration = sessionGeneration
-        sessionLock.unlock()
-        requestLock.lock()
-        if let cached = requestResults[request.requestId] {
-            requestLock.unlock()
-            return cached
+    /// Only the owner that is still current may clear the coalescer/task.
+    /// An older cancelled task must not erase a replacement flight installed
+    /// after `clearSession()` released the lock.
+    private func abandonFlight(_ owner: ReadinessTaskGate.Token) {
+        flightLock.lock()
+        guard flightOwner.isCurrent(owner) else {
+            flightLock.unlock()
+            return
         }
-        if let task = requestTasks[request.requestId] {
+        flightOwner.invalidate()
+        flightState.cancel()
+        inFlight = nil
+        flightLock.unlock()
+    }
+
+    private func invalidateFlight() {
+        flightLock.lock()
+        inFlight?.cancel()
+        inFlight = nil
+        flightOwner.invalidate()
+        flightState.cancel()
+        flightLock.unlock()
+    }
+
+    private func clearRequestState() {
+        requestLock.lock()
+        requestTasks.values.forEach { $0.task.cancel() }
+        requestTasks.removeAll()
+        requestResults.removeAll()
+        requestLock.unlock()
+    }
+
+    private func handleWatchRequest(
+        _ request: ReadinessRefreshRequest,
+        accountEpoch requestEpoch: UInt64
+    ) async -> ReadinessRefreshResult {
+        requestLock.lock()
+        if let cached = requestResults[request.requestId], cached.epoch == requestEpoch {
             requestLock.unlock()
-            return await task.value
+            return cached.result
+        }
+        if let cached = requestResults[request.requestId] {
+            requestResults.removeValue(forKey: request.requestId)
+        }
+        if let entry = requestTasks[request.requestId], entry.epoch == requestEpoch {
+            requestLock.unlock()
+            return await entry.task.value
+        }
+        if let stale = requestTasks.removeValue(forKey: request.requestId) {
+            stale.task.cancel()
         }
 
         let task = Task { [weak self] in
@@ -475,21 +542,35 @@ final class HealthSyncManager {
                     errorMessage: "The phone readiness service is unavailable."
                 )
             }
-            return await self.performWatchRequest(request)
+            return await self.performWatchRequest(
+                request,
+                accountEpoch: requestEpoch
+            )
         }
-        requestTasks[request.requestId] = task
+        requestTasks[request.requestId] = RequestTaskEntry(
+            epoch: requestEpoch,
+            task: task
+        )
         requestLock.unlock()
 
         let result = await task.value
         sessionLock.lock()
-        let stillCurrentSession = requestGeneration == sessionGeneration
-        sessionLock.unlock()
-        guard stillCurrentSession else { return result }
+        guard accountEpoch.owns(requestEpoch) else {
+            sessionLock.unlock()
+            return result
+        }
         requestLock.lock()
-        requestTasks.removeValue(forKey: request.requestId)
-        requestResults[request.requestId] = result
+        if requestTasks[request.requestId]?.epoch == requestEpoch {
+            requestTasks.removeValue(forKey: request.requestId)
+        }
+        requestResults[request.requestId] = RequestResultEntry(
+            epoch: requestEpoch,
+            result: result
+        )
         if requestResults.count > 32,
-           let oldest = requestResults.min(by: { $0.value.completedAt < $1.value.completedAt })?.key {
+           let oldest = requestResults.min(by: {
+               $0.value.result.completedAt < $1.value.result.completedAt
+           })?.key {
             requestResults.removeValue(forKey: oldest)
         }
         let handler = resultHandler
@@ -499,12 +580,46 @@ final class HealthSyncManager {
             UserDefaults.standard.set(data, forKey: latestResultKey)
         }
         handler?(result)
+        sessionLock.unlock()
         return result
     }
 
-    private func performWatchRequest(_ request: ReadinessRefreshRequest) async -> ReadinessRefreshResult {
+    /// Direct reply and application-context publication share one final
+    /// account-epoch gate. A same-user token refresh keeps the epoch and may
+    /// publish; sign-out/account-switch suppresses the old snapshot entirely.
+    private func deliverWatchResult(
+        _ result: ReadinessRefreshResult,
+        accountEpoch requestEpoch: UInt64,
+        replyHandler: (([String: Any]) -> Void)?
+    ) {
+        sessionLock.lock()
+        guard ReadinessRefreshDeliveryGate.allows(
+            capturedEpoch: requestEpoch,
+            currentEpoch: accountEpoch.currentEpoch,
+            isSignedOut: accountEpoch.isSignedOut
+        ) else {
+            sessionLock.unlock()
+            return
+        }
+        replyHandler?(result.message())
+        SendLogReadinessBridge.publish(result, immediate: replyHandler != nil)
+        sessionLock.unlock()
+    }
+
+    private func performWatchRequest(
+        _ request: ReadinessRefreshRequest,
+        accountEpoch requestEpoch: UInt64
+    ) async -> ReadinessRefreshResult {
         let startedAt = Date().timeIntervalSince1970
         do {
+            // A request task can be scheduled after clearSession() has
+            // cancelled the old task, before Swift observes cancellation.
+            // Do not let that stale request join or create a flight for the
+            // replacement account; its terminal result will be suppressed by
+            // the delivery gate as well.
+            guard isAccountEpochCurrent(requestEpoch) else {
+                throw CancellationError()
+            }
             let outcome = try await syncOutcomeNow(trigger: .automatic)
             return ReadinessRefreshResult(
                 request: request,
@@ -541,6 +656,12 @@ final class HealthSyncManager {
                 errorMessage: "The iPhone could not refresh readiness."
             )
         }
+    }
+
+    private func isAccountEpochCurrent(_ capturedEpoch: UInt64) -> Bool {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        return accountEpoch.owns(capturedEpoch)
     }
 
     /// Hard-delete the user's health rows (RLS scopes to auth.uid()), then
