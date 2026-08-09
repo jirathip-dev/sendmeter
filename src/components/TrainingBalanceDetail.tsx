@@ -10,7 +10,7 @@ import {
 } from "../lib/zoneHistory";
 import { QUALITY_COLORS } from "../lib/zoneSelection";
 import type { TindeqRecordingMeta } from "../types";
-import DetailPage from "./DetailPage";
+import Sheet from "./Sheet";
 import ZoneBreakdownPanel from "./ZoneBreakdownPanel";
 
 interface Props {
@@ -88,10 +88,11 @@ export default function TrainingBalanceDetail({
   const tiedOthers = d.tied.filter((z) => z !== rec.zone);
 
   return (
-    <DetailPage
+    <Sheet
       title="Training balance"
       subtitle={`${exercise} · last ${Math.round(windowDays / 7)} weeks`}
       onClose={onClose}
+      fullHeight
     >
       <Section title="What this counts">
         <ScopeRow label="One exercise">
@@ -200,6 +201,6 @@ export default function TrainingBalanceDetail({
           </div>
         </div>
       </Section>
-    </DetailPage>
+    </Sheet>
   );
 }

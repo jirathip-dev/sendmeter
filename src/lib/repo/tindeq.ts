@@ -10,6 +10,7 @@ import type {
 } from "../../types";
 import type { RecordedZone } from "../force-curve";
 import { localDayRange } from "../dates";
+import { computeGroupDurationMin } from "../duration";
 import {
   legacyPresetRow,
   preCapacityPresetRow,
@@ -23,6 +24,7 @@ import {
   parseCadenceMarkers,
   parseReverseActionSetMetrics,
 } from "../reverseAction";
+import { normalizeMovementPreset } from "../movementProtocol";
 
 const RECORDING_COLS =
   "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no, protocol_mode, target_kg, target_low_kg, target_high_kg, cadence_out_s, cadence_return_s, cadence_markers, set_metrics, setup_note, capacity_evidence, completed_reps, completion_status";
@@ -225,6 +227,10 @@ export async function insertRecording(
         // Only set when the caller minted one for retry-idempotency (#106) —
         // omitted, the column's own gen_random_uuid() default applies.
         ...(rec.id ? { id: rec.id } : {}),
+        // #487 (F2): only set when the offline queue's drain supplied the
+        // original capture time — omitted, the column's own `default now()`
+        // applies, which is correct for a normal (non-queued) save.
+        ...(rec.recordedAt ? { recorded_at: rec.recordedAt } : {}),
         duration_ms: rec.durationMs,
         peak_kg: rec.peakKg,
         avg_kg: rec.avgKg,
@@ -334,7 +340,7 @@ type PresetRow = LegacyPresetRow & {
 };
 
 function toPreset(r: PresetRow): TindeqPreset {
-  return {
+  return normalizeMovementPreset({
     id: r.id,
     name: r.name,
     holdS: r.hold_s,
@@ -357,32 +363,36 @@ function toPreset(r: PresetRow): TindeqPreset {
     prepareS: r.prepare_s ?? 5,
     setupNote: r.setup_note ?? "",
     capacityEvidence: r.capacity_evidence ?? false,
-  };
+  });
 }
 
 function presetToRow(p: Omit<TindeqPreset, "id">) {
+  // Keep direct callers and schema-fallback writes on the same <=30m/set
+  // contract as the editor. Historical rows are normalized on read; a stale
+  // in-memory draft is normalized here before it can be written back.
+  const normalized = normalizeMovementPreset({ id: "draft", ...p });
   return {
-    name: p.name,
-    hold_s: p.holdS,
-    holds_s: p.holdsS,
-    reps: p.reps,
-    sets: p.sets,
-    rest_reps_s: p.restRepsS,
-    rest_sets_s: p.restSetsS,
-    target_kg: p.targetKg,
-    target_pct: p.targetPct,
-    pct_basis: p.pctBasis,
-    pct_step: p.pctStep,
-    target_curve: p.targetCurve,
-    alternate_sides: p.alternateSides,
-    protocol_mode: p.protocolMode ?? "hold",
-    cadence_out_s: p.cadenceOutS ?? 3,
-    cadence_return_s: p.cadenceReturnS ?? 3,
-    tolerance_mode: p.toleranceMode ?? "percent",
-    tolerance_value: p.toleranceValue ?? 10,
-    prepare_s: p.prepareS ?? 5,
-    setup_note: p.setupNote ?? "",
-    capacity_evidence: p.capacityEvidence ?? false,
+    name: normalized.name,
+    hold_s: normalized.holdS,
+    holds_s: normalized.holdsS,
+    reps: normalized.reps,
+    sets: normalized.sets,
+    rest_reps_s: normalized.restRepsS,
+    rest_sets_s: normalized.restSetsS,
+    target_kg: normalized.targetKg,
+    target_pct: normalized.targetPct,
+    pct_basis: normalized.pctBasis,
+    pct_step: normalized.pctStep,
+    target_curve: normalized.targetCurve,
+    alternate_sides: normalized.alternateSides,
+    protocol_mode: normalized.protocolMode ?? "hold",
+    cadence_out_s: normalized.cadenceOutS ?? 3,
+    cadence_return_s: normalized.cadenceReturnS ?? 3,
+    tolerance_mode: normalized.toleranceMode ?? "percent",
+    tolerance_value: normalized.toleranceValue ?? 10,
+    prepare_s: normalized.prepareS ?? 5,
+    setup_note: normalized.setupNote ?? "",
+    capacity_evidence: normalized.capacityEvidence ?? false,
   };
 }
 
@@ -512,35 +522,34 @@ export async function updateRecordingGroup(
 /// group_id convention History's multi-select flow uses (SL-21): mint a
 /// fresh group_id for the session if it doesn't have one yet (a session
 /// logged through the plain Log Session form never gets one), stamp it onto
-/// the recordings in one batch (mirrors updateRecordingsMeta's `.in()`
-/// pattern). Duration is recomputed from the recording span ONLY for tindeq
-/// sessions, where duration is defined as the gauge wall-clock span — for a
-/// manually-logged session the user just typed a duration into the form, and
-/// attaching a few gauge reps must not clobber it (e.g. a 90-min climbing
-/// session would become the reps' 12-min span).
+/// the recordings, and (for tindeq sessions only — see the RPC's own
+/// comment) recompute the session's duration from the recordings' actual
+/// span. For a manually-logged session the user just typed a duration into
+/// the form, and attaching a few gauge reps must not clobber it (e.g. a
+/// 90-min climbing session would become the reps' 12-min span).
+///
+/// #490: this used to be three separate, non-transactional requests
+/// (set session.group_id, regroup the recordings, recompute duration) — a
+/// failure on the 2nd or 3rd left the 1st stranded (the session pointing at
+/// a group with none/some of the intended recordings, or grouped correctly
+/// but with a stale duration). `link_tindeq_recordings_to_session` (see
+/// supabase/migrations/20260807090000_link_tindeq_recordings_rpc.sql) does
+/// all three inside one DB transaction, so any failure anywhere leaves
+/// nothing changed. Takes only the session id — not a client-held
+/// `groupId`/`type` snapshot, which could be stale by the time this runs
+/// (see CLAUDE.md's closures-outliving-the-render note) — the function reads
+/// both fresh, inside the same transaction that uses them.
 export async function linkRecordingsToSession(
-  session: { id: string; groupId: string | null; type: string },
+  sessionId: string,
   recordingIds: string[],
 ): Promise<void> {
   if (recordingIds.length === 0) return;
-  const groupId = session.groupId ?? crypto.randomUUID();
-  if (!session.groupId) {
-    unwrap(
-      await supabase
-        .from("sessions")
-        .update({ group_id: groupId })
-        .eq("id", session.id)
-        .select("id"),
-    );
-  }
   unwrap(
-    await supabase
-      .from("tindeq_recordings")
-      .update({ group_id: groupId })
-      .in("id", recordingIds)
-      .select("id"),
+    await supabase.rpc("link_tindeq_recordings_to_session", {
+      p_session_id: sessionId,
+      p_recording_ids: recordingIds,
+    }),
   );
-  if (session.type === "tindeq") await recalcTindeqSessionDuration(groupId);
 }
 
 /// Recompute a Tindeq session's duration from its recordings' actual time span
@@ -553,11 +562,13 @@ export async function recalcTindeqSessionDuration(
   groupId: string,
 ): Promise<number | null> {
   const recs = await fetchRecordingsByGroup(groupId);
-  if (recs.length === 0) return null;
-  const starts = recs.map((r) => Date.parse(r.recordedAt));
-  const ends = recs.map((r) => Date.parse(r.recordedAt) + r.durationMs);
-  const spanMs = Math.max(...ends) - Math.min(...starts);
-  const durationMin = Math.max(1, Math.round(spanMs / 60000));
+  // #487 (F3): clamp to the DB's 1..600 `duration_min` bound (see
+  // src/lib/duration.ts) — an unclamped span used to reach the write below
+  // and fail the check constraint *after* the caller had already re-grouped
+  // the recordings onto this session, leaving the user with regrouped
+  // recordings and no session.
+  const durationMin = computeGroupDurationMin(recs);
+  if (durationMin === null) return null;
   unwrap(
     await supabase
       .from("sessions")

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LiveWorkout } from "../types";
+import { SheetLayerProvider } from "./Sheet";
 
 interface Props {
   live: LiveWorkout;
@@ -46,15 +47,16 @@ export default function LiveWorkoutFullscreen({ live, onMinimize }: Props) {
   const accent = climbing ? "var(--success)" : restOver ? "var(--danger)" : "var(--primary)";
 
   return createPortal(
-    <div
-      className="fullscreen-overlay"
-      style={{
-        background: `color-mix(in srgb, ${accent} 12%, var(--canvas))`,
-        transition: "background 0.3s",
-        display: "flex",
-        justifyContent: "center",
-      }}
-    >
+    <SheetLayerProvider layer="fullscreen">
+      <div
+        className="fullscreen-overlay"
+        style={{
+          background: `color-mix(in srgb, ${accent} 12%, var(--canvas))`,
+          transition: "background 0.3s",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
       <div
         style={{
           width: "100%",
@@ -148,7 +150,8 @@ export default function LiveWorkoutFullscreen({ live, onMinimize }: Props) {
           Controlled from your watch — log boulders and end it there.
         </div>
       </div>
-    </div>,
+      </div>
+    </SheetLayerProvider>,
     document.body,
   );
 }

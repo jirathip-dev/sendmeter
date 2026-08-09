@@ -4,141 +4,79 @@ import Supabase
 
 /// Minimal offline queue for gym basements: every workout save is first
 /// serialized to Documents/pending/<uuid>.json, then uploaded and deleted on
-/// success. Drained serially (oldest first) on launch / foreground. Replays
-/// are safe because uploads are idempotent upserts on client UUIDs.
+/// success. Since #491 this is a thin shell over `UploadQueueEngine` — the
+/// three watch queues were line-for-line copies of the same actor, and the
+/// retry/quarantine policy (#475) had only ever landed in this one; the
+/// engine holds the single shared implementation, this type keeps the name,
+/// the singleton, and the seam-shaped init that `OfflineQueueTests` and the
+/// app's call sites already use.
+///
+/// `uploader`/`clock`/`baseDir` are the #475 injectable seam:
+/// `OfflineQueue.shared` uses the real Supabase-backed uploader, the wall
+/// clock, and the app's real Documents directory; tests construct their own
+/// instance with a scripted uploader and a scratch directory so the real
+/// `drainPass` control flow — not a reimplementation of it — is what gets
+/// exercised.
 actor OfflineQueue {
     static let shared = OfflineQueue()
 
-    private var drainState = CoalescingDrain()
+    private let engine: UploadQueueEngine<WorkoutSaveBundle>
 
-    private var pendingDir: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let dir = docs.appendingPathComponent("pending", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
+    init(
+        uploader: WorkoutBundleUploading = RepoBundleUploader(),
+        clock: QueueClock = SystemQueueClock(),
+        baseDir: URL? = nil,
+        sessionRelay: SessionRelayRequesting = AuthManagerRelayRequester(),
+        scheduler: DrainScheduling = TaskDrainScheduler()
+    ) {
+        engine = UploadQueueEngine(
+            slot: .workouts,
+            directoryName: "pending",
+            // The pre-#491 name, so existing installs keep their recorded
+            // timestamp (see the engine's `lastSyncFileName` doc).
+            lastSyncFileName: "last-successful-sync.json",
+            upload: { try await uploader.upload($0) },
+            classify: { UploadFailureMapping.classify($0, bundle: $1) },
+            clock: clock,
+            baseDir: baseDir ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],
+            sessionRelay: sessionRelay,
+            scheduler: scheduler,
+            // #481 / #491 review F1: `workout.raw` (the 1Hz debug trace,
+            // hundreds of KB with keepRawTrace on) is shed before the
+            // potentially-forever quarantine.
+            stripsPayloadOnQuarantine: true
+        )
     }
 
-    /// Count of items pending for the currently signed-in account, PLUS any
-    /// item stranded while nobody is signed in (issue #189) — otherwise
-    /// Account B would see a permanently-stuck "N pending" badge for items
-    /// stranded under Account A (#158), AND a workout saved while signed out
-    /// would show 0 pending forever, since `shouldDrain` always returns
-    /// false with `currentUserId == nil`. `drain()`'s own guard is untouched
-    /// (it still never uploads a mismatched or signed-out item) — widening
-    /// this count is display-only.
-    func pendingCount() -> Int {
-        let currentUserId = WatchSessionStore.shared.userId
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let files = (try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil))?
-            .filter { $0.pathExtension == "json" } ?? []
-        let count = files.filter { file in
-            guard
-                let data = try? Data(contentsOf: file),
-                let bundle = try? decoder.decode(WorkoutSaveBundle.self, from: data)
-            else { return true } // unreadable: retained and reported until a later build can decode it
-            return shouldDrain(itemUserId: bundle.enqueuedUserId, currentUserId: currentUserId)
-                || currentUserId == nil
-        }.count
-        // Publish for the sync-readable stamp (#21): reading this actor is an
-        // await, which the WatchConnectivity send paths can't do.
-        PendingSyncCache.shared.record(count, for: .workouts)
-        return count
-    }
+    func pendingCount() async -> Int { await engine.pendingCount() }
 
-    /// Persist the bundle and return as soon as it's on disk — the upload runs
-    /// in the background (the queue retries until it lands). If persistence
-    /// fails, keep the in-memory bundle alive long enough to attempt the
-    /// idempotent upload directly; only failure of both paths is `.lost`.
-    func enqueue(_ bundle: WorkoutSaveBundle) async -> QueuePersistOutcome {
-        var bundle = bundle
-        // Stamp which account is signed in right now (issue #158) — the
-        // relayed access token's `sub` claim, read synchronously from the
-        // Keychain cache (#265). Checked back in drain().
-        bundle.enqueuedUserId = WatchSessionStore.shared.userId
+    @discardableResult
+    func quarantinedCount() async -> Int { await engine.quarantinedCount() }
 
-        switch PendingQueuePolicy.actionAfterPersist(persist(bundle)) {
-        case .drainQueued:
-            Task { await drain() }
-            return .queued
-        case .uploadDirect:
-            do {
-                try await Repo.uploadBundle(bundle)
-                return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: true)
-            } catch {
-                return PendingQueuePolicy.outcomeAfterDirectUpload(succeeded: false)
-            }
-        }
-    }
+    func enqueue(_ bundle: WorkoutSaveBundle) async -> QueuePersistOutcome { await engine.enqueue(bundle) }
 
-    private func persist(_ bundle: WorkoutSaveBundle) -> Bool {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let url = pendingDir.appendingPathComponent("\(bundle.workout.id.uuidString).json")
-        let persisted: Bool
-        do {
-            let data = try encoder.encode(bundle)
-            try data.write(to: url, options: .atomic)
-            persisted = true
-        } catch {
-            persisted = false
-        }
-        _ = pendingCount() // refresh the reported depth (#21)
-        Task { @MainActor in WatchBuild.reportQueueStatus() }
-        return persisted
-    }
+    func drain() async { await engine.drain() }
 
-    func drain() async {
-        guard drainState.request() == .start else { return }
-        // request() marks the actor as running before this first suspension.
-        repeat {
-            await drainPass()
-        } while drainState.completePass() == .rerun
-    }
+    func isRetryScheduled() async -> Bool { await engine.isRetryScheduled() }
 
-    private func drainPass() async {
-        let files = ((try? FileManager.default.contentsOfDirectory(
-            at: pendingDir, includingPropertiesForKeys: [.creationDateKey]
-        )) ?? [])
-            .filter { $0.pathExtension == "json" }
-            .sorted { lhs, rhs in
-                let l = (try? lhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-                let r = (try? rhs.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
-                return l < r
-            }
+    func lastSuccessfulSyncAt() async -> Date? { await engine.lastSuccessfulSyncAt() }
+}
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        for file in files {
-            guard
-                let data = try? Data(contentsOf: file),
-                let bundle = try? decoder.decode(WorkoutSaveBundle.self, from: data)
-            else {
-                // Never delete an unreadable or undecodable value (#287).
-                // It stays counted/published through PendingSyncCache and a
-                // later compatible build gets another chance to recover it.
-                continue
-            }
-            // Read fresh right before each file's check, not once before the
-            // loop (issue #158) — this is a non-@MainActor actor and `await`
-            // below is a suspension point, so a concurrent account switch
-            // could otherwise go unnoticed for the rest of the pass and let
-            // a file queued under Account A upload under Account B.
-            let currentUserId = WatchSessionStore.shared.userId
-            guard shouldDrain(itemUserId: bundle.enqueuedUserId, currentUserId: currentUserId) else {
-                // Queued under a different account (or nobody's signed in):
-                // leave the file on disk untouched and keep checking the
-                // rest — this is not a network/auth error, so don't `break`.
-                continue
-            }
-            do {
-                try await Repo.uploadBundle(bundle)
-                try? FileManager.default.removeItem(at: file)
-            } catch {
-                break // no network (or auth) — stop, retry next drain
-            }
-        }
-        _ = pendingCount() // refresh the reported depth (#21)
-        await MainActor.run { WatchBuild.reportQueueStatus() }
+extension OfflineQueue: QueueDepthReporting {
+    nonisolated var syncSlot: PendingSyncQueue { .workouts }
+    func refreshReportedCounts() async { await engine.refreshReportedCounts() }
+}
+
+extension WorkoutSaveBundle: QueueUploadItem {
+    var queueFileId: UUID { workout.id }
+
+    /// The 1Hz raw trace is debug telemetry, not training data — the upload
+    /// works with `raw` nil and every user-visible number (attempts, HR,
+    /// effort, session row) survives. nil when there is nothing to shed.
+    func strippedOfHeavyPayload() -> WorkoutSaveBundle? {
+        guard workout.raw != nil else { return nil }
+        var stripped = self
+        stripped.workout.raw = nil
+        return stripped
     }
 }

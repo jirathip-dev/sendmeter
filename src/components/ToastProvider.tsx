@@ -78,21 +78,11 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
             <span>{t.message}</span>
             {t.action && (
               <button
+                className="toast-action-button"
+                data-kind={t.kind}
                 onClick={() => {
                   t.action!.onClick();
                   setToasts((list) => list.filter((x) => x.id !== t.id));
-                }}
-                style={{
-                  flexShrink: 0,
-                  background: "none",
-                  border: "none",
-                  padding: "2px 4px",
-                  margin: "-2px -2px -2px 0",
-                  fontFamily: "inherit",
-                  fontSize: "var(--t-sm)",
-                  fontWeight: 700,
-                  color: KIND_COLOR[t.kind],
-                  cursor: "pointer",
                 }}
               >
                 {t.action.label}

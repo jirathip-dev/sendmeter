@@ -23,13 +23,14 @@ export default function ChartTooltip({
 }) {
   return (
     <div
+      role="status"
       style={{
         position: "absolute",
         bottom: "100%",
         marginBottom: 6,
         padding: "5px 7px",
-        background: "var(--surface-2)",
-        border: "1px solid var(--border)",
+        background: "var(--chart-tooltip)",
+        border: "1px solid var(--chart-tooltip-border)",
         borderRadius: 6,
         boxShadow: "var(--shadow-card)",
         fontSize: "var(--t-2xs)",

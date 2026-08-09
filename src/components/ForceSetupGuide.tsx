@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import type { ForceMeasurementMode } from "../lib/forceSetup";
 import ForcePathDiagram from "./ForcePathDiagram";
 import Sheet from "./Sheet";
@@ -25,25 +24,18 @@ const MODE_COPY = {
 /** Informational equipment guidance only. It deliberately does not inspect,
  * approve, persist, or gate the user's physical setup. */
 export default function ForceSetupGuide({ mode, sensor, onClose }: Props) {
-  const headingRef = useRef<HTMLHeadingElement | null>(null);
-
-  useEffect(() => {
-    queueMicrotask(() => headingRef.current?.focus());
-  }, []);
-
   const copy = MODE_COPY[mode];
   return (
-    <Sheet onClose={onClose} fullHeight className="force-setup-sheet">
-      <article className="force-setup-guide" role="dialog" aria-modal="true" aria-labelledby="force-setup-guide-title">
-        <header className="force-setup-guide-header">
-          <div>
-            <div className="label-eyebrow">How to set up</div>
-            <h2 id="force-setup-guide-title" tabIndex={-1} ref={headingRef}>
-              {copy.title} <span className="force-setup-support">· {copy.support}</span>
-            </h2>
-          </div>
-          <button type="button" className="modal-x" onClick={onClose} aria-label="Close setup guidance">×</button>
-        </header>
+    <Sheet
+      title={copy.title}
+      subtitle={copy.support}
+      onClose={onClose}
+      fullHeight
+      layer="fullscreen"
+      className="force-setup-sheet"
+    >
+      <article className="force-setup-guide">
+        <div className="label-eyebrow" style={{ marginBottom: 8 }}>How to set up</div>
 
         <div className="force-setup-guide-body">
           <div className="force-guide-note">

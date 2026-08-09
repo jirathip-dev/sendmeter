@@ -8,4 +8,10 @@ export const SendLogHealth = registerPlugin<SendLogHealthPlugin>(
   },
 );
 
-export type { SendLogHealthPlugin } from "./definitions";
+export type {
+  ReadinessRefreshResult,
+  ReadinessSnapshot,
+  ReadinessFreshness,
+  ReadinessRefreshStatus,
+  SendLogHealthPlugin,
+} from "./definitions";

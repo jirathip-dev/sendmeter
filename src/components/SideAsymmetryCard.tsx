@@ -1,4 +1,4 @@
-import { isEffortRecording, recordingCapacityModality } from "../lib/zoneHistory";
+import { isStaticCapacityEvidence } from "../lib/zoneHistory";
 import type { ForceCapacityModality, TindeqRecordingMeta } from "../types";
 
 /// Left/right best-peak comparison for a tag — finger-strength asymmetry is a
@@ -14,10 +14,9 @@ export default function SideAsymmetryCard({
   recordings: TindeqRecordingMeta[];
   modality?: ForceCapacityModality;
 }) {
+  if (modality !== "static") return null;
   const effortRecordings = recordings.filter((recording) =>
-    recordingCapacityModality(recording) === modality &&
-    (modality === "static" || recording.capacityEvidence !== false) &&
-    isEffortRecording(recording),
+    isStaticCapacityEvidence(recording),
   );
   const bestPeak = (side: string): number | null => {
     const peaks = effortRecordings.filter((r) => r.side === side && r.peakKg != null).map((r) => r.peakKg!);
@@ -33,9 +32,9 @@ export default function SideAsymmetryCard({
   const flag = imbalancePct >= 15; // asymmetry worth addressing
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-force" style={{ marginTop: 10 }}>
       <div className="label-eyebrow" style={{ marginBottom: 12 }}>
-        {modality === "reverse_action" ? "Reverse Action" : "Static"} Left / Right asymmetry
+        Static Left / Right asymmetry
       </div>
       <div style={{ display: "flex", gap: 14 }}>
         {([["Left", left], ["Right", right]] as const).map(([label, v]) => (

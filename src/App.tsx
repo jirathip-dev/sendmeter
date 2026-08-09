@@ -37,6 +37,7 @@ import { useRealtimeBump } from "./hooks/useRealtimeVersion";
 import type { HealthSyncSource } from "./lib/healthSync";
 import { insertRecording, restoreSession } from "./lib/repo";
 import { drainPendingRecordingsQueue } from "./lib/recordingQueue";
+import { browserDrainHandles, scheduleQueueDrain } from "./lib/drainSchedule";
 import { takeLostRecordingsNotice } from "./lib/lostRecordings";
 import type { SignOut } from "./lib/signOut";
 import SplashScreen from "./components/SplashScreen";
@@ -137,7 +138,7 @@ function AuthedApp({
   // session, dropped connection) while we were signed out — AuthedApp only
   // renders once `session` exists, so a fresh mount here IS "auth just
   // succeeded" (login or a session restore). drainPendingRecordingsQueue
-  // guards its own re-entrancy, so a duplicate mount can't double-insert.
+  // guards its own re-entrancy, so an overlapping trigger can't double-insert.
   // #269: this is also where the two stores reconcile — the drain first moves
   // anything in the synchronous localStorage lane (a salvage-on-unmount, or a
   // pre-#269 queue left behind by an older build) into the IndexedDB main
@@ -146,32 +147,64 @@ function AuthedApp({
   // No manual list refresh needed on success — `tindeq_recordings` is a
   // WATCHED_TABLES table, so each recovered insert bumps the realtime
   // version and ForceView's own fetch effect picks it up.
+  //
+  // #484 F2: mount used to be the ONLY trigger — a user who went offline
+  // mid-session, got signal back, and never reloaded the tab had a queue that
+  // would never drain again, while ForceView's own copy told them it would.
+  // `scheduleQueueDrain` (see drainSchedule.ts for the tested scheduling
+  // logic) also drains on foreground/visibility AND on a plain interval — the
+  // interval matters because that exact scenario never fires a
+  // foreground/visibility event (the tab was never backgrounded).
   useEffect(() => {
     let cancelled = false;
-    void drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
-      if (!cancelled && n > 0) {
-        toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
-      }
-    });
+    // Returns whether the pass made progress (recovered ≥1 recording) —
+    // `scheduleQueueDrain`'s backoff (#484 F6) resets on progress and climbs
+    // on a run that finds nothing to do.
+    function runDrain(): Promise<boolean> {
+      return drainPendingRecordingsQueue(userId, insertRecording).then((n) => {
+        if (!cancelled && n > 0) {
+          toast(`Recovered ${n} unsaved recording${n === 1 ? "" : "s"}`);
+        }
+        return n > 0;
+      });
+    }
+    // #484 F4: the real DOM/Capacitor wiring lives in `browserDrainHandles`
+    // (drainSchedule.ts), unit-tested there against fake `document`/`window`/
+    // Capacitor objects — not reimplemented here, so there's exactly one
+    // adapter to get right or get wrong.
+    const cancel = scheduleQueueDrain(
+      runDrain,
+      browserDrainHandles(document, window, {
+        isNativePlatform: () => Capacitor.isNativePlatform(),
+        addListener: (type, cb) => CapacitorApp.addListener(type, cb),
+      }),
+    );
     return () => {
       cancelled = true;
+      cancel();
     };
   }, [userId, toast]);
 
   // #264: the other side of the queue — recordings that could not even be
-  // queued. The path that loses one (useTindeq's salvage-on-unmount cleanup)
-  // has no UI it can reach, so it parks a durable one-shot notice instead;
-  // this is where the user finally hears about it. Mount covers sign-in and a
-  // cold launch, appStateChange covers a loss that happened while the app was
-  // backgrounded. `take` clears the record, so it shows exactly once.
+  // queued (both stores refused the write outright). The path that loses one
+  // (useTindeq's salvage-on-unmount cleanup) has no UI it can reach, so it
+  // parks a durable one-shot notice instead; this is where the user finally
+  // hears about it. Mount covers sign-in and a cold launch, appStateChange
+  // covers a loss that happened while the app was backgrounded. `take`
+  // clears the record, so it shows exactly once.
+  //
+  // #484: a server-rejected upload does NOT go through this notice — see the
+  // policy block above `drainQueue` in recordingQueue.ts. It is retained
+  // (never deleted on a server response), so there is nothing lost to report
+  // here; a stuck upload surfaces instead through the ambient
+  // `pendingRecordingsBreakdown`/`uploadWarningPresentation` states, same as
+  // any other still-on-device queue depth.
   useEffect(() => {
     function surface() {
       const notice = takeLostRecordingsNotice();
       if (!notice) return;
-      toast(
-        `${notice.count} recording${notice.count === 1 ? "" : "s"} couldn't be saved — device storage was full`,
-        "error",
-      );
+      const label = `${notice.count} recording${notice.count === 1 ? "" : "s"}`;
+      toast(`${label} couldn't be saved — device storage was full`, "error");
     }
     // Deferred, not called inline: a toast is a setState, and this effect must
     // not write state synchronously in its body (react-compiler lint).
@@ -406,17 +439,7 @@ function AuthedApp({
 
       {/* Log bottom sheet modal */}
       {showModal && (
-        <Sheet onClose={() => setShowModal(false)}>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--t-xl)",
-              fontWeight: 800,
-              marginBottom: 2,
-            }}
-          >
-            Log Session
-          </div>
+        <Sheet title="Log session" onClose={() => setShowModal(false)}>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
             Load = Duration × RPE
           </div>
@@ -431,34 +454,19 @@ function AuthedApp({
 
       {/* Phases bottom sheet — informational only (no tap-to-set) */}
       {showPhases && (
-        <Sheet fullHeight onClose={() => setShowPhases(false)}>
+        <Sheet title="Training phases" fullHeight onClose={() => setShowPhases(false)}>
           <PhasesView
             currentPhase={currentPhase}
             phasePeriods={phasePeriods}
             phaseStartDate={phaseStartDate}
           />
-          <div style={{ marginTop: 10 }}>
-            <button className="btn-ghost" onClick={() => setShowPhases(false)}>
-              Close
-            </button>
-          </div>
         </Sheet>
       )}
 
       {/* Compact phase switcher — the actual "change phase" control (the sheet
           above is reference only). */}
       {showPhaseChange && (
-        <Sheet onClose={() => setShowPhaseChange(false)}>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: "var(--t-xl)",
-              fontWeight: 800,
-              marginBottom: 2,
-            }}
-          >
-            Change phase
-          </div>
+        <Sheet title="Change phase" onClose={() => setShowPhaseChange(false)}>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
             Sets the training block your sessions log under.
           </div>
@@ -467,6 +475,10 @@ function AuthedApp({
               const active = p.id === currentPhase;
               return (
                 <button
+                  className="phase-option"
+                  data-phase={p.id}
+                  data-active={active ? "true" : "false"}
+                  aria-pressed={active}
                   key={p.id}
                   onClick={() => {
                     if (!active) {
@@ -475,43 +487,23 @@ function AuthedApp({
                     }
                     setShowPhaseChange(false);
                   }}
-                  style={{
-                    textAlign: "left",
-                    padding: "12px 14px",
-                    borderRadius: 10,
-                    cursor: "pointer",
-                    background: active ? p.bg : "var(--surface-1)",
-                    border: `1px solid ${active ? p.color : "var(--border)"}`,
-                    fontFamily: "inherit",
-                  }}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <span style={{ fontSize: "var(--t-base)", fontWeight: 700, color: p.color }}>
+                  <div className="phase-option-heading">
+                    <span className="phase-option-name">
                       {p.name}
                     </span>
                     {active && (
-                      <span style={{ fontSize: "var(--t-eyebrow)", color: p.color, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                      <span className="phase-option-current">
                         Current
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
+                  <div className="phase-option-description">
                     {p.desc}
                   </div>
                 </button>
               );
             })}
-          </div>
-          <div style={{ marginTop: 12 }}>
-            <button className="btn-ghost" onClick={() => setShowPhaseChange(false)}>
-              Cancel
-            </button>
           </div>
         </Sheet>
       )}

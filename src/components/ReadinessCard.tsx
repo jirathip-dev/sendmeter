@@ -6,6 +6,7 @@ import { useRipple } from "../hooks/useRipple";
 import { healthLastSyncedAt } from "../lib/healthSync";
 import { fetchHealthMetrics } from "../lib/repo";
 import { ZONE_COLORS } from "../lib/readinessZones";
+import { chartColor } from "../lib/chartTheme";
 import ChartTooltip from "./ChartTooltip";
 import InfoDot from "./InfoDot";
 import type { HealthMetric } from "../types";
@@ -29,7 +30,7 @@ function relativeTime(ms: number): string {
 }
 
 export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}) {
-  const [hoveredDay, hoverDayProps] = useChartHover<number>();
+  const [hoveredDay, , , surfaceProps] = useChartHover<number>();
   const { ripples, spawnRipple } = useRipple();
   const realtimeVersion = useRealtimeVersion();
   const metrics = useCancellableFetch<HealthMetric[]>(
@@ -49,7 +50,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
   if (metrics.length === 0) {
     return (
       <div
-        className={`card${onClick ? " tappable" : ""}`}
+        className={`card surface-readiness${onClick ? " tappable" : ""}`}
         onClick={onClick}
         onPointerDown={onClick ? spawnRipple : undefined}
       >
@@ -111,7 +112,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
 
   return (
     <div
-      className={`card${onClick ? " tappable" : ""}`}
+      className={`card surface-readiness${onClick ? " tappable" : ""}`}
       onClick={onClick}
       onPointerDown={onClick ? spawnRipple : undefined}
     >
@@ -175,7 +176,11 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
             </span>
           ))}
         </div>
-        <div style={{ position: "relative", flex: 1 }}>
+        <div
+          role="group"
+          aria-label="Fourteen-day readiness trend"
+          style={{ position: "relative", flex: 1 }}
+        >
           {/* zone-threshold gridlines (push/maintain/recover boundaries) */}
           {[70, 40].map((v) => (
             <div
@@ -185,7 +190,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
                 left: 0,
                 right: 0,
                 top: 56 - (v / 100) * 50,
-                borderTop: "1px dashed var(--hairline)",
+                borderTop: `1px dashed ${chartColor("grid")}`,
               }}
             />
           ))}
@@ -204,12 +209,21 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
           )}
           <div
             className="chart-scrub"
+            role="button"
+            tabIndex={0}
+            aria-label={
+              hoveredDay !== null
+                ? `${days[hoveredDay]!.key}: ${days[hoveredDay]!.m?.readiness != null ? `${days[hoveredDay]!.m!.readiness} ${days[hoveredDay]!.m!.zone ?? ""}`.trim() : "no data"}`
+                : "Fourteen-day readiness data; use arrow keys to inspect days"
+            }
             style={{
               display: "flex",
               gap: 3,
               alignItems: "flex-end",
               height: 56,
             }}
+            onClick={(event) => event.stopPropagation()}
+            {...surfaceProps(days.map((_, i) => i), days.length, (i) => i + 0.5)}
           >
             {days.map(({ key, m }, i) => (
               <div
@@ -233,6 +247,8 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
                   </ChartTooltip>
                 )}
                 <div
+                  role="img"
+                  aria-label={`${key}: ${m?.readiness != null ? `${m.readiness} ${m.zone ?? ""}`.trim() : "no data"}`}
                   style={{
                     width: "100%",
                     height:
@@ -241,7 +257,7 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
                         : 2,
                     background:
                       m?.zone && m.readiness != null
-                        ? (ZONE_COLORS[m.zone] ?? "var(--border)")
+                        ? `linear-gradient(180deg, color-mix(in srgb, ${ZONE_COLORS[m.zone] ?? "var(--border)"} 58%, var(--canvas)), ${ZONE_COLORS[m.zone] ?? "var(--border)"})`
                         : "var(--border)",
                     borderRadius: 2,
                     opacity: hoveredDay === null || hoveredDay === i ? 1 : 0.5,
@@ -249,7 +265,6 @@ export default function ReadinessCard({ onClick }: { onClick?: () => void } = {}
                     cursor: "pointer",
                     transition: "opacity 0.1s",
                   }}
-                  {...hoverDayProps(i)}
                 />
               </div>
             ))}

@@ -70,22 +70,15 @@ export default function EditRecordingSheet({
   }
 
   return (
-    <Sheet onClose={onClose}>
-      <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800, marginBottom: 2 }}>
-        Edit recording
-      </div>
-      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 4 }}>
-        {rec.source === "manual" ? (
-          <>
-            {rec.externalLoadKg?.toFixed(1)} kg external · {((rec.actualDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s actual
-            {rec.plannedDurationMs != null && ` / ${(rec.plannedDurationMs / 1000).toFixed(1)}s planned`}
-            {rec.outcome && ` · ${rec.outcome.replace("_", " ")}`}
-          </>
-        ) : (
-          <>{rec.peakKg?.toFixed(1)} kg peak · {(rec.durationMs / 1000).toFixed(1)}s</>
-        )}
-      </div>
-
+    <Sheet
+      title="Edit recording"
+      subtitle={
+        rec.source === "manual"
+          ? `${rec.externalLoadKg?.toFixed(1)} kg external · ${((rec.actualDurationMs ?? rec.durationMs) / 1000).toFixed(1)}s actual${rec.plannedDurationMs != null ? ` / ${(rec.plannedDurationMs / 1000).toFixed(1)}s planned` : ""}${rec.outcome ? ` · ${rec.outcome.replace("_", " ")}` : ""}`
+          : `${rec.peakKg?.toFixed(1)} kg peak · ${(rec.durationMs / 1000).toFixed(1)}s`
+      }
+      onClose={onClose}
+    >
       <span className="field-label">Exercise tag</span>
       <input
         className="field"
@@ -98,17 +91,9 @@ export default function EditRecordingSheet({
           {recentTags.map((t) => (
             <button
               key={t}
+              className="recording-tag-option"
+              data-selected={tag === t ? "true" : "false"}
               onClick={() => setTag(t)}
-              style={{
-                padding: "4px 10px",
-                borderRadius: 999,
-                fontSize: "var(--t-xs)",
-                fontWeight: 600,
-                cursor: "pointer",
-                border: `1px solid ${tag === t ? "var(--info)" : "var(--border)"}`,
-                background: tag === t ? "rgba(123,131,235,0.12)" : "transparent",
-                color: tag === t ? "var(--ink)" : "var(--ink-muted)",
-              }}
             >
               {t}
             </button>
@@ -121,18 +106,9 @@ export default function EditRecordingSheet({
         {SIDES.map((s) => (
           <button
             key={s.value}
+            className="recording-side-option"
+            data-selected={side === s.value ? "true" : "false"}
             onClick={() => setSide(s.value)}
-            style={{
-              flex: 1,
-              padding: "9px 0",
-              borderRadius: 8,
-              fontSize: "var(--t-sm)",
-              fontWeight: 600,
-              cursor: "pointer",
-              border: `1px solid ${side === s.value ? "var(--warning)" : "var(--border)"}`,
-              background: side === s.value ? "rgba(221,177,58,0.12)" : "transparent",
-              color: side === s.value ? "var(--ink)" : "var(--ink-muted)",
-            }}
           >
             {s.label}
           </button>
@@ -153,18 +129,9 @@ export default function EditRecordingSheet({
             ).map(([v, label]) => (
               <button
                 key={v}
+                className="recording-scope-option"
+                data-selected={scope === v ? "true" : "false"}
                 onClick={() => setScope(v)}
-                style={{
-                  flex: 1,
-                  padding: "9px 0",
-                  borderRadius: 8,
-                  fontSize: "var(--t-sm)",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  border: `1px solid ${scope === v ? "var(--info)" : "var(--border)"}`,
-                  background: scope === v ? "rgba(123,131,235,0.12)" : "transparent",
-                  color: scope === v ? "var(--ink)" : "var(--ink-muted)",
-                }}
               >
                 {label}
               </button>

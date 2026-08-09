@@ -17,17 +17,7 @@ interface Props {
 export default function SignOutPendingSheet({ count, onChoose }: Props) {
   const items = `${count} recording${count === 1 ? "" : "s"}`;
   return (
-    <Sheet onClose={() => onChoose("cancel")}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-          marginBottom: 6,
-        }}
-      >
-        {items} not uploaded
-      </div>
+    <Sheet title={`${items} not uploaded`} onClose={() => onChoose("cancel")}>
       <div
         style={{
           fontSize: "var(--t-sm)",
@@ -47,12 +37,11 @@ export default function SignOutPendingSheet({ count, onChoose }: Props) {
       </button>
       <div style={{ marginTop: 8 }}>
         <button
-          className="btn-ghost"
+          className="btn-danger"
           // #171: the destructive step gets the heavier tick so it doesn't feel
           // like the plain choice above it.
           data-haptic="medium"
           onClick={() => onChoose("discard")}
-          style={{ borderColor: "rgba(229,116,58,0.35)", color: "var(--danger)" }}
         >
           Delete {count === 1 ? "it" : "them"} and sign out
         </button>

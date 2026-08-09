@@ -5,6 +5,7 @@ import {
   reverseActionSetWindow,
   type ReverseActionSegment,
 } from "./reverseAction";
+import { normalizeMovementPreset } from "./movementProtocol";
 
 export interface CadenceOnlyRunState {
   version: 1;
@@ -33,13 +34,14 @@ export interface CadenceOnlyPosition {
 const KEY = "sendmeter:reverse-action-cadence-run";
 
 export function cadenceOnlyTimeline(state: CadenceOnlyRunState): ReverseActionSegment[] {
+  const preset = normalizeMovementPreset(state.preset);
   return buildReverseActionTimeline({
-    reps: state.preset.reps,
-    sets: state.preset.sets,
-    cadenceOutS: state.preset.cadenceOutS ?? 3,
-    cadenceReturnS: state.preset.cadenceReturnS ?? 3,
-    restSetsS: state.preset.restSetsS,
-    prepareS: state.preset.prepareS ?? 5,
+    reps: preset.reps,
+    sets: preset.sets,
+    cadenceOutS: preset.cadenceOutS ?? 3,
+    cadenceReturnS: preset.cadenceReturnS ?? 3,
+    restSetsS: preset.restSetsS,
+    prepareS: preset.prepareS ?? 5,
   });
 }
 
@@ -84,8 +86,9 @@ function completedRepsAt(
   state: CadenceOnlyRunState,
   actualDurationMs: number,
 ): number {
-  const repMs = ((state.preset.cadenceOutS ?? 3) + (state.preset.cadenceReturnS ?? 3)) * 1_000;
-  return Math.min(state.preset.reps, Math.floor(actualDurationMs / repMs));
+  const preset = normalizeMovementPreset(state.preset);
+  const repMs = ((preset.cadenceOutS ?? 3) + (preset.cadenceReturnS ?? 3)) * 1_000;
+  return Math.min(preset.reps, Math.floor(actualDurationMs / repMs));
 }
 
 export function buildCadenceOnlySetRecording(
@@ -94,6 +97,7 @@ export function buildCadenceOnlySetRecording(
   nowMs: number,
   includePartial: boolean,
 ): (NewTindeqRecording & { id: string }) | null {
+  const preset = normalizeMovementPreset(state.preset);
   const timeline = cadenceOnlyTimeline(state);
   const window = reverseActionSetWindow(timeline, set);
   const id = state.setRecordingIds[set - 1];
@@ -107,6 +111,12 @@ export function buildCadenceOnlySetRecording(
   if (!complete && (!includePartial || availableMs < 1_000)) return null;
   return {
     id,
+    // #487 (F2, review finding 3): `nowMs` is already this function's own
+    // wall-clock anchor (every duration below is derived from it), so
+    // reusing it keeps the function pure/deterministic instead of reaching
+    // for `Date.now()` — same "stamp at construction, not at whichever
+    // request path eventually inserts" reasoning as ForceView.tsx's builders.
+    recordedAt: new Date(nowMs).toISOString(),
     source: "manual",
     durationMs: Math.max(1, availableMs),
     peakKg: null,
@@ -121,15 +131,15 @@ export function buildCadenceOnlySetRecording(
     plannedDurationMs,
     actualDurationMs: Math.max(1, availableMs),
     protocolMode: "reverse_action",
-    cadenceOutS: state.preset.cadenceOutS ?? 3,
-    cadenceReturnS: state.preset.cadenceReturnS ?? 3,
+    cadenceOutS: preset.cadenceOutS ?? 3,
+    cadenceReturnS: preset.cadenceReturnS ?? 3,
     cadenceMarkers: cadenceMarkersForSet(timeline, set).filter(
       (marker) => marker.tMs <= availableMs,
     ),
     capacityEvidence: false,
     completedReps: completedRepsAt(state, availableMs),
     completionStatus: complete ? "complete" : "partial",
-    setupNote: state.preset.setupNote ?? "",
+    setupNote: preset.setupNote ?? "",
     samples: [],
   };
 }
@@ -172,7 +182,10 @@ export function loadCadenceOnlyRun(): CadenceOnlyRunState | null {
       value.setRecordingIds.length !== value.preset.sets ||
       typeof value.startedMs !== "number"
     ) return null;
-    const restored = value as CadenceOnlyRunState;
+    const restored = {
+      ...(value as CadenceOnlyRunState),
+      preset: normalizeMovementPreset(value.preset as TindeqPreset),
+    };
     if (
       restored.endedMs !== undefined &&
       (!Number.isFinite(restored.endedMs) ||

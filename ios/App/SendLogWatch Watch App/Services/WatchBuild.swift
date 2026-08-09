@@ -17,6 +17,16 @@ enum WatchBuild {
     static let identity = BuildIdentity(infoDictionary: Bundle.main.infoDictionary)
     private static let reportLock = NSLock()
     private nonisolated(unsafe) static var lastReportedQueueTotal: Int?
+    /// #475 F1: tracked separately from `lastReportedQueueTotal` — a change
+    /// in ONLY the quarantine count (nothing pending changed) must still
+    /// trigger a report, or a workout that gets quarantined while the
+    /// pending total happens to stay flat would never reach the phone.
+    private nonisolated(unsafe) static var lastReportedQuarantinedTotal: Int?
+    /// #475 F13: tracked separately again — a bundle moving between
+    /// `.schemaRejection` and `.stuckRetrying` (the F12 resurrection path)
+    /// can change this subset while the overall quarantined total stays the
+    /// same number, and the phone needs to hear about that too.
+    private nonisolated(unsafe) static var lastReportedQuarantinedStuckTotal: Int?
 
     static func stamp(_ message: [String: Any]) -> [String: Any] {
         // Cached (see `PendingSyncCache`) because this is a synchronous send
@@ -26,7 +36,9 @@ enum WatchBuild {
         WatchBuildReport.stamped(
             message,
             with: identity,
-            pendingSync: PendingSyncCache.shared.total
+            pendingSync: PendingSyncCache.shared.total,
+            quarantinedSync: PendingSyncCache.shared.quarantinedTotal,
+            quarantinedStuckSync: PendingSyncCache.shared.quarantinedStuckTotal
         )
     }
 
@@ -39,12 +51,19 @@ enum WatchBuild {
               WCSession.isSupported(),
               WCSession.default.activationState == .activated
         else { return }
+        let quarantined = PendingSyncCache.shared.quarantinedTotal
+        let quarantinedStuck = PendingSyncCache.shared.quarantinedStuckTotal
         reportLock.lock()
-        guard total != lastReportedQueueTotal else {
+        guard total != lastReportedQueueTotal
+            || quarantined != lastReportedQuarantinedTotal
+            || quarantinedStuck != lastReportedQuarantinedStuckTotal
+        else {
             reportLock.unlock()
             return
         }
         lastReportedQueueTotal = total
+        lastReportedQuarantinedTotal = quarantined
+        lastReportedQuarantinedStuckTotal = quarantinedStuck
         reportLock.unlock()
         let message = stamp(["kind": "queueStatus"])
         // Guaranteed messages are enqueued synchronously in count order. An
@@ -56,12 +75,32 @@ enum WatchBuild {
         }
     }
 
-    /// Count both actors first so a fresh install reports an honest zero
-    /// rather than leaving `PendingSyncCache` unknown.
+    /// Every queue whose depth the phone should hear about (#491). A new
+    /// queue MUST be added here (and get its own `PendingSyncQueue` case) —
+    /// two structural guards replace the old "all four `async let`s must
+    /// stay in the tuple" comment, which was load-bearing exactly once and
+    /// then nearly lost in a merge: `PendingSyncCache` now refuses to report
+    /// a total until EVERY `PendingSyncQueue` case has published (a dropped
+    /// source reads as "not reported", never as an empty queue), and
+    /// `WatchQueueReportingTests` pins that this registry covers every case.
+    static let reportingQueues: [any QueueDepthReporting] = [
+        OfflineQueue.shared,
+        PendingSessionQueue.shared,
+        PendingRecordingQueue.shared,
+    ]
+
+    /// Count every queue's totals first so a fresh install reports an honest
+    /// zero rather than leaving `PendingSyncCache` unknown — quarantine
+    /// included (#475 F1), since this runs independently of (and
+    /// concurrently with) the per-queue `drain()`s at launch (see
+    /// `SendLogWatchApp.swift`) and can't assume a drain pass has already
+    /// populated it.
     static func refreshAndReportQueueStatus() async {
-        async let workouts = OfflineQueue.shared.pendingCount()
-        async let sessions = PendingSessionQueue.shared.pendingCount()
-        _ = await (workouts, sessions)
+        await withTaskGroup(of: Void.self) { group in
+            for queue in reportingQueues {
+                group.addTask { await queue.refreshReportedCounts() }
+            }
+        }
         await MainActor.run { reportQueueStatus() }
     }
 }

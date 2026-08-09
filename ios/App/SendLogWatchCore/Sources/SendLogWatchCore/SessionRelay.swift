@@ -91,6 +91,20 @@ public enum SessionRelay {
         return .signedIn(userId: session.userId, tokenFresh: isFresh(session, now: now))
     }
 
+    /// Whether the watch should ask the phone for a fresh relay right now:
+    /// signed out entirely, or signed in with an access token that has gone
+    /// stale. Deliberately recomputed from `session` + `now` on every call —
+    /// **never** from a `WatchAuthState` a caller cached earlier — because a
+    /// value this cheap to recompute has no excuse to go stale (#472: three
+    /// call sites in `AuthManager` read a cached decision and could therefore
+    /// decline to ask for a token the watch actually needed).
+    public static func needsToken(for session: RelayedSession?, now: TimeInterval) -> Bool {
+        switch state(for: session, now: now) {
+        case .signedOut: return true
+        case let .signedIn(_, tokenFresh): return !tokenFresh
+        }
+    }
+
     /// Throttle for `requestSession` asks. Several triggers converge on the
     /// same moment (bootstrap, reachability change, foreground, the waiting
     /// screen appearing), and each ask costs the phone a WebView round-trip

@@ -383,6 +383,13 @@ export function useTindeq() {
           ? specialized
           : [{
           id: crypto.randomUUID(),
+          // #487 (F2, review finding 3): stamp the capture moment at
+          // construction — same reasoning as ForceView.tsx's builders. This
+          // is the generic sign-out salvage row, built and persisted
+          // synchronously right here, so `new Date()` at this line is the
+          // capture moment (this cleanup cannot await, so there is no later
+          // point to stamp from).
+          recordedAt: new Date().toISOString(),
           durationMs: summary.durationMs,
           peakKg: summary.peakKg,
           avgKg: summary.avgKg,

@@ -18,8 +18,17 @@ for the App Store Connect forms.
   Delete account. Removes the auth user; every table cascades.
 - **Password sign-in**: needed for the reviewer demo account (magic-link-only apps
   are painful to review).
-- **Usage strings**: Bluetooth (iOS + watch), HealthKit share/read, Motion — all set.
-- **No Sign in with Apple requirement**: only email-based auth, no third-party login.
+- **Usage strings**: Bluetooth (iOS + watch), HealthKit share/read, Motion,
+  Location (when-in-use only, for Send Conditions) — all set.
+- **Sign in with Apple**: offered (#496 — this file used to claim email-only
+  auth, which was false). `src/lib/appleAuth.ts` wires the native flow
+  (`SignInWithApple.authorize` → Supabase `signInWithIdToken`) and the web
+  OAuth redirect (`signInWithOAuth(provider: "apple")`), rendered from
+  `LoginScreen.tsx`. Since Apple is the only third-party login offered,
+  guideline 4.8's "must also offer Sign in with Apple" rule is satisfied by
+  construction. What Apple provides on that path (the email address — possibly
+  a Hide-My-Email relay address) is covered by the Email Address row in the
+  App Privacy table below; confirm the App Store Connect answers reflect it.
 - **Privacy manifests** (`PrivacyInfo.xcprivacy`, issue #226): one per shipped
   bundle — see the section below. Without them App Store Connect bounces the
   upload with **ITMS-91053: Missing API declaration** before review even starts.
@@ -70,15 +79,18 @@ row below. Native crash reporting (Sentry Cocoa) is deliberately **out of
 scope**; adding it later *would* add a framework bundle and require re-checking
 both the manifest and this file.
 
-`NSPrivacyCollectedDataTypes` mirrors the App Privacy table below — all four
-rows on the iOS app; the watch app declares the subset it actually uploads
-(health, fitness, user content, but never email or auth diagnostics); the two
-widget extensions collect nothing.
+`NSPrivacyCollectedDataTypes` mirrors the App Privacy table below — all six
+rows on the iOS app (location is app-only: Send Conditions runs in the WebView
+bundled into the main App target, not the watch app or either widget
+extension); the watch app declares the subset it actually uploads (health,
+fitness, user content, but never email, location, or auth diagnostics); the
+two widget extensions collect nothing.
 
 ## App Store Connect: App Privacy answers ("nutrition label")
 
 Declare these under **Data Types Collected**, all with:
-- Linked to identity: **Yes** (rows are keyed to the account)
+- Linked to identity: **Yes** (rows are keyed to the account) — **except
+  Location, which is No** (see below)
 - Used for tracking: **No**
 - Purpose: **App Functionality** (only)
 
@@ -89,15 +101,32 @@ Declare these under **Data Types Collected**, all with:
 | Body weight | Health & Fitness → Health |
 | Training/session logs, force recordings | User Content → Other User Content |
 | Error diagnostics (crash/error reports) | Diagnostics → Other Diagnostic Data |
+| Location (Send Conditions weather lookup) | Location → Coarse Location |
+
+The Location row is the one exception to the "Linked to identity: Yes" default
+above: `src/lib/weather.ts` takes device coordinates from
+`@capacitor/geolocation` and rounds them to 2 decimal places (~1.1km) *before*
+either fetch — that rounding is why the declared sub-type is **Coarse**, not
+Precise, per Apple's own threshold (Precise = 3+ decimal places). The rounded
+coordinates then go to **Open-Meteo** (a third-party weather API) to fetch a
+reading, and nothing ties them to the account or stores them server-side.
+Answer that row **Linked to identity: No, Used for tracking: No, Purpose: App
+Functionality only**.
 
 The Diagnostics row covers error monitoring keyed to the auth uuid, which is why
-it answers "linked to identity: yes" like every other row here:
+it answers "linked to identity: yes" like every other row here (except Location,
+above):
 
 **Error monitoring** (issues #227 and #382) covers uncaught JavaScript
 exceptions, React render errors, unhandled promise rejections, and a narrow set
 of handled session/workout failures after recovery is exhausted, processed by **Sentry**
-(`sentry.io`, Functional Software, Inc.) — the one **third-party processor**
-the app uses. `src/lib/monitoring.ts` is the only place it is configured.
+(`sentry.io`, Functional Software, Inc.), one of **two** third-party
+processors the app sends anything to — the other is Open-Meteo (weather
+lookups, covered by the Location row above). The typeface (Inter) is
+self-hosted in the app bundle (#505), so no request goes to Google Fonts
+any more. `src/lib/monitoring.ts` is the only place Sentry is configured.
+(Sign in with Apple additionally makes Apple a party on that login path —
+see the Sign in with Apple bullet above.)
 
 The bounded auth-diagnostics ring remains on-device in Preferences and is not
 uploaded or included in the App Privacy collected-data answers.
@@ -130,7 +159,7 @@ What Sentry receives is built from an allow-list in `beforeSend` /
 data for advertising or measurement, and there is no ad network or cross-app
 identifier — so **no ATT prompt** and `NSPrivacyTracking` stays `false`.
 
-Everything else (location, contacts, identifiers, purchases, browsing):
+Everything else (contacts, identifiers, purchases, browsing):
 **Not collected**. There are no analytics or ad SDKs and no trackers — Sentry is
 error monitoring only.
 
@@ -146,9 +175,13 @@ error monitoring only.
 > is stored on the user's own account row (see privacy policy) and never used for
 > advertising.
 > Crash/error diagnostics are processed by Sentry (sentry.io). Reports carry the
-> account's anonymous user id, the error and its stack trace only — health data,
-> email and request contents are stripped before the report is sent, and there
-> is no analytics, advertising, or tracking SDK in the app.
+> account's anonymous user id, the error and its stack trace, plus basic
+> device/OS/app-version context and recent in-app activity (taps, in-app
+> navigation, and request URLs) — health data, email and request contents are
+> stripped before the report is sent, and there is no analytics, advertising,
+> or tracking SDK in the app.
+> Location is used only to fetch weather; coordinates are rounded to ~1km
+> before being sent to Open-Meteo, never stored or linked to the account.
 
 **Demo account**: create a throwaway user before submitting — sign up via
 magic link on the web app with a spare email, set a password via Account →
@@ -215,8 +248,10 @@ fastlane snapshot UI-test schemes sequentially. It produces:
   scale the 6.9" set down;
 - the same four screens in portrait on iPad Pro 13-inch (M5, 2064×2752),
   satisfying App Store Connect's required 13-inch iPad display set;
-- two real watch-app screens on Apple Watch Ultra 3 (422×514), with deterministic
-  readiness/ACWR fixture values enabled only by snapshot's launch argument.
+- two real watch-app screens on Apple Watch SE (40mm, 324×394) and Apple Watch
+  Ultra 3 (49mm, 422×514), with deterministic readiness/ACWR fixture values
+  enabled only by snapshot's launch argument; the shared fixture matrix also
+  checks every essential Force control at 44pt on both sizes.
 
 Outputs land in `fastlane/screenshots/en-US/`. The lane fails if the expected
 count or pixel dimensions drift. The directory and HTML summary are gitignored:

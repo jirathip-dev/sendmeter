@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { LiveWorkout } from "../types";
+import type { LiveWorkoutSyncState } from "../hooks/useLiveWorkout";
 
 function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -16,9 +17,11 @@ function fmtElapsed(ms: number): string {
 /// Tapping opens the fullscreen mirror (same timer screen as phone workouts).
 export default function LiveWorkoutCard({
   live,
+  syncState = "server-fallback",
   onOpen,
 }: {
   live: LiveWorkout;
+  syncState?: LiveWorkoutSyncState;
   onOpen: () => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
@@ -31,7 +34,7 @@ export default function LiveWorkoutCard({
 
   return (
     <div
-      className="card tappable"
+      className="card surface-workout tappable"
       onClick={onOpen}
       style={{
         marginBottom: 12,
@@ -72,6 +75,12 @@ export default function LiveWorkoutCard({
           {live.climbing ? "CLIMBING" : "RESTING"}
         </span>
         <span aria-hidden="true" style={{ color: "var(--ink-faint)", fontSize: "var(--t-md)" }}>›</span>
+      </div>
+
+      <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 8 }}>
+        {syncState === "watch-direct"
+          ? "Instant watch link"
+          : "Catching up through the server"}
       </div>
 
       <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>

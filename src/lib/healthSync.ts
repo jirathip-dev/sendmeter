@@ -1,6 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import type { Session } from "@supabase/supabase-js";
 import { SendLogHealth } from "sendlog-health";
+import type { ReadinessRefreshResult } from "sendlog-health";
 import { fetchTodayHealthSignature } from "./repo/health";
 import { healthSignaturesEqual } from "./healthSignature";
 
@@ -29,7 +30,7 @@ export function healthLastSyncedAt(): number | null {
 /// "Health data cleared · resyncing" toast from AccountSheet. Source alone is
 /// no longer sufficient to gate the foreground toast, though — see `changed`
 /// below (#146).
-export type HealthSyncSource = "background" | "foreground" | "resync";
+export type HealthSyncSource = "background" | "foreground" | "resync" | "watch";
 
 /// Records that a sync attempt happened (drives the "Last synced Xm ago" line
 /// on ReadinessCard, unconditionally — that's correct/wanted feedback for
@@ -52,6 +53,30 @@ function recordHealthSync(source: HealthSyncSource, changed = false): void {
   }
 }
 
+let readinessListenerStarted = false;
+
+/// Native watch requests execute entirely in the iPhone plugin. This listener
+/// is only the phone-UI notification/re-read hook; it does not perform HealthKit
+/// work and never carries credentials or raw samples. The local latest-result
+/// read covers a result that completed before the WebView mounted its listener.
+function ensureReadinessListener(): void {
+  if (!IS_NATIVE || readinessListenerStarted) return;
+  readinessListenerStarted = true;
+  void SendLogHealth.addListener(
+    "readinessRefresh",
+    (result: ReadinessRefreshResult) => {
+      if (result.status === "success") recordHealthSync("watch", true);
+    },
+  );
+  void SendLogHealth.getLatestReadiness()
+    .then((result) => {
+      if (result?.status === "success") recordHealthSync("watch", true);
+    })
+    .catch(() => {
+      // A pre-#520 native shell simply has no method/result yet.
+    });
+}
+
 /// Hand the native health plugin the current access token so its own Supabase
 /// client can read sessions / write health_metrics — including on a
 /// background wake, when the WebView's supabase-js session isn't reachable.
@@ -64,6 +89,7 @@ function recordHealthSync(source: HealthSyncSource, changed = false): void {
 /// here owns rotation.
 export function relayHealthSession(session: Session | null): void {
   if (!IS_NATIVE) return;
+  ensureReadinessListener();
   if (session) {
     void SendLogHealth.setSession({ accessToken: session.access_token });
   } else {
@@ -112,15 +138,39 @@ export async function syncHealthNow(): Promise<void> {
 }
 
 /// Rebuild the whole recent health history from HealthKit (not just today) —
-/// the native side of "Clear & resync". No-op on web; there the DELETE alone
-/// stands and the device backfills on its next background delivery. A failure
-/// here is not fatal to the clear (the rows are already deleted).
-export async function resyncHealthHistory(): Promise<void> {
-  if (!IS_NATIVE) return;
+/// the native side of "Clear & resync". No-op on web (returns `ok: true`);
+/// there the DELETE alone stands and the device backfills on its next
+/// background delivery — that's a deliberate no-op, not a failure. A failure
+/// here is not fatal to the clear: `deleteHealthMetrics` is a HARD delete
+/// (#487, F4), so the rows are already gone by the time this runs regardless
+/// of what it returns. What must NOT happen is reporting success when the
+/// resync itself failed — the caller (AccountSheet's "Clear & resync") used
+/// to swallow this silently and tell the user "cleared · resyncing" either
+/// way, which is exactly the CLAUDE.md #264 pattern (an outcome reported as
+/// success when it isn't) applied to the one irreversible action in the app.
+/// Callers must use `ok` to show an honest "resync failed" state rather than
+/// claiming the rebuild is in progress.
+///
+/// #494 (N4): a failure's `message` is carried back rather than discarded —
+/// e.g. the native `HealthResyncFoundNoDataError` ("Resync found no Health
+/// data to rebuild from — Health access may be denied, or your history is
+/// genuinely empty for this window") used to be thrown away here, leaving
+/// the caller no way to tell a genuinely-empty HealthKit history apart from
+/// a real failure. `message` alone still can't make that distinction
+/// reliably (the native comment explains why: `authorizationStatus` can't
+/// tell denied from empty either) — see `healthClearFailed` in
+/// `lib/healthClearOutcome.ts` for the discriminator the caller actually
+/// uses (rows deleted vs. rows rebuilt). This field is for surfacing the
+/// real reason when it IS a genuine failure, not for classifying it.
+export async function resyncHealthHistory(): Promise<{ ok: boolean; message?: string }> {
+  if (!IS_NATIVE) return { ok: true };
   try {
     await SendLogHealth.clearAndResync();
     recordHealthSync("resync");
-  } catch {
-    // plugin unavailable — safe to ignore
+    return { ok: true };
+  } catch (e) {
+    // plugin call failed (unavailable, HealthKit error, dead session, …) —
+    // not fatal to the already-completed delete, but the caller must say so.
+    return { ok: false, message: e instanceof Error ? e.message : undefined };
   }
 }

@@ -9,6 +9,7 @@ export class SendLogHealthWeb extends WebPlugin implements SendLogHealthPlugin {
   async setSession(): Promise<void> {}
   async clearSession(): Promise<void> {}
   async syncNow(): Promise<void> {}
+  async getLatestReadiness(): Promise<null> { return null; }
   async clearAndResync(): Promise<void> {}
   async startBackgroundSync(): Promise<void> {}
 }

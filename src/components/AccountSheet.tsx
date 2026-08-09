@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { Capacitor } from "@capacitor/core";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
+import { resolveHealthClearResult, type HealthClearOutcome } from "../lib/healthClearOutcome";
+import HealthClearedStatus from "./HealthClearedStatus";
 import { authRedirectUrl } from "../lib/authRedirect";
 import {
   getAuthDiagnosticEvents,
@@ -37,6 +40,11 @@ interface Props {
 }
 
 type TabId = "appearance" | "health" | "account";
+
+// #494 (N5): "Clear health data & resync"'s success copy differs by
+// platform — native's device-resync claim is only true where a device
+// actually runs one.
+const IS_NATIVE = Capacitor.isNativePlatform();
 
 const NULL_SESSION_LABELS: Record<NullSessionReason, string> = {
   "network-error": "Network error",
@@ -144,7 +152,15 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [clearing, setClearing] = useState(false);
-  const [cleared, setCleared] = useState(false);
+  // #487 (F4) / #494 (N4, F2): null = "Clear & resync" hasn't run yet (drives
+  // the same UI branch `cleared` used to). Once set, it's one of three
+  // outcomes, not a boolean: "resynced" (green — the rebuild actually
+  // succeeded), "nothingToClear" (neutral — no history existed to rebuild;
+  // must not promise a resync or tell the user to retry a remedy that can't
+  // fix a denied HealthKit permission, which also has zero rows), "failed"
+  // (amber — real data existed and the rebuild came back empty). See
+  // healthClearOutcome.ts for why this needs three states, not `!resynced`.
+  const [clearOutcome, setClearOutcome] = useState<HealthClearOutcome | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   // #273: the sign-out drains the offline recording queue first, which on a
   // bad connection is the slow part — say which is happening rather than
@@ -284,17 +300,29 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     setClearing(true);
     setError(null);
     try {
-      await deleteHealthMetrics();
-      // Rebuild the whole recent history from HealthKit (no-op on web; the
-      // delete stands regardless and the device backfills on next delivery).
-      await resyncHealthHistory();
+      const deletedCount = await deleteHealthMetrics();
+      // The delete above is a HARD delete (#487, F4) — from this point on
+      // the rows are gone no matter what happens next, so nothing below may
+      // throw its way into the catch block and report the clear itself as
+      // failed. Rebuild the whole recent history from HealthKit (no-op on
+      // web; the delete stands regardless and the device backfills on next
+      // delivery) — but read whether that resync actually succeeded, so the
+      // toast/banner can say so honestly instead of always claiming
+      // "resyncing".
+      const { ok: resynced } = await resyncHealthHistory();
       // Force the readiness/recovery cards to refetch — the DELETE's own
       // realtime echo doesn't reliably arrive (esp. in the native WebView),
       // which left stale scores on screen after a clear.
       bumpRealtime();
       setConfirmingClear(false);
-      setCleared(true);
-      toast("Health data cleared · resyncing");
+      // #494 (N4) / review finding F2: `resolveHealthClearResult` is the
+      // one place that turns these two raw results into what the user
+      // sees — do nothing here but forward its output, so the decision is
+      // exercised by the same call this component makes in
+      // healthClearOutcome.test.ts, not re-derived inline.
+      const { outcome, toast: toastText } = resolveHealthClearResult(deletedCount, resynced);
+      setClearOutcome(outcome);
+      toast(toastText);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to clear health data");
     } finally {
@@ -317,17 +345,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   );
 
   return (
-    <Sheet onClose={onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-        }}
-      >
-        Account
-      </div>
-
+    <Sheet title="Account" onClose={onClose}>
       {/* Tabs */}
       <div className="acct-tabs">
         {TABS.map((t) => (
@@ -393,14 +411,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                           </div>
                         </div>
                         <button
-                          className="btn-ghost btn-inline"
+                          className="btn-danger btn-inline"
                           disabled={removingId === p.id}
                           onClick={() => void runRemovePasskey(p.id)}
-                          style={{
-                            flexShrink: 0,
-                            color: "var(--danger)",
-                            borderColor: "rgba(229,116,58,0.35)",
-                          }}
+                          style={{ flexShrink: 0 }}
                         >
                           {removingId === p.id ? "Removing…" : "Remove"}
                         </button>
@@ -445,11 +459,8 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         {tab === "health" && (
           <div>
             {eyebrow("Health data")}
-            {cleared ? (
-              <div style={{ fontSize: "var(--t-sm)", color: "var(--success)", lineHeight: 1.5 }}>
-                Health data cleared. Your device will re-sync fresh metrics from
-                Apple Health shortly.
-              </div>
+            {clearOutcome ? (
+              <HealthClearedStatus outcome={clearOutcome} native={IS_NATIVE} />
             ) : confirmingClear ? (
               <div>
                 <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
@@ -575,9 +586,9 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
             <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
               {eyebrow("Danger zone", true)}
               {!showDanger ? (
-                <button
-                  className="btn-ghost btn-inline"
-                  style={{ color: "var(--ink-muted)", fontSize: "var(--t-sm)" }}
+                  <button
+                    className="btn-ghost btn-inline"
+                    style={{ fontSize: "var(--t-sm)" }}
                   onClick={() => setShowDanger(true)}
                 >
                   Reveal delete option
@@ -589,20 +600,9 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                     recording, workout, and health metric. There is no undo.
                   </div>
                   <button
+                    className="btn-danger"
                     disabled={deleting}
                     onClick={() => void runDelete()}
-                    style={{
-                      background: "var(--danger)",
-                      color: "#ffffff",
-                      border: "none",
-                      padding: "13px 20px",
-                      borderRadius: 8,
-                      width: "100%",
-                      fontFamily: "Inter, sans-serif",
-                      fontSize: "var(--t-base)",
-                      fontWeight: 500,
-                      cursor: "pointer",
-                    }}
                   >
                     {deleting ? "Deleting…" : "Yes, delete everything"}
                   </button>
@@ -618,8 +618,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 </div>
               ) : (
                 <button
-                  className="btn-ghost"
-                  style={{ borderColor: "rgba(229,116,58,0.35)", color: "var(--danger)" }}
+                  className="btn-danger btn-inline"
                   onClick={() => setConfirmingDelete(true)}
                 >
                   Delete account…
@@ -645,11 +644,6 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         />
       )}
 
-      <div style={{ marginTop: 16 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
     </Sheet>
   );
 }

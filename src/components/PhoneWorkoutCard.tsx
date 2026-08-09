@@ -29,7 +29,7 @@ export default function PhoneWorkoutCard({
 
   if (state.phase === "idle") {
     return (
-      <div className="card" style={{ marginBottom: 12 }}>
+      <div className="card surface-workout" style={{ marginBottom: 12 }}>
         <div className="card-title" style={{ marginBottom: 8 }}>
           Phone workout
         </div>
@@ -41,9 +41,9 @@ export default function PhoneWorkoutCard({
           className="btn-primary"
           // #222: one timer at a time. Kept clickable while blocked (rather
           // than `disabled`) so the tap names the reason instead of doing
-          // nothing — the aria-disabled + dimming carry the "off" state.
+          // nothing — the aria-disabled state and semantic fill carry the
+          // "off" state.
           aria-disabled={blockedReason ? true : undefined}
-          style={blockedReason ? { opacity: 0.5 } : undefined}
           onClick={() => {
             if (blockedReason) {
               toast(blockedReason, "info");
@@ -65,15 +65,13 @@ export default function PhoneWorkoutCard({
     const climbing = state.climbingSince !== null;
     return (
       <button
+        className={`phone-workout-resume surface-workout ${climbing ? "climbing" : "resting"}`}
         onClick={onResume}
         style={{
           width: "100%",
           textAlign: "left",
           cursor: "pointer",
           marginBottom: 12,
-          background: "var(--canvas)",
-          border: `1px solid color-mix(in srgb, ${climbing ? "var(--success)" : "var(--primary)"} 45%, transparent)`,
-          borderRadius: 12,
           padding: 16,
           display: "flex",
           alignItems: "center",
@@ -85,12 +83,12 @@ export default function PhoneWorkoutCard({
           <div className="card-title" style={{ marginBottom: 4 }}>
             Workout in progress
           </div>
-          <div style={{ fontSize: "var(--t-base)", color: "var(--ink-muted)" }}>
+          <div className="phone-workout-resume-meta">
             {state.attempts.length} boulder{state.attempts.length === 1 ? "" : "s"} ·{" "}
             {climbing ? "climbing" : "resting"}
           </div>
         </div>
-        <span style={{ color: climbing ? "var(--success)" : "var(--primary)", fontWeight: 700, fontSize: "var(--t-base)" }}>
+        <span className="phone-workout-resume-action">
           Resume ›
         </span>
       </button>
@@ -100,7 +98,7 @@ export default function PhoneWorkoutCard({
   // confirming — the workout auto-saves the instant it's stopped (WorkoutView
   // effect); this card is just the momentary "saving" placeholder.
   return (
-    <div className="card" style={{ marginBottom: 12 }}>
+    <div className="card surface-workout" style={{ marginBottom: 12 }}>
       <div className="card-title" style={{ marginBottom: 6 }}>
         Saving workout…
       </div>

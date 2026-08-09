@@ -217,43 +217,17 @@ export default function InfoDot({ topic }: { topic: InfoTopic }) {
     // bubble into the host card's onClick.
     <span style={{ display: "contents" }} onClick={(e) => e.stopPropagation()}>
       <button
+        className="info-dot-button"
         aria-label={`About: ${c.title}`}
         onClick={() => setOpen(true)}
-        style={{
-          width: 18,
-          height: 18,
-          borderRadius: "50%",
-          border: "1px solid var(--border)",
-          background: "transparent",
-          color: "var(--ink-faint)",
-          fontSize: "var(--t-xs)",
-          lineHeight: 1,
-          cursor: "pointer",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 0,
-          fontFamily: "Inter, sans-serif",
-          flexShrink: 0,
-        }}
       >
         ?
       </button>
       {open && (
-        <Sheet onClose={() => setOpen(false)}>
+        <Sheet title={c.title} onClose={() => setOpen(false)}>
           {/* The dot often sits inside an uppercase eyebrow label — undo any
               inherited text styling for the sheet body. */}
           <div style={{ textTransform: "none", letterSpacing: "normal", textAlign: "left" }}>
-            <div
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontSize: "var(--t-lg)",
-                fontWeight: 800,
-                marginBottom: 12,
-              }}
-            >
-              {c.title}
-            </div>
             {c.body.map((b) => (
               <div key={b.heading} style={{ marginBottom: 14 }}>
                 <div
@@ -272,11 +246,6 @@ export default function InfoDot({ topic }: { topic: InfoTopic }) {
                 </div>
               </div>
             ))}
-            <div style={{ marginTop: 14 }}>
-              <button className="btn-ghost" onClick={() => setOpen(false)}>
-                Close
-              </button>
-            </div>
           </div>
         </Sheet>
       )}

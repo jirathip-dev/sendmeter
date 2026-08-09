@@ -4,6 +4,7 @@ import {
   watchStatusPresentation,
   type WatchBuildInfo,
   type WatchBuildStatus,
+  type WatchQuarantineStatus,
   type WatchSyncStatus,
 } from "./watchBuild";
 
@@ -97,19 +98,15 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
   it("stays quiet while both queues are empty or not read yet", () => {
     expect(
       uploadWarningPresentation(
-        sync("empty", { pendingSyncCount: 0, pendingSyncStale: false }),
-        0,
-      ),
+        sync("empty", { pendingSyncCount: 0, pendingSyncStale: false }), { pending: 0, stuck: 0 }),
     ).toBeNull();
-    expect(uploadWarningPresentation(null, null)).toBeNull();
-    expect(uploadWarningPresentation(sync("not-reported"), 0)).toBeNull();
+    expect(uploadWarningPresentation(null, { pending: null, stuck: null })).toBeNull();
+    expect(uploadWarningPresentation(sync("not-reported"), { pending: 0, stuck: 0 })).toBeNull();
   });
 
   it("shows current pending watch items and disappears after a live zero report", () => {
     const pending = uploadWarningPresentation(
-      sync("pending", { pendingSyncCount: 2, pendingSyncStale: false }),
-      0,
-    );
+      sync("pending", { pendingSyncCount: 2, pendingSyncStale: false }), { pending: 0, stuck: 0 });
     expect(pending?.items).toEqual([
       expect.objectContaining({
         source: "watch",
@@ -118,9 +115,7 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
     ]);
     expect(
       uploadWarningPresentation(
-        sync("empty", { pendingSyncCount: 0, pendingSyncStale: false }),
-        0,
-      ),
+        sync("empty", { pendingSyncCount: 0, pendingSyncStale: false }), { pending: 0, stuck: 0 }),
     ).toBeNull();
   });
 
@@ -130,9 +125,7 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
         pendingSyncCount: 7,
         pendingSyncStale: true,
         pendingSyncReportedAt: 1_779_000_000,
-      }),
-      0,
-    );
+      }), { pending: 0, stuck: 0 });
     expect(warning?.items[0]).toMatchObject({
       text: "Apple Watch last reported 7 items waiting to upload.",
       reportedAt: 1_779_000_000,
@@ -146,9 +139,7 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
         pendingSyncCount: 0,
         pendingSyncStale: true,
         pendingSyncReportedAt: 1_779_000_000,
-      }),
-      0,
-    );
+      }), { pending: 0, stuck: 0 });
     expect(warning?.title).toBe("Check Apple Watch uploads");
     expect(warning?.items[0]?.text).toBe(
       "Apple Watch has not reported upload status recently.",
@@ -157,18 +148,143 @@ describe("uploadWarningPresentation (#369 History banner)", () => {
   });
 
   it("includes only non-empty iPhone uploads and combines both devices", () => {
-    const phoneOnly = uploadWarningPresentation(null, 1);
+    const phoneOnly = uploadWarningPresentation(null, { pending: 1, stuck: 0 });
     expect(phoneOnly?.items[0]?.text).toBe(
       "This iPhone · 1 Force recording waiting to upload.",
     );
 
     const combined = uploadWarningPresentation(
-      sync("pending", { pendingSyncCount: 3 }),
-      2,
-    );
+      sync("pending", { pendingSyncCount: 3 }), { pending: 2, stuck: 0 });
     expect(combined?.items.map((item) => item.source)).toEqual(["watch", "phone"]);
     expect(combined?.items[1]?.text).toBe(
       "This iPhone · 2 Force recordings waiting to upload.",
     );
+  });
+
+  // #475 F1: quarantine was invisible everywhere before this — the count
+  // was written to a cache slot nothing read. These pin the distinct,
+  // non-"waiting to upload" presentation.
+  function quarantined(
+    status: WatchQuarantineStatus,
+    over: Partial<WatchBuildInfo> = {},
+  ): WatchBuildInfo {
+    return info("match", { watchDisplay: "1.4.0 (57)", quarantineStatus: status, ...over });
+  }
+
+  it("stays quiet while quarantine is none or not yet reported", () => {
+    expect(
+      uploadWarningPresentation(quarantined("none", { quarantinedSyncCount: 0 }), { pending: 0, stuck: 0 }),
+    ).toBeNull();
+    expect(uploadWarningPresentation(quarantined("not-reported"), { pending: 0, stuck: 0 })).toBeNull();
+  });
+
+  it("never phrases a quarantined item as waiting to upload", () => {
+    const warning = uploadWarningPresentation(
+      quarantined("stuck", { quarantinedSyncCount: 2, quarantinedSyncReportedAt: 1_779_500_000 }), { pending: 0, stuck: 0 });
+    expect(warning?.items).toEqual([
+      expect.objectContaining({
+        source: "watch-quarantined",
+        text: "Apple Watch · 2 workouts could not be uploaded and will not retry.",
+        reportedAt: 1_779_500_000,
+      }),
+    ]);
+    expect(warning?.items[0]?.text).not.toMatch(/waiting to upload/);
+    // The generic fallback title, not "Uploads waiting" — nothing here is
+    // waiting for anything.
+    expect(warning?.title).toBe("Check Apple Watch uploads");
+  });
+
+  it("shows both a pending item and a quarantined item at once, distinctly", () => {
+    const warning = uploadWarningPresentation(
+      info("match", {
+        watchDisplay: "1.4.0 (57)",
+        syncStatus: "pending",
+        pendingSyncCount: 1,
+        quarantineStatus: "stuck",
+        quarantinedSyncCount: 1,
+      }), { pending: 0, stuck: 0 });
+    expect(warning?.items.map((item) => item.source)).toEqual(["watch", "watch-quarantined"]);
+    expect(warning?.items[0]?.text).toContain("waiting to upload");
+    expect(warning?.items[1]?.text).toContain("could not be uploaded and will not retry");
+  });
+
+  // #475 F13: the two QuarantineReason cases need different, true copy —
+  // conflating them told a "will not retry" user something false when the
+  // only thing wrong was gym wifi (or the reverse).
+  it("shows only the retrying item when every quarantined workout is still auto-retrying", () => {
+    const warning = uploadWarningPresentation(
+      quarantined("stuck", { quarantinedSyncCount: 2, quarantinedStuckSyncCount: 2 }), { pending: 0, stuck: 0 });
+    expect(warning?.items).toEqual([
+      expect.objectContaining({
+        source: "watch-quarantined-retrying",
+        text: "Apple Watch · 2 workouts having trouble uploading — retrying automatically.",
+      }),
+    ]);
+    expect(warning?.items[0]?.text).not.toMatch(/will not retry/);
+    expect(warning?.items[0]?.detail).toContain("No action needed");
+  });
+
+  it("splits into both a permanent item and a retrying item when the counts differ", () => {
+    const warning = uploadWarningPresentation(
+      quarantined("stuck", {
+        quarantinedSyncCount: 3,
+        quarantinedStuckSyncCount: 1,
+        quarantinedStuckSyncReportedAt: 1_779_600_000,
+      }), { pending: 0, stuck: 0 });
+    expect(warning?.items.map((item) => item.source)).toEqual([
+      "watch-quarantined",
+      "watch-quarantined-retrying",
+    ]);
+    // 3 total, 1 retrying -> 2 permanent, not 3.
+    expect(warning?.items[0]?.text).toBe(
+      "Apple Watch · 2 workouts could not be uploaded and will not retry.",
+    );
+    expect(warning?.items[1]?.text).toBe(
+      "Apple Watch · 1 workout having trouble uploading — retrying automatically.",
+    );
+    expect(warning?.items[1]?.reportedAt).toBe(1_779_600_000);
+  });
+
+  it("defaults an unknown breakdown to the cautious permanent framing, not silently to retrying", () => {
+    // An older watch build / plugin reports only the combined total — the
+    // subset is genuinely unknown, which must not read as "0 retrying".
+    const warning = uploadWarningPresentation(
+      quarantined("stuck", { quarantinedSyncCount: 4, quarantinedStuckSyncCount: undefined }), { pending: 0, stuck: 0 });
+    expect(warning?.items).toEqual([
+      expect.objectContaining({
+        source: "watch-quarantined",
+        text: "Apple Watch · 4 workouts could not be uploaded and will not retry.",
+      }),
+    ]);
+  });
+
+  describe("a stuck iPhone queue (#484)", () => {
+    it("renders its own item, distinct from a pending one, with 'Uploads waiting' as the title", () => {
+      const warning = uploadWarningPresentation(null, { pending: 0, stuck: 1 });
+      expect(warning?.items).toEqual([
+        expect.objectContaining({
+          source: "phone-stuck",
+          text: "This iPhone · 1 Force recording stuck — the server keeps rejecting it and it won't retry automatically.",
+        }),
+      ]);
+      expect(warning?.title).toBe("Uploads waiting");
+    });
+
+    it("renders alongside a pending item rather than replacing it", () => {
+      const warning = uploadWarningPresentation(null, { pending: 2, stuck: 1 });
+      expect(warning?.items.map((i) => i.source)).toEqual(["phone-stuck", "phone"]);
+    });
+
+    it("pluralizes correctly at more than one stuck recording", () => {
+      const warning = uploadWarningPresentation(null, { pending: 0, stuck: 3 });
+      expect(warning?.items[0]?.text).toBe(
+        "This iPhone · 3 Force recordings stuck — the server keeps rejecting them and they won't retry automatically.",
+      );
+    });
+
+    it("stays quiet when stuck is 0 or not yet known", () => {
+      expect(uploadWarningPresentation(null, { pending: 0, stuck: 0 })).toBeNull();
+      expect(uploadWarningPresentation(null, { pending: 0, stuck: null })).toBeNull();
+    });
   });
 });

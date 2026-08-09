@@ -14,7 +14,7 @@
 </head>
 <body>
   <h1>Sendmeter — Privacy Policy</h1>
-  <p>Last updated: 12 July 2026</p>
+  <p>Last updated: 7 August 2026</p>
 
   <p>Sendmeter is a personal climbing training tracker. This policy covers the
   Sendmeter web app, iPhone app, and Apple Watch app.</p>
@@ -33,6 +33,11 @@
         read from Apple Health on your iPhone — including data written there by any
         other apps or wearables you've connected — to compute a daily recovery
         score.</li>
+    <li><strong>Location (Send Conditions, with your permission):</strong> a coarse,
+        rounded version of your device location (~1km precision) is sent to
+        Open-Meteo, a third-party weather API, to look up current and historical
+        conditions. It is not stored on our servers and is never linked to your
+        account.</li>
   </ul>
 
   <h2>Where it lives</h2>
@@ -44,7 +49,17 @@
   <h2>What we don't do</h2>
   <ul>
     <li>No advertising, no trackers, no analytics SDKs.</li>
-    <li>We never sell or share your data with third parties.</li>
+    <li>We never sell your data or share it for advertising. Aside from the
+        infrastructure that hosts the app and database, the services that
+        receive anything include <strong>Sentry</strong>
+        (crash/error diagnostics — receives your anonymous account id, the
+        error/stack trace, plus basic device, OS and app-version diagnostics
+        and recent in-app activity (taps, in-app navigation, and request
+        URLs); health data, email, and request contents are stripped before
+        the report is sent) and <strong>Open-Meteo</strong> (weather lookups for
+        Send Conditions — receives a coarse, rounded device location only,
+        never your account id or email). The app's typeface ships inside the
+        app itself, so no font CDN is contacted.</li>
     <li>HealthKit data is used only to display your metrics and compute your
         recovery score. It is never used for marketing or advertising and is never
         disclosed to third parties, in line with Apple's HealthKit guidelines.</li>
@@ -55,6 +70,17 @@
   the app: <strong>Account → Delete account</strong>. Deletion is immediate and
   irreversible — every session, recording, workout, and health metric linked to
   your account is removed.</p>
+
+  <h2>Sign in with Apple</h2>
+  <p>If you choose <strong>Sign in with Apple</strong>, Apple acts as your
+  sign-in provider for that login: you authenticate with Apple directly, and
+  Apple gives us the email address for your account (your real one, or a
+  private relay address if you pick Hide My Email).</p>
+
+  <h2>Typeface</h2>
+  <p>Sendmeter uses the <strong>Inter</strong> typeface by Rasmus Andersson
+  (The Inter Project Authors), bundled with the app and licensed under the
+  <a href="/fonts/OFL.txt">SIL Open Font License 1.1</a>.</p>
 
   <h2>Contact</h2>
   <p>Questions or data requests: <a href="mailto:guyjrt10984@gmail.com">guyjrt10984@gmail.com</a></p>

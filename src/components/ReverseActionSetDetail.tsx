@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import { useSvgScale } from "../hooks/useSvgScale";
+import { useChartId } from "../hooks/useChartId";
 import {
   cadenceMarkerLabel,
   reverseActionMetricItems,
 } from "../lib/reverseActionHistory";
 import type { TindeqRecordingMeta, TindeqSample } from "../types";
+import ChartDefs from "./ChartDefs";
+import { chartColor, chartGradientUrl } from "../lib/chartTheme";
 
 const H = 178;
 const PAD = { top: 32, right: 10, bottom: 20, left: 30 };
 
 function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSample[] }) {
+  const chartId = useChartId("reverse-action");
   const hostRef = useRef<HTMLDivElement>(null);
   const [hostWidth, setHostWidth] = useState(300);
   useEffect(() => {
@@ -48,15 +52,20 @@ function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSamp
   const points = clean
     .map((sample) => `${px(sample.t).toFixed(1)},${py(sample.kg).toFixed(1)}`)
     .join(" ");
+  const baseline = H - PAD.bottom;
+  const areaPath = clean.length >= 2
+    ? `M ${px(clean[0]!.t).toFixed(1)},${baseline} ${points} L ${px(clean.at(-1)!.t).toFixed(1)},${baseline} Z`
+    : "";
 
   return (
     <div ref={hostRef} style={{ width: "100%", overflowX: "auto" }}>
       <svg
         role="img"
-        aria-label={`Reverse Action set ${rec.setNo ?? 1} force trace with ${markers.length} prescribed cadence markers`}
+        aria-label={`Resisted-movement set ${rec.setNo ?? 1} force trace with ${markers.length} prescribed cadence markers`}
         viewBox={`0 0 ${W} ${H}`}
         style={{ width: W, height: H, display: "block" }}
       >
+        <ChartDefs instanceId={chartId} />
         {markers.map((marker, index) => {
           const nextMs = markers[index + 1]?.tMs ?? tMax;
           const startX = px(marker.tMs);
@@ -71,8 +80,8 @@ function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSamp
               style={{
                 fill:
                   marker.direction === "out"
-                    ? "color-mix(in srgb, var(--primary) 8%, transparent)"
-                    : "color-mix(in srgb, var(--info) 8%, transparent)",
+                    ? `color-mix(in srgb, ${chartColor("force")} 8%, transparent)`
+                    : `color-mix(in srgb, ${chartColor("forceSecondary")} 8%, transparent)`,
               }}
             />
           );
@@ -83,7 +92,7 @@ function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSamp
             y={py(targetHighKg)}
             width={W - PAD.left - PAD.right}
             height={Math.max(0, py(targetLowKg) - py(targetHighKg))}
-            style={{ fill: "color-mix(in srgb, var(--success) 13%, transparent)" }}
+            style={{ fill: `color-mix(in srgb, ${chartColor("optimal")} 13%, transparent)` }}
           />
         )}
         {[0, kgMax / 2, kgMax].map((kg, index) => (
@@ -93,7 +102,7 @@ function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSamp
               x2={W - PAD.right}
               y1={py(kg)}
               y2={py(kg)}
-              style={{ stroke: "var(--hairline)" }}
+              style={{ stroke: chartColor("grid") }}
             />
             <text x={2} y={py(kg) + 3} fontSize={8} style={{ fill: "var(--ink-faint)" }}>
               {kg.toFixed(0)}{index === 2 ? "kg" : ""}
@@ -107,7 +116,7 @@ function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSamp
               x2={px(marker.tMs)}
               y1={PAD.top - 5}
               y2={H - PAD.bottom}
-              stroke={marker.direction === "out" ? "var(--primary)" : "var(--info)"}
+              stroke={marker.direction === "out" ? chartColor("force") : chartColor("forceSecondary")}
               strokeDasharray="3 3"
             />
             <text
@@ -115,7 +124,7 @@ function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSamp
               y={index % 2 === 0 ? 10 : 23}
               fontSize={8}
               fontWeight={700}
-              style={{ fill: marker.direction === "out" ? "var(--primary)" : "var(--info)" }}
+              style={{ fill: marker.direction === "out" ? chartColor("force") : chartColor("forceSecondary") }}
             >
               {cadenceMarkerLabel(marker)}
             </text>
@@ -127,18 +136,21 @@ function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSamp
             x2={W - PAD.right}
             y1={py(targetKg)}
             y2={py(targetKg)}
-            stroke="var(--success)"
+            stroke={chartColor("optimal")}
             strokeWidth={1.2}
           />
         )}
         {clean.length >= 2 && (
-          <polyline
-            points={points}
-            fill="none"
-            stroke="var(--warning)"
-            strokeWidth={2}
-            vectorEffect="non-scaling-stroke"
-          />
+          <>
+            {areaPath && <path d={areaPath} fill={chartGradientUrl(chartId, "force-area")} />}
+            <polyline
+              points={points}
+              fill="none"
+              stroke={chartColor("caution")}
+              strokeWidth={2}
+              vectorEffect="non-scaling-stroke"
+            />
+          </>
         )}
         {[0, tMax / 2, tMax].map((ms, index) => (
           <text
@@ -147,7 +159,7 @@ function Trace({ rec, samples }: { rec: TindeqRecordingMeta; samples: TindeqSamp
             y={H - 4}
             fontSize={8}
             textAnchor={index === 0 ? "start" : index === 2 ? "end" : "middle"}
-            style={{ fill: "var(--ink-faint)" }}
+            style={{ fill: chartColor("axis") }}
           >
             {(ms / 1_000).toFixed(1)}s
           </text>
@@ -169,7 +181,7 @@ export default function ReverseActionSetDetail({
     return <div style={{ marginTop: 10, padding: 10, borderRadius: 9, background: "var(--surface-1)", color: "var(--ink-muted)", fontSize: "var(--t-xs)", lineHeight: 1.55 }}>
       <strong style={{ color: "var(--ink)" }}>Cadence only · clock-guided, not detected</strong><br />
       Set {rec.setNo ?? 1} · {rec.completedReps ?? 0} completed rep{rec.completedReps === 1 ? "" : "s"} · {rec.completionStatus ?? "partial"} · {((rec.actualDurationMs ?? rec.durationMs) / 1_000).toFixed(1)}s actual / {((rec.plannedDurationMs ?? rec.durationMs) / 1_000).toFixed(1)}s planned
-      {rec.cadenceOutS != null && rec.cadenceReturnS != null ? ` · ${rec.cadenceOutS}s OUT / ${rec.cadenceReturnS}s RETURN` : ""}
+      {rec.cadenceOutS != null && rec.cadenceReturnS != null ? ` · ${rec.cadenceOutS}s CONCENTRIC / ${rec.cadenceReturnS}s ECCENTRIC` : ""}
       <br />Equipment resistance{rec.setupNote ? ` · ${rec.setupNote}` : " · setup not recorded"}. No force, target band, or movement detection was recorded.
     </div>;
   }
@@ -180,7 +192,7 @@ export default function ReverseActionSetDetail({
           ? `Target ${rec.targetKg.toFixed(1)} kg${rec.targetLowKg != null && rec.targetHighKg != null ? ` (${rec.targetLowKg.toFixed(1)}–${rec.targetHighKg.toFixed(1)})` : ""}`
           : "Equipment resistance · no kg target"}
         {rec.cadenceOutS != null && rec.cadenceReturnS != null
-          ? ` · ${rec.cadenceOutS}s OUT / ${rec.cadenceReturnS}s RETURN`
+          ? ` · ${rec.cadenceOutS}s CONCENTRIC / ${rec.cadenceReturnS}s ECCENTRIC`
           : ""}
       </div>
       <Trace rec={rec} samples={samples} />
@@ -213,7 +225,7 @@ export default function ReverseActionSetDetail({
         ))}
       </div>
       <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 8, lineHeight: 1.45 }}>
-        Markers are the prescribed OUT/RETURN clock; force alone does not detect joint position.
+        Markers are the prescribed concentric/eccentric clock; force alone does not detect joint position.
         {rec.setupNote ? ` Setup: ${rec.setupNote}` : ""}
       </div>
     </div>

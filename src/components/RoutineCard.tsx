@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   deleteRoutinePreset,
   deleteSession,
@@ -8,14 +8,16 @@ import {
   updateRoutinePreset,
 } from "../lib/repo";
 import { today } from "../lib/dates";
-import { expandRoutine, routineDurationS } from "../lib/routine";
+import { ROUTINE_PREPARE_S, expandRoutine, routineDurationS } from "../lib/routine";
 import { restoreAt } from "../lib/restoreAt";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
 import {
   clearRoutineRun,
   loadRoutineRun,
   partialMinutes,
+  resolveRoutineResume,
   shouldLog,
+  type RoutineLogOutcome,
   type RoutineRunState,
 } from "../lib/routineRun";
 import type { PhaseId, RoutinePreset, RoutineStep } from "../types";
@@ -40,7 +42,11 @@ const EXAMPLE_ROUTINE: Omit<RoutinePreset, "id"> = {
 };
 
 function fmtTotal(steps: RoutineStep[]): string {
-  const total = routineDurationS(expandRoutine(steps));
+  // Must expand with the same prepareS as RoutineFullscreen / routineRun's
+  // resume math (routine.ts's ROUTINE_PREPARE_S doc comment) — omitting it
+  // here made the card advertise "9m" for a routine the timer runs as
+  // "9m05s" (#483 review F7).
+  const total = routineDurationS(expandRoutine(steps, { prepareS: ROUTINE_PREPARE_S }));
   const m = Math.floor(total / 60);
   const s = total % 60;
   return s === 0 ? `${m}m` : `${m}m${s}s`;
@@ -66,6 +72,18 @@ export default function RoutineCard({
 }) {
   const toast = useToast();
   const bumpRealtime = useRealtimeBump();
+  // #483 re-review closure-capture note: the mount effect's `.then` can now
+  // log a session (an interrupted/completed run resolved via
+  // resolveRoutineResume), reading `currentPhase` — a prop captured at mount
+  // inside a `[]`-deps effect. It happens to be safe today only because
+  // App.tsx gates the tabs behind a loading screen until currentPhase is
+  // already set, an invariant that lives two files away and nothing pins.
+  // Reading it via a ref removes the dependency entirely, matching
+  // ForceView's recordingsRef pattern for the #295/#296 defect class.
+  const currentPhaseRef = useRef(currentPhase);
+  useEffect(() => {
+    currentPhaseRef.current = currentPhase;
+  }, [currentPhase]);
   const [presets, setPresets] = useState<RoutinePreset[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -102,19 +120,44 @@ export default function RoutineCard({
       .then((list) => {
         if (!alive) return;
         setPresets(list);
-        // Auto-resume an interrupted run if its preset still exists (SL-97);
-        // otherwise default-select the first preset and drop the stale run.
-        const resume = resumeRun && list.some((p) => p.id === resumeRun.presetId);
-        if (resume) {
-          setSelectedId(resumeRun!.presetId);
-          // Auto-resume is deliberately NOT guarded (#222): a routine that was
-          // already in progress must come back, blocked-state or not.
-          setRunningState(true);
-        } else {
-          setSelectedId(list[0]?.id ?? null);
-          if (resumeRun) {
+        // Decide what to do with a persisted run (#483): resume it if it's
+        // genuinely still in progress; otherwise resolveRoutineResume has
+        // already classified it as completed/partial/discarded using the
+        // lastSeenMs heartbeat (F1/F3/F5) rather than raw wall clock, which
+        // is what let an abandoned run silently discard a genuinely-finished
+        // one, or resume-then-instantly-finish with a fabricated duration.
+        const outcome = resolveRoutineResume(resumeRun, list, Date.now());
+        switch (outcome.kind) {
+          case "resume":
+            setSelectedId(outcome.presetId);
+            // Auto-resume is deliberately NOT guarded (#222): a routine that
+            // was already in progress must come back, blocked-state or not.
+            setRunningState(true);
+            break;
+          case "none":
+            setSelectedId(list[0]?.id ?? null);
+            // resolveRoutineResume also returns "none" when a persisted run's
+            // own preset was deleted — a real, previously-confirmed run being
+            // discarded, not "there was nothing here". #483 re-review N5: the
+            // "never discard silently" rule this fix names elsewhere must
+            // hold here too, so this gets the same visible toast as
+            // classifyElapsed's "discarded" (applyLogOutcome), not silence.
+            if (resumeRun) {
+              clearRoutineRun();
+              setResumeRun(null);
+              toast("Interrupted routine's preset was deleted — nothing logged", "info");
+            }
+            break;
+          default: {
+            // "completed" | "partial" | "discarded" — never resume the UI
+            // here: the wall clock across the gap that produced this
+            // classification isn't trusted, only what the heartbeat
+            // confirmed (already baked into outcome.durationMin).
+            setSelectedId(list[0]?.id ?? null);
             clearRoutineRun();
             setResumeRun(null);
+            const presetName = list.find((p) => p.id === outcome.presetId)?.name ?? "Routine";
+            applyLogOutcome(outcome, presetName);
           }
         }
       })
@@ -132,7 +175,10 @@ export default function RoutineCard({
 
   /// Log a routine as a session (feeds ACWR + History). `undo` adds an Undo
   /// action to the toast — used for partial auto-saves on early exit (SL-97)
-  /// since the user didn't explicitly choose to save.
+  /// since the user didn't explicitly choose to save. Reads `currentPhase`
+  /// via a ref (#483 re-review), not the captured prop — this can now fire
+  /// from the mount effect's `.then` (an interrupted/completed run logged on
+  /// resume), and a ref can't go stale the way a closed-over prop can.
   async function logRoutine(durationMin: number, note: string, undo = false) {
     try {
       const s = await insertSession({
@@ -141,7 +187,7 @@ export default function RoutineCard({
         duration: durationMin,
         rpe: 4,
         note,
-        phase: currentPhase,
+        phase: currentPhaseRef.current,
       });
       bumpRealtime();
       toast(
@@ -164,6 +210,34 @@ export default function RoutineCard({
         automatic: true,
       });
       setError(e instanceof Error ? e.message : "Failed to log routine");
+    }
+  }
+
+  /// Applies a RoutineLogOutcome (#483 review F1/F3/F5) — shared by the
+  /// mount-time resume decision (resolveRoutineResume) and RoutineFullscreen's
+  /// onStaleFinish, so both a stale-persisted-record read and a live
+  /// suspended-then-resumed WebView are handled identically. A "discarded"
+  /// outcome MUST stay visible — a run the user actually did, however
+  /// briefly, disappearing with no toast is the exact silent-loss bug this
+  /// fix exists to stop (#483 review, F1's "today's silent discard is the
+  /// worst of the three options").
+  function applyLogOutcome(outcome: RoutineLogOutcome, presetName: string) {
+    switch (outcome.kind) {
+      case "completed":
+        void logRoutine(outcome.durationMin, `${presetName} (auto-logged)`);
+        return;
+      case "partial":
+        void logRoutine(outcome.durationMin, `${presetName} (partial, interrupted)`, true);
+        return;
+      case "discarded":
+        // #483 polish F-A: NOT "too short to log" — a run classified
+        // "discarded" here didn't necessarily run for a short *wall-clock*
+        // time; it's that too little of it was ever confirmed (heartbeat
+        // froze early, or a legacy record has no heartbeat history at all).
+        // "Too short" tells the user something false about a 9-minute
+        // routine whose heartbeat happened to freeze at 40s.
+        toast("Routine interrupted — too little of it was confirmed to log", "info");
+        return;
     }
   }
 
@@ -255,7 +329,7 @@ export default function RoutineCard({
   }
 
   return (
-    <div className="card" style={{ marginTop: 10 }}>
+    <div className="card surface-workout" style={{ marginTop: 10 }}>
       <div className="card-title" style={{ marginBottom: 8 }}>
         Routines
       </div>
@@ -383,7 +457,6 @@ export default function RoutineCard({
                   className="del-btn"
                   aria-label="Remove step"
                   disabled={steps.length === 1}
-                  style={{ opacity: steps.length === 1 ? 0.3 : 1 }}
                   onClick={() => setSteps((list) => list.filter((_, j) => j !== i))}
                 >
                   ×
@@ -451,10 +524,11 @@ export default function RoutineCard({
         <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
           <button
             className="btn-primary"
-            style={blockedReason ? { flex: 1, opacity: 0.5 } : { flex: 1 }}
+            style={{ flex: 1 }}
             // #222: one timer at a time. Kept clickable while blocked (rather
             // than `disabled`) so the tap names the reason instead of doing
-            // nothing — the aria-disabled + dimming carry the "off" state.
+            // nothing — the aria-disabled state and semantic fill carry the
+            // "off" state.
             aria-disabled={blockedReason ? true : undefined}
             onClick={() => {
               if (blockedReason) {
@@ -472,12 +546,7 @@ export default function RoutineCard({
             Start Routine
           </button>
           <button
-            className="btn-ghost"
-            style={
-              blockedReason
-                ? { width: "auto", flexShrink: 0, whiteSpace: "nowrap", opacity: 0.5 }
-                : { width: "auto", flexShrink: 0, whiteSpace: "nowrap" }
-            }
+            className="btn-ghost routine-new-button"
             aria-disabled={blockedReason ? true : undefined}
             onClick={() => {
               if (blockedReason) {
@@ -494,7 +563,7 @@ export default function RoutineCard({
         <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
           <button
             className="btn-primary"
-            style={blockedReason ? { flex: 1, opacity: 0.5 } : { flex: 1 }}
+            style={{ flex: 1 }}
             aria-disabled={blockedReason ? true : undefined}
             onClick={() => {
               if (blockedReason) {
@@ -544,6 +613,14 @@ export default function RoutineCard({
             // ACWR and shows in History. RPE defaults; edit in History.
             setResumeRun(null);
             void logRoutine(durationMin, selected.name);
+          }}
+          onStaleFinish={(outcome) => {
+            // `done` flipped after a long, unobserved gap (#483 review F3) —
+            // nobody was there to see it finish, so close immediately rather
+            // than lingering on a "Complete" screen with no one to tap Done.
+            setResumeRun(null);
+            setRunningState(false);
+            applyLogOutcome(outcome, selected.name);
           }}
         />
       )}

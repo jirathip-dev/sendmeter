@@ -12,11 +12,13 @@ import {
   deleteRecording,
   fetchHiddenTags,
   fetchRecordings,
+  insertRecording,
   insertTindeqSession,
-  recalcTindeqSessionDuration,
+  linkRecordingsToSession,
   restoreRecording,
   updateRecordingGroup,
 } from "../lib/repo";
+import { drainPendingRecordingsQueue, retryStuckRecordings } from "../lib/recordingQueue";
 import { dominantZone, zoneSets } from "../lib/zoneHistory";
 import {
   historyFilterOptions,
@@ -76,10 +78,34 @@ export default function HistoryView({
   const [live] = useLiveWorkout(userId);
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
-  const uploadWarning = uploadWarningPresentation(
-    useWatchInfo(),
-    usePendingUploads(),
-  );
+  const pendingUploads = usePendingUploads(userId);
+  const uploadWarning = uploadWarningPresentation(useWatchInfo(), {
+    pending: pendingUploads?.pending ?? null,
+    stuck: pendingUploads?.stuck ?? null,
+  });
+  // #484: the explicit-user-action re-attempt path for a "phone-stuck" item
+  // (see `retryStuckRecordings`'s doc comment) — the only automatic
+  // re-attempt a stuck recording gets is surviving an app-version change, so
+  // this button is the sole way back short of that.
+  const [retryingStuck, setRetryingStuck] = useState(false);
+  async function handleRetryStuck() {
+    if (retryingStuck) return;
+    setRetryingStuck(true);
+    try {
+      const cleared = await retryStuckRecordings(userId);
+      if (cleared === 0) return;
+      const recovered = await drainPendingRecordingsQueue(userId, insertRecording);
+      toast(
+        recovered > 0
+          ? `Retried — ${recovered} recording${recovered === 1 ? "" : "s"} uploaded`
+          : "Retrying — still waiting on the server",
+      );
+    } catch {
+      toast("Couldn't retry — try again", "error");
+    } finally {
+      setRetryingStuck(false);
+    }
+  }
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   // Lazy render (SL-86): mount the timeline in pages.
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -208,7 +234,15 @@ export default function HistoryView({
     (s) => s.type === "tindeq" && s.groupId,
   );
 
-  async function assignSelectionToSession(groupId: string) {
+  // #490 (review finding F3): used to be an N+1 loop of `updateRecordingGroup`
+  // calls followed by a separate `recalcTindeqSessionDuration` round trip —
+  // the exact non-atomic shape #490 fixed for `linkRecordingsToSession`, just
+  // not yet routed through the fix. This screen already has the target
+  // session's id in hand (`tindeqSessions` below carries full `Session`
+  // objects), so it needs no group-id plumbing of its own — one call to the
+  // same RPC-backed `linkRecordingsToSession` does the regroup AND the
+  // duration recompute atomically.
+  async function assignSelectionToSession(sessionId: string) {
     // Derived exactly like createSessionFromSelection's `recs`: only visible
     // `ungrouped` rows, so a ticked-then-soft-deleted (or otherwise hidden)
     // recording is never written to and the toast count matches reality.
@@ -217,10 +251,10 @@ export default function HistoryView({
     setAssigning(true);
     setAssignError(null);
     try {
-      for (const r of recs) await updateRecordingGroup(r.id, groupId);
-      // The target session's span just grew — recompute its total time so the
-      // duration/load reflect the newly-added recordings, not the stale value.
-      await recalcTindeqSessionDuration(groupId);
+      await linkRecordingsToSession(
+        sessionId,
+        recs.map((r) => r.id),
+      );
       setAssignedIds((prev) => {
         const next = new Set(prev);
         for (const r of recs) next.add(r.id);
@@ -265,6 +299,18 @@ export default function HistoryView({
   // Group the ticked recordings under a new session: the session takes the
   // recordings' own date and time span; RPE defaults to 5 (editable via the
   // pencil afterwards).
+  //
+  // #490 (review finding F3): still N+1 non-atomic (regroup every recording,
+  // then insert the session; an insert failure orphans the whole group) —
+  // NOT converted to the `linkRecordingsToSession` RPC, unlike
+  // `assignSelectionToSession` above. The RPC needs an existing session id;
+  // this function's whole job is minting the session that doesn't exist yet,
+  // so there is nothing for it to link TO until after `insertTindeqSession`
+  // succeeds — a different operation shape (create-then-populate), not the
+  // same "link into an existing session" one #490 fixed. Left as a known,
+  // smaller residual (the unclamped `Math.max(1, Math.round(spanMs/60000))`
+  // duration below is harmless: `insertTindeqSession` clamps to `min(600,…)`
+  // itself), rather than folded into this branch.
   async function createSessionFromSelection() {
     const recs = ungrouped
       .filter((r) => selectedIds.has(r.id))
@@ -335,7 +381,7 @@ export default function HistoryView({
   ].sort((a, b) => b.sortKey.localeCompare(a.sortKey));
 
   return (
-    <div>
+    <div className="history-view surface-history">
       <div
         style={{
           display: "flex",
@@ -394,6 +440,16 @@ export default function HistoryView({
                   ? ` Last report: ${new Date(item.reportedAt * 1000).toLocaleString()}.`
                   : ""}
               </div>
+              {item.source === "phone-stuck" && (
+                <button
+                  className="btn-ghost"
+                  style={{ marginTop: 6 }}
+                  disabled={retryingStuck}
+                  onClick={() => void handleRetryStuck()}
+                >
+                  {retryingStuck ? "Retrying…" : "Retry now"}
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -561,10 +617,7 @@ export default function HistoryView({
 
       {/* Assign ticked recordings into an existing Tindeq session */}
       {assignOpen && (
-        <Sheet onClose={() => setAssignOpen(false)}>
-          <div style={{ fontFamily: "Inter, sans-serif", fontSize: "var(--t-xl)", fontWeight: 800, marginBottom: 2 }}>
-            Assign to session
-          </div>
+        <Sheet title="Assign to session" onClose={() => setAssignOpen(false)}>
           <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
             Move {selectedIds.size} recording{selectedIds.size === 1 ? "" : "s"} into an existing Tindeq session.
           </div>
@@ -574,36 +627,20 @@ export default function HistoryView({
           {tindeqSessions.map((s) => (
             <button
               key={s.id}
+              className="history-session-option"
               disabled={assigning}
-              onClick={() => void assignSelectionToSession(s.groupId!)}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "12px 14px",
-                marginBottom: 8,
-                background: "var(--canvas)",
-                border: "1px solid var(--card-border)",
-                borderRadius: 10,
-                cursor: assigning ? "default" : "pointer",
-                boxShadow: "var(--shadow-card)",
-              }}
+              onClick={() => void assignSelectionToSession(s.id)}
             >
-              <div style={{ fontSize: "var(--t-base)", fontWeight: 600, color: "var(--ink)" }}>
+              <div className="history-session-title">
                 {s.date} · {s.duration}min · RPE {s.rpe}
               </div>
               {s.note && (
-                <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
+                <div className="history-session-note">
                   {s.note}
                 </div>
               )}
             </button>
           ))}
-          <div style={{ marginTop: 8 }}>
-            <button className="btn-ghost" disabled={assigning} onClick={() => setAssignOpen(false)}>
-              Cancel
-            </button>
-          </div>
         </Sheet>
       )}
     </div>
@@ -628,7 +665,7 @@ function HistoryFilterRow({
       <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 5 }}>
         {label}
       </div>
-      <div role="group" aria-label={label} style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+      <div className="chip-scroll" role="group" aria-label={label} style={{ display: "flex", gap: 6, overflowX: "auto" }}>
         <FilterButton active={value === null} onClick={() => onChange(null)}>
           {allLabel}
         </FilterButton>
@@ -660,20 +697,7 @@ function FilterButton({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      style={{
-        flex: "0 0 auto",
-        border: `1px solid ${active ? "var(--primary)" : "var(--card-border)"}`,
-        borderRadius: 999,
-        padding: "5px 10px",
-        background: active
-          ? "color-mix(in srgb, var(--primary) 15%, var(--canvas))"
-          : "var(--canvas)",
-        color: active ? "var(--primary-accent)" : "var(--ink-muted)",
-        fontSize: "var(--t-xs)",
-        fontWeight: active ? 700 : 600,
-        cursor: "pointer",
-        whiteSpace: "nowrap",
-      }}
+      className="filter-chip"
     >
       {children}
     </button>

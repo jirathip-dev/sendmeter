@@ -21,8 +21,13 @@ import {
 // we had before.
 
 const DB_NAME = "sendmeter";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "pending-recordings";
+/// #484 F5: lets `getAllForUser` fetch one account's own entries without
+/// deserializing every OTHER account's stranded queue. Added in the v1→v2
+/// upgrade below, on the EXISTING store — `onupgradeneeded` never re-creates
+/// it, so this never touches stored data.
+const USER_ID_INDEX = "userId";
 
 /// An `open` that neither succeeds nor errors is a real failure mode (a
 /// blocked version change; historically, private-mode WebKit). Without a
@@ -53,6 +58,14 @@ export interface RecordingDb {
   /// behind anything written between the two. Rejects if the transaction
   /// aborts, so a caller can tell "removed" from "asked to remove".
   clear(): Promise<void>;
+  /// #484 F5: every entry attributed to `userId`, PLUS unattributed legacy
+  /// entries (`userId === null` — #189: still counted, matching `drainQueue`'s
+  /// attempt rule). Uses the `userId` index for the attributed subset, so the
+  /// common single-account case never deserializes another account's
+  /// stranded queue; only falls through to a full `getAll()` when the store
+  /// holds more keys than the index matched (i.e. there IS an unattributed or
+  /// other-account residue to go looking for).
+  getAllForUser(userId: string): Promise<PendingRecording[]>;
 }
 
 export type RecordingDbLoader = () => Promise<RecordingDb | null>;
@@ -147,10 +160,60 @@ function wrap(db: IDBDatabase): RecordingDb {
     clear() {
       return writeTx(db, (store) => [store.clear()]);
     },
+    async getAllForUser(userId) {
+      // `getAll` accepts a plain key directly (shorthand for a range
+      // matching only that key) — deliberately not `IDBKeyRange.only(...)`,
+      // which is a separate global this module would otherwise depend on
+      // (present in every real browser, but not in Node/vitest without an
+      // explicit polyfill import).
+      const indexed: unknown[] = await requestValue(
+        db.transaction(STORE, "readonly").objectStore(STORE).index(USER_ID_INDEX).getAll(userId),
+      );
+      const attributed = indexed.filter(isPendingRecording);
+      // Cheap (getAllKeys, no deserialize) existence check: if the store
+      // holds no more keys than the index just matched, there is nothing
+      // unattributed or belonging to another account to go find.
+      const totalKeys: IDBValidKey[] = await requestValue(
+        db.transaction(STORE, "readonly").objectStore(STORE).getAllKeys(),
+      );
+      if (totalKeys.length <= attributed.length) {
+        return attributed.sort(byQueuedAt);
+      }
+      // A `userId: null` field is not a valid IndexedDB key, so the index
+      // silently omits those records — this full scan is the only way to
+      // find them, and it only runs when the cheap check above says there's
+      // something beyond this user's own attributed rows.
+      const allRows: unknown[] = await requestValue(
+        db.transaction(STORE, "readonly").objectStore(STORE).getAll(),
+      );
+      const seen = new Set(attributed.map((p) => p.id));
+      const legacy = allRows
+        .filter(isPendingRecording)
+        .filter((p) => p.userId === null && !seen.has(p.id));
+      return [...attributed, ...legacy].sort(byQueuedAt);
+    },
   };
 }
 
 let cached: Promise<RecordingDb | null> | null = null;
+/// When the CURRENT `cached` promise last resolved to `null` (a failed
+/// open), or `null` if `cached` is unset or its attempt is still in flight /
+/// succeeded. Drives the cooldown below — see #485 F2/F6 in
+/// `openRecordingDb`'s doc comment.
+let cachedFailedAt: number | null = null;
+
+/// #485 F2 (review of the F9 fix): how long a FAILED open's cooldown lasts
+/// before the NEXT call is allowed to retry. Bounds the retry cost — with no
+/// cooldown, a hung/blocked open (which burns the full `OPEN_TIMEOUT_MS`
+/// every single time, exactly the case this module documents: "a
+/// version-change block, or a WebKit private-mode open that hangs") turned a
+/// realistic sign-out-drain-plus-save-path sequence from 1 open attempt
+/// (pre-#485) into 12 (measured in review) — 6s of `DRAIN_TIMEOUT_MS`'s 8s
+/// budget alone, and a 3s stall on every ForceView rep save. One retry per
+/// cooldown window bounds that to at most one `OPEN_TIMEOUT_MS` stall per
+/// window, no matter how many callers pile on meanwhile (they all share the
+/// one in-flight/failed `cached` promise).
+export const RETRY_COOLDOWN_MS = 30_000;
 
 function openOnce(factory: IDBFactory | null): Promise<RecordingDb | null> {
   if (!factory) return Promise.resolve(null);
@@ -176,10 +239,19 @@ function openOnce(factory: IDBFactory | null): Promise<RecordingDb | null> {
     const timer = setTimeout(() => settle(null), OPEN_TIMEOUT_MS);
     req.onupgradeneeded = () => {
       const d = req.result;
+      let store: IDBObjectStore;
       if (!d.objectStoreNames.contains(STORE)) {
         // keyPath `id`, no autoIncrement: re-putting an entry the migration
         // already copied overwrites it instead of adding a second copy.
-        d.createObjectStore(STORE, { keyPath: "id" });
+        store = d.createObjectStore(STORE, { keyPath: "id" });
+      } else {
+        // v1 → v2 (#484 F5): the store already exists — grab it off the
+        // versionchange transaction rather than re-creating it, which would
+        // wipe every queued recording.
+        store = req.transaction!.objectStore(STORE);
+      }
+      if (!store.indexNames.contains(USER_ID_INDEX)) {
+        store.createIndex(USER_ID_INDEX, "userId");
       }
     };
     req.onsuccess = () => {
@@ -214,18 +286,56 @@ function openOnce(factory: IDBFactory | null): Promise<RecordingDb | null> {
 /// never rejects — when IndexedDB is unavailable, refused or blocked; the
 /// caller's job is then to use the localStorage lane instead.
 ///
-/// Pass an explicit `factory` to bypass the module-level memo (tests).
+/// Pass an explicit `factory` to bypass the module-level memo (tests). Pass
+/// `now` to control the retry-cooldown clock (tests); defaults to `Date.now`.
+///
+/// #485 F9: `cached` memoizes the PROMISE, not the resolved value, so a plain
+/// `cached ??= openOnce(...)` would keep re-returning a promise that already
+/// resolved to `null` forever — a single transient blocked-open (another tab
+/// mid version-change, a slow disk) permanently downgrades the whole session
+/// to the localStorage lane, which #269 sized as a ~1.5 MB emergency lane,
+/// not a main store. So a `null` resolution starts a `RETRY_COOLDOWN_MS`
+/// cooldown (`cachedFailedAt`) rather than either memoizing the failure
+/// forever OR retrying unconditionally.
+///
+/// #485 F2 (review): retrying unconditionally — clearing `cached` on every
+/// `null` resolution, with no cooldown — was tried first and measured
+/// turning ONE open attempt per session into TWELVE on a realistic
+/// sign-out-drain-plus-save-path sequence, each burning the full
+/// `OPEN_TIMEOUT_MS` on a hung open. `readyToRetry` bounds that to at most
+/// one retry per cooldown window; every call in between shares the same
+/// failed `cached` promise (still resolves `null`, same as before — no
+/// caller-visible change on the fast path).
+///
+/// #485 F6 (review): the attempt that gets to flag a failure (or install
+/// itself as `cached`) is checked by IDENTITY (`cached !== attempt`), not by
+/// "did I resolve to null" alone — a late-arriving, SUPERSEDED attempt (the
+/// cooldown fired again and a newer attempt already replaced `cached` before
+/// this older one finally settled) must not stomp state a newer attempt
+/// already installed.
 export function openRecordingDb(
   factory?: IDBFactory | null,
+  now: () => number = Date.now,
 ): Promise<RecordingDb | null> {
   if (factory !== undefined) return openOnce(factory);
-  cached ??= openOnce(defaultFactory());
+  const readyToRetry =
+    cachedFailedAt !== null && now() - cachedFailedAt >= RETRY_COOLDOWN_MS;
+  if (!cached || readyToRetry) {
+    const attempt = openOnce(defaultFactory());
+    cached = attempt;
+    cachedFailedAt = null;
+    void attempt.then((db) => {
+      if (cached !== attempt) return; // superseded — see F6 above
+      if (!db) cachedFailedAt = now();
+    });
+  }
   return cached;
 }
 
 /// Forget the memoized connection. Only for tests — the app opens once.
 export function resetRecordingDbCache(): void {
   cached = null;
+  cachedFailedAt = null;
 }
 
 /// Whether a rejected write was the store refusing for want of room, as

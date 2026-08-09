@@ -45,7 +45,17 @@ export function parseNotification(dv: DataView): TindeqFrame {
     return { kind: "weight", samples };
   }
   if (tag === 0x00) {
-    return { kind: "response", payload: new DataView(dv.buffer, dv.byteOffset + 2) };
+    // Bound explicitly to `dv`'s own remaining length. Without the third
+    // argument, `DataView`'s constructor defaults to the END OF THE
+    // UNDERLYING BUFFER, not the end of `dv` itself — on a `dv` that is a
+    // sub-view not reaching its buffer's end (a shared/reused ArrayBuffer),
+    // that silently leaks whatever bytes follow into the response payload.
+    // Mirrors SendLogWatchCore's TindeqProtocol.swift, where
+    // `data.dropFirst(2)` is always bounded to `data`'s own endIndex.
+    return {
+      kind: "response",
+      payload: new DataView(dv.buffer, dv.byteOffset + 2, dv.byteLength - 2),
+    };
   }
   if (tag === 0x02) return { kind: "lowBattery" };
   return { kind: "unknown", tag };

@@ -10,9 +10,12 @@ export const SendLogAuthBridge = registerPlugin<SendLogAuthBridgePlugin>(
 
 export type {
   LiveForceMessage,
+  LiveMirrorEvent,
+  LiveMirrorMetadata,
   LiveWorkoutMessage,
   SendLogAuthBridgePlugin,
   WatchBuildInfo,
   WatchBuildStatus,
+  WatchQuarantineStatus,
   WatchSyncStatus,
 } from "./definitions";

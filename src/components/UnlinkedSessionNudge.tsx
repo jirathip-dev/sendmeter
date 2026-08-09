@@ -47,10 +47,7 @@ export default function UnlinkedSessionNudge({ session, onDismiss }: Props) {
   async function link() {
     setLinking(true);
     try {
-      await linkRecordingsToSession(
-        { id: session.id, groupId: session.groupId, type: session.type },
-        recordingIds!,
-      );
+      await linkRecordingsToSession(session.id, recordingIds!);
       bumpRealtime();
       toast(`Linked ${n} recording${n === 1 ? "" : "s"} to this session`);
       onDismiss();

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { useChartHover } from "../hooks/useChartHover";
 import { QUALITIES } from "../lib/force-curve";
 import type { ForceCurveModel, TrainingQuality } from "../lib/force-curve";
@@ -40,7 +40,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
   // `new Date()` is impure in render — freeze it once for this mount.
   const [now] = useState(() => new Date());
   const [detailOpen, setDetailOpen] = useState(false);
-  const [hovered, hoverProps] = useChartHover<TrainingQuality>();
+  const [hovered, , , surfaceProps] = useChartHover<TrainingQuality>();
   const sets = zoneTrainingSets(recordings, now, WINDOW_DAYS);
   const rec = recommendZone(sets, model);
   // Hold seconds + hold count behind each bar, for the tooltip — the same
@@ -52,7 +52,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
 
   return (
     <div
-      className="card tappable"
+      className="card surface-force tappable"
       style={{ marginTop: 10 }}
       onClick={() => setDetailOpen(true)}
     >
@@ -81,8 +81,16 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
           tick. The click guard keeps a scrub from opening the detail page. */}
       <div
         className="chart-scrub"
+        role="button"
+        tabIndex={0}
+        aria-label={
+          hovered !== null
+            ? `${QUALITIES.find((q) => q.id === hovered)?.label ?? "Training balance"}: ${sets[hovered]} sets`
+            : `Training balance for ${exercise}, last four weeks; use arrow keys to inspect zones`
+        }
         style={{ display: "flex", flexDirection: "column", gap: 5 }}
         onClick={(e) => e.stopPropagation()}
+        {...surfaceProps(QUALITIES.map((q) => q.id), QUALITIES.length, (i) => i + 0.5, "y")}
       >
         {QUALITIES.map((q) => {
           const n = sets[q.id];
@@ -99,9 +107,15 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
+                minHeight: 44,
+                padding: "0 4px",
+                border: 0,
+                background: "transparent",
+                color: "inherit",
+                font: "inherit",
+                appearance: "none",
                 cursor: "pointer",
               }}
-              {...hoverProps(q.id)}
             >
               {hovered === q.id && (
                 // The card clips its overflow (`.card.tappable`), so the top
@@ -130,6 +144,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
                 {q.label}
               </span>
               <div
+                aria-hidden="true"
                 style={{
                   flex: 1,
                   height: 8,
@@ -142,7 +157,7 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
                   style={{
                     width: `${(n / maxSets) * 100}%`,
                     height: "100%",
-                    background: color,
+                    background: `linear-gradient(90deg, color-mix(in srgb, ${color} 60%, var(--canvas)), ${color})`,
                     borderRadius: 4,
                     opacity: hovered === null || hovered === q.id ? 1 : 0.45,
                   }}
@@ -165,57 +180,34 @@ export default function ZoneFocusCard({ recordings, exercise, model, onPick, loc
       </div>
 
       {/* Focus recommendation — tap to arm its guided zone. */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation(); // arming the zone is not "open the detail page"
-          onPick(rec.zone);
-        }}
-        disabled={locked}
-        style={{
-          marginTop: 12,
-          width: "100%",
-          textAlign: "left",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "10px 12px",
-          borderRadius: 10,
-          border: `1px solid ${QUALITY_COLORS[rec.zone]}`,
-          background: `color-mix(in srgb, ${QUALITY_COLORS[rec.zone]} 12%, transparent)`,
-          cursor: locked ? "default" : "pointer",
-          opacity: locked ? 0.6 : 1,
-          fontFamily: "inherit",
-        }}
+      <span
+        className="zone-focus-button-host"
+        style={{ "--zone-focus-color": QUALITY_COLORS[rec.zone] } as CSSProperties}
       >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: "var(--t-eyebrow)", color: "var(--ink-muted)" }}>
+        <button
+          className="zone-focus-button"
+          onClick={(e) => {
+            e.stopPropagation(); // arming the zone is not "open the detail page"
+            onPick(rec.zone);
+          }}
+          disabled={locked}
+        >
+        <div className="zone-focus-copy">
+          <div className="zone-focus-kicker">
             FOCUS NEXT
           </div>
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontWeight: 800,
-              fontSize: "var(--t-md)",
-              color: QUALITY_COLORS[rec.zone],
-            }}
-          >
+          <div className="zone-focus-label">
             {QUALITIES.find((q) => q.id === rec.zone)?.label}
           </div>
-          <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 2 }}>
+          <div className="zone-focus-reason">
             {rec.reason}
           </div>
         </div>
-        <span
-          style={{
-            fontSize: "var(--t-xs)",
-            fontWeight: 700,
-            color: QUALITY_COLORS[rec.zone],
-            flexShrink: 0,
-          }}
-        >
+        <span className="zone-focus-action">
           Arm ›
         </span>
-      </button>
+        </button>
+      </span>
 
       {detailOpen && (
         <div onClick={(e) => e.stopPropagation()} style={{ cursor: "default" }}>

@@ -28,7 +28,7 @@ import {
   reverseActionTargetBand,
   type ReverseActionSegment,
 } from "../lib/reverseAction";
-import { prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
+import { disconnectNeedsConfirm, prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
 import { DEFAULT_HANDS_FREE_FORCE_CONFIG } from "../lib/handsFreeForce";
 import { adaptiveStaticHolds, type AdaptiveStaticState } from "../lib/adaptiveStaticProtocol";
 import {
@@ -46,6 +46,8 @@ import PresetPlanChart from "./PresetPlanChart";
 import type { GaugeTarget } from "./ForceCurveCard";
 import ReverseActionWorkDisplay from "./ReverseActionWorkDisplay";
 import ProtocolBadge from "./ProtocolBadge";
+import ConfirmDialog from "./ConfirmDialog";
+import { SheetLayerProvider } from "./Sheet";
 import {
   prescriptionForSegment,
   targetHoldSegment,
@@ -356,6 +358,20 @@ export default function ForceFullscreen({
   // effect pass that calls onStart), closing the gap.
   const counting = prepStartedMs !== null;
 
+  // #486: Disconnect used to fire tindeq.disconnect() unconditionally, live
+  // through measuring/armed/counting exactly when Tare and "How to set up"
+  // are hidden for being unsafe there — one mistimed tap silently discarded
+  // a max-effort rep with no salvage (disconnect() is the deliberate
+  // user-initiated path, not the unexpected-drop path that salvages).
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  function handleDisconnectTap() {
+    if (disconnectNeedsConfirm({ measuring, armed, counting })) {
+      setConfirmDisconnect(true);
+    } else {
+      tindeq.disconnect();
+    }
+  }
+
   useEffect(() => {
     if (prepStartedMs === null) return;
     const t = setInterval(() => setPrepNow(Date.now()), 200);
@@ -642,17 +658,18 @@ export default function ForceFullscreen({
     reverseWorking && pos ? (pos.seg as ReverseActionSegment) : null;
 
   return createPortal(
-    <div
-      className="fullscreen-overlay"
-      style={{
-        // The whole screen takes the phase color, Timer-Plus style.
-        background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 13 : 6}%, var(--canvas))`,
-        transition: "background 0.3s",
-        display: "flex",
-        justifyContent: "center",
-        overflowY: reverseWorking ? "hidden" : "auto",
-      }}
-    >
+    <SheetLayerProvider layer="fullscreen">
+      <div
+        className="fullscreen-overlay"
+        style={{
+          // The whole screen takes the phase color, Timer-Plus style.
+          background: `color-mix(in srgb, ${bannerColor} ${pos || done || counting || armed ? 13 : 6}%, var(--canvas))`,
+          transition: "background 0.3s",
+          display: "flex",
+          justifyContent: "center",
+          overflowY: reverseWorking ? "hidden" : "auto",
+        }}
+      >
       <div
         style={{
           width: "100%",
@@ -729,13 +746,26 @@ export default function ForceFullscreen({
             </button>
           )}
           <button
-            onClick={tindeq.disconnect}
-            className="glass-pill"
-            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)", "--pill-tint": "var(--danger)" } as CSSProperties}
+            onClick={handleDisconnectTap}
+            className="glass-pill glass-pill-danger"
+            style={{ padding: "7px 13px", fontSize: "var(--t-2xs)" }}
           >
             Disconnect
           </button>
         </div>
+
+        {confirmDisconnect && (
+          <ConfirmDialog
+            title="Disconnect now?"
+            body="You're mid-hold — disconnecting now loses this rep with no way to recover it."
+            confirmLabel="Disconnect"
+            onConfirm={() => {
+              setConfirmDisconnect(false);
+              tindeq.disconnect();
+            }}
+            onClose={() => setConfirmDisconnect(false)}
+          />
+        )}
 
         {reverseWorking && band && protocol && (
           <>
@@ -878,8 +908,8 @@ export default function ForceFullscreen({
               >
                 {pos.seg.phase === "move"
                   ? pos.seg.direction === "out"
-                    ? "OUT"
-                    : "RETURN"
+                    ? "CONCENTRIC"
+                    : "ECCENTRIC"
                   : meta.label}
                 {holdSide && ` · ${holdSide.toUpperCase()}`}
                 {pos.seg.phase === "switch" && pos.seg.side && ` → ${pos.seg.side.toUpperCase()}`}
@@ -985,7 +1015,7 @@ export default function ForceFullscreen({
                     <ProtocolBadge mode={protocol.protocolMode ?? "hold"} quality={protocolQuality} />{" "}
                     {protocol.protocolMode === "reverse_action" ? (
                       <>
-                        · {protocol.cadenceOutS ?? 3}s OUT / {protocol.cadenceReturnS ?? 3}s RETURN · {protocol.reps} rep{protocol.reps === 1 ? "" : "s"} × {protocol.sets} set{protocol.sets === 1 ? "" : "s"} · ~
+                        · {protocol.cadenceOutS ?? 3}s CONCENTRIC / {protocol.cadenceReturnS ?? 3}s ECCENTRIC · {protocol.reps} rep{protocol.reps === 1 ? "" : "s"} × {protocol.sets} set{protocol.sets === 1 ? "" : "s"} · ~
                         {Math.round(timelineDurationS(timeline) / 60)}min
                         <br />one continuous raw trace saves per set
                       </>
@@ -1141,7 +1171,7 @@ export default function ForceFullscreen({
                   primeAudio();
                   onPause();
                 }}
-                className="glass-pill"
+                className={`glass-pill ${paused ? "glass-pill-success" : "glass-pill-warning"}`}
                 style={
                   {
                     padding: "9px 18px",
@@ -1149,7 +1179,6 @@ export default function ForceFullscreen({
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
-                    "--pill-tint": paused ? "var(--success)" : "var(--warning)",
                   } as CSSProperties
                 }
               >
@@ -1162,7 +1191,7 @@ export default function ForceFullscreen({
               </button>
               <button
                 onClick={onSkip}
-                className="glass-pill"
+                className="glass-pill glass-pill-info"
                 style={
                   {
                     padding: "9px 18px",
@@ -1170,7 +1199,6 @@ export default function ForceFullscreen({
                     display: "flex",
                     alignItems: "center",
                     gap: 6,
-                    "--pill-tint": "var(--info)",
                   } as CSSProperties
                 }
               >
@@ -1180,7 +1208,7 @@ export default function ForceFullscreen({
             </div>
           )}
           <button
-            aria-label={measuring && protocol?.protocolMode === "reverse_action" ? "Emergency stop and save partial Reverse Action set" : undefined}
+            aria-label={measuring && protocol?.protocolMode === "reverse_action" ? "Emergency stop and save partial resisted-movement set" : undefined}
             onClick={() => {
               if (measuring) {
                 onStop();
@@ -1208,24 +1236,11 @@ export default function ForceFullscreen({
               }
             }}
             disabled={measuring ? saving : armed ? false : counting ? false : !canStart}
+            className={`force-action-button ${measuring || armed || counting ? "danger" : "ready"}`}
             style={{
               width: clampCss(FORCE_ACTION_CIRCLE),
               height: clampCss(FORCE_ACTION_CIRCLE),
               flexShrink: 0,
-              borderRadius: "50%",
-              border: `3px solid ${measuring || armed || counting ? "var(--danger)" : "var(--success)"}`,
-              background: `color-mix(in srgb, ${measuring || armed || counting ? "var(--danger)" : "var(--success)"} 16%, transparent)`,
-              color: measuring || armed || counting ? "var(--danger)" : "var(--success)",
-              cursor: "pointer",
-              fontFamily: "Inter, sans-serif",
-              fontWeight: 800,
-              fontSize: "var(--t-md)",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 3,
-              opacity: (measuring ? saving : armed ? false : counting ? false : !canStart) ? 0.45 : 1,
             }}
           >
             {measuring ? (
@@ -1318,7 +1333,8 @@ export default function ForceFullscreen({
           )}
         </div>
       </div>
-    </div>,
+      </div>
+    </SheetLayerProvider>,
     document.body,
   );
 }

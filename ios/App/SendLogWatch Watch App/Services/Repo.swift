@@ -3,18 +3,39 @@ import SendLogWatchCore
 import Supabase
 
 enum Repo {
-    private static var client: SupabaseClient { SupabaseService.data }
+    // All network access goes through the `SupabaseService` façade — this
+    // target has no reachable Supabase client, only per-table query builders
+    // (#502).
 
     // MARK: Tindeq recordings (identical shape to the web app's inserts)
 
-    static func insertTindeqRecording(
+    /// Read-only protocol catalog for the watch. Authoring remains on the
+    /// phone/web app; the watch only selects and runs rows already saved there.
+    static func fetchTindeqPresets() async throws -> [WatchForceProtocol] {
+        try await SupabaseService
+            .from("tindeq_presets")
+            .select("id, name, hold_s, holds_s, reps, sets, rest_reps_s, rest_sets_s, target_kg, target_pct, pct_basis, pct_step, target_curve, alternate_sides, protocol_mode, cadence_out_s, cadence_return_s, tolerance_mode, tolerance_value, prepare_s, setup_note, capacity_evidence")
+            .order("created_at", ascending: true)
+            .execute()
+            .value
+    }
+
+    /// Builds the insert row from a stopped recording (#486) — pulled out of
+    /// `insertTindeqRecording` so `PendingRecordingQueue`'s callers can build
+    /// the durable payload synchronously, before ever touching the network.
+    /// `id` is minted by the caller (not defaulted here) so the SAME id is
+    /// what gets persisted to disk and later replayed — a fresh `UUID()` per
+    /// retry would defeat the idempotent upsert below.
+    static func makeTindeqRecordingRow(
         _ r: StoppedRecording,
+        id: UUID,
         note: String,
         tag: String,
         side: String,
         groupId: UUID?
-    ) async throws {
-        let row = TindeqRecordingInsert(
+    ) -> TindeqRecordingInsert {
+        TindeqRecordingInsert(
+            id: id,
             durationMs: r.durationMs,
             peakKg: r.peakKg,
             avgKg: r.avgKg,
@@ -25,7 +46,109 @@ enum Repo {
             groupId: groupId,
             samples: r.samples.map { [$0.t, $0.kg] }
         )
-        try await client.from("tindeq_recordings").insert(row).execute()
+    }
+
+    /// Complete guided measured-row shape. The claim already contains the
+    /// stable id plus run/set/rep and picker snapshot; completion is derived
+    /// before this pure builder is called, so no live manager state leaks into
+    /// an async queue operation.
+    static func makeGuidedMeasuredRecordingRow(
+        _ r: StoppedRecording,
+        claim: GuidedForceRecordingClaim,
+        completion: GuidedForceCompletion,
+        groupId: UUID,
+        metrics: MovementSetMetrics?,
+        outcome: String? = nil,
+        note: String = ""
+    ) -> TindeqRecordingInsert {
+        let context = claim.context
+        return TindeqRecordingInsert(
+            id: claim.id,
+            durationMs: completion.actualDurationMs,
+            peakKg: r.peakKg,
+            avgKg: r.avgKg,
+            sampleCount: r.samples.count,
+            note: note,
+            tag: context.tag,
+            side: context.side,
+            groupId: groupId,
+            samples: r.samples.map { [$0.t, $0.kg] },
+            protocolRunId: context.key.runId,
+            setNo: context.key.set,
+            repNo: context.key.rep,
+            zone: context.zone,
+            source: "dynamometer",
+            outcome: outcome,
+            plannedDurationMs: context.plannedDurationMs,
+            actualDurationMs: completion.actualDurationMs,
+            protocolMode: context.kind == .movementSet ? "reverse_action" : "hold",
+            targetKg: context.targetBand?.kg,
+            targetLowKg: context.targetBand?.lowKg,
+            targetHighKg: context.targetBand?.highKg,
+            cadenceOutS: context.cadenceOutS,
+            cadenceReturnS: context.cadenceReturnS,
+            cadenceMarkers: completion.cadenceMarkers,
+            setMetrics: metrics,
+            setupNote: context.setupNote.isEmpty ? nil : context.setupNote,
+            capacityEvidence: context.capacityEvidence,
+            completedReps: completion.completedReps,
+            completionStatus: completion.status?.rawValue
+        )
+    }
+
+    /// Sensorless movement is cadence-only: one manual row per set, with no
+    /// invented force values, samples, or set metrics. Capacity evidence is
+    /// forced false to satisfy the modality contract even if the source preset
+    /// was authored as a measured capacity effort.
+    static func makeCadenceOnlyMovementRow(
+        claim: GuidedForceRecordingClaim,
+        completion: GuidedForceCompletion,
+        groupId: UUID
+    ) -> TindeqRecordingInsert {
+        let context = claim.context
+        return TindeqRecordingInsert(
+            id: claim.id,
+            durationMs: completion.actualDurationMs,
+            peakKg: nil,
+            avgKg: nil,
+            sampleCount: 0,
+            note: "Cadence only · force not measured",
+            tag: context.tag,
+            side: context.side,
+            groupId: groupId,
+            samples: [],
+            protocolRunId: context.key.runId,
+            setNo: context.key.set,
+            repNo: nil,
+            zone: context.zone,
+            source: "manual",
+            outcome: nil,
+            plannedDurationMs: context.plannedDurationMs,
+            actualDurationMs: completion.actualDurationMs,
+            protocolMode: "reverse_action",
+            targetKg: nil,
+            targetLowKg: nil,
+            targetHighKg: nil,
+            cadenceOutS: context.cadenceOutS,
+            cadenceReturnS: context.cadenceReturnS,
+            cadenceMarkers: completion.cadenceMarkers,
+            setMetrics: nil,
+            setupNote: context.setupNote.isEmpty ? nil : context.setupNote,
+            capacityEvidence: false,
+            completedReps: completion.completedReps,
+            completionStatus: completion.status?.rawValue
+        )
+    }
+
+    /// Idempotent upsert on the client-minted id (#486) — safe for
+    /// `PendingRecordingQueue` to replay after a response was lost. Mirrors
+    /// `uploadBundle`/`logTindeqSession`'s `ignoreDuplicates` pattern: a
+    /// retry that lands after the original insert already succeeded is a
+    /// no-op rather than a duplicate row.
+    static func insertTindeqRecording(_ row: TindeqRecordingInsert) async throws {
+        try await SupabaseService.from("tindeq_recordings")
+            .upsert(row, onConflict: "id", ignoreDuplicates: true)
+            .execute()
     }
 
     /// Distinct tags from recent recordings, most recently used first, minus
@@ -41,7 +164,7 @@ enum Repo {
     /// watch never fits a curve (that needs the raw sample streams, which it
     /// doesn't keep); it only reads the two numbers back.
     static func fetchRecentTindeqTags() async throws -> [TindeqTagInfo] {
-        async let recordingsTask: [TindeqTagRow] = client
+        async let recordingsTask: [TindeqTagRow] = SupabaseService
             .from("tindeq_recordings")
             .select("tag")
             .neq("tag", value: "")
@@ -71,7 +194,7 @@ enum Repo {
     /// curve params). Small by construction — one row per tag the user has
     /// ever hidden or fitted a curve for.
     static func fetchTagRegistry() async throws -> [TagRegistryRow] {
-        try await client
+        try await SupabaseService
             .from("tindeq_tags")
             .select("name, hidden, cf_kg, w_prime_kgs")
             .execute()
@@ -106,7 +229,7 @@ enum Repo {
             groupId: pending.groupId,
             workoutSource: nil
         )
-        try await client.from("sessions")
+        try await SupabaseService.from("sessions")
             .upsert(session, onConflict: "id", ignoreDuplicates: true)
             .execute()
     }
@@ -114,7 +237,7 @@ enum Repo {
     // MARK: Confirmed workout → sessions + climb_workouts + climb_attempts
 
     static func fetchCurrentPhase() async throws -> String {
-        let rows: [UserSettingsRow] = try await client
+        let rows: [UserSettingsRow] = try await SupabaseService
             .from("user_settings")
             .select("current_phase")
             .execute()
@@ -124,10 +247,17 @@ enum Repo {
 
     static func fetchSessionLoads(sinceDays: Int) async throws -> [SessionLoadRow] {
         let cutoff = Calendar.gregorianLocal.date(byAdding: .day, value: -sinceDays, to: Date())!
-        return try await client
+        return try await SupabaseService
             .from("sessions")
             .select("date, load")
             .gte("date", value: cutoff.localDateString)
+            // #487 (F1): exclude soft-deleted sessions from the on-watch ACWR
+            // used by WidgetBridge — same fix as the iPhone health plugin's
+            // acwrSeries/computeAcwr (HealthSyncManager.swift). Without this a
+            // deleted session kept depressing the widget's ACWR for the rest
+            // of the 28-day window even though it no longer counts anywhere
+            // else in the app.
+            .is("deleted_at", value: nil)
             .execute()
             .value
     }
@@ -135,7 +265,7 @@ enum Repo {
     /// Latest computed readiness row, written by the iPhone app. The watch
     /// only displays it — it no longer reads HealthKit or computes readiness.
     static func fetchLatestHealthMetric() async throws -> HealthMetricRow? {
-        let rows: [HealthMetricRow] = try await client
+        let rows: [HealthMetricRow] = try await SupabaseService
             .from("health_metrics")
             .select("date, readiness, zone")
             .order("date", ascending: false)
@@ -145,17 +275,43 @@ enum Repo {
         return rows.first
     }
 
+    /// #473/#478: rows started before `rpeTrainingCutoff` carry #473's
+    /// corrupt detector output (near-permanent CLIMBING misread as one
+    /// multi-minute attempt, boulder counts under-counted) baked into
+    /// `mean_effort`/`attempts_per_10min` — training on them just relearns
+    /// the bug under the fresh `rpeModel.v2` storage key. Excluding them is
+    /// the actual fix for the historical-row policy: bumping the storage key
+    /// alone (#478) only stops READING an old model, it does nothing to stop
+    /// the next refit from re-fitting on the same corrupt rows. With this
+    /// filter, `RPEModelFitter.fit` returns `nil` (below
+    /// `rpeMinTrainingSamples`) until enough POST-fix confirmed workouts
+    /// exist, and `WorkoutManager.end()`'s existing fallback
+    /// (`AttemptDetector.predictRPE`'s hand formula) is used meanwhile —
+    /// deliberately worse-than-nothing is not on the table; "no model yet"
+    /// is the honest state.
     static func fetchLabeledWorkouts() async throws -> [LabeledWorkoutRow] {
-        try await client
+        try await SupabaseService
             .from("climb_workouts")
             .select("avg_hr, mean_effort, attempts_per_10min, rpe_confirmed")
             .not("rpe_confirmed", operator: .is, value: "null")
             .not("mean_effort", operator: .is, value: "null")
+            .gte("started_at", value: rpeTrainingCutoff)
             .order("started_at", ascending: false)
             .limit(200)
             .execute()
             .value
     }
+
+    /// Earliest `started_at` eligible to train the on-device RPE model — see
+    /// `fetchLabeledWorkouts`. This is this fix's expected ship date; if the
+    /// PR merges later than that, bump it to match (an earlier cutoff than
+    /// the actual ship date lets pre-fix rows back in).
+    private static let rpeTrainingCutoff: String = {
+        var c = DateComponents()
+        c.year = 2026; c.month = 8; c.day = 7
+        let date = Calendar.gregorianLocal.date(from: c)!
+        return ISO8601DateFormatter().string(from: date)
+    }()
 
     static func makeSaveBundle(
         summary: WorkoutSummary,
@@ -229,7 +385,7 @@ enum Repo {
 
     /// Best-effort mid-workout flush (SL-90) — merge-upserts the partial row.
     static func flushPartialWorkout(_ p: ClimbWorkoutPartialUpsert) async throws {
-        try await client.from("climb_workouts")
+        try await SupabaseService.from("climb_workouts")
             .upsert(p, onConflict: "id")
             .execute()
     }
@@ -238,17 +394,54 @@ enum Repo {
     /// replays after partial success are safe. The workout row MERGES on
     /// conflict (not ignore) — the SL-90 periodic flush may have written a
     /// partial row under the same id, and the final stats must land over it.
+    ///
+    /// Order is FK-mandated — `climb_attempts.workout_id` and
+    /// `climb_workouts.session_id` are both non-null references, so
+    /// sessions → climb_workouts → climb_attempts is the only legal
+    /// sequence (verified against
+    /// `supabase/migrations/20260711120000_watch_workouts.sql`; see the
+    /// #475 correction comment). NEVER reorder these three calls.
+    ///
+    /// Each stage is tagged with `StagedUploadError` on failure so
+    /// `OfflineQueue` can report which of the three actually landed (#475) —
+    /// this only labels the failure, it changes no request or its order.
     static func uploadBundle(_ bundle: WorkoutSaveBundle) async throws {
-        try await client.from("sessions")
-            .upsert(bundle.session, onConflict: "id", ignoreDuplicates: true)
-            .execute()
-        try await client.from("climb_workouts")
-            .upsert(bundle.workout, onConflict: "id")
-            .execute()
-        if !bundle.attempts.isEmpty {
-            try await client.from("climb_attempts")
-                .upsert(bundle.attempts, onConflict: "id", ignoreDuplicates: true)
+        do {
+            try await SupabaseService.from("sessions")
+                .upsert(bundle.session, onConflict: "id", ignoreDuplicates: true)
                 .execute()
+        } catch {
+            throw StagedUploadError(stage: .session, underlying: error)
+        }
+        do {
+            try await SupabaseService.from("climb_workouts")
+                .upsert(bundle.workout, onConflict: "id")
+                .execute()
+        } catch {
+            throw StagedUploadError(stage: .climbWorkout, underlying: error)
+        }
+        if !bundle.attempts.isEmpty {
+            do {
+                try await SupabaseService.from("climb_attempts")
+                    .upsert(bundle.attempts, onConflict: "id", ignoreDuplicates: true)
+                    .execute()
+            } catch {
+                throw StagedUploadError(stage: .climbAttempts, underlying: error)
+            }
         }
     }
+}
+
+/// Which of `uploadBundle`'s three upserts threw, plus the original error —
+/// issue #475's quarantine record needs the failing stage; `underlying` is
+/// still the exact error `UploadFailure` classification reads (PostgrestError
+/// / HTTPError / anything else `Repo`'s Supabase client can throw).
+///
+/// `underlying: Error` isn't itself `Sendable`, but every concrete type
+/// supabase-swift's client actually throws here (`PostgrestError`,
+/// `HTTPError`, `URLError`) already is — `@unchecked` avoids an existential
+/// upcast fight for a guarantee the underlying library already provides.
+struct StagedUploadError: Error, @unchecked Sendable {
+    let stage: UploadStage
+    let underlying: Error
 }

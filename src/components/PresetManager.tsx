@@ -38,6 +38,10 @@ import ReverseActionPresetFields from "./ReverseActionPresetFields";
 import ProtocolBadge from "./ProtocolBadge";
 import { presetModality, protocolModeFor } from "../lib/protocolModeContext";
 import type { ForceCapacityModality } from "../types";
+import {
+  movementSetExceedsTindeqCap,
+  TINDEQ_MAX_MOVEMENT_SET_S,
+} from "../lib/movementProtocol";
 
 interface Props {
   selectedId: string | null;
@@ -54,7 +58,10 @@ interface Props {
   /// set you finish isn't the set you started. Disables all of them rather
   /// than leaving a control that looks live but is inert.
   locked: boolean;
-  modality: ForceCapacityModality;
+  modality?: ForceCapacityModality;
+  /// Built-in phone suggestions that can be persisted like a user preset but
+  /// must never be rendered in, edited from, or deleted through My protocols.
+  restorablePresets?: TindeqPreset[];
 }
 
 function fmt(sec: number): string {
@@ -135,7 +142,7 @@ function NumField({
 
 /// Hang-protocol presets (hold / reps / sets / rests). Saved to Supabase;
 /// selecting one arms the guided timer in the fullscreen gauge.
-export default function PresetManager({ selectedId, onSelect, onRestore, presetRefs, locked, modality }: Props) {
+export default function PresetManager({ selectedId, onSelect, onRestore, presetRefs, locked, modality, restorablePresets = [] }: Props) {
   const toast = useToast();
   const [presets, setPresets] = useState<TindeqPreset[]>([]);
   const [adding, setAdding] = useState(false);
@@ -166,7 +173,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   const [pctBasis, setPctBasis] = useState<"pr" | "cf">("pr");
   const [pctStep, setPctStep] = useState(0); // +% per set
   const [alternateSides, setAlternateSides] = useState(false);
-  const [protocolMode, setProtocolMode] = useState<TindeqProtocolMode>(() => protocolModeFor(modality));
+  const [protocolMode, setProtocolMode] = useState<TindeqProtocolMode>(() => protocolModeFor(modality ?? "static"));
   const [cadenceOutS, setCadenceOutS] = useState(3);
   const [cadenceReturnS, setCadenceReturnS] = useState(3);
   const [toleranceMode, setToleranceMode] =
@@ -174,7 +181,6 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   const [toleranceValue, setToleranceValue] = useState(10);
   const [prepareS, setPrepareS] = useState(5);
   const [setupNote, setSetupNote] = useState("");
-  const [capacityEvidence, setCapacityEvidence] = useState(false);
   // Issue #143: gate preset delete behind a confirm dialog. Holds the preset
   // being confirmed (need its name for the dialog copy).
   const [confirmDelete, setConfirmDelete] = useState<TindeqPreset | null>(null);
@@ -190,7 +196,9 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
     setRestRepsS(p.restRepsS);
     setRestSetsS(p.restSetsS);
     setTargetMode(
-      p.targetCurve ? "curve" : p.targetPct != null ? "pct" : p.targetKg != null ? "kg" : "off",
+      p.protocolMode === "reverse_action"
+        ? (p.targetKg != null ? "kg" : "off")
+        : p.targetCurve ? "curve" : p.targetPct != null ? "pct" : p.targetKg != null ? "kg" : "off",
     );
     setTargetKg(p.targetKg ?? 0);
     setTargetPct(p.targetPct ?? 60);
@@ -204,7 +212,6 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
     setToleranceValue(p.toleranceValue ?? 10);
     setPrepareS(p.prepareS ?? 5);
     setSetupNote(p.setupNote ?? "");
-    setCapacityEvidence(p.capacityEvidence ?? false);
     setAdding(true);
   }
 
@@ -232,6 +239,10 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   useLayoutEffect(() => {
     onRestoreRef.current = onRestore;
   }, [onRestore]);
+  const restorablePresetsRef = useRef(restorablePresets);
+  useLayoutEffect(() => {
+    restorablePresetsRef.current = restorablePresets;
+  }, [restorablePresets]);
 
   useEffect(() => {
     let alive = true;
@@ -244,7 +255,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         if (savedId && selectedIdRef.current === null) {
           // A pre-#431 saved selection may not have a saved global mode yet.
           // Let ForceView restore it and synchronize the explicit context.
-          const saved = list.find((p) => p.id === savedId);
+          const saved = list.find((p) => p.id === savedId) ?? restorablePresetsRef.current.find((p) => p.id === savedId);
           if (saved) onRestoreRef.current(saved);
         }
       })
@@ -279,10 +290,10 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         restRepsS: 0,
         restSetsS,
         targetKg: targetMode === "kg" && targetKg > 0 ? targetKg : null,
-        targetPct: targetMode === "pct" && targetPct > 0 ? targetPct : null,
+        targetPct: null,
         pctBasis,
-        pctStep: targetMode === "pct" && targetPct > 0 ? pctStep : 0,
-        targetCurve: targetMode === "curve",
+        pctStep: 0,
+        targetCurve: false,
         alternateSides: false,
         protocolMode,
         cadenceOutS,
@@ -291,7 +302,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         toleranceValue,
         prepareS,
         setupNote: setupNote.trim(),
-        capacityEvidence,
+        capacityEvidence: false,
       };
     }
     const { holdBase, holdsS } = deriveHoldsField(varyHolds, holdS, holds, sets);
@@ -320,9 +331,15 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
   }
 
   async function save() {
-    setSaving(true);
     setError(null);
     const draft = draftPlanPreset();
+    if (movementSetExceedsTindeqCap(draft)) {
+      setError(
+        `Each resisted-movement set must be ${TINDEQ_MAX_MOVEMENT_SET_S / 60} minutes or less for Progressor. Lower reps or cadence and save again.`,
+      );
+      return;
+    }
+    setSaving(true);
     const fields: Omit<TindeqPreset, "id"> = {
       name: name.trim() || `${draft.holdS}s × ${reps} × ${sets}`,
       ...draft,
@@ -381,13 +398,13 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginBottom: 8 }}>{error}</div>
       )}
 
-      {presets.filter((p) => presetModality(p) === modality).length === 0 && !adding && (
+      {presets.filter((p) => modality === undefined || presetModality(p) === modality).length === 0 && !adding && (
         <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)", marginBottom: 10, lineHeight: 1.5 }}>
-          Save a {modality === "static" ? "static hold" : "Reverse Action"} protocol — selecting it runs its guided timer on the gauge.
+          Save a protocol — selecting it runs its guided timer on the gauge.
         </div>
       )}
 
-      {presets.filter((p) => presetModality(p) === modality).map((p) => {
+      {presets.filter((p) => modality === undefined || presetModality(p) === modality).map((p) => {
         const selected = p.id === selectedId;
         // The load this preset's target (fixed kg, %/curve — any mode)
         // resolves to for the active exercise right now — used by the quality
@@ -406,19 +423,6 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
         return (
           <Fragment key={p.id}>
           <div
-            // #171: arming/disarming a preset is a selection, not a button.
-            // Muted while locked (#298): this row is a div, so it cannot carry
-            // the native `disabled` that `hapticForCandidate` keys off — without
-            // this, a tap refused by the `locked` guard below would buzz exactly
-            // like an accepted arm. A refused tap must not feel like an
-            // accepted one.
-            data-haptic={locked ? "off" : "light"}
-            onClick={() => {
-              if (locked) return;
-              if (selected) localStorage.removeItem(SELECTED_KEY);
-              else localStorage.setItem(SELECTED_KEY, p.id);
-              onSelect(selected ? null : p);
-            }}
             style={{
               display: "flex",
               alignItems: "center",
@@ -428,11 +432,25 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               background: "var(--canvas)",
               border: `1px solid ${selected ? "var(--success)" : "var(--card-border)"}`,
               borderRadius: 10,
-              cursor: locked ? "default" : "pointer",
               opacity: locked ? 0.75 : 1,
               boxShadow: "var(--shadow-card)",
+              position: "relative",
             }}
           >
+            <button
+              type="button"
+              className="preset-select-control"
+              data-haptic={locked ? "off" : "light"}
+              disabled={locked}
+              aria-pressed={selected}
+              aria-label={`${selected ? "Clear" : "Select"} ${p.name}`}
+              aria-describedby={`preset-${p.id}-summary`}
+              onClick={() => {
+                if (selected) localStorage.removeItem(SELECTED_KEY);
+                else localStorage.setItem(SELECTED_KEY, p.id);
+                onSelect(selected ? null : p);
+              }}
+            />
             <div
               aria-hidden="true"
               style={{
@@ -442,9 +460,15 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 flexShrink: 0,
                 border: `2px solid ${selected ? "var(--success)" : "var(--border)"}`,
                 background: selected ? "var(--success)" : "transparent",
+                position: "relative",
+                zIndex: 1,
+                pointerEvents: "none",
               }}
             />
-            <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              id={`preset-${p.id}-summary`}
+              style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 1, pointerEvents: "none" }}
+            >
               <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                 <span
                   style={{
@@ -461,7 +485,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
                 {p.protocolMode === "reverse_action" ? (
                   <>
-                    {(p.cadenceOutS ?? 3)}s out / {p.cadenceReturnS ?? 3}s return · {p.reps} rep{p.reps === 1 ? "" : "s"} · {p.sets} set{p.sets === 1 ? "" : "s"} · {fmt(protocolDurationS(p))} total
+                    {(p.cadenceOutS ?? 3)}s concentric / {p.cadenceReturnS ?? 3}s eccentric · {p.reps} rep{p.reps === 1 ? "" : "s"} · {p.sets} set{p.sets === 1 ? "" : "s"} · {fmt(protocolDurationS(p))} total
                   </>
                 ) : (
                   <>
@@ -505,23 +529,17 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
             <button
               className="del-btn"
               aria-label="Edit preset"
-              style={{ fontSize: "var(--t-base)" }}
+              style={{ fontSize: "var(--t-base)", position: "relative", zIndex: 2 }}
               disabled={locked}
-              onClick={(e) => {
-                e.stopPropagation();
-                openEdit(p);
-              }}
+              onClick={() => openEdit(p)}
             >
               ✎
             </button>
             <button
               className="del-btn"
-              style={{ marginLeft: 0 }}
+              style={{ marginLeft: 0, position: "relative", zIndex: 2 }}
               disabled={locked}
-              onClick={(e) => {
-                e.stopPropagation();
-                setConfirmDelete(p);
-              }}
+              onClick={() => setConfirmDelete(p)}
             >
               ×
             </button>
@@ -535,12 +553,20 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
           under its own row (see the map above). */}
       {adding && !editingId && renderForm()}
       {!adding && (
-        <button className="btn-ghost" disabled={locked} onClick={() => {
-          setProtocolMode(protocolModeFor(modality));
-          setAdding(true);
-        }}>
-          + New preset
-        </button>
+        <div className="force-new-protocol-actions">
+          <button className="btn-ghost" disabled={locked} onClick={() => {
+            setProtocolMode("hold");
+            setAdding(true);
+          }}>
+            + New static
+          </button>
+          <button className="btn-ghost" disabled={locked} onClick={() => {
+            setProtocolMode("reverse_action");
+            setAdding(true);
+          }}>
+            + New movement
+          </button>
+        </div>
       )}
       {locked && (
         <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 4 }}>
@@ -563,6 +589,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
 
   function renderForm() {
     const curveCopy = curveHoldCopy(varyHolds, holdS);
+    const draft = draftPlanPreset();
     return (
         <div className="card">
           <span className="field-label" style={{ marginTop: 0 }}>Name (optional)</span>
@@ -570,7 +597,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
             className="field"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={protocolMode === "reverse_action" ? "Reverse Action 3:3" : "Repeaters 7:3"}
+            placeholder={protocolMode === "reverse_action" ? "Movement 3:1" : "Repeaters 7:3"}
           />
           <span className="field-label">Protocol</span>
           <ProtocolBadge mode={protocolMode} />
@@ -629,7 +656,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                   ))}
                 </div>
               )}
-              <PresetPlanChart preset={draftPlanPreset()} refs={presetRefs} />
+              <PresetPlanChart preset={draft} refs={presetRefs} />
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 <NumField label="Rest / rep s" value={restRepsS} onChange={setRestRepsS} min={0} max={600} />
                 <NumField label="Rest / set s" value={restSetsS} onChange={setRestSetsS} min={0} max={1200} />
@@ -660,23 +687,23 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
           {/* Target load — how the band on the live gauge is set. */}
           <span className="field-label">Target load</span>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {([
-                  ["off", protocolMode === "reverse_action" ? "Equipment resistance" : "None"],
+            {(protocolMode === "reverse_action"
+              ? ([
+                  ["off", "No force target"],
+                  ["kg", "Fixed kg"],
+                ] as const)
+              : ([
+                  ["off", "None"],
                   ["kg", "Fixed kg"],
                   ["pct", "% of…"],
                   ["curve", "Auto (curve)"],
-                ] as const).map(([m, label]) => (
+                ] as const)
+            ).map(([m, label]) => (
               <button
                 key={m}
-                className="tag"
+                className="tag preset-target-mode"
+                data-selected={targetMode === m ? "true" : "false"}
                 onClick={() => setTargetMode(m)}
-                style={{
-                  background: targetMode === m ? "var(--primary)" : "var(--surface-1)",
-                  color: targetMode === m ? "#ffffff" : "var(--ink-muted)",
-                  border: `1px solid ${targetMode === m ? "var(--primary)" : "var(--border)"}`,
-                  cursor: "pointer",
-                  fontFamily: "Inter, sans-serif",
-                }}
               >
                 {label}
               </button>
@@ -685,7 +712,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
 
           {protocolMode === "reverse_action" && targetMode === "off" && (
             <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-muted)", marginTop: 6 }}>
-              Cadence-only runs use the spring or machine resistance in your equipment setup. Starting with a sensor needs a numeric target.
+              Use the spring or machine resistance in your setup. Sensor runs still record force; target accuracy simply stays unavailable.
             </div>
           )}
 
@@ -695,7 +722,7 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
             </div>
           )}
 
-          {targetMode === "pct" && (
+          {protocolMode === "hold" && targetMode === "pct" && (
             <>
               {/* Reference: % of PR (max strength) or % of Critical Force (endurance) */}
               <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
@@ -707,15 +734,9 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
                 ).map(([b, label]) => (
                   <button
                     key={b}
-                    className="tag"
+                    className="tag preset-basis-option"
+                    data-selected={pctBasis === b ? "true" : "false"}
                     onClick={() => setPctBasis(b)}
-                    style={{
-                      background: pctBasis === b ? "var(--info)" : "var(--surface-1)",
-                      color: pctBasis === b ? "#ffffff" : "var(--ink-muted)",
-                      border: `1px solid ${pctBasis === b ? "var(--info)" : "var(--border)"}`,
-                      cursor: "pointer",
-                      fontFamily: "Inter, sans-serif",
-                    }}
                   >
                     {label}
                   </button>
@@ -733,8 +754,8 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
               </div>
               <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
                 {pctBasis === "pr"
-                  ? `% of your best ${protocolMode === "reverse_action" ? "Reverse Action" : "Static"} capacity peak for the exercise.`
-                  : `% of ${protocolMode === "reverse_action" ? "Reverse Action" : "Static"} critical force — models never fall back across execution types.`}
+                  ? "% of your best Static capacity peak for the exercise."
+                  : "% of Static critical force."}
                 {pctStep > 0 &&
                   ` Sets run ${targetPct}%${Array.from(
                     { length: Math.min(sets, 4) - 1 },
@@ -744,32 +765,22 @@ export default function PresetManager({ selectedId, onSelect, onRestore, presetR
             </>
           )}
 
-          {targetMode === "curve" && (
+          {protocolMode === "hold" && targetMode === "curve" && (
             <>
-              {protocolMode === "hold" && (
-                <>
-                  <span className="field-label">{curveCopy.label}</span>
-                  <input
-                    type="range"
-                    min={3}
-                    max={240}
-                    value={holdS}
-                    onChange={(e) => setHoldS(Number(e.target.value))}
-                    style={{ width: "100%", accentColor: "var(--primary)" }}
-                  />
-                </>
-              )}
+              <span className="field-label">{curveCopy.label}</span>
+              <input
+                type="range"
+                min={3}
+                max={240}
+                value={holdS}
+                onChange={(e) => setHoldS(Number(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--primary)" }}
+              />
               <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6, lineHeight: 1.5 }}>
-                {protocolMode === "reverse_action"
-                  ? `Reverse Action auto: target the force sustainable for one continuous ${prescriptionWorkS(draftPlanPreset(), 1)}s movement set. Unavailable until that distinct model can be fitted.`
-                  : curveCopy.description}
+                {curveCopy.description}
               </div>
             </>
           )}
-          {protocolMode === "reverse_action" && <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 12, fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>
-            <input type="checkbox" checked={capacityEvidence} onChange={(event) => setCapacityEvidence(event.target.checked)} />
-            <span><strong style={{ color: "var(--ink)" }}>Capacity test</strong><br />Include measured sensor sets in the Reverse Action Hill/CF model. Leave off for ordinary prescribed work to avoid self-feedback.</span>
-          </label>}
           {protocolMode === "hold" && <label
             style={{
               display: "flex",

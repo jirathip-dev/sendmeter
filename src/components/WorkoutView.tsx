@@ -40,7 +40,7 @@ interface Props {
 export default function WorkoutView({ userId, currentPhase, sessions, onLog }: Props) {
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
-  const [live] = useLiveWorkout(userId);
+  const [live, , liveSyncState] = useLiveWorkout(userId);
   const [phone, dispatch] = usePhoneWorkout();
   const [error, setError] = useState<string | null>(null);
   // A running phone workout takes over full-screen; "minimize" drops back to
@@ -137,13 +137,19 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
   }
 
   return (
-    <div>
+    <div className="workout-view">
       <div className="section-head">WORKOUT</div>
       <div className="section-sub">
         Live watch tracking, phone logging, and your recent climbs.
       </div>
 
-      {live && <LiveWorkoutCard live={live} onOpen={() => setLiveOpen(true)} />}
+      {live && (
+        <LiveWorkoutCard
+          live={live}
+          syncState={liveSyncState}
+          onOpen={() => setLiveOpen(true)}
+        />
+      )}
       {live && liveOpen && (
         <LiveWorkoutFullscreen live={live} onMinimize={() => setLiveOpen(false)} />
       )}
@@ -198,7 +204,7 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
       <WorkoutStatsCard sessions={sessions} />
 
       {/* Manual entry — the Log Session sheet (moved from Home) */}
-      <div className="card" style={{ marginTop: 2 }}>
+      <div className="card surface-workout" style={{ marginTop: 2 }}>
         <div className="card-title" style={{ marginBottom: 8 }}>
           Log a past workout
         </div>

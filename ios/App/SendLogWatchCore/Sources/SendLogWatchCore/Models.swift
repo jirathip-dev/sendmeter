@@ -54,6 +54,13 @@ public struct Attempt: Sendable {
     public let motionIntensity: Double
     public let effortScore: Double
     public let source: AttemptSource
+    /// #473: true when this attempt closed by hitting a duration cap
+    /// (`maxAttemptS`, `unestablishedMaxS` or `establishedDriftMaxS`) rather
+    /// than a genuine end signal (returned-to-floor or the HR+quiet
+    /// fallback). Hitting a cap always means detection was wrong about
+    /// something — surfaced here rather than silently clamped, so a caller
+    /// can report/log it instead of it reading as an ordinary attempt.
+    public let hitCap: Bool
 
     public init(
         startedAt: Date,
@@ -63,7 +70,8 @@ public struct Attempt: Sendable {
         peakHR: Double?,
         motionIntensity: Double,
         effortScore: Double,
-        source: AttemptSource
+        source: AttemptSource,
+        hitCap: Bool = false
     ) {
         self.startedAt = startedAt
         self.durationS = durationS
@@ -73,6 +81,7 @@ public struct Attempt: Sendable {
         self.motionIntensity = motionIntensity
         self.effortScore = effortScore
         self.source = source
+        self.hitCap = hitCap
     }
 }
 
@@ -97,7 +106,7 @@ public nonisolated struct SessionLoadRow: Codable {
 /// same pattern as `WorkoutSaveBundle`). `date`/`durationMin`/`note` are
 /// captured synchronously at tap time so a delayed drain still logs the
 /// session against the moment it actually finished.
-public nonisolated struct PendingTindeqSession: Codable {
+public nonisolated struct PendingTindeqSession: Codable, Sendable {
     public var id: UUID
     public var date: String           // YYYY-MM-DD, captured at enqueue time
     public var durationMin: Int

@@ -45,7 +45,10 @@ export interface BuildReverseActionRecordingInput {
   set: number;
   physicalEndMs?: number;
   protocolShiftS?: number;
-  targetBand: ReverseActionTargetBand;
+  /// Optional for measured resisted movement. A target-free set still keeps
+  /// its raw trace and completion/stability metrics; target accuracy remains
+  /// null rather than inventing a load.
+  targetBand: ReverseActionTargetBand | null;
   cadenceOutS: number;
   cadenceReturnS: number;
   base: Pick<
@@ -286,6 +289,13 @@ export function reverseActionSetMetrics(
 
 export function buildReverseActionSetRecording(
   input: BuildReverseActionRecordingInput,
+  // #487 (F2, review finding 3): stamp the capture moment on the object
+  // itself at construction, same reasoning as ForceView.tsx's builders —
+  // this is the ONE place both the live save (saveReverseActionSet) and the
+  // sign-out salvage path (buildUnclaimedReverseActionSalvage) build a
+  // recording, so it covers both. Injectable (matching recordingQueue.ts's
+  // `now` convention) so callers stay deterministic in tests.
+  now: () => string = () => new Date().toISOString(),
 ): (NewTindeqRecording & { id: string }) | null {
   const slice = sliceReverseActionSet(
     input.samples,
@@ -304,6 +314,7 @@ export function buildReverseActionSetRecording(
   const durationMs = Math.max(1, Math.round(slice.samples.at(-1)!.t));
   return {
     id: input.id,
+    recordedAt: now(),
     durationMs,
     peakKg: Math.max(...kgs),
     avgKg: metrics.meanKg,
@@ -311,9 +322,9 @@ export function buildReverseActionSetRecording(
     setNo: input.set,
     samples: slice.samples,
     protocolMode: "reverse_action",
-    targetKg: input.targetBand.kg,
-    targetLowKg: input.targetBand.lowKg,
-    targetHighKg: input.targetBand.highKg,
+    targetKg: input.targetBand?.kg ?? null,
+    targetLowKg: input.targetBand?.lowKg ?? null,
+    targetHighKg: input.targetBand?.highKg ?? null,
     cadenceOutS: input.cadenceOutS,
     cadenceReturnS: input.cadenceReturnS,
     cadenceMarkers: slice.markers,
@@ -357,7 +368,6 @@ export function buildUnclaimedReverseActionSalvage(
     const key = reverseActionSetKey(input.runId, set);
     if (input.claims.has(key)) continue;
     const targetBand = input.targetBandForSet(set);
-    if (!targetBand) continue;
     let id = input.ids.get(key);
     if (!id) {
       id = input.createId();

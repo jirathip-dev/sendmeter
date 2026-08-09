@@ -282,6 +282,19 @@ export interface NewTindeqRecording {
   /// never saw) collides on the unique constraint instead of duplicating the
   /// row. Omitted for normal (non-retried) saves — the DB default applies.
   id?: string;
+  /// ISO timestamp of when this was actually recorded (#487, F2), so a
+  /// recording queued offline and drained hours/days later lands on the day
+  /// it was captured, not the day it happened to finally upload — otherwise
+  /// it lands in the wrong ACWR bucket (the watch already solved this shape
+  /// for sessions, #144). Optional on the TYPE only because `insertRecording`
+  /// itself has no way to enforce it — every REAL construction site stamps
+  /// it at build time (not just the offline-queue retry path: a live save
+  /// needs it too, since ForceView's #264 in-memory Retry banner can re-call
+  /// `insertRecording` on the same object hours later). `recordedAtInvariant
+  /// .test.ts` pins this structurally across all of `src`, so an insert
+  /// literal that omits it is a bug, not a valid "normal save" case — don't
+  /// reintroduce a comment (or a call site) that treats omission as fine.
+  recordedAt?: string;
   durationMs: number;
   peakKg: number | null;
   avgKg: number | null;
@@ -374,6 +387,16 @@ export interface WorkoutListItem {
 /// while a workout is running (SL-41 live mirror).
 export interface LiveWorkout {
   workoutId: string;
+  /// Stable run identity carried by both the WC and Supabase paths. Current
+  /// watch builds use the workout UUID; the mirror keeps it separate so a
+  /// future transport can reuse the same contract without relying on a row's
+  /// primary-key shape.
+  runId: string;
+  /// Strictly increasing within runId. Null only for rows written by a
+  /// pre-#521 watch/build; those rows fall back to updatedAt ordering.
+  sequence: number | null;
+  event: "start" | "telemetry" | "phase" | "count" | "end";
+  terminal: boolean;
   status: "live" | "ended";
   startedAt: string;
   hr: number | null;

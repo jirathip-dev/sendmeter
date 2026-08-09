@@ -187,49 +187,314 @@ final class PendingSyncStalenessTests: XCTestCase {
 }
 
 final class PendingSyncCacheTests: XCTestCase {
-    func testNilUntilAQueueHasCounted() {
-        // "We have never counted" must not be reported as "zero pending".
+    /// Populates every queue's pending slot, then applies overrides — most
+    /// tests need "everything reported" as their baseline now that a total
+    /// requires full coverage (#491).
+    private func fullyReported(_ counts: [PendingSyncQueue: Int] = [:]) -> PendingSyncCache {
         let cache = PendingSyncCache()
-        XCTAssertNil(cache.total)
-        cache.record(0, for: .workouts)
-        XCTAssertEqual(cache.total, 0)
+        for queue in PendingSyncQueue.allCases {
+            cache.record(counts[queue] ?? 0, for: queue)
+        }
+        return cache
     }
 
-    func testSumsTheQueuesTheWatchDrains() {
-        // The watch's own Home screen shows workouts + gauge sessions as one
-        // number; the phone must not disagree with the wrist.
+    func testNilUntilEveryQueueHasCounted() {
+        // Two honest-states rules in one (#491): "we have never counted"
+        // must not be reported as "zero pending", and a sum missing a queue
+        // must not be reported as the queue depth — a dropped source would
+        // read as zero, i.e. under-report SILENTLY, which is exactly how the
+        // #475/#486 merge conflict in `WatchBuild` would have surfaced.
         let cache = PendingSyncCache()
+        XCTAssertNil(cache.total)
         cache.record(2, for: .workouts)
+        XCTAssertNil(cache.total, "a partial sum silently under-reports — must read as not-reported")
         cache.record(3, for: .tindeqSessions)
-        XCTAssertEqual(cache.total, 5)
+        XCTAssertNil(cache.total, "still missing a queue")
+        cache.record(1, for: .tindeqRecordings)
+        XCTAssertEqual(cache.total, 6, "every queue reported — the sum is finally honest")
+    }
+
+    func testAllZerosReportAsZeroNotUnknown() {
+        // A fresh install that has counted everything must report an honest
+        // zero — "checked, nothing pending" is a different fact from "never
+        // checked".
+        XCTAssertEqual(fullyReported().total, 0)
     }
 
     func testLatestCountPerQueueWins() {
-        let cache = PendingSyncCache()
-        cache.record(4, for: .workouts)
+        let cache = fullyReported([.workouts: 4])
         cache.record(1, for: .workouts)
         XCTAssertEqual(cache.total, 1)
     }
 
-    func testAQueueThatHasNotCountedYetJustContributesNothing() {
-        // An under-count beats reporting nothing at all — the first drain
-        // publishes both queues anyway.
-        let cache = PendingSyncCache()
-        cache.record(2, for: .tindeqSessions)
-        XCTAssertEqual(cache.total, 2)
-    }
-
     func testNegativeCountsCannotPoisonTheTotal() {
-        let cache = PendingSyncCache()
+        let cache = fullyReported([.tindeqSessions: 2])
         cache.record(-5, for: .workouts)
-        cache.record(2, for: .tindeqSessions)
         XCTAssertEqual(cache.total, 2)
     }
 
     func testResetClearsBackToUnknown() {
-        let cache = PendingSyncCache()
-        cache.record(1, for: .workouts)
+        let cache = fullyReported([.workouts: 1])
         cache.reset()
         XCTAssertNil(cache.total)
+    }
+
+    // MARK: #475 — quarantined count is tracked separately from `total`
+
+    private func fullyQuarantineReported(_ counts: [PendingSyncQueue: Int] = [:]) -> PendingSyncCache {
+        let cache = PendingSyncCache()
+        for queue in PendingSyncQueue.allCases {
+            cache.recordQuarantined(counts[queue] ?? 0, for: queue)
+        }
+        return cache
+    }
+
+    func testQuarantinedCountIsNilUntilEveryQueueReports() {
+        // Same completeness rule as `total` (#491): with all three queues
+        // quarantining now, a partial quarantine sum under-reports just as
+        // silently as a partial pending sum.
+        let cache = PendingSyncCache()
+        XCTAssertNil(cache.quarantinedTotal)
+        cache.recordQuarantined(2, for: .workouts)
+        XCTAssertNil(cache.quarantinedTotal, "a partial quarantine sum must read as not-reported")
+        cache.recordQuarantined(0, for: .tindeqSessions)
+        cache.recordQuarantined(1, for: .tindeqRecordings)
+        XCTAssertEqual(cache.quarantinedTotal, 3)
+    }
+
+    func testEachQueueKeepsItsOwnQuarantineSlot() {
+        // #491: the pre-consolidation cache had ONE quarantine count that
+        // only `OfflineQueue` wrote. With three writers, one queue's report
+        // must not stomp another's.
+        let cache = fullyQuarantineReported([.workouts: 2, .tindeqRecordings: 1])
+        cache.recordQuarantined(0, for: .tindeqRecordings)
+        XCTAssertEqual(cache.quarantinedTotal, 2, "clearing one queue's slot must not erase another queue's count")
+    }
+
+    func testQuarantinedCountDoesNotFoldIntoTheSyncingTotal() {
+        // A quarantined item is not "pending" — it will never leave via a
+        // normal drain, so it must not inflate the number that reads as
+        // "will sync" to the user.
+        let cache = fullyReported([.workouts: 2])
+        for queue in PendingSyncQueue.allCases { cache.recordQuarantined(1, for: queue) }
+        XCTAssertEqual(cache.total, 2)
+        XCTAssertEqual(cache.quarantinedTotal, 3)
+    }
+
+    func testNegativeQuarantinedCountsAreRefused() {
+        let cache = fullyQuarantineReported()
+        cache.recordQuarantined(-1, for: .workouts)
+        XCTAssertEqual(cache.quarantinedTotal, 0)
+    }
+
+    func testResetAlsoClearsQuarantinedBackToUnknown() {
+        let cache = fullyQuarantineReported([.workouts: 2])
+        cache.reset()
+        XCTAssertNil(cache.quarantinedTotal)
+    }
+
+    // MARK: #475 F13 — the .stuckRetrying subset, tracked separately
+
+    private func fullyStuckReported(_ counts: [PendingSyncQueue: Int] = [:]) -> PendingSyncCache {
+        let cache = PendingSyncCache()
+        for queue in PendingSyncQueue.allCases {
+            cache.recordQuarantinedStuck(counts[queue] ?? 0, for: queue)
+        }
+        return cache
+    }
+
+    func testStuckSubsetIsNilUntilEveryQueueReports() {
+        let cache = PendingSyncCache()
+        XCTAssertNil(cache.quarantinedStuckTotal)
+        cache.recordQuarantinedStuck(1, for: .workouts)
+        XCTAssertNil(cache.quarantinedStuckTotal)
+        cache.recordQuarantinedStuck(0, for: .tindeqSessions)
+        cache.recordQuarantinedStuck(0, for: .tindeqRecordings)
+        XCTAssertEqual(cache.quarantinedStuckTotal, 1)
+    }
+
+    func testStuckSubsetIsIndependentOfTheTotal() {
+        let cache = fullyQuarantineReported([.workouts: 3])
+        for queue in PendingSyncQueue.allCases { cache.recordQuarantinedStuck(0, for: queue) }
+        cache.recordQuarantinedStuck(1, for: .workouts)
+        XCTAssertEqual(cache.quarantinedTotal, 3)
+        XCTAssertEqual(cache.quarantinedStuckTotal, 1)
+    }
+
+    func testNegativeStuckSubsetCountsAreRefused() {
+        let cache = fullyStuckReported()
+        cache.recordQuarantinedStuck(-1, for: .workouts)
+        XCTAssertEqual(cache.quarantinedStuckTotal, 0)
+    }
+
+    func testResetAlsoClearsTheStuckSubsetBackToUnknown() {
+        let cache = fullyStuckReported([.workouts: 1])
+        cache.reset()
+        XCTAssertNil(cache.quarantinedStuckTotal)
+    }
+}
+
+/// Issue #475 F1: quarantine is invisible today because nothing reads
+/// `PendingSyncCache.quarantinedTotal` anywhere in the app. These pin the
+/// wire contract and verdict that fix that — same channel, same
+/// honest-states rules as the #21 pending-sync report above, but a
+/// distinct key and a distinct verdict type, since "quarantined" must never
+/// be presented as "will sync".
+final class QuarantinedSyncStampingTests: XCTestCase {
+    private let identity = BuildIdentity(version: "1.4.0", build: "57")
+
+    func testRoundTripsThroughAMessageAlongsidePendingSync() {
+        let msg = WatchBuildReport.stamped(
+            ["kind": "liveWorkout", "status": "live"],
+            with: identity,
+            pendingSync: 3,
+            quarantinedSync: 1
+        )
+        XCTAssertEqual(WatchBuildReport.pendingSync(in: msg), 3)
+        XCTAssertEqual(WatchBuildReport.quarantinedSync(in: msg), 1)
+        XCTAssertEqual(WatchBuildReport.identity(in: msg), identity)
+    }
+
+    func testAZeroQuarantinedCountIsReportedRatherThanOmitted() {
+        // Zero is a fact worth sending: it's what distinguishes "checked,
+        // nothing stuck" from "never checked".
+        let msg = WatchBuildReport.stamped(["kind": "requestSession"], with: identity, quarantinedSync: 0)
+        XCTAssertEqual(WatchBuildReport.quarantinedSync(in: msg), 0)
+    }
+
+    func testUnknownQuarantinedCountLeavesTheMessageUntouched() {
+        let msg = WatchBuildReport.stamped(["kind": "requestSession"], with: nil, quarantinedSync: nil)
+        XCTAssertEqual(msg.count, 1)
+        XCTAssertNil(WatchBuildReport.quarantinedSync(in: msg))
+    }
+
+    func testNegativeQuarantinedCountsAreRefusedOnBothSides() {
+        let msg = WatchBuildReport.stamped(["kind": "liveForce"], with: nil, quarantinedSync: -1)
+        XCTAssertNil(msg[WatchBuildReport.quarantinedSyncKey])
+        XCTAssertNil(WatchBuildReport.quarantinedSync(in: [WatchBuildReport.quarantinedSyncKey: -4]))
+    }
+
+    func testReadsAQuarantinedCountThatCameBackAsADouble() {
+        XCTAssertEqual(WatchBuildReport.quarantinedSync(in: [WatchBuildReport.quarantinedSyncKey: 2.0]), 2)
+    }
+
+    func testUnstampedMessageYieldsNoQuarantinedCount() {
+        XCTAssertNil(WatchBuildReport.quarantinedSync(in: ["kind": "liveForce", "kg": 12.5]))
+    }
+
+    func testStrippingRemovesTheQuarantineKeyToo() {
+        let stamped = WatchBuildReport.stamped(
+            ["kind": "liveForce", "kg": 12.5],
+            with: identity,
+            pendingSync: 3,
+            quarantinedSync: 1
+        )
+        let stripped = WatchBuildReport.stripped(stamped)
+        XCTAssertEqual(stripped.count, 2)
+        XCTAssertEqual(stripped["kg"] as? Double, 12.5)
+        XCTAssertNil(stripped[WatchBuildReport.quarantinedSyncKey])
+        XCTAssertNil(stripped[WatchBuildReport.pendingSyncKey])
+    }
+
+    // MARK: #475 F13 — the .stuckRetrying subset rides the same channel, separately
+
+    func testStuckSubsetRoundTripsAlongsideTheTotal() {
+        let msg = WatchBuildReport.stamped(
+            ["kind": "liveWorkout", "status": "live"],
+            with: identity,
+            quarantinedSync: 3,
+            quarantinedStuckSync: 1
+        )
+        XCTAssertEqual(WatchBuildReport.quarantinedSync(in: msg), 3)
+        XCTAssertEqual(WatchBuildReport.quarantinedStuckSync(in: msg), 1)
+    }
+
+    func testAZeroStuckSubsetIsReportedRatherThanOmitted() {
+        let msg = WatchBuildReport.stamped(
+            ["kind": "requestSession"], with: identity, quarantinedSync: 2, quarantinedStuckSync: 0
+        )
+        XCTAssertEqual(WatchBuildReport.quarantinedStuckSync(in: msg), 0)
+    }
+
+    func testUnknownStuckSubsetLeavesTheMessageUntouchedAndReadsAsUnknown() {
+        // An older watch build (or one that only ever reports the combined
+        // total) must read as "breakdown unknown", not zero — the two must
+        // not be confused, since the phone treats unknown as the more
+        // cautious "assume permanent" case.
+        let msg = WatchBuildReport.stamped(
+            ["kind": "requestSession"], with: identity, quarantinedSync: 2, quarantinedStuckSync: nil
+        )
+        XCTAssertNil(msg[WatchBuildReport.quarantinedStuckSyncKey])
+        XCTAssertNil(WatchBuildReport.quarantinedStuckSync(in: msg))
+    }
+
+    func testNegativeStuckSubsetCountsAreRefusedOnBothSides() {
+        let msg = WatchBuildReport.stamped(["kind": "liveForce"], with: nil, quarantinedStuckSync: -1)
+        XCTAssertNil(msg[WatchBuildReport.quarantinedStuckSyncKey])
+        XCTAssertNil(WatchBuildReport.quarantinedStuckSync(in: [WatchBuildReport.quarantinedStuckSyncKey: -4]))
+    }
+
+    func testReadsAStuckSubsetThatCameBackAsADouble() {
+        XCTAssertEqual(WatchBuildReport.quarantinedStuckSync(in: [WatchBuildReport.quarantinedStuckSyncKey: 1.0]), 1)
+    }
+
+    func testStrippingRemovesTheStuckSubsetKeyToo() {
+        let stamped = WatchBuildReport.stamped(
+            ["kind": "liveForce", "kg": 12.5],
+            with: identity,
+            quarantinedSync: 3,
+            quarantinedStuckSync: 1
+        )
+        let stripped = WatchBuildReport.stripped(stamped)
+        XCTAssertEqual(stripped.count, 2)
+        XCTAssertNil(stripped[WatchBuildReport.quarantinedStuckSyncKey])
+    }
+}
+
+final class WatchQuarantineStatusTests: XCTestCase {
+    func testNoneIsNotTheSameAsNeverReported() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 0, pairing: pairing()), .none
+        )
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: nil, pairing: pairing()), .notReported
+        )
+    }
+
+    func testAnyPositiveCountReadsAsStuck() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 1, pairing: pairing()), .stuck
+        )
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 42, pairing: pairing()), .stuck
+        )
+    }
+
+    func testPairingProblemsBeatAnyStoredCount() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 3, pairing: pairing(paired: false)),
+            .notPaired
+        )
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 0, pairing: pairing(supported: false)),
+            .notPaired
+        )
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 3, pairing: pairing(appInstalled: false)),
+            .appNotInstalled
+        )
+    }
+
+    func testPreActivationIsUnknownRatherThanNone() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: 0, pairing: pairing(activated: false)),
+            .unknown
+        )
+    }
+
+    func testNegativeCountIsTreatedAsNoReading() {
+        XCTAssertEqual(
+            WatchBuildReport.quarantineStatus(quarantinedSync: -1, pairing: pairing()), .notReported
+        )
     }
 }

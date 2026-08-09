@@ -83,10 +83,18 @@ final class SessionRelayDecodeTests: XCTestCase {
         // A phone build older than #265 still relays `refreshToken`. Decoding
         // must produce EXACTLY the same result as the payload without it —
         // i.e. the field is not read, not stored, and not consulted.
+        // Reuse one token for both contexts: JSONSerialization does not
+        // promise dictionary key order, so generating two otherwise identical
+        // JWTs can produce different access-token strings and make this test
+        // compare serializer order instead of the relay contract.
+        let accessToken = jwt()
         let withToken = SessionRelay.decode(
-            signedIn(["refreshToken": "rt-226-two-rotations-stale"]), now: 1_000
+            signedIn([
+                "accessToken": accessToken,
+                "refreshToken": "rt-226-two-rotations-stale"
+            ]), now: 1_000
         )
-        let without = SessionRelay.decode(signedIn(), now: 1_000)
+        let without = SessionRelay.decode(signedIn(["accessToken": accessToken]), now: 1_000)
         XCTAssertEqual(withToken, without)
     }
 
@@ -240,6 +248,42 @@ final class WatchAuthStateTests: XCTestCase {
             SessionRelay.state(for: session(expiresAt: 1_000), now: 50_000).userId, userA
         )
         XCTAssertNil(SessionRelay.state(for: nil, now: 1_000).userId)
+    }
+}
+
+/// #472: a decision computed from a session+clock at time T must not be
+/// trusted after time has passed — it has to be recomputed. `AuthManager`
+/// used to cache exactly this decision (as `state`, read via `needsToken`)
+/// and reuse it at three call sites instead of recomputing it, so a token
+/// that went stale with no external event to react to was never discovered.
+final class SessionRelayStalenessTests: XCTestCase {
+    private func session(expiresAt: TimeInterval) -> RelayedSession {
+        RelayedSession(accessToken: jwt(), userId: userA, expiresAt: expiresAt)
+    }
+
+    func testAStateComputedAtTDisagreesWithTheSameSessionsStateLater() {
+        // The session expires between the two reads. Anything that cached the
+        // first result and kept using it would be wrong for every moment
+        // after `expiresAt`.
+        let s = session(expiresAt: 1_000)
+        let computedAtT = SessionRelay.state(for: s, now: 500)
+        let computedLater = SessionRelay.state(for: s, now: 50_000)
+        XCTAssertEqual(computedAtT, .signedIn(userId: userA, tokenFresh: true))
+        XCTAssertEqual(computedLater, .signedIn(userId: userA, tokenFresh: false))
+        XCTAssertNotEqual(
+            computedAtT, computedLater,
+            "a decision cached at T does not stay valid at T+delta"
+        )
+    }
+
+    func testNeedsTokenTracksTheSameStalenessAsState() {
+        let s = session(expiresAt: 1_000)
+        XCTAssertFalse(SessionRelay.needsToken(for: s, now: 500))
+        XCTAssertTrue(SessionRelay.needsToken(for: s, now: 50_000))
+    }
+
+    func testNeedsTokenIsTrueWhenSignedOut() {
+        XCTAssertTrue(SessionRelay.needsToken(for: nil, now: 1_000))
     }
 }
 

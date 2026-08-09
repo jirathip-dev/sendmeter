@@ -1,6 +1,10 @@
-import type { CSSProperties } from "react";
 import type { ReverseActionToleranceMode } from "../types";
 import NumInput from "./NumInput";
+import {
+  maxMovementRepsForCadence,
+  movementSetDurationS,
+  TINDEQ_MAX_MOVEMENT_SET_S,
+} from "../lib/movementProtocol";
 
 function NumberField({
   label,
@@ -64,22 +68,32 @@ interface Props {
 export default function ReverseActionPresetFields(props: Props) {
   const setDurationS =
     props.reps * (props.cadenceOutS + props.cadenceReturnS);
+  const maxReps = maxMovementRepsForCadence(
+    props.cadenceOutS,
+    props.cadenceReturnS,
+  );
+  const overCap = movementSetDurationS({
+    protocolMode: "reverse_action",
+    reps: props.reps,
+    cadenceOutS: props.cadenceOutS,
+    cadenceReturnS: props.cadenceReturnS,
+  }) > TINDEQ_MAX_MOVEMENT_SET_S;
   return (
     <>
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-        <NumberField label="Reps / set" value={props.reps} onChange={props.onReps} min={1} max={50} />
+        <NumberField label="Reps / set" value={props.reps} onChange={props.onReps} min={1} max={maxReps} />
         <NumberField label="Sets" value={props.sets} onChange={props.onSets} min={1} max={20} />
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
         <NumberField
-          label="Out s"
+          label="Concentric s"
           value={props.cadenceOutS}
           onChange={props.onCadenceOutS}
           min={0.5}
           max={30}
         />
         <NumberField
-          label="Return s"
+          label="Eccentric s"
           value={props.cadenceReturnS}
           onChange={props.onCadenceReturnS}
           min={0.5}
@@ -89,13 +103,14 @@ export default function ReverseActionPresetFields(props: Props) {
       <div
         style={{
           fontSize: "var(--t-xs)",
-          color: "var(--ink-muted)",
+          color: overCap ? "var(--danger)" : "var(--ink-muted)",
           marginTop: 6,
           lineHeight: 1.5,
         }}
       >
-        One continuous {setDurationS}s set · clock-guided reps; force does not infer joint
-        position.
+        One continuous {setDurationS}s set · max 30m per set for Progressor; clock-guided
+        reps; force does not infer joint position.
+        {overCap && " Lower reps or cadence before saving."}
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
         <NumberField
@@ -124,20 +139,9 @@ export default function ReverseActionPresetFields(props: Props) {
         ).map(([mode, label]) => (
           <button
             key={mode}
-            className="tag"
+            className="tag tolerance-mode-option"
+            data-selected={props.toleranceMode === mode ? "true" : "false"}
             onClick={() => props.onToleranceMode(mode)}
-            style={
-              {
-                background:
-                  props.toleranceMode === mode ? "var(--info)" : "var(--surface-1)",
-                color: props.toleranceMode === mode ? "#ffffff" : "var(--ink-muted)",
-                border: `1px solid ${
-                  props.toleranceMode === mode ? "var(--info)" : "var(--border)"
-                }`,
-                cursor: "pointer",
-                fontFamily: "Inter, sans-serif",
-              } as CSSProperties
-            }
           >
             {label}
           </button>

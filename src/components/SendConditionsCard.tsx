@@ -102,7 +102,7 @@ export default function SendConditionsCard() {
   return (
     <>
     <div
-      className="card"
+      className="card surface-context"
       // #171: tappable card without the `.tappable` class (it has its own
       // compact column layout) — opt into the delegated tick by attribute.
       data-haptic="light"

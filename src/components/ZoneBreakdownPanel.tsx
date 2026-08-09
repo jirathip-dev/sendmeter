@@ -167,18 +167,8 @@ function ZoneRow({
       {holds.length > 0 && (
         <>
           <button
+            className="zone-holds-toggle"
             onClick={() => setOpen((v) => !v)}
-            style={{
-              marginLeft: 15,
-              marginTop: 3,
-              padding: 0,
-              background: "none",
-              border: "none",
-              color: "var(--ink-faint)",
-              fontSize: "var(--t-2xs)",
-              fontFamily: "inherit",
-              cursor: "pointer",
-            }}
           >
             {open ? "▾" : "▸"} {holds.length} hold{holds.length === 1 ? "" : "s"}
           </button>

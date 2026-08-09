@@ -1,3 +1,8 @@
+// KEEP-IN-SYNC: mirrored by
+// ios/App/SendLogWatchCore/Sources/SendLogWatchCore/HandsFreeForce.swift.
+// Keep phases, thresholds, timestamp recovery, and transition claims aligned;
+// both runtimes intentionally make each action claim before async work.
+
 export interface HandsFreeForceConfig {
   /// Load that must be held continuously before an armed pull begins.
   startKg: number;
@@ -16,6 +21,7 @@ export const DEFAULT_HANDS_FREE_FORCE_CONFIG: HandsFreeForceConfig = {
 
 export type HandsFreeForceState =
   | { phase: "idle" }
+  | { phase: "waitingForSlack" }
   | { phase: "armed"; aboveSinceMs: number | null }
   | { phase: "recording"; belowSinceMs: number | null }
   | { phase: "stopping" };
@@ -31,19 +37,31 @@ export function armedHandsFreeForce(): HandsFreeForceState {
   return { phase: "armed", aboveSinceMs: null };
 }
 
+/// A post-save re-arm must observe an unloaded gauge before it can recognize
+/// another pull. Otherwise a manual Stop & Save while still hanging turns the
+/// same continuous load into a phantom second rep after `startStableMs`.
+export function rearmedHandsFreeForce(): HandsFreeForceState {
+  return { phase: "waitingForSlack" };
+}
+
 export function idleHandsFreeForce(): HandsFreeForceState {
   return { phase: "idle" };
 }
 
 /// Reconcile the control claim while the transport reports an inactive
-/// status. `connected + armed` is the one intentional overlap: Arm claims the
-/// machine synchronously, then the async transport may render once with its
-/// old connected status before publishing armed.
+/// status. `connected + armed/waitingForSlack` is the intentional overlap:
+/// the state machine owns a live weight stream while the transport-facing
+/// status remains connected.
 export function handsFreeForceAtInactiveStatus(
   state: HandsFreeForceState,
   status: "connected" | "idle" | "unsupported",
 ): HandsFreeForceState {
-  if (status === "connected" && state.phase === "armed") return state;
+  if (
+    status === "connected" &&
+    (state.phase === "armed" || state.phase === "waitingForSlack")
+  ) {
+    return state;
+  }
   return state.phase === "idle" ? state : idleHandsFreeForce();
 }
 
@@ -57,6 +75,12 @@ export function stepHandsFreeForce(
 ): HandsFreeForceStep {
   if (state.phase === "idle" || state.phase === "stopping") {
     return { state, action: null };
+  }
+
+  if (state.phase === "waitingForSlack") {
+    return sample.kg <= config.stopKg
+      ? { state: armedHandsFreeForce(), action: null }
+      : { state, action: null };
   }
 
   if (state.phase === "armed") {

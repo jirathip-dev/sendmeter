@@ -22,6 +22,8 @@ import {
   createGenerationGuard,
   reconcileAddSession,
   rollbackAddSession,
+  rollbackEditSession,
+  rollbackRemoveSession,
   rollbackSetPhase,
   runFetchAttempts,
   sortSessions,
@@ -414,6 +416,85 @@ describe("applyRemoveSessionOptimistic", () => {
     const b = makeSession({ id: "b" });
     const result = applyRemoveSessionOptimistic([a, b], "missing");
     expect(result).toEqual([a, b]);
+  });
+});
+
+// #485 F4 — the auditor flagged this but explicitly did NOT prove it
+// ("needing a React renderer the repo has no harness for"). Verified for
+// real here: `editSession`/`removeSession` used to capture `prev = sessions`
+// once, up front, and roll back with a bare `setSessions(prev)` — the whole
+// list AS IT STOOD BEFORE THIS OPERATION's own optimistic apply. That
+// snapshot is a value from the render this call started in; it has no way
+// to see a DIFFERENT mutation (another edit/delete succeeding, or a
+// realtime refetch) that lands in the async window between the snapshot and
+// this rollback running. `rollback: () => setSessions(prev)` would silently
+// revert that other, successful mutation too — exactly CLAUDE.md's #295/#296
+// defect class (a decision from state captured earlier than the decision).
+//
+// `rollbackEditSession`/`rollbackRemoveSession` fix it by taking only the
+// ONE row this operation needs to undo, applied via a functional update
+// against whatever `sessions` CURRENTLY is at rollback time — never a
+// captured whole-list value.
+describe("rollbackEditSession / rollbackRemoveSession (#485 F4)", () => {
+  it("rollbackEditSession restores only the edited row", () => {
+    const original = makeSession({ id: "a", note: "before" });
+    const edited = makeSession({ id: "a", note: "after" });
+    const other = makeSession({ id: "b" });
+    const result = rollbackEditSession([edited, other], "a", original);
+    expect(result).toEqual([original, other]);
+  });
+
+  it("rollbackEditSession — PROVED. preserves a concurrent mutation to another row, unlike a whole-list snapshot restore", () => {
+    const original = makeSession({ id: "a", note: "before" });
+    const edited = makeSession({ id: "a", note: "after" });
+    // The list as it stands AT ROLLBACK TIME: b has since been deleted by a
+    // concurrent, already-succeeded removeSession — the exact interleaving
+    // F4 describes.
+    const currentList = [edited]; // b is gone
+    const result = rollbackEditSession(currentList, "a", original);
+    // The pre-fix shape (`setSessions(prevSnapshot)`, prevSnapshot = [original, b]
+    // captured before either operation) would resurrect b here. A wrong
+    // VALUE, not a missing symbol — this is the failure HANDOFF.md's scratch
+    // reproduction observed against the literal pre-fix rollback closure.
+    expect(result).toEqual([original]);
+    expect(result.some((s) => s.id === "b")).toBe(false);
+  });
+
+  it("rollbackEditSession is a no-op when there is nothing to restore from", () => {
+    const other = makeSession({ id: "b" });
+    expect(rollbackEditSession([other], "a", undefined)).toEqual([other]);
+  });
+
+  it("rollbackRemoveSession reinserts the removed row, sorted back into place", () => {
+    const removed = makeSession({ id: "a", date: "2026-07-18" });
+    const c = makeSession({ id: "c", date: "2026-07-20" });
+    const result = rollbackRemoveSession([c], removed);
+    expect(result.map((s) => s.id)).toEqual(["c", "a"]);
+  });
+
+  it("rollbackRemoveSession — PROVED. preserves a concurrent edit to another row, unlike a whole-list snapshot restore", () => {
+    const removed = makeSession({ id: "b" });
+    const editedA = makeSession({ id: "a", note: "edited while b's delete was in flight" });
+    // The list as it stands AT ROLLBACK TIME: a has already been edited by a
+    // concurrent, already-succeeded editSession.
+    const currentList = [editedA];
+    const result = rollbackRemoveSession(currentList, removed);
+    const a = result.find((s) => s.id === "a");
+    // The pre-fix shape would have restored the PRE-edit `a` from its own
+    // stale snapshot, silently discarding the concurrent edit.
+    expect(a).toEqual(editedA);
+    expect(result.some((s) => s.id === "b")).toBe(true);
+  });
+
+  it("rollbackRemoveSession is a no-op with nothing to reinsert", () => {
+    const a = makeSession({ id: "a" });
+    expect(rollbackRemoveSession([a], undefined)).toEqual([a]);
+  });
+
+  it("rollbackRemoveSession does not duplicate if the row is already back", () => {
+    const removed = makeSession({ id: "a" });
+    const already = makeSession({ id: "a", note: "re-added some other way" });
+    expect(rollbackRemoveSession([already], removed)).toEqual([already]);
   });
 });
 

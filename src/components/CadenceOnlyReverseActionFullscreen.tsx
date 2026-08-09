@@ -9,6 +9,7 @@ import {
 } from "../lib/cadenceOnlyRun";
 import type { NewTindeqRecording } from "../types";
 import ProtocolBadge from "./ProtocolBadge";
+import { SheetLayerProvider } from "./Sheet";
 
 export default function CadenceOnlyReverseActionFullscreen({
   run,
@@ -120,7 +121,7 @@ export default function CadenceOnlyReverseActionFullscreen({
   const instruction = position.finished
     ? "COMPLETE"
     : segment?.phase === "move"
-      ? segment.direction === "out" ? "OUT" : "RETURN"
+      ? segment.direction === "out" ? "CONCENTRIC" : "ECCENTRIC"
       : segment?.phase === "setRest" ? "SET REST" : "PREPARE";
 
   async function stop() {
@@ -137,7 +138,7 @@ export default function CadenceOnlyReverseActionFullscreen({
     await persistDue(stoppedAt, true);
   }
 
-  return <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "var(--canvas)", padding: "max(14px, env(safe-area-inset-top)) 16px max(14px, env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 12, textAlign: "center" }}>
+  return <SheetLayerProvider layer="fullscreen"><div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "var(--canvas)", padding: "max(14px, env(safe-area-inset-top)) 16px max(14px, env(safe-area-inset-bottom))", display: "flex", flexDirection: "column", gap: 12, textAlign: "center" }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
       <div style={{ minWidth: 0, flex: 1, textAlign: "left" }}>
         <div style={{ fontWeight: 850, fontSize: "var(--t-lg)", overflowWrap: "anywhere" }}>{run.preset.name}</div>
@@ -161,7 +162,7 @@ export default function CadenceOnlyReverseActionFullscreen({
       <div style={{ color: "var(--ink-faint)", fontSize: "var(--t-xs)" }}>
         Equipment resistance · {run.preset.setupNote || "no setup note"}
       </div>
-      <button className="btn-primary" style={{ background: "var(--danger)" }} onClick={() => void stop()}>Emergency stop</button>
+      <button className="btn-danger" onClick={() => void stop()}>Emergency stop</button>
     </> : <div className="card" style={{ margin: "auto 0" }}>
       <div style={{ fontWeight: 850, fontSize: "var(--t-xl)" }}>{stopped ? "Partial protocol saved" : "Protocol complete"}</div>
       <div className="section-sub">Clock-guided dose only; no force capacity evidence was recorded.</div>
@@ -192,5 +193,5 @@ export default function CadenceOnlyReverseActionFullscreen({
         });
       }}>{saving ? "Saving…" : "Save session"}</button>
     </div>}
-  </div>;
+  </div></SheetLayerProvider>;
 }

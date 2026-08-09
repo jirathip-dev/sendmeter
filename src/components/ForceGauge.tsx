@@ -5,6 +5,16 @@ import type { TindeqSample } from "../types";
 
 const WINDOW_MS = 10_000;
 
+interface TracePalette {
+  grid: string;
+  optimal: string;
+  focus: string;
+}
+
+function cssChartColor(canvas: HTMLCanvasElement, name: string, fallback: string): string {
+  return getComputedStyle(canvas).getPropertyValue(name).trim() || fallback;
+}
+
 export interface GaugeTargetZone {
   kg: number;
   lowKg: number;
@@ -36,6 +46,7 @@ function drawTrace(
   samples: TindeqSample[],
   nowT: number,
   target?: GaugeTargetZone | null,
+  palette: TracePalette = { grid: "#8E8E93", optimal: "#2E96F0", focus: "#5B5FC7" },
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -57,7 +68,8 @@ function drawTrace(
     1.15;
 
   // gridlines
-  ctx.strokeStyle = "rgba(136,136,142,0.3)";
+  ctx.strokeStyle = palette.grid;
+  ctx.globalAlpha = 0.3;
   ctx.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
     const y = (h / 4) * i;
@@ -66,25 +78,29 @@ function drawTrace(
     ctx.lineTo(w, y);
     ctx.stroke();
   }
+  ctx.globalAlpha = 1;
 
   // target zone band + line
   if (target) {
     const yLow = h - (target.lowKg / maxKg) * h;
     const yHigh = h - (target.highKg / maxKg) * h;
-    ctx.fillStyle = "rgba(46,150,240,0.10)";
+    ctx.fillStyle = palette.optimal;
+    ctx.globalAlpha = 0.1;
     ctx.fillRect(0, yHigh, w, yLow - yHigh);
     const yTarget = h - (target.kg / maxKg) * h;
-    ctx.strokeStyle = "rgba(46,150,240,0.6)";
+    ctx.strokeStyle = palette.optimal;
+    ctx.globalAlpha = 0.6;
     ctx.setLineDash([5, 4]);
     ctx.beginPath();
     ctx.moveTo(0, yTarget);
     ctx.lineTo(w, yTarget);
     ctx.stroke();
     ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
   }
 
   if (visible.length < 2) return;
-  ctx.strokeStyle = "#5B5FC7";
+  ctx.strokeStyle = palette.focus;
   ctx.lineWidth = 2;
   ctx.lineJoin = "round";
   ctx.beginPath();
@@ -114,20 +130,70 @@ export default function ForceGauge({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    if (!live) {
-      // one final draw of whatever is in the buffer
+    const readPalette = (): TracePalette => ({
+      grid: cssChartColor(canvas, "--chart-grid", "#8E8E93"),
+      optimal: cssChartColor(canvas, "--chart-optimal", "#2E96F0"),
+      focus: cssChartColor(canvas, "--chart-focus", "#5B5FC7"),
+    });
+    let palette = readPalette();
+    const drawCurrent = () => {
+      // Computed styles are read only at mount or when a theme signal changes;
+      // the live RAF below reuses this palette for every trace frame.
+      palette = readPalette();
       const samples = samplesRef.current;
-      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0, target);
-      return;
+      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0, target, palette);
+    };
+    // Theme changes are rare compared with trace frames. Observe the root
+    // instead of reading computed styles in the animation loop, keeping the
+    // live canvas cheap while still adapting immediately to explicit and
+    // system light/dark mode.
+    const themeObserver = new MutationObserver(() => {
+      drawCurrent();
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    const preferences = [
+      window.matchMedia("(prefers-color-scheme: dark)"),
+      window.matchMedia("(prefers-contrast: more)"),
+    ];
+    const onPreferenceChange = () => drawCurrent();
+    for (const preference of preferences) {
+      if (typeof preference.addEventListener === "function") {
+        preference.addEventListener("change", onPreferenceChange);
+      } else {
+        preference.addListener(onPreferenceChange);
+      }
+    }
+    const removePreferenceListeners = () => {
+      for (const preference of preferences) {
+        if (typeof preference.removeEventListener === "function") {
+          preference.removeEventListener("change", onPreferenceChange);
+        } else {
+          preference.removeListener(onPreferenceChange);
+        }
+      }
+    };
+    if (!live) {
+      drawCurrent();
+      return () => {
+        themeObserver.disconnect();
+        removePreferenceListeners();
+      };
     }
     let raf = 0;
     const tick = () => {
       const samples = samplesRef.current;
-      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0, target);
+      drawTrace(canvas, samples, samples[samples.length - 1]?.t ?? 0, target, palette);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      themeObserver.disconnect();
+      removePreferenceListeners();
+    };
   }, [live, samplesRef, target]);
 
   const inZone =

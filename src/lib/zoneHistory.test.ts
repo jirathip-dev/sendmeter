@@ -10,6 +10,8 @@ import {
   isDepletionEffortRecording,
   isEffortRecording,
   isMeasuredRecording,
+  isRecoveredRecording,
+  isStaticCapacityEvidence,
   recommendZone,
   recordingCapacityModality,
   recordingZone,
@@ -29,7 +31,7 @@ describe("isMeasuredRecording (#367)", () => {
   });
 });
 
-describe("capacity modality partitioning (#422)", () => {
+describe("Static-only capacity evidence (#510)", () => {
   const measured = (
     id: string,
     protocolMode?: "hold" | "reverse_action",
@@ -53,29 +55,27 @@ describe("capacity modality partitioning (#422)", () => {
     expect(recordingCapacityModality({ protocolMode: "reverse_action" })).toBe("reverse_action");
   });
 
-  it("never lets Static and Reverse Action rows enter each other's curve or PR", () => {
+  it("never lets resisted-movement rows enter Static curve or PR models", () => {
     const rows = [measured("legacy"), measured("hold", "hold"), measured("reverse", "reverse_action")];
     expect(curveCandidateRecordings(rows, "FDP", "left", "static").map((r) => r.id)).toEqual([
       "legacy",
       "hold",
     ]);
-    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action").map((r) => r.id)).toEqual([
-      "reverse",
-    ]);
+    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action")).toEqual([]);
     expect(effortPeakKg(rows, "FDP", "left", "static")).toBe(30);
-    expect(effortPeakKg(rows, "FDP", "left", "reverse_action")).toBe(30);
+    expect(effortPeakKg(rows, "FDP", "left", "reverse_action")).toBeNull();
+    expect(isStaticCapacityEvidence(rows[0]!)).toBe(true);
+    expect(isStaticCapacityEvidence(rows[2]!)).toBe(false);
   });
 
-  it("keeps historical Reverse Action evidence but excludes new ordinary prescribed sets", () => {
+  it("excludes historical, explicit-capacity, and ordinary movement rows alike", () => {
     const rows = [
       measured("historical", "reverse_action", null),
       measured("capacity", "reverse_action", true),
       measured("ordinary", "reverse_action", false),
     ];
-    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action").map((r) => r.id)).toEqual([
-      "historical",
-      "capacity",
-    ]);
+    expect(curveCandidateRecordings(rows, "FDP", "left", "reverse_action")).toEqual([]);
+    expect(rows.every((row) => !isStaticCapacityEvidence(row))).toBe(true);
   });
 
   it("excludes cadence-only rows from both models regardless of stamped mode", () => {
@@ -202,6 +202,76 @@ describe("isEffortRecording (#325)", () => {
   });
 });
 
+describe("isRecoveredRecording (#486 review — F4)", () => {
+  it("is true for a true whole-buffer blob: no protocol run, no recorded zone, exact salvage note", () => {
+    expect(
+      isRecoveredRecording({ note: "Recovered after sign-out", zone: null, protocolRunId: null }),
+    ).toBe(true);
+    expect(
+      isRecoveredRecording({
+        note: "Recovered after connection loss",
+        zone: null,
+        protocolRunId: undefined,
+      }),
+    ).toBe(true);
+  });
+
+  it("is FALSE for a reconstructed adaptive/reverse-action hold carrying the identical note text — F4's over-exclusion", () => {
+    // buildAdaptiveStaticSalvage / buildUnclaimedReverseActionSalvage: a
+    // precisely time-sliced hold/set with a real protocolRunId and a
+    // recorded zone, that can carry the exact same note a true blob does.
+    // Note text alone cannot tell them apart — the zone/protocolRunId
+    // conjunction is what does.
+    expect(
+      isRecoveredRecording({
+        note: "Recovered after sign-out",
+        zone: "strength",
+        protocolRunId: "run-1",
+      }),
+    ).toBe(false);
+    expect(
+      isRecoveredRecording({
+        note: "Recovered after connection loss",
+        zone: "power",
+        protocolRunId: "run-2",
+      }),
+    ).toBe(false);
+  });
+
+  it("is FALSE for a composite note (the adaptive salvage's actual shape) even with no protocol run", () => {
+    // Exact match, not prefix — "Recovered after sign-out · Hands-free
+    // protocol attempt failed" is a different string entirely.
+    expect(
+      isRecoveredRecording({
+        note: "Recovered after sign-out · Hands-free protocol attempt failed",
+        zone: null,
+        protocolRunId: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("is FALSE for an ordinary un-noted free hold (the common zone:null/protocolRunId:null case)", () => {
+    expect(
+      isRecoveredRecording({ note: "", zone: null, protocolRunId: null }),
+    ).toBe(false);
+    expect(
+      isRecoveredRecording({ note: undefined, zone: null, protocolRunId: null }),
+    ).toBe(false);
+  });
+
+  it("is FALSE for a user's own unrelated note, even one sharing the 'Recovered after' prefix", () => {
+    // F3: note is user-editable (EditRecordingSheet). Exact match — not the
+    // old startsWith — so an ordinary training-log phrase can't collide.
+    expect(
+      isRecoveredRecording({
+        note: "Recovered after 3 min rest",
+        zone: null,
+        protocolRunId: null,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("effortPeakKg (#325)", () => {
   const rec = (
     peakKg: number,
@@ -256,6 +326,17 @@ describe("effortPeakKg (#325)", () => {
     const recs = [rec(40, "FDP", "left"), rec(48, "FDP", "right")];
     expect(effortPeakKg(recs, "FDP", null)).toBe(48);
   });
+
+  it("#486 review F1: a salvage/recovery blob's PEAK still counts toward the PR — only the curve fit excludes it", () => {
+    // The blob's duration/avg are contaminated by inter-rep rests (what the
+    // curve fit consumes); its peakKg is a genuine instantaneous max over
+    // real samples and is unaffected. Dropping it here would silently lower
+    // the user's PR and re-prescribe every %-of-PR preset lighter with no
+    // UI indication — the exact regression the review caught (62 -> 55 kg).
+    const cleanRep = { peakKg: 55, avgKg: 50, tag: "FDP", side: "left" as const, zone: "strength" as const, durationMs: 10_000, source: "dynamometer" as const, protocolRunId: null };
+    const blob = { peakKg: 62, avgKg: 30, tag: "FDP", side: "left" as const, zone: null, durationMs: 536_000, source: "dynamometer" as const, note: "Recovered after connection loss", protocolRunId: null };
+    expect(effortPeakKg([cleanRep, blob], "FDP", "left")).toBe(62);
+  });
 });
 
 describe("curveCandidateRecordings (#325)", () => {
@@ -289,6 +370,38 @@ describe("curveCandidateRecordings (#325)", () => {
     ];
     expect(curveCandidateRecordings(recs, "FDP", "left").map((r) => r.id)).toEqual(["left"]);
     expect(curveCandidateRecordings(recs, "FDP", null).map((r) => r.id)).toEqual(["left", "right"]);
+  });
+
+  it("#486 review F4: excludes a true blob but admits a reconstructed hold carrying the identical note", () => {
+    const blob = {
+      id: "blob",
+      durationMs: 536_000,
+      tag: "FDP",
+      side: "left" as const,
+      zone: null,
+      protocolRunId: null,
+      note: "Recovered after sign-out",
+      peakKg: 62,
+      avgKg: 30,
+      source: "dynamometer" as const,
+    };
+    // buildUnclaimedReverseActionSalvage's actual shape: same literal note
+    // text as the blob, but a real protocolRunId and a recorded zone — a
+    // legitimate per-set reconstruction, not a raw buffer slice.
+    const reconstructed = {
+      id: "reconstructed",
+      durationMs: 8_000,
+      tag: "FDP",
+      side: "left" as const,
+      zone: "strength" as const,
+      protocolRunId: "run-42",
+      note: "Recovered after sign-out",
+      peakKg: 40,
+      avgKg: 35,
+      source: "dynamometer" as const,
+    };
+    const picked = curveCandidateRecordings([blob, reconstructed], "FDP", "left");
+    expect(picked.map((r) => r.id)).toEqual(["reconstructed"]);
   });
 });
 
@@ -330,6 +443,23 @@ describe("balanceScopeCounts (#325)", () => {
         { durationMs: 10_000, zone: "warmup" },
       ]),
     ).toEqual({ effortCount: 0, recordedCount: 0 });
+  });
+
+  it("#486 review F2: counts a salvage/recovery blob — stays consistent with zoneSets, which was never filtering it out", () => {
+    // Training balance is out of scope for #486 (only curveCandidateRecordings
+    // excludes a blob); balanceScopeCounts and zoneSets must agree on whether
+    // it's counted, or this function's own doc comment ("would make both
+    // sentences literally false") becomes true of the fix instead of the bug.
+    const cleanRep = { durationMs: 10_000, zone: "strength" as const };
+    const blob = { durationMs: 536_000, zone: null, note: "Recovered after connection loss" };
+    const counts = balanceScopeCounts([cleanRep, blob]);
+    expect(counts.effortCount).toBe(2);
+    // zoneSets buckets the blob's ~536s as endurance (inferred from raw
+    // duration) — the same bucket balanceScopeCounts's effortCount now
+    // agrees it belongs in, matching "N holds fed the numbers below" to the
+    // holds the bars actually total.
+    const sets = zoneSets([cleanRep, blob]);
+    expect(sets.endurance).toBeGreaterThan(0);
   });
 });
 

@@ -20,7 +20,27 @@ public enum TindeqFrame: Equatable, Sendable {
     case weight([WeightSample])
     case response(Data)
     case lowBattery
-    case unknown(UInt8)
+    // Int, not UInt8 (#488): a real tag byte is 0-255, so a UInt8 sentinel
+    // for "too short to have a tag at all" necessarily collides with some
+    // genuine tag value. The web mirror (tindeq-protocol.ts) represents the
+    // same frame as `{ kind: "unknown", tag: number }` and uses -1 for
+    // exactly this reason — a value no real tag byte can ever produce.
+    // Matching that here keeps a truncated notification distinguishable
+    // from a real, if unrecognized, one.
+    //
+    // WARNING (#488 F6): the associated value can be `truncatedTag` (-1),
+    // which is NOT representable as `UInt8` — `UInt8(tag)` traps on it where
+    // it previously could not (the old `UInt8`-typed case made every value
+    // total). A future consumer that narrows this back to a byte (e.g. to
+    // log it as `0x%02X`) must check against `truncatedTag` first, or use
+    // the non-trapping `UInt8(exactly:)`.
+    case unknown(Int)
+
+    /// Sentinel `unknown(_:)` payload for "too short to have a tag at all" —
+    /// never a real tag byte (0-255), so a truncated notification is always
+    /// distinguishable from a genuine, if unrecognized, one. See the WARNING
+    /// above before converting an `unknown` payload to `UInt8`.
+    public static let truncatedTag = -1
 
     public struct WeightSample: Equatable, Sendable {
         public let us: UInt32  // device timestamp, microseconds
@@ -31,7 +51,7 @@ public enum TindeqFrame: Equatable, Sendable {
 /// Frames are [tag u8][length u8][payload]. Weight payload (tag 0x01) is
 /// repeated pairs of (float32 LE kg, uint32 LE µs).
 public func parseTindeqNotification(_ data: Data) -> TindeqFrame {
-    guard data.count >= 2 else { return .unknown(0xFF) }
+    guard data.count >= 2 else { return .unknown(TindeqFrame.truncatedTag) }
     let tag = data[data.startIndex]
     let len = Int(data[data.startIndex + 1])
 
@@ -54,6 +74,6 @@ public func parseTindeqNotification(_ data: Data) -> TindeqFrame {
     case 0x02:
         return .lowBattery
     default:
-        return .unknown(tag)
+        return .unknown(Int(tag))
     }
 }

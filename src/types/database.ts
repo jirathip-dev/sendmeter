@@ -210,11 +210,15 @@ export type Database = {
           climbing: boolean
           climbing_since: string | null
           elevation_gain_m: number | null
+          event: string
           hr: number | null
           rest_started_at: string | null
           rest_target_s: number | null
+          run_id: string
+          sequence: number
           started_at: string
           status: string
+          terminal: boolean
           updated_at: string
           user_id: string
           workout_id: string
@@ -225,11 +229,15 @@ export type Database = {
           climbing?: boolean
           climbing_since?: string | null
           elevation_gain_m?: number | null
+          event?: string
           hr?: number | null
           rest_started_at?: string | null
           rest_target_s?: number | null
+          run_id?: string
+          sequence?: number
           started_at: string
           status?: string
+          terminal?: boolean
           updated_at?: string
           user_id?: string
           workout_id: string
@@ -240,11 +248,15 @@ export type Database = {
           climbing?: boolean
           climbing_since?: string | null
           elevation_gain_m?: number | null
+          event?: string
           hr?: number | null
           rest_started_at?: string | null
           rest_target_s?: number | null
+          run_id?: string
+          sequence?: number
           started_at?: string
           status?: string
+          terminal?: boolean
           updated_at?: string
           user_id?: string
           workout_id?: string
@@ -623,6 +635,13 @@ export type Database = {
     }
     Functions: {
       delete_account: { Args: never; Returns: undefined }
+      link_tindeq_recordings_to_session: {
+        Args: { p_recording_ids: string[]; p_session_id: string }
+        Returns: {
+          duration_min: number
+          group_id: string
+        }[]
+      }
       rename_tindeq_tag: {
         Args: { new_name: string; old_name: string }
         Returns: undefined

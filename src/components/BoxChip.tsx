@@ -16,7 +16,7 @@ export default function BoxChip({
   onClick: () => void;
   /// Compact variant for the fullscreen's tight quick-pickers.
   small?: boolean;
-  /// Accent hue: fill when active, text + border tint when idle.
+  /// Accent hue: fill and border tint; text always uses the readable ink token.
   /// Defaults to the info violet.
   color?: string;
   style?: CSSProperties;
@@ -27,25 +27,20 @@ export default function BoxChip({
 }) {
   const hue = color ?? "var(--info)";
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        padding: small ? "6px 10px" : "8px 12px",
-        borderRadius: 8,
-        border: `1px solid ${active ? hue : color ? hue : "var(--border)"}`,
-        background: active ? hue : "var(--surface-1)",
-        color: active ? "#ffffff" : color ? hue : "var(--ink)",
-        fontFamily: "Inter, sans-serif",
-        fontSize: small ? "var(--t-xs)" : "var(--t-sm)",
-        fontWeight: 600,
-        cursor: disabled ? "default" : "pointer",
-        opacity: disabled ? 0.75 : 1,
-        WebkitTapHighlightColor: "transparent",
-        ...style,
-      }}
+    <span
+      className="box-chip-host"
+      style={{ "--box-chip-hue": hue, ...style } as CSSProperties}
     >
-      {label}
-    </button>
+      <button
+        className={`box-chip${small ? " box-chip-small" : ""}`}
+        data-active={active ? "true" : "false"}
+        data-disabled={disabled ? "true" : "false"}
+        data-has-color={color ? "true" : "false"}
+        onClick={onClick}
+        disabled={disabled}
+      >
+        {label}
+      </button>
+    </span>
   );
 }

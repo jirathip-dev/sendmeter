@@ -49,23 +49,46 @@ export interface PendingUploadsLine {
   tone: PendingUploadsTone;
 }
 
+/// The queue depth, split — see `pendingRecordingsBreakdown` in
+/// recordingQueue.ts. `pending` is still being actively retried; `stuck` is
+/// what a drain has stopped attempting automatically because the server has
+/// rejected it across an app-version change (the policy block above
+/// `drainQueue`).
+export interface PendingUploadsBreakdown {
+  pending: number;
+  stuck: number;
+}
+
 /// How the depth reads, kept out of the view so the honest-states rule is
 /// testable: "not known yet" must never render as "empty", and an empty queue
 /// must say so rather than render as silence — a row that disappears when
 /// there's nothing to report is indistinguishable from a row that's broken.
 ///
 /// `null` means the depth hasn't been read yet (both stores are async to
-/// count); `0` means genuinely nothing queued.
-export function pendingUploadsLine(count: number | null): PendingUploadsLine {
-  if (count === null) return { text: "This device · queue not read yet", tone: "muted" };
-  if (count === 0) {
+/// count); `{pending: 0, stuck: 0}` means genuinely nothing queued.
+///
+/// #484: a non-zero `stuck` is its OWN state, never folded silently into
+/// `pending` or excluded from the line — #475 F1 on the watch was a BLOCKER
+/// for exactly that shape (a quarantine count written into a slot with zero
+/// readers). It always renders (tone "warning", since nothing will move on
+/// its own), whether or not anything is still pending too.
+export function pendingUploadsLine(breakdown: PendingUploadsBreakdown | null): PendingUploadsLine {
+  if (breakdown === null) return { text: "This device · queue not read yet", tone: "muted" };
+  const { pending, stuck } = breakdown;
+  if (pending === 0 && stuck === 0) {
     return { text: "This device · empty, everything synced", tone: "muted" };
   }
-  const items = `${count} recording${count === 1 ? "" : "s"} pending sync`;
+  if (stuck > 0) {
+    const stuckWords = `${stuck} recording${stuck === 1 ? "" : "s"} stuck, not retrying`;
+    if (pending === 0) return { text: `This device · ${stuckWords}`, tone: "warning" };
+    const pendingWords = `${pending} pending sync`;
+    return { text: `This device · ${pendingWords}, ${stuckWords}`, tone: "warning" };
+  }
+  const items = `${pending} recording${pending === 1 ? "" : "s"} pending sync`;
   return {
     text: `This device · ${items}`,
     // A couple of reps waiting on signal is normal and not worth alarm; a
     // backlog this deep means the drain isn't getting through.
-    tone: count >= PENDING_BACKED_UP ? "warning" : "muted",
+    tone: pending >= PENDING_BACKED_UP ? "warning" : "muted",
   };
 }

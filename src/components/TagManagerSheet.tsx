@@ -60,17 +60,7 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
   const sorted = [...tags].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <Sheet onClose={onClose}>
-      <div
-        style={{
-          fontFamily: "Inter, sans-serif",
-          fontSize: "var(--t-xl)",
-          fontWeight: 800,
-          marginBottom: 2,
-        }}
-      >
-        Manage tags
-      </div>
+    <Sheet title="Manage tags" onClose={onClose}>
       <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
         Rename updates every recording with that tag. Hiding keeps the data but
         drops the tag from the pickers and trend.
@@ -122,8 +112,8 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
                     Save
                   </button>
                   <button
+                    className="tag-action-button"
                     onClick={() => setEditing(null)}
-                    style={pillBtn}
                     aria-label="Cancel"
                   >
                     ✕
@@ -152,19 +142,19 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
                     {t.count} rep{t.count === 1 ? "" : "s"}
                   </span>
                   <button
+                    className="tag-action-button"
                     onClick={() => {
                       setDraft(t.name);
                       setEditing(t.name);
                     }}
-                    style={pillBtn}
                     aria-label={`Rename ${t.name}`}
                     disabled={busy}
                   >
                     ✎
                   </button>
                   <button
+                    className="tag-action-button"
                     onClick={() => void toggleHidden(t.name, !isHidden)}
-                    style={pillBtn}
                     aria-label={isHidden ? `Show ${t.name}` : `Hide ${t.name}`}
                     disabled={busy}
                   >
@@ -177,23 +167,6 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
         })}
       </div>
 
-      <div style={{ marginTop: 14 }}>
-        <button className="btn-ghost" onClick={onClose}>
-          Done
-        </button>
-      </div>
     </Sheet>
   );
 }
-
-const pillBtn: React.CSSProperties = {
-  flexShrink: 0,
-  background: "none",
-  border: "1px solid var(--border)",
-  color: "var(--ink-muted)",
-  padding: "5px 9px",
-  borderRadius: 7,
-  fontSize: "var(--t-2xs)",
-  fontFamily: "Inter, sans-serif",
-  cursor: "pointer",
-};

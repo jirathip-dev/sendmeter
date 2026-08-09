@@ -72,10 +72,15 @@ export async function fetchWeightHistory(): Promise<
 /// polluted by e.g. the watch being worn by someone else. Defaults to all
 /// rows; pass `from`/`to` (YYYY-MM-DD) to limit to a date range. A lower
 /// date bound is always sent so PostgREST never sees an unfiltered delete.
+///
+/// Returns the number of rows actually deleted (#494 N4) — the caller uses
+/// it as a discriminator: zero rows deleted (there was no history to begin
+/// with) plus a resync that then finds nothing to rebuild is benign, not the
+/// data-loss failure `resyncHealthHistory`'s `ok:false` exists to flag.
 export async function deleteHealthMetrics(opts?: {
   from?: string;
   to?: string;
-}): Promise<void> {
+}): Promise<number> {
   // Guard: an unauthenticated DELETE isn't an error — RLS just matches zero
   // rows and reports success, so the UI would claim "cleared" while nothing
   // happened (seen when a revoked session fell back to anon). Fail loudly
@@ -89,6 +94,7 @@ export async function deleteHealthMetrics(opts?: {
     .delete()
     .gte("date", opts?.from ?? "2000-01-01");
   if (opts?.to) q = q.lte("date", opts.to);
-  const { error } = await q;
+  const { data: deleted, error } = await q.select("date");
   if (error) throw error;
+  return deleted?.length ?? 0;
 }

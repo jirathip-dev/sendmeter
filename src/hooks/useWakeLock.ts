@@ -57,11 +57,21 @@ export function useWakeLock(active: boolean): void {
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-    void nativeCoordinator.setDesired(active);
-    return () => {
-      // This is process-global native state, so cleanup must explicitly restore
-      // the idle timer. The coordinator orders it after any in-flight enable.
-      void nativeCoordinator.setDesired(false);
-    };
+    if (!active) {
+      // Re-assert on every inactive (re)mount (#493 review F3): the
+      // coordinator swallows a rejected native transition and never retries,
+      // so without this a single failed allowSleep — a bridge hiccup on
+      // routine pause — would keep the screen from ever auto-locking again
+      // this process. This restores the old setDesired(false)-on-inactive
+      // self-healing, refcount-safely: reassert applies the current hold
+      // count, so it cannot release a hold another consumer still has.
+      void nativeCoordinator.reassert();
+      return;
+    }
+    // This is process-global native state (#493 F-E): each active consumer
+    // holds one refcounted acquire, so one unmounting can't release a lock
+    // another still needs. The coordinator serializes the underlying native
+    // transitions; the last release restores the idle timer.
+    return nativeCoordinator.acquire();
   }, [active]);
 }

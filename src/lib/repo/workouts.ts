@@ -13,6 +13,7 @@ import type {
 import { today } from "../dates";
 import { unwrap } from "./shared";
 import { unwrapOneMutation } from "../mutationInvariant";
+import { rowToLive } from "../liveWorkoutMirror";
 
 // ---- Routine presets (Workout tab guided routine timer) ----
 
@@ -186,26 +187,11 @@ export async function fetchWorkouts(limit = 30): Promise<WorkoutListItem[]> {
 export async function fetchLiveWorkout(): Promise<LiveWorkout | null> {
   const { data, error } = await supabase
     .from("live_workouts")
-    .select(
-      "workout_id, status, started_at, hr, attempt_count, active_kcal, elevation_gain_m, climbing, climbing_since, rest_started_at, rest_target_s, updated_at",
-    )
+    .select("*")
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  return {
-    workoutId: data.workout_id,
-    status: data.status as LiveWorkout["status"],
-    startedAt: data.started_at,
-    hr: data.hr,
-    attemptCount: data.attempt_count,
-    activeKcal: data.active_kcal,
-    elevationGainM: data.elevation_gain_m,
-    climbing: data.climbing,
-    climbingSince: data.climbing_since,
-    restStartedAt: data.rest_started_at,
-    restTargetS: data.rest_target_s,
-    updatedAt: data.updated_at,
-  };
+  return rowToLive(data as unknown as Record<string, unknown>);
 }
 
 /// Save a phone-logged workout (SL-41): a sessions row (feeds ACWR/History,

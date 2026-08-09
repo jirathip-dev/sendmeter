@@ -110,7 +110,26 @@ public nonisolated enum RPEQuantization {
 }
 
 public nonisolated enum RPEModelStore {
-    private static let key = "rpeModel.v1"
+    // #473/#478: bumped from "rpeModel.v1" — every model fitted before this
+    // fix trained on #473's corrupt features (a 27s boulder recorded as
+    // 1034s, 5 boulders recorded as 1, `attempts_confirmed` systematically
+    // under-counted). Bumping the key makes `load()` read nil once on
+    // upgrade, so `refitRPEModelIfStale` treats it as unconditionally stale
+    // and refits from scratch on the next workout start — an old-key model
+    // is simply never read again, "clearing" it without needing a migration.
+    //
+    // The key bump alone only stops READING an old model — the very next
+    // refit would otherwise immediately re-fit a "fresh" v2 model on the same
+    // corrupt rows. `Repo.fetchLabeledWorkouts()` closes that: it excludes
+    // rows started before this fix's rollout cutoff, so the refit trains on
+    // NOTHING until enough post-fix confirmed workouts exist
+    // (`Tunables.rpeMinTrainingSamples`) — `RPEModelFitter.fit` returns nil
+    // below that, and `WorkoutManager.end()`'s existing hand-formula fallback
+    // (`AttemptDetector.predictRPE`) is used meanwhile. That's the honest
+    // historical-row policy: existing `climb_workouts`/`climb_attempts` rows
+    // keep their recorded (sometimes phantom) durations/counts, not
+    // backfilled — see RELEASE_NOTES.md — but they are never trained on again.
+    private static let key = "rpeModel.v2"
 
     public static func load() -> RPEModel? {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
