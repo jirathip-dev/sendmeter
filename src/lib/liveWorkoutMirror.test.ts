@@ -8,6 +8,8 @@ import {
   messageToLive,
   preferFresher,
   rowToLive,
+  acceptsLiveWorkout,
+  reduceLiveWorkout,
   visibleLiveWorkout,
   type HrLog,
 } from "./liveWorkoutMirror";
@@ -17,8 +19,12 @@ const T1 = "2026-07-16T10:00:05.000Z";
 const T2 = "2026-07-16T10:00:10.000Z";
 
 function row(overrides: Partial<LiveWorkout> = {}): LiveWorkout {
-  return {
+  const base: LiveWorkout = {
     workoutId: "w1",
+    runId: "w1",
+    sequence: 1,
+    event: "telemetry",
+    terminal: false,
     status: "live",
     startedAt: T0,
     hr: 120,
@@ -30,14 +36,18 @@ function row(overrides: Partial<LiveWorkout> = {}): LiveWorkout {
     restStartedAt: null,
     restTargetS: null,
     updatedAt: T1,
+  };
+  return {
+    ...base,
     ...overrides,
+    runId: overrides.runId ?? overrides.workoutId ?? base.runId,
   };
 }
 
 describe("preferFresher", () => {
   it("incoming wins when strictly newer", () => {
     const prev = row({ updatedAt: T0 });
-    const incoming = row({ updatedAt: T1 });
+    const incoming = row({ sequence: 2, updatedAt: T1 });
     expect(preferFresher(prev, incoming)).toBe(incoming);
   });
 
@@ -47,20 +57,105 @@ describe("preferFresher", () => {
     expect(preferFresher(prev, incoming)).toBe(prev);
   });
 
-  it("incoming wins on an equal timestamp", () => {
+  it("rejects an equal-timestamp duplicate sequence", () => {
     const prev = row({ updatedAt: T1 });
     const incoming = row({ updatedAt: T1, hr: 999 });
-    expect(preferFresher(prev, incoming)).toBe(incoming);
+    expect(preferFresher(prev, incoming)).toBe(prev);
   });
 
   it("incoming wins when prev is null", () => {
     const incoming = row();
     expect(preferFresher(null, incoming)).toBe(incoming);
   });
+
+  it("rejects duplicate and out-of-order sequences even when their clocks are newer", () => {
+    const prev = row({ sequence: 8, updatedAt: T2 });
+    expect(acceptsLiveWorkout(prev, row({ sequence: 8, updatedAt: "2026-07-16T10:01:00.000Z" }))).toBe(false);
+    expect(acceptsLiveWorkout(prev, row({ sequence: 7, updatedAt: "2026-07-16T10:01:00.000Z" }))).toBe(false);
+  });
+
+  it("accepts terminal End and rejects a late live beat", () => {
+    const live = row({ sequence: 10, updatedAt: T2 });
+    const ended = row({ status: "ended", sequence: 9, event: "end", terminal: true, updatedAt: T1 });
+    expect(acceptsLiveWorkout(live, ended)).toBe(true);
+    expect(acceptsLiveWorkout(ended, row({ sequence: 11, updatedAt: "2026-07-16T10:01:00.000Z" }))).toBe(false);
+  });
+
+  it("rotates mixed-version fallback identity at a new workout start", () => {
+    const ended = messageToLive({
+      status: "ended",
+      started_at: Date.parse(T0) / 1000,
+      updated_at: Date.parse(T1) / 1000,
+    }, null);
+    expect(ended.runId).toBe(`legacy-workout-${Date.parse(T0)}`);
+    const fresh = messageToLive({
+      status: "live",
+      started_at: Date.parse(T2) / 1000,
+      updated_at: Date.parse(T2) / 1000,
+    }, ended);
+    expect(fresh.runId).not.toBe(ended.runId);
+    expect(acceptsLiveWorkout(ended, fresh)).toBe(true);
+    const late = messageToLive({
+      status: "live",
+      started_at: Date.parse(T0) / 1000,
+      updated_at: Date.parse("2026-07-16T10:01:00.000Z") / 1000,
+    }, ended);
+    expect(late.runId).toBe(ended.runId);
+    expect(acceptsLiveWorkout(ended, late)).toBe(false);
+  });
+
+  it("normalizes an explicit terminal marker to End even with a live status", () => {
+    const next = messageToLive({
+      status: "live",
+      run_id: "run-terminal",
+      sequence: 4,
+      terminal: true,
+      event: "telemetry",
+      updated_at: Date.parse(T1) / 1000,
+    }, null);
+    expect(next.terminal).toBe(true);
+    expect(next.event).toBe("end");
+    expect(visibleLiveWorkout(next, { id: next.runId, pts: [] }, Date.parse(T1))).toEqual([null, []]);
+  });
+
+  it("normalizes Swift UUID casing so WC and Supabase share one cursor", () => {
+    const direct = messageToLive({
+      status: "live",
+      run_id: "ABCDEFAB-ABCD-4ABC-8ABC-ABCDEFABCDEF",
+      sequence: 2,
+      event: "telemetry",
+      updated_at: Date.parse(T1) / 1000,
+    }, null);
+    const durable = row({
+      runId: direct.runId.toLowerCase(),
+      sequence: 1,
+      updatedAt: T0,
+    });
+    expect(direct.runId).toBe(durable.runId);
+    expect(acceptsLiveWorkout(durable, direct)).toBe(true);
+  });
+
+  it("reduces current state from one ref-owned cursor and keeps the direct source", () => {
+    const initial = {
+      row: null,
+      hrLog: { id: "", pts: [] },
+      source: "server-fallback" as const,
+    };
+    const next = row({ sequence: 1, hr: 125 });
+    const result = reduceLiveWorkout(initial, next, "watch-direct");
+    expect(result.accepted).toBe(true);
+    expect(result.state.row).toBe(next);
+    expect(result.state.source).toBe("watch-direct");
+    expect(result.state.hrLog.pts).toEqual([{ t: Date.parse(T1), hr: 125 }]);
+  });
 });
 
 describe("messageToLive", () => {
   const msg: LiveWorkoutMessage = {
+    run_id: "run-1",
+    sequence: 4,
+    event: "telemetry",
+    terminal: false,
     status: "live",
     started_at: Date.parse(T0) / 1000,
     hr: 130,
@@ -77,6 +172,8 @@ describe("messageToLive", () => {
   it("converts epoch-seconds fields to ISO strings", () => {
     const live = messageToLive(msg, null);
     expect(live.startedAt).toBe(T0);
+    expect(live.runId).toBe("run-1");
+    expect(live.sequence).toBe(4);
     expect(live.climbingSince).toBe(T1);
     expect(live.updatedAt).toBe(T2);
     expect(live.restStartedAt).toBeNull();
@@ -111,6 +208,10 @@ describe("rowToLive", () => {
   it("maps a raw postgres row into a LiveWorkout", () => {
     const raw = {
       workout_id: "w9",
+      run_id: "run-9",
+      sequence: 3,
+      event: "phase",
+      terminal: false,
       status: "live",
       started_at: T0,
       hr: 140,
@@ -125,6 +226,10 @@ describe("rowToLive", () => {
     };
     expect(rowToLive(raw)).toEqual({
       workoutId: "w9",
+      runId: "run-9",
+      sequence: 3,
+      event: "phase",
+      terminal: false,
       status: "live",
       startedAt: T0,
       hr: 140,

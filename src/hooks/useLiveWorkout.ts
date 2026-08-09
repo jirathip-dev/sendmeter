@@ -6,50 +6,65 @@ import { fetchLiveWorkout } from "../lib/repo";
 import type { LiveWorkout } from "../types";
 import { subscribePluginListener } from "./pluginListener";
 import {
-  appendHrPoint,
   messageToLive,
-  preferFresher,
+  reduceLiveWorkout,
   rowToLive,
   visibleLiveWorkout,
   type HrLog,
   type LiveHrPoint,
+  type LiveWorkoutMirrorState,
+  type LiveWorkoutSource,
 } from "../lib/liveWorkoutMirror";
 
 export type { LiveHrPoint };
+
+export type LiveWorkoutSyncState = "watch-direct" | "server-fallback";
+
+export interface LiveWorkoutMirrorResult {
+  row: LiveWorkout | null;
+  hrLog: LiveHrPoint[];
+  syncState: LiveWorkoutSyncState;
+}
 
 /// The user's in-progress watch workout, mirrored live (SL-41): one initial
 /// fetch plus a dedicated realtime channel that reads row payloads directly.
 /// Deliberately NOT part of RealtimeVersionProvider — a 5s heartbeat through
 /// the global version counter would refetch every card in the app every 5s.
-/// Returns [null, series] when there's no workout, it ended, or the heartbeat
-/// went stale.
+///
+/// The two transports reduce through one ref-owned state machine (#521): the
+/// WatchConnectivity beat is immediate, while Supabase remains the durable
+/// fallback. Duplicate/out-of-order packets and late live packets after End
+/// never reach React state.
 export function useLiveWorkout(
   userId: string,
-): [LiveWorkout | null, LiveHrPoint[]] {
+): [LiveWorkout | null, LiveHrPoint[], LiveWorkoutSyncState] {
   const [row, setRow] = useState<LiveWorkout | null>(null);
-  // Mirror of `row` for the event callbacks — lets the WC listener compare
-  // freshness without doing side effects inside a setState updater.
-  const rowRef = useRef<LiveWorkout | null>(null);
-  // HR series keyed by workout id so a new workout starts a fresh chart.
-  // Appended only inside async callbacks (react-compiler: no sync setState
-  // in effect bodies).
   const [hrLog, setHrLog] = useState<HrLog>({ id: "", pts: [] });
-  // Re-evaluate staleness on a timer even with no new events.
+  const [syncState, setSyncState] = useState<LiveWorkoutSyncState>("server-fallback");
   const [now, setNow] = useState(() => Date.now());
+  const mirrorRef = useRef<LiveWorkoutMirrorState>({
+    row: null,
+    hrLog: { id: "", pts: [] },
+    source: "server-fallback",
+  });
 
   useEffect(() => {
     let cancelled = false;
 
-    function ingest(next: LiveWorkout) {
-      setHrLog((prev) => appendHrPoint(prev, next));
+    function ingest(next: LiveWorkout, source: LiveWorkoutSource) {
+      if (cancelled) return;
+      const reduced = reduceLiveWorkout(mirrorRef.current, next, source);
+      if (!reduced.accepted) return;
+      mirrorRef.current = reduced.state;
+      setRow(reduced.state.row);
+      setHrLog(reduced.state.hrLog);
+      setSyncState(reduced.state.source);
     }
 
     fetchLiveWorkout()
-      .then((r) => {
-        if (cancelled) return;
-        rowRef.current = r;
-        setRow(r);
-        if (r) ingest(r);
+      .then((next) => {
+        if (cancelled || !next) return;
+        ingest(next, "server-fallback");
       })
       .catch(() => {});
 
@@ -65,10 +80,7 @@ export function useLiveWorkout(
         },
         (payload) => {
           if (payload.new && "workout_id" in payload.new) {
-            const next = rowToLive(payload.new);
-            rowRef.current = next;
-            setRow(next);
-            ingest(next);
+            ingest(rowToLive(payload.new), "server-fallback");
           }
         },
       )
@@ -76,21 +88,15 @@ export function useLiveWorkout(
 
     // Bluetooth-fast path (native only): the watch also beats over
     // WatchConnectivity via the auth-bridge plugin — sub-second, no network.
-    // Keep whichever source is newest; Supabase remains the fallback and the
-    // only path for web-on-desktop.
+    // Supabase remains the durable fallback and the only path on desktop.
     //
-    // #485 F7: `subscribePluginListener` (see its doc comment) so a handle
-    // that resolves after this effect has already cleaned up still gets
-    // removed instead of leaking.
+    // #485 F7: `subscribePluginListener` removes a handle even when its async
+    // registration resolves after this effect has cleaned up.
     const unsubscribeWc = Capacitor.isNativePlatform()
       ? subscribePluginListener(() =>
           SendLogAuthBridge.addListener("liveWorkout", (msg) => {
-            const prev = rowRef.current;
-            const next = preferFresher(prev, messageToLive(msg, prev));
-            if (next === prev) return; // a fresher supabase row already landed
-            rowRef.current = next;
-            setRow(next);
-            ingest(next);
+            const previous = mirrorRef.current.row;
+            ingest(messageToLive(msg, previous), "watch-direct");
           }),
         )
       : null;
@@ -104,5 +110,6 @@ export function useLiveWorkout(
     };
   }, [userId]);
 
-  return visibleLiveWorkout(row, hrLog, now);
+  const [visible, series] = visibleLiveWorkout(row, hrLog, now);
+  return [visible, series, syncState];
 }

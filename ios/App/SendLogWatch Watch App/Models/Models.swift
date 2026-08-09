@@ -246,6 +246,15 @@ nonisolated struct HealthMetricRow: Codable {
 nonisolated struct LiveWorkoutUpsert: Codable {
     var userId: UUID
     var workoutId: UUID
+    /// #521: both transport paths use the workout id as their run identity.
+    /// Kept as a distinct field so the wire contract is explicit and can
+    /// evolve independently of the database primary key.
+    var runId: UUID
+    /// Strictly increasing within runId. Gaps are valid when a telemetry beat
+    /// is coalesced before transport.
+    var sequence: Int = 1
+    var event: String = "telemetry"
+    var terminal: Bool = false
     var status: String         // "live" | "ended"
     var startedAt: Date
     var hr: Double?
@@ -261,9 +270,10 @@ nonisolated struct LiveWorkoutUpsert: Codable {
     var updatedAt: Date
 
     enum CodingKeys: String, CodingKey {
-        case status, hr, climbing
+        case status, hr, climbing, sequence, event, terminal
         case userId = "user_id"
         case workoutId = "workout_id"
+        case runId = "run_id"
         case startedAt = "started_at"
         case attemptCount = "attempt_count"
         case activeKcal = "active_kcal"
@@ -295,6 +305,10 @@ nonisolated struct LiveWorkoutUpsert: Codable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(userId, forKey: .userId)
         try container.encode(workoutId, forKey: .workoutId)
+        try container.encode(runId, forKey: .runId)
+        try container.encode(sequence, forKey: .sequence)
+        try container.encode(event, forKey: .event)
+        try container.encode(terminal, forKey: .terminal)
         try container.encode(status, forKey: .status)
         try container.encode(startedAt, forKey: .startedAt)
         try container.encode(hr, forKey: .hr) // explicit null, not omitted, when nil

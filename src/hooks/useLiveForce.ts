@@ -1,7 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
-import { isFresh, mergeForceBeat, type LiveForce, type LiveForceSample } from "../lib/liveForceMirror";
+import {
+  isFresh,
+  reduceForceBeat,
+  type LiveForce,
+  type LiveForceMirrorState,
+  type LiveForceSample,
+} from "../lib/liveForceMirror";
 import { subscribePluginListener } from "./pluginListener";
 
 export type { LiveForce, LiveForceSample };
@@ -12,6 +18,10 @@ export type { LiveForce, LiveForceSample };
 /// while the phone is reachable from the watch. Device-only to verify.
 export function useLiveForce(): LiveForce | null {
   const [beat, setBeat] = useState<LiveForce | null>(null);
+  const mirrorRef = useRef<LiveForceMirrorState>({
+    beat: null,
+    cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null },
+  });
   // Staleness re-check between beats.
   const [now, setNow] = useState(() => Date.now());
 
@@ -22,11 +32,14 @@ export function useLiveForce(): LiveForce | null {
     // removed instead of leaking.
     const unsubscribe = subscribePluginListener(() =>
       SendLogAuthBridge.addListener("liveForce", (msg) => {
-        // Functional update so the merge reads the previous beat's spark
-        // buffer without a side-effecting ref (react-compiler: no sync
-        // setState/mutation in effect bodies — this all runs inside the async
-        // plugin-event callback instead, and `prev` covers the accumulation).
-        setBeat((prev) => mergeForceBeat(prev, msg));
+        // The ref is the authoritative cursor: event callbacks can arrive
+        // faster than React renders, so a functional setState alone would
+        // leave terminal/out-of-order decisions detached from the current
+        // run. Mutate the ref and publish the accepted snapshot together.
+        const reduced = reduceForceBeat(mirrorRef.current, msg);
+        if (!reduced.accepted) return;
+        mirrorRef.current = reduced.state;
+        setBeat(reduced.state.beat);
       }),
     );
     const interval = setInterval(() => setNow(Date.now()), 2_000);

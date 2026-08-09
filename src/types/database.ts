@@ -210,11 +210,15 @@ export type Database = {
           climbing: boolean
           climbing_since: string | null
           elevation_gain_m: number | null
+          event: string
           hr: number | null
           rest_started_at: string | null
           rest_target_s: number | null
+          run_id: string
+          sequence: number
           started_at: string
           status: string
+          terminal: boolean
           updated_at: string
           user_id: string
           workout_id: string
@@ -225,11 +229,15 @@ export type Database = {
           climbing?: boolean
           climbing_since?: string | null
           elevation_gain_m?: number | null
+          event?: string
           hr?: number | null
           rest_started_at?: string | null
           rest_target_s?: number | null
+          run_id?: string
+          sequence?: number
           started_at: string
           status?: string
+          terminal?: boolean
           updated_at?: string
           user_id?: string
           workout_id: string
@@ -240,11 +248,15 @@ export type Database = {
           climbing?: boolean
           climbing_since?: string | null
           elevation_gain_m?: number | null
+          event?: string
           hr?: number | null
           rest_started_at?: string | null
           rest_target_s?: number | null
+          run_id?: string
+          sequence?: number
           started_at?: string
           status?: string
+          terminal?: boolean
           updated_at?: string
           user_id?: string
           workout_id?: string

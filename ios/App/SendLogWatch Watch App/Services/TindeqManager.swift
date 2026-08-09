@@ -87,7 +87,19 @@ final class TindeqManager: NSObject {
     // flaps for longer than that window. See `ForceBeatWindow`.
     private var lastBeatT: Double?
     private var needsBackfill = true
+    /// #521: one run identity per Progressor transport connection. Sequence
+    /// allocation is synchronous on this manager before the WC send queue.
+    private var forceMirrorSequence = LiveMirrorSequence(runId: UUID())
+    private var forceMirrorStatus: String?
+    private var forceMirrorCount = 0
+    private var forceMirrorTag = ""
+    private var forceMirrorSide = ""
     private let beatQueue = DispatchQueue(label: "com.jirathip.sendlog.forcebeat")
+    /// Telemetry can arrive faster than WatchConnectivity can deliver. The
+    /// queue keeps only the newest telemetry snapshot; discrete start,
+    /// phase/count, and end snapshots bypass this coalescing lane.
+    private var pendingTelemetry: [String: Any]?
+    private var telemetryFlushScheduled = false
     private var uiTimer: Timer?
     // Distinguishes an app-initiated disconnect from a real BLE drop, so only
     // the latter triggers the finish-on-disconnect prompt.
@@ -201,6 +213,12 @@ final class TindeqManager: NSObject {
 
     func connect() {
         errorMsg = nil
+        resetForceMirrorPipeline()
+        forceMirrorSequence = LiveMirrorSequence(runId: UUID())
+        forceMirrorStatus = nil
+        forceMirrorCount = sessionCount
+        forceMirrorTag = liveTag
+        forceMirrorSide = liveSide
         status = .scanning
         if central == nil {
             central = CBCentralManager(delegate: self, queue: .main)
@@ -386,15 +404,16 @@ final class TindeqManager: NSObject {
         }
     }
 
-    /// SL-87: fire one live-force beat over WatchConnectivity when the phone
-    /// is reachable — same Bluetooth-fast mirror path as the workout beat
-    /// (the auth-bridge plugin forwards it to the WebView). No Supabase
-    /// fallback (an 80 Hz gauge has no business heartbeating the network);
-    /// instead a skipped/failed beat sets `needsBackfill` so the next
-    /// successful beat re-sends the whole capped window rather than leaving a
-    /// gap (issue #148). `sendMessage` runs on `beatQueue`, off the main
-    /// queue CoreBluetooth/SwiftUI use, so a stalled send can't stutter
-    /// either.
+    /// SL-87/#521: fire one live-force beat over WatchConnectivity when the
+    /// phone is reachable — the plugin forwards it to the WebView with no
+    /// network hop. The force stream has no Supabase fallback (an 80 Hz gauge
+    /// has no business heartbeating the network); `needsBackfill` causes the
+    /// next successful telemetry beat to resend the capped window (#148).
+    ///
+    /// High-rate telemetry is coalesced on `beatQueue`, while start,
+    /// phase/count, and end transitions bypass that lane. Every payload still
+    /// gets its sequence before enqueueing, so a skipped telemetry packet is a
+    /// valid gap rather than an ordering ambiguity.
     private func pushForceBeat() {
         let wc = WCSession.default
         guard wc.activationState == .activated else { return }
@@ -408,6 +427,32 @@ final class TindeqManager: NSObject {
         case .connected: statusStr = "connected"
         default: statusStr = "idle"
         }
+        let event: LiveMirrorEvent
+        if statusStr == "idle" {
+            event = .end
+        } else if forceMirrorStatus == nil {
+            event = .start
+        } else if forceMirrorStatus != statusStr {
+            event = .phase
+        } else if forceMirrorCount != sessionCount {
+            event = .count
+        } else if forceMirrorTag != liveTag || forceMirrorSide != liveSide {
+            // Exercise/side labels drive the whole Force card. Treat a
+            // selection change as a discrete context transition so it cannot
+            // sit behind a telemetry debounce window.
+            event = .phase
+        } else {
+            event = .telemetry
+        }
+        forceMirrorStatus = statusStr
+        forceMirrorCount = sessionCount
+        forceMirrorTag = liveTag
+        forceMirrorSide = liveSide
+        // Sequence exhaustion is astronomically unlikely, but it must fail
+        // closed rather than repeat Int.max and make the phone accept a
+        // duplicate force transition.
+        guard let beat = forceMirrorSequence.nextIfAvailable(event: event) else { return }
+
         // SL-95: only meaningful mid-hold — omitted (empty) otherwise so
         // idle/connected beats stay tiny, and the backfill watermark is left
         // untouched by them.
@@ -419,7 +464,7 @@ final class TindeqManager: NSObject {
                 needsBackfill = false
             }
         }
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "kind": "liveForce",
             "status": statusStr,
             "kg": (currentKg * 100).rounded() / 100,
@@ -431,13 +476,55 @@ final class TindeqManager: NSObject {
             "updated_at": Date().timeIntervalSince1970,
             "spark": spark,
         ]
+        payload.merge(beat.wireFields) { _, new in new }
         let stamped = WatchBuild.stamp(payload)
-        beatQueue.async {
-            wc.sendMessage(stamped, replyHandler: nil, errorHandler: { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.needsBackfill = true
-                }
-            })
+        let immediate = event.isDiscrete
+        let runId = beat.runId
+        beatQueue.async { [weak self] in
+            guard let self else { return }
+            if immediate {
+                // A transition supersedes any telemetry still waiting in the
+                // debounce window. Its lower sequence would be rejected by
+                // the phone anyway, so dropping it is safe coalescing.
+                self.pendingTelemetry = nil
+                wc.sendMessage(stamped, replyHandler: nil, errorHandler: { [weak self] _ in
+                    DispatchQueue.main.async { self?.markForceBeatFailed(runId: runId) }
+                })
+                return
+            }
+            self.pendingTelemetry = stamped
+            guard !self.telemetryFlushScheduled else { return }
+            self.telemetryFlushScheduled = true
+            self.beatQueue.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                guard let self else { return }
+                let next = self.pendingTelemetry
+                self.pendingTelemetry = nil
+                self.telemetryFlushScheduled = false
+                guard let next else { return }
+                wc.sendMessage(next, replyHandler: nil, errorHandler: { [weak self] _ in
+                    DispatchQueue.main.async { self?.markForceBeatFailed(runId: runId) }
+                })
+            }
+        }
+    }
+
+    /// A WatchConnectivity error can arrive after the gauge has been
+    /// disconnected and a new run has already begun. Only the current run may
+    /// change its backfill watermark; an old callback must not make a fresh
+    /// stream resend stale samples.
+    private func markForceBeatFailed(runId: UUID) {
+        guard forceMirrorSequence.runId == runId else { return }
+        needsBackfill = true
+    }
+
+    /// Clear a coalesced telemetry snapshot before a new BLE connection gets
+    /// a fresh run identity. The debounce timer itself is harmless: when it
+    /// fires it observes an empty pending slot, while the serial queue keeps
+    /// this reset ahead of the next beat emitted by `connect()`/`start()`.
+    private func resetForceMirrorPipeline() {
+        beatQueue.async { [weak self] in
+            self?.pendingTelemetry = nil
+            self?.telemetryFlushScheduled = false
         }
     }
 
@@ -564,6 +651,9 @@ final class TindeqManager: NSObject {
                 let tagLabel = claim.tag.isEmpty ? "" : " · \(claim.tag)"
                 savedMsg = String(format: "Saved · %.1f kg%@", summary.peakKg, tagLabel)
                 sessionCount += 1
+                // Count changes are discrete mirror transitions, not a
+                // telemetry update that may wait behind the coalescing lane.
+                pushForceBeat()
                 recordRepDepletion(
                     peakKg: summary.peakKg,
                     durationMs: summary.durationMs,

@@ -1,9 +1,29 @@
 import type { PluginListenerHandle } from "@capacitor/core";
 
+/// The protocol metadata shared by the WatchConnectivity and Supabase mirror
+/// paths (#521). Fields are optional at the TypeScript boundary so a phone can
+/// still read a pre-#521 watch during a staggered rollout; every current watch
+/// emitter sends all four fields.
+export type LiveMirrorEvent = "start" | "telemetry" | "phase" | "count" | "end";
+
+export interface LiveMirrorMetadata {
+  /// UUID for one workout/gauge transport run. Never infer ordering from a UUID.
+  run_id?: string;
+  /// Strictly increasing within `run_id`; gaps are valid when telemetry is
+  /// coalesced. A duplicate or lower value is never applied.
+  sequence?: number;
+  /// Why this snapshot was emitted. `telemetry` may be coalesced; discrete
+  /// transitions are delivered immediately.
+  event?: LiveMirrorEvent;
+  /// Explicit terminal marker. Receivers also infer it from ended/idle status
+  /// for mixed-version payloads.
+  terminal?: boolean;
+}
+
 /// Watch→phone live-workout beat, relayed over WatchConnectivity (Bluetooth)
 /// for a sub-second in-app mirror. Same snake_case shape as the
 /// live_workouts row, with dates as epoch SECONDS.
-export interface LiveWorkoutMessage {
+export interface LiveWorkoutMessage extends LiveMirrorMetadata {
   status: "live" | "ended";
   started_at?: number;
   hr?: number;
@@ -20,7 +40,7 @@ export interface LiveWorkoutMessage {
 /// Watch→phone live force-gauge beat (SL-87), ~2 Hz while measuring plus one
 /// on every status transition. WC-only — no Supabase fallback (a gauge stream
 /// has no business heartbeating the network).
-export interface LiveForceMessage {
+export interface LiveForceMessage extends LiveMirrorMetadata {
   status: "connected" | "measuring" | "idle";
   kg?: number;
   peak_kg?: number;

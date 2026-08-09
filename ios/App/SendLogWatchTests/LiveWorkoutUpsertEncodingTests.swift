@@ -23,7 +23,7 @@ final class LiveWorkoutUpsertEncodingTests: XCTestCase {
 
     private func sampleRow(hr: Double?) -> LiveWorkoutUpsert {
         LiveWorkoutUpsert(
-            userId: UUID(), workoutId: UUID(), status: "live",
+            userId: UUID(), workoutId: UUID(), runId: UUID(), status: "live",
             startedAt: Date(timeIntervalSince1970: 1_700_000_000),
             hr: hr, attemptCount: 3, activeKcal: nil, elevationGainM: nil,
             climbing: false, climbingSince: nil, restStartedAt: nil,
@@ -62,8 +62,17 @@ final class LiveWorkoutUpsertEncodingTests: XCTestCase {
     /// field on a typo.
     func testAllNonOptionalFieldsArePresent() throws {
         let object = try encode(sampleRow(hr: nil))
-        for key in ["user_id", "workout_id", "status", "started_at", "attempt_count", "climbing", "updated_at"] {
+        for key in ["user_id", "workout_id", "run_id", "sequence", "event", "terminal", "status", "started_at", "attempt_count", "climbing", "updated_at"] {
             XCTAssertTrue(object.keys.contains(key), "expected \(key) to be present in the encoded body")
         }
+    }
+
+    func testMirrorIdentityAndSequenceRoundTripOnTheWire() throws {
+        let row = sampleRow(hr: 142)
+        let object = try encode(row)
+        XCTAssertEqual(object["run_id"] as? String, row.runId.uuidString)
+        XCTAssertEqual(object["sequence"] as? Int, row.sequence)
+        XCTAssertEqual(object["event"] as? String, row.event)
+        XCTAssertEqual(object["terminal"] as? Bool, row.terminal)
     }
 }
