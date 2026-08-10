@@ -52,6 +52,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - History: a type or Force tag filter now resets to "All" for good when its last matching recording or session is removed, instead of silently re-applying itself once matching data reappears.
 - History: recordings grouped into a session no longer vanish for good if that session is later deleted; deleting a ticked recording now immediately updates the bulk-action count instead of leaving a stuck button; and "Assign…" no longer writes to a recording that was ticked then deleted.
 - Force: a non-hands-free run right after a hands-free run no longer plays stray "done" cues or shows a stale danger banner on segment transitions.
+- Web: fixed a race where overlapping screen wake-lock requests (e.g. a fast tab-hide/show) could leak an extra lock or drop the active one, sometimes leaving the screen unable to sleep after a Force measurement or a guided routine ended.
 - Force: resisted-movement presets now keep every continuous set within the Progressor's 30-minute recording window, including older presets opened on the Watch.
 - Watch: a zero-rest resisted-movement boundary no longer loses the next set while the previous recording is still being queued; both sets stay in one Force session.
 - Watch: switching accounts during a guided Force run now discards the in-progress trace without saving it under the next account; same-account offline runs continue normally.
