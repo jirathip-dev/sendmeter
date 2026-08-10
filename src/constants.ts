@@ -1,5 +1,18 @@
 import type { NavItem, Phase, SessionType } from "./types";
 
+// Accessibility note (#547 light-theme contrast audit): these four `color`
+// hexes are used both as chart/phase accents (fine — decorative, large) and
+// as small (9-15px) text/tag foreground on near-white light surfaces (phase
+// banner name, History session-type tags) — e.g. Strength #DDB13A on white
+// measures ~2.0:1, well under WCAG AA's 4.5:1 for normal text. Each color is
+// shared with dark mode, where the same hex reads at a healthy ~8:1+ on the
+// dark canvas, so this is not a per-theme mistake — the palette was simply
+// never tuned for use as light-mode text. Fixing it needs a light-mode-only
+// text variant per phase (distinct from `color`, which chips/charts/dark
+// mode should keep), which is a design-system change spanning every
+// consumer of this palette, not just the Dashboard surfaces #547 migrates.
+// Accepted as a known, tracked shortfall against #547's contrast-audit AC
+// rather than fixed here — see the round-1/round-2 review on that issue.
 export const PHASES: Phase[] = [
   {
     id: "capacity",
