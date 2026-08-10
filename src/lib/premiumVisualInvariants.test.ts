@@ -1539,6 +1539,18 @@ function resolveThemeColor(value: string, theme: ThemeName, name: string): RGB {
   return hexColor(value.trim(), `${name} in ${theme}`);
 }
 
+// A gradient token can itself be a bare var() alias to another gradient
+// token (e.g. light --gradient-readiness: var(--gradient-neutral), #547) —
+// resolve that indirection before handing the value to gradientEndpoints,
+// which only parses literal rgba()/rgb() stops.
+function resolveGradientDeclaration(value: string, theme: ThemeName, name: string): string {
+  const variable = value.trim().match(/^var\(\s*(--[\w-]+)\s*\)$/)?.[1];
+  if (!variable) return value;
+  const resolved = themeDeclarations[theme][variable];
+  if (!resolved) throw new Error(`${name} references undefined ${variable}`);
+  return resolveGradientDeclaration(resolved, theme, `${name} ${variable}`);
+}
+
 function objectBlock(source: string, marker: string): string {
   const markerStart = source.indexOf(marker);
   if (markerStart < 0) throw new Error(`Missing object marker: ${marker}`);
@@ -2278,8 +2290,16 @@ describe("premium visual language contracts (#517)", () => {
         check(theme, `fullscreen/${hue}/active`, ink, mix(surface, accent, 0.18));
       }
 
-      for (const gradient of ["--gradient-interaction", "--gradient-readiness"] as const) {
-        for (const [index, endpoint] of gradientEndpoints(themeDeclarations[theme][gradient]!, canvas, `${theme} ${gradient}`).entries()) {
+      // .phone-workout-resume renders --well-tint-interaction/-readiness, not
+      // the analytical-card --gradient-interaction/-readiness tokens (#547
+      // round 3 finding C) — check the tokens the component actually uses.
+      for (const gradient of ["--well-tint-interaction", "--well-tint-readiness"] as const) {
+        const gradientValue = resolveGradientDeclaration(
+          themeDeclarations[theme][gradient]!,
+          theme,
+          `${theme} ${gradient}`,
+        );
+        for (const [index, endpoint] of gradientEndpoints(gradientValue, canvas, `${theme} ${gradient}`).entries()) {
           check(theme, `phone-card/${gradient}/${index}/normal`, ink, endpoint);
           check(theme, `phone-card/${gradient}/${index}/hover`, ink, endpoint);
           check(theme, `phone-card/${gradient}/${index}/active`, ink, endpoint);
