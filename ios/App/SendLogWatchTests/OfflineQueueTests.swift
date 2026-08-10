@@ -1012,6 +1012,120 @@ final class OfflineQueueTests: XCTestCase {
         let didRun = await ran.ran
         XCTAssertTrue(didRun, "the scheduled action must actually run after the delay")
     }
+
+    // MARK: #529 slice 1 — workout ownership: A → signed-out/B holds an A-owned save
+
+    /// The named acceptance criterion: a bundle stamped with account A's id
+    /// at `WorkoutManager.start()` (via `Repo.makeSaveBundle`) must never
+    /// upload while a DIFFERENT account is the one currently signed in — it
+    /// is held on disk, not silently rebound to whoever is active now, and
+    /// it does not count as B's pending work either. Once A is signed back
+    /// in, the very same held item drains normally — this is also the
+    /// "retry with a held owner" case: nothing special happens on the
+    /// account's return, the ordinary drain loop just becomes eligible again.
+    func testAnOwnedBundleIsHeldWhileADifferentAccountIsActiveAndDrainsOnceItsOwnerReturns() async throws {
+        let ownerA = testUserId
+        let otherAccountB = UUID()
+        let bundle = makeBundle(id: UUID(), enqueuedUserId: ownerA)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let uploader = ScriptedUploader(failing: [:])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        // B is active when the run finally ends and is enqueued — the exact
+        // A → signed-out → B shape: A started and owns the run, but nobody
+        // (or somebody else) is signed in by the time Stop is tapped.
+        signIn(as: otherAccountB)
+        let outcome = await queue.enqueue(bundle)
+        XCTAssertEqual(outcome, .queued, "persistence itself does not depend on who is currently signed in")
+
+        await queue.drain()
+        var uploaded = await uploader.uploadedIds
+        XCTAssertFalse(uploaded.contains(bundle.workout.id), "an A-owned bundle must never upload while B is the active account")
+        XCTAssertTrue(try filesOnDisk().contains("\(bundle.workout.id.uuidString).json"), "held, not lost — the file stays pending on disk")
+
+        let pendingUnderB = await queue.pendingCount()
+        XCTAssertEqual(pendingUnderB, 0, "must not read as B's pending work — B can neither see nor act on A's data")
+
+        // A signs back in — no special "resume" call, just an ordinary drain.
+        signIn(as: ownerA)
+        let pendingUnderA = await queue.pendingCount()
+        XCTAssertEqual(pendingUnderA, 1, "signing back in as the owner restores visibility of the held item")
+
+        await queue.drain()
+        uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(bundle.workout.id), "must drain normally once its real owner is active again")
+    }
+
+    /// A held item must never be silently rebound to B either — draining
+    /// several times while B stays signed in must not eventually give up and
+    /// upload it under B, and it must not be quarantined (no verdict was
+    /// ever reached; it was never even attempted).
+    func testAnOwnedBundleIsNeverReboundToADifferentAccountAcrossRepeatedDrains() async throws {
+        let ownerA = testUserId
+        let otherAccountB = UUID()
+        let bundle = makeBundle(id: UUID(), enqueuedUserId: ownerA)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let uploader = ScriptedUploader(failing: [:])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+        signIn(as: otherAccountB)
+        await queue.enqueue(bundle)
+
+        for _ in 0..<5 {
+            await queue.drain()
+        }
+
+        let uploaded = await uploader.uploadedIds
+        XCTAssertFalse(uploaded.contains(bundle.workout.id), "must never be uploaded under B, no matter how many drains it survives")
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(bundle.workout.id.uuidString).json"), "still pending — a held item is not an error")
+        XCTAssertFalse(remaining.contains("\(bundle.workout.id.uuidString).quarantine"), "held items were never attempted, so there is nothing to quarantine")
+    }
+
+    /// `UploadQueueEngine.enqueue`'s nil→current-user fallback (issue #158)
+    /// must survive for LEGACY on-disk items — a bundle that genuinely has
+    /// no stamped owner is trusted to whoever is signed in at enqueue time,
+    /// same as before this fix.
+    func testEnqueueStampsTheCurrentAccountOnlyForALegacyNilOwnerBundle() async throws {
+        let bundle = makeBundle(id: UUID(), enqueuedUserId: nil)
+        let queue = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]),
+            clock: FixedClock(Date(timeIntervalSince1970: 1_800_000_000)),
+            baseDir: tempDir
+        )
+
+        _ = await queue.enqueue(bundle)
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(bundle.workout.id.uuidString).json"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let persisted = try decoder.decode(WorkoutSaveBundle.self, from: data)
+        XCTAssertEqual(persisted.enqueuedUserId, testUserId, "a legacy nil-owner item is trusted to the currently signed-in account, exactly as before")
+    }
+
+    /// The other half: a NEWLY built bundle that already carries an explicit
+    /// owner (as every production `Repo.makeSaveBundle` call now must) must
+    /// never take the nil-owner fallback path — `enqueue` must not overwrite
+    /// it with whoever happens to be signed in at persist time, even when
+    /// that differs from the stamped owner.
+    func testEnqueueNeverOverwritesAnExplicitlyStampedOwner() async throws {
+        let ownerA = UUID()
+        let currentlySignedIn = testUserId
+        XCTAssertNotEqual(ownerA, currentlySignedIn)
+        let bundle = makeBundle(id: UUID(), enqueuedUserId: ownerA)
+        let queue = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]),
+            clock: FixedClock(Date(timeIntervalSince1970: 1_800_000_000)),
+            baseDir: tempDir
+        )
+
+        _ = await queue.enqueue(bundle)
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(bundle.workout.id.uuidString).json"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let persisted = try decoder.decode(WorkoutSaveBundle.self, from: data)
+        XCTAssertEqual(persisted.enqueuedUserId, ownerA, "an explicitly captured owner must never be replaced by whoever is signed in at enqueue time")
+    }
 }
 
 private actor RanFlag {

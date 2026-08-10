@@ -368,13 +368,23 @@ nonisolated struct WorkoutSaveBundle: Codable {
     var session: SessionInsert
     var workout: ClimbWorkoutInsert
     var attempts: [ClimbAttemptInsert]
-    /// Which account was signed in when this bundle was persisted to disk
-    /// (issue #158) — stamped by `OfflineQueue.persist`, checked by `drain()`
-    /// so an item queued under one account can't silently upload under
-    /// whichever account happens to be signed in when the queue next drains.
-    /// `nil` only for items written before this field existed (legacy
-    /// on-disk files); see `shouldDrain`.
-    var enqueuedUserId: UUID? = nil
+    /// The account that owned the run when `WorkoutManager.start()` accepted
+    /// it (issue #529) — captured once, immutably, and carried through
+    /// end/retry/offline-queue untouched, exactly like
+    /// `GuidedForceRunner.ownerUserId`. Checked by `drain()`/`pendingCount()`
+    /// (`shouldDrain`) so a bundle built under one account can't silently
+    /// upload under whichever account happens to be signed in when the queue
+    /// next drains or when the run is later ended.
+    ///
+    /// Deliberately has NO default: every *production* constructor
+    /// (`Repo.makeSaveBundle`) must pass this explicitly, so a future call
+    /// site cannot forget to stamp an owner and silently fall back to
+    /// `UploadQueueEngine.enqueue`'s nil→current-user stamp — that fallback
+    /// is reserved for genuinely legacy on-disk files written before this
+    /// field existed. `nil` remains a legal value here (an unattributed
+    /// legacy file, or a run that started while nobody was signed in); see
+    /// `shouldDrain`.
+    var enqueuedUserId: UUID?
 }
 
 /// Why a bundle was quarantined (#475 F3) — kept distinct because the two

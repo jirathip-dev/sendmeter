@@ -109,7 +109,10 @@ final class WorkoutOwnershipTests: XCTestCase {
                 rpePredicted: 5, rpeConfirmed: 5, meanEffort: 5, attemptsPer10min: 1,
                 sessionId: sessionId
             ),
-            attempts: []
+            attempts: [],
+            // Irrelevant to this fixture (view-wiring/screen-selection, not
+            // account ownership — see WorkoutSavePathResetTests for #529).
+            enqueuedUserId: nil
         )
     }
 }

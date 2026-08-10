@@ -313,12 +313,18 @@ enum Repo {
         return ISO8601DateFormatter().string(from: date)
     }()
 
+    /// `ownerUserId` has no default on purpose (#529): the caller must pass
+    /// the account captured at `WorkoutManager.start()`, not re-derive
+    /// whoever happens to be signed in right now — that re-derivation at
+    /// save time (instead of at run-start time) is exactly the cross-account
+    /// misattribution this fix closes. See `WorkoutSaveBundle.enqueuedUserId`.
     static func makeSaveBundle(
         summary: WorkoutSummary,
         boulders: Int,
         rpe: Double,
         phase: String,
-        tunables: Tunables
+        tunables: Tunables,
+        ownerUserId: UUID?
     ) -> WorkoutSaveBundle {
         let sessionId = UUID()
         // Reuse the id generated at workout start so the live_workouts row and
@@ -380,7 +386,7 @@ enum Repo {
                 source: a.source.rawValue
             )
         }
-        return WorkoutSaveBundle(session: session, workout: workout, attempts: attempts)
+        return WorkoutSaveBundle(session: session, workout: workout, attempts: attempts, enqueuedUserId: ownerUserId)
     }
 
     /// Best-effort mid-workout flush (SL-90) — merge-upserts the partial row.

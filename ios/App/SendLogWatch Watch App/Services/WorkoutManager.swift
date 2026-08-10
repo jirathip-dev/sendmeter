@@ -74,6 +74,20 @@ final class WorkoutManager: NSObject {
     /// rules this depends on.
     var failedBundle: WorkoutSaveBundle?
 
+    /// Stable account identity captured the moment `start()` accepts a run
+    /// (issue #529) — mirrors `GuidedForceRunner.ownerUserId`. Unlike a
+    /// guided Force run, an ordinary workout does NOT discard itself on a
+    /// later account change: an `HKWorkoutSession` is a live recording the
+    /// user is mid-climb inside, so this stays fixed at the account that
+    /// started it and is never re-read from `userIdProvider()` again for
+    /// this run — `endAndSave()`/`retryFailedSave()` stamp every save with
+    /// this value, so an A → signed-out/B transition holds the eventual
+    /// save under A (`shouldDrain`) instead of silently uploading it under
+    /// whichever account is signed in when Stop is finally tapped.
+    private(set) var ownerUserId: UUID?
+
+    @ObservationIgnored private let userIdProvider: @Sendable () -> UUID?
+
     private static func loadRestTarget() -> Int {
         let v = UserDefaults.standard.integer(forKey: "restTargetS")
         return [60, 120, 180, 300].contains(v) ? v : 180
@@ -205,9 +219,13 @@ final class WorkoutManager: NSObject {
     /// directly, means it survives navigation exactly like everything else.
     private var restAlarmTask: Task<Void, Never>?
 
-    init(tunables: Tunables = .default) {
+    init(
+        tunables: Tunables = .default,
+        userIdProvider: @escaping @Sendable () -> UUID? = { WatchSessionStore.shared.userId }
+    ) {
         self.tunables = tunables
         self.detector = AttemptDetector(tunables: tunables)
+        self.userIdProvider = userIdProvider
         super.init()
     }
 
@@ -273,6 +291,11 @@ final class WorkoutManager: NSObject {
         builder = nil
         startDate = nil
         liveSync = nil
+        // #529: captured once, synchronously, for THIS accepted run — never
+        // re-read after this point. See `ownerUserId`'s doc comment for why
+        // a workout must stay bound to the account that started it rather
+        // than whoever is signed in when it's eventually saved.
+        ownerUserId = userIdProvider()
         cancelRestAlarm() // review finding F5: no stale alarm from a previous rest
         // Warm the phase in the background so save-on-stop needs no network.
         // Stamped with this start's generation: once hoisted, this manager
@@ -723,7 +746,11 @@ final class WorkoutManager: NSObject {
                 // 0.5-step steppers are for MANUAL entry only (SL-89).
                 rpe: RPEQuantization.autoTracked(summary.predictedRPE),
                 phase: cachedPhase,
-                tunables: .default
+                tunables: .default,
+                // #529: the account captured at start(), not whoever is
+                // signed in now — `end()` may run long after an account
+                // switch mid-workout.
+                ownerUserId: ownerUserId
             )
             WidgetBridge.updateLiveWorkout(active: false) // clear the live widget
             await save(bundle)
