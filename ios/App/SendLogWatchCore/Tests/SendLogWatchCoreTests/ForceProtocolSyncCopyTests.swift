@@ -4,8 +4,8 @@ import XCTest
 /// Regression coverage for #536: an expired-token catalog-refresh failure
 /// must render as product copy — never `JWT`, PostgREST codes, HTTP codes,
 /// Supabase wording, or any other raw exception text — and the banner must
-/// never say the same thing twice (title carries the cache claim, message
-/// carries only the recovery action).
+/// never say the same thing twice (title carries the sync-outcome claim,
+/// message carries only the recovery action).
 final class ForceProtocolSyncCopyTests: XCTestCase {
     private static let allowedMessages: Set<String> = [
         "Open Sendmeter on iPhone to refresh.",
@@ -14,7 +14,11 @@ final class ForceProtocolSyncCopyTests: XCTestCase {
     ]
     private static let allowedTitles: Set<String> = [
         "Showing saved protocols",
-        "No saved protocols yet"
+        "No saved protocols yet",
+        "Couldn\u{2019}t sync protocols"
+    ]
+    private static let allRowsStates: [ForceProtocolSyncCopy.RowsState] = [
+        .cachedWithRows, .cachedEmpty, .neverSynced
     ]
 
     /// #536 review finding 7: broader than "JWT" alone, and shared with
@@ -31,6 +35,7 @@ final class ForceProtocolSyncCopyTests: XCTestCase {
     private static let realisticRawErrors = [
         "JWT expired",
         "Status Code: 401 Body: {\"message\":\"Invalid API key\"}",
+        "Status Code: 403 Body: {\"message\":\"nope\"}",
         "JWSError JWSInvalidSignature",
         "Invalid authentication credentials",
         "Could not connect to the server.",
@@ -50,8 +55,8 @@ final class ForceProtocolSyncCopyTests: XCTestCase {
             )
             assertNoRawTechnicalWording(message, source: raw)
 
-            for hasUsableRows in [true, false] {
-                let presentation = ForceProtocolSyncCopy.presentation(for: reason, hasUsableRows: hasUsableRows)
+            for rows in Self.allRowsStates {
+                let presentation = ForceProtocolSyncCopy.presentation(for: reason, rows: rows)
                 XCTAssertTrue(
                     Self.allowedTitles.contains(presentation.title),
                     "unexpected title for raw input \"\(raw)\": \"\(presentation.title)\""
@@ -81,32 +86,42 @@ final class ForceProtocolSyncCopyTests: XCTestCase {
         XCTAssertEqual(ForceProtocolSyncCopy.message(for: reason), "Couldn\u{2019}t refresh right now.")
     }
 
+    /// A bare 403 (no "permission" wording in the body) still reads as an
+    /// auth failure (#536 review round 2 finding C).
+    func testBareStatusCode403ClassifiesAsAuthExpired() {
+        let reason = BackendFailureReason(errorDescription: "Status Code: 403 Body: {\"message\":\"nope\"}")
+        XCTAssertEqual(reason, .authExpired)
+    }
+
     /// #536 review finding 1: the title must reflect actual saved rows, not
     /// merely that a cache write has happened — an empty catalog is a
     /// legitimately persisted cache.
-    func testPresentationTitleReflectsUsableRowsNotJustACacheWrite() {
-        let reason = BackendFailureReason(errorDescription: "JWT expired")
+    func testCachedRowsStatesReflectActualCountNotJustACacheWrite() {
+        XCTAssertEqual(ForceProtocolSyncCopy.title(for: .cachedWithRows), "Showing saved protocols")
+        XCTAssertEqual(ForceProtocolSyncCopy.title(for: .cachedEmpty), "No saved protocols yet")
+    }
 
-        XCTAssertEqual(
-            ForceProtocolSyncCopy.presentation(for: reason, hasUsableRows: true).title,
-            "Showing saved protocols"
-        )
-        XCTAssertEqual(
-            ForceProtocolSyncCopy.presentation(for: reason, hasUsableRows: false).title,
-            "No saved protocols yet"
-        )
+    /// #536 review round 2 finding A: a request that never had a prior
+    /// successful fetch to fall back on must not claim a count either way —
+    /// "we couldn't find out" stays distinguishable from "you have none".
+    func testNeverSyncedTitleDoesNotClaimACount() {
+        let title = ForceProtocolSyncCopy.title(for: .neverSynced)
+        XCTAssertEqual(title, "Couldn\u{2019}t sync protocols")
+        XCTAssertFalse(title.lowercased().contains("saved"))
+        XCTAssertNotEqual(title, ForceProtocolSyncCopy.title(for: .cachedEmpty))
     }
 
     /// #536 review finding 2: title and message must never repeat the same
-    /// claim — every combination of reason x hasUsableRows must produce a
-    /// distinct title/message pair.
+    /// claim — every combination of reason x rows must produce a distinct,
+    /// non-overlapping title/message pair.
     func testTitleAndMessageNeverRepeatEachOther() {
         for reason in [BackendFailureReason.authExpired, .unreachable, .unknown] {
-            for hasUsableRows in [true, false] {
-                let presentation = ForceProtocolSyncCopy.presentation(for: reason, hasUsableRows: hasUsableRows)
+            for rows in Self.allRowsStates {
+                let presentation = ForceProtocolSyncCopy.presentation(for: reason, rows: rows)
                 XCTAssertNotEqual(presentation.title, presentation.message)
                 XCTAssertFalse(presentation.message.lowercased().contains("saved"))
                 XCTAssertFalse(presentation.message.lowercased().contains("cached"))
+                XCTAssertFalse(presentation.message.lowercased().contains("sync"))
             }
         }
     }

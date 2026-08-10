@@ -90,16 +90,28 @@ final class ForceProtocolCatalog {
         }
     }
 
-    /// The `.cached`/`.failed` banner title. Derived from actual saved rows,
-    /// not from whether *any* cache write has ever happened
-    /// (`hasCachedSnapshot`) — an empty catalog is a legitimately persisted
-    /// cache too, so the title must never claim saved protocols exist when
-    /// there are none (#536 review finding 1). `.failed` only occurs when
-    /// nothing has ever been cached, so `myProtocols` is always empty there
-    /// and this always reads "No saved protocols yet".
+    /// The `.cached`/`.failed` banner title, from the single Core source of
+    /// truth (`ForceProtocolSyncCopy.title(for:)`, #536 review round 2
+    /// finding B — this used to re-declare the same literals here).
+    ///
+    /// `.failed` must NOT reuse the empty-rows title: it means no successful
+    /// fetch has ever completed for this account, so the count is genuinely
+    /// *unknown*, not confirmed zero — an account with a stale token but 12
+    /// real saved protocols would otherwise render "No saved protocols yet",
+    /// a false factual claim from a failed request (#536 review round 2
+    /// finding A). Only `.cached` (a prior successful fetch, possibly empty,
+    /// is still on screen) may claim a count either way.
     var syncBannerTitle: String {
         synchronizeAccountScope()
-        return myProtocols.isEmpty ? "No saved protocols yet" : "Showing saved protocols"
+        let rows: ForceProtocolSyncCopy.RowsState
+        if !myProtocols.isEmpty {
+            rows = .cachedWithRows
+        } else if status == .cached {
+            rows = .cachedEmpty
+        } else {
+            rows = .neverSynced
+        }
+        return ForceProtocolSyncCopy.title(for: rows)
     }
 
     init(

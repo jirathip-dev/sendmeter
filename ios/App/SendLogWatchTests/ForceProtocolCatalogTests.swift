@@ -156,8 +156,13 @@ final class ForceProtocolCatalogTests: XCTestCase {
     }
 
     /// Same failure, but with nothing cached yet — the catalog has no rows to
-    /// fall back to, so `.failed` is correct, and the copy must still stay
-    /// free of raw technical wording.
+    /// fall back to, so `.failed` is correct. #536 review round 2 finding A:
+    /// no successful fetch has EVER completed for this account, so the title
+    /// must NOT claim "No saved protocols yet" (that would assert the count
+    /// is confirmed zero, when it's actually unknown — the account could
+    /// have a dozen real saved protocols the watch just can't confirm right
+    /// now). It must say the sync itself failed, distinct from the
+    /// legitimately-empty-cache case in the test below.
     func testExpiredTokenFailureWithoutCachedSnapshotShowsProductCopyOnly() async throws {
         let defaults = makeDefaults()
         let account = UUID()
@@ -169,7 +174,8 @@ final class ForceProtocolCatalogTests: XCTestCase {
 
         XCTAssertEqual(catalog.status, .failed)
         XCTAssertEqual(catalog.myProtocols, [])
-        XCTAssertEqual(catalog.syncBannerTitle, "No saved protocols yet")
+        XCTAssertEqual(catalog.syncBannerTitle, "Couldn\u{2019}t sync protocols")
+        XCTAssertFalse(catalog.syncBannerTitle.lowercased().contains("saved"))
         let message = try XCTUnwrap(catalog.errorMessage)
         XCTAssertEqual(message, "Open Sendmeter on iPhone to refresh.")
         assertNoRawTechnicalWording(message)
@@ -182,7 +188,11 @@ final class ForceProtocolCatalogTests: XCTestCase {
     /// Seeds that exact on-disk shape directly (a live empty-but-authenticated
     /// refresh needs a real relayed session this test harness doesn't control)
     /// and asserts a later auth failure does NOT claim "Showing saved
-    /// protocols" — there is nothing saved to show.
+    /// protocols" — there is nothing saved to show. Unlike the never-synced
+    /// test above, THIS state genuinely does know the count is zero (a prior
+    /// successful fetch confirmed it), so "No saved protocols yet" is
+    /// correct here and must read differently from "Couldn't sync
+    /// protocols" (#536 review round 2 finding A).
     func testExpiredTokenFailureWithEmptyPersistedCacheNeverClaimsSavedRows() async throws {
         let defaults = makeDefaults()
         let account = UUID()
@@ -200,8 +210,34 @@ final class ForceProtocolCatalogTests: XCTestCase {
         XCTAssertEqual(catalog.status, .cached)
         XCTAssertEqual(catalog.myProtocols, [])
         XCTAssertEqual(catalog.syncBannerTitle, "No saved protocols yet")
+        XCTAssertNotEqual(catalog.syncBannerTitle, "Couldn\u{2019}t sync protocols")
         let message = try XCTUnwrap(catalog.errorMessage)
         XCTAssertEqual(message, "Open Sendmeter on iPhone to refresh.")
+        assertNoRawTechnicalWording(message)
+        assertNoRawTechnicalWording(catalog.syncBannerTitle)
+    }
+
+    /// #536 review round 2 finding A ("worse" case): an anonymous/RLS empty
+    /// response with no cache sets `status = .failed` with the message
+    /// "Waiting for your iPhone to finish signing in." — the code *knows*
+    /// the request was unauthenticated, i.e. the strongest possible evidence
+    /// the protocol count is unknown, not confirmed zero. The title must
+    /// still say the sync failed, not that there are no saved protocols.
+    func testUnauthenticatedEmptyResponseWithoutCacheDoesNotClaimZeroProtocols() async throws {
+        let defaults = makeDefaults()
+        let account = UUID()
+        let state = ForceProtocolCatalogTestState(userId: account)
+        state.setProtocols([])
+        let catalog = makeCatalog(defaults: defaults, state: state)
+
+        await catalog.refresh()
+
+        XCTAssertEqual(catalog.status, .failed)
+        XCTAssertEqual(catalog.myProtocols, [])
+        XCTAssertEqual(catalog.syncBannerTitle, "Couldn\u{2019}t sync protocols")
+        XCTAssertFalse(catalog.syncBannerTitle.lowercased().contains("saved"))
+        let message = try XCTUnwrap(catalog.errorMessage)
+        XCTAssertEqual(message, "Waiting for your iPhone to finish signing in.")
         assertNoRawTechnicalWording(message)
         assertNoRawTechnicalWording(catalog.syncBannerTitle)
     }

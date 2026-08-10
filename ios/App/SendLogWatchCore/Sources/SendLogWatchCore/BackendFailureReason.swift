@@ -24,7 +24,7 @@ import Foundation
 public enum BackendFailureReason: Sendable, Equatable {
     /// Auth/session/RLS wording — the relayed access token is stale, missing
     /// or rejected (JWT/JWS expired or invalid, "not authenticated",
-    /// "permission denied", row-level security, an HTTP 401, ...).
+    /// "permission denied", row-level security, an HTTP 401 or 403, ...).
     case authExpired
     /// Network/timeout/offline/host-unreachable wording — no reachable
     /// backend right now.
@@ -63,7 +63,13 @@ public enum BackendFailureReason: Sendable, Equatable {
             || m.contains("api key") {
             return true
         }
-        return statusCode(in: m) == 401
+        // 403 is included alongside 401: the realistic 403 body already
+        // matches "permission" above, but a bare status-only 403 (no body
+        // wording) is still the same "the relayed credential was rejected"
+        // shape, not a genuinely unrecognized failure (#536 review round 2
+        // finding C).
+        guard let code = statusCode(in: m) else { return false }
+        return code == 401 || code == 403
     }
 
     private static func matchesUnreachable(_ m: String) -> Bool {

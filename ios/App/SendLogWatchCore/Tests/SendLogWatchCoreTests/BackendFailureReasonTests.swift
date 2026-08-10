@@ -14,7 +14,10 @@ final class BackendFailureReasonTests: XCTestCase {
             "JWSError JWSInvalidSignature",
             "Invalid authentication credentials",
             "Invalid API key",
-            "Status Code: 401 Body: {\"message\":\"Invalid API key\"}"
+            "Status Code: 401 Body: {\"message\":\"Invalid API key\"}",
+            // #536 review round 2 finding C: a bare 403 (no "permission"
+            // wording) is still an auth failure, not unrecognized.
+            "Status Code: 403 Body: {\"message\":\"nope\"}"
         ] {
             XCTAssertEqual(
                 BackendFailureReason(errorDescription: description),
