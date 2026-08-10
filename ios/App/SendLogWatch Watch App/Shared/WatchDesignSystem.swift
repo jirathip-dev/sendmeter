@@ -294,66 +294,79 @@ struct WatchSecondaryButtonStyle: ButtonStyle {
     }
 }
 
-struct WatchPageControl: View {
-    let selection: Int
-    let labels: [String]
-    let onSelect: (Int) -> Void
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(labels.indices, id: \.self) { index in
-                WatchPageControlItem(
-                    label: labels[index],
-                    isSelected: index == selection,
-                    action: { onSelect(index) }
-                )
-            }
-        }
-        .padding(.horizontal, 3)
-        .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
-        .background {
-            Capsule()
-                .fill(WatchPalette.card.opacity(0.9))
-                .padding(.vertical, 4)
-        }
-    }
-}
-
-private struct WatchPageControlItem: View {
-    let label: String
-    let isSelected: Bool
+/// Shared compact icon control for Watch navigation and secondary actions —
+/// the primitive #541 (icon-first design system) asks for. Any icon-only
+/// control on the watch (Home's Status/Actions switcher below, #537's Force
+/// setup entry points, future secondary actions) should be built from this
+/// rather than a one-off `Button` + `Image`, so the visible glyph size, the
+/// watchOS-minimum hit target, and the selected/unselected treatment stay
+/// identical everywhere instead of drifting per screen.
+///
+/// - `accessibilityLabel` is required: an icon with no announced name is not
+///   accessible (#541's rule). `accessibilityHint` is optional extra context
+///   ("Opens force gauge setup").
+/// - The hit target is `WatchDesignTokens.minimumHitTarget` (44pt) on both
+///   axes regardless of how small `systemImage` renders — same guarantee
+///   `WatchPrimaryButtonStyle`/`WatchSecondaryButtonStyle` already give text
+///   buttons.
+/// - `isSelected` reuses the same fill/opacity language as
+///   `WatchStateChip`/segmented tabs elsewhere for an active state.
+struct WatchIconButton: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    var accessibilityHint: String? = nil
+    var isSelected: Bool = false
+    var tint: Color = WatchPalette.primary
     let action: () -> Void
 
-    private var labelWeight: Font.Weight { isSelected ? .bold : .medium }
-    private var foreground: Color { isSelected ? WatchPalette.textPrimary : WatchPalette.textTertiary }
-    private var fill: Color { isSelected ? WatchPalette.primary.opacity(0.72) : Color.white.opacity(0.06) }
-    private var strokeOpacity: Double { isSelected ? 0.24 : 0.1 }
+    /// Painted circle diameter — deliberately smaller than the hit target so
+    /// a row of these reads as compact chrome rather than another full-size
+    /// button bar (the #539 complaint about the old full-width pill).
+    private static let visibleDiameter: CGFloat = 30
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                Capsule()
-                    .fill(fill)
-                    .overlay(Capsule().stroke(Color.white.opacity(strokeOpacity), lineWidth: 0.7))
-                Text(label)
-                    .font(.system(size: 9, weight: labelWeight, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: 34)
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(isSelected ? WatchPalette.textPrimary : WatchPalette.textTertiary)
+                .frame(width: Self.visibleDiameter, height: Self.visibleDiameter)
+                .background {
+                    Circle()
+                        .fill(isSelected ? tint.opacity(0.72) : Color.white.opacity(0.08))
+                        .overlay {
+                            Circle().stroke(Color.white.opacity(isSelected ? 0.24 : 0.1), lineWidth: 0.7)
+                        }
+                }
         }
         .buttonStyle(.plain)
         .frame(
             minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
-            maxWidth: .infinity,
             minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
         )
-        .foregroundStyle(foreground)
         .contentShape(Rectangle())
-        .accessibilityLabel("Show \(label)")
-        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        // No `.accessibilityElement(children: .ignore)` here: on a `Button`
+        // (unlike the plain `Label` `WatchStateChip` uses) it left the SF
+        // Symbol's own auto-generated name ("Chart Column", "Flash") as the
+        // announced label instead of the one set below — verified against
+        // `WatchPageControlItem`'s working equivalent, which never called it.
+        .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .modifier(WatchIconButtonHint(hint: accessibilityHint))
+    }
+}
+
+/// `accessibilityHint` is optional on `WatchIconButton`; SwiftUI has no
+/// conditional-modifier shorthand, so this keeps the `if let` out of the
+/// button's own body.
+private struct WatchIconButtonHint: ViewModifier {
+    let hint: String?
+
+    func body(content: Content) -> some View {
+        if let hint {
+            content.accessibilityHint(hint)
+        } else {
+            content
+        }
     }
 }
 

@@ -142,6 +142,17 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     statusPage.frame.intersects(readiness.frame),
                     "home page selector must never obscure readiness content"
                 )
+                // #539: the primary readiness card must fit un-cropped in the
+                // first viewport on 40/41mm and Ultra — this is the
+                // regression guard for the clipping bug, independent of the
+                // curated App Store screenshots. `readiness-ring` sits near
+                // the card's bottom edge, so an un-clipped ring is a reliable
+                // proxy for an un-clipped card without needing a container-
+                // level identifier (one was tried and swallowed the ring's
+                // own identifier from the accessibility tree — SwiftUI
+                // collapses a tagged container's children into one opaque
+                // element).
+                assertFullyVisible(readiness, in: app, fixture: item.fixture)
                 actionsPage.tap()
                 XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 5))
                 statusPage.tap()

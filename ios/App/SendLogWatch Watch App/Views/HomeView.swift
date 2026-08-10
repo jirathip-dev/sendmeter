@@ -111,12 +111,33 @@ struct HomeView: View {
             // it followed TabView, watchOS let the page paint beyond its
             // proposed bounds, making this control appear to cover the
             // readiness/Force cards on both 40mm and 49mm watches.
-            WatchPageControl(
-                selection: selection == .status ? 0 : 1,
-                labels: ["Status", "Actions"],
-                onSelect: { selection = $0 == 0 ? .status : .actions }
-            )
-            .padding(.horizontal, 18)
+            //
+            // #539/#541: a full-width text pill here was the single biggest
+            // consumer of the 40/41mm first viewport and read as heavier than
+            // the status it was gating. Two compact `WatchIconButton`s
+            // (#541's shared primitive) replace it — same explicit two-way
+            // affordance (VoiceOver users get named "Show Status"/"Show
+            // Actions" controls instead of relying on a blind swipe), far
+            // less visual weight.
+            HStack(spacing: 6) {
+                Spacer(minLength: 0)
+                WatchIconButton(
+                    systemImage: "chart.bar.fill",
+                    accessibilityLabel: "Show Status",
+                    accessibilityHint: "Displays today's readiness and training load",
+                    isSelected: selection == .status,
+                    action: { selection = .status }
+                )
+                WatchIconButton(
+                    systemImage: "bolt.fill",
+                    accessibilityLabel: "Show Actions",
+                    accessibilityHint: "Displays Force Gauge and Climb Workout",
+                    isSelected: selection == .actions,
+                    tint: WatchPalette.secondary,
+                    action: { selection = .actions }
+                )
+            }
+            .padding(.trailing, 10)
             TabView(selection: $selection) {
                 StatusView()
                     .tag(WatchHomePage.status)

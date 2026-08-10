@@ -57,12 +57,11 @@ struct StatusView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .center) {
-                    WatchEyebrow(text: "Today")
-                    Spacer(minLength: 4)
-                    WatchStateChip(state: statusChip.state, title: statusChip.title, compact: true)
-                }
+            // #539: a standalone "Today" + sync-chip row above these cards
+            // pushed the readiness card below the first-viewport fold on
+            // 40/41mm watches. The chip now sits in the readiness card's own
+            // header (below) instead of costing its own row + spacing gap.
+            VStack(alignment: .leading, spacing: 6) {
                 WatchCard(accent: readinessAccent(snap.readinessZone, reducedLuminance: isLuminanceReduced)) {
                     readiness
                 }
@@ -74,7 +73,8 @@ struct StatusView: View {
                 }
             }
             .padding(.horizontal, 4)
-            .padding(.vertical, 4)
+            .padding(.top, 2)
+            .padding(.bottom, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.hidden)
@@ -89,7 +89,11 @@ struct StatusView: View {
 
     private var readiness: some View {
         VStack(alignment: .leading, spacing: 4) {
-            eyebrow("READINESS")
+            HStack(alignment: .center) {
+                eyebrow("READINESS")
+                Spacer(minLength: 4)
+                WatchStateChip(state: statusChip.state, title: statusChip.title, compact: true)
+            }
             HStack(spacing: 10) {
                 ReadinessRingView(
                     score: snap.readiness,

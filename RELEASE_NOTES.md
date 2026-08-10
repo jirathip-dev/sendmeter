@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Apple Watch Home no longer clips the readiness card on 40/41mm watches, and the full-width Status/Actions pill is now a compact icon-based switcher.
 - Apple Watch screens now use a consistent glanceable visual language with clearer state cues, larger action targets, and safer reduced-motion and Always-On fallbacks across status, workout, and Force flows.
 - Watch workout and Force mirrors now keep a stable run identity, ignore
   duplicate or out-of-order updates, and close decisively even when a late
