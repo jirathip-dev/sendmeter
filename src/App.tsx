@@ -6,9 +6,8 @@ import { today } from "./lib/dates";
 import {
   computeAcwr,
   computeWeeklyLoads,
-  currentPeriodStart,
   getACWRStatus,
-  phaseStartFromHistory,
+  phaseBlockAge,
 } from "./lib/metrics";
 import { useAuth } from "./hooks/useAuth";
 import { useTrainingData } from "./hooks/useTrainingData";
@@ -277,19 +276,18 @@ function AuthedApp({
 
   const phase = PHASES.find((p) => p.id === currentPhase) || PHASES[0]!;
   const status = getACWRStatus(acwrData.acwr);
-  // "Day N" counts from the current phase's streak of logged sessions (auto
-  // from history), so toggling to another phase and back doesn't reset it. The
-  // open period's start (or phaseStartDate) is only the fallback when nothing's
-  // been logged in the phase yet.
-  const periodStart = currentPeriodStart(phasePeriods, currentPhase, phaseStartDate);
-  const phaseStart = phaseStartFromHistory(sessions, currentPhase, periodStart);
+  const currentDate = today();
+  // "Day N" counts from the canonical open phase period (or phaseStartDate as
+  // its fallback) via the SAME phaseBlockAge() PhasesView calls — never from
+  // recent-session-streak history (issue #544: a manually-selected block
+  // started weeks ago must not read as Day 3 just because the current streak
+  // of same-phase sessions is younger than the block itself; phaseBlockAge
+  // has no session parameter at all).
   const phaseDays =
-    Math.floor(
-      (new Date(today()).getTime() - new Date(phaseStart).getTime()) / 86400000,
-    ) + 1;
+    phaseBlockAge(phasePeriods, currentPhase, phaseStartDate, currentDate)?.totalDays ?? null;
   // Today's date for the phase strip (parse as LOCAL midnight so the label is
   // right regardless of UTC offset).
-  const todayLabel = new Date(today() + "T00:00:00").toLocaleDateString(
+  const todayLabel = new Date(currentDate + "T00:00:00").toLocaleDateString(
     undefined,
     { weekday: "short", month: "short", day: "numeric" },
   );

@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import {
+  blockAge,
   dateStr,
   dayOffsetFromToday,
   daysAgo,
@@ -99,6 +100,85 @@ describe("relativeDayLabel", () => {
         day: "numeric",
       }),
     );
+  });
+});
+
+describe("blockAge", () => {
+  // Both dates are always explicit arguments now (never `today()`/`new
+  // Date()` inside the helper — see its docstring), so every case below is a
+  // plain two-literal call: no fake timers needed anywhere in this block.
+
+  it("issue #544 regression: block started 25 Jul, today 10 Aug, is Day 17 / Week 3 Day 3", () => {
+    expect(blockAge("2026-07-25", "2026-08-10")).toEqual({ totalDays: 17, week: 3, dayOfWeek: 3 });
+  });
+
+  it("the start date itself is Day 1, Week 1", () => {
+    expect(blockAge("2026-08-10", "2026-08-10")).toEqual({ totalDays: 1, week: 1, dayOfWeek: 1 });
+  });
+
+  it("rolls from Week 1 Day 7 to Week 2 Day 1 at the week boundary", () => {
+    expect(blockAge("2026-08-04", "2026-08-10")).toEqual({ totalDays: 7, week: 1, dayOfWeek: 7 });
+    expect(blockAge("2026-08-03", "2026-08-10")).toEqual({ totalDays: 8, week: 2, dayOfWeek: 1 });
+  });
+
+  it("counts correctly across a month/year boundary", () => {
+    // Dec 30 = Day 1, Dec 31 = Day 2, Jan 1 = Day 3.
+    expect(blockAge("2025-12-30", "2026-01-01")).toEqual({ totalDays: 3, week: 1, dayOfWeek: 3 });
+  });
+
+  describe("DST transitions (America/New_York)", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("the TZ stub actually takes effect (sanity check for the two tests below)", () => {
+      vi.stubEnv("TZ", "America/New_York");
+      // Post fall-back (EST, UTC-5): getTimezoneOffset is +300 minutes.
+      expect(new Date(2026, 10, 2, 0, 0, 0, 0).getTimezoneOffset()).toBe(300);
+      // Post spring-forward (EDT, UTC-4): +240 minutes.
+      expect(new Date(2026, 2, 9, 0, 0, 0, 0).getTimezoneOffset()).toBe(240);
+    });
+
+    it("counts a whole day across the 23h spring-forward day", () => {
+      vi.stubEnv("TZ", "America/New_York");
+      // 2026-03-08 is 23h long in America/New_York.
+      expect(blockAge("2026-03-07", "2026-03-09")).toEqual({ totalDays: 3, week: 1, dayOfWeek: 3 });
+    });
+
+    it("counts a whole day across the 25h fall-back day — the case Math.floor gets wrong", () => {
+      vi.stubEnv("TZ", "America/New_York");
+      // 2026-11-01 is 25h long in America/New_York: the raw ms diff between
+      // local midnights Oct 31 and Nov 2 is 49h, not 48h. round(49/24) = 2
+      // (correct, Day 3); floor(49/24) = 2 as well for a POSITIVE span, but
+      // the offset computed here is NEGATIVE (start - reference), where
+      // floor(-49/24) = -3 → Day 4, silently off by one. This is the case
+      // the spring-forward test above cannot catch (there floor and round
+      // agree) — see the finding this test was added for (#544 review).
+      expect(blockAge("2026-10-31", "2026-11-02")).toEqual({ totalDays: 3, week: 1, dayOfWeek: 3 });
+    });
+
+    it("stays exact across a longer span that includes the fall-back transition", () => {
+      vi.stubEnv("TZ", "America/New_York");
+      expect(blockAge("2026-10-25", "2026-11-08")).toEqual({ totalDays: 15, week: 3, dayOfWeek: 1 });
+    });
+  });
+
+  it("fails safely (null) for a future start date", () => {
+    expect(blockAge("2026-08-11", "2026-08-10")).toBeNull();
+  });
+
+  it("fails safely (null) for a malformed start date", () => {
+    expect(blockAge("", "2026-08-10")).toBeNull();
+    expect(blockAge("not-a-date", "2026-08-10")).toBeNull();
+  });
+
+  it("fails safely (null) for a semantically-invalid but numerically-parseable start date", () => {
+    // Date silently rolls these over instead of rejecting them; blockAge
+    // must not render a confident-looking Day N from a date that was never
+    // really valid.
+    expect(blockAge("2026-02-31", "2026-08-10")).toBeNull(); // rolls to Mar 3
+    expect(blockAge("2026-7-25", "2026-08-10")).toBeNull(); // unpadded month
+    expect(blockAge("0001-01-01", "2026-08-10")).toBeNull(); // Date maps year 1 -> 1901
   });
 });
 

@@ -9,7 +9,7 @@ import type {
   TindeqRecordingMeta,
   WeeklyLoad,
 } from "../types";
-import { daysAgo, today } from "./dates";
+import { blockAge, daysAgo, today, type BlockAge } from "./dates";
 
 export function getACWRStatus(acwr: number | null): AcwrStatus {
   // Colors are CSS-var strings — applied via inline style, they track the
@@ -78,26 +78,21 @@ export function currentPeriodStart(
   );
 }
 
-/// The effective start date for the current phase's "Day N" counter, taken from
-/// session *history* rather than the phase_periods row — so briefly switching to
-/// another phase and back (which opens a fresh period dated today) doesn't reset
-/// the count. Walks sessions newest → oldest and follows the current phase's
-/// unbroken streak (a session of a *different* phase ends it); the earliest
-/// session in that streak is when the phase actually started. Falls back to
-/// `fallbackStart` (the open period's start) when no current-phase session
-/// exists yet — e.g. a genuine fresh switch. All dates are YYYY-MM-DD.
-export function phaseStartFromHistory(
-  sessions: Pick<Session, "date" | "phase">[],
+/// The one composition Home and the Training phases sheet both call for the
+/// user-facing block-age display (issue #544) — `currentPeriodStart` feeding
+/// `blockAge`, hoisted here so the two screens can't drift onto different
+/// start dates or different day math by editing one call site and not the
+/// other (they used to: the Home strip read `phaseStartFromHistory()`'s
+/// recent-session-streak start instead of this canonical one). Deliberately
+/// has NO session parameter — the whole point of #544 is that session
+/// history must never be able to feed the displayed block age.
+export function phaseBlockAge(
+  phasePeriods: Pick<PhasePeriod, "phase" | "startedOn" | "endedOn">[],
   currentPhase: PhaseId,
-  fallbackStart: string,
-): string {
-  const desc = [...sessions].sort((a, b) => b.date.localeCompare(a.date));
-  let start: string | null = null;
-  for (const s of desc) {
-    if (s.phase !== currentPhase) break;
-    start = s.date;
-  }
-  return start ?? fallbackStart;
+  phaseStartDate: string,
+  referenceDate: string,
+): BlockAge | null {
+  return blockAge(currentPeriodStart(phasePeriods, currentPhase, phaseStartDate), referenceDate);
 }
 
 // "Low" readiness mirrors the "recover" zone floor already drawn as a
