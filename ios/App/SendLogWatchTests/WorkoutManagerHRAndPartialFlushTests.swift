@@ -124,6 +124,24 @@ final class WorkoutManagerHRMissingDateIntervalTests: XCTestCase {
         let manager = WorkoutManager()
         manager.reportHRMissingDateIntervalOnce()
         XCTAssertTrue(manager.hrMissingDateIntervalLogged)
+        XCTAssertEqual(manager.hrMissingDateIntervalCount, 1)
+    }
+
+    /// #481 review F2, failure scenario B: `hrMissingDateIntervalCount` exists
+    /// specifically to answer "one blip or a whole workout of untimestampable
+    /// readings?" — a question the one-shot `hrMissingDateIntervalLogged` flag
+    /// can't. If the increment ever moved below
+    /// `guard !hrMissingDateIntervalLogged else { return }`, every call after
+    /// the first would short-circuit before reaching it, and this would go
+    /// back to reading 1 for every workout with any occurrence at all,
+    /// silently reintroducing the exact blindness the count was added to fix.
+    func testCountIncrementsOnEveryReportEvenAfterTheOneShotGateHasFired() {
+        let manager = WorkoutManager()
+        manager.reportHRMissingDateIntervalOnce()
+        manager.reportHRMissingDateIntervalOnce()
+        manager.reportHRMissingDateIntervalOnce()
+        XCTAssertTrue(manager.hrMissingDateIntervalLogged, "the Console gate should still only need to fire once")
+        XCTAssertEqual(manager.hrMissingDateIntervalCount, 3, "every occurrence must count, not just the first")
     }
 
     /// A missing date interval must not affect HR itself — the direction
@@ -145,13 +163,22 @@ final class WorkoutManagerHRMissingDateIntervalTests: XCTestCase {
 
     /// `start()` must reset the flag, or a real occurrence in workout N
     /// silently suppresses the diagnostic for every later workout too.
+    /// #481 review F2, failure scenario A: `hrMissingDateIntervalCount` is on
+    /// the SAME App-scoped manager the flag lives on (#476), so an unreset
+    /// count doesn't just lose one workout's number — it accumulates across
+    /// every workout for the rest of the process. `start()` must reset it in
+    /// the same block, or `end()`'s "N time(s) this workout" breadcrumb
+    /// starts answering a different, wrong question while still looking
+    /// precise.
     func testStartResetsTheOneShotFlagForANewWorkout() async {
         let manager = makeAuthorizationFailingWorkoutManager()
         manager.reportHRMissingDateIntervalOnce()
         XCTAssertTrue(manager.hrMissingDateIntervalLogged)
+        XCTAssertEqual(manager.hrMissingDateIntervalCount, 1)
 
         await manager.start() // injected auth fails after the unconditional reset block
         XCTAssertFalse(manager.hrMissingDateIntervalLogged, "a new workout must get its own one-shot report, not inherit the previous workout's")
+        XCTAssertEqual(manager.hrMissingDateIntervalCount, 0, "a new workout must not carry the previous workout's count forward either")
     }
 }
 

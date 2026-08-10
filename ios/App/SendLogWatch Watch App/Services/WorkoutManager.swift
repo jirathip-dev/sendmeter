@@ -230,7 +230,13 @@ final class WorkoutManager: NSObject {
     /// in the background, but a unit-test host has no Supabase to reach — left
     /// unstubbed, this dialed 127.0.0.1:54321 from every test that calls
     /// `start()`, a measured 2-in-5 flake at ~32s/run (#481). Tests inject a
-    /// synchronous stub so `start()` never touches the network.
+    /// synchronous stub so `start()` never touches the network. #481 review
+    /// F1: this default swallows its own error with `try?`, so a missed stub
+    /// is silent — no assertion failure, just a background dial-out and
+    /// whatever latency it costs. That property is enforced, not just
+    /// followed by convention: `WorkoutManagerNetworkSeamCoverageTests`
+    /// (`WorkoutOwnershipTests.swift`) statically scans the test target for a
+    /// `WorkoutManager` that reaches `start()` without stubbing this.
     var phaseWarmer: () async -> String = {
         (try? await Repo.fetchCurrentPhase()) ?? "capacity"
     }
@@ -257,17 +263,26 @@ final class WorkoutManager: NSObject {
     // #481: this used to carry a `deinit { fusionTimer?.invalidate() }`,
     // added when `WorkoutManager` was `@State` inside `WorkoutLiveView` (a
     // navigationDestination) and really could deallocate mid-workout (a nav
-    // pop). #476 hoisted it to App scope (`SendLogWatchApp`'s `@State`), so
-    // in production it now lives for the whole process — the deallocation
-    // path the guard existed for is exactly the one the hoist removed. It
-    // was also never correctly thread-safe where it WAS reachable:
+    // pop). It was also never correctly thread-safe where it WAS reachable:
     // `Timer.invalidate()` must be called from the thread that installed the
     // timer (`startFusion()`, always MainActor-adjacent), but `deinit`
     // carries no isolation and could in principle run on whatever thread
-    // drops the last strong reference. Removed rather than kept as a guard
-    // that only looked active — `end()` (and
+    // drops the last strong reference.
+    //
+    // The invariant that makes it safe to remove — no view owns its own
+    // `WorkoutManager`, so nothing deallocates it mid-workout — is #476's
+    // rule, not a fact about which views happen to exist today: any view
+    // that ever gains `@State private var workout = WorkoutManager()` and
+    // calls `start()` reintroduces both #476's orphaned-session bug and the
+    // orphaned run-loop timer this `deinit` used to mop up, with nothing left
+    // to catch it. Today the rule is pinned only per-view, by
+    // `testWorkoutLiveViewReadsWorkoutManagerFromEnvironmentNotState` /
+    // `testRootViewReadsWorkoutManagerFromEnvironmentNotState`
+    // (`WorkoutOwnershipTests.swift`) — a NEW view needs its own such pin, or
+    // its own `deinit` guard, not a free pass from this comment. `end()` (and
     // `stopRecordingAndAwaitInFlightPartial()`) is the one real invalidation
-    // path now, and it already runs on MainActor.
+    // path for every view that follows the rule, and it already runs on
+    // MainActor.
 
     func requestAuthorization() async throws {
         if let authorizationRequestOverride {
@@ -640,10 +655,16 @@ final class WorkoutManager: NSObject {
         // cap, not a genuine end signal" and nothing ever read it. Same
         // one-shot-per-workout Console breadcrumb as `hrMissingDateInterval`
         // below, not user-facing: a caller was always meant to report this,
-        // not silently accept the clamp.
+        // not silently accept the clamp. #481 review F3: a merge of a capped
+        // fragment with a later clean-closing one (< `mergeGapS` apart, same
+        // source) keeps only the LAST fragment's `hitCap`
+        // (`AttemptDetector.swift`'s merge step, documented there as
+        // diagnostic-only) — so this count can under-report a real cap hit
+        // that got absorbed into a merged attempt. "at least" says that
+        // honestly instead of implying an exact count.
         let cappedAttemptCount = attempts.filter(\.hitCap).count
         if cappedAttemptCount > 0 {
-            Self.log.warning("\(cappedAttemptCount) attempt(s) this workout closed on a duration cap, not a genuine end signal (#481)")
+            Self.log.warning("at least \(cappedAttemptCount) attempt(s) this workout closed on a duration cap, not a genuine end signal (#481)")
         }
         // #481 (#477 F4 follow-up): `reportHRMissingDateIntervalOnce()` logs
         // only once per workout, so Console can't tell a single blip from a
