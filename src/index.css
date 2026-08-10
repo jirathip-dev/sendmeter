@@ -247,9 +247,12 @@
      real background it lands on in light mode: plain #FFFFFF/#F2F4F8 AND the
      ~12%-phase-tinted tag/card fills (`Phase.bg`), which is the binding
      constraint (measured, not eyeballed — see the "phase identity's text
-     variant" test in premiumVisualInvariants.test.ts). Dark mode redefines
-     these to equal `color` below (already ~8.4:1+ on the dark canvas —
-     untouched). */
+     variant" test in premiumVisualInvariants.test.ts). Dark mode below is
+     NOT simply "identity, already safe" — round-1 review measured capacity/
+     power/execution at ~4.17–4.47:1 on the real ~12%-tinted dark card/tag
+     fill (below AA), so three of the four hues get their own lightened dark
+     variant too; only strength clears AA at full identity strength there
+     (~6.3:1+). See the dark block below for the actual per-hue numbers. */
   --phase-text-capacity: #216AAA;
   --phase-text-strength: #816722;
   --phase-text-power: #A05129;
@@ -407,12 +410,27 @@
   --nav-ring-opacity: 0.85;
   --phase-tint-alpha: 12%;
   --phase-border-alpha: 35%;
-  /* Dark mode's identity hues already clear ~8.4:1+ on the dark canvas
-     (#557) — text uses the same value as the decorative `color`. */
-  --phase-text-capacity: #2E96F0;
+  /* #557 round-2 review: dark identity hues do NOT uniformly clear AA text
+     contrast on the real ~12%-tinted dark card/tag fill (`Phase.bg` over the
+     dark canvas/sheet surface) — only strength has real headroom there.
+     Measured (identity vs. that tinted fill, dark canvas #171D2A / sheet
+     surface ~#1E2737): capacity ~4.2:1, strength ~6.3:1+, power ~4.5:1,
+     execution ~4.2:1 — three of four below or right at the 4.5:1 line.
+     Strength keeps the identity hex (headroom is real and large); capacity/
+     power/execution get their own lightened dark variant — a tint (mixed
+     toward white), not a saturation-preserving value scale: at maximum
+     scale before channel clipping, execution only reaches ~4.42:1 against
+     the tinted fill, still short of 4.5:1, so a small, expected saturation
+     loss (a real property of tints, not a bug) buys the rest. Hue itself is
+     exact (±0 – 2°) so each still reads as its own color family. All four
+     clear AA at ≥4.5:1 against both plain --canvas and the tinted fill —
+     see the "phase identity's text variant" test in
+     premiumVisualInvariants.test.ts, which pins the measured floor, not
+     just plain --canvas. */
+  --phase-text-capacity: #47A2F2;
   --phase-text-strength: #DDB13A;
-  --phase-text-power: #E5743A;
-  --phase-text-execution: #7B83EB;
+  --phase-text-power: #E7804C;
+  --phase-text-execution: #8E95EE;
   --shadow-xs: 0 1px 2px rgba(0,0,0,0.28);
   --shadow-sm: 0 4px 14px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
   --shadow-card: 0 1px 2px rgba(0,0,0,0.32), 0 12px 30px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06);
@@ -537,10 +555,14 @@
     --nav-ring-opacity: 0.85;
     --phase-tint-alpha: 12%;
     --phase-border-alpha: 35%;
-    --phase-text-capacity: #2E96F0;
+    /* Mirrors :root[data-theme="dark"] exactly (#557 round 2) — this is the
+       system-dark/no-explicit-theme path, and it must stay byte-identical to
+       the explicit dark block or a system-dark user silently keeps a stale
+       or under-contrast value (pinned in premiumVisualInvariants.test.ts). */
+    --phase-text-capacity: #47A2F2;
     --phase-text-strength: #DDB13A;
-    --phase-text-power: #E5743A;
-    --phase-text-execution: #7B83EB;
+    --phase-text-power: #E7804C;
+    --phase-text-execution: #8E95EE;
     --shadow-xs: 0 1px 2px rgba(0,0,0,0.28);
     --shadow-sm: 0 4px 14px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
     --shadow-card: 0 1px 2px rgba(0,0,0,0.32), 0 12px 30px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06);

@@ -1436,6 +1436,10 @@ const THEME_TOKENS = [
   "--chrome-bg",
   "--chrome-border",
   "--focus-ring",
+  "--phase-text-capacity",
+  "--phase-text-strength",
+  "--phase-text-power",
+  "--phase-text-execution",
   "--primary-action",
   "--primary-action-shade",
   "--primary-action-hover",
@@ -1514,6 +1518,25 @@ function mix(a: RGB, b: RGB, amount: number): RGB {
     a[1] + (b[1] - a[1]) * amount,
     a[2] + (b[2] - a[2]) * amount,
   ];
+}
+
+/** Hue angle in degrees [0, 360). Used to prove a "same color family" claim
+ * independent of how a variant was derived — a shade (mixed toward black,
+ * light mode) preserves HSL saturation exactly; a tint (mixed toward white,
+ * dark mode) does not, by definition of the sRGB/HSL relationship. Hue is
+ * the only channel both derivations are expected to hold fixed. */
+function hueDegrees([r, g, b]: RGB): number {
+  const [rn, gn, bn] = [r / 255, g / 255, b / 255];
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const d = max - min;
+  if (d === 0) return 0;
+  let h: number;
+  if (max === rn) h = ((gn - bn) / d) % 6;
+  else if (max === gn) h = (bn - rn) / d + 2;
+  else h = (rn - gn) / d + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
 }
 
 function gradientEndpoints(value: string, background: RGB, name: string): RGB[] {
@@ -2236,57 +2259,104 @@ describe("premium visual language contracts (#517)", () => {
     const phasesViewSource = component("PhasesView.tsx");
     const sessionRowSource = component("SessionRow.tsx");
     expect(dashboardSource).toContain("color: phase.textColor,");
-    expect(dashboardSource).not.toContain("color: phase.color,");
-    expect(phasesViewSource).not.toMatch(/color:\s*p\.color[,\s]/);
+    expect(dashboardSource).not.toMatch(/color:\s*phase\.color\b/);
+    expect(phasesViewSource).not.toMatch(/color:\s*p\.color\b/);
     expect(sessionRowSource).toContain("color: ph?.textColor");
     expect(sessionRowSource).not.toContain("color: ph?.color");
+
+    // Every --phase-text-* token is declared (non-empty) in all three theme
+    // blocks, and the system-dark path stays byte-identical to the explicit
+    // dark path — a later edit to one dark block and not the other would
+    // otherwise silently leave a system-dark user on a stale/under-contrast
+    // value while every other assertion here (which only reads
+    // `themeDeclarations.dark`) stayed green.
+    for (const phase of phases) {
+      const token = `--phase-text-${phase.id}`;
+      for (const theme of Object.keys(themeDeclarations) as ThemeName[]) {
+        expect(themeDeclarations[theme][token], `${theme} ${token} declared`).toBeTruthy();
+      }
+      expect(themeDeclarations.dark[token], `${token} dark === systemDark`).toBe(
+        themeDeclarations.systemDark[token],
+      );
+    }
+
+    const white = hexColor("#FFFFFF", "white");
+    const f2f4f8 = hexColor("#F2F4F8", "F2F4F8");
+    const darkCanvas = resolveThemeColor("var(--canvas)", "dark", "dark canvas");
+    // The real worst-case dark surface text lands on isn't plain --canvas:
+    // Sheet/session-row backgrounds layer --gradient-neutral over it, and
+    // its lighter stop is the strictest bound for light-on-dark contrast
+    // (round-2 review — a plain-canvas-only check missed capacity/power/
+    // execution measuring below AA on this real composite).
+    const darkGradientStops = gradientEndpoints(
+      resolveGradientDeclaration(
+        themeDeclarations.dark["--gradient-neutral"]!,
+        "dark",
+        "dark gradient-neutral",
+      ),
+      darkCanvas,
+      "dark gradient-neutral",
+    );
+    const darkWorstSurface = darkGradientStops.reduce((lightest, stop) =>
+      luminance(stop) > luminance(lightest) ? stop : lightest,
+    );
 
     for (const phase of phases) {
       const identity = hexColor(phase.hue, `${phase.id} identity`);
 
-      // Dark mode: the text token equals the decorative identity hue, which
-      // already clears AA comfortably on the dark canvas.
-      const darkVar = themeDeclarations.dark[`--phase-text-${phase.id}`];
-      expect(darkVar, `dark --phase-text-${phase.id}`).toBe(phase.hue);
-      const darkCanvas = resolveThemeColor("var(--canvas)", "dark", "dark canvas");
+      // --- Dark mode: only strength has real headroom (~6.3:1+ measured) to
+      // stay at the identity hex. capacity/power/execution measure
+      // ~4.17-4.47:1 on the real 12%-tinted dark card/tag fill at full
+      // identity strength (below AA) — each gets its own lightened variant.
+      const darkVarValue = themeDeclarations.dark[`--phase-text-${phase.id}`]!;
+      const darkVariant = hexColor(darkVarValue, `dark --phase-text-${phase.id}`);
+      const darkTintedWorst = mix(darkWorstSurface, identity, 0.12);
+      if (phase.id === "strength") {
+        expect(darkVarValue, "strength dark stays at identity").toBe(phase.hue);
+      } else {
+        expect(darkVariant, `${phase.id} dark variant differs from identity`).not.toEqual(identity);
+      }
+      expect(contrastRatio(darkVariant, darkCanvas), `${phase.id} dark vs --canvas`).toBeGreaterThanOrEqual(4.5);
       expect(
-        contrastRatio(identity, darkCanvas),
-        `dark ${phase.id} identity on canvas`,
+        contrastRatio(darkVariant, darkTintedWorst),
+        `${phase.id} dark vs 12%-tinted worst-case dark surface`,
       ).toBeGreaterThanOrEqual(4.5);
 
-      // Light mode: the text token must be a darkened variant (same hue,
+      // --- Light mode: the token must be a darkened variant (same hue,
       // lower value) that clears AA against every real background it lands
       // on — plain white/#F2F4F8 AND the ~12%-phase-tinted tag/card fill
       // (Phase.bg), which is the stricter, binding constraint.
-      const lightVarValue = themeDeclarations.light[`--phase-text-${phase.id}`];
-      expect(lightVarValue, `light --phase-text-${phase.id} declared`).toBeTruthy();
-      const variant = hexColor(lightVarValue!, `light --phase-text-${phase.id}`);
-      expect(variant, `${phase.id} variant differs from identity`).not.toEqual(identity);
-
-      const white = hexColor("#FFFFFF", "white");
-      const f2f4f8 = hexColor("#F2F4F8", "F2F4F8");
-      const tagBg = mix(f2f4f8, identity, 0.12);
-      expect(contrastRatio(variant, white), `${phase.id} vs #FFFFFF`).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(variant, f2f4f8), `${phase.id} vs #F2F4F8`).toBeGreaterThanOrEqual(4.5);
+      const lightVarValue = themeDeclarations.light[`--phase-text-${phase.id}`]!;
+      const lightVariant = hexColor(lightVarValue, `light --phase-text-${phase.id}`);
+      expect(lightVariant, `${phase.id} light variant differs from identity`).not.toEqual(identity);
+      const lightTagBg = mix(f2f4f8, identity, 0.12);
+      expect(contrastRatio(lightVariant, white), `${phase.id} light vs #FFFFFF`).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(lightVariant, f2f4f8), `${phase.id} light vs #F2F4F8`).toBeGreaterThanOrEqual(4.5);
       expect(
-        contrastRatio(variant, tagBg),
-        `${phase.id} vs 12%-tinted tag/card fill`,
+        contrastRatio(lightVariant, lightTagBg),
+        `${phase.id} light vs 12%-tinted tag/card fill`,
       ).toBeGreaterThanOrEqual(4.5);
 
-      // The hue itself must stay recognizable — same RGB ratios, just darker
-      // (an HSV hue/saturation-preserving shade), not a different color.
-      const [ir, ig, ib] = identity;
-      const [vr, vg, vb] = variant;
-      const maxIdentity = Math.max(ir, ig, ib);
-      const maxVariant = Math.max(vr, vg, vb);
-      expect(maxVariant, `${phase.id} variant is darker`).toBeLessThan(maxIdentity);
-      for (const [i, v] of [[ir, vr], [ig, vg], [ib, vb]] as const) {
-        // Same channel ratio (±1 for rounding) proves hue/saturation are
-        // unchanged — only value (brightness) was scaled down.
+      // --- Hue lock: every variant that differs from identity must still be
+      // recognizably the same hue. Light variants are shades (RGB scaled
+      // toward black), which preserves HSL saturation exactly as a free
+      // consequence — but dark variants are tints (mixed toward white,
+      // needed for execution/capacity to reach 4.5:1 at all; a pure
+      // saturation-preserving scale tops out at ~4.42:1 for execution even
+      // at max headroom before channel clipping), and tinting reduces
+      // saturation by definition of the sRGB/HSL relationship. So hue angle
+      // — not per-channel ratio-to-max — is the invariant both directions
+      // actually guarantee, and the one that matters for "still reads as
+      // the same color family".
+      const identityHue = hueDegrees(identity);
+      const variantsToCheck: Array<[string, typeof identity]> = [["light", lightVariant]];
+      if (phase.id !== "strength") variantsToCheck.push(["dark", darkVariant]);
+      for (const [themeName, variant] of variantsToCheck) {
+        const hueDrift = Math.abs(hueDegrees(variant) - identityHue);
         expect(
-          Math.abs(i / maxIdentity - v / maxVariant),
-          `${phase.id} channel ratio drift`,
-        ).toBeLessThan(0.02);
+          Math.min(hueDrift, 360 - hueDrift),
+          `${phase.id} ${themeName} hue drift`,
+        ).toBeLessThan(2);
       }
     }
   });

@@ -5,16 +5,17 @@ import type { NavItem, Phase, SessionType } from "./types";
 // large) and as small (9-15px) text/tag foreground on near-white light
 // surfaces (phase banner name, History session-type tags) — e.g. Strength
 // #DDB13A on white measures ~2.0:1, well under WCAG AA's 4.5:1 for normal
-// text. Each color is shared with dark mode, where the same hex reads at a
-// healthy ~8:1+ on the dark canvas, so this is not a per-theme mistake — the
-// palette was simply never tuned for use as light-mode text. `textColor`
-// (below) is the fix: a `var(--phase-text-<id>)` reference resolved per theme
-// in index.css — darkened in light mode to clear AA on every real consumer
-// background (plain near-white AND the ~12%-phase-tinted tag/card fills),
-// equal to `color` in dark mode. Every text consumer of the palette must use
-// `textColor`, never `color` — `color` stays for chart/chip/border/background
-// (non-text) uses, where the original saturated hue is correct in both
-// themes.
+// text. `textColor` (below) is the fix: a `var(--phase-text-<id>)` reference
+// resolved per theme in index.css — darkened in light mode to clear AA on
+// every real consumer background (plain near-white AND the ~12%-phase-tinted
+// tag/card fills). Dark mode is NOT simply the unchanged identity hex either
+// (round-2 review, #557): three of the four hues (all but strength) measure
+// below 4.5:1 on the real ~12%-tinted dark card/tag fill, so they get their
+// own lightened dark variant too — see the comment above the dark
+// `--phase-text-*` block in index.css for the measured per-hue numbers.
+// Every text consumer of the palette must use `textColor`, never `color` —
+// `color` stays for chart/chip/border/background (non-text) uses, where the
+// original saturated hue is correct in both themes.
 export const PHASES: Phase[] = [
   {
     id: "capacity",

@@ -117,11 +117,26 @@ export default function Dashboard({
             </div>
             <div
               style={{
+                display: "inline-block",
+                maxWidth: "100%",
                 fontSize: "var(--t-md)",
                 fontWeight: 700,
                 color: phase.textColor,
                 letterSpacing: "-0.01em",
-                marginTop: 2,
+                marginTop: 4,
+                padding: "2px 9px",
+                borderRadius: 7,
+                // #557 round 2: the banner's own tint (--phase-accent at
+                // --phase-tint-alpha) fades to ~transparent by the time it
+                // reaches the name, so on light mode's darkened, less
+                // saturated text (esp. Strength's gold, which reads brown at
+                // AA-legible lightness) the name is the only identity signal
+                // left — reintroduce it the same way History's session-type
+                // tags do, with the phase's own identity bg/border (already
+                // proven AA-safe for `textColor` in
+                // premiumVisualInvariants.test.ts).
+                background: phase.bg,
+                border: `1px solid ${phase.border}`,
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",

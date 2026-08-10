@@ -9,12 +9,15 @@ export interface Phase {
   id: PhaseId;
   name: string;
   color: string;
-  /// Light-mode-legible text variant of `color` (issue #557) — a CSS
-  /// custom-property reference (`var(--phase-text-<id>)`), resolved per
-  /// theme in index.css: darkened to clear WCAG AA 4.5:1 on light-mode's
-  /// near-white surfaces, equal to `color` in dark mode (already ~8.4:1+
-  /// there). Use this for every consumer that renders the phase identity
-  /// as small text; `color` stays the decorative/chart/chip/dark-mode value.
+  /// AA-legible text variant of `color` (issue #557) — a CSS custom-property
+  /// reference (`var(--phase-text-<id>)`), resolved per theme in index.css.
+  /// Light mode: darkened to clear WCAG AA 4.5:1 on light mode's near-white
+  /// surfaces. Dark mode: NOT simply `color` unchanged — round-2 review found
+  /// three of four identity hues (all but strength) fall short of 4.5:1 on
+  /// the real ~12%-tinted dark card/tag fill, so those get their own
+  /// lightened dark variant too. Use this for every consumer that renders
+  /// the phase identity as text; `color` stays the decorative/chart/chip
+  /// value (identity hex, unchanged in both themes).
   textColor: string;
   bg: string;
   border: string;
