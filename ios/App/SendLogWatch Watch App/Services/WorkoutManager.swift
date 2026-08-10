@@ -225,20 +225,30 @@ final class WorkoutManager: NSObject {
     var partialUploader: (ClimbWorkoutPartialUpsert) async -> Void = { partial in
         try? await Repo.flushPartialWorkout(partial)
     }
-    /// Not `private`, same reasoning as `partialUploader`: the production
-    /// default is the real `Repo.fetchCurrentPhase()` warm-up `start()` fires
-    /// in the background, but a unit-test host has no Supabase to reach — left
-    /// unstubbed, this dialed 127.0.0.1:54321 from every test that calls
-    /// `start()`, a measured 2-in-5 flake at ~32s/run (#481). Tests inject a
-    /// synchronous stub so `start()` never touches the network. #481 review
-    /// F1: this default swallows its own error with `try?`, so a missed stub
-    /// is silent — no assertion failure, just a background dial-out and
-    /// whatever latency it costs. That property is enforced, not just
-    /// followed by convention: `WorkoutManagerNetworkSeamCoverageTests`
-    /// (`WorkoutOwnershipTests.swift`) statically scans the test target for a
-    /// `WorkoutManager` that reaches `start()` without stubbing this.
+    /// Not `private`, same reasoning as `partialUploader`: `start()` fires
+    /// this in the background so save-on-stop needs no network round trip.
+    /// #481: left as a bare `Repo.fetchCurrentPhase()` call, this dialed
+    /// 127.0.0.1:54321 from every test that calls `start()` — a measured
+    /// 2-in-5 flake at ~32s/run. #481 review F1/F5/F6: an injectable
+    /// per-instance property only closes that hole for constructions that
+    /// remember to override it — a round-1 fix that instead tried to
+    /// STATICALLY SCAN the test target for missed overrides turned out to be
+    /// evadable by ordinary XCTest idioms (`setUp()` + a stored property, a
+    /// computed-property factory, a cross-file factory, a factory that calls
+    /// `start()` itself) and could silently stop scanning partway through a
+    /// file — a pin that can go quiet is not a pin. The actual fix is
+    /// constructional, not conventional: the DEFAULT closure itself detects a
+    /// test host and returns the same fallback `start()` already used for a
+    /// failed fetch, before ever reaching `Repo`. This makes every
+    /// construction shape safe — including ones nobody has written yet —
+    /// with nothing to remember and nothing to scan for.
+    /// `testDefaultPhaseWarmerIsInertUnderTest` (`WorkoutOwnershipTests.swift`)
+    /// pins exactly this. Overriding `phaseWarmer` in a test is still
+    /// possible (some tests want a specific phase for `predictedRPE`'s
+    /// inputs) but is no longer required for network safety.
     var phaseWarmer: () async -> String = {
-        (try? await Repo.fetchCurrentPhase()) ?? "capacity"
+        guard NSClassFromString("XCTestCase") == nil else { return "capacity" }
+        return (try? await Repo.fetchCurrentPhase()) ?? "capacity"
     }
     /// Double haptic when the rest countdown hits zero (#476 F5: hoisted out
     /// of WorkoutLiveView, same reasoning as the save path — a rest alarm

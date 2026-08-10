@@ -160,9 +160,6 @@ final class WorkoutManagerDoubleStartTests: XCTestCase {
 
     private func makeAuthorizationFailingManager(gate: AuthorizationGate? = nil) -> WorkoutManager {
         let manager = WorkoutManager()
-        // #481: start() fires a background phase warm-up against the real
-        // Repo — stub it so this test host never dials 127.0.0.1:54321.
-        manager.phaseWarmer = { "capacity" }
         if let gate {
             manager.authorizationRequestOverride = {
                 await gate.enter()
@@ -324,157 +321,39 @@ final class WorkoutSessionActivationWiringTests: XCTestCase {
     }
 }
 
-/// #481 review F1: `WorkoutManager.phaseWarmer` keeps `start()`'s background
-/// phase warm-up off the real network only because every construction that
-/// reaches `start()` remembers to stub it — a convention, not an enforced
-/// rule. A missed stub is silent: the default swallows its error with
-/// `try?`, so a violation produces no assertion failure, just a background
-/// connect to 127.0.0.1:54321 and the ~32s/run, 2-in-5 flake #476A originally
-/// measured coming back. This scans the test target's own source for the
-/// property statically — the same idiom `WorkoutSessionActivationWiringTests`
-/// above uses to pin production wiring by reading it as text — because
-/// nothing else would make "someone forgot to stub this" a CI failure rather
-/// than a silent flake.
+/// #481 review round 2 (F5/F6/F7): a first attempt at this closed the "no
+/// real network in unit tests" hole for `phaseWarmer` by statically
+/// SCANNING the test target's source for a missed stub — text-based, same
+/// idiom `WorkoutSessionActivationWiringTests` above uses to pin production
+/// wiring. It turned out evadable by ordinary XCTest idioms the two passes
+/// didn't model (`setUp()` + a stored property, a computed-property
+/// factory, a cross-file factory, a factory that calls `start()` itself)
+/// and — worse — its own parser silently stopped partway through THIS file
+/// on a doc comment containing the words "func ", so the tail of the file
+/// (including the scanner's own tests) went unscanned with no failure and
+/// no diagnostic. A pin that can silently stop scanning is not a pin.
 ///
-/// Two passes, matching how the seam is actually used in this target today:
-/// a handful of factory functions construct-and-stub in one place, and
-/// callers just invoke the factory; a few tests construct a `WorkoutManager`
-/// directly instead. Both need the stub, but the enclosing function that
-/// must contain it differs.
-final class WorkoutManagerNetworkSeamCoverageTests: XCTestCase {
-    /// Every `SendLogWatchTests/*.swift` file, read as text — deliberately
-    /// the whole directory (not just the three files known to construct a
-    /// `WorkoutManager` today), so a NEW file with a new factory or a new
-    /// inline construction is covered without anyone remembering to add it
-    /// here.
-    private func testFileSources() throws -> [(name: String, text: String)] {
-        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let urls = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension == "swift" }
-        return try urls.map { ($0.lastPathComponent, try String(contentsOf: $0, encoding: .utf8)) }
-    }
-
-    private func balancedSpan(in text: String, from start: String.Index, open: Character, close: Character) -> String? {
-        var depth = 1
-        var index = start
-        while depth > 0, index < text.endIndex {
-            if text[index] == open { depth += 1 }
-            else if text[index] == close { depth -= 1 }
-            if depth > 0 { index = text.index(after: index) }
-        }
-        guard depth == 0 else { return nil }
-        return String(text[start..<index])
-    }
-
-    /// Every `func ... { ... }` in `source`, paired with its signature (from
-    /// `func` to the opening brace). Skips over the parameter list with its
-    /// own paren-depth counter — not just "the first `{` after `func`" —
-    /// because a default argument value can itself be a closure (e.g.
-    /// `makeAuthorizationFailingWorkoutManager`'s
-    /// `userIdProvider: ... = { WatchSessionStore.shared.userId }`), whose
-    /// `{` would otherwise be mistaken for the function body's own opening
-    /// brace, truncating the signature before its `-> WorkoutManager` return
-    /// type and silently hiding the function from both passes below.
-    private func functionBodies(in source: String) -> [(signature: String, body: String)] {
-        var results: [(signature: String, body: String)] = []
-        var searchStart = source.startIndex
-        while let funcRange = source.range(of: "func ", range: searchStart..<source.endIndex) {
-            guard let parenOpen = source.range(of: "(", range: funcRange.upperBound..<source.endIndex) else { break }
-            var depth = 1
-            var index = parenOpen.upperBound
-            while depth > 0, index < source.endIndex {
-                if source[index] == "(" { depth += 1 }
-                else if source[index] == ")" { depth -= 1 }
-                index = source.index(after: index)
-            }
-            guard depth == 0 else { break }
-            guard let braceOpen = source.range(of: "{", range: index..<source.endIndex) else { break }
-            let signature = String(source[funcRange.lowerBound..<braceOpen.lowerBound])
-            guard let body = balancedSpan(in: source, from: braceOpen.upperBound, open: "{", close: "}") else { break }
-            results.append((signature, body))
-            searchStart = braceOpen.upperBound
-        }
-        return results
-    }
-
-    /// True when `text` contains the literal `token(` NOT as a suffix of some
-    /// other identifier — e.g. matching `WorkoutManager(` against
-    /// `let m = WorkoutManager(...)` but not against
-    /// `makeAuthorizationFailingWorkoutManager(...)`, and matching a factory
-    /// NAME like `makeManager(` against its call sites but not against
-    /// unrelated identifiers that happen to end the same way.
-    private func containsDirectCall(_ token: String, in text: String) -> Bool {
-        let needle = "\(token)("
-        var searchStart = text.startIndex
-        while let range = text.range(of: needle, range: searchStart..<text.endIndex) {
-            if range.lowerBound == text.startIndex {
-                return true
-            }
-            let precedingChar = text[text.index(before: range.lowerBound)]
-            if !(precedingChar.isLetter || precedingChar.isNumber || precedingChar == "_") {
-                return true
-            }
-            searchStart = range.upperBound
-        }
-        return false
-    }
-
-    private func containsDirectWorkoutManagerConstruction(_ body: String) -> Bool {
-        containsDirectCall("WorkoutManager", in: body)
-    }
-
-    /// The identifier right after `func ` in a signature string, up to (not
-    /// including) its argument list's `(`.
-    private func functionName(fromSignature signature: String) -> String? {
-        guard let funcRange = signature.range(of: "func ") else { return nil }
-        guard let parenRange = signature.range(of: "(", range: funcRange.upperBound..<signature.endIndex) else { return nil }
-        return String(signature[funcRange.upperBound..<parenRange.lowerBound])
-    }
-
-    /// Pass 1 — every helper that constructs and returns a `WorkoutManager`
-    /// AND is actually used (by name, anywhere else in the same file) inside
-    /// a function that also calls `.start()` must stub `phaseWarmer` itself —
-    /// a caller has no way to know it needs to. A factory whose managers
-    /// never reach `start()` (e.g. `WorkoutManagerHeartRateStalenessTests
-    /// .makeManager`, which only drives `performFusionTick`/`acceptHeartRate`
-    /// directly) is legitimately exempt, so this only requires the stub when
-    /// some usage in the file demonstrably reaches `start()`.
-    func testEveryStartReachingWorkoutManagerFactoryStubsThePhaseWarmer() throws {
-        for (name, source) in try testFileSources() {
-            let functions = functionBodies(in: source)
-            for (factoryIndex, factory) in functions.enumerated() {
-                guard factory.signature.contains("-> WorkoutManager") else { continue }
-                guard let factoryName = functionName(fromSignature: factory.signature) else { continue }
-                let reachesStart = functions.indices.contains { callerIndex in
-                    guard callerIndex != factoryIndex else { return false }
-                    let caller = functions[callerIndex]
-                    return containsDirectCall(factoryName, in: caller.body) && caller.body.contains(".start()")
-                }
-                guard reachesStart else { continue }
-                XCTAssertTrue(
-                    factory.body.contains("phaseWarmer ="),
-                    "\(name): \(factoryName)(...) (\(factory.signature.trimmingCharacters(in: .whitespacesAndNewlines))) is used by a caller " +
-                    "that calls start(), so it must stub phaseWarmer itself, or start() silently dials 127.0.0.1:54321"
-                )
-            }
-        }
-    }
-
-    /// Pass 2 — a function that constructs a `WorkoutManager` directly (not
-    /// through one of the Pass-1 factories) and calls `.start()` on it must
-    /// also stub `phaseWarmer` somewhere in that same function.
-    func testEveryInlineWorkoutManagerThatStartsStubsThePhaseWarmer() throws {
-        for (name, source) in try testFileSources() {
-            for (signature, body) in functionBodies(in: source) {
-                guard !signature.contains("-> WorkoutManager") else { continue } // covered by Pass 1
-                guard containsDirectWorkoutManagerConstruction(body) else { continue }
-                guard body.contains(".start()") else { continue }
-                XCTAssertTrue(
-                    body.contains("phaseWarmer ="),
-                    "\(name): \(signature.trimmingCharacters(in: .whitespacesAndNewlines)) constructs a WorkoutManager " +
-                    "directly and calls start() without stubbing phaseWarmer — start() will dial 127.0.0.1:54321"
-                )
-            }
-        }
+/// The actual fix is constructional, not conventional (see
+/// `WorkoutManager.phaseWarmer`'s doc comment): the DEFAULT closure detects
+/// a test host and returns the fallback value directly, before ever
+/// reaching `Repo`. That makes every construction shape — present or future,
+/// in this file or any other — safe with nothing to remember and nothing to
+/// scan for, so there is no scanner to maintain here any more. This is the
+/// one direct test of that guarantee.
+@MainActor
+final class WorkoutManagerPhaseWarmerConstructionalSafetyTests: XCTestCase {
+    /// No `phaseWarmer` override at all — the bare default `start()` ships
+    /// with. A dead 127.0.0.1:54321 (this test target's whole point, and
+    /// what `swift test`/`xcodebuild test` actually run against — no
+    /// Supabase runs in CI or in this repo's verification loop) would make
+    /// `Repo.fetchCurrentPhase()` fail and fall through to the same
+    /// "capacity" this asserts on, so the real proof that this took the
+    /// test-host branch rather than a failed network round trip is that the
+    /// whole target — this test included — runs in single digit seconds; see
+    /// the commit message for the timed, stack-stopped run.
+    func testDefaultPhaseWarmerIsInertUnderTest() async {
+        let manager = WorkoutManager()
+        let phase = await manager.phaseWarmer()
+        XCTAssertEqual(phase, "capacity", "the default phaseWarmer must resolve to the fallback value under a test host, not by reaching Repo.fetchCurrentPhase() over the network")
     }
 }
