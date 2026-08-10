@@ -1099,6 +1099,36 @@ final class WorkoutManager: NSObject {
                 // #477: one or more flushes were requested while this one
                 // was in flight — coalesce them into exactly one more run,
                 // built from state as of NOW, not as of the earlier request.
+                // #529 slice-2 review R1: `flushPartial()`'s own ownership
+                // guard only protects the request that arrives WHILE this
+                // one is already in flight — the account can just as well
+                // change during the network round trip itself, and this
+                // coalesced rerun calls `runPartialFlush()` directly,
+                // bypassing that guard entirely. Re-check here too, or an
+                // A → signed-out/B transition mid-flight lets one more
+                // partial upsert fire under B's currently-relayed token
+                // after `flushPartial()` would have refused a fresh call.
+                guard self.userIdProvider() == self.ownerUserId else {
+                    // #529 slice-2 review F3: `completePass()` above already
+                    // consumed the rerun request but left `running == true`
+                    // (its contract: a `.rerun` caller is expected to
+                    // actually perform another pass and complete THAT one
+                    // too). Declining to run without resolving the drain
+                    // wedges it `running` forever — every later
+                    // `flushPartial()` on this still-live workout would hit
+                    // `.request()` → `.queued` and do nothing, exactly the
+                    // "durable flushing silently dead for the rest of the
+                    // workout" hazard `partialFlushEpoch`'s own doc comment
+                    // warns about 80 lines up, just reached from an ownership
+                    // mismatch instead of a stale epoch. A second
+                    // `completePass()` call here sees `requestedAgain ==
+                    // false` (already cleared above) and returns `.idle`,
+                    // clearing `running` — safe to call synchronously with no
+                    // intervening `await`, so nothing else can have re-armed
+                    // `requestedAgain` in between.
+                    _ = self.partialFlushDrain.completePass()
+                    return
+                }
                 self.runPartialFlush()
             }
         }

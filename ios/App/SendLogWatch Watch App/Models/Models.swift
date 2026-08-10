@@ -220,6 +220,12 @@ nonisolated struct TindeqRecordingInsert: Codable {
     var capacityEvidence: Bool? = nil
     var completedReps: Int? = nil
     var completionStatus: String? = nil
+    /// #529 slice 2 — see `SessionInsert.userId`'s doc comment for the full
+    /// rationale; same row-level defense-in-depth, same `tindeq_recordings`
+    /// RLS shape. Stamped by `TindeqManager.persistPreparedRecording` from
+    /// whichever owner (`persistenceOwnerUserId` for a guided run,
+    /// `manualSessionOwnerUserId` for manual/hands-free) governs the save.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, note, samples, tag, side, zone, source, outcome
@@ -245,6 +251,7 @@ nonisolated struct TindeqRecordingInsert: Codable {
         case capacityEvidence = "capacity_evidence"
         case completedReps = "completed_reps"
         case completionStatus = "completion_status"
+        case userId = "user_id"
     }
 }
 
@@ -264,7 +271,17 @@ nonisolated struct PendingTindeqRecording: Codable {
     /// next drains. `nil` only for items written before this field existed
     /// (there are none pre-#486, but the pattern is kept identical to the
     /// other two queues); see `shouldDrain`.
-    var enqueuedUserId: UUID? = nil
+    ///
+    /// Deliberately has NO default (#529 slice 2, mirrors
+    /// `WorkoutSaveBundle.enqueuedUserId`): every production constructor
+    /// (`TindeqManager.persistPreparedRecording`) must pass this explicitly
+    /// — captured at measurement start, not re-derived at save time — so a
+    /// future call site cannot forget to stamp an owner and silently fall
+    /// back to `UploadQueueEngine.enqueue`'s nil→current-user stamp, which
+    /// is reserved for genuinely legacy on-disk files. `nil` remains a legal
+    /// VALUE here (a legacy file, or a recording made while nobody was
+    /// signed in); see `shouldDrain`.
+    var enqueuedUserId: UUID?
 }
 
 nonisolated struct TindeqTagRow: Codable {

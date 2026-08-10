@@ -159,12 +159,33 @@ private enum WorkoutManagerAuthorizationFailure: Error {
     case unavailable
 }
 
-private func makeAuthorizationFailingWorkoutManager() -> WorkoutManager {
-    let manager = WorkoutManager()
+/// #529 slice-2 review R3: every manager in this file used to default to
+/// `{ WatchSessionStore.shared.userId }` — the real, process-wide relayed
+/// identity. Since `start()` now captures `ownerUserId` from that provider
+/// and `flushPartial()`/its coalesced rerun gate on it, these tests were
+/// silently depending on whatever another test in the same process left
+/// signed in/out, rather than pinning a value of their own. An explicit
+/// signed-out default matches what most of this file actually relies on —
+/// several tests here never reach an ACCEPTED `start()` at all (`isRunning`
+/// is set by hand), so `ownerUserId` stays nil and this must too, or
+/// `flushPartial()`'s ownership guard silently skips every flush; ownership
+/// tests below override it with their own mutable box to actually exercise
+/// an account transition.
+private func makeAuthorizationFailingWorkoutManager(
+    userIdProvider: @escaping @Sendable () -> UUID? = { nil }
+) -> WorkoutManager {
+    let manager = WorkoutManager(userIdProvider: userIdProvider)
     manager.authorizationRequestOverride = {
         throw WorkoutManagerAuthorizationFailure.unavailable
     }
     return manager
+}
+
+/// A mutable, thread-safe box standing in for "whoever the phone currently
+/// says is signed in" — local to this file since Swift's top-level `private`
+/// is file-scoped (`WorkoutSavePathResetTests.swift` has its own copy).
+private final class FlushOwnershipAccountBox: @unchecked Sendable {
+    var current: UUID?
 }
 
 /// Actor-serialized event log for asserting cross-task ordering
@@ -274,7 +295,13 @@ private actor Gate {
 final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
     @MainActor
     func testStopRecordingAwaitsTheInFlightPartialBeforeReturning() async {
-        let manager = WorkoutManager()
+        // #529 slice-2 review R3: `start()` is never called in this test, so
+        // `ownerUserId` stays nil — an explicit signed-out provider (rather
+        // than the default's ambient `WatchSessionStore.shared.userId`)
+        // makes `flushPartial()`'s ownership guard (`nil == nil`) pass for a
+        // documented reason instead of by accident of whatever another test
+        // in this process left signed in.
+        let manager = WorkoutManager(userIdProvider: { nil })
         manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
         let order = OrderLog()
         let gate = Gate()
@@ -314,7 +341,13 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
     /// whether teardown already ran.
     @MainActor
     func testStopRecordingInvalidatesTheTimerBeforeAwaitingTheInFlightPartial() async {
-        let manager = WorkoutManager()
+        // #529 slice-2 review R3: `start()` is never called in this test, so
+        // `ownerUserId` stays nil — an explicit signed-out provider (rather
+        // than the default's ambient `WatchSessionStore.shared.userId`)
+        // makes `flushPartial()`'s ownership guard (`nil == nil`) pass for a
+        // documented reason instead of by accident of whatever another test
+        // in this process left signed in.
+        let manager = WorkoutManager(userIdProvider: { nil })
         manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
         manager.startFusion()
         XCTAssertNotNil(manager.fusionTimer, "startFusion() should have created a live timer")
@@ -352,7 +385,13 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
     /// or piling up as one run per request.
     @MainActor
     func testASkippedFlushCoalescesToOneRerunWithTheLatestSnapshot() async {
-        let manager = WorkoutManager()
+        // #529 slice-2 review R3: `start()` is never called in this test, so
+        // `ownerUserId` stays nil — an explicit signed-out provider (rather
+        // than the default's ambient `WatchSessionStore.shared.userId`)
+        // makes `flushPartial()`'s ownership guard (`nil == nil`) pass for a
+        // documented reason instead of by accident of whatever another test
+        // in this process left signed in.
+        let manager = WorkoutManager(userIdProvider: { nil })
         manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
         let order = OrderLog()
         let gate = Gate()
@@ -513,6 +552,117 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
         XCTAssertEqual(
             events, ["later-flush-ran"],
             "durable flushing must not be wedged by a start() that was REJECTED (isRunning already true) — only an ACCEPTED start() actually replaces the drain"
+        )
+    }
+}
+
+/// #529 slice-2 review R2: the round-1 fix that closed the mid-workout flush
+/// ownership leak (`flushPartial()`'s `guard userIdProvider() == ownerUserId`,
+/// and `ClimbWorkoutPartialUpsert.userId`'s row-level stamp) shipped with no
+/// dedicated test of its own — only the round-1 review comment described it.
+/// These pin both halves directly against production entry points, plus the
+/// slice-2 fix that closed the same gap in the coalesced-rerun branch (R1).
+final class WorkoutManagerPartialFlushOwnershipTests: XCTestCase {
+    @MainActor
+    func testFlushPartialSkipsEntirelyOnceTheAccountNoLongerMatchesTheCapturedOwner() async {
+        let box = FlushOwnershipAccountBox()
+        let ownerA = UUID()
+        box.current = ownerA
+        let manager = makeAuthorizationFailingWorkoutManager(userIdProvider: { box.current })
+        await manager.start()
+        manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertEqual(manager.ownerUserId, ownerA)
+
+        var uploadCount = 0
+        manager.partialUploader = { _ in uploadCount += 1 }
+
+        // A -> signed-out, then A -> B: neither may let the flush proceed.
+        box.current = nil
+        manager.flushPartial()
+        XCTAssertEqual(uploadCount, 0, "flushPartial() must skip once the run's owner has signed out (#529 F1)")
+
+        box.current = UUID()
+        manager.flushPartial()
+        XCTAssertEqual(uploadCount, 0, "flushPartial() must skip once a DIFFERENT account is active — never silently rebind to B")
+    }
+
+    /// The other half of F1/F6: the row this DOES send when ownership still
+    /// matches carries the immutable owner as row-level defense-in-depth,
+    /// not whatever `auth.uid()` the request happens to ride under.
+    @MainActor
+    func testFlushPartialStampsTheCapturedOwnerOnThePartialUpsertRow() async {
+        let ownerA = UUID()
+        let manager = makeAuthorizationFailingWorkoutManager(userIdProvider: { ownerA })
+        await manager.start()
+        manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let order = OrderLog()
+        manager.partialUploader = { partial in
+            await order.append(partial.userId?.uuidString ?? "nil")
+        }
+        manager.flushPartial()
+
+        let events = await order.waitUntilCount(1, orTimeout: .seconds(10))
+        XCTAssertEqual(
+            events, [ownerA.uuidString],
+            "the SL-90 partial upsert must carry the run's captured owner as a row-level RLS stamp (#529 F1/F6)"
+        )
+    }
+
+    /// #529 slice-2 review R1: `flushPartial()`'s own guard only protects the
+    /// request that arrives WHILE a flush is already in flight — the account
+    /// can just as well change during that in-flight network call itself,
+    /// and the coalesced-rerun branch used to call `runPartialFlush()`
+    /// directly with no guard of its own. Verifies the fix that closed it.
+    @MainActor
+    func testCoalescedRerunSkipsWhenTheAccountChangesWhileTheFirstPassIsInFlight() async {
+        let box = FlushOwnershipAccountBox()
+        let ownerA = UUID()
+        box.current = ownerA
+        let manager = makeAuthorizationFailingWorkoutManager(userIdProvider: { box.current })
+        await manager.start()
+        manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let order = OrderLog()
+        let gate = Gate()
+        manager.partialUploader = { _ in
+            await order.append("start")
+            await gate.wait()
+            await order.append("committed")
+        }
+
+        manager.flushPartial() // first pass starts, blocks on the gate
+        _ = await order.waitUntilCount(1, orTimeout: .seconds(10))
+        manager.flushPartial() // a second request while in flight -> coalesces into a rerun
+
+        // The account changes WHILE the first pass is still parked on the
+        // gate — exactly the window `flushPartial()`'s own guard cannot see,
+        // since it only checks before a NEW request is dispatched.
+        box.current = UUID()
+        await gate.release()
+
+        // Give the completion handler every reasonable chance to run (and,
+        // on a regression, start the coalesced rerun) before asserting.
+        try? await Task.sleep(for: .milliseconds(100))
+
+        let events = await order.snapshot()
+        XCTAssertEqual(
+            events, ["start", "committed"],
+            "a coalesced rerun must not fire once the active account no longer matches the run's captured owner"
+        )
+
+        // #529 slice-2 review F3: a skipped rerun must resolve the drain
+        // (`CoalescingDrain.running` back to false), not merely decline to
+        // fire — otherwise this assertion above would also pass on the
+        // wedged, pre-fix code, since a wedged drain never starts a rerun
+        // either. Prove the drain is actually usable again: restore the
+        // owner and request one more flush; it must actually run.
+        box.current = ownerA
+        manager.flushPartial()
+        let finalEvents = await order.waitUntilCount(4, orTimeout: .seconds(10)) // start, committed, start, committed
+        XCTAssertEqual(
+            finalEvents, ["start", "committed", "start", "committed"],
+            "durable flushing must not be wedged by a coalesced rerun that declined to run — a later flush on the SAME workout must still work"
         )
     }
 }

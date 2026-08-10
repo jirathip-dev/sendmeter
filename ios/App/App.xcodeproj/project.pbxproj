@@ -40,6 +40,7 @@
 		5EC0A005B005C005D005E005 /* SendLogWatchCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5EC0A004B004C004D004E004 /* SendLogWatchCore */; };
 		607EED49313DF8C069EB9C0E /* RPEModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */; };
 		6352C4B663C906E80F5F0280 /* PendingTindeqRecordingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CAA7BB196064905A0427D09 /* PendingTindeqRecordingTests.swift */; };
+		64FB2430181FB9A5B9F53287 /* TindeqManualOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F79679DFA82552B469F247 /* TindeqManualOwnershipTests.swift */; };
 		69ECCBC95C0D80B03512206A /* PendingQueuePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */; };
 		703E0DDDB01CECCD44C5799A /* TagReconciliationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */; };
 		74314E505442F247623FCB40 /* LiveWorkoutSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A6EFB4E72129DAD5B7165F /* LiveWorkoutSyncTests.swift */; };
@@ -182,6 +183,7 @@
 		37BA8D61B308E48528541602 /* HandsFreeForceTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HandsFreeForceTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/HandsFreeForceTests.swift; sourceTree = "<group>"; };
 		3EFD293FEBD07813BA2231FA /* WorkoutOwnershipTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WorkoutOwnershipTests.swift; sourceTree = "<group>"; };
 		481650BBB5C256BE2759C477 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		48F79679DFA82552B469F247 /* TindeqManualOwnershipTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TindeqManualOwnershipTests.swift; sourceTree = "<group>"; };
 		4A71E5BE016D1DBF7C3FE908 /* PendingQueueDecodeCompatTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PendingQueueDecodeCompatTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/PendingQueueDecodeCompatTests.swift; sourceTree = "<group>"; };
 		4CAA7BB196064905A0427D09 /* PendingTindeqRecordingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PendingTindeqRecordingTests.swift; sourceTree = "<group>"; };
 		4CCE65502100282783D5231B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -368,6 +370,7 @@
 				220863B963764B1C32974A33 /* GuidedForceRunnerOwnershipTests.swift */,
 				D1A6EFB4E72129DAD5B7165F /* LiveWorkoutSyncTests.swift */,
 				C78BAA80A2F314497A5BD91A /* LiveWorkoutTerminalRetryTests.swift */,
+				48F79679DFA82552B469F247 /* TindeqManualOwnershipTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = SOURCE_ROOT;
@@ -758,6 +761,7 @@
 				36FA170B7A251B81A1502E7B /* GuidedForceRunnerOwnershipTests.swift in Sources */,
 				74314E505442F247623FCB40 /* LiveWorkoutSyncTests.swift in Sources */,
 				4D84C3B92A3D75B9FBA09DE3 /* LiveWorkoutTerminalRetryTests.swift in Sources */,
+				64FB2430181FB9A5B9F53287 /* TindeqManualOwnershipTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

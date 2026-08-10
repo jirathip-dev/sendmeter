@@ -227,7 +227,13 @@ enum Repo {
             note: pending.note,
             phase: phase,
             groupId: pending.groupId,
-            workoutSource: nil
+            workoutSource: nil,
+            // #529 slice 2: row-level defense-in-depth, same rationale as
+            // `SessionInsert.userId`'s doc comment — `pending.enqueuedUserId`
+            // is the same immutable owner `shouldDrain` already gated this
+            // drain attempt on, carried into the row itself so a race during
+            // the network round trip still fails closed under RLS.
+            userId: pending.enqueuedUserId
         )
         try await SupabaseService.from("sessions")
             .upsert(session, onConflict: "id", ignoreDuplicates: true)
