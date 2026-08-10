@@ -79,3 +79,242 @@ describe("resyncHealthHistory", () => {
     expect(result.message).toMatch(/genuinely empty/);
   });
 });
+
+/// #534: the dedupe guard for the process-lifetime readiness listener used to
+/// be an optimistic boolean flipped to `true` before `addListener` resolved —
+/// a rejected first attempt left it stuck, permanently disabling readiness
+/// notifications. These pin the fix: the guard is the registration promise
+/// itself, cleared on failure so a later call retries, and never cleared on
+/// success so a repeat call can't install a second listener; a failure is
+/// only reported to monitoring on the SECOND CONSECUTIVE attempt (review
+/// round 2 F4 — the first might just be a self-healing blip); and the
+/// one-shot catch-up read fires only from a successful install, never from a
+/// failed attempt (review round 2 F3).
+///
+/// The failure shapes modeled below are the two real ones traced from the
+/// installed `@capacitor/core`/`@capacitor/ios` sources (review round 1
+/// F1/F5), not a generic `Error("bridge failure")` fiction: a plugin missing
+/// from the native build genuinely rejects `addListener()`
+/// (`CapacitorException`, code `UNIMPLEMENTED`), while a plugin that IS
+/// present but whose registration message silently fails to land is modeled
+/// as a phantom resolve with no usable handle — the shape our own defensive
+/// check reacts to, even though the currently-installed Capacitor version
+/// was not observed to produce it (see the "Honest limits" comment on
+/// `ensureReadinessListener`, and #552 for the real fix that would need).
+describe("ensureReadinessListener", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.doUnmock("@capacitor/core");
+    vi.doUnmock("sendlog-health");
+    vi.doUnmock("./monitoring");
+    vi.restoreAllMocks();
+  });
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  /// Asserts nothing inside `fn` leaves an unhandled promise rejection
+  /// behind — review round 2 F6 explicitly asked for this on the
+  /// phantom-handle and mid-flight-deferred cases, not just the plain
+  /// rejection one.
+  const withNoUnhandledRejection = async (fn: () => Promise<void>) => {
+    let unhandled: unknown;
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandled = reason;
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      await fn();
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+    expect(unhandled).toBeUndefined();
+  };
+
+  const mockNative = (
+    addListener: ReturnType<typeof vi.fn>,
+    isPluginAvailable: ReturnType<typeof vi.fn> = vi.fn().mockReturnValue(true),
+  ) => {
+    vi.doMock("@capacitor/core", () => ({
+      Capacitor: { isNativePlatform: () => true, isPluginAvailable },
+    }));
+    const getLatestReadiness = vi.fn().mockResolvedValue(null);
+    vi.doMock("sendlog-health", () => ({
+      SendLogHealth: { addListener, getLatestReadiness },
+    }));
+    const captureHandledOperationalFailure = vi.fn();
+    vi.doMock("./monitoring", () => ({ captureHandledOperationalFailure }));
+    return { getLatestReadiness, captureHandledOperationalFailure };
+  };
+
+  it("is a no-op on web — never touches the native plugin", async () => {
+    vi.doMock("@capacitor/core", () => ({
+      Capacitor: { isNativePlatform: () => false, isPluginAvailable: vi.fn() },
+    }));
+    const addListener = vi.fn();
+    vi.doMock("sendlog-health", () => ({
+      SendLogHealth: { addListener, getLatestReadiness: vi.fn() },
+    }));
+
+    const { ensureReadinessListener } = await import("./healthSync");
+    ensureReadinessListener();
+    await flush();
+    expect(addListener).not.toHaveBeenCalled();
+  });
+
+  it("a plugin missing from the native build is a no-op, reported only on the SECOND consecutive attempt", async () => {
+    const addListener = vi.fn();
+    const isPluginAvailable = vi.fn().mockReturnValue(false);
+    const { captureHandledOperationalFailure } = mockNative(addListener, isPluginAvailable);
+
+    const { ensureReadinessListener } = await import("./healthSync");
+
+    ensureReadinessListener();
+    await flush();
+    expect(isPluginAvailable).toHaveBeenCalledWith("SendLogHealth");
+    expect(addListener).not.toHaveBeenCalled();
+    // A single failed attempt might self-heal — captureHandledOperationalFailure's
+    // own contract is "recovery exhausted," not "first try didn't work."
+    expect(captureHandledOperationalFailure).not.toHaveBeenCalled();
+
+    ensureReadinessListener();
+    await flush();
+    expect(captureHandledOperationalFailure).toHaveBeenCalledTimes(1);
+    expect(captureHandledOperationalFailure).toHaveBeenCalledWith(
+      "health.readiness-listener",
+      expect.any(Error),
+    );
+  });
+
+  it("a rejected attempt (plugin missing from the native build) does not permanently disable notifications — a later call retries, installs exactly one listener, and fires the catch-up read exactly once", async () => {
+    const missing = Object.assign(
+      new Error('"SendLogHealth.addListener()" is not implemented on ios'),
+      { code: "UNIMPLEMENTED" },
+    );
+    const addListener = vi
+      .fn()
+      .mockRejectedValueOnce(missing)
+      .mockRejectedValueOnce(missing)
+      .mockResolvedValue({ remove: vi.fn() });
+    const { captureHandledOperationalFailure, getLatestReadiness } = mockNative(addListener);
+
+    const { ensureReadinessListener } = await import("./healthSync");
+
+    await withNoUnhandledRejection(async () => {
+      ensureReadinessListener();
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(1);
+      // First failure: not yet reported, and no catch-up read fired.
+      expect(captureHandledOperationalFailure).not.toHaveBeenCalled();
+      expect(getLatestReadiness).not.toHaveBeenCalled();
+
+      ensureReadinessListener();
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(2);
+      // Second CONSECUTIVE failure: now reported, still no catch-up read.
+      expect(captureHandledOperationalFailure).toHaveBeenCalledWith(
+        "health.readiness-listener",
+        missing,
+      );
+      expect(getLatestReadiness).not.toHaveBeenCalled();
+
+      ensureReadinessListener();
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(3);
+      // Success installs the listener AND fires the one-shot catch-up read —
+      // never on a failed attempt (review round 2 F3).
+      expect(getLatestReadiness).toHaveBeenCalledTimes(1);
+
+      // Success must stick: a further call installs no fourth listener, and
+      // does not replay the catch-up read.
+      ensureReadinessListener();
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(3);
+      expect(getLatestReadiness).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("a phantom-resolved attempt (no usable handle) does not permanently disable notifications — a later call retries and installs exactly one listener", async () => {
+    const addListener = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValue({ remove: vi.fn() });
+    const { captureHandledOperationalFailure } = mockNative(addListener);
+
+    const { ensureReadinessListener } = await import("./healthSync");
+
+    await withNoUnhandledRejection(async () => {
+      ensureReadinessListener();
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(1);
+      expect(captureHandledOperationalFailure).not.toHaveBeenCalled();
+
+      ensureReadinessListener();
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(2);
+      expect(captureHandledOperationalFailure).toHaveBeenCalledWith(
+        "health.readiness-listener",
+        expect.any(Error),
+      );
+
+      ensureReadinessListener();
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(3);
+
+      // Success must stick: a further call installs no fourth listener.
+      ensureReadinessListener();
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  it("a second caller arriving while a failing registration is still in flight does not install a second listener", async () => {
+    let rejectFirst: (error: unknown) => void = () => {};
+    const first = new Promise((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const addListener = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockResolvedValue({ remove: vi.fn() });
+    mockNative(addListener);
+
+    const { ensureReadinessListener } = await import("./healthSync");
+
+    await withNoUnhandledRejection(async () => {
+      ensureReadinessListener();
+      expect(addListener).toHaveBeenCalledTimes(1);
+
+      // A second caller arrives before the first attempt has settled — and
+      // returns immediately, well before `first` is rejected below.
+      ensureReadinessListener();
+      expect(addListener).toHaveBeenCalledTimes(1);
+
+      rejectFirst(new Error("bridge failure"));
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(1);
+
+      // Only once the in-flight attempt has actually failed does a later call retry.
+      ensureReadinessListener();
+      await flush();
+      expect(addListener).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("repeated successful calls do not duplicate listeners or replay the catch-up read", async () => {
+    const addListener = vi.fn().mockResolvedValue({ remove: vi.fn() });
+    const { getLatestReadiness } = mockNative(addListener);
+
+    const { ensureReadinessListener } = await import("./healthSync");
+
+    ensureReadinessListener();
+    await flush();
+    ensureReadinessListener();
+    await flush();
+    ensureReadinessListener();
+    await flush();
+
+    expect(addListener).toHaveBeenCalledTimes(1);
+    expect(getLatestReadiness).toHaveBeenCalledTimes(1);
+  });
+});
