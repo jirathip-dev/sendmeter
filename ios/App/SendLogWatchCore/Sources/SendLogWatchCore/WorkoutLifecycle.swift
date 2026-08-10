@@ -59,6 +59,53 @@ public enum WidgetCountSync {
     }
 }
 
+/// Orchestrates `HKWorkoutSession.startActivity` + `HKLiveWorkoutBuilder
+/// .beginCollection`. `startActivity` makes watchOS treat the session as THE
+/// one active session immediately; if `beginCollection` then throws, that
+/// session is live but nothing has referenced it outside this call yet — a
+/// caller that only assigns its own `session`/`builder` handle on success
+/// (as `WorkoutManager.start()` does) can never reach it again through
+/// `end()`'s `guard let session`. Left alone, that orphans the session: it
+/// keeps HealthKit collecting in the background and blocks every later
+/// `HKWorkoutSession` from starting (watchOS permits only one) until the
+/// watch app is force-quit (#480).
+///
+/// On failure this detaches both delegates, then ends the session and
+/// discards the builder, before rethrowing — detach first, because Apple
+/// doesn't document `delegate = nil` as synchronously cancelling a callback
+/// HealthKit already dispatched, so `WorkoutManager`'s own delegate methods
+/// additionally guard by identity (`=== self.session` / `=== self.builder`)
+/// as the real backstop. Never touches anything beyond the four closures
+/// passed in — in particular, it never assigns a caller's own state, so a
+/// long-lived manager spanning many workouts (#476A) can't have this failure
+/// path leave a stale handle for the next `start()` to clean up.
+///
+/// Pure control flow, no HealthKit dependency: `startActivity`/
+/// `beginCollection`/`end`/`discardWorkout` are closures the caller wires to
+/// its real session/builder, so this is covered by `swift test` — a real
+/// `HKWorkoutSession` needs the HealthKit entitlement, which neither this
+/// package's test host nor the unsigned `SendLogWatchTests` app-target host
+/// has.
+public enum WorkoutSessionActivation {
+    public static func run(
+        startActivity: () -> Void,
+        beginCollection: () async throws -> Void,
+        detachDelegates: () -> Void,
+        endSession: () -> Void,
+        discardBuilder: () -> Void
+    ) async throws {
+        startActivity()
+        do {
+            try await beginCollection()
+        } catch {
+            detachDelegates()
+            endSession()
+            discardBuilder()
+            throw error
+        }
+    }
+}
+
 /// Whether a successful save should clear `WorkoutManager.failedBundle`.
 ///
 /// Review finding R1: `save()`'s success path used to clear `failedBundle`
