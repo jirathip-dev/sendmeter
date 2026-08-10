@@ -92,35 +92,64 @@ function recordHealthSync(source: HealthSyncSource, changed = false, at: number 
 /// listener push or a replayed `getLatestReadiness()` — as a health sync,
 /// guarding against exactly the failure modes #535 was filed for:
 ///
-/// - `requestedForUserId` is a snapshot of `activeHealthUserId` taken before
-///   the (possibly async) native call that produced `result`. Comparing it
-///   against the CURRENT `activeHealthUserId` here is the guard, not the
-///   snapshot itself (CLAUDE.md: a captured value cannot invalidate another
-///   in-flight closure's read of it) — an account switch mid-flight fails
-///   this check and the result is dropped rather than risk crediting the
-///   wrong account's marker.
-/// - `result.completedAt` (native epoch seconds) is used for the recorded
-///   timestamp instead of `Date.now()`, so a stale cached replay reports its
-///   real age rather than "just now".
-/// - `result.requestId` is deduped against the last request this module
-///   already recorded, so the same completed request observed twice (e.g.
-///   the live push and the catch-up read both seeing it) is not reported as
-///   a second new change.
+/// - Account ownership: `result.accountUserId` (native
+///   `ReadinessRefreshResult.accountUserId`, stamped on every current
+///   result) is trusted over the dispatch-time `requestedForUserId`
+///   snapshot when present, because the snapshot alone is a tautology on
+///   the synchronous listener-push path (compared against
+///   `activeHealthUserId` with no intervening await — a value against
+///   itself) and does not cover the real contamination window: a relay to
+///   account B can flip `activeHealthUserId` to B synchronously while
+///   `setSession(B)` is still crossing the bridge, so a result native
+///   completes and delivers while still bound to A arrives labelled with
+///   A's own `accountUserId`, not B's. Only a legacy unstamped result (no
+///   `accountUserId`) falls back to the snapshot-vs-current comparison —
+///   still correct there, since that is the only signal available.
+/// - Durable monotonic fence: `result.completedAt` (native epoch seconds)
+///   is compared against the PERSISTED marker for that account
+///   (`healthLastSyncedAt()`), not just an in-memory "already processed"
+///   set. `lastProcessedReadinessRequestId` alone dies with the WebView, so
+///   without this a cold-launch catch-up replay of the exact same cached
+///   result would still look like a fresh change on every app open (the
+///   cost `changed` exists to avoid — native's own `latestReadinessResult()`
+///   reads without consuming). The same comparison also stops the marker
+///   moving BACKWARDS: a genuinely fresh foreground sync (`Date.now()`)
+///   must never be regressed to an older cached replay's earlier
+///   `completedAt` (mirrors `ReadinessResultGate.shouldApply`'s completion
+///   fence in `ios/App/SendLogWatchCore/.../ReadinessRefresh.swift`).
+/// - `result.requestId` is additionally deduped against the last request
+///   this module has processed IN THIS PROCESS, so two same-tick deliveries
+///   of the identical request (e.g. the live push and the catch-up read
+///   both observing it) don't do a redundant persisted-marker read/write.
 function processReadinessResult(
   result: ReadinessRefreshResult | null | undefined,
   requestedForUserId: string | null,
 ): void {
   if (!result || result.status !== "success") return;
-  if (!requestedForUserId || activeHealthUserId !== requestedForUserId) return;
+  if (!requestedForUserId) return;
+  if (result.accountUserId) {
+    if (result.accountUserId !== activeHealthUserId) return;
+  } else if (activeHealthUserId !== requestedForUserId) {
+    return;
+  }
   if (result.requestId && result.requestId === lastProcessedReadinessRequestId) return;
-  if (result.requestId) lastProcessedReadinessRequestId = result.requestId;
   const completedAtMs =
     typeof result.completedAt === "number" ? result.completedAt * 1000 : Date.now();
+  const priorSyncedAt = healthLastSyncedAt();
+  if (priorSyncedAt !== null && completedAtMs <= priorSyncedAt) return;
+  if (result.requestId) lastProcessedReadinessRequestId = result.requestId;
   recordHealthSync("watch", true, completedAtMs);
 }
 
 let readinessListenerRegistration: Promise<void> | null = null;
 let readinessListenerFailureStreak = 0;
+/// True once `addListener` has actually resolved with a usable handle —
+/// distinct from `readinessListenerRegistration` being set, which also
+/// covers a still-pending attempt. Used by `relayHealthSession` (#535 F4) to
+/// know it's safe to re-fire the catch-up read for a newly-signed-in account
+/// without risking firing it ahead of/during a registration that might still
+/// fail (the exact ordering #534's review protected).
+let readinessListenerInstalled = false;
 let readinessCatchUpRequested = false;
 
 /// Native watch requests execute entirely in the iPhone plugin. This listener
@@ -180,6 +209,7 @@ export function ensureReadinessListener(): void {
         throw new Error("readiness listener registration returned no handle");
       }
       readinessListenerFailureStreak = 0;
+      readinessListenerInstalled = true;
       ensureReadinessCatchUpRead();
     })
     .catch((error: unknown) => {
@@ -203,15 +233,19 @@ function reportReadinessListenerFailure(error: unknown): void {
   }
 }
 
-/// A one-shot local-latest-result read, covering a watch-triggered result
-/// that completed before the WebView mounted the listener above. Fired only
-/// from the listener's OWN successful-install branch (#534 review round 2
-/// F3), never from a failed attempt: a failed first attempt used to spend
-/// this launch's one catch-up read on an outage the listener never actually
-/// recovered from — a watch refresh completing during that outage would then
-/// never surface even once a later foreground installed the listener
-/// successfully. Residual, left for #535/#552: if registration never
-/// succeeds this launch, the catch-up read never fires either — there is
+/// A one-shot-PER-ACCOUNT local-latest-result read, covering a watch-
+/// triggered result that completed before the WebView mounted the listener
+/// above. Two callers: the listener's OWN successful-install branch (#534
+/// review round 2 F3) — never a failed attempt, since a failed first attempt
+/// used to spend this launch's one catch-up read on an outage the listener
+/// never actually recovered from, so a watch refresh completing during that
+/// outage would then never surface even once a later foreground installed
+/// the listener successfully — and `relayHealthSession` re-firing it for a
+/// LATER account once the listener is already durably installed (#535 F4),
+/// since installation itself only ever happens once per process and would
+/// otherwise never give a second account its own catch-up this launch.
+/// Residual, left for #552: if registration never succeeds this launch, the
+/// catch-up read never fires for that first account either — there is
 /// currently no independent "ask once even without a live listener" path.
 function ensureReadinessCatchUpRead(): void {
   if (readinessCatchUpRequested) return;
@@ -241,10 +275,26 @@ export function relayHealthSession(session: Session | null): void {
   // platform: on web this only affects `healthLastSyncedAt()`'s bookkeeping,
   // since sync itself never runs there.
   const userId = session?.user.id ?? null;
-  if (userId !== activeHealthUserId) lastProcessedReadinessRequestId = null;
+  const accountChanged = userId !== activeHealthUserId;
+  if (accountChanged) {
+    lastProcessedReadinessRequestId = null;
+    // The one-shot catch-up guard is per-launch AND per-account: without
+    // this reset, an account signed into after the FIRST account's catch-up
+    // already fired this launch would never get one of its own (#535 F4).
+    readinessCatchUpRequested = false;
+  }
   activeHealthUserId = userId;
   if (!IS_NATIVE) return;
   ensureReadinessListener();
+  // `ensureReadinessListener()` only fires the catch-up read from its OWN
+  // success branch, which does not run again once a registration from an
+  // earlier account has already resolved — so a later account change needs
+  // its own explicit fire here. Gated on `readinessListenerInstalled`
+  // (rather than firing unconditionally) so this never races ahead of a
+  // still-pending/still-failing first registration attempt.
+  if (accountChanged && userId && readinessListenerInstalled) {
+    ensureReadinessCatchUpRead();
+  }
   if (session) {
     void SendLogHealth.setSession({ accessToken: session.access_token });
   } else {

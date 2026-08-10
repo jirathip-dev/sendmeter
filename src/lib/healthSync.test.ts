@@ -357,18 +357,24 @@ describe("readiness replay sync timestamp (#535)", () => {
   const session = (userId: string): Session =>
     ({ user: { id: userId }, access_token: `token-${userId}` }) as unknown as Session;
 
-  /// `getLatestReadinessResolved` is what the catch-up read resolves with on
-  /// listener install. `push(result)` invokes the exact callback the
-  /// production `addListener("readinessRefresh", …)` call registered, so a
-  /// test can simulate the live native push independently of the catch-up
+  /// `getLatestReadinessResolvedValues` are consumed in order, one per
+  /// `getLatestReadiness()` call (a launch's own catch-up read, then each
+  /// later account's re-fired catch-up read — #535 F4); any call beyond the
+  /// given values resolves `null`. `push(result)` invokes the exact callback
+  /// the production `addListener("readinessRefresh", …)` call registered, so
+  /// a test can simulate the live native push independently of the catch-up
   /// read racing it.
-  function mockNativeReadiness(getLatestReadinessResolved: unknown) {
+  function mockNativeReadiness(...getLatestReadinessResolvedValues: unknown[]) {
     let pushCallback: ((result: unknown) => void) | undefined;
     const addListener = vi.fn((_event: string, cb: (result: unknown) => void) => {
       pushCallback = cb;
       return Promise.resolve({ remove: vi.fn() });
     });
-    const getLatestReadiness = vi.fn().mockResolvedValue(getLatestReadinessResolved);
+    const getLatestReadiness = vi.fn();
+    for (const value of getLatestReadinessResolvedValues) {
+      getLatestReadiness.mockResolvedValueOnce(value);
+    }
+    getLatestReadiness.mockResolvedValue(null);
     vi.doMock("@capacitor/core", () => ({
       Capacitor: { isNativePlatform: () => true, isPluginAvailable: vi.fn().mockReturnValue(true) },
     }));
@@ -474,5 +480,155 @@ describe("readiness replay sync timestamp (#535)", () => {
     // Switching back to A restores A's own (unmodified) marker.
     relayHealthSession(session("user-a"));
     expect(healthLastSyncedAt()).not.toBeNull();
+  });
+
+  // Review round 1 F1/F2: the in-memory `lastProcessedReadinessRequestId`
+  // guard dies with the WebView, so on its own it cannot stop a cold-launch
+  // catch-up read from re-reporting a result this account already recorded
+  // last session. The fence has to be checked against the PERSISTED marker.
+  it("a cross-launch replay of an already-recorded cached result is not reported as a new change (durable fence)", async () => {
+    const userId = "user-a";
+    const completedAtSeconds = Math.floor(Date.now() / 1000) - 3 * 3600;
+    const priorMs = completedAtSeconds * 1000;
+    // Simulate state left behind by a PREVIOUS process: this account's
+    // marker already reflects this exact cached result.
+    localStorage.setItem(`sendmeter:health-synced-at:${userId}`, String(priorMs));
+
+    mockNativeReadiness({
+      status: "success",
+      requestId: "req-stale",
+      completedAt: completedAtSeconds,
+      accountUserId: userId,
+    });
+
+    const { relayHealthSession, healthLastSyncedAt } = await import("./healthSync");
+    const syncedHandler = vi.fn();
+    window.addEventListener("sendmeter:health-synced", syncedHandler);
+    try {
+      relayHealthSession(session(userId));
+      await flush();
+
+      expect(syncedHandler).not.toHaveBeenCalled();
+      expect(healthLastSyncedAt()).toBe(priorMs);
+    } finally {
+      window.removeEventListener("sendmeter:health-synced", syncedHandler);
+    }
+  });
+
+  // Review round 1 F2: understating freshness is as dishonest as
+  // overstating it. A late-arriving replay of an OLDER cached result must
+  // never regress the marker past a genuinely fresher one already recorded.
+  it("a result with an older completedAt than the persisted marker does not regress the displayed sync time", async () => {
+    const { push } = mockNativeReadiness(null);
+
+    const { relayHealthSession, healthLastSyncedAt } = await import("./healthSync");
+    const syncedHandler = vi.fn();
+    window.addEventListener("sendmeter:health-synced", syncedHandler);
+    try {
+      relayHealthSession(session("user-a"));
+      await flush(); // catch-up read resolves null — nothing recorded yet
+
+      const freshCompletedAtSeconds = Math.floor(Date.now() / 1000);
+      push({
+        status: "success",
+        requestId: "req-fresh",
+        completedAt: freshCompletedAtSeconds,
+        accountUserId: "user-a",
+      });
+      await flush();
+      expect(healthLastSyncedAt()).toBe(freshCompletedAtSeconds * 1000);
+
+      // An older cached result (e.g. a slow catch-up read) arrives after.
+      const staleCompletedAtSeconds = freshCompletedAtSeconds - 3 * 3600;
+      push({
+        status: "success",
+        requestId: "req-stale-late",
+        completedAt: staleCompletedAtSeconds,
+        accountUserId: "user-a",
+      });
+      await flush();
+
+      expect(syncedHandler).toHaveBeenCalledTimes(1); // only the fresh one
+      expect(healthLastSyncedAt()).toBe(freshCompletedAtSeconds * 1000); // unchanged
+    } finally {
+      window.removeEventListener("sendmeter:health-synced", syncedHandler);
+    }
+  });
+
+  it("a result with no completedAt falls back to Date.now()", async () => {
+    const { push } = mockNativeReadiness(null);
+
+    const { relayHealthSession, healthLastSyncedAt } = await import("./healthSync");
+    relayHealthSession(session("user-a"));
+    await flush();
+
+    const before = Date.now();
+    push({ status: "success", requestId: "req-no-completed-at", accountUserId: "user-a" });
+    await flush();
+    const after = Date.now();
+
+    const recorded = healthLastSyncedAt();
+    expect(recorded).not.toBeNull();
+    expect(recorded as number).toBeGreaterThanOrEqual(before);
+    expect(recorded as number).toBeLessThanOrEqual(after);
+  });
+
+  // Review round 1 F3: comparing the dispatch-time snapshot against
+  // `activeHealthUserId` is a tautology on the synchronous listener-push
+  // path (no await separates them). The real contamination window is a
+  // relay to B flipping `activeHealthUserId` synchronously while native is
+  // still bound to A — a result native completes (and stamps) for A must
+  // not be written into B's marker just because it happens to arrive while
+  // B is current.
+  it("a result stamped for account A that arrives after relaying to account B is dropped, not written under B's marker", async () => {
+    const { push } = mockNativeReadiness(null);
+
+    const { relayHealthSession, healthLastSyncedAt } = await import("./healthSync");
+    relayHealthSession(session("user-a"));
+    await flush();
+
+    // The relay to B updates `activeHealthUserId` synchronously; native was
+    // still bound to A when it completed and delivered this result.
+    relayHealthSession(session("user-b"));
+    push({
+      status: "success",
+      requestId: "req-late-a",
+      completedAt: Math.floor(Date.now() / 1000),
+      accountUserId: "user-a",
+    });
+    await flush();
+
+    expect(healthLastSyncedAt()).toBeNull(); // B's marker must stay untouched
+
+    relayHealthSession(session("user-a"));
+    expect(healthLastSyncedAt()).toBeNull(); // A was never credited for it either
+  });
+
+  // Review round 1 F4: listener installation is process-lifetime (#534), so
+  // only the FIRST account signed in this launch would otherwise ever get a
+  // catch-up read — a later account switch needs its own.
+  it("switching to a new account after the listener is already installed fires that account's own catch-up read", async () => {
+    const bCompletedAtSeconds = Math.floor(Date.now() / 1000) - 3600;
+    const { getLatestReadiness } = mockNativeReadiness(
+      null, // account A's catch-up read: nothing cached
+      {
+        status: "success",
+        requestId: "req-b",
+        completedAt: bCompletedAtSeconds,
+        accountUserId: "user-b",
+      }, // account B's own catch-up read
+    );
+
+    const { relayHealthSession, healthLastSyncedAt } = await import("./healthSync");
+    relayHealthSession(session("user-a"));
+    await flush();
+    expect(getLatestReadiness).toHaveBeenCalledTimes(1);
+    expect(healthLastSyncedAt()).toBeNull();
+
+    relayHealthSession(session("user-b"));
+    await flush();
+
+    expect(getLatestReadiness).toHaveBeenCalledTimes(2);
+    expect(healthLastSyncedAt()).toBe(bCompletedAtSeconds * 1000);
   });
 });
