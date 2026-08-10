@@ -2,19 +2,17 @@ import Foundation
 
 /// Maps raw backend/SDK errors to short, user-facing text for the watch UI —
 /// so an auth/session hiccup reads as "signed out", not a database error.
+/// Classification itself lives in `BackendFailureReason`, shared with
+/// `ForceProtocolSyncCopy`.
 public enum ErrorText {
     public static func friendly(_ error: Error) -> String {
-        let m = error.localizedDescription.lowercased()
-        if m.contains("row-level security") || m.contains("jwt")
-            || m.contains("not authenticated") || m.contains("unauthorized")
-            || m.contains("permission") {
+        switch BackendFailureReason(errorDescription: error.localizedDescription) {
+        case .authExpired:
             return "Signed out — open the iPhone app to reconnect, then try again."
-        }
-        if m.contains("offline") || m.contains("network")
-            || m.contains("connection") || m.contains("timed out")
-            || m.contains("timeout") {
+        case .unreachable:
             return "No connection — try again in a moment."
+        case .unknown:
+            return "Couldn't save. Try again."
         }
-        return "Couldn't save. Try again."
     }
 }

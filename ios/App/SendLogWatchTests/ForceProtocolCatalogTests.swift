@@ -7,6 +7,13 @@ private enum ForceProtocolCatalogTestError: Error {
     case offline
 }
 
+/// Mirrors the real "JWT expired" text observed on-device (#536) — the exact
+/// wording `Repo.fetchTindeqPresets()` surfaces when the relayed access
+/// token has expired.
+private struct ForceProtocolCatalogTestAuthError: LocalizedError {
+    var errorDescription: String? { "JWT expired" }
+}
+
 /// Thread-safe mutable inputs for the injected catalog seams. The fetch runs
 /// inside `withTimeout`'s task group, so the test provider must be Sendable even
 /// though each test itself is main-actor isolated.
@@ -15,6 +22,7 @@ private final class ForceProtocolCatalogTestState: @unchecked Sendable {
     private var storedUserId: UUID?
     private var storedProtocols: [WatchForceProtocol] = []
     private var isOffline = false
+    private var pendingError: Error?
 
     init(userId: UUID) {
         storedUserId = userId
@@ -44,9 +52,16 @@ private final class ForceProtocolCatalogTestState: @unchecked Sendable {
         lock.unlock()
     }
 
+    func setPendingError(_ error: Error?) {
+        lock.lock()
+        pendingError = error
+        lock.unlock()
+    }
+
     func fetch() throws -> [WatchForceProtocol] {
         lock.lock()
         defer { lock.unlock() }
+        if let pendingError { throw pendingError }
         if isOffline { throw ForceProtocolCatalogTestError.offline }
         return storedProtocols
     }
@@ -110,6 +125,67 @@ final class ForceProtocolCatalogTests: XCTestCase {
         XCTAssertEqual(relaunched.myProtocols, [protocolValue])
         XCTAssertEqual(relaunched.selected.id, protocolValue.id)
         XCTAssertEqual(relaunched.status, .cached)
+    }
+
+    /// Regression for #536: a real "JWT expired" refresh failure must never
+    /// reach the picker as raw text. With a cached snapshot present the
+    /// catalog stays usable (`.cached`) and `errorMessage`/`statusText` carry
+    /// only the mapped product copy.
+    func testExpiredTokenFailureWithCachedSnapshotShowsProductCopyOnly() async {
+        let defaults = makeDefaults()
+        let account = UUID()
+        let protocolValue = makeProtocol(id: "cached-protocol", name: "Cached protocol")
+        let state = ForceProtocolCatalogTestState(userId: account)
+        state.setProtocols([protocolValue])
+        let catalog = makeCatalog(defaults: defaults, state: state)
+
+        await catalog.refresh()
+        XCTAssertEqual(catalog.status, .fresh)
+
+        state.setPendingError(ForceProtocolCatalogTestAuthError())
+        await catalog.refresh()
+
+        XCTAssertEqual(catalog.status, .cached)
+        XCTAssertEqual(catalog.myProtocols, [protocolValue])
+        XCTAssertEqual(
+            catalog.errorMessage,
+            "Open Sendmeter on iPhone to refresh · showing saved protocols"
+        )
+        assertNoRawTechnicalWording(catalog.errorMessage)
+        assertNoRawTechnicalWording(catalog.statusText)
+    }
+
+    /// Same failure, but with nothing cached yet — the catalog has no rows to
+    /// fall back to, so `.failed` is correct, and the copy must still stay
+    /// free of raw technical wording.
+    func testExpiredTokenFailureWithoutCachedSnapshotShowsProductCopyOnly() async {
+        let defaults = makeDefaults()
+        let account = UUID()
+        let state = ForceProtocolCatalogTestState(userId: account)
+        state.setPendingError(ForceProtocolCatalogTestAuthError())
+        let catalog = makeCatalog(defaults: defaults, state: state)
+
+        await catalog.refresh()
+
+        XCTAssertEqual(catalog.status, .failed)
+        XCTAssertEqual(catalog.myProtocols, [])
+        XCTAssertEqual(catalog.errorMessage, "Open Sendmeter on iPhone to refresh.")
+        assertNoRawTechnicalWording(catalog.errorMessage)
+        assertNoRawTechnicalWording(catalog.statusText)
+    }
+
+    private func assertNoRawTechnicalWording(_ message: String?, file: StaticString = #filePath, line: UInt = #line) {
+        guard let message else { return }
+        let lowered = message.lowercased()
+        let rawTerms = ["jwt", "postgrest", "pgrst", "http", "supabase", "row-level security", "401", "403"]
+        for term in rawTerms {
+            XCTAssertFalse(
+                lowered.contains(term),
+                "product copy leaked raw technical wording \"\(term)\": \(message)",
+                file: file,
+                line: line
+            )
+        }
     }
 
     func testSelectionIsStoredPerAccountAndNeverCrossesAccounts() async {

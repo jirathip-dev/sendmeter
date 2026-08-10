@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import SendLogWatchCore
 
 /// Read-only Force protocol catalog for watchOS. The phone/web app owns
@@ -36,6 +37,10 @@ final class ForceProtocolCatalog {
     private static let maxAttempts = 3
     private static let perAttemptTimeoutSeconds: Double = 6
     private static let retryDelaysMs: [UInt64] = [250, 750]
+
+    private static let log = Logger(
+        subsystem: "com.jirathip.sendlog.watchkitapp", category: "forceProtocolCatalog"
+    )
 
     private let defaults: UserDefaults
     @ObservationIgnored private let accountIdProvider: @Sendable () -> UUID?
@@ -177,8 +182,17 @@ final class ForceProtocolCatalog {
         guard isCurrent(generation) else { return }
 
         guard let fetched else {
-            errorMessage = lastError?.localizedDescription ?? "No response from your iPhone."
+            let technicalDescription = lastError?.localizedDescription
+            if let technicalDescription {
+                Self.log.error("catalog refresh failed: \(technicalDescription)")
+            } else {
+                Self.log.error("catalog refresh failed: no response from iPhone")
+            }
             status = hasCachedSnapshot ? .cached : .failed
+            errorMessage = ForceProtocolSyncCopy.message(
+                for: BackendFailureReason(errorDescription: technicalDescription ?? ""),
+                hasCachedSnapshot: hasCachedSnapshot
+            )
             return
         }
 
