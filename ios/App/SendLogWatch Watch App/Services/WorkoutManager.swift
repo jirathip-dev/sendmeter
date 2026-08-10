@@ -531,6 +531,9 @@ final class WorkoutManager: NSObject {
             msg["active_kcal"] = kcal
             if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
             if let rs { msg["rest_started_at"] = rs.timeIntervalSince1970 }
+            // #530: this run's immutable owner (#529), never re-read from
+            // `userIdProvider()` here — see `ownerUserId`'s doc comment.
+            msg = LiveMirrorOwnership.stamped(msg, ownerUserId: ownerUserId)
             session.sendMessage(WatchBuild.stamp(msg), replyHandler: nil, errorHandler: nil)
         }
     }

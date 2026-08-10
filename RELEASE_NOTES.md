@@ -84,6 +84,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Watch: force recordings now queue and retry like workouts and gauge sessions do, so a gym-basement outage no longer loses a rep outright.
 - Watch: an auto-tracked workout is now permanently attributed to the account signed in when it started — ending or retrying it after the watch switches to (or briefly signs out of) a different account no longer risks it uploading under the wrong person; it's queued and held until the original account is signed in again.
 - Watch: a manual or hands-free Force session (each rep, an interrupted rep recovered after a disconnect, and the logged session itself) is now permanently attributed to the account signed in when it started, the same protection already in place for workouts and guided protocols — a mid-session account switch no longer risks it uploading under the wrong person.
+- iPhone: the live Workout mirror and live Force gauge mirror no longer briefly show a previous account's in-progress data after switching accounts on the phone while the watch is still catching up — a live update that doesn't match the signed-in account is now dropped instead of displayed, whether or not the watch has updated yet to say who it belongs to.
 
 ## 1.0 — 2026-08-02
 

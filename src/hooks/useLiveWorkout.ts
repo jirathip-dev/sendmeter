@@ -6,7 +6,7 @@ import { fetchLiveWorkout } from "../lib/repo";
 import type { LiveWorkout } from "../types";
 import { subscribePluginListener } from "./pluginListener";
 import {
-  messageToLive,
+  admitLiveWorkoutMessage,
   emptyLiveWorkoutMirrorState,
   reduceLiveWorkout,
   rowToLive,
@@ -16,6 +16,10 @@ import {
   type LiveWorkoutMirrorState,
   type LiveWorkoutSource,
 } from "../lib/liveWorkoutMirror";
+import {
+  hasAccountChangedSincePersisted,
+  recordStampedPacketAccepted,
+} from "../lib/liveMirrorOwnership";
 
 export type { LiveHrPoint };
 
@@ -50,6 +54,21 @@ export function useLiveWorkout(
   // account immediately, then reset the ref/state in a layout effect before
   // the browser can paint or a new listener can publish data.
   const accountTransition = renderedUserId !== userId;
+  // #530 (round-1 review F1): a `useRef` alone is inert on a real account
+  // switch — this app has no in-place swap, so sign-out → sign-in is a full
+  // UNMOUNT of this hook, not a `userId` prop change on a still-mounted one.
+  // The initial value instead consults durable storage (survives that
+  // remount); the ref then also flips true on an in-mount prop change (the
+  // narrower background/foreground relay case), same as before.
+  // `hasAccountChangedSincePersisted` is a PURE read (round-2 review
+  // R2-F1/R2-F4 — the write moved to `useAuth.ts`'s `onSession`, the single
+  // auth-boundary owner), so evaluating it more than once (a StrictMode
+  // double-invoked lazy initializer, or any other extra render) is harmless;
+  // `useState`'s lazy form is used only to avoid a redundant read.
+  const [initialHasHadAccountTransition] = useState(() =>
+    hasAccountChangedSincePersisted(userId),
+  );
+  const hasHadAccountTransitionRef = useRef(initialHasHadAccountTransition);
 
   if (accountTransition) {
     setRenderedUserId(userId);
@@ -59,7 +78,24 @@ export function useLiveWorkout(
   }
 
   useLayoutEffect(() => {
+    // #530: compare BEFORE activeUserIdRef is reassigned below — a mismatch
+    // here means this run is a genuine account change, not the initial
+    // mount (whose ref/prop start out equal).
+    if (activeUserIdRef.current !== userId) {
+      hasHadAccountTransitionRef.current = true;
+    }
     activeUserIdRef.current = userId;
+    // #530 round-2 review R2-F3: resetting the cursor here — synchronously,
+    // before any listener installed for the NEW `userId` can publish — is
+    // what makes it safe that a beat's run/sequence identity never rotates
+    // on an ownership handover (a deliberate difference from the Force
+    // mirror's Swift-side design, see TindeqManager.swift). This mirror is
+    // safe across an account change ONLY because a phone account change
+    // always resets this exact state first: either a full remount (a fresh
+    // `mirrorRef`) or this layout effect (this line). If the mirror hooks
+    // are ever hoisted above the tab switch, or a future refactor keeps
+    // this state alive across a `userId` change without resetting it here,
+    // that assumption silently stops holding.
     mirrorRef.current = emptyLiveWorkoutMirrorState();
   }, [userId]);
 
@@ -111,8 +147,35 @@ export function useLiveWorkout(
     const unsubscribeWc = Capacitor.isNativePlatform()
       ? subscribePluginListener(() =>
           SendLogAuthBridge.addListener("liveWorkout", (msg) => {
-            const previous = mirrorRef.current.row;
-            ingest(messageToLive(msg, previous), "watch-direct");
+            // #530 (round-1 review F5): the ref-based active-account check
+            // runs FIRST, matching `useLiveForce`.
+            if (cancelled || activeUserIdRef.current !== effectUserId) return;
+            // #530 round-2 review R2-F6: `admitLiveWorkoutMessage` is the
+            // ONLY function this listener calls to decide whether `msg`
+            // reaches state — the ownership guard lives INSIDE it, not as a
+            // separate call a future edit could drop without touching this
+            // listener at all.
+            const admission = admitLiveWorkoutMessage(
+              mirrorRef.current,
+              msg,
+              activeUserIdRef.current,
+              hasHadAccountTransitionRef.current,
+            );
+            if (!admission.accepted) return;
+            // #530 round-2 review R2-F1: a genuinely STAMPED (not
+            // legacy-absent) acceptance is positive evidence this watch has
+            // caught up to the current account — close the risk window
+            // both for this mount and durably, so a legacy build's
+            // unstamped packets are trusted again once there's real
+            // evidence there is nothing left to distrust.
+            if (admission.stampedAcceptance) {
+              hasHadAccountTransitionRef.current = false;
+              recordStampedPacketAccepted(activeUserIdRef.current);
+            }
+            mirrorRef.current = admission.state;
+            setRow(admission.state.row);
+            setHrLog(admission.state.hrLog);
+            setSyncState(admission.state.source);
           }),
         )
       : null;

@@ -175,6 +175,12 @@ describe("preferFresher", () => {
   });
 });
 
+// `acceptsPacketOwner` and the account-transition tracking it depends on now
+// live in `liveMirrorOwnership.test.ts` (round-1 review F4: single source of
+// truth for both mirrors) — including the full-pipeline late-A-after-B
+// coverage for this module's `reduceLiveWorkout`, with a negative control
+// proving the reducer alone would have accepted the same packet (F3).
+
 describe("messageToLive", () => {
   const msg: LiveWorkoutMessage = {
     run_id: "run-1",
