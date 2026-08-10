@@ -74,18 +74,29 @@
   --border: #D6DDE9;
   --hairline: #E4E8F0;
   --ink: #182131;
-  --ink-muted: #647087;
-  /* Darkened from the original #8B96AA (2.98:1 on white — too faint once
-     cards lost their tinted backgrounds, #547) to 4.55:1 — clears WCAG AA
-     for normal text — while staying the lightest tier below --ink-muted's
-     ~4.99:1. Round-1 review measured an interim #77839C at 3.81:1, still
-     short of AA; this is the corrected value. Phase-identity colors used as
-     text (PHASES[].color in src/constants.ts) remain below AA on the new
-     neutral surfaces — a pre-existing condition unrelated to this token,
-     shared with dark mode's healthy contrast, and accepted/tracked on issue
-     #547 rather than fixed here (it spans the whole phase palette, used well
-     beyond the Dashboard this PR migrates). */
-  --ink-faint: #6A7692;
+  /* Darkened from the original #647087 (4.99:1) to ~6.93:1 (#547 round 2,
+     finding A) — round 2's --ink-faint fix (below) closed the gap to
+     --ink-muted down to a 1.10:1 step between the two, collapsing the
+     secondary/tertiary tiers into one visual weight. Darkening this token
+     too restores a real step (~1.4:1) while keeping the three-tier ladder
+     (--ink 16.1:1 → --ink-muted ~6.9:1 → --ink-faint ~5.0:1 on white) each
+     comfortably clearing AA on its own. */
+  --ink-muted: #4F5A70;
+  /* Darkened from the original #8B96AA (2.98:1 on white) through two
+     intermediate values (#77839C at 3.81:1, #6A7692 at 4.55:1 — both
+     measured against pure white, #547 rounds 1–2) to this value, retuned
+     (round 2 finding B) against the *greyest real surface it lands on*:
+     several consumers (inactive `.nav-label`, History's `Trash` button) sit
+     on the floating chrome's glass over `--bg` (~#F2F4F8 effective), where
+     the round-1 fix measured only 4.13:1 — under AA — despite clearing
+     4.55:1 on pure white. This value clears AA on both (~4.97:1 on white,
+     ~4.51:1 on #F2F4F8). Phase-identity colors used as text (PHASES[].color
+     in src/constants.ts) remain below AA on the new neutral surfaces — a
+     pre-existing condition unrelated to this token, shared with dark mode's
+     healthy contrast, and tracked as a follow-up on issue #557 rather than
+     fixed here (it spans the whole phase palette, used well beyond the
+     Dashboard #547 migrates). */
+  --ink-faint: #617090;
   --primary: #5B5FC7;
   --primary-hover: #4A4EB3;
   --primary-accent: #4E53B9; /* primary used as text/underline */
@@ -1273,7 +1284,14 @@ input[type="number"] {
   /* Uses the non-neutralized --well-tint-* pair, not --gradient-interaction/
      --gradient-readiness (#547 round 2 finding #7) — this banner's fill is
      the primary climbing/resting state cue, so it keeps its tint in light
-     mode instead of inheriting the analytical-card neutralization. */
+     mode instead of inheriting the analytical-card neutralization.
+     The explicit --card-gradient assignment here is load-bearing, not
+     decorative (#547 round 3 finding C): the component also carries
+     `.surface-workout` (PhoneWorkoutCard.tsx), whose own rule above already
+     defines --card-gradient, so the var(--card-gradient, well-tint) fallback
+     below could never fire for the resting state — this re-assignment, at
+     equal specificity but later in source order, is what actually wins. */
+  --card-gradient: var(--well-tint-interaction);
   background-image: var(--card-gradient, var(--well-tint-interaction));
   border: 1px solid color-mix(in srgb, var(--accent-interaction) 42%, var(--card-border));
   border-radius: 12px;

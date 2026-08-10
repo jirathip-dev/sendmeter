@@ -11,8 +11,8 @@ import type { NavItem, Phase, SessionType } from "./types";
 // text variant per phase (distinct from `color`, which chips/charts/dark
 // mode should keep), which is a design-system change spanning every
 // consumer of this palette, not just the Dashboard surfaces #547 migrates.
-// Accepted as a known, tracked shortfall against #547's contrast-audit AC
-// rather than fixed here — see the round-1/round-2 review on that issue.
+// Tracked as a follow-up: https://github.com/sendmeter/sendmeter/issues/557
+// (not #547 itself, which closes on merge).
 export const PHASES: Phase[] = [
   {
     id: "capacity",

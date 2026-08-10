@@ -2290,7 +2290,10 @@ describe("premium visual language contracts (#517)", () => {
         check(theme, `fullscreen/${hue}/active`, ink, mix(surface, accent, 0.18));
       }
 
-      for (const gradient of ["--gradient-interaction", "--gradient-readiness"] as const) {
+      // .phone-workout-resume renders --well-tint-interaction/-readiness, not
+      // the analytical-card --gradient-interaction/-readiness tokens (#547
+      // round 3 finding C) — check the tokens the component actually uses.
+      for (const gradient of ["--well-tint-interaction", "--well-tint-readiness"] as const) {
         const gradientValue = resolveGradientDeclaration(
           themeDeclarations[theme][gradient]!,
           theme,
