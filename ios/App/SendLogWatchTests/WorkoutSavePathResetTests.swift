@@ -1,4 +1,5 @@
 import Foundation
+import SendLogWatchCore
 import XCTest
 @testable import SendLogWatch_Watch_App
 
@@ -187,6 +188,35 @@ final class WorkoutManagerOwnershipTests: XCTestCase {
         XCTAssertEqual(manager.ownerUserId, ownerA, "the accepted call's captured owner must survive a concurrent second call racing an account switch")
     }
 
+    /// #529 slice-2 review R4: `testStartClearsPerSaveTransientsFromAPreviousWorkout`
+    /// (above, in `WorkoutSavePathResetTests`) pins that `start()`'s single
+    /// reset block clears the OTHER per-save transients from a previous
+    /// workout, but never exercised `ownerUserId` — the transient slice 1
+    /// actually added to that same block — alongside them. This closes that
+    /// gap: a second, separate workout (started under a DIFFERENT account,
+    /// after the first one's `ownerUserId` was already captured) must
+    /// re-capture the CURRENT provider value, not carry the previous
+    /// workout's stale owner forward the way `failedBundle` deliberately
+    /// does. (Immutability WITHIN one run's lifetime is
+    /// `testOwnerUserIdStaysImmutableAfterAnAccountSwitchFollowingStart`,
+    /// above — a different property from re-capture ACROSS separate runs.)
+    func testStartRecapturesOwnerUserIdForASeparateSubsequentWorkoutUnderADifferentAccount() async {
+        let box = AccountBox()
+        let ownerA = UUID()
+        box.current = ownerA
+        let manager = makeAuthorizationFailingWorkoutManager(userIdProvider: { box.current })
+
+        await manager.start() // rejected by the injected authorization failure, but still accepted by the start guard
+        XCTAssertEqual(manager.ownerUserId, ownerA)
+
+        box.current = UUID()
+        let ownerB = box.current
+
+        await manager.start() // a separate, later workout — not a concurrent double-tap
+        XCTAssertEqual(manager.acceptedStartCount, 2, "both calls must be genuinely separate, accepted starts")
+        XCTAssertEqual(manager.ownerUserId, ownerB, "a new workout must capture the CURRENT provider value, not carry the previous workout's owner forward")
+    }
+
     /// `Repo.makeSaveBundle` is the seam `endAndSave()` calls with the
     /// manager's captured `ownerUserId` — proving it stamps `enqueuedUserId`
     /// from the explicit parameter (never re-deriving from whatever is
@@ -214,6 +244,44 @@ final class WorkoutManagerOwnershipTests: XCTestCase {
         )
 
         XCTAssertEqual(bundle.enqueuedUserId, ownerA, "the bundle must carry the explicit owner passed in, with no other source of truth")
+        // #529 slice-2 review R2: the row-level defense-in-depth stamps
+        // (#529 F6) had no dedicated test of their own — only
+        // `enqueuedUserId`, the queue-level guard, was pinned above. Every
+        // row `makeSaveBundle` builds must carry the SAME explicit owner.
+        XCTAssertEqual(bundle.session.userId, ownerA, "SessionInsert.userId must carry the explicit owner, not fall back to auth.uid()'s default")
+        XCTAssertEqual(bundle.workout.userId, ownerA, "ClimbWorkoutInsert.userId must carry the explicit owner")
+    }
+
+    /// #529 slice-2 review R2: `ClimbAttemptInsert.userId` specifically,
+    /// since `makeSaveBundle` maps `summary.attempts` through a separate
+    /// closure than the session/workout rows above — a regression there
+    /// wouldn't be caught by asserting on `session`/`workout` alone.
+    func testMakeSaveBundleStampsTheExplicitOwnerOnEveryAttemptRow() {
+        let attempt = Attempt(
+            startedAt: Date(), durationS: 24.5, elevationGainM: 3.1,
+            avgHR: 140, peakHR: 160, motionIntensity: 0.4, effortScore: 5, source: .auto
+        )
+        let ownerA = UUID()
+        let summary = WorkoutSummary(
+            workoutId: UUID(),
+            startedAt: Date(),
+            endedAt: Date().addingTimeInterval(600),
+            avgHR: 140,
+            maxHR: 160,
+            activeKcal: 50,
+            elevationGainM: 3.1,
+            attempts: [attempt],
+            predictedRPE: 5,
+            rawTrace: []
+        )
+
+        let bundle = Repo.makeSaveBundle(
+            summary: summary, boulders: 1, rpe: 5, phase: "capacity", tunables: .default,
+            ownerUserId: ownerA
+        )
+
+        XCTAssertEqual(bundle.attempts.count, 1)
+        XCTAssertEqual(bundle.attempts.first?.userId, ownerA, "every ClimbAttemptInsert row must carry the explicit owner")
     }
 
     /// A run that was genuinely never signed in (unreachable via the normal

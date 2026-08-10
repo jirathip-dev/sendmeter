@@ -1099,6 +1099,16 @@ final class WorkoutManager: NSObject {
                 // #477: one or more flushes were requested while this one
                 // was in flight — coalesce them into exactly one more run,
                 // built from state as of NOW, not as of the earlier request.
+                // #529 slice-2 review R1: `flushPartial()`'s own ownership
+                // guard only protects the request that arrives WHILE this
+                // one is already in flight — the account can just as well
+                // change during the network round trip itself, and this
+                // coalesced rerun calls `runPartialFlush()` directly,
+                // bypassing that guard entirely. Re-check here too, or an
+                // A → signed-out/B transition mid-flight lets one more
+                // partial upsert fire under B's currently-relayed token
+                // after `flushPartial()` would have refused a fresh call.
+                guard self.userIdProvider() == self.ownerUserId else { return }
                 self.runPartialFlush()
             }
         }

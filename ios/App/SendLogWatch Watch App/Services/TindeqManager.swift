@@ -84,6 +84,29 @@ final class TindeqManager: NSObject {
     private let userIdProvider: @Sendable () -> UUID?
     private var persistenceOwnerUserId: UUID?
     private var persistenceOwnerAssigned = false
+    /// Stable account identity for the manual/hands-free paths (issue #529
+    /// slice 2) — the counterpart to `persistenceOwnerUserId` for callers
+    /// that have no external owner assignment of their own.
+    /// `GuidedForceRunner` explicitly assigns `persistenceOwnerUserId` before
+    /// it drives the manager; a manual Free-hold `start()` or hands-free
+    /// `armHandsFree()` has no such caller, so the manager captures its own
+    /// owner right there, before the synchronous claim
+    /// (`repClaims.begin`/`beginArmedRecording`) — never at Stop/persist
+    /// time, which is exactly the save-time read that let a mid-run account
+    /// switch misattribute a rep (the bug this field exists to close).
+    ///
+    /// Captured once, when `sessionId` is nil (no gauge session open yet),
+    /// and held fixed for that session's whole lifetime: a session started
+    /// under A stays A's even across a later signed-out/B transition, never
+    /// silently rebound — same policy as `WorkoutManager.ownerUserId`. Once
+    /// `ensureSession()` mints a `sessionId`, the gate in
+    /// `captureManualSessionOwnerIfNeeded()` stops recapturing, so every
+    /// later rep and the eventual session-completion row
+    /// (`logSessionAfterPendingSaves`) inherit the SAME owner regardless of
+    /// who is signed in when they individually start or save. Reset happens
+    /// implicitly: `clearSession()` nils `sessionId`, so the next manual
+    /// start recaptures fresh for the next session.
+    private var manualSessionOwnerUserId: UUID?
     /// Test seam: production writes through CoreBluetooth; watch target tests
     /// inject this observer so the real command ordering is inspectable.
     private let commandWriter: ((Tindeq.Cmd) -> Void)?
@@ -163,6 +186,18 @@ final class TindeqManager: NSObject {
         guidedClaims.reset()
     }
 
+    /// Captures `manualSessionOwnerUserId` for a NEW gauge session (#529
+    /// slice 2) — a no-op once one is already open (`sessionId != nil`), so
+    /// this only ever fixes the owner once per session, at the first
+    /// accepted manual `start()`/`armHandsFree()`, never re-deriving it for
+    /// later reps of the same session. Called before the synchronous claim,
+    /// so no await can run between "who is signed in" and "who owns this
+    /// measurement".
+    private func captureManualSessionOwnerIfNeeded() {
+        guard sessionId == nil else { return }
+        manualSessionOwnerUserId = userIdProvider()
+    }
+
     /// Fold one just-saved rep into the session's W' depletion (#280). Called
     /// from every path that persists a rep — the Stop & Save button and the
     /// disconnect salvage — so the prediction covers the whole session.
@@ -218,9 +253,17 @@ final class TindeqManager: NSObject {
         )
         // Capture A before the actor hop. UploadQueueEngine preserves this
         // explicit stamp, so a delayed enqueue cannot become a B session.
+        // #529 slice 2: a guided run's explicit assignment wins while it's
+        // still active (`logSessionNow` runs before `clearPersistenceOwner`
+        // on the guided completion path); otherwise this session's immutable
+        // manual owner, captured once at its first rep's start — never a
+        // live read, which is exactly the save-time misattribution this
+        // closes. `userIdProvider()` only backstops the case neither owner
+        // was ever captured (unreachable via the UI today, same as
+        // `WorkoutManager.endAndSave()`'s equivalent fallback).
         pending.enqueuedUserId = persistenceOwnerAssigned
             ? persistenceOwnerUserId
-            : userIdProvider()
+            : (manualSessionOwnerUserId ?? userIdProvider())
         clearSession()
         let generation = persistenceGeneration
         Task { @MainActor in
@@ -281,6 +324,18 @@ final class TindeqManager: NSObject {
     }
 
     func clearPersistenceOwner() {
+        // #529 slice 2: the shared gauge session's `sessionId` is minted
+        // once per CONNECT, not once per guided run — if it survives past
+        // this guided run's end (a manual rep continues in the same
+        // connect), later manual saves must inherit the SAME owner the
+        // guided run itself used, not silently fall back to whoever is
+        // signed in when the next manual `start()` happens. Only when no
+        // manual owner has been captured yet for this session — a manual
+        // rep that already opened the session under its OWN owner (guided
+        // started later, using the assigned field) must keep that value.
+        if sessionId != nil, manualSessionOwnerUserId == nil {
+            manualSessionOwnerUserId = persistenceOwnerUserId
+        }
         persistenceOwnerUserId = nil
         persistenceOwnerAssigned = false
     }
@@ -322,6 +377,7 @@ final class TindeqManager: NSObject {
         errorMsg = nil
         persistenceOwnerUserId = nil
         persistenceOwnerAssigned = false
+        manualSessionOwnerUserId = nil
         pushForceBeat()
     }
 
@@ -331,6 +387,7 @@ final class TindeqManager: NSObject {
 
     func start() {
         guard status == .connected, !handsFreeRequested, !saving, guidedClaims.active == nil else { return }
+        captureManualSessionOwnerIfNeeded()
         savedMsgGeneration += 1
         savedMsg = nil
         resetRecordingBuffer()
@@ -349,6 +406,7 @@ final class TindeqManager: NSObject {
     func armHandsFree() {
         guard status == .connected, !handsFreeRequested, !saving,
               guidedClaims.active == nil, !trimmedLiveTag.isEmpty else { return }
+        captureManualSessionOwnerIfNeeded()
         savedMsgGeneration += 1
         savedMsg = nil
         handsFreeRequested = true
@@ -944,10 +1002,19 @@ final class TindeqManager: NSObject {
         rearmHandsFreeAfterStop: HandsFreeStopReason?
     ) {
         // Both the queue owner and the completion generation are captured on
-        // this synchronous MainActor turn, before the first await.
+        // this synchronous MainActor turn, before the first await. #529
+        // slice 2: a guided run's explicit assignment wins while active;
+        // otherwise this session's immutable manual owner (captured once at
+        // the first rep's `start()`/`armHandsFree()`, never re-derived at
+        // this save boundary) — `userIdProvider()` only backstops the
+        // unreachable case where neither owner was ever captured.
         let enqueuedUserId = persistenceOwnerAssigned
             ? persistenceOwnerUserId
-            : userIdProvider()
+            : (manualSessionOwnerUserId ?? userIdProvider())
+        var row = row
+        // #529 slice 2 — row-level defense-in-depth, see
+        // `TindeqRecordingInsert.userId`'s doc comment.
+        row.userId = enqueuedUserId
         let generation = persistenceGeneration
         saveOperationsInFlight += 1
         saving = true
