@@ -560,7 +560,11 @@ struct ForceGaugeView: View {
                 }
 
                 Button("Arm hands-free") { tindeq.armHandsFree() }
-                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.secondary)))
+                    // Neutral ink, matching "Free hold" (SL-538 round-2
+                    // review finding 4): the two are peer ways to start a
+                    // measurement on this screen, so one may not read louder
+                    // than the other.
+                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
                     .disabled(tindeq.saving || visibleStatus != .connected || tag.trimmingCharacters(in: .whitespaces).isEmpty)
                     .accessibilityHint("Arms the gauge to start when you pull")
                     .accessibilityIdentifier("force-arm-hands-free")
@@ -678,7 +682,11 @@ struct ForceGaugeView: View {
                 }
 
                 Button("Arm hands-free") { tindeq.armHandsFree() }
-                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.secondary)))
+                    // Neutral ink, matching "Free hold" (SL-538 round-2
+                    // review finding 4): the two are peer ways to start a
+                    // measurement on this screen, so one may not read louder
+                    // than the other.
+                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
                     .disabled(tindeq.saving || visibleStatus != .connected || tag.trimmingCharacters(in: .whitespaces).isEmpty)
                     .accessibilityHint("Arms the gauge to start when you pull")
                     .accessibilityIdentifier("force-arm-hands-free")

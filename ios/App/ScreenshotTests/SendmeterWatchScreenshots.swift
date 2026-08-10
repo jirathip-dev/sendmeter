@@ -53,6 +53,12 @@ final class SendmeterWatchScreenshots: XCTestCase {
             .firstMatch
 
         let controls = [exercise, side, protocolChange, start]
+        // SL-538 round-2 review finding 5: a future eligibility regression
+        // (Start disabled, `.opacity(0.52)`) would otherwise fail the pixel
+        // scan below with a colour-shaped error message pointing at the
+        // wrong cause. Assert the actual precondition first.
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        XCTAssertTrue(start.isEnabled, "Start must be enabled for the pixel scan below to mean anything")
         var validatedPNGData: Data?
         for _ in 0..<3 {
             // A watch can remain in reduced-luminance/AOD after the navigation
@@ -281,6 +287,78 @@ final class SendmeterWatchScreenshots: XCTestCase {
             }
             app.terminate()
         }
+    }
+
+    /// SL-538 round-2 review finding 1: `ForceProtocolViews.swift` was the
+    /// single most-changed file in the original commit (16 call sites
+    /// retinted) and had zero fixture/screenshot coverage. Navigates the
+    /// real production chooser (no mock) via the always-available Suggested
+    /// Movement Starter row, which needs neither network nor a signed-in
+    /// relay to render.
+    func testForceProtocolChooserRendersSuggestedProtocol() throws {
+        let app = launchFixture("forceSetup")
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        openActions(app)
+        app.staticTexts["Force Gauge"].tap()
+
+        let protocolLink = app.buttons
+            .matching(NSPredicate(format: "label == %@", "Selected protocol, Movement Starter"))
+            .firstMatch
+        XCTAssertTrue(
+            protocolLink.waitForExistence(timeout: 10),
+            "setup should expose the selected-protocol link before opening the chooser"
+        )
+        protocolLink.tap()
+
+        let suggestedRow = app.buttons["force-protocol-suggested:movement-starter"]
+        XCTAssertTrue(
+            suggestedRow.waitForExistence(timeout: 10),
+            "chooser should list the Suggested Movement Starter protocol"
+        )
+        // The row's existence (asserted above) is the coverage this test
+        // exists for — it is the regression signal a reverted/broken chooser
+        // would fail on. Bringing it fully into frame is presentation
+        // niceness for the attached screenshot only: watchOS ScrollView
+        // gestures in this simulator have proven bistable and unpredictable
+        // (a small drag and a full swipe both landed on the same two
+        // far-apart rest positions in manual testing), so scrolling here is
+        // best-effort and not asserted on.
+        app.swipeUp(velocity: .slow)
+
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "force-protocol-chooser"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    /// SL-538 round-2 review finding 1: `GuidedForceRunnerView.swift` (12
+    /// retinted call sites) also had zero coverage. The real
+    /// `GuidedForceRunner` needs a relayed signed-in account to start a run,
+    /// which this standalone watch-target test cannot provide honestly — the
+    /// `forceGuidedRun` fixture instead renders the production view directly
+    /// with fixed display data (`RootView`'s fixture bypass +
+    /// `GuidedForceRunnerView.display`), the same presentation-only pattern
+    /// `forceSetup`/`forceConnected`/etc. already use for `ForceGaugeView`.
+    func testForceGuidedRunRendersActivePhase() throws {
+        let app = launchFixture("forceGuidedRun")
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        let stop = app.buttons["force-guided-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10), "fixture should render the Stop control")
+        assertFullyVisible(stop, in: app, fixture: "forceGuidedRun")
+
+        let phaseCard = app.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "identifier == %@ OR identifier == %@ OR identifier == %@",
+                "force-guided-phase-card", "force-guided-compact-card", "force-guided-micro-card"
+            ))
+            .firstMatch
+        XCTAssertTrue(phaseCard.waitForExistence(timeout: 5), "fixture should render one of the phase-card layouts")
+
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "force-guided-run"
+        capture.lifetime = .keepAlways
+        add(capture)
     }
 
     func testAppStoreScreenshots() throws {

@@ -25,6 +25,19 @@ enum WatchPalette {
         color(WatchDesignTokens.readableForeground(rgb, on: surface))
     }
 
+    /// `foreground(_:)`'s default `cardStrong` surface is the *flat* card
+    /// base — but a label near the topLeading corner of an accent-tinted
+    /// `WatchCard` actually sits on `accent` painted over that base (see
+    /// `WatchDesignTokens.accentCardSurface`), which is a worse surface for a
+    /// same-hue label. Use this instead of `foreground(_:)` for any label at
+    /// or near that corner (SL-538 round-2 review finding 2).
+    static func foregroundOnAccentCard(
+        _ rgb: PhaseRGB,
+        accent: PhaseRGB = WatchDesignTokens.primary
+    ) -> Color {
+        foreground(rgb, on: WatchDesignTokens.accentCardSurface(accent))
+    }
+
     static let canvas = color(WatchDesignTokens.canvas)
     static let canvasRaised = color(WatchDesignTokens.canvasRaised)
     static let card = color(WatchDesignTokens.card)

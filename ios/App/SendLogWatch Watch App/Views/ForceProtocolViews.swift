@@ -120,7 +120,7 @@ struct ForceSelectedProtocolCard: View {
                             ? "hand.raised.fill"
                             : "figure.strengthtraining.traditional")
                             .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                             .frame(width: 24, height: 24)
 
                         Text(protocolValue.name)
@@ -138,7 +138,7 @@ struct ForceSelectedProtocolCard: View {
 
                     Text(ForceProtocolPresentation.modeDescription(for: protocolValue))
                         .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                        .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
 
@@ -162,13 +162,13 @@ struct ForceSelectedProtocolCard: View {
                             Spacer(minLength: 0)
                             Text("Change")
                                 .font(.caption2.weight(.semibold))
-                                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                                .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                         }
                         VStack(alignment: .leading, spacing: 4) {
                             sourcePill
                             Text("Change protocol")
                                 .font(.caption2.weight(.semibold))
-                                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                                .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                         }
                     }
                     }
@@ -229,7 +229,7 @@ struct ForceSelectedProtocolCard: View {
                     compactDetailText
                     Text("Change protocol")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                        .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                 }
             }
 
@@ -246,7 +246,7 @@ struct ForceSelectedProtocolCard: View {
     private var compactDetailText: some View {
         Text(ForceProtocolPresentation.compactDetail(for: protocolValue))
             .font(.system(.caption2, design: .rounded).weight(.semibold))
-            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
             .lineLimit(1)
             .minimumScaleFactor(0.62)
     }
@@ -254,14 +254,14 @@ struct ForceSelectedProtocolCard: View {
     private var changeText: some View {
         Text("Change")
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
     }
 
     private var protocolKindPill: some View {
         Text(ForceProtocolPresentation.category(for: protocolValue))
             .font(.system(size: 10, weight: .bold, design: .rounded))
             .tracking(0.7)
-            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
             .padding(.horizontal, 7)
             .frame(minHeight: 24)
             .background(Capsule().fill(WatchPalette.primary.opacity(0.16)))
@@ -424,7 +424,7 @@ struct ForceProtocolChooserView: View {
 
                         Text(ForceProtocolPresentation.modeDescription(for: protocolValue))
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                             .lineLimit(1)
 
                         Text(ForceProtocolPresentation.detail(for: protocolValue))
@@ -467,13 +467,13 @@ struct ForceProtocolChooserView: View {
         Text(ForceProtocolPresentation.category(for: protocolValue))
             .font(.system(size: 10, weight: .bold, design: .rounded))
             .tracking(0.7)
-            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
     }
 
     private var selectedMark: some View {
         Label("Selected", systemImage: "checkmark.circle.fill")
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
             .lineLimit(1)
     }
 

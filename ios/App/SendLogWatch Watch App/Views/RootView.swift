@@ -51,7 +51,16 @@ struct RootView: View {
 
     @ViewBuilder
     private var signedInSurface: some View {
-        if guidedForceRunner.isActive {
+        // The real `GuidedForceRunner` needs a relayed signed-in account to
+        // start a run (see its `start(...)`), which a standalone watch-target
+        // screenshot test cannot fake honestly — so this fixture state is
+        // rendered directly rather than by driving `isActive` (SL-538
+        // round-2 review finding 1). `ScreenshotFixtures.enabled` is always
+        // false outside a `-FASTLANE_SNAPSHOT YES` launch, so this never
+        // affects production navigation.
+        if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .forceGuidedRun {
+            GuidedForceRunnerView()
+        } else if guidedForceRunner.isActive {
             GuidedForceRunnerView()
         } else {
             signedInContent

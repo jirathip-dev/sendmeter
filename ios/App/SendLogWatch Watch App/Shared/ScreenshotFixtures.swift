@@ -27,6 +27,15 @@ enum ScreenshotFixtureState: String, CaseIterable {
     case forceLive
     case forceSaved
     case forceError
+    /// SL-538 round-2 review finding 1: puts `GuidedForceRunnerView` on
+    /// screen directly (see `RootView`'s fixture bypass) without driving the
+    /// real `GuidedForceRunner` through a signed-in relay — that service
+    /// legitimately requires a relayed account (`WatchSessionStore.userId`)
+    /// to start a run, which a standalone watch-target screenshot test has
+    /// no way to fake honestly. This fixture overrides only what the view
+    /// *displays* (`ScreenshotFixtures.guidedRun`), the same presentation-
+    /// only pattern `ScreenshotForceVisual` already uses for `ForceGaugeView`.
+    case forceGuidedRun
 }
 
 struct ScreenshotWorkoutVisual {
@@ -55,6 +64,25 @@ struct ScreenshotForceVisual {
     let sessionCount: Int
     let savedMessage: String?
     let errorMessage: String?
+}
+
+/// Presentation-only stand-in for the fields `GuidedForceRunnerView` reads
+/// off the real `GuidedForceRunner`. Never feeds back into the runner or any
+/// of its persistence/queue paths — see `ScreenshotFixtureState.forceGuidedRun`.
+struct ScreenshotGuidedRunVisual {
+    let phaseTitle: String
+    let countdownText: String
+    let progress: Double
+    let isMeasured: Bool
+    let isCadenceOnly: Bool
+    let protocolName: String
+    let currentSet: Int
+    let totalSets: Int
+    let currentRep: Int
+    let totalReps: Int
+    let side: String
+    let currentKg: Double?
+    let tag: String
 }
 
 /// Deterministic App Store screenshot data. Fastlane's official SnapshotHelper
@@ -203,5 +231,22 @@ enum ScreenshotFixtures {
             ScreenshotForceVisual(status: .connected, tag: "", side: "", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: "Progressor is out of range. Check the gauge and try again.")
         default: nil
         }
+    }
+
+    static var guidedRun: ScreenshotGuidedRunVisual? {
+        guard state == .forceGuidedRun else { return nil }
+        return ScreenshotGuidedRunVisual(
+            phaseTitle: "Hold",
+            countdownText: "7",
+            progress: 0.42,
+            isMeasured: true,
+            isCadenceOnly: false,
+            protocolName: "Static PR Ladder",
+            currentSet: 2, totalSets: 3,
+            currentRep: 1, totalReps: 2,
+            side: "left",
+            currentKg: 24.6,
+            tag: "Crimp edge"
+        )
     }
 }
