@@ -4,6 +4,7 @@ import { SendLogHealth } from "sendlog-health";
 import type { ReadinessRefreshResult } from "sendlog-health";
 import { fetchTodayHealthSignature } from "./repo/health";
 import { healthSignaturesEqual } from "./healthSignature";
+import { captureHandledOperationalFailure } from "./monitoring";
 
 export { healthSignaturesEqual } from "./healthSignature";
 
@@ -54,11 +55,11 @@ function recordHealthSync(source: HealthSyncSource, changed = false): void {
 }
 
 let readinessListenerRegistration: Promise<void> | null = null;
+let readinessCatchUpRequested = false;
 
 /// Native watch requests execute entirely in the iPhone plugin. This listener
 /// is only the phone-UI notification/re-read hook; it does not perform HealthKit
-/// work and never carries credentials or raw samples. The local latest-result
-/// read covers a result that completed before the WebView mounted its listener.
+/// work and never carries credentials or raw samples.
 ///
 /// #534: the dedupe guard used to be an optimistic boolean set before
 /// `addListener` resolved — a rejected first attempt (transient bridge
@@ -70,19 +71,60 @@ let readinessListenerRegistration: Promise<void> | null = null;
 /// the first await). On rejection the guard is cleared so the next
 /// auth/foreground call retries; on success it stays set forever so a repeat
 /// call is a no-op and never installs a second listener.
+///
+/// Honest limits of what this can detect (#534 review F1): Capacitor's iOS
+/// bridge gives `addListener()` no ack/nack from the native plugin. Its
+/// generated wrapper (`@capacitor/ios`'s `addListenerNative`) resolves as
+/// soon as the outbound postMessage call returns locally — `postToNative`
+/// swallows its own delivery errors — so a message that never reaches (or is
+/// never processed by) a genuinely running native plugin still resolves here
+/// with a normal-looking handle; that failure mode is invisible to this
+/// promise and cannot be retried from the JS side alone. What this guard DOES
+/// reliably catch: the plugin never having a native counterpart at all (an
+/// iOS build that dropped the native shell) — `isPluginAvailable` short-
+/// circuits that case up front instead of leaving `addListener()`'s wrapper
+/// promise permanently unsettled (it has no header to resolve OR reject
+/// against), and a handle that resolves without a callable `remove` is
+/// treated the same as a rejection. Closing the remaining gap needs a native-
+/// side ack, which is out of scope for this fix.
+///
+/// Exported for direct unit testing only — the sole production caller is
+/// `relayHealthSession` below.
 export function ensureReadinessListener(): void {
   if (!IS_NATIVE || readinessListenerRegistration) return;
+  if (!Capacitor.isPluginAvailable("SendLogHealth")) return;
   readinessListenerRegistration = SendLogHealth.addListener(
     "readinessRefresh",
     (result: ReadinessRefreshResult) => {
       if (result.status === "success") recordHealthSync("watch", true);
     },
   )
-    .then(() => undefined)
+    .then((handle) => {
+      if (!handle || typeof handle.remove !== "function") {
+        throw new Error("readiness listener registration returned no handle");
+      }
+    })
     .catch((error: unknown) => {
       readinessListenerRegistration = null;
-      console.error("[health] readiness listener registration failed", error);
+      captureHandledOperationalFailure("health.readiness-listener", error);
     });
+  ensureReadinessCatchUpRead();
+}
+
+/// A one-shot local-latest-result read, covering a watch-triggered result
+/// that completed before the WebView mounted `ensureReadinessListener`'s
+/// listener. Deliberately NOT re-run every time the registration guard above
+/// is cleared and retried (#534 review F4): this call has no notion of
+/// "already reported," so replaying it on every foreground of a build whose
+/// listener registration keeps failing would re-dispatch
+/// `sendmeter:health-synced` with `changed: true` each time, falsely
+/// claiming a fresh watch sync landed on every foreground. The module-scoped
+/// `readinessCatchUpRequested` flag below is a stopgap that only means "asked
+/// once this launch" — #535 is expected to replace it with real
+/// requestId/completedAt dedupe of the result itself, which this flag is not.
+function ensureReadinessCatchUpRead(): void {
+  if (readinessCatchUpRequested) return;
+  readinessCatchUpRequested = true;
   void SendLogHealth.getLatestReadiness()
     .then((result) => {
       if (result?.status === "success") recordHealthSync("watch", true);
