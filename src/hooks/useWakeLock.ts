@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
 import { KeepAwake } from "@capacitor-community/keep-awake";
 import { KeepAwakeCoordinator } from "../lib/keepAwakeCoordinator";
+import { subscribeToBrowserWakeLock } from "../lib/browserWakeLock";
 
 const nativeCoordinator = new KeepAwakeCoordinator((active) =>
   active ? KeepAwake.keepAwake() : KeepAwake.allowSleep(),
@@ -18,41 +19,14 @@ export function useWakeLock(active: boolean): void {
     const wl = navigator.wakeLock;
     if (!wl) return;
 
-    let sentinel: WakeLockSentinel | null = null;
-    let cancelled = false;
-
-    const acquire = () => {
-      if (sentinel || cancelled) return;
-      wl.request("screen")
-        .then((s) => {
-          if (cancelled) {
-            void s.release().catch(() => {});
-            return;
-          }
-          sentinel = s;
-          // iOS releases the lock when the page hides — clear our handle so the
-          // visibility listener re-acquires on return.
-          s.addEventListener("release", () => {
-            sentinel = null;
-          });
-        })
-        .catch(() => {
-          /* denied / not visible — fine, best-effort */
-        });
-    };
-
-    acquire();
-    const onVis = () => {
-      if (document.visibilityState === "visible") acquire();
-    };
-    document.addEventListener("visibilitychange", onVis);
-
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", onVis);
-      void sentinel?.release().catch(() => {});
-      sentinel = null;
-    };
+    return subscribeToBrowserWakeLock({
+      request: () => wl.request("screen"),
+      isVisible: () => document.visibilityState === "visible",
+      onVisibilityChange: (handler) => {
+        document.addEventListener("visibilitychange", handler);
+        return () => document.removeEventListener("visibilitychange", handler);
+      },
+    });
   }, [active]);
 
   useEffect(() => {
