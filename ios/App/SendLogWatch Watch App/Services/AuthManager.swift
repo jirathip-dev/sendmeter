@@ -223,7 +223,10 @@ final class AuthManager: NSObject {
                 async let workouts: Void = OfflineQueue.shared.drain()
                 async let sessions: Void = PendingSessionQueue.shared.drain()
                 async let recordings: Void = PendingRecordingQueue.shared.drain()
-                _ = await (workouts, sessions, recordings)
+                // #531: a fresh relay is also this actor's recovery path for
+                // a terminal live_workouts upsert stuck on a stale token.
+                async let liveWorkout: Void = LiveWorkoutTerminalRetry.shared.retryNow()
+                _ = await (workouts, sessions, recordings, liveWorkout)
                 await WatchBuild.refreshAndReportQueueStatus()
             }
         case .signedOut:

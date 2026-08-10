@@ -27,6 +27,7 @@
 		498D2C0A73BE410711C4CD53 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 665354DA3AF13BA04D7AADA0 /* Supabase */; };
 		4CE00A3CD5500DB7577ACBB4 /* SnapshotHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3F5AD05DE81A538A6242E98 /* SnapshotHelper.swift */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
+		4D84C3B92A3D75B9FBA09DE3 /* LiveWorkoutTerminalRetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C78BAA80A2F314497A5BD91A /* LiveWorkoutTerminalRetryTests.swift */; };
 		4F9BA0DA906E18E88FCDFCA8 /* DateExtensionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 929803D573A0FA4074230787 /* DateExtensionsTests.swift */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
@@ -41,6 +42,7 @@
 		6352C4B663C906E80F5F0280 /* PendingTindeqRecordingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CAA7BB196064905A0427D09 /* PendingTindeqRecordingTests.swift */; };
 		69ECCBC95C0D80B03512206A /* PendingQueuePolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E29F10C4091AED6A4F12BC3 /* PendingQueuePolicyTests.swift */; };
 		703E0DDDB01CECCD44C5799A /* TagReconciliationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */; };
+		74314E505442F247623FCB40 /* LiveWorkoutSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A6EFB4E72129DAD5B7165F /* LiveWorkoutSyncTests.swift */; };
 		80DC27B0A88456BA04ED783E /* ForceProtocolCatalogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 868B947F60DEE41E3FBB2B55 /* ForceProtocolCatalogTests.swift */; };
 		82F4391EF9C94876CD04F862 /* WorkoutSavePathResetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58B8CA96E0F5FACEF50EEC31 /* WorkoutSavePathResetTests.swift */; };
 		83A8F2ED6C251F2C6FE27CC2 /* GuidedForceRunTimingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8592A49F0E87BCE3DF9310D /* GuidedForceRunTimingTests.swift */; };
@@ -218,6 +220,8 @@
 		C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/CoalescingDrainTests.swift; sourceTree = "<group>"; };
 		C3F5AD05DE81A538A6242E98 /* SnapshotHelper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SnapshotHelper.swift; sourceTree = "<group>"; };
 		C78B4050D2AFE4FFC205D1C0 /* TagReconciliationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/TagReconciliationTests.swift; sourceTree = "<group>"; };
+		C78BAA80A2F314497A5BD91A /* LiveWorkoutTerminalRetryTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveWorkoutTerminalRetryTests.swift; sourceTree = "<group>"; };
+		D1A6EFB4E72129DAD5B7165F /* LiveWorkoutSyncTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveWorkoutSyncTests.swift; sourceTree = "<group>"; };
 		D25FA550666EBB825642076A /* LiveWorkoutUpsertEncodingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveWorkoutUpsertEncodingTests.swift; sourceTree = "<group>"; };
 		D5F88EE79EE43D995B504A78 /* SendmeterWatchScreenshots.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SendmeterWatchScreenshots.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D8592A49F0E87BCE3DF9310D /* GuidedForceRunTimingTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GuidedForceRunTimingTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/GuidedForceRunTimingTests.swift; sourceTree = "<group>"; };
@@ -362,6 +366,8 @@
 				31A1EB3CD36C29EFEE9ED771 /* GuidedForcePolicyTests.swift */,
 				868B947F60DEE41E3FBB2B55 /* ForceProtocolCatalogTests.swift */,
 				220863B963764B1C32974A33 /* GuidedForceRunnerOwnershipTests.swift */,
+				D1A6EFB4E72129DAD5B7165F /* LiveWorkoutSyncTests.swift */,
+				C78BAA80A2F314497A5BD91A /* LiveWorkoutTerminalRetryTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = SOURCE_ROOT;
@@ -750,6 +756,8 @@
 				DFB64FDAEB1AB019AD0AA7AE /* GuidedForcePolicyTests.swift in Sources */,
 				80DC27B0A88456BA04ED783E /* ForceProtocolCatalogTests.swift in Sources */,
 				36FA170B7A251B81A1502E7B /* GuidedForceRunnerOwnershipTests.swift in Sources */,
+				74314E505442F247623FCB40 /* LiveWorkoutSyncTests.swift in Sources */,
+				4D84C3B92A3D75B9FBA09DE3 /* LiveWorkoutTerminalRetryTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

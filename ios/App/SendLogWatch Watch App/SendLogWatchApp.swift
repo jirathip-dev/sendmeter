@@ -48,6 +48,9 @@ struct SendLogWatchApp: App {
                 Task { await OfflineQueue.shared.drain() }
                 Task { await PendingSessionQueue.shared.drain() }
                 Task { await PendingRecordingQueue.shared.drain() }
+                // #531: a failed terminal live_workouts upsert has no other
+                // trigger once its owning LiveWorkoutSync actor is gone.
+                Task { await LiveWorkoutTerminalRetry.shared.retryNow() }
                 Task { await WatchBuild.refreshAndReportQueueStatus() }
                 // One watch-triggered path keeps the cached score, widgets,
                 // and open status UI in sync; there is no duplicate foreground

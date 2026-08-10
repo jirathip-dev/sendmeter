@@ -2,6 +2,22 @@ import Foundation
 import SendLogWatchCore
 import Supabase
 
+/// The seam through which `LiveWorkoutSync` sends one row — `RepoLiveWorkoutUpserter`
+/// is the production path; tests inject a scripted double. Matches
+/// `WorkoutBundleUploading`/`RepoBundleUploader`'s pattern (OfflineQueueSeams.swift).
+protocol LiveWorkoutUpserting: Sendable {
+    func upsert(_ row: LiveWorkoutUpsert) async throws
+}
+
+struct RepoLiveWorkoutUpserter: LiveWorkoutUpserting {
+    func upsert(_ row: LiveWorkoutUpsert) async throws {
+        try await SupabaseService
+            .from("live_workouts")
+            .upsert(row, onConflict: "user_id")
+            .execute()
+    }
+}
+
 /// Best-effort live heartbeat so the web Workout tab can mirror an
 /// in-progress watch workout (SL-41). WatchConnectivity is the immediate
 /// path; this actor is the durable Supabase fallback.
@@ -16,9 +32,24 @@ import Supabase
 ///   late provisional heartbeat.
 /// End AND Discard call `markEnded()` (status='ended') rather than deleting —
 /// postgres_changes can't filter DELETE events on the web side.
+///
+/// #531: `upsert` used to `try?` away every failure — for a TELEMETRY row
+/// that's fine (best-effort, always superseded by the next beat, and once
+/// `terminalQueued` no further beat will ever arrive to retry with), but for
+/// the TERMINAL row it permanently left the server-side row `status='live'`,
+/// because nothing else was ever going to write to this run again. A failed
+/// terminal upsert is now handed off to `terminalRetry` — a durable owner
+/// that outlives this actor (`WorkoutManager.end()` drops its reference to
+/// this instance right after `markEnded()` returns) and retries on
+/// foreground / an accepted auth relay / bounded backoff. See
+/// `LiveWorkoutTerminalRetry`'s doc comment for why a blind resend of the
+/// same row is safe and idempotent under the DB's run/sequence ordering
+/// guard.
 actor LiveWorkoutSync {
     private let workoutId: UUID
     private let startedAt: Date
+    private let uploader: LiveWorkoutUpserting
+    private let terminalRetry: LiveWorkoutTerminalRetrying
     private var userId: UUID?
     private var latestSequence = 0
     private var terminalQueued = false
@@ -26,9 +57,16 @@ actor LiveWorkoutSync {
     private var pendingIdentity = LiveMirrorPendingIdentity()
     private var draining = false
 
-    init(workoutId: UUID, startedAt: Date) {
+    init(
+        workoutId: UUID,
+        startedAt: Date,
+        uploader: LiveWorkoutUpserting = RepoLiveWorkoutUpserter(),
+        terminalRetry: LiveWorkoutTerminalRetrying = LiveWorkoutTerminalRetry.shared
+    ) {
         self.workoutId = workoutId
         self.startedAt = startedAt
+        self.uploader = uploader
+        self.terminalRetry = terminalRetry
     }
 
     /// Reads the relayed account synchronously. `WatchSessionStore` is
@@ -168,6 +206,14 @@ actor LiveWorkoutSync {
     /// One serial drain. Actor re-entrancy lets later beats replace `pending`
     /// while `upsert` is suspended; the loop picks up that latest snapshot
     /// after the current request returns.
+    ///
+    /// #531: a failed TELEMETRY row is dropped and the loop just moves on to
+    /// whatever is `pending` now — correct, because telemetry is best-effort
+    /// and any row worth keeping already coalesced past it. A failed
+    /// TERMINAL row is different: `beat()`/`markEnded()` refuse every later
+    /// sequence once `terminalQueued`, so nothing will ever replace it — it
+    /// is handed off to `terminalRetry` instead of being dropped, so the
+    /// write stays retryable after this actor itself is gone.
     private func drain() async {
         guard !draining else { return }
         draining = true
@@ -176,15 +222,17 @@ actor LiveWorkoutSync {
             // Do not clear a newer identity that may have replaced this row
             // while the previous upsert was suspended.
             _ = pendingIdentity.clear(ifSequence: row.sequence)
-            await upsert(row)
+            do {
+                try await upsert(row)
+            } catch {
+                guard row.terminal else { continue }
+                await terminalRetry.handOff(row, error: error)
+            }
         }
         draining = false
     }
 
-    private func upsert(_ row: LiveWorkoutUpsert) async {
-        try? await SupabaseService
-            .from("live_workouts")
-            .upsert(row, onConflict: "user_id")
-            .execute()
+    private func upsert(_ row: LiveWorkoutUpsert) async throws {
+        try await uploader.upsert(row)
     }
 }
