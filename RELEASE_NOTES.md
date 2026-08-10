@@ -36,7 +36,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
-- Watch: a Climb Workout that fails to start partway through no longer leaves an invisible session running in the background — retrying Start now works instead of silently failing until the watch app is force-quit.
+- Watch: if a Climb Workout fails to start partway through, the watch now ends and discards the partially-started session instead of leaving it running in the background.
 - iPhone: reopening the app no longer shows readiness as "Synced just now" for an older watch-triggered result that actually completed hours earlier; the synced-time marker is also now kept separate per signed-in account.
 - iPhone: an outright-failed registration for watch-triggered readiness refreshes (for example, on an app version missing the needed native support) no longer disables that notification for the rest of the app session; a registration that fails silently without an error is a separate, still-open gap.
 - Routine actions now stay inside the Workout card on narrow phones; sheet headers are more compact without a redundant drag handle; and the Watch home switcher keeps full-size touch targets with slimmer visual pills.

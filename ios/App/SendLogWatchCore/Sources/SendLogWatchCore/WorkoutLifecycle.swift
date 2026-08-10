@@ -75,17 +75,32 @@ public enum WidgetCountSync {
 /// doesn't document `delegate = nil` as synchronously cancelling a callback
 /// HealthKit already dispatched, so `WorkoutManager`'s own delegate methods
 /// additionally guard by identity (`=== self.session` / `=== self.builder`)
-/// as the real backstop. Never touches anything beyond the four closures
-/// passed in — in particular, it never assigns a caller's own state, so a
-/// long-lived manager spanning many workouts (#476A) can't have this failure
-/// path leave a stale handle for the next `start()` to clean up.
+/// as the real backstop. Never touches anything beyond the five closures
+/// passed in (`startActivity`, `beginCollection`, `detachDelegates`,
+/// `endSession`, `discardBuilder`) — in particular, it never assigns a
+/// caller's own state, so a long-lived manager spanning many workouts
+/// (#476A) can't have this failure path leave a stale handle for the next
+/// `start()` to clean up.
 ///
-/// Pure control flow, no HealthKit dependency: `startActivity`/
+/// `@MainActor`: `WorkoutManager.start()` (the one caller) is itself
+/// `@MainActor`, and every one of these five calls ran on the main thread
+/// pre-extraction, serialized with every other mutation this class makes to
+/// the session/builder pair — `detachDelegates` in particular is the fix's
+/// first line of defence against a HealthKit callback racing the teardown
+/// (see above), so it must keep running on the same actor as the rest of
+/// `start()`, not hop to the cooperative pool the way a plain `nonisolated
+/// async` function would (SE-0338: a nonisolated async function does not
+/// inherit its caller's actor). Isolating here, not by making the closures
+/// `@MainActor` individually, keeps the call site a plain `await` with no
+/// extra annotations.
+///
+/// Pure control flow, no HealthKit dependency otherwise: `startActivity`/
 /// `beginCollection`/`end`/`discardWorkout` are closures the caller wires to
 /// its real session/builder, so this is covered by `swift test` — a real
 /// `HKWorkoutSession` needs the HealthKit entitlement, which neither this
 /// package's test host nor the unsigned `SendLogWatchTests` app-target host
 /// has.
+@MainActor
 public enum WorkoutSessionActivation {
     public static func run(
         startActivity: () -> Void,

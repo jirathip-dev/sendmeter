@@ -64,14 +64,25 @@ final class WidgetCountSyncTests: XCTestCase {
     }
 }
 
-/// #480: proves the four-step choreography `WorkoutManager.start()` wires to
-/// its real `HKWorkoutSession`/`HKLiveWorkoutBuilder` — a `beginCollection`
+/// #480: proves the five-closure choreography `WorkoutManager.start()` wires
+/// to its real `HKWorkoutSession`/`HKLiveWorkoutBuilder` — a `beginCollection`
 /// failure must end/discard the pair it JUST started (and detach both
 /// delegates first) before rethrowing, never leaving that cleanup for the
-/// caller. A spy stands in for the two HealthKit objects; this test host
-/// cannot construct real ones (no entitlement, same reason
-/// `WorkoutManagerHRAndPartialFlushTests` gives for its own HealthKit-shaped
-/// seams).
+/// caller. A spy stands in for the two HealthKit objects; this package's
+/// test host cannot construct real ones (no HealthKit entitlement — same
+/// reason `WorkoutManagerHRAndPartialFlushTests`, in the separate
+/// `SendLogWatchTests` Xcode target, gives for its own HealthKit-shaped
+/// seams there). `@MainActor`: `WorkoutSessionActivation.run` is isolated to
+/// match its one production caller (`WorkoutManager.start()`, itself
+/// `@MainActor` — see the type's doc comment in `WorkoutLifecycle.swift`),
+/// so calling it from a test needs the same isolation.
+///
+/// This proves the ALGORITHM only. `WorkoutSessionActivationWiringTests`
+/// (`SendLogWatchTests` — `WorkoutOwnershipTests.swift`) is what pins the
+/// production call site actually wires these closures to the real
+/// session/builder correctly; neither suite alone would catch a wiring
+/// regression the other doesn't also cover (#480 review F2).
+@MainActor
 final class WorkoutSessionActivationTests: XCTestCase {
     private final class Spy {
         var startActivityCalled = false
@@ -156,32 +167,26 @@ final class WorkoutSessionActivationTests: XCTestCase {
         )
     }
 
-    /// The issue's other stated acceptance criterion: a failed activation
-    /// followed by a retry (a fresh session/builder pair — production never
-    /// reuses a discarded one) must succeed cleanly. Nothing here is
-    /// stateful across calls, so a second run on a fresh pair must behave
-    /// exactly like a first, with none of the first attempt's cleanup calls
-    /// leaking onto it.
-    func testAFailedActivationFollowedByARetryOnAFreshPairSucceeds() async throws {
-        let failedSpy = Spy()
-        do {
-            try await run(spy: failedSpy, beginCollectionThrows: true)
-            XCTFail("expected the first attempt to fail")
-        } catch {
-            // expected
-        }
-        XCTAssertTrue(failedSpy.sessionEnded)
-
-        let retrySpy = Spy()
-        try await run(spy: retrySpy, beginCollectionThrows: false)
-
-        XCTAssertEqual(
-            retrySpy.callOrder, ["startActivity", "beginCollection"],
-            "the retry must run cleanly with no leftover state from the failed attempt"
-        )
-        XCTAssertFalse(retrySpy.sessionEnded, "a successful retry's own session must never be ended")
-        XCTAssertFalse(retrySpy.builderDiscarded, "a successful retry's own builder must never be discarded")
-    }
+    // #480 review F3: a "failed activation followed by a retry on a fresh
+    // pair succeeds" test used to live here. It could not fail:
+    // `WorkoutSessionActivation.run` is a stateless `static func` with no
+    // captured mutable state, so a second call on a brand-new `Spy` is
+    // mechanically identical to `testSuccessCallsStartAndBeginCollectionOnlyWithNoCleanup`
+    // above, whatever the first call did. That statelessness is real and
+    // worth having — it's what rules out this function itself wedging a
+    // retry — but asserting it added no coverage, and the comment claiming
+    // it proved the issue's "failed start then retry succeeds" criterion
+    // overclaimed. The parts of that criterion actually reachable off-device
+    // are pinned at the `WorkoutManager` level instead: `WorkoutManagerDoubleStartTests
+    // .testStartGuardReleasesAfterCompletionForALegitimateRestart` proves the
+    // start guard releases after a failed `start()` so a second call is
+    // accepted, and `WorkoutManagerOwnershipTests
+    // .testStartRecapturesOwnerUserIdForASeparateSubsequentWorkoutUnderADifferentAccount`
+    // proves the same for the reset block a retry re-runs (both in
+    // `SendLogWatchTests`, injected via `authorizationRequestOverride` since
+    // a real failure this far into `start()` can't be driven off-device
+    // either). Whether a retry actually succeeds against real HealthKit — a
+    // freed one-active-session slot — stays device-only; #504 tracks it.
 }
 
 /// Review finding X1: this used to be proven only by driving the real

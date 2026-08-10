@@ -235,3 +235,96 @@ final class WorkoutManagerDeinitTests: XCTestCase {
         )
     }
 }
+
+/// #480 review F2: `WorkoutSessionActivationTests` (`SendLogWatchCore`)
+/// proves the ALGORITHM — a `beginCollection` failure detaches, ends, and
+/// discards whatever session/builder the closures are given, in that order.
+/// It proves nothing about the one thing #480 was actually about: which
+/// real session/builder `WorkoutManager.start()`'s production call passes
+/// into it. A future edit that empties `detachDelegates:`, transposes
+/// `endSession:`/`discardBuilder:`, or wires either to the wrong handle
+/// would leave every test in both suites green while reintroducing #480
+/// verbatim — no compiler diagnostic and no spy-based unit test can see
+/// that, since the spy only ever sees what it's handed.
+///
+/// This reads `WorkoutManager.swift` as text and pins the ONE production
+/// call site's actual wiring — same idea as the repo's
+/// `nativeAuthInvariants.test.ts` (a structural guard over code neither the
+/// compiler nor a mock can check), scaled down to this file's much smaller
+/// stakes: a handful of literal-text assertions against known-clean source
+/// (no comments or string literals live inside these closures today), not
+/// that file's full tokenizer. Lives here (not in `SendLogWatchCore`,
+/// alongside the algorithm test) because `WorkoutManager.swift` sits outside
+/// the Core package's own directory tree and this file already establishes
+/// the pattern of reading a live production file's structure directly
+/// (`WorkoutOwnershipTests` above, via `Mirror`).
+final class WorkoutSessionActivationWiringTests: XCTestCase {
+    /// `#filePath` is this test file's own on-disk location, stable within
+    /// one checkout (including CI): `SendLogWatchTests/` and
+    /// `SendLogWatch Watch App/` are fixed siblings under `ios/App/`.
+    private func workoutManagerSource() throws -> String {
+        let sourcePath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // SendLogWatchTests/
+            .deletingLastPathComponent() // App/
+            .appendingPathComponent("SendLogWatch Watch App/Services/WorkoutManager.swift")
+        return try String(contentsOf: sourcePath, encoding: .utf8)
+    }
+
+    /// Isolates the single production call's argument list (from the `(`
+    /// right after `WorkoutSessionActivation.run` to its matching `)`,
+    /// tracking paren depth so the nested calls inside each closure body —
+    /// `startActivity(with:)`, `session.end()`, etc. — don't end the scan
+    /// early) so every assertion below reads against what THIS call
+    /// actually passes, not some other occurrence of the same argument
+    /// labels elsewhere in the file.
+    private func balancedSpan(in text: String, from start: String.Index, open: Character, close: Character) -> String? {
+        var depth = 1
+        var index = start
+        while depth > 0, index < text.endIndex {
+            if text[index] == open { depth += 1 }
+            else if text[index] == close { depth -= 1 }
+            if depth > 0 { index = text.index(after: index) }
+        }
+        guard depth == 0 else { return nil }
+        return String(text[start..<index])
+    }
+
+    private func closureBody(labeled label: String, in callBody: String) -> String? {
+        guard let labelRange = callBody.range(of: "\(label):") else { return nil }
+        guard let braceOpen = callBody.range(of: "{", range: labelRange.upperBound..<callBody.endIndex) else { return nil }
+        return balancedSpan(in: callBody, from: braceOpen.upperBound, open: "{", close: "}")
+    }
+
+    func testTheProductionCallSiteWiresDetachEndAndDiscardToTheRealSessionAndBuilder() throws {
+        let source = try workoutManagerSource()
+
+        let callMarker = "WorkoutSessionActivation.run("
+        let occurrences = source.components(separatedBy: callMarker).count - 1
+        XCTAssertEqual(occurrences, 1, "expected exactly one production call site to WorkoutSessionActivation.run(...) — this pin only reads the first")
+
+        guard let callStart = source.range(of: callMarker) else {
+            return XCTFail("WorkoutManager.swift no longer calls WorkoutSessionActivation.run(...) — the #480 fix's wiring is untested")
+        }
+        guard let callBody = balancedSpan(in: source, from: callStart.upperBound, open: "(", close: ")") else {
+            return XCTFail("could not isolate the WorkoutSessionActivation.run(...) argument list")
+        }
+
+        let startActivity = try XCTUnwrap(closureBody(labeled: "startActivity", in: callBody), "missing startActivity: argument")
+        XCTAssertTrue(startActivity.contains("session.startActivity(with: start)"), "startActivity: must call startActivity on the real session")
+
+        let beginCollection = try XCTUnwrap(closureBody(labeled: "beginCollection", in: callBody), "missing beginCollection: argument")
+        XCTAssertTrue(beginCollection.contains("builder.beginCollection(at: start)"), "beginCollection: must call beginCollection on the real builder")
+
+        let detach = try XCTUnwrap(closureBody(labeled: "detachDelegates", in: callBody), "missing detachDelegates: argument")
+        XCTAssertTrue(detach.contains("session.delegate = nil"), "detachDelegates: must nil the session's delegate")
+        XCTAssertTrue(detach.contains("builder.delegate = nil"), "detachDelegates: must nil the builder's delegate")
+
+        let end = try XCTUnwrap(closureBody(labeled: "endSession", in: callBody), "missing endSession: argument")
+        XCTAssertTrue(end.contains("session.end()"), "endSession: must end the SAME session this call started")
+        XCTAssertFalse(end.contains("discardWorkout"), "endSession: and discardBuilder: must not be transposed")
+
+        let discard = try XCTUnwrap(closureBody(labeled: "discardBuilder", in: callBody), "missing discardBuilder: argument")
+        XCTAssertTrue(discard.contains("builder.discardWorkout()"), "discardBuilder: must discard the SAME builder this call started")
+        XCTAssertFalse(discard.contains(".end()"), "endSession: and discardBuilder: must not be transposed")
+    }
+}
