@@ -143,6 +143,22 @@ final class TindeqManager: NSObject {
     /// #521: one run identity per Progressor transport connection. Sequence
     /// allocation is synchronous on this manager before the WC send queue.
     private var forceMirrorSequence = LiveMirrorSequence(runId: UUID())
+    /// #530: the live-mirror run's immutable account owner, captured once in
+    /// `connect()` (the same place `forceMirrorSequence` itself resets) and
+    /// held fixed for every beat of this BLE connect — never re-read from
+    /// `userIdProvider()` at heartbeat time. Deliberately a SEPARATE concept
+    /// from `persistenceOwnerUserId`/`manualSessionOwnerUserId`: those govern
+    /// where a SAVED recording is attributed and are captured lazily (only
+    /// once the first rep begins), while the mirror beat starts firing as
+    /// soon as the Progressor connects — before any tag/rep is chosen, and
+    /// while both of those may still be nil. Reading either of them live at
+    /// every beat (~2 Hz while measuring) would be exactly the "read the
+    /// current account at heartbeat time" mistake #529/#530 exist to close.
+    /// `private(set)`, mirroring `WorkoutManager.ownerUserId` — this run's
+    /// only observable effect (the stamped WatchConnectivity beat) is
+    /// unreachable from the unsigned test host, so SendLogWatchTests asserts
+    /// on the captured value directly instead.
+    private(set) var forceMirrorOwnerUserId: UUID?
     private var forceMirrorStatus: String?
     private var forceMirrorCount = 0
     private var forceMirrorTag = ""
@@ -326,6 +342,11 @@ final class TindeqManager: NSObject {
         errorMsg = nil
         resetForceMirrorPipeline()
         forceMirrorSequence = LiveMirrorSequence(runId: UUID())
+        // #530: captured once, synchronously, for THIS connect's mirror run
+        // — never re-read after this point. See `forceMirrorOwnerUserId`'s
+        // doc comment for why this is distinct from the persistence-owner
+        // fields.
+        forceMirrorOwnerUserId = userIdProvider()
         forceMirrorStatus = nil
         forceMirrorCount = sessionCount
         forceMirrorTag = liveTag
@@ -902,6 +923,9 @@ final class TindeqManager: NSObject {
             "spark": spark,
         ]
         payload.merge(beat.wireFields) { _, new in new }
+        // #530: this connect's immutable mirror owner, never re-read from
+        // `userIdProvider()` here — see `forceMirrorOwnerUserId`'s doc comment.
+        payload = LiveMirrorOwnership.stamped(payload, ownerUserId: forceMirrorOwnerUserId)
         let stamped = WatchBuild.stamp(payload)
         let immediate = event.isDiscrete
         let runId = beat.runId

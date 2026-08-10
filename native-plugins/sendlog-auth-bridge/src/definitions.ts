@@ -18,6 +18,21 @@ export interface LiveMirrorMetadata {
   /// Explicit terminal marker. Receivers also infer it from ended/idle status
   /// for mixed-version payloads.
   terminal?: boolean;
+  /// The immutable account that owns this run (#529's captured run owner),
+  /// stamped once at watch run start and never re-derived from the watch's
+  /// current relayed identity at heartbeat time (#530). Receivers must reject
+  /// a packet whose owner does not match the phone's currently authenticated
+  /// account BEFORE it reaches reducer state — the watch may still be
+  /// relaying a run that started under a previous account for a while after
+  /// the phone itself has switched, and run id/sequence ordering alone cannot
+  /// tell that apart from a legitimate late beat. A Swift `UUID.uuidString`
+  /// (UPPERCASE) — normalize before comparing, same as `run_id` (see
+  /// `normalizeRunId`/`acceptsPacketOwner` in `liveWorkoutMirror.ts` /
+  /// `liveForceMirror.ts`, and `normalizeUserId` in `healthSync.ts`, #535).
+  /// Absent on a pre-#530 watch build; see `acceptsPacketOwner`'s doc comment
+  /// for the conservative mixed-version rule that governs an unstamped
+  /// packet.
+  account_user_id?: string;
 }
 
 /// Watch→phone live-workout beat, relayed over WatchConnectivity (Bluetooth)

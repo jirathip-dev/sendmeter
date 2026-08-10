@@ -6,6 +6,7 @@ import { fetchLiveWorkout } from "../lib/repo";
 import type { LiveWorkout } from "../types";
 import { subscribePluginListener } from "./pluginListener";
 import {
+  acceptsPacketOwner,
   messageToLive,
   emptyLiveWorkoutMirrorState,
   reduceLiveWorkout,
@@ -50,6 +51,10 @@ export function useLiveWorkout(
   // account immediately, then reset the ref/state in a layout effect before
   // the browser can paint or a new listener can publish data.
   const accountTransition = renderedUserId !== userId;
+  // #530: once this becomes true it never resets — an unstamped (pre-#530
+  // watch) packet is only trusted BEFORE this hook has ever lived through an
+  // account transition. See `acceptsPacketOwner`'s doc comment.
+  const hasHadAccountTransitionRef = useRef(false);
 
   if (accountTransition) {
     setRenderedUserId(userId);
@@ -59,6 +64,12 @@ export function useLiveWorkout(
   }
 
   useLayoutEffect(() => {
+    // #530: compare BEFORE activeUserIdRef is reassigned below — a mismatch
+    // here means this run is a genuine account change, not the initial
+    // mount (whose ref/prop start out equal).
+    if (activeUserIdRef.current !== userId) {
+      hasHadAccountTransitionRef.current = true;
+    }
     activeUserIdRef.current = userId;
     mirrorRef.current = emptyLiveWorkoutMirrorState();
   }, [userId]);
@@ -111,6 +122,12 @@ export function useLiveWorkout(
     const unsubscribeWc = Capacitor.isNativePlatform()
       ? subscribePluginListener(() =>
           SendLogAuthBridge.addListener("liveWorkout", (msg) => {
+            // #530: reject a packet stamped (or, per the conservative
+            // mixed-version rule, un-stamped after a transition) for a
+            // different account BEFORE it ever reaches messageToLive/ingest.
+            if (!acceptsPacketOwner(msg.account_user_id, effectUserId, hasHadAccountTransitionRef.current)) {
+              return;
+            }
             const previous = mirrorRef.current.row;
             ingest(messageToLive(msg, previous), "watch-direct");
           }),

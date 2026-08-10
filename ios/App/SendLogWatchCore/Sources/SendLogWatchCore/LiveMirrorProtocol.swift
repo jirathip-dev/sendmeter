@@ -195,6 +195,31 @@ public struct LiveMirrorCursor: Sendable, Equatable {
     }
 }
 
+/// Adds the immutable run-owner account id to an outgoing watch→phone mirror
+/// message (#530). The owner is #529's captured run owner — read once at run
+/// start and held fixed for the run's whole lifetime by the caller (see
+/// `WorkoutManager.ownerUserId` / `TindeqManager`'s `forceMirrorOwnerUserId`)
+/// — never the watch's current relayed identity re-read at heartbeat time.
+/// The phone rejects a stamped packet whose owner does not match its
+/// currently authenticated account before the packet reaches reducer state
+/// (`acceptsPacketOwner` in `liveWorkoutMirror.ts` / `liveForceMirror.ts`).
+public enum LiveMirrorOwnership {
+    public static let accountUserIdKey = "account_user_id"
+
+    /// A nil owner (only reachable via the UI today when a run began fully
+    /// signed out) leaves the field off entirely, matching how the rest of
+    /// this wire format omits an unknown value rather than sending an
+    /// explicit null. `ownerUserId.uuidString` rides the wire UPPERCASE, same
+    /// as `run_id` — the phone side normalizes casing before comparing
+    /// (#535's pattern).
+    public static func stamped(_ message: [String: Any], ownerUserId: UUID?) -> [String: Any] {
+        guard let ownerUserId else { return message }
+        var out = message
+        out[accountUserIdKey] = ownerUserId.uuidString
+        return out
+    }
+}
+
 /// Wall-clock fallback used while a mixed-version watch is still sending the
 /// pre-#521 shape. A real run/sequence pair always wins over this fallback;
 /// legacy packets remain readable during a staggered rollout.

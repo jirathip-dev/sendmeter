@@ -4,6 +4,7 @@ import type { LiveWorkout } from "../types";
 import {
   STALE_MS,
   WC_PLACEHOLDER_ID,
+  acceptsPacketOwner,
   appendHrPoint,
   messageToLive,
   preferFresher,
@@ -173,6 +174,46 @@ describe("preferFresher", () => {
     expect(accountB.accepted).toBe(true);
     expect(accountB.state.row?.runId).toBe("account-b-run");
   });
+});
+
+describe("acceptsPacketOwner", () => {
+  const accountA = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
+  const accountB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+  it("accepts a packet stamped for the current account, normalizing Swift UUID casing", () => {
+    expect(acceptsPacketOwner(accountA, accountA.toLowerCase(), false)).toBe(true);
+    expect(acceptsPacketOwner(accountA, accountA.toLowerCase(), true)).toBe(true);
+  });
+
+  it("rejects a packet stamped for a different account regardless of transition history", () => {
+    expect(acceptsPacketOwner(accountA, accountB, false)).toBe(false);
+    expect(acceptsPacketOwner(accountA, accountB, true)).toBe(false);
+  });
+
+  it("accepts an unstamped legacy packet before any account transition has occurred", () => {
+    expect(acceptsPacketOwner(undefined, accountB, false)).toBe(true);
+  });
+
+  it("rejects an unstamped legacy packet once an account transition has occurred in-process", () => {
+    expect(acceptsPacketOwner(undefined, accountB, true)).toBe(false);
+    expect(acceptsPacketOwner(null, accountB, true)).toBe(false);
+  });
+
+  it.each(["start", "telemetry", "phase", "count", "end"] as const)(
+    "rejects a late account-A %s packet once account B is active",
+    (event) => {
+      const msg: LiveWorkoutMessage = {
+        run_id: "account-a-run",
+        sequence: 5,
+        event,
+        terminal: event === "end",
+        account_user_id: accountA,
+        status: event === "end" ? "ended" : "live",
+        updated_at: Date.parse(T1) / 1000,
+      };
+      expect(acceptsPacketOwner(msg.account_user_id, accountB, true)).toBe(false);
+    },
+  );
 });
 
 describe("messageToLive", () => {

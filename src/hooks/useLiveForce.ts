@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
 import {
+  acceptsPacketOwner,
   isFresh,
   emptyLiveForceMirrorState,
   reduceForceBeat,
@@ -26,6 +27,10 @@ export function useLiveForce(userId: string): LiveForce | null {
   // effect then clears the cursor before paint and before the next listener
   // can publish a packet.
   const accountTransition = renderedUserId !== userId;
+  // #530: once this becomes true it never resets — an unstamped (pre-#530
+  // watch) packet is only trusted BEFORE this hook has ever lived through an
+  // account transition. See `acceptsPacketOwner`'s doc comment.
+  const hasHadAccountTransitionRef = useRef(false);
 
   if (accountTransition) {
     setRenderedUserId(userId);
@@ -33,6 +38,12 @@ export function useLiveForce(userId: string): LiveForce | null {
   }
 
   useLayoutEffect(() => {
+    // #530: compare BEFORE activeUserIdRef is reassigned below — a mismatch
+    // here means this run is a genuine account change, not the initial
+    // mount (whose ref/prop start out equal).
+    if (activeUserIdRef.current !== userId) {
+      hasHadAccountTransitionRef.current = true;
+    }
     activeUserIdRef.current = userId;
     mirrorRef.current = emptyLiveForceMirrorState();
   }, [userId]);
@@ -50,6 +61,12 @@ export function useLiveForce(userId: string): LiveForce | null {
     const unsubscribe = subscribePluginListener(() =>
       SendLogAuthBridge.addListener("liveForce", (msg) => {
         if (cancelled || activeUserIdRef.current !== effectUserId) return;
+        // #530: reject a packet stamped (or, per the conservative
+        // mixed-version rule, un-stamped after a transition) for a different
+        // account BEFORE it ever reaches reduceForceBeat.
+        if (!acceptsPacketOwner(msg.account_user_id, effectUserId, hasHadAccountTransitionRef.current)) {
+          return;
+        }
         // The ref is the authoritative cursor: event callbacks can arrive
         // faster than React renders, so a functional setState alone would
         // leave terminal/out-of-order decisions detached from the current

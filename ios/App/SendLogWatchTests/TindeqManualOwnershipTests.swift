@@ -534,6 +534,65 @@ final class TindeqManualOwnershipTests: XCTestCase {
         XCTAssertNil(manager.sessionId)
     }
 
+    // MARK: #530 — live-mirror beat ownership
+    //
+    // `forceMirrorOwnerUserId` is a NEW, separate concept from every owner
+    // field tested above: those govern where a SAVED recording is
+    // attributed and are captured lazily (only once a rep begins), while the
+    // live-mirror beat starts firing as soon as the Progressor connects —
+    // before any tag/rep is chosen. Its only observable effect (the stamped
+    // WatchConnectivity beat) is unreachable from this unsigned test host (no
+    // real WCSession activates), so these assert on the captured field
+    // directly, the same way `WorkoutSavePathResetTests` asserts on
+    // `WorkoutManager.ownerUserId`.
+
+    func testConnectCapturesTheForceMirrorOwnerAndNeverRereadsItAtBeatTime() {
+        let box = ManualOwnershipAccountBox()
+        let accountA = UUID()
+        box.current = accountA
+        let manager = TindeqManager(
+            recordingQueue: ManualOwnershipRecordingQueue(),
+            sessionQueue: ManualOwnershipSessionQueue(),
+            userIdProvider: { box.current }
+        )
+
+        manager.connect()
+        XCTAssertEqual(
+            manager.forceMirrorOwnerUserId, accountA,
+            "connect() must capture the currently signed-in account as this run's mirror owner"
+        )
+
+        // The relayed account changes well after the mirror run began — a
+        // later beat (triggered here via a picker didSet, same as production)
+        // must still stamp A, never silently pick up B.
+        box.current = UUID()
+        manager.liveTag = "Half crimp"
+        XCTAssertEqual(
+            manager.forceMirrorOwnerUserId, accountA,
+            "the mirror owner must stay pinned to the account that opened this connect, never re-read at beat time"
+        )
+    }
+
+    func testANewConnectCapturesWhoeverIsCurrentlySignedInNow() {
+        let box = ManualOwnershipAccountBox()
+        box.current = UUID()
+        let manager = TindeqManager(
+            recordingQueue: ManualOwnershipRecordingQueue(),
+            sessionQueue: ManualOwnershipSessionQueue(),
+            userIdProvider: { box.current }
+        )
+        manager.connect()
+
+        let accountB = UUID()
+        box.current = accountB
+        manager.connect() // a genuinely new connect
+
+        XCTAssertEqual(
+            manager.forceMirrorOwnerUserId, accountB,
+            "a fresh connect must capture whoever is signed in now, not stay stuck on the previous connect's owner"
+        )
+    }
+
     /// One set, one rep, short enough to complete synchronously via a single
     /// `advance(to:)` call — used by the F5 carry-over tests above, which
     /// only care about reaching `.completed`, not protocol shape.
