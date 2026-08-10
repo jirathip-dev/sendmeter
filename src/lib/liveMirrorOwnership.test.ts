@@ -3,14 +3,21 @@ import type { LiveWorkoutMessage, LiveForceMessage } from "sendlog-auth-bridge";
 import {
   acceptsPacketOwner,
   hasAccountChangedSincePersisted,
+  recordAuthenticatedAccountForLiveMirror,
+  recordStampedPacketAccepted,
   type LiveMirrorOwnershipStorage,
 } from "./liveMirrorOwnership";
 import {
-  messageToLive,
+  admitLiveWorkoutMessage,
   emptyLiveWorkoutMirrorState,
+  messageToLive,
   reduceLiveWorkout,
 } from "./liveWorkoutMirror";
-import { emptyLiveForceMirrorState, reduceForceBeat } from "./liveForceMirror";
+import {
+  admitLiveForceMessage,
+  emptyLiveForceMirrorState,
+  reduceForceBeat,
+} from "./liveForceMirror";
 
 const ACCOUNT_A = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
 const ACCOUNT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -61,94 +68,165 @@ describe("acceptsPacketOwner", () => {
   });
 });
 
-describe("hasAccountChangedSincePersisted (round-1 review F1)", () => {
-  it("a first-ever mount with nothing stored is not a transition", () => {
+// Round-2 review R2-F1: the writer (`recordAuthenticatedAccountForLiveMirror`,
+// called once by `useAuth.ts`'s `onSession`) and the reader
+// (`hasAccountChangedSincePersisted`, called by any number of mirror hooks)
+// are now separate functions on separate storage keys. Round-1's version
+// conflated them — `hasAccountChangedSincePersisted` itself compared AND
+// overwrote the stored value, so the FIRST mirror to read it consumed the
+// signal for every mirror after it. These tests pin the reader as genuinely
+// non-destructive.
+describe("recordAuthenticatedAccountForLiveMirror + hasAccountChangedSincePersisted (round-2 review R2-F1)", () => {
+  it("a first-ever recorded account is not a transition", () => {
     const storage = fakeStorage();
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, storage);
     expect(hasAccountChangedSincePersisted(ACCOUNT_A, storage)).toBe(false);
   });
 
-  it("a second mount for a DIFFERENT account is a transition — the exact signal a `useRef` alone cannot survive across an unmount/remount", () => {
+  it("recording a DIFFERENT account than the last one latches a transition", () => {
     const storage = fakeStorage();
-    hasAccountChangedSincePersisted(ACCOUNT_A, storage); // mount 1: signed in as A
-    // The whole authed tree unmounts (sign-out) and remounts fresh for B
-    // (sign-in) — a brand-new hook instance. A `useRef(false)` seeded on
-    // this fresh mount could never see that A existed; the durable check
-    // must supply `true` here instead.
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, storage); // signed in as A
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_B, storage); // sign-out/sign-in as B
     expect(hasAccountChangedSincePersisted(ACCOUNT_B, storage)).toBe(true);
   });
 
-  it("a second mount for the SAME account is not a transition", () => {
+  it("recording the SAME account again (a token refresh, not a switch) is not a transition", () => {
     const storage = fakeStorage();
-    hasAccountChangedSincePersisted(ACCOUNT_A, storage);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, storage);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, storage);
     expect(hasAccountChangedSincePersisted(ACCOUNT_A, storage)).toBe(false);
   });
 
-  it("normalizes Swift UUID casing when comparing against the stored value", () => {
+  it("normalizes Swift UUID casing on both the write and the read", () => {
     const storage = fakeStorage();
-    hasAccountChangedSincePersisted(ACCOUNT_A, storage);
-    expect(hasAccountChangedSincePersisted(ACCOUNT_A.toLowerCase(), storage)).toBe(false);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, storage);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_B.toUpperCase(), storage);
+    expect(hasAccountChangedSincePersisted(ACCOUNT_B, storage)).toBe(true);
   });
 
-  it("a LATER relaunch under the same account (no further switch) re-trusts legacy packets again — the flag is re-derived, not latched forever", () => {
+  // The round-1 regression, reproduced directly: reading must not consume
+  // the signal. This is exactly what round-1's version got wrong — it used
+  // ONE function for both, so the act of a mirror hook checking the flag
+  // was indistinguishable from the flag having been "handled".
+  it("READING the transition flag never mutates it — repeated reads all see the same answer", () => {
     const storage = fakeStorage();
-    hasAccountChangedSincePersisted(ACCOUNT_A, storage); // mount 1
-    hasAccountChangedSincePersisted(ACCOUNT_B, storage); // mount 2: the switch
-    // mount 3: B relaunches again with no further switch.
-    expect(hasAccountChangedSincePersisted(ACCOUNT_B, storage)).toBe(false);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, storage);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_B, storage);
+
+    expect(hasAccountChangedSincePersisted(ACCOUNT_B, storage)).toBe(true);
+    expect(hasAccountChangedSincePersisted(ACCOUNT_B, storage)).toBe(true);
+    expect(hasAccountChangedSincePersisted(ACCOUNT_B, storage)).toBe(true);
   });
 
-  it("returns false and does not throw when storage is unavailable", () => {
-    expect(hasAccountChangedSincePersisted(ACCOUNT_A, null)).toBe(false);
+  // Fails CLOSED (round-2 review R2-F5): unreadable/unavailable storage must
+  // not silently disable the privacy boundary.
+  it("hasAccountChangedSincePersisted fails closed (true) when storage is unavailable", () => {
+    expect(hasAccountChangedSincePersisted(ACCOUNT_A, null)).toBe(true);
   });
 
-  it("returns false when storage throws on read", () => {
+  it("hasAccountChangedSincePersisted fails closed (true) when storage throws on read", () => {
     const throwing: LiveMirrorOwnershipStorage = {
       getItem: () => {
         throw new Error("quota");
       },
       setItem: () => {},
     };
-    expect(hasAccountChangedSincePersisted(ACCOUNT_A, throwing)).toBe(false);
+    expect(hasAccountChangedSincePersisted(ACCOUNT_A, throwing)).toBe(true);
+  });
+
+  it("recordAuthenticatedAccountForLiveMirror does not throw when storage is unavailable or throws", () => {
+    expect(() => recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, null)).not.toThrow();
+    const throwing: LiveMirrorOwnershipStorage = {
+      getItem: () => {
+        throw new Error("quota");
+      },
+      setItem: () => {
+        throw new Error("quota");
+      },
+    };
+    expect(() => recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, throwing)).not.toThrow();
   });
 });
 
-// Round-1 review F1 fix, wired end-to-end: this simulates exactly what
-// `useLiveWorkout`/`useLiveForce` do — an initial value from durable
-// storage, seeding the transition flag BEFORE any packet is admitted —
-// across the sign-out/sign-in remount the issue's own repro describes.
-describe("account transition tracking across a simulated hook remount (round-1 review F1)", () => {
-  it("a legacy A packet is rejected for B after a REMOUNT, not only after an in-place prop change", () => {
+// The exact empirical repro from the round-2 review: three mirror hooks
+// (Workout, Force, History all use `useLiveWorkout`/`useLiveForce`, and tabs
+// mount conditionally) each consulting the durable signal after ONE
+// account-boundary write. Round-1's conflated read/write made only the
+// FIRST of these `true`; every later one read `false` because reading it
+// once already overwrote the stored value with the current account.
+describe("R2-F1 repro: multiple mirror mounts under the same post-switch account", () => {
+  it("every mirror that mounts after the switch sees the transition, not just the first", () => {
     const storage = fakeStorage();
-    // Mount 1: signed in as A.
-    hasAccountChangedSincePersisted(ACCOUNT_A, storage);
-    // Sign-out unmounts the whole authed tree; sign-in remounts it fresh for
-    // B. This IS the hook's initial-value computation on that fresh mount.
-    const hasHadAccountTransition = hasAccountChangedSincePersisted(ACCOUNT_B, storage);
-    expect(hasHadAccountTransition).toBe(true);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, storage); // signed in as A
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_B, storage); // the switch, recorded ONCE
 
-    // The watch is still on a pre-#530 build and keeps beating unstamped
-    // packets for A's still-running workout — the exact scenario from the
-    // issue body.
-    expect(acceptsPacketOwner(undefined, ACCOUNT_B, hasHadAccountTransition)).toBe(false);
+    // Three separate mirror mounts under B — e.g. Force tab opened first,
+    // then Workout, then History — each an independent `hasAccountChangedSincePersisted`
+    // call, none of which is also a write.
+    const mountResults = [
+      hasAccountChangedSincePersisted(ACCOUNT_B, storage),
+      hasAccountChangedSincePersisted(ACCOUNT_B, storage),
+      hasAccountChangedSincePersisted(ACCOUNT_B, storage),
+    ];
+
+    expect(mountResults).toEqual([true, true, true]);
   });
 
-  it("a genuinely first-ever sign-in still trusts a legacy packet", () => {
+  it("a legacy A packet is rejected on EVERY one of those mounts, not just the first", () => {
     const storage = fakeStorage();
-    const hasHadAccountTransition = hasAccountChangedSincePersisted(ACCOUNT_A, storage);
-    expect(acceptsPacketOwner(undefined, ACCOUNT_A, hasHadAccountTransition)).toBe(true);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, storage);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_B, storage);
+
+    for (let mount = 0; mount < 3; mount++) {
+      const hasHadAccountTransition = hasAccountChangedSincePersisted(ACCOUNT_B, storage);
+      expect(acceptsPacketOwner(undefined, ACCOUNT_B, hasHadAccountTransition)).toBe(false);
+    }
   });
 });
 
-// Round-1 review F3: each case proves the guard is load-bearing by pairing
-// it with a NEGATIVE CONTROL — the reducer alone (no ownership guard) DOES
-// accept the same packet, so what actually keeps it out of B's mirror is
-// `acceptsPacketOwner`, not the pre-existing run/sequence cursor logic. A
-// test that only asserted `acceptsPacketOwner(...) === false` in isolation
-// (the round-1 shape) would still pass with the hook's guard call deleted
-// entirely — these instead assert against the mirror reducers themselves.
-describe("full admission pipeline: late account-A packets after B is active (round-1 review F3)", () => {
+// The clearing half of the design (round-2 review R2-F1's "stronger still"
+// suggestion): once the watch has PROVEN it caught up — a genuinely stamped
+// packet accepted for the current account — the risk window closes and a
+// later mount trusts legacy packets again.
+describe("recordStampedPacketAccepted", () => {
+  it("clears the transition marker for the account that was just proven", () => {
+    const storage = fakeStorage();
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_A, storage);
+    recordAuthenticatedAccountForLiveMirror(ACCOUNT_B, storage);
+    expect(hasAccountChangedSincePersisted(ACCOUNT_B, storage)).toBe(true);
+
+    recordStampedPacketAccepted(ACCOUNT_B, storage);
+
+    expect(hasAccountChangedSincePersisted(ACCOUNT_B, storage)).toBe(false);
+  });
+
+  it("does not throw when storage is unavailable or throws", () => {
+    expect(() => recordStampedPacketAccepted(ACCOUNT_A, null)).not.toThrow();
+    const throwing: LiveMirrorOwnershipStorage = {
+      getItem: () => {
+        throw new Error("quota");
+      },
+      setItem: () => {
+        throw new Error("quota");
+      },
+    };
+    expect(() => recordStampedPacketAccepted(ACCOUNT_A, throwing)).not.toThrow();
+  });
+});
+
+// Round-1 review F3, closed further by round-2 review R2-F6: these no
+// longer hand-compose `acceptsPacketOwner` + the reducer inline — they call
+// `admitLiveWorkoutMessage`/`admitLiveForceMessage`, the EXACT same
+// functions `useLiveWorkout`/`useLiveForce` call as their entire packet
+// handler. Deleting the ownership guard from inside either admit function
+// (the only way a hook could lose the guard, since neither hook composes it
+// separately any more) fails these tests directly. Each case still pairs
+// with a NEGATIVE CONTROL — the reducer alone accepts the same packet — so
+// the guard is proven load-bearing, not redundant with the run/sequence
+// cursor.
+describe("full admission pipeline: late account-A packets after B is active", () => {
   it.each(["start", "telemetry", "phase", "count", "end"] as const)(
-    "keeps a late account-A workout %s packet out of B's mirror, though the reducer alone would accept it",
+    "keeps a late account-A workout %s packet out of B's mirror via admitLiveWorkoutMessage, though the reducer alone would accept it",
     (event) => {
       const msg: LiveWorkoutMessage = {
         run_id: "account-a-run",
@@ -160,22 +238,30 @@ describe("full admission pipeline: late account-A packets after B is active (rou
         started_at: Date.parse(T0) / 1000,
         updated_at: Date.parse(T1) / 1000,
       };
-      const live = messageToLive(msg, null);
 
       // Negative control: a fresh reducer, with no ownership guard in front
       // of it, accepts this packet outright.
+      const live = messageToLive(msg, null);
       const withoutGuard = reduceLiveWorkout(emptyLiveWorkoutMirrorState(), live, "watch-direct");
       expect(withoutGuard.accepted).toBe(true);
 
-      // With the guard in front (as the hook wires it, before `ingest` is
-      // ever called): B has already lived through an account transition, so
-      // this A-stamped packet must never reach the reducer at all.
-      expect(acceptsPacketOwner(msg.account_user_id, ACCOUNT_B, true)).toBe(false);
+      // With the guard: this is the ACTUAL function `useLiveWorkout` calls.
+      // B has already lived through an account transition, so this
+      // A-stamped packet must never reach the reducer at all.
+      const admission = admitLiveWorkoutMessage(
+        emptyLiveWorkoutMirrorState(),
+        msg,
+        ACCOUNT_B,
+        true,
+      );
+      expect(admission.accepted).toBe(false);
+      expect(admission.stampedAcceptance).toBe(false);
+      expect(admission.state).toEqual(emptyLiveWorkoutMirrorState());
     },
   );
 
   it.each(["start", "telemetry", "phase", "count", "end"] as const)(
-    "keeps a late account-A force %s packet out of B's mirror, though the reducer alone would accept it",
+    "keeps a late account-A force %s packet out of B's mirror via admitLiveForceMessage, though the reducer alone would accept it",
     (event) => {
       const msg: LiveForceMessage = {
         run_id: "account-a-run",
@@ -199,9 +285,76 @@ describe("full admission pipeline: late account-A packets after B is active (rou
       const withoutGuard = reduceForceBeat(emptyLiveForceMirrorState(), msg);
       expect(withoutGuard.accepted).toBe(true);
 
-      // With the guard in front: B has already lived through an account
-      // transition, so this A-stamped packet must never reach the reducer.
-      expect(acceptsPacketOwner(msg.account_user_id, ACCOUNT_B, true)).toBe(false);
+      // With the guard: the ACTUAL function `useLiveForce` calls.
+      const admission = admitLiveForceMessage(
+        emptyLiveForceMirrorState(),
+        msg,
+        ACCOUNT_B,
+        true,
+      );
+      expect(admission.accepted).toBe(false);
+      expect(admission.stampedAcceptance).toBe(false);
+      expect(admission.state).toEqual(emptyLiveForceMirrorState());
     },
   );
+
+  it("admits a genuinely current-account workout packet and reports stampedAcceptance", () => {
+    const msg: LiveWorkoutMessage = {
+      run_id: "account-b-run",
+      sequence: 1,
+      event: "start",
+      terminal: false,
+      account_user_id: ACCOUNT_B,
+      status: "live",
+      started_at: Date.parse(T0) / 1000,
+      updated_at: Date.parse(T1) / 1000,
+    };
+    const admission = admitLiveWorkoutMessage(emptyLiveWorkoutMirrorState(), msg, ACCOUNT_B, true);
+    expect(admission.accepted).toBe(true);
+    expect(admission.stampedAcceptance).toBe(true);
+    expect(admission.state.row?.runId).toBe("account-b-run");
+  });
+
+  it("admits a genuinely current-account force packet and reports stampedAcceptance", () => {
+    const msg: LiveForceMessage = {
+      run_id: "account-b-run",
+      sequence: 1,
+      event: "start",
+      terminal: false,
+      account_user_id: ACCOUNT_B,
+      status: "measuring",
+      kg: 5,
+      peak_kg: 5,
+      elapsed_ms: 100,
+      session_count: 0,
+      tag: "MVC",
+      side: "left",
+      updated_at: Date.parse(T1) / 1000,
+      spark: [],
+    };
+    const admission = admitLiveForceMessage(emptyLiveForceMirrorState(), msg, ACCOUNT_B, true);
+    expect(admission.accepted).toBe(true);
+    expect(admission.stampedAcceptance).toBe(true);
+    expect(admission.state.beat?.runId).toBe("account-b-run");
+  });
+
+  it("admits an unstamped legacy packet with stampedAcceptance=false when no transition has occurred", () => {
+    const msg: LiveForceMessage = {
+      sequence: 1,
+      event: "start",
+      terminal: false,
+      status: "measuring",
+      kg: 5,
+      peak_kg: 5,
+      elapsed_ms: 100,
+      session_count: 0,
+      tag: "MVC",
+      side: "left",
+      updated_at: Date.parse(T1) / 1000,
+      spark: [],
+    };
+    const admission = admitLiveForceMessage(emptyLiveForceMirrorState(), msg, ACCOUNT_B, false);
+    expect(admission.accepted).toBe(true);
+    expect(admission.stampedAcceptance).toBe(false);
+  });
 });

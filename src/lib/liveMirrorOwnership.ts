@@ -5,6 +5,15 @@
 /// the other) and for both `useLiveWorkout` / `useLiveForce`.
 
 const LAST_ACCOUNT_KEY = "sendmeter:live-mirror-last-account";
+/// Separate from `LAST_ACCOUNT_KEY` on purpose (round-2 review R2-F1): this
+/// key names the account a switch was observed INTO, and is written by
+/// exactly one caller (`recordAuthenticatedAccountForLiveMirror`, the single
+/// auth-boundary owner) and cleared by exactly one other
+/// (`recordStampedPacketAccepted`, once the watch proves it has caught up).
+/// Any number of mirror hooks may READ it (`hasAccountChangedSincePersisted`)
+/// without disarming it for one another — reading must never double as
+/// writing, which was round-1's bug.
+const TRANSITIONED_INTO_KEY = "sendmeter:live-mirror-transitioned-into";
 
 export interface LiveMirrorOwnershipStorage {
   getItem(key: string): string | null;
@@ -59,51 +68,100 @@ function browserLocalStorage(): LiveMirrorOwnershipStorage | null {
   }
 }
 
-/// Durable (survives an unmount/remount) record of whether THIS device has
-/// ever authenticated a DIFFERENT account than the one it's authenticated as
-/// now — round-1 review F1's fix.
+/// Records the account this device has just authenticated — called exactly
+/// ONCE per session the app observes with a real user id, by the single
+/// owner at the auth boundary (`useAuth.ts`'s `onSession`, which is the one
+/// funnel for both the ordinary sign-in/sign-out path and the narrower
+/// in-place A→B swap on a `visibilitychange` re-check). This is the ONLY
+/// function that writes `TRANSITIONED_INTO_KEY` on a genuine switch
+/// (round-2 review R2-F1).
 ///
-/// A `useRef`-only transition flag is inert on the only account-switch path
-/// the UI actually has: this app has no in-place account swap (`App.tsx`
-/// renders `<LoginScreen />` whenever there is no session), so a user-driven
-/// A→B switch is sign-out → UNMOUNT of the whole authed tree → sign-in →
-/// fresh mount, and a `useRef` initialized fresh on that new mount can never
-/// see A ever existed. `localStorage` survives that remount (it's the same
-/// WebView, not a reload), so persisting the last-seen account here — and
-/// comparing against it once at the NEXT mount — is what actually closes the
-/// window described in the issue: a still-unstamped legacy watch beat for A
-/// must not render as B's the moment B's tab (re)mounts.
+/// Round-1's version conflated this write with the per-mirror-hook READ
+/// (`hasAccountChangedSincePersisted`'s old read-modify-write shape): the
+/// FIRST mirror hook to mount after a switch consumed the signal and
+/// overwrote it, so a SECOND mirror mounting moments later (a different tab
+/// — `useLiveWorkout` lives in both `WorkoutView` and `HistoryView`,
+/// `useLiveForce` in `ForceView`, and tabs mount conditionally) saw no
+/// transition at all. Separating the writer from the readers means any
+/// number of mirrors can consult the same durable signal without disarming
+/// it for one another.
 ///
-/// This is a defensive signal, not forensic evidence, so it deliberately
-/// does NOT need `authEventStore.ts`'s Preferences-on-native dual store —
-/// that module exists to survive the WebView's OWN storage being wiped,
-/// which an ordinary sign-out/sign-in never triggers.
-///
-/// Re-derives from "stored last-seen account differs from current" on every
-/// call rather than latching one permanent flag for the life of the install:
-/// once the transition risk window has passed (this same account relaunches
-/// later with no further switch), a still-unstamped legacy watch is trusted
-/// again — exactly as it would be for a device that has never switched at
-/// all. Every call also records `currentUserId` as the new "last seen"
-/// value, so the NEXT mount (a real switch, or just a relaunch) can compare
-/// against it.
-export function hasAccountChangedSincePersisted(
-  currentUserId: string,
+/// `localStorage`-backed, not `authEventStore.ts`'s Preferences-on-native
+/// dual store: this is a defensive signal, not forensic evidence, and an
+/// ordinary sign-out/sign-in never wipes the WebView's own storage — that's
+/// the narrower case that module exists for.
+export function recordAuthenticatedAccountForLiveMirror(
+  userId: string,
   storage: LiveMirrorOwnershipStorage | null = browserLocalStorage(),
-): boolean {
-  const normalizedCurrent = normalizeUserId(currentUserId);
-  if (!storage || normalizedCurrent === null) return false;
+): void {
+  const normalized = normalizeUserId(userId);
+  if (!storage || normalized === null) return;
   let stored: string | null;
   try {
     stored = storage.getItem(LAST_ACCOUNT_KEY);
   } catch {
-    return false; // storage unreadable — nothing durable to compare against
+    return; // storage unreadable — nothing durable to compare against
   }
-  const changed = stored !== null && stored !== normalizedCurrent;
   try {
-    storage.setItem(LAST_ACCOUNT_KEY, normalizedCurrent);
+    if (stored !== null && stored !== normalized) {
+      // Latches "a switch was observed INTO this account" — see
+      // `recordStampedPacketAccepted` for how this later clears.
+      storage.setItem(TRANSITIONED_INTO_KEY, normalized);
+    }
+    storage.setItem(LAST_ACCOUNT_KEY, normalized);
   } catch {
-    /* best-effort — a failed write just means the NEXT mount can't compare */
+    /* best-effort — a failed write just means the signal can't be recorded */
   }
-  return changed;
+}
+
+/// Pure READ of the durable transition marker `recordAuthenticatedAccountForLiveMirror`
+/// writes — never mutates storage (round-2 review R2-F1/R2-F4), so any
+/// number of mirror hooks can call this at mount without disarming it for
+/// one another.
+///
+/// Fails CLOSED (round-2 review R2-F5): unavailable or unreadable storage
+/// returns `true` — "treat as if a transition may have happened, don't
+/// trust an unstamped packet" — rather than `false`. A privacy boundary
+/// should not silently disable itself just because its own signal can't be
+/// read; the AC's conservative-mixed-version requirement applies exactly as
+/// hard here as when the signal reads normally.
+export function hasAccountChangedSincePersisted(
+  currentUserId: string,
+  storage: LiveMirrorOwnershipStorage | null = browserLocalStorage(),
+): boolean {
+  const normalized = normalizeUserId(currentUserId);
+  if (!storage || normalized === null) return true;
+  try {
+    return storage.getItem(TRANSITIONED_INTO_KEY) === normalized;
+  } catch {
+    return true;
+  }
+}
+
+/// Clears the durable transition marker for `userId` once the watch has
+/// PROVEN it has caught up — a genuinely STAMPED packet (not the
+/// legacy-absent branch) correctly attributed to this account is positive
+/// evidence the watch is on a #530-aware build and has relayed the current
+/// account, closing the risk window `recordAuthenticatedAccountForLiveMirror`
+/// opened. Called by both mirror hooks whenever `acceptsPacketOwner` accepts
+/// a packet whose `account_user_id` was actually present (round-2 review
+/// R2-F1's "stronger still" suggestion — clear on watch evidence, not on a
+/// phone-side mount).
+///
+/// Not `removeItem`: keeps the storage interface narrow, matching
+/// `authEventStore.ts`'s `getItem`/`setItem`-only shape. Any stored value
+/// other than the normalized `userId` itself reads as "not transitioned" in
+/// `hasAccountChangedSincePersisted`'s equality check, so an empty string
+/// works as well as deleting the key.
+export function recordStampedPacketAccepted(
+  userId: string,
+  storage: LiveMirrorOwnershipStorage | null = browserLocalStorage(),
+): void {
+  const normalized = normalizeUserId(userId);
+  if (!storage || normalized === null) return;
+  try {
+    storage.setItem(TRANSITIONED_INTO_KEY, "");
+  } catch {
+    /* best-effort */
+  }
 }

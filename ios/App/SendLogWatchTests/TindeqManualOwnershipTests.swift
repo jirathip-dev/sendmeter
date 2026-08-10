@@ -534,20 +534,30 @@ final class TindeqManualOwnershipTests: XCTestCase {
         XCTAssertNil(manager.sessionId)
     }
 
-    // MARK: #530 — live-mirror beat ownership (round-1 review F2)
+    // MARK: #530 — live-mirror beat ownership (round-1 review F2, round-2
+    // review R2-F2)
     //
     // `currentForceMirrorOwnerUserId` is a COMPUTED property, deliberately
     // NOT a field pinned once at `connect()` — a BLE connect outlives
     // multiple, differently-owned gauge sessions (Progressor stays connected
     // across Finish/`clearSession()`), so a stamp fixed at connect time could
-    // assert an owner a later session doesn't have. It re-derives from
+    // assert an owner a later session doesn't have. It PREFERS
     // `persistenceOwnerUserId`/`manualSessionOwnerUserId`, the SAME two
-    // fields `enqueuedUserId` is computed from elsewhere in this file — these
-    // tests exercise the computed property directly, since its only other
-    // observable effect (the stamped WatchConnectivity beat) is unreachable
-    // from this unsigned test host (no real WCSession activates).
+    // fields `enqueuedUserId` is computed from elsewhere in this file, and
+    // FALLS BACK to `forceMirrorConnectOwnerUserId` (round-2 review R2-F2)
+    // for a beat that has no session/guided run yet — a nil stamp there was
+    // indistinguishable on the wire from a pre-#530 watch, which the phone's
+    // legacy branch trusted even for a CURRENT watch. These tests exercise
+    // the computed property directly, since its only other observable
+    // effect (the stamped WatchConnectivity beat) is unreachable from this
+    // unsigned test host (no real WCSession activates). `manager.status =
+    // .connected` after `connect()` fakes past the real BLE handshake this
+    // host cannot perform — `connect()` itself is safe to call here since
+    // its only synchronous side effects are field resets and constructing a
+    // `CBCentralManager`, whose async delegate callbacks this test never
+    // waits on.
 
-    func testCurrentForceMirrorOwnerIsNilBeforeAnySessionOrGuidedRunHasClaimedTheConnect() {
+    func testCurrentForceMirrorOwnerIsNilWhenNoConnectHasEverHappened() {
         let manager = TindeqManager(
             recordingQueue: ManualOwnershipRecordingQueue(),
             sessionQueue: ManualOwnershipSessionQueue(),
@@ -556,11 +566,62 @@ final class TindeqManualOwnershipTests: XCTestCase {
         )
         XCTAssertNil(
             manager.currentForceMirrorOwnerUserId,
-            "a bare connected transport with no tag/rep chosen yet has no session to attribute a mirror beat to"
+            "a manager that has never connected has no relayed identity to fall back to either"
         )
     }
 
-    func testCurrentForceMirrorOwnerFollowsTheManualSessionOwnerAndClearsWithTheSession() async throws {
+    /// The round-2 review R2-F2 fix: before any session/guided run claims
+    /// the connect, the mirror must still stamp SOMETHING for a signed-in,
+    /// current watch — never silently go unstamped, which the phone cannot
+    /// tell apart from a pre-#530 build.
+    func testCurrentForceMirrorOwnerFallsBackToTheConnectCapturedIdentityBeforeAnySessionClaimsIt() {
+        let box = ManualOwnershipAccountBox()
+        let accountA = UUID()
+        box.current = accountA
+        let manager = TindeqManager(
+            recordingQueue: ManualOwnershipRecordingQueue(),
+            sessionQueue: ManualOwnershipSessionQueue(),
+            commandWriter: { _ in },
+            userIdProvider: { box.current }
+        )
+        manager.connect()
+        manager.status = .connected
+
+        XCTAssertEqual(
+            manager.currentForceMirrorOwnerUserId, accountA,
+            "a connected transport with no session yet must fall back to the watch's relayed identity, not go unstamped"
+        )
+    }
+
+    /// The exact R2-F2 concrete failure: an account switch that lands with
+    /// NO session open must update the fallback immediately, so every beat
+    /// from that instant forward — not just once a new session's first rep
+    /// begins — stamps the NEW account, never the old one and never nothing.
+    func testCurrentForceMirrorOwnerFallsBackToTheNewlyRelayedAccountImmediatelyOnATransitionWithNoOpenSession() {
+        let box = ManualOwnershipAccountBox()
+        let accountA = UUID()
+        box.current = accountA
+        let manager = TindeqManager(
+            recordingQueue: ManualOwnershipRecordingQueue(),
+            sessionQueue: ManualOwnershipSessionQueue(),
+            commandWriter: { _ in },
+            userIdProvider: { box.current }
+        )
+        manager.connect()
+        manager.status = .connected
+        XCTAssertEqual(manager.currentForceMirrorOwnerUserId, accountA)
+
+        let accountB = UUID()
+        box.current = accountB
+        manager.handleAccountTransition(to: accountB)
+
+        XCTAssertEqual(
+            manager.currentForceMirrorOwnerUserId, accountB,
+            "a between-session beat right after an account switch must stamp the NEW account immediately, not stay on the old one or go unstamped"
+        )
+    }
+
+    func testCurrentForceMirrorOwnerFollowsTheManualSessionOwnerThenFallsBackToTheConnectIdentityOnceTheSessionCloses() async throws {
         let box = ManualOwnershipAccountBox()
         let accountA = UUID()
         box.current = accountA
@@ -572,6 +633,8 @@ final class TindeqManualOwnershipTests: XCTestCase {
             commandWriter: { _ in },
             userIdProvider: { box.current }
         )
+        manager.connect()
+        manager.status = .connected
         manager.liveTag = "Half crimp"
         manager.liveSide = "left"
 
@@ -586,9 +649,9 @@ final class TindeqManualOwnershipTests: XCTestCase {
 
         manager.logSessionNow()
         try await waitUntil { await sessions.count() == 1 }
-        XCTAssertNil(
-            manager.currentForceMirrorOwnerUserId,
-            "once the session is closed, a between-session beat must go unstamped, not keep asserting the closed session's owner"
+        XCTAssertEqual(
+            manager.currentForceMirrorOwnerUserId, accountA,
+            "once the session is closed, a between-session beat must fall back to the connect-captured identity (still A, no switch happened), not go unstamped"
         )
     }
 
@@ -633,12 +696,15 @@ final class TindeqManualOwnershipTests: XCTestCase {
     /// active it wins over an already-open manual session's owner. Once the
     /// guided run hands persistence back (`endRun()` → `clearPersistenceOwner()`,
     /// synchronous, before its own save Task resolves), the carry-over falls
-    /// back to X's still-open manual owner rather than going nil early; only
+    /// back to X's still-open manual owner rather than reverting early; only
     /// once the whole session actually finishes closing (its deferred
     /// `logSessionAfterPendingSaves()`, after the save resolves) does the
-    /// mirror finally read nil. The live mirror stamp must track the SAME
-    /// three states `enqueuedUserId` does.
-    func testCurrentForceMirrorOwnerPrefersTheActiveGuidedRunThenFallsBackToTheManualOwnerThenGoesNilOnceTheSessionCloses() async throws {
+    /// mirror fall all the way back to the connect-captured identity
+    /// (round-2 review R2-F2 — still X here, since no account switch
+    /// happened). The live mirror stamp must track the SAME three states
+    /// `enqueuedUserId` does, never going unstamped for this still-current,
+    /// still-signed-in-as-X watch.
+    func testCurrentForceMirrorOwnerPrefersTheActiveGuidedRunThenFallsBackToTheManualOwnerThenToTheConnectIdentity() async throws {
         let accountX = UUID()
         let accountA = UUID()
         let recordings = ManualOwnershipRecordingQueue()
@@ -649,6 +715,8 @@ final class TindeqManualOwnershipTests: XCTestCase {
             commandWriter: { _ in },
             userIdProvider: { accountX }
         )
+        manager.connect()
+        manager.status = .connected
         manager.liveTag = "Half crimp"
         manager.liveSide = "left"
 
@@ -683,9 +751,9 @@ final class TindeqManualOwnershipTests: XCTestCase {
         )
 
         try await waitUntil { await sessions.count() == 1 && !manager.saving }
-        XCTAssertNil(
-            manager.currentForceMirrorOwnerUserId,
-            "once the whole session finally closes, a between-session beat must go unstamped"
+        XCTAssertEqual(
+            manager.currentForceMirrorOwnerUserId, accountX,
+            "once the whole session finally closes, a between-session beat must fall back to the connect-captured identity, not go unstamped"
         )
     }
 

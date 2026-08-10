@@ -2,16 +2,16 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
 import {
+  admitLiveForceMessage,
   isFresh,
   emptyLiveForceMirrorState,
-  reduceForceBeat,
   type LiveForce,
   type LiveForceMirrorState,
   type LiveForceSample,
 } from "../lib/liveForceMirror";
 import {
-  acceptsPacketOwner,
   hasAccountChangedSincePersisted,
+  recordStampedPacketAccepted,
 } from "../lib/liveMirrorOwnership";
 import { subscribePluginListener } from "./pluginListener";
 
@@ -35,9 +35,12 @@ export function useLiveForce(userId: string): LiveForce | null {
   // UNMOUNT of this hook, not a `userId` prop change on a still-mounted one.
   // The initial value instead consults durable storage (survives that
   // remount); the ref then also flips true on an in-mount prop change (the
-  // narrower background/foreground relay case), same as before. Evaluated
-  // exactly once via `useState`'s lazy initializer — `hasAccountChangedSincePersisted`
-  // both reads AND writes storage, so it must not re-run on every render.
+  // narrower background/foreground relay case), same as before.
+  // `hasAccountChangedSincePersisted` is a PURE read (round-2 review
+  // R2-F1/R2-F4 — the write moved to `useAuth.ts`'s `onSession`, the single
+  // auth-boundary owner), so evaluating it more than once (a StrictMode
+  // double-invoked lazy initializer, or any other extra render) is harmless;
+  // `useState`'s lazy form is used only to avoid a redundant read.
   const [initialHasHadAccountTransition] = useState(() =>
     hasAccountChangedSincePersisted(userId),
   );
@@ -56,6 +59,17 @@ export function useLiveForce(userId: string): LiveForce | null {
       hasHadAccountTransitionRef.current = true;
     }
     activeUserIdRef.current = userId;
+    // #530 round-2 review R2-F3: resetting the cursor here — synchronously,
+    // before any listener installed for the NEW `userId` can publish — is
+    // what makes it safe that a beat's run/sequence identity never rotates
+    // on an ownership handover on the Swift side (see
+    // `currentForceMirrorOwnerUserId` in TindeqManager.swift). This mirror
+    // is safe across an account change ONLY because a phone account change
+    // always resets this exact state first: either a full remount (a fresh
+    // `mirrorRef`) or this layout effect (this line). If the mirror hooks
+    // are ever hoisted above the tab switch, or a future refactor keeps
+    // this state alive across a `userId` change without resetting it here,
+    // that assumption silently stops holding.
     mirrorRef.current = emptyLiveForceMirrorState();
   }, [userId]);
 
@@ -72,21 +86,33 @@ export function useLiveForce(userId: string): LiveForce | null {
     const unsubscribe = subscribePluginListener(() =>
       SendLogAuthBridge.addListener("liveForce", (msg) => {
         if (cancelled || activeUserIdRef.current !== effectUserId) return;
-        // #530: reject a packet stamped (or, per the conservative
-        // mixed-version rule, un-stamped after a transition) for a different
-        // account BEFORE it ever reaches reduceForceBeat. Reads the live ref
-        // value (round-1 review F5), not the render-captured `effectUserId`.
-        if (!acceptsPacketOwner(msg.account_user_id, activeUserIdRef.current, hasHadAccountTransitionRef.current)) {
-          return;
+        // #530 round-2 review R2-F6: `admitLiveForceMessage` is the ONLY
+        // function this listener calls to decide whether `msg` reaches
+        // state — the ownership guard lives INSIDE it, not as a separate
+        // call a future edit could drop without touching this listener at
+        // all. Reads the live ref value (round-1 review F5), not the
+        // render-captured `effectUserId`.
+        const admission = admitLiveForceMessage(
+          mirrorRef.current,
+          msg,
+          activeUserIdRef.current,
+          hasHadAccountTransitionRef.current,
+        );
+        if (!admission.accepted) return;
+        // #530 round-2 review R2-F1: a genuinely STAMPED (not
+        // legacy-absent) acceptance is positive evidence this watch has
+        // caught up to the current account — close the risk window both
+        // for this mount and durably.
+        if (admission.stampedAcceptance) {
+          hasHadAccountTransitionRef.current = false;
+          recordStampedPacketAccepted(activeUserIdRef.current);
         }
         // The ref is the authoritative cursor: event callbacks can arrive
         // faster than React renders, so a functional setState alone would
         // leave terminal/out-of-order decisions detached from the current
         // run. Mutate the ref and publish the accepted snapshot together.
-        const reduced = reduceForceBeat(mirrorRef.current, msg);
-        if (!reduced.accepted) return;
-        mirrorRef.current = reduced.state;
-        setBeat(reduced.state.beat);
+        mirrorRef.current = admission.state;
+        setBeat(admission.state.beat);
       }),
     );
     const interval = setInterval(() => setNow(Date.now()), 2_000);

@@ -7,6 +7,7 @@ import type {
   LiveWorkoutMessage,
 } from "sendlog-auth-bridge";
 import type { LiveWorkout } from "../types";
+import { acceptsPacketOwner } from "./liveMirrorOwnership";
 
 /// How long a heartbeat may go quiet before the workout is presumed dead
 /// (watch upserts every ~5s; 30s of silence = app killed / walked away).
@@ -259,6 +260,37 @@ export function reduceLiveWorkout(
       source,
     },
   };
+}
+
+export interface LiveWorkoutAdmissionResult extends LiveWorkoutReduceResult {
+  /// True when this admission is positive evidence the watch has caught up
+  /// to a #530-aware build — a genuinely STAMPED (not legacy-absent) packet
+  /// was accepted. Callers should durably clear the transition marker via
+  /// `recordStampedPacketAccepted` in `liveMirrorOwnership.ts`.
+  stampedAcceptance: boolean;
+}
+
+/// The FULL WatchConnectivity packet admission pipeline for one incoming
+/// message, in one call: the account-ownership guard (#530), then
+/// `messageToLive`, then `reduceLiveWorkout` — a rejected owner never
+/// reaches the reducer at all. Round-2 review R2-F6: this is the ONLY
+/// function `useLiveWorkout`'s WC listener calls, so a test exercising this
+/// function directly is exercising the exact wiring that ships — deleting
+/// the ownership guard from inside this function (as opposed to a hook-side
+/// call the test suite cannot reach) is caught by
+/// `liveMirrorOwnership.test.ts`'s late-A-after-B coverage.
+export function admitLiveWorkoutMessage(
+  previous: LiveWorkoutMirrorState,
+  msg: LiveWorkoutMessage,
+  currentUserId: string,
+  hasHadAccountTransition: boolean,
+): LiveWorkoutAdmissionResult {
+  if (!acceptsPacketOwner(msg.account_user_id, currentUserId, hasHadAccountTransition)) {
+    return { state: previous, accepted: false, stampedAcceptance: false };
+  }
+  const incoming = messageToLive(msg, previous.row);
+  const reduced = reduceLiveWorkout(previous, incoming, "watch-direct");
+  return { ...reduced, stampedAcceptance: msg.account_user_id !== undefined };
 }
 
 /// The hook's final visible state: hides an ended/missing/stale row and only

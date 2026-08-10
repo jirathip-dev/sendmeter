@@ -115,27 +115,41 @@ final class TindeqManager: NSObject {
     /// a genuinely fresh one instead of silently continuing to accumulate
     /// into the old owner's container.
     private var manualSessionOwnerUserId: UUID?
-    /// #530 (round-1 review F2): the live-mirror beat's account stamp,
-    /// re-derived from the SAME two already-boundary-captured fields above at
-    /// every beat — never a third field pinned once at `connect()`. A BLE
+    /// #530 round-2 review R2-F2: fallback identity for a beat that has no
+    /// active session/guided-run owner yet — the connect-before-first-rep and
+    /// between-session windows (the Progressor stays connected across
+    /// Finish/`clearSession()`, and an account switch can land with no
+    /// session open at all) that round-1's F2 fix left genuinely unstamped.
+    /// An unstamped beat is indistinguishable on the wire from a pre-#530
+    /// watch, so those windows were silently trusted by the phone's lenient
+    /// legacy branch even for a CURRENT, signed-in watch. Captured at the
+    /// SAME kind of deterministic boundary as every other owner field here —
+    /// `connect()`, `handleAccountTransition(to:)`, and `clearSession()` —
+    /// never read live at `pushForceBeat()` time.
+    private var forceMirrorConnectOwnerUserId: UUID?
+    /// #530: the live-mirror beat's account stamp. Prefers the CURRENT
+    /// session/guided-run owner — re-derived from the SAME two
+    /// already-boundary-captured fields above at every beat, never a
+    /// separate field pinned once at `connect()` (round-1 review F2: a BLE
     /// connect deliberately outlives multiple, differently-owned gauge
-    /// sessions (the Progressor stays connected across Finish/`clearSession()`
-    /// and a later `start()`/`armHandsFree()` under a different account), so
-    /// pinning the stamp once at connect time could keep asserting an owner a
-    /// later session doesn't have. This is still NOT a live re-read of
-    /// `userIdProvider()` at heartbeat time — `persistenceOwnerUserId` and
-    /// `manualSessionOwnerUserId` are themselves only ever written at their
-    /// own deterministic ownership boundaries (`setPersistenceOwner`,
-    /// `captureManualSessionOwnerIfNeeded`), the exact same two fields
-    /// `enqueuedUserId` is computed from in `persistPreparedRecording`/
-    /// `logSessionAfterPendingSaves` — so the mirror stamp structurally
-    /// cannot drift from the save-attribution owner, by construction, with no
-    /// separate call site to remember to keep in sync. `nil` before any
-    /// session/guided run has claimed the connect (a "connected" beat before
-    /// a tag or rep is chosen) leaves the wire field off entirely — see
-    /// `LiveMirrorOwnership.stamped`.
+    /// sessions, so pinning the stamp once at connect time could keep
+    /// asserting an owner a later session doesn't have) — falling back to
+    /// `forceMirrorConnectOwnerUserId` when no session/guided run has
+    /// claimed the connect yet (round-2 review R2-F2). Neither branch is a
+    /// live re-read of `userIdProvider()` at heartbeat time:
+    /// `persistenceOwnerUserId`/`manualSessionOwnerUserId` are themselves
+    /// only ever written at their own deterministic ownership boundaries
+    /// (`setPersistenceOwner`, `captureManualSessionOwnerIfNeeded`) — the
+    /// exact same two fields `enqueuedUserId` is computed from in
+    /// `persistPreparedRecording`/`logSessionAfterPendingSaves`, so the
+    /// primary branch structurally cannot drift from the save-attribution
+    /// owner — and the fallback is captured at its own boundaries above. A
+    /// signed-in #530 watch therefore never emits an unstamped packet once
+    /// it has connected at least once: "absent" on the wire means exactly
+    /// one thing, a pre-#530 build.
     var currentForceMirrorOwnerUserId: UUID? {
-        persistenceOwnerAssigned ? persistenceOwnerUserId : manualSessionOwnerUserId
+        (persistenceOwnerAssigned ? persistenceOwnerUserId : manualSessionOwnerUserId)
+            ?? forceMirrorConnectOwnerUserId
     }
     /// The target account of an account transition that `handleAccountTransition(to:)`
     /// could not act on immediately because a rep was actively `measuring`
@@ -239,6 +253,13 @@ final class TindeqManager: NSObject {
         // both readers had no way to tell "captured for THIS session" from
         // "left over from the last one".
         manualSessionOwnerUserId = nil
+        // #530 round-2 review R2-F2: refresh the between-session fallback
+        // right as the primary owner clears, so the very next beat — before
+        // any new session claims an owner of its own — still stamps whoever
+        // the watch is CURRENTLY relayed as, not nothing. A one-time read at
+        // this deterministic session-boundary, not a live re-read at beat
+        // time.
+        forceMirrorConnectOwnerUserId = userIdProvider()
     }
 
     /// Captures `manualSessionOwnerUserId` for a NEW gauge session (#529
@@ -348,6 +369,10 @@ final class TindeqManager: NSObject {
         errorMsg = nil
         resetForceMirrorPipeline()
         forceMirrorSequence = LiveMirrorSequence(runId: UUID())
+        // #530 round-2 review R2-F2: the mirror's fallback identity for
+        // this connect, before any session/guided run claims its own — see
+        // `forceMirrorConnectOwnerUserId`'s doc comment.
+        forceMirrorConnectOwnerUserId = userIdProvider()
         forceMirrorStatus = nil
         forceMirrorCount = sessionCount
         forceMirrorTag = liveTag
@@ -437,6 +462,13 @@ final class TindeqManager: NSObject {
     /// made no such commitment yet (no claim, no samples) — closing through
     /// it is safe, and just means the new account has to re-arm.
     func handleAccountTransition(to userId: UUID?) {
+        // #530 round-2 review R2-F2: unconditional and first — the watch's
+        // relayed identity has genuinely changed regardless of whether the
+        // session-management guards below act on it, and the live-mirror
+        // fallback must track that immediately so a beat sent between here
+        // and whenever (or whether) a new session opens stamps the NEW
+        // account, not the old one and not nothing.
+        forceMirrorConnectOwnerUserId = userId
         guard !persistenceOwnerAssigned, guidedClaims.active == nil else { return }
         guard let sessionOwner = manualSessionOwnerUserId, userId != sessionOwner else { return }
         guard !measuring else {
