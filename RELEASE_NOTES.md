@@ -32,6 +32,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force now puts exercise, one selected protocol, Start, and two compact progress previews in the main flow; Suggested and custom protocols live in one chooser, including a 3-second concentric / 1-second eccentric Movement Starter. Resisted movement tracks completion and execution quality without changing Static PR, Hill/CF, or asymmetry.
 - Apple Watch Force now offers the same read-only Suggested and saved-protocol chooser, runs guided Static or resisted-movement sessions from a glanceable timer, and can follow Movement Starter cadence without a connected force sensor while clearly marking force as unmeasured.
 - Force: shortened the brief pause after Stop while your force curve recomputes, without changing any of the numbers it produces.
+- Apple Watch Force screens now match the rest of Sendmeter's visual language: the primary Start button, protocol card, and guided-run timer use the same blue/indigo accent as the rest of the app instead of a separate pink/purple identity, with connection, warning, and error states still called out in their usual colors.
 
 ### Fixed
 

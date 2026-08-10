@@ -39,6 +39,14 @@ public enum WatchDesignTokens {
     public static let success = PhaseRGB(0.30, 0.93, 0.68)
     public static let warning = PhaseRGB(1.0, 0.76, 0.32)
     public static let danger = PhaseRGB(1.0, 0.38, 0.46)
+    /// Reserved for the Home screen's Force-module nav-card identity only
+    /// (`HomeView`'s "Force Gauge" card, matching Climb Workout's `secondary`
+    /// treatment) — a defined semantic use distinguishing modules, not a
+    /// general Force-feature accent. Generic Force controls/cards
+    /// (ForceGaugeView, ForceProtocolViews, GuidedForceRunnerView) use
+    /// `primary`/`success`/`warning`/`danger` like the rest of the app
+    /// (SL-538); none of them carry protocol- or zone-specific hues, so there
+    /// is no data semantic tied to this token beyond that one nav card.
     public static let force = PhaseRGB(1.0, 0.43, 0.76)
 
     public static let semanticAccents: [PhaseRGB] = [

@@ -76,13 +76,13 @@ final class SendmeterWatchScreenshots: XCTestCase {
             if let pngData = screenshot.image.pngData(),
                let source = CGImageSourceCreateWithData(pngData as CFData, nil),
                let encodedImage = CGImageSourceCreateImageAtIndex(source, 0, nil),
-               hasMagentaStartSurface(encodedImage) {
+               hasPrimaryStartSurface(encodedImage) {
                 validatedPNGData = pngData
                 break
             }
         }
         guard let validatedPNGData else {
-            XCTFail("40mm setup screenshot never rendered the magenta Start surface")
+            XCTFail("40mm setup screenshot never rendered the semantic-primary Start surface")
             throw ForceScreenshotCaptureError.emptyFrame
         }
         // Attach the exact validated PNG bytes; screenshot/image convenience
@@ -339,7 +339,14 @@ final class SendmeterWatchScreenshots: XCTestCase {
         XCTAssertLessThanOrEqual(frame.maxY, bounds.maxY, "fixture \(fixture) control is clipped below")
     }
 
-    private func hasMagentaStartSurface(_ image: CGImage) -> Bool {
+    /// SL-538: the Start button fills with `WatchPalette.primary`
+    /// (`WatchDesignTokens.primary`, an indigo/violet blue — not the old
+    /// decorative magenta) at ~0.92 fill opacity over the dark canvas, so the
+    /// rendered pixel is blue-dominant with a distinctly low green channel
+    /// (unlike `secondary`'s cyan, where green tracks blue). Keep this
+    /// threshold in sync with `WatchDesignTokens.primary` if that token's
+    /// RGB ever changes.
+    private func hasPrimaryStartSurface(_ image: CGImage) -> Bool {
         let width = image.width
         let height = image.height
         guard width > 0, height > 0 else { return false }
@@ -363,17 +370,17 @@ final class SendmeterWatchScreenshots: XCTestCase {
         }
         guard rendered else { return false }
 
-        var magentaPixels = 0
+        var primaryPixels = 0
         for offset in stride(from: 0, to: rgba.count, by: 4) {
             let red = Int(rgba[offset])
             let green = Int(rgba[offset + 1])
             let blue = Int(rgba[offset + 2])
-            if red >= 180, blue >= 130, green <= 170,
-               red >= green + 45, blue >= green + 20 {
-                magentaPixels += 1
+            if blue >= 150, red >= 40,
+               blue >= red + 60, blue >= green + 70, green <= red + 40 {
+                primaryPixels += 1
             }
         }
-        return magentaPixels >= max(512, width * height / 100)
+        return primaryPixels >= max(512, width * height / 100)
     }
 
 }

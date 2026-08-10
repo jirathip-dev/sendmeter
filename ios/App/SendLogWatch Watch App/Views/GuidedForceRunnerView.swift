@@ -4,6 +4,10 @@ import SwiftUI
 /// Full-screen, one-glance guided Force surface.  RootView owns the switch to
 /// this view while `GuidedForceRunner` owns all execution state, so leaving
 /// setup cannot strand a timer or a BLE claim.
+/// Phase/progress chrome uses the shared semantic `primary` accent (SL-538):
+/// this screen IS the primary action in progress, and no phase (prepare,
+/// hold, rest, switch) carries a distinct data-semantic hue. `Stop` keeps
+/// `danger` since it is a destructive/abort control, not decorative.
 struct GuidedForceRunnerView: View {
     @Environment(GuidedForceRunner.self) private var runner
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -45,12 +49,12 @@ struct GuidedForceRunnerView: View {
     /// visible without relying on a scroll position.
     private var microLayout: some View {
         VStack(spacing: 3) {
-            WatchCard(accent: WatchPalette.force) {
+            WatchCard(accent: WatchPalette.primary) {
                 VStack(spacing: 1) {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
                         Text(runner.phaseTitle)
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
                             .lineLimit(1)
                             .minimumScaleFactor(0.66)
                         Spacer(minLength: 2)
@@ -71,7 +75,7 @@ struct GuidedForceRunnerView: View {
                         compactWorkStatus
                         Spacer(minLength: 2)
                         ProgressView(value: runner.progress)
-                            .tint(WatchPalette.force)
+                            .tint(WatchPalette.primary)
                             .frame(width: 40)
                             .accessibilityLabel("Protocol progress")
                             .accessibilityValue("\(Int((runner.progress * 100).rounded())) percent")
@@ -91,14 +95,14 @@ struct GuidedForceRunnerView: View {
     /// separate control, so it can never scroll below the fold.
     private var compactLayout: some View {
         VStack(spacing: 4) {
-            WatchCard(accent: WatchPalette.force) {
+            WatchCard(accent: WatchPalette.primary) {
                 VStack(spacing: 2) {
                     compactHeader
 
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(runner.phaseTitle)
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
                         Spacer(minLength: 2)
@@ -119,7 +123,7 @@ struct GuidedForceRunnerView: View {
                         compactWorkStatus
                         Spacer(minLength: 2)
                         ProgressView(value: runner.progress)
-                            .tint(WatchPalette.force)
+                            .tint(WatchPalette.primary)
                             .frame(width: 46)
                             .accessibilityLabel("Protocol progress")
                             .accessibilityValue("\(Int((runner.progress * 100).rounded())) percent")
@@ -227,12 +231,12 @@ struct GuidedForceRunnerView: View {
     }
 
     private var phaseCard: some View {
-        WatchCard(accent: WatchPalette.force) {
+        WatchCard(accent: WatchPalette.primary) {
             VStack(spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(runner.phaseTitle)
                         .font(.system(.headline, design: .rounded).weight(.bold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                     Spacer(minLength: 3)
@@ -280,7 +284,7 @@ struct GuidedForceRunnerView: View {
                     (Text(String(format: "%.1f", kg))
                         .font(.system(.title3, design: .rounded).weight(.bold))
                         .monospacedDigit()
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
                     + Text(" kg").font(.caption).foregroundStyle(WatchPalette.textSecondary))
                         .accessibilityLabel("Current force")
                         .accessibilityValue(String(format: "%.1f kilograms", kg))
@@ -310,7 +314,7 @@ struct GuidedForceRunnerView: View {
     }
 
     private var progressCard: some View {
-        WatchCard(accent: WatchPalette.force.opacity(isLuminanceReduced ? 0.36 : 0.72)) {
+        WatchCard(accent: WatchPalette.primary.opacity(isLuminanceReduced ? 0.36 : 0.72)) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(runner.tag)
@@ -321,10 +325,10 @@ struct GuidedForceRunnerView: View {
                     Spacer(minLength: 4)
                     Text("\(Int((runner.progress * 100).rounded()))%")
                         .font(.caption2.monospacedDigit().weight(.bold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
                 }
                 ProgressView(value: runner.progress)
-                    .tint(WatchPalette.force)
+                    .tint(WatchPalette.primary)
                     .animation(reduceMotion ? nil : .easeOut(duration: WatchDesignTokens.motionDuration), value: runner.progress)
                     .accessibilityLabel("Protocol progress")
                     .accessibilityValue("\(Int((runner.progress * 100).rounded())) percent")
