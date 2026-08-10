@@ -10,7 +10,24 @@ export { healthSignaturesEqual } from "./healthSignature";
 
 const IS_NATIVE = Capacitor.isNativePlatform();
 
+/// Legacy pre-#535 unscoped marker — one global key, no account attached.
+/// NOT migrated on purpose: its owner was never recorded, so attributing it
+/// to whichever account happens to sign in next would recreate the exact
+/// bug #535 was filed for (violates acceptance criterion 3 — see the #535
+/// review round-2 ruling). It IS deleted outright, unconditionally, since a
+/// plain removal carries none of the migration's account-attribution risk
+/// and there is no reason to leave unreachable dead data in localStorage
+/// forever.
 const SYNCED_AT_KEY = "sendmeter:health-synced-at";
+const SYNCED_REQUEST_ID_KEY = "sendmeter:health-synced-request-id";
+
+function forgetLegacySyncedAt(): void {
+  try {
+    localStorage.removeItem(SYNCED_AT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 /// The authenticated user the health-sync marker is currently scoped to.
 /// Set synchronously (before any listener/bootstrap work) by
@@ -25,13 +42,53 @@ let activeHealthUserId: string | null = null;
 /// recorded a sync for. Guards against reporting the SAME native result
 /// twice as a fresh change — e.g. the live listener push and the one-shot
 /// catch-up read (`ensureReadinessCatchUpRead`) both observing the same
-/// already-completed request. Deliberately module-scoped (not
-/// once-per-launch) so it stays correct if a future caller replays more
-/// than once in one process (#552).
+/// already-completed request. In-memory only, so it dies with the WebView;
+/// `syncedRequestIdFor`/`rememberSyncedRequestId` below cover the SAME
+/// dedupe durably across a relaunch (#535 review round 2 F1).
 let lastProcessedReadinessRequestId: string | null = null;
+
+/// Native ids (`ReadinessRefreshResult.accountUserId`, a Swift
+/// `UUID.uuidString`) come back UPPERCASE; supabase-js session ids are
+/// lowercase. Comparing them raw drops every stamped result (#535 review
+/// round 2 F1) — normalize both sides before comparing, same as
+/// `normalizeRunId` in `liveWorkoutMirror.ts` / `liveForceMirror.ts`.
+function normalizeUserId(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.toLowerCase() : null;
+}
 
 function syncedAtStorageKey(userId: string | null): string | null {
   return userId ? `${SYNCED_AT_KEY}:${userId}` : null;
+}
+
+function syncedRequestIdStorageKey(userId: string | null): string | null {
+  return userId ? `${SYNCED_REQUEST_ID_KEY}:${userId}` : null;
+}
+
+/// The requestId this account's marker was last recorded from, persisted
+/// alongside the timestamp so the SAME native result replayed after a
+/// relaunch (when `lastProcessedReadinessRequestId` has already been reset)
+/// is still recognized as already-applied rather than reported as new
+/// (#535 review round 2 F1).
+function syncedRequestIdFor(userId: string | null): string | null {
+  const key = syncedRequestIdStorageKey(userId);
+  if (!key) return null;
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function rememberSyncedRequestId(userId: string | null, requestId: string): void {
+  const key = syncedRequestIdStorageKey(userId);
+  if (!key) return;
+  try {
+    localStorage.setItem(key, requestId);
+  } catch {
+    /* ignore */
+  }
 }
 
 /// Epoch ms of the last successful health sync, or null (SL-31). Drives the
@@ -88,9 +145,16 @@ function recordHealthSync(source: HealthSyncSource, changed = false, at: number 
   }
 }
 
+function firstFiniteSeconds(...values: Array<number | undefined>): number | undefined {
+  return values.find((v): v is number => typeof v === "number" && Number.isFinite(v));
+}
+
 /// Applies one native `ReadinessRefreshResult` — from either the live
 /// listener push or a replayed `getLatestReadiness()` — as a health sync,
-/// guarding against exactly the failure modes #535 was filed for:
+/// guarding against exactly the failure modes #535 was filed for. Returns
+/// whether the result was recognized as belonging to the active account
+/// (applied as a new sync OR confirmed as an already-seen duplicate) —
+/// `false` means the caller got nothing usable and may want to retry.
 ///
 /// - Account ownership: `result.accountUserId` (native
 ///   `ReadinessRefreshResult.accountUserId`, stamped on every current
@@ -104,41 +168,65 @@ function recordHealthSync(source: HealthSyncSource, changed = false, at: number 
 ///   completes and delivers while still bound to A arrives labelled with
 ///   A's own `accountUserId`, not B's. Only a legacy unstamped result (no
 ///   `accountUserId`) falls back to the snapshot-vs-current comparison —
-///   still correct there, since that is the only signal available.
-/// - Durable monotonic fence: `result.completedAt` (native epoch seconds)
-///   is compared against the PERSISTED marker for that account
-///   (`healthLastSyncedAt()`), not just an in-memory "already processed"
-///   set. `lastProcessedReadinessRequestId` alone dies with the WebView, so
-///   without this a cold-launch catch-up replay of the exact same cached
-///   result would still look like a fresh change on every app open (the
-///   cost `changed` exists to avoid — native's own `latestReadinessResult()`
-///   reads without consuming). The same comparison also stops the marker
-///   moving BACKWARDS: a genuinely fresh foreground sync (`Date.now()`)
-///   must never be regressed to an older cached replay's earlier
-///   `completedAt` (mirrors `ReadinessResultGate.shouldApply`'s completion
-///   fence in `ios/App/SendLogWatchCore/.../ReadinessRefresh.swift`).
-/// - `result.requestId` is additionally deduped against the last request
-///   this module has processed IN THIS PROCESS, so two same-tick deliveries
-///   of the identical request (e.g. the live push and the catch-up read
-///   both observing it) don't do a redundant persisted-marker read/write.
+///   still correct there, since that is the only signal available. Both
+///   sides are normalized (trim + lowercase) before comparing: native ids
+///   are an uppercase Swift `UUID.uuidString`, supabase-js ids are
+///   lowercase — a raw `!==` would drop every stamped result (#535 review
+///   round 2 F1), which is worse than the tautology it replaced.
+/// - Durable dedupe: `result.requestId` is checked against BOTH the
+///   in-memory `lastProcessedReadinessRequestId` (same-tick duplicates,
+///   e.g. the live push and the catch-up read both observing one result)
+///   AND the PERSISTED per-account `syncedRequestIdFor` marker, so the
+///   exact same cached result replayed after a relaunch (when the
+///   in-memory guard has already reset) is still recognized as
+///   already-applied rather than reported as a new change on every cold
+///   launch (#535 review round 2 F1) — native's own `latestReadinessResult()`
+///   reads without consuming.
+/// - Timestamp handling is decoupled from dedupe on purpose (#535 review
+///   round 2 F4): an unseen `requestId` always records and announces
+///   (`recordHealthSync`'s event still fires, so `bumpRealtime()` still
+///   runs), but the WRITTEN value is clamped to `Math.max(completedAtMs,
+///   priorSyncedAt)` so a genuinely new result that happens to carry an
+///   earlier timestamp than an unrelated already-recorded sync (e.g. the
+///   phone's own `Date.now()`-stamped foreground sync landing first) can
+///   never regress the displayed "Synced …ago" line. `completedAt` is
+///   preferred, falling back to `startedAt` then `sentAt` (both always
+///   present) before `Date.now()` (#535 review round 2 F3) — `Date.now()`
+///   would otherwise silently mark a replayed result "just now".
 function processReadinessResult(
   result: ReadinessRefreshResult | null | undefined,
   requestedForUserId: string | null,
-): void {
-  if (!result || result.status !== "success") return;
-  if (!requestedForUserId) return;
+): boolean {
+  if (!result || result.status !== "success") return false;
+  if (!requestedForUserId) return false;
   if (result.accountUserId) {
-    if (result.accountUserId !== activeHealthUserId) return;
+    if (normalizeUserId(result.accountUserId) !== normalizeUserId(activeHealthUserId)) return false;
   } else if (activeHealthUserId !== requestedForUserId) {
-    return;
+    return false;
   }
-  if (result.requestId && result.requestId === lastProcessedReadinessRequestId) return;
-  const completedAtMs =
-    typeof result.completedAt === "number" ? result.completedAt * 1000 : Date.now();
+
+  const requestId = result.requestId || null;
+  const alreadyApplied =
+    requestId !== null &&
+    (requestId === lastProcessedReadinessRequestId ||
+      requestId === syncedRequestIdFor(activeHealthUserId));
+  if (alreadyApplied) return true;
+
+  const completedAtSeconds = firstFiniteSeconds(
+    result.completedAt,
+    result.startedAt,
+    result.sentAt,
+  );
+  const completedAtMs = completedAtSeconds !== undefined ? completedAtSeconds * 1000 : Date.now();
   const priorSyncedAt = healthLastSyncedAt();
-  if (priorSyncedAt !== null && completedAtMs <= priorSyncedAt) return;
-  if (result.requestId) lastProcessedReadinessRequestId = result.requestId;
-  recordHealthSync("watch", true, completedAtMs);
+  const writtenAtMs = priorSyncedAt !== null ? Math.max(completedAtMs, priorSyncedAt) : completedAtMs;
+
+  if (requestId) {
+    lastProcessedReadinessRequestId = requestId;
+    rememberSyncedRequestId(activeHealthUserId, requestId);
+  }
+  recordHealthSync("watch", true, writtenAtMs);
+  return true;
 }
 
 let readinessListenerRegistration: Promise<void> | null = null;
@@ -202,7 +290,9 @@ export function ensureReadinessListener(): void {
   }
   readinessListenerRegistration = SendLogHealth.addListener(
     "readinessRefresh",
-    (result: ReadinessRefreshResult) => processReadinessResult(result, activeHealthUserId),
+    (result: ReadinessRefreshResult) => {
+      processReadinessResult(result, activeHealthUserId);
+    },
   )
     .then((handle) => {
       if (!handle || typeof handle.remove !== "function") {
@@ -252,7 +342,16 @@ function ensureReadinessCatchUpRead(): void {
   readinessCatchUpRequested = true;
   const requestedForUserId = activeHealthUserId;
   void SendLogHealth.getLatestReadiness()
-    .then((result) => processReadinessResult(result, requestedForUserId))
+    .then((result) => {
+      // Nothing usable for this account (nil result, wrong/stale account
+      // binding) does NOT count as "asked and answered" — reset the guard
+      // so a later relay can retry rather than stranding this account
+      // without a catch-up for the rest of the launch (#535 review round 2
+      // F2).
+      if (!processReadinessResult(result, requestedForUserId)) {
+        readinessCatchUpRequested = false;
+      }
+    })
     .catch(() => {
       // A pre-#520 native shell simply has no method/result yet.
     });
@@ -269,6 +368,7 @@ function ensureReadinessCatchUpRead(): void {
 /// `watchAuthRelay.ts` and the plugin's `definitions.ts`. Only supabase-js
 /// here owns rotation.
 export function relayHealthSession(session: Session | null): void {
+  forgetLegacySyncedAt();
   // Scope the sync marker + replay dedupe to whichever account is now
   // authenticated — set synchronously, before any listener/bootstrap work,
   // so nothing below can read a stale account (#535). Tracked regardless of
@@ -286,17 +386,35 @@ export function relayHealthSession(session: Session | null): void {
   activeHealthUserId = userId;
   if (!IS_NATIVE) return;
   ensureReadinessListener();
-  // `ensureReadinessListener()` only fires the catch-up read from its OWN
-  // success branch, which does not run again once a registration from an
-  // earlier account has already resolved — so a later account change needs
-  // its own explicit fire here. Gated on `readinessListenerInstalled`
-  // (rather than firing unconditionally) so this never races ahead of a
-  // still-pending/still-failing first registration attempt.
-  if (accountChanged && userId && readinessListenerInstalled) {
-    ensureReadinessCatchUpRead();
-  }
   if (session) {
-    void SendLogHealth.setSession({ accessToken: session.access_token });
+    if (accountChanged && readinessListenerInstalled) {
+      // `ensureReadinessListener()` only fires the catch-up read from its
+      // OWN success branch, which does not run again once a registration
+      // from an earlier account has already resolved — so a later account
+      // change needs its own explicit fire, gated on
+      // `readinessListenerInstalled` so this never races ahead of a
+      // still-pending/still-failing first registration attempt. Crucially,
+      // it is chained BEHIND this `setSession` call's own resolution
+      // rather than fired alongside it (#535 review round 2 F2): both are
+      // bridge calls dispatched to the same native plugin in order, so
+      // issuing the read immediately would reach native while it is still
+      // bound to the PREVIOUS account — answering with nil (if that
+      // account just signed out) or the previous account's own result
+      // (which `processReadinessResult` correctly drops), burning the
+      // one-shot guard for nothing and leaving this account without a
+      // catch-up for the launch. Waiting for `setSession` to resolve is the
+      // ordering guarantee: native only calls back once it has actually
+      // applied the new binding.
+      void SendLogHealth.setSession({ accessToken: session.access_token }).then(
+        ensureReadinessCatchUpRead,
+        () => {
+          // setSession itself failed — native has no new binding to answer
+          // for, so there is nothing to catch up on yet.
+        },
+      );
+    } else {
+      void SendLogHealth.setSession({ accessToken: session.access_token });
+    }
   } else {
     void SendLogHealth.clearSession();
   }
