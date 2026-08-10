@@ -123,6 +123,11 @@ describe("WebWakeLockCoordinator", () => {
     const coordinator = new WebWakeLockCoordinator(request);
 
     coordinator.acquire();
+    // Let the request actually get issued before cleanup — this test is
+    // about a request already in flight resolving late, distinct from
+    // "cleanup landing before the requester is even called" below.
+    await Promise.resolve();
+    expect(request).toHaveBeenCalledTimes(1);
     coordinator.cleanup(); // cleanup fires before the request resolves
     expect(coordinator.isHeld()).toBe(false);
 
@@ -132,8 +137,8 @@ describe("WebWakeLockCoordinator", () => {
     expect(coordinator.isHeld()).toBe(false);
     expect(a.release).toHaveBeenCalledTimes(1);
 
-    // Cleanup also blocks any further acquire attempts, including a
-    // redrive — request stays at 1, never retried.
+    // Cleanup also blocks any further acquire attempts — request stays at
+    // 1, never retried.
     coordinator.acquire();
     await flush();
     expect(request).toHaveBeenCalledTimes(1);
@@ -220,10 +225,10 @@ describe("WebWakeLockCoordinator", () => {
     expect(b.release).not.toHaveBeenCalled();
   });
 
-  // Review round 1, finding 3: a requester that throws synchronously (rather
-  // than returning a rejected promise) must not escape acquire() or leave
+  // Round 1, finding 3: a requester that throws synchronously (rather than
+  // returning a rejected promise) must not escape acquire() or leave
   // `pending` stuck true forever.
-  it("a requester that throws synchronously is caught, and the standing intent still self-heals", async () => {
+  it("a requester that throws synchronously is caught, clearing pending without wedging a later acquire", async () => {
     const a = fakeSentinel("A");
     const retry = deferred<typeof a>();
     const request = vi
@@ -237,22 +242,26 @@ describe("WebWakeLockCoordinator", () => {
     expect(() => coordinator.acquire()).not.toThrow();
     await flush();
 
-    // Not wedged: the synchronous throw was caught, `pending` cleared, and
-    // the still-unmet intent drove a retry on its own.
+    // A lone acquire() (never swallowed) does not auto-retry — see round 2,
+    // finding 1: that's exactly the standing-intent shape that storms.
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(coordinator.isHeld()).toBe(false);
+
+    // `pending` isn't wedged: a fresh acquire() issues a real second
+    // request instead of being silently swallowed.
+    coordinator.acquire();
+    await flush();
     expect(request).toHaveBeenCalledTimes(2);
     retry.resolve(a);
     await flush();
     expect(coordinator.isHeld()).toBe(true);
   });
 
-  // Review round 1, finding 1: an acquire() call that lands while a request
-  // is already pending is swallowed by the `pending` guard — but the intent
-  // it expressed must not be lost. Without a redrive, a subsequent rejection
-  // (NotAllowedError is normal when the document was hidden at the moment
-  // `request()` actually evaluated visibility) would leave nothing held and
-  // no further visibilitychange coming to retry — the screen would never
-  // re-lock for the rest of the session.
-  it("an acquire swallowed while a request is pending re-drives itself if that request then rejects", async () => {
+  // Round 1, finding 1 (edge-triggered fix, round 2): an acquire() call that
+  // lands while a request is already pending is swallowed by the `pending`
+  // guard — but the intent it expressed must not be lost outright. The
+  // in-flight request's own settlement retries exactly once on its behalf.
+  it("an acquire swallowed while a request is pending earns exactly one retry if that request then rejects", async () => {
     const a = fakeSentinel("A");
     const d1 = deferred<typeof a>();
     const d2 = deferred<typeof a>();
@@ -263,7 +272,7 @@ describe("WebWakeLockCoordinator", () => {
     const coordinator = new WebWakeLockCoordinator(request);
 
     coordinator.acquire(); // starts the request, pending
-    coordinator.acquire(); // swallowed by the pending guard
+    coordinator.acquire(); // swallowed by the pending guard — earns one retry
     await Promise.resolve();
     expect(request).toHaveBeenCalledTimes(1);
 
@@ -273,23 +282,105 @@ describe("WebWakeLockCoordinator", () => {
     expect(request).toHaveBeenCalledTimes(2);
     expect(coordinator.isHeld()).toBe(false);
 
+    // No further retries beyond the one earned — draining more turns must
+    // not grow the count (round 2, finding 1's storm regression).
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+    expect(request).toHaveBeenCalledTimes(2);
+
     d2.resolve(a);
     await flush();
     expect(coordinator.isHeld()).toBe(true);
   });
 
-  it("a rejection after cleanup does not redrive — the standing intent was cleared", async () => {
+  it("a rejection after cleanup does not retry — cleanup clears the missed-acquire flag too", async () => {
     const d = deferred<ReturnType<typeof fakeSentinel>>();
     const request = vi.fn().mockReturnValue(d.promise);
     const coordinator = new WebWakeLockCoordinator(request);
 
     coordinator.acquire();
+    coordinator.acquire(); // swallowed — would earn a retry if not for cleanup
+    await Promise.resolve(); // let the request actually get issued
+    expect(request).toHaveBeenCalledTimes(1);
     coordinator.cleanup();
     d.reject(new Error("denied"));
     await flush();
 
     expect(request).toHaveBeenCalledTimes(1);
     expect(coordinator.isHeld()).toBe(false);
+  });
+
+  // Round 2, finding 2: cleanup() must be able to cancel a request that was
+  // only *scheduled* (pending = true synchronously) but not yet actually
+  // issued — the requester call itself is one microtask turn away.
+  it("cleanup landing before the requester is even called skips issuing the request", async () => {
+    const request = vi.fn().mockResolvedValue(fakeSentinel("A"));
+    const coordinator = new WebWakeLockCoordinator(request);
+
+    coordinator.acquire();
+    coordinator.cleanup(); // lands in the microtask gap before requestSentinel() runs
+    await flush();
+
+    expect(request).not.toHaveBeenCalled();
+    expect(coordinator.isHeld()).toBe(false);
+  });
+
+  // Round 2, finding 1 (the blocker): an always-rejecting requester must
+  // never spin. The reviewer measured round 1's standing-intent redrive at
+  // 200k requests in 273ms against exactly this shape — unbounded,
+  // non-yielding microtask retries with no cap and no task boundary, which
+  // starves the macrotask queue (the very visibilitychange that would end
+  // it never gets to run).
+  it("an always-rejecting requester never spins — at most one retry per swallowed acquire, never a standing loop", async () => {
+    const request = vi.fn().mockRejectedValue(new Error("NotAllowedError"));
+    const coordinator = new WebWakeLockCoordinator(request);
+
+    coordinator.acquire(); // request 1
+    coordinator.acquire(); // swallowed while pending — the one retry it earns
+    await flush();
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(coordinator.isHeld()).toBe(false);
+
+    // The regression this pins: draining many more microtask turns must not
+    // grow the count further.
+    for (let i = 0; i < 200; i++) await Promise.resolve();
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  // Round 2, finding 1's "success arm has the same shape": a request that
+  // resolves to an already-released sentinel makes hasLiveSentinel() false
+  // right after adoption — under a standing-intent redrive that alone would
+  // re-trigger a request forever. With no acquire() swallowed during the
+  // flight, there is nothing to retry on.
+  it("resolving to an already-released sentinel does not retry when no acquire was swallowed", async () => {
+    const dead = fakeSentinel("dead");
+    dead.markReleasedWithoutEvent();
+    const request = vi.fn().mockResolvedValue(dead);
+    const coordinator = new WebWakeLockCoordinator(request);
+
+    coordinator.acquire();
+    await flush();
+
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(coordinator.isHeld()).toBe(false);
+
+    for (let i = 0; i < 200; i++) await Promise.resolve();
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it("an acquire swallowed during a request that resolves to an already-released sentinel earns exactly one retry", async () => {
+    const dead = fakeSentinel("dead");
+    dead.markReleasedWithoutEvent();
+    const live = fakeSentinel("live");
+    const request = vi.fn().mockResolvedValueOnce(dead).mockResolvedValueOnce(live);
+    const coordinator = new WebWakeLockCoordinator(request);
+
+    coordinator.acquire();
+    coordinator.acquire(); // swallowed while pending
+    await flush();
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(coordinator.isHeld()).toBe(true);
   });
 
   // Review round 1, finding 4: cleanup must release exactly the sentinel it
@@ -327,7 +418,7 @@ describe("WebWakeLockCoordinator", () => {
     expect(a.release).not.toHaveBeenCalled();
   });
 
-  it("a rejected request clears the pending flag so acquire (or a redrive) can retry", async () => {
+  it("a rejected request clears the pending flag so a later acquire can retry — without a swallowed call, nothing auto-retries", async () => {
     const a = fakeSentinel("A");
     const d1 = deferred<typeof a>();
     const d2 = deferred<typeof a>();
@@ -340,14 +431,14 @@ describe("WebWakeLockCoordinator", () => {
     coordinator.acquire();
     d1.reject(new Error("denied"));
     await flush();
-    // The standing intent from the first acquire() already redrove this on
-    // its own by the time flush() settles.
     expect(coordinator.isHeld()).toBe(false);
-    expect(request).toHaveBeenCalledTimes(2);
+    // No swallowed acquire happened during the flight, so this does not
+    // auto-retry — that would be the standing-intent shape round 2 removed.
+    expect(request).toHaveBeenCalledTimes(1);
 
-    // An explicit acquire() here is redundant (a request is already
-    // pending from the redrive) and must stay a no-op, not a third request.
+    // `pending` is cleared, so a fresh acquire() issues a real request.
     coordinator.acquire();
+    await flush();
     expect(request).toHaveBeenCalledTimes(2);
 
     d2.resolve(a);

@@ -17,40 +17,47 @@ export type WakeLockRequester<S extends WakeLockSentinelLike> = () => Promise<S>
  * `pending` closes that window: `acquire()` is a no-op while a request is
  * in flight or a live sentinel is already held, so at most one request is
  * ever outstanding. `cleaned` makes a request that resolves after
- * `cleanup()` get released immediately instead of adopted. The sentinel's
- * own `release` event only clears the tracked reference by identity
- * (`this.sentinel === s`), so a stale event from a superseded sentinel can't
- * null out a newer one.
+ * `cleanup()` get released immediately instead of adopted — and (review
+ * round 2, finding 2) if `cleanup()` lands in the microtask gap before the
+ * requester is even called, the request is skipped entirely rather than
+ * issued and thrown away. The sentinel's own `release` event only clears the
+ * tracked reference by identity (`this.sentinel === s`), so a stale event
+ * from a superseded sentinel can't null out a newer one.
  *
- * `wantsHold` is the standing intent — set by every `acquire()`, cleared
- * only by `cleanup()` — separate from whether a request happens to be
- * outstanding right now. Review round 1 found that without it, an
- * `acquire()` swallowed by the `pending` guard (e.g. a visibilitychange
- * landing mid-request) could vanish for good: if that in-flight request then
- * rejects (`NotAllowedError` is normal when the document was hidden at the
- * moment `request()` actually evaluated visibility), nothing was left to
- * retry, and with no further visibilitychange coming the screen would never
- * re-lock for the rest of the session — a regression against the pre-fix
- * code's simpler always-retry-next-event behavior. `redrive()` re-checks
- * `wantsHold` after every settlement (success *and* failure) and starts a
- * fresh request if the intent is still unmet, so a swallowed acquire keeps
- * its promise instead of being silently dropped.
+ * `missedAcquire` is **edge-triggered**, not standing: it is set only when
+ * `acquire()` is swallowed by the pending/live-sentinel guard, and cleared
+ * at the top of every `startRequest()`. Review round 1 fixed a real bug
+ * (a swallowed acquire's intent could vanish for good if the in-flight
+ * request then rejected) with a *standing* "keep wanting a hold until
+ * cleanup" flag — but round 2 found that shape is an unbounded, non-yielding
+ * microtask retry storm against an always-rejecting requester (measured:
+ * 200k requests in 273ms, starving the macrotask queue so the very
+ * visibilitychange that would end it never got to run). `missedAcquire`
+ * retries **at most once** per swallowed call: `settled()` below only
+ * starts a fresh request when `missedAcquire` is still true, and
+ * `startRequest()` clears it immediately, so a chain of repeated failures
+ * can extend the retry no further than the one swallowed call earned. A
+ * consumer that wants more than that relies on the next real
+ * `acquire()` (e.g. the next visibilitychange), same as it always has.
  */
 export class WebWakeLockCoordinator<S extends WakeLockSentinelLike> {
   private pending = false;
   private sentinel: S | null = null;
   private cleaned = false;
-  private wantsHold = false;
+  private missedAcquire = false;
 
   constructor(private readonly requestSentinel: WakeLockRequester<S>) {}
 
   /// Idempotent — a no-op while a request is pending, a live sentinel is
-  /// already held, or cleanup has run. Always records the intent to hold,
-  /// even when it's a no-op, so a settlement still in flight can re-drive it.
+  /// already held, or cleanup has run. A swallowed call while pending is
+  /// remembered (edge-triggered, see class doc) so that request's own
+  /// settlement can retry once on its behalf.
   acquire(): void {
     if (this.cleaned) return;
-    this.wantsHold = true;
-    if (this.pending || this.hasLiveSentinel()) return;
+    if (this.pending || this.hasLiveSentinel()) {
+      this.missedAcquire = true;
+      return;
+    }
     this.startRequest();
   }
 
@@ -65,10 +72,11 @@ export class WebWakeLockCoordinator<S extends WakeLockSentinelLike> {
   }
 
   /// Releases the held sentinel (if any) and blocks every later `acquire()`
-  /// and any request already in flight from being adopted.
+  /// and any request already in flight (issued or merely scheduled) from
+  /// being adopted.
   cleanup(): void {
     this.cleaned = true;
-    this.wantsHold = false;
+    this.missedAcquire = false;
     this.pending = false;
     if (this.sentinel) {
       void this.sentinel.release().catch(() => {});
@@ -82,35 +90,46 @@ export class WebWakeLockCoordinator<S extends WakeLockSentinelLike> {
 
   private startRequest(): void {
     this.pending = true;
+    this.missedAcquire = false;
     // Wrapped in a resolved-promise `.then` so a requester that throws
     // synchronously (rather than returning a rejected promise) still lands
     // in `.catch` below instead of escaping `acquire()` with `pending` stuck
-    // true forever.
+    // true forever. The `cleaned` re-check here (not just after the request
+    // resolves) means a cleanup() landing in this microtask gap skips
+    // issuing the request at all, instead of issuing one just to release it.
     Promise.resolve()
-      .then(() => this.requestSentinel())
+      .then(() => (this.cleaned ? null : this.requestSentinel()))
       .then((s) => {
-        this.pending = false;
+        if (s === null) {
+          this.settled();
+          return;
+        }
         if (this.cleaned) {
           void s.release().catch(() => {});
+          this.settled();
           return;
         }
         this.sentinel = s;
         s.addEventListener("release", () => {
           if (this.sentinel === s) this.sentinel = null;
         });
-        this.redrive();
+        this.settled();
       })
       .catch(() => {
-        this.pending = false;
-        this.redrive();
+        this.settled();
       });
   }
 
-  /// Starts a fresh request if the standing intent is still unmet — see the
-  /// class doc comment for why this can't just be "retry on failure".
-  private redrive(): void {
-    if (!this.cleaned && this.wantsHold && !this.pending && !this.hasLiveSentinel()) {
-      this.startRequest();
+  /// Runs after every request settlement (success or failure, including the
+  /// cleaned-before-issued case). Retries exactly once if an `acquire()`
+  /// was swallowed during this request's flight and the intent is still
+  /// unmet — never on a standing basis (see class doc for why that storms).
+  private settled(): void {
+    this.pending = false;
+    if (this.cleaned || !this.missedAcquire || this.hasLiveSentinel()) {
+      this.missedAcquire = false;
+      return;
     }
+    this.startRequest();
   }
 }

@@ -21,7 +21,7 @@ function code(relPath: string): string {
 
 const source = code("useWakeLock.ts");
 
-describe("useWakeLock.ts structural invariants (#533 review round 1)", () => {
+describe("useWakeLock.ts structural invariants (#533 review)", () => {
   it("finds the source file it is scanning", () => {
     // A path typo would silently match an empty/wrong string below.
     expect(source.length).toBeGreaterThan(500);
@@ -32,10 +32,29 @@ describe("useWakeLock.ts structural invariants (#533 review round 1)", () => {
     // cleanup() is terminal — it permanently blocks further acquire() calls
     // on that instance. Hoisting it the same way `nativeCoordinator` is
     // hoisted would brick the web wake lock for the rest of the session
-    // after the first unmount (review round 1, finding 6). A module-scope
-    // `const x = new WebWakeLockCoordinator(...)` must not exist.
-    expect(source).not.toMatch(/^const \w+ = new WebWakeLockCoordinator\(/m);
-    expect(source).toMatch(/const coordinator = new WebWakeLockCoordinator\(/);
+    // after the first unmount (review round 1, finding 6).
+    //
+    // Checked by POSITION, not declaration syntax (review round 2, finding
+    // 4: a `^const \w+ =` regex misses `let`, `export const`, and a
+    // declaration split across lines) — every `new WebWakeLockCoordinator(`
+    // call site must fall strictly inside the function body, and
+    // specifically inside its first (web) `useEffect`, not before the
+    // function starts or inside the second (native) effect.
+    const fnStart = source.indexOf("export function useWakeLock");
+    expect(fnStart).toBeGreaterThan(-1);
+    const effectStart = source.indexOf("useEffect(() => {", fnStart);
+    const effectEnd = source.indexOf("}, [active]);", effectStart);
+    expect(effectStart).toBeGreaterThan(fnStart);
+    expect(effectEnd).toBeGreaterThan(effectStart);
+
+    const ctorSites = [...source.matchAll(/new WebWakeLockCoordinator\(/g)];
+    expect(ctorSites.length).toBeGreaterThan(0);
+    for (const site of ctorSites) {
+      const index = site.index ?? -1;
+      expect(index).toBeGreaterThan(fnStart);
+      expect(index).toBeGreaterThan(effectStart);
+      expect(index).toBeLessThan(effectEnd);
+    }
   });
 
   it("the visibilitychange listener is removed before cleanup() runs", () => {
@@ -119,13 +138,15 @@ describe("useWakeLock (web) behavior", () => {
     vi.restoreAllMocks();
   });
 
-  // Review round 1, finding 5. StrictMode synchronously mounts, cleans up,
-  // and remounts the effect within a single commit — before either request's
-  // promise has a chance to resolve. The first coordinator's cleanup() runs
-  // before its request settles (cleanup-before-resolution), so that sentinel
-  // must be released immediately on arrival, never adopted; the second
-  // coordinator is never cleaned up and keeps its sentinel held.
-  it("StrictMode's mount→cleanup→mount issues two requests and releases only the first sentinel", async () => {
+  // Review round 1, finding 5 (updated round 2, finding 2). StrictMode
+  // synchronously mounts, cleans up, and remounts the effect within a
+  // single commit — entirely before any microtask runs, so the first
+  // coordinator's cleanup() lands before its request is even issued. Round
+  // 2's fix makes that request never get issued at all (rather than issued
+  // and immediately released), so only the second (never-cleaned-up)
+  // coordinator's request goes out, and no sentinel is ever released for a
+  // request that was never made.
+  it("StrictMode's mount→cleanup→mount issues exactly one request — the first coordinator's cleanup pre-empts its own", async () => {
     const sentinels = [fakeSentinel("A"), fakeSentinel("B")];
     let i = 0;
     requestMock.mockImplementation(() => Promise.resolve(sentinels[i++]));
@@ -137,8 +158,8 @@ describe("useWakeLock (web) behavior", () => {
       await flushMicrotasks();
     });
 
-    expect(requestMock).toHaveBeenCalledTimes(2);
-    expect(sentinels[0]?.release).toHaveBeenCalledTimes(1);
+    expect(requestMock).toHaveBeenCalledTimes(1);
+    expect(sentinels[0]?.release).not.toHaveBeenCalled();
     expect(sentinels[1]?.release).not.toHaveBeenCalled();
   });
 
