@@ -115,6 +115,21 @@ final class TindeqManager: NSObject {
     /// a genuinely fresh one instead of silently continuing to accumulate
     /// into the old owner's container.
     private var manualSessionOwnerUserId: UUID?
+    /// The target account of an account transition that `handleAccountTransition(to:)`
+    /// could not act on immediately because a rep was actively `measuring`
+    /// (#529 slice-2 review round 2, R2-F1). Dropping the transition there
+    /// silently reopened the exact misattribution this feature exists to
+    /// close: once the straddling rep ends, the session stays open under
+    /// the OLD owner with nothing left to notice the account has moved on —
+    /// on the hands-free path, `rearmHandsFreeAfterSave` re-arms
+    /// automatically, so every later pull would keep landing in the old
+    /// owner's session with NO further user action. `nil`/`false` means "no
+    /// transition pending"; a genuinely pending signed-out target is still
+    /// representable (`hasPendingAccountTransition == true`,
+    /// `pendingAccountTransitionUserId == nil`), which is why a bare
+    /// Optional can't double as its own "is anything pending" flag.
+    private var pendingAccountTransitionUserId: UUID?
+    private var hasPendingAccountTransition = false
     /// Test seam: production writes through CoreBluetooth; watch target tests
     /// inject this observer so the real command ordering is inspectable.
     private let commandWriter: ((Tindeq.Cmd) -> Void)?
@@ -385,21 +400,48 @@ final class TindeqManager: NSObject {
     /// `start()`/`armHandsFree()` opens a fresh session under them instead
     /// of silently continuing to accumulate into the old owner's.
     ///
-    /// Deliberately does nothing while a rep is actively `measuring`: that
+    /// Records rather than acts while a rep is actively `measuring`: that
     /// rep's Start already happened under the captured owner, and closing
     /// the session out from under it would clear `manualSessionOwnerUserId`
     /// before its own (still in-flight) Stop/save reads it — reopening the
     /// exact save-time-read bug this field exists to close, just for the
-    /// one rep straddling the transition; the next transition check (the
-    /// next auth event, or this rep's own eventual Stop) resolves it. An
-    /// armed-but-idle hands-free wait has made no such commitment yet (no
-    /// claim, no samples) — closing through it is safe, and just means the
-    /// new account has to re-arm.
+    /// one rep straddling the transition. `resolvePendingAccountTransitionIfNeeded()`
+    /// (#529 slice-2 review round 2 R2-F1) is what actually completes a
+    /// deferred transition, called from every point a rep ends — dropping it
+    /// here instead (the round-1 shape) left it silently lost: on the
+    /// hands-free path `rearmHandsFreeAfterSave` re-arms automatically, so
+    /// every later pull kept landing in the OLD owner's session with no
+    /// further user action at all. An armed-but-idle hands-free wait has
+    /// made no such commitment yet (no claim, no samples) — closing through
+    /// it is safe, and just means the new account has to re-arm.
     func handleAccountTransition(to userId: UUID?) {
         guard !persistenceOwnerAssigned, guidedClaims.active == nil else { return }
         guard let sessionOwner = manualSessionOwnerUserId, userId != sessionOwner else { return }
-        guard !measuring else { return }
+        guard !measuring else {
+            pendingAccountTransitionUserId = userId
+            hasPendingAccountTransition = true
+            return
+        }
         logSessionNow()
+    }
+
+    /// Completes a transition `handleAccountTransition(to:)` had to defer
+    /// while a rep was `measuring` (#529 slice-2 review round 2 R2-F1).
+    /// Called from every point a rep can end — the durable-save completion
+    /// (manual Stop, hands-free auto-rearm, and salvage, which all funnel
+    /// through `persistPreparedRecording`), a Stop that produced no
+    /// summary to persist, the 30-minute manual cap's no-save branch, and
+    /// the end of `handleTransportDisconnect` — so there is no rep-ending
+    /// path this can silently miss. Re-runs `handleAccountTransition`'s own
+    /// policy (never a different one): a safe no-op if the session already
+    /// closed some other way in the meantime, or a genuine close/log-held
+    /// if it's still open under the stale owner.
+    private func resolvePendingAccountTransitionIfNeeded() {
+        guard hasPendingAccountTransition, !measuring, saveOperationsInFlight == 0 else { return }
+        let target = pendingAccountTransitionUserId
+        hasPendingAccountTransition = false
+        pendingAccountTransitionUserId = nil
+        handleAccountTransition(to: target)
     }
 
     /// Synchronously tears down an account's transport and claims without
@@ -440,6 +482,8 @@ final class TindeqManager: NSObject {
         persistenceOwnerUserId = nil
         persistenceOwnerAssigned = false
         // manualSessionOwnerUserId is reset by clearSession() above.
+        pendingAccountTransitionUserId = nil
+        hasPendingAccountTransition = false
         pushForceBeat()
     }
 
@@ -517,6 +561,12 @@ final class TindeqManager: NSObject {
         guard let claim = repClaims.claimStop() else { return }
         if handsFreeRequested { handsFreeState = .stopping }
         guard let summary = stopTransport(endMs: reason.trimEndMs) else {
+            // #529 slice-2 review round 2 R2-F1: nothing was captured to
+            // persist, so no `persistPreparedRecording` completion will ever
+            // run for this rep — this IS the rep-ending point. Resolve
+            // before the re-arm check below for the same reason as the
+            // completion handler: a closed session cancels hands-free too.
+            resolvePendingAccountTransitionIfNeeded()
             if handsFreeRequested, transportConnected {
                 rearmHandsFreeAfterSave(afterStop: reason)
             }
@@ -770,6 +820,10 @@ final class TindeqManager: NSObject {
                     // save action the user did not tap.
                     self.repClaims.discard()
                     _ = self.stopTransport()
+                    // #529 slice-2 review round 2 R2-F1: nothing is
+                    // persisted on this branch, so this IS the rep-ending
+                    // point for any deferred account transition.
+                    self.resolvePendingAccountTransitionIfNeeded()
                 }
             }
         }
@@ -1123,6 +1177,17 @@ final class TindeqManager: NSObject {
             saving = saveOperationsInFlight > 0
             scheduleSavedMsgDismiss()
 
+            // #529 slice-2 review round 2 R2-F1: resolve any deferred
+            // account transition BEFORE the hands-free auto-rearm check
+            // below — `measuring` is already false here (this rep's own
+            // Stop set it), and `sessionCount` already reflects this rep
+            // (bumped above), so it's safe to close/log the session now. If
+            // it DOES close, `logSessionNow()`'s `cancelHandsFree()` clears
+            // `handsFreeRequested`, so `rearmHandsFreeAfterSave` below (which
+            // guards on it) correctly declines to re-arm instead of silently
+            // continuing the closed session under whoever pulls next.
+            resolvePendingAccountTransitionIfNeeded()
+
             if finishAfterSaves, saveOperationsInFlight == 0 {
                 logSessionAfterPendingSaves()
             } else if let rearmHandsFreeAfterStop {
@@ -1338,6 +1403,15 @@ extension TindeqManager: CBCentralManagerDelegate {
             repClaims.discard()
             guidedClaims.discardActive()
         }
+        // #529 slice-2 review round 2 R2-F1: unconditional and last, after
+        // every branch above — `measuring` was already set false at the top
+        // of this function, so this is always a valid rep-ending point. Safe
+        // regardless of which branch ran: a salvage branch already
+        // incremented `saveOperationsInFlight` (synchronously, before its
+        // own `Task`), so this correctly no-ops here and resolves instead
+        // from that salvage's own `persistPreparedRecording` completion,
+        // once `sessionCount` reflects it.
+        resolvePendingAccountTransitionIfNeeded()
         pushForceBeat()
     }
 

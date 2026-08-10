@@ -316,6 +316,224 @@ final class TindeqManualOwnershipTests: XCTestCase {
         )
     }
 
+    // MARK: #529 slice-2 review round 2 — handleAccountTransition(to:)
+    //
+    // Round 1 added `handleAccountTransition(to:)` but shipped it with no
+    // test of its own; round-2 review (R2-F2) named that gap as exactly why
+    // R2-F1 — the deferred transition being dropped on the floor once the
+    // straddling rep ended — went unnoticed. These pin the policy directly.
+
+    /// The named acceptance case: a transition arriving mid-rep must defer
+    /// (never touch the still-recording rep's owner), then resolve once that
+    /// rep actually ends — closing/logging the session under its held owner
+    /// — so a SEPARATE, later rep by the new account opens its own fresh
+    /// session instead of silently landing in the old one.
+    func testAccountTransitionDuringAMeasuringManualRepDefersThenResolvesAtStop() async throws {
+        let box = ManualOwnershipAccountBox()
+        let accountA = UUID()
+        let accountB = UUID()
+        box.current = accountA
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
+            userIdProvider: { box.current }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.start()
+        feed(manager, [(20, 0), (25, 500_000)])
+        XCTAssertEqual(manager.status, .measuring, "the rep must still be in flight when the transition arrives")
+
+        // The relay that flips `box.current` is the SAME event that reports
+        // the transition — mirrors `SendLogWatchApp`'s single `.onChange`.
+        box.current = accountB
+        manager.handleAccountTransition(to: accountB)
+        let sessionsBeforeStop = await sessions.count()
+        XCTAssertEqual(sessionsBeforeStop, 0, "a transition mid-rep must defer, not close the session out from under the recording rep")
+
+        manager.stopAndSave(reason: .userTapped)
+        try await waitUntil { await recordings.count() == 1 && !manager.saving }
+
+        let rows = await recordings.snapshot()
+        XCTAssertEqual(rows.first?.enqueuedUserId, accountA, "the straddling rep itself must still be attributed to the account that started it")
+
+        // The deferred transition resolves in the SAME completion that saved
+        // the straddling rep — the session must already be closed.
+        try await waitUntil { await sessions.count() == 1 }
+        let loggedSessions = await sessions.snapshot()
+        XCTAssertEqual(loggedSessions.first?.enqueuedUserId, accountA, "the session-completion row must be held under A, the account that opened it")
+        XCTAssertNil(manager.sessionId, "the deferred transition must close the session once the straddling rep ends")
+
+        // A genuinely NEW rep, under B (now the live account), must open its
+        // OWN session — never inherit A's.
+        manager.start()
+        feed(manager, [(18, 5_000_000), (22, 5_500_000)])
+        manager.stopAndSave(reason: .userTapped)
+        try await waitUntil { await recordings.count() == 2 && !manager.saving }
+        let allRows = await recordings.snapshot()
+        XCTAssertEqual(allRows.last?.enqueuedUserId, accountB, "B's post-transition activity must never inherit A's owner")
+    }
+
+    /// The worse-case named in the review: a transition mid-hands-free-pull
+    /// must not let the automatic re-arm keep silently accepting B's later
+    /// pulls into A's session with no further user action. Resolving the
+    /// transition at rep-end must itself cancel hands-free (`logSessionNow()`
+    /// → `cancelHandsFree()`), which is what actually breaks the loop.
+    func testAccountTransitionDuringAHandsFreePullDefersThenStopsTheAutoRearm() async throws {
+        let box = ManualOwnershipAccountBox()
+        let accountA = UUID()
+        let accountB = UUID()
+        box.current = accountA
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            armTimeoutSeconds: 600,
+            commandWriter: { _ in },
+            userIdProvider: { box.current }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.armHandsFree()
+        feed(manager, [(50, 0), (0, 500_000), (2.5, 1_000_000), (2.5, 1_600_000)])
+        XCTAssertEqual(manager.status, .measuring, "the pull must have promoted the armed stream to a recording")
+
+        box.current = accountB
+        manager.handleAccountTransition(to: accountB)
+        XCTAssertTrue(manager.handsFreeRequested, "a transition mid-pull must defer — hands-free stays live for the rep already in flight")
+
+        // Release grace elapses — same proven deltas as
+        // TindeqHandsFreeIntegrationTests.
+        feed(manager, [(30, 1_700_000), (0.5, 1_800_000), (0, 3_299_000)])
+        feed(manager, [(0, 3_300_000)])
+        try await waitUntil { await recordings.count() == 1 && !manager.saving }
+
+        let rows = await recordings.snapshot()
+        XCTAssertEqual(rows.first?.enqueuedUserId, accountA, "the straddling pull must still be attributed to A")
+
+        try await waitUntil { await sessions.count() == 1 }
+        XCTAssertFalse(
+            manager.handsFreeRequested,
+            "resolving the deferred transition must cancel hands-free, or every later pull by whoever's next keeps landing in A's session with no further action"
+        )
+        XCTAssertNil(manager.sessionId)
+
+        // Confirm the loop is genuinely broken: B has to explicitly re-arm,
+        // and that NEW arm captures B, not a resurrected A.
+        manager.armHandsFree()
+        feed(manager, [(40, 4_000_000), (0, 4_500_000), (3, 5_000_000), (3, 5_600_000)])
+        feed(manager, [(20, 5_700_000), (0.5, 5_800_000), (0, 7_299_000)])
+        feed(manager, [(0, 7_300_000)])
+        try await waitUntil { await recordings.count() == 2 && !manager.saving }
+        let allRows = await recordings.snapshot()
+        XCTAssertEqual(allRows.last?.enqueuedUserId, accountB, "B's re-armed pull must never inherit A's owner")
+    }
+
+    /// A transition with nothing captured at all (a fresh manager, or one
+    /// after Finish/discard) must be a genuine no-op — no session conjured
+    /// into existence, no queue call of any kind.
+    func testAccountTransitionWithNoOpenSessionIsANoOp() {
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
+            userIdProvider: { UUID() }
+        )
+
+        manager.handleAccountTransition(to: UUID())
+
+        XCTAssertNil(manager.sessionId)
+        XCTAssertEqual(manager.sessionCount, 0)
+    }
+
+    /// Same account signing in again (a token refresh, not a real switch)
+    /// must not disturb an open session at all.
+    func testAccountTransitionToTheSameOwnerIsANoOp() async throws {
+        let accountA = UUID()
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
+            userIdProvider: { accountA }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+        manager.start()
+        feed(manager, [(20, 0), (25, 500_000)])
+        manager.stopAndSave(reason: .userTapped)
+        try await waitUntil { await recordings.count() == 1 && !manager.saving }
+        let sessionIdBefore = manager.sessionId
+        XCTAssertNotNil(sessionIdBefore)
+
+        manager.handleAccountTransition(to: accountA)
+
+        XCTAssertEqual(manager.sessionId, sessionIdBefore, "the SAME account relaying again must not close the open session")
+        let sessionCountAfter = await sessions.count()
+        XCTAssertEqual(sessionCountAfter, 0, "nothing should have been logged")
+    }
+
+    /// While a guided run owns the manager (`persistenceOwnerAssigned`),
+    /// `handleAccountTransition` must defer entirely to
+    /// `GuidedForceRunner`'s own `authStateDidChange` — acting here too
+    /// would race two policies over the same state.
+    func testAccountTransitionDoesNothingWhileAGuidedRunOwnsTheManager() async throws {
+        let accountA = UUID()
+        let accountB = UUID()
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
+            userIdProvider: { accountA }
+        )
+        let runner = GuidedForceRunner(userIdProvider: { accountA })
+        XCTAssertTrue(
+            runner.start(protocolValue: shortMovementProtocol, tag: "Half crimp", side: "left", manager: manager)
+        )
+        XCTAssertTrue(runner.isActive)
+
+        manager.handleAccountTransition(to: accountB)
+
+        XCTAssertTrue(runner.isActive, "the manual-path transition handler must not touch a manager a guided run owns")
+        XCTAssertEqual(manager.status, .measuring)
+    }
+
+    /// An armed-but-idle hands-free wait has made no commitment yet (no
+    /// claim, no samples) — a transition must close through it immediately,
+    /// not defer, and the new account has to re-arm.
+    func testAccountTransitionClosesThroughAnArmedButIdleHandsFreeWaitImmediately() {
+        let accountA = UUID()
+        let accountB = UUID()
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            armTimeoutSeconds: 600,
+            commandWriter: { _ in },
+            userIdProvider: { accountA }
+        )
+        manager.liveTag = "Half crimp"
+        manager.armHandsFree()
+        XCTAssertEqual(manager.handsFreeState, .armed(aboveSinceMs: nil))
+
+        manager.handleAccountTransition(to: accountB)
+
+        XCTAssertFalse(manager.handsFreeRequested, "an armed-but-idle wait must close immediately, not defer — nothing was ever recorded under A")
+        XCTAssertNil(manager.sessionId)
+    }
+
     /// One set, one rep, short enough to complete synchronously via a single
     /// `advance(to:)` call — used by the F5 carry-over tests above, which
     /// only care about reaching `.completed`, not protocol shape.
