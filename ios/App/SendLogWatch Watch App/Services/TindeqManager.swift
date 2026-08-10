@@ -103,9 +103,17 @@ final class TindeqManager: NSObject {
     /// `captureManualSessionOwnerIfNeeded()` stops recapturing, so every
     /// later rep and the eventual session-completion row
     /// (`logSessionAfterPendingSaves`) inherit the SAME owner regardless of
-    /// who is signed in when they individually start or save. Reset happens
-    /// implicitly: `clearSession()` nils `sessionId`, so the next manual
-    /// start recaptures fresh for the next session.
+    /// who is signed in when they individually start or save.
+    ///
+    /// `clearSession()` nils this alongside `sessionId` (#529 slice-2 review
+    /// F1) — every reader resolves the owner BEFORE calling `clearSession()`,
+    /// so this can never observe a mid-read reset, but a stale non-nil value
+    /// surviving a CLOSED session used to leak into whatever opened next,
+    /// including under a completely different account. `handleAccountTransition(to:)`
+    /// is the other half (#529 slice-2 review F2): closing/logging an OPEN
+    /// session on an account change so a new account's later activity opens
+    /// a genuinely fresh one instead of silently continuing to accumulate
+    /// into the old owner's container.
     private var manualSessionOwnerUserId: UUID?
     /// Test seam: production writes through CoreBluetooth; watch target tests
     /// inject this observer so the real command ordering is inspectable.
@@ -184,15 +192,28 @@ final class TindeqManager: NSObject {
         sessionCount = 0
         depletion.reset()
         guidedClaims.reset()
+        // #529 slice-2 review F1: every reader of `manualSessionOwnerUserId`
+        // (`clearPersistenceOwner()`'s carry-over, `logSessionAfterPendingSaves`)
+        // resolves it BEFORE this function runs (both call sites read, then
+        // call `clearSession()`), so nil-ing it here is safe and closes a
+        // real cross-account leak: without this, a stale owner from a
+        // CLOSED session survived into whatever session opens next — even
+        // under a completely different account via a later guided run — and
+        // both readers had no way to tell "captured for THIS session" from
+        // "left over from the last one".
+        manualSessionOwnerUserId = nil
     }
 
     /// Captures `manualSessionOwnerUserId` for a NEW gauge session (#529
     /// slice 2) — a no-op once one is already open (`sessionId != nil`), so
     /// this only ever fixes the owner once per session, at the first
-    /// accepted manual `start()`/`armHandsFree()`, never re-deriving it for
-    /// later reps of the same session. Called before the synchronous claim,
-    /// so no await can run between "who is signed in" and "who owns this
-    /// measurement".
+    /// ACCEPTED manual `start()`/`armHandsFree()`, never re-deriving it for
+    /// later reps of the same session. Both call sites invoke this only
+    /// after their claim is accepted (#529 slice-2 review F6 — `start()`
+    /// calls it once `repClaims.begin` succeeds; `armHandsFree()` has no
+    /// further gate past its own guard) and before any `await`, so no
+    /// suspension can run between "who is signed in" and "who owns this
+    /// measurement", and a rejected call never mutates ownership state.
     private func captureManualSessionOwnerIfNeeded() {
         guard sessionId == nil else { return }
         manualSessionOwnerUserId = userIdProvider()
@@ -245,25 +266,31 @@ final class TindeqManager: NSObject {
             clearSession()
             return
         }
-        var pending = PendingTindeqSession.build(
+        // Capture A before the actor hop and before `clearSession()` (which
+        // nils `manualSessionOwnerUserId`) — passed straight into `build(...)`
+        // rather than assigned afterward (#529 slice-2 review F4:
+        // `PendingTindeqSession`'s memberwise init and `build(...)` both
+        // require this explicitly now, so a future call site cannot forget
+        // the post-hoc stamp and fall through to `UploadQueueEngine.enqueue`'s
+        // legacy nil→current-user fallback). A guided run's explicit
+        // assignment wins while it's still active (`logSessionNow` runs
+        // before `clearPersistenceOwner` on the guided completion path);
+        // otherwise this session's immutable manual owner, captured once at
+        // its first rep's start — never a live read, which is exactly the
+        // save-time misattribution this closes. `userIdProvider()` only
+        // backstops the case neither owner was ever captured (unreachable
+        // via the UI today, same as `WorkoutManager.endAndSave()`'s
+        // equivalent fallback).
+        let enqueuedUserId = persistenceOwnerAssigned
+            ? persistenceOwnerUserId
+            : (manualSessionOwnerUserId ?? userIdProvider())
+        let pending = PendingTindeqSession.build(
             sessionStartedAt: sessionStartedAt,
             recordingCount: sessionCount,
             rpe: predictedRPE.rpe,
-            groupId: groupId
+            groupId: groupId,
+            enqueuedUserId: enqueuedUserId
         )
-        // Capture A before the actor hop. UploadQueueEngine preserves this
-        // explicit stamp, so a delayed enqueue cannot become a B session.
-        // #529 slice 2: a guided run's explicit assignment wins while it's
-        // still active (`logSessionNow` runs before `clearPersistenceOwner`
-        // on the guided completion path); otherwise this session's immutable
-        // manual owner, captured once at its first rep's start — never a
-        // live read, which is exactly the save-time misattribution this
-        // closes. `userIdProvider()` only backstops the case neither owner
-        // was ever captured (unreachable via the UI today, same as
-        // `WorkoutManager.endAndSave()`'s equivalent fallback).
-        pending.enqueuedUserId = persistenceOwnerAssigned
-            ? persistenceOwnerUserId
-            : (manualSessionOwnerUserId ?? userIdProvider())
         clearSession()
         let generation = persistenceGeneration
         Task { @MainActor in
@@ -340,6 +367,41 @@ final class TindeqManager: NSObject {
         persistenceOwnerAssigned = false
     }
 
+    /// Reacts to a signed-in account change for the manual/hands-free paths
+    /// (#529 slice 2 review F2). A gauge session has no natural end of its
+    /// own — it spans the whole Progressor CONNECT, not one run — so nothing
+    /// closed an OPEN session when the signed-in account changed, and its
+    /// already-open container kept silently accepting whoever was next to
+    /// pull a rep or tap Finish. Only acts when no guided run has claimed
+    /// persistence (`persistenceOwnerAssigned`/`guidedClaims.active`):
+    /// `GuidedForceRunner`'s own `authStateDidChange` already owns that
+    /// decision via `discardWithoutSaving()`, and running both policies over
+    /// the same state at once would race.
+    ///
+    /// Policy mirrors slice 1: the already-open session's captured owner is
+    /// held — logged/queued under them, never rebound (`logSessionNow()`
+    /// already routes through `shouldDrain`'s account guard at drain time) —
+    /// while the container itself closes, so a genuinely NEW account's next
+    /// `start()`/`armHandsFree()` opens a fresh session under them instead
+    /// of silently continuing to accumulate into the old owner's.
+    ///
+    /// Deliberately does nothing while a rep is actively `measuring`: that
+    /// rep's Start already happened under the captured owner, and closing
+    /// the session out from under it would clear `manualSessionOwnerUserId`
+    /// before its own (still in-flight) Stop/save reads it — reopening the
+    /// exact save-time-read bug this field exists to close, just for the
+    /// one rep straddling the transition; the next transition check (the
+    /// next auth event, or this rep's own eventual Stop) resolves it. An
+    /// armed-but-idle hands-free wait has made no such commitment yet (no
+    /// claim, no samples) — closing through it is safe, and just means the
+    /// new account has to re-arm.
+    func handleAccountTransition(to userId: UUID?) {
+        guard !persistenceOwnerAssigned, guidedClaims.active == nil else { return }
+        guard let sessionOwner = manualSessionOwnerUserId, userId != sessionOwner else { return }
+        guard !measuring else { return }
+        logSessionNow()
+    }
+
     /// Synchronously tears down an account's transport and claims without
     /// entering any salvage or persistence path. Account changes use this
     /// instead of `disconnect()`: the latter is an ordinary transport
@@ -377,7 +439,7 @@ final class TindeqManager: NSObject {
         errorMsg = nil
         persistenceOwnerUserId = nil
         persistenceOwnerAssigned = false
-        manualSessionOwnerUserId = nil
+        // manualSessionOwnerUserId is reset by clearSession() above.
         pushForceBeat()
     }
 
@@ -387,11 +449,16 @@ final class TindeqManager: NSObject {
 
     func start() {
         guard status == .connected, !handsFreeRequested, !saving, guidedClaims.active == nil else { return }
-        captureManualSessionOwnerIfNeeded()
         savedMsgGeneration += 1
         savedMsg = nil
         resetRecordingBuffer()
+        // #529 slice-2 review F6: capture only once the claim is actually
+        // ACCEPTED, not on the guard above (a concurrent/racing rejection
+        // here must not mutate ownership state) — matches
+        // `WorkoutManager.start()`, which captures `ownerUserId` only past
+        // its own acceptance guard.
         guard repClaims.begin(tag: trimmedLiveTag, side: liveSide) != nil else { return }
+        captureManualSessionOwnerIfNeeded()
         write(.startWeight)
         measuring = true
         status = .measuring

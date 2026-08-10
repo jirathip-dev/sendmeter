@@ -214,6 +214,127 @@ final class TindeqManualOwnershipTests: XCTestCase {
         XCTAssertEqual(rows.last?.enqueuedUserId, accountB, "a NEW session started under B must capture B, not stay stuck on the previous session's A")
     }
 
+    // MARK: #529 slice-2 review F5 — clearPersistenceOwner()'s carry-over branch
+    //
+    // The review named three scenarios: (a) a manual rep continuing a
+    // guided run's still-open session while its last save is deferred, (b)
+    // the deferred session-completion row itself, (c) either with an
+    // already-captured manual owner present. (a) turned out not to be
+    // separately reachable: `start()`/`armHandsFree()` both refuse while
+    // `saving` is true (`!saving` in their guard), and the guided run's
+    // deferred completion keeps `saving` true for exactly as long as
+    // `sessionId` stays open on the carry-over path — so no manual rep can
+    // ever begin while that window is open. By the time a manual `start()`
+    // is accepted again, the deferred completion has already resolved and
+    // closed the session (or the test below's block is what's holding it
+    // open, which asserts (b) directly). (b) and (c) are the two that are
+    // independently reachable, and are what's tested here.
+
+    /// (b) The deferred guided session-completion row itself (built once the
+    /// blocked last rep's write finally settles) must carry the bridged
+    /// owner even if the active account changed WHILE it was deferred —
+    /// this is the exact reproduction from the F1 finding, now fixed.
+    func testDeferredGuidedSessionCompletionStampsTheBridgedOwnerAcrossALaterAccountSwitch() async throws {
+        let box = ManualOwnershipAccountBox()
+        let accountA = UUID()
+        box.current = accountA
+        let recordings = BlockingManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
+            userIdProvider: { box.current }
+        )
+        let runner = GuidedForceRunner(userIdProvider: { box.current })
+
+        XCTAssertTrue(
+            runner.start(protocolValue: shortMovementProtocol, tag: "Half crimp", side: "left", manager: manager)
+        )
+        let startedAt = try XCTUnwrap(runner.runState?.startedAt)
+        feed(manager, [(12, 0), (25, 100_000)])
+        runner.advance(to: startedAt.addingTimeInterval(shortMovementProtocol.durationS))
+        try await waitUntil { await recordings.count() == 1 && manager.saving }
+        XCTAssertEqual(runner.phase, .completed)
+
+        // The account switches WHILE the deferred session finish is still
+        // waiting on the blocked write.
+        box.current = UUID()
+
+        await recordings.releaseAll()
+        try await waitUntil { await sessions.count() == 1 }
+        let loggedSessions = await sessions.snapshot()
+        let logged = try XCTUnwrap(loggedSessions.first)
+        XCTAssertEqual(
+            logged.enqueuedUserId, accountA,
+            "clearPersistenceOwner()'s carry-over must protect the deferred session-completion row from a later account switch"
+        )
+    }
+
+    /// (c) The carry-over must never override an owner ALREADY captured for
+    /// the CURRENTLY open session — a manual rep that opened it first keeps
+    /// governing the session (and its completion row) even after a guided
+    /// run continues in the same connect under its own, different owner.
+    func testAnAlreadyCapturedManualOwnerIsNotOverriddenByClearPersistenceOwnersCarryOver() async throws {
+        let accountX = UUID()
+        let accountA = UUID()
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
+            userIdProvider: { accountX }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.start()
+        feed(manager, [(20, 0), (25, 500_000)])
+        manager.stopAndSave(reason: .userTapped)
+        try await waitUntil { await recordings.count() == 1 && !manager.saving }
+        XCTAssertNotNil(manager.sessionId, "the session must still be open after one manual rep — Finish was never tapped")
+
+        let runner = GuidedForceRunner(userIdProvider: { accountA })
+        XCTAssertTrue(
+            runner.start(protocolValue: shortMovementProtocol, tag: "Half crimp", side: "left", manager: manager)
+        )
+        let startedAt = try XCTUnwrap(runner.runState?.startedAt)
+        feed(manager, [(12, 5_000_000), (25, 5_100_000)])
+        runner.advance(to: startedAt.addingTimeInterval(shortMovementProtocol.durationS))
+        try await waitUntil { await sessions.count() == 1 && !manager.saving }
+
+        let rows = await recordings.snapshot()
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.last?.enqueuedUserId, accountA, "the guided run's own rep is still stamped its own explicit owner while active")
+
+        let loggedSessions = await sessions.snapshot()
+        let logged = try XCTUnwrap(loggedSessions.first)
+        XCTAssertEqual(
+            logged.enqueuedUserId, accountX,
+            "the session's already-captured manual owner must win — clearPersistenceOwner()'s carry-over only fills in a NIL owner"
+        )
+    }
+
+    /// One set, one rep, short enough to complete synchronously via a single
+    /// `advance(to:)` call — used by the F5 carry-over tests above, which
+    /// only care about reaching `.completed`, not protocol shape.
+    private var shortMovementProtocol: WatchForceProtocol {
+        WatchForceProtocol(
+            id: "carry-over-movement",
+            name: "Carry-over movement",
+            holdS: 0,
+            reps: 1,
+            sets: 1,
+            restRepsS: 0,
+            restSetsS: 0,
+            mode: .reverseAction,
+            cadenceOutS: 3,
+            cadenceReturnS: 1,
+            prepareS: 0
+        )
+    }
+
     private func feed(_ manager: TindeqManager, _ samples: [(Float, UInt32)]) {
         var data = Data([0x01, UInt8(samples.count * 8)])
         for (kg, us) in samples {
@@ -269,4 +390,31 @@ private actor ManualOwnershipSessionQueue: TindeqSessionQueueing {
 
     func count() -> Int { items.count }
     func snapshot() -> [PendingTindeqSession] { items }
+}
+
+/// Holds every `enqueue` call open on a continuation until `releaseAll()` —
+/// used by the F5 carry-over tests to keep a guided run's last save
+/// `saveOperationsInFlight > 0` so its session finish genuinely defers,
+/// mirroring `BlockingOwnershipRecordingQueue` in
+/// `GuidedForceRunnerOwnershipTests.swift` (Swift's top-level `private` is
+/// file-scoped, so this file needs its own copy).
+private actor BlockingManualOwnershipRecordingQueue: TindeqRecordingQueueing {
+    private var items: [PendingTindeqRecording] = []
+    private var waiters: [CheckedContinuation<QueuePersistOutcome, Never>] = []
+
+    func enqueue(_ pending: PendingTindeqRecording) async -> QueuePersistOutcome {
+        items.append(pending)
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func count() -> Int { items.count }
+    func snapshot() -> [PendingTindeqRecording] { items }
+
+    func releaseAll() {
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume(returning: .queued) }
+    }
 }

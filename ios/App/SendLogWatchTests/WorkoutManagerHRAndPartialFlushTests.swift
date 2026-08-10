@@ -650,5 +650,19 @@ final class WorkoutManagerPartialFlushOwnershipTests: XCTestCase {
             events, ["start", "committed"],
             "a coalesced rerun must not fire once the active account no longer matches the run's captured owner"
         )
+
+        // #529 slice-2 review F3: a skipped rerun must resolve the drain
+        // (`CoalescingDrain.running` back to false), not merely decline to
+        // fire — otherwise this assertion above would also pass on the
+        // wedged, pre-fix code, since a wedged drain never starts a rerun
+        // either. Prove the drain is actually usable again: restore the
+        // owner and request one more flush; it must actually run.
+        box.current = ownerA
+        manager.flushPartial()
+        let finalEvents = await order.waitUntilCount(4, orTimeout: .seconds(10)) // start, committed, start, committed
+        XCTAssertEqual(
+            finalEvents, ["start", "committed", "start", "committed"],
+            "durable flushing must not be wedged by a coalesced rerun that declined to run — a later flush on the SAME workout must still work"
+        )
     }
 }

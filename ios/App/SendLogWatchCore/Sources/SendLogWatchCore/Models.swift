@@ -120,12 +120,23 @@ public nonisolated struct PendingTindeqSession: Codable, Sendable {
     public var note: String
     public var groupId: UUID          // Tindeq gauge session link — must survive the upload
     /// Which account was signed in when this session was persisted to disk
-    /// (issue #158) — stamped by `PendingSessionQueue.persist`, checked by
-    /// `drain()` so a session queued under one account can't silently upload
-    /// under whichever account happens to be signed in when the queue next
-    /// drains. `nil` only for items written before this field existed
-    /// (legacy on-disk files); see `shouldDrain`.
-    public var enqueuedUserId: UUID? = nil
+    /// (issue #158), checked by `drain()` so a session queued under one
+    /// account can't silently upload under whichever account happens to be
+    /// signed in when the queue next drains — see `shouldDrain`. Stamped by
+    /// `TindeqManager` on the same synchronous MainActor turn `build(...)`
+    /// runs on (#529 slice 2 — the immutable owner captured at the session's
+    /// first rep, held fixed through a later account transition), not read
+    /// lazily afterward.
+    ///
+    /// Deliberately has NO default on the memberwise init (#529 slice 2,
+    /// mirrors `WorkoutSaveBundle.enqueuedUserId` / `PendingTindeqRecording
+    /// .enqueuedUserId`): every production constructor must pass this
+    /// explicitly, so a future call site cannot forget to stamp an owner and
+    /// silently fall back to `UploadQueueEngine.enqueue`'s nil→current-user
+    /// stamp, which is reserved for genuinely legacy on-disk files. `nil`
+    /// remains a legal VALUE here (a legacy file, or a session logged while
+    /// nobody was signed in).
+    public var enqueuedUserId: UUID?
 
     public init(
         id: UUID,
@@ -135,7 +146,7 @@ public nonisolated struct PendingTindeqSession: Codable, Sendable {
         rpeConfirmed: Bool? = nil,
         note: String,
         groupId: UUID,
-        enqueuedUserId: UUID? = nil
+        enqueuedUserId: UUID?
     ) {
         self.id = id
         self.date = date
@@ -157,13 +168,17 @@ public nonisolated struct PendingTindeqSession: Codable, Sendable {
     /// moment it happened to be logged.
     /// `rpeConfirmed` defaults to false because since #280 the watch never
     /// asks: every session it logs carries a predicted (or fallback) RPE.
+    /// `enqueuedUserId` has no default (#529 slice 2) — the caller must pass
+    /// the account this session's ownership was captured under, not leave it
+    /// to a later post-hoc assignment a future call site could forget.
     public static func build(
         sessionStartedAt: Date?,
         now: Date = Date(),
         recordingCount: Int,
         rpe: Double,
         rpeConfirmed: Bool = false,
-        groupId: UUID
+        groupId: UUID,
+        enqueuedUserId: UUID?
     ) -> PendingTindeqSession {
         let started = sessionStartedAt ?? now
         let rawMinutes = Int((now.timeIntervalSince(started) / 60).rounded())
@@ -175,7 +190,8 @@ public nonisolated struct PendingTindeqSession: Codable, Sendable {
             rpe: rpe,
             rpeConfirmed: rpeConfirmed,
             note: note,
-            groupId: groupId
+            groupId: groupId,
+            enqueuedUserId: enqueuedUserId
         )
     }
 }

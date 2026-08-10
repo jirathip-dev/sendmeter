@@ -67,6 +67,13 @@ struct SendLogWatchApp: App {
         .onChange(of: auth.state) { _, _ in
             forceProtocolCatalog.synchronizeAccountScope()
             guidedForceRunner.authStateDidChange(to: auth.state)
+            // #529 slice-2 review F2: a manual/hands-free gauge session has
+            // no natural end of its own (it spans the whole connect, not one
+            // run) — called AFTER the guided runner so persistenceOwnerAssigned
+            // truthfully reflects whether ITS teardown (discardWithoutSaving())
+            // already ran this same event; tindeq.handleAccountTransition
+            // no-ops while a guided run still owns the manager either way.
+            tindeq.handleAccountTransition(to: auth.state.userId)
         }
     }
 }
