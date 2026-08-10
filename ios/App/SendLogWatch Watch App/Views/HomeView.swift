@@ -178,6 +178,13 @@ private struct ActionsView: View {
     /// nil until the `.task` below resolves (review F22) — unknown must not
     /// render as `.current`/healthy, so the row simply doesn't show until
     /// there's an actual reading, rather than defaulting to "fine".
+    /// #481 (#472 F23): this is a snapshot taken once by `.task` when the view
+    /// appears, not re-evaluated while it stays on screen — a queue that goes
+    /// stale (or recovers) mid-appearance won't move this row until the next
+    /// appearance, and `staleSyncMessage`'s "retrying automatically" is only
+    /// ever true as of that one fetch. Recorded rather than fixed: a live
+    /// refresh needs a real trigger (a timer or a queue-state publisher), not
+    /// a one-line change.
     @State private var syncFreshness: SyncFreshness?
     /// Whether `OfflineQueue` currently has a backoff retry armed (review
     /// F18) — read alongside `syncFreshness` so the row's copy can say

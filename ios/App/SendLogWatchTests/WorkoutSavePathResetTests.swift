@@ -172,7 +172,6 @@ final class WorkoutManagerOwnershipTests: XCTestCase {
             await gate.waitUntilReleased()
             throw WorkoutSavePathAuthorizationFailure.unavailable
         }
-
         async let first: Void = manager.start()
 
         // Do not rely on async-let scheduling or a timing yield: the first

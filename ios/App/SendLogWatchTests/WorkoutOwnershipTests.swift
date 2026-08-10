@@ -217,24 +217,16 @@ private actor AuthorizationGate {
     }
 }
 
-/// Issue #476: the fusion timer used to be invalidated only in `end()` — any
-/// other path to deallocation (skipping an explicit stop) left it registered
-/// on the run loop, which retains it and keeps firing into a `[weak self]`
-/// that's already nil.
-final class WorkoutManagerDeinitTests: XCTestCase {
-    @MainActor
-    func testFusionTimerIsInvalidatedWhenTheManagerDeinits() {
-        var manager: WorkoutManager? = WorkoutManager()
-        manager?.startFusion()
-        let timer = manager?.fusionTimer
-        XCTAssertEqual(timer?.isValid, true, "startFusion() should have created a live timer")
-        manager = nil
-        XCTAssertEqual(
-            timer?.isValid, false,
-            "deinit must invalidate fusionTimer, or the run loop keeps firing it forever"
-        )
-    }
-}
+// Issue #476 added a `deinit { fusionTimer?.invalidate() }` and this test to
+// pin it, for the `WorkoutManager`-owned-by-a-navigationDestination shape of
+// that era, where the manager really could deallocate mid-workout. #481
+// (cross-wave residual F6) found that guard dead post-#476's own hoist to
+// App scope (`WorkoutManager` now lives for the process) and not actually
+// thread-safe where it was reachable (`Timer.invalidate()` needs the
+// installing thread; `deinit` carries no isolation) — so the deinit was
+// removed rather than kept as a guard that only looked active. `end()` /
+// `stopRecordingAndAwaitInFlightPartial()` is the one real invalidation path
+// now, and `WorkoutManagerPartialFlushOrderingTests` already covers it.
 
 /// #480 review F2: `WorkoutSessionActivationTests` (`SendLogWatchCore`)
 /// proves the ALGORITHM — a `beginCollection` failure detaches, ends, and
@@ -326,5 +318,91 @@ final class WorkoutSessionActivationWiringTests: XCTestCase {
         let discard = try XCTUnwrap(closureBody(labeled: "discardBuilder", in: callBody), "missing discardBuilder: argument")
         XCTAssertTrue(discard.contains("builder.discardWorkout()"), "discardBuilder: must discard the SAME builder this call started")
         XCTAssertFalse(discard.contains(".end()"), "endSession: and discardBuilder: must not be transposed")
+    }
+}
+
+/// #481 review round 2 (F5/F6/F7): a first attempt at this closed the "no
+/// real network in unit tests" hole for `phaseWarmer` by statically
+/// SCANNING the test target's source for a missed stub — text-based, same
+/// idiom `WorkoutSessionActivationWiringTests` above uses to pin production
+/// wiring. It turned out evadable by ordinary XCTest idioms the two passes
+/// didn't model (`setUp()` + a stored property, a computed-property
+/// factory, a cross-file factory, a factory that calls `start()` itself)
+/// and — worse — its own parser silently stopped partway through THIS file
+/// on a doc comment containing the words "func ", so the tail of the file
+/// (including the scanner's own tests) went unscanned with no failure and
+/// no diagnostic. A pin that can silently stop scanning is not a pin.
+///
+/// The actual fix is constructional, not conventional (see
+/// `WorkoutManager.phaseWarmer`'s doc comment): the DEFAULT closure checks
+/// `WorkoutManager.isRunningUnderTestHost` and returns the fallback value
+/// directly, before ever reaching `Repo`. That makes every construction
+/// shape — present or future, in this file or any other — safe with nothing
+/// to remember and nothing to scan for, so there is no scanner to maintain
+/// here any more.
+@MainActor
+final class WorkoutManagerPhaseWarmerConstructionalSafetyTests: XCTestCase {
+    /// #481 review round 3 (F8): the ORIGINAL version of this file only had
+    /// `testDefaultPhaseWarmerIsInertUnderTest` below, asserting on
+    /// `phaseWarmer()`'s RETURN VALUE — but `"capacity"` is also what the
+    /// UNGUARDED path returns in every environment this suite runs in (a
+    /// dead port throws and `try?` swallows it; a live-but-unauthenticated
+    /// stack answers 401 and does the same; `Repo.fetchCurrentPhase` itself
+    /// falls back to `"capacity"` on an empty result). That assertion cannot
+    /// fail whether the guard is present, inverted, or deleted — a pin that
+    /// cannot fail is not a pin. This asserts on the CONDITION instead — the
+    /// thing that can actually regress.
+    func testWorkoutManagerIsRunningUnderTestHostDuringTests() {
+        XCTAssertTrue(
+            WorkoutManager.isRunningUnderTestHost,
+            "XCTest is linked into this process, so isRunningUnderTestHost must read true here — if it doesn't, phaseWarmer's default (and anything else that guards on it) silently take the production, network-reaching path during every test run"
+        )
+    }
+
+    /// Pins the WIRING, not just the predicate's own value: `phaseWarmer`'s
+    /// default must actually consult `isRunningUnderTestHost` before it ever
+    /// mentions `Repo` — someone could leave the static property correct
+    /// while the closure that's supposed to check it drifts (a copy-paste
+    /// onto a similar closure, a merge conflict resolved wrong). NOT the
+    /// general-purpose, `"func "`-substring parser round 2 deleted (it
+    /// silently stopped scanning this very file) — a handful of literal-text
+    /// assertions against one known-clean, narrow region, same idiom
+    /// `WorkoutSessionActivationWiringTests` above already uses on this same
+    /// production file.
+    func testPhaseWarmerDefaultConsultsIsRunningUnderTestHostBeforeRepo() throws {
+        let sourcePath = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // SendLogWatchTests/
+            .deletingLastPathComponent() // App/
+            .appendingPathComponent("SendLogWatch Watch App/Services/WorkoutManager.swift")
+        let source = try String(contentsOf: sourcePath, encoding: .utf8)
+
+        guard let propertyRange = source.range(of: "var phaseWarmer: () async -> String = {") else {
+            return XCTFail("WorkoutManager.swift no longer declares phaseWarmer this way — this pin's wiring check is stale")
+        }
+        guard let closingBrace = source.range(of: "\n    }", range: propertyRange.upperBound..<source.endIndex) else {
+            return XCTFail("could not isolate phaseWarmer's default closure body")
+        }
+        let body = source[propertyRange.upperBound..<closingBrace.lowerBound]
+
+        guard let testHostRange = body.range(of: "isRunningUnderTestHost") else {
+            return XCTFail("phaseWarmer's default must consult WorkoutManager.isRunningUnderTestHost, or a test host is no longer guaranteed to skip the network")
+        }
+        guard let repoRange = body.range(of: "Repo.") else {
+            return XCTFail("phaseWarmer's default no longer mentions Repo — this pin's wiring check is stale")
+        }
+        XCTAssertLessThan(
+            testHostRange.lowerBound, repoRange.lowerBound,
+            "phaseWarmer's default must check isRunningUnderTestHost BEFORE reaching Repo, not after"
+        )
+    }
+
+    /// The integration-level sanity check this whole mechanism exists to
+    /// satisfy — kept alongside the two pins above, not in place of them,
+    /// since F8 found the return value alone degenerate as a REGRESSION pin
+    /// but it is still the actual observable behavior `start()` depends on.
+    func testDefaultPhaseWarmerIsInertUnderTest() async {
+        let manager = WorkoutManager()
+        let phase = await manager.phaseWarmer()
+        XCTAssertEqual(phase, "capacity", "the default phaseWarmer must resolve to the fallback value under a test host, not by reaching Repo.fetchCurrentPhase() over the network")
     }
 }

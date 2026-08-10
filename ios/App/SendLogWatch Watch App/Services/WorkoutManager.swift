@@ -170,6 +170,12 @@ final class WorkoutManager: NSObject {
     /// actually makes the "once" behavior real — is what SendLogWatchTests
     /// asserts on instead.
     var hrMissingDateIntervalLogged = false
+    /// #481 (#477 F4 follow-up): `hrMissingDateIntervalLogged` only says
+    /// whether Console has been told at all — it can't distinguish a single
+    /// blip from a whole workout of untimestampable readings. This counts
+    /// every occurrence regardless of the one-shot log gate; `end()` reports
+    /// the total.
+    var hrMissingDateIntervalCount = 0
     // MARK: Partial-flush ordering (#477)
     //
     // `flushPartial()` used to fire an unconstrained `Task.detached` every
@@ -219,6 +225,41 @@ final class WorkoutManager: NSObject {
     var partialUploader: (ClimbWorkoutPartialUpsert) async -> Void = { partial in
         try? await Repo.flushPartialWorkout(partial)
     }
+    /// #481 review F8: extracted out of `phaseWarmer`'s default closure so
+    /// the CONDITION — the thing that can regress (inverted, deleted by a
+    /// well-meaning "no test-awareness in production code" tidy-up) — is
+    /// independently inspectable and assertable, rather than folded into a
+    /// closure whose only observable output (`"capacity"`) is also what the
+    /// unguarded path returns in every environment this suite runs in (dead
+    /// port → `try?` swallows the failure; a live-but-unauthenticated stack
+    /// → 401 → same; `Repo.fetchCurrentPhase` itself falls back to
+    /// `"capacity"` on an empty result). A pin on the return value alone
+    /// cannot fail; `testWorkoutManagerIsRunningUnderTestHostDuringTests`
+    /// (`WorkoutOwnershipTests.swift`) asserts on this property directly.
+    static let isRunningUnderTestHost = NSClassFromString("XCTestCase") != nil
+    /// Not `private`: `WorkoutOwnershipTests.swift` calls this directly
+    /// (`@testable import` only reaches `internal`+) to prove the DEFAULT —
+    /// not an override — is what resolves under test. `start()` fires this
+    /// in the background so save-on-stop needs no network round trip. #481:
+    /// left as a bare `Repo.fetchCurrentPhase()` call, this dialed
+    /// 127.0.0.1:54321 from every test that calls `start()` — a measured
+    /// 2-in-5 flake at ~32s/run. #481 review F1/F5/F6: an injectable
+    /// per-instance property only closes that hole for constructions that
+    /// remember to override it — a round-1 fix that instead tried to
+    /// STATICALLY SCAN the test target for missed overrides turned out to be
+    /// evadable by ordinary XCTest idioms (`setUp()` + a stored property, a
+    /// computed-property factory, a cross-file factory, a factory that calls
+    /// `start()` itself) and could silently stop scanning partway through a
+    /// file — a pin that can go quiet is not a pin. The actual fix is
+    /// constructional, not conventional: the DEFAULT closure itself checks
+    /// `isRunningUnderTestHost` and returns the same fallback `start()`
+    /// already used for a failed fetch, before ever reaching `Repo`. This
+    /// makes every construction shape safe — including ones nobody has
+    /// written yet — with nothing to remember and nothing to scan for.
+    var phaseWarmer: () async -> String = {
+        guard !WorkoutManager.isRunningUnderTestHost else { return "capacity" }
+        return (try? await Repo.fetchCurrentPhase()) ?? "capacity"
+    }
     /// Double haptic when the rest countdown hits zero (#476 F5: hoisted out
     /// of WorkoutLiveView, same reasoning as the save path — a rest alarm
     /// scheduled while the view was on screen used to be silently cancelled
@@ -239,14 +280,29 @@ final class WorkoutManager: NSObject {
         super.init()
     }
 
-    /// `end()` already invalidates the fusion timer, but that's not the only
-    /// way this object goes away — invalidate here too, or a path that skips
-    /// `end()` (deallocation without an explicit stop) leaves the timer
-    /// registered on the run loop, which retains it and keeps firing forever
-    /// into a `[weak self]` that's already nil.
-    deinit {
-        fusionTimer?.invalidate()
-    }
+    // #481: this used to carry a `deinit { fusionTimer?.invalidate() }`,
+    // added when `WorkoutManager` was `@State` inside `WorkoutLiveView` (a
+    // navigationDestination) and really could deallocate mid-workout (a nav
+    // pop). It was also never correctly thread-safe where it WAS reachable:
+    // `Timer.invalidate()` must be called from the thread that installed the
+    // timer (`startFusion()`, always MainActor-adjacent), but `deinit`
+    // carries no isolation and could in principle run on whatever thread
+    // drops the last strong reference.
+    //
+    // The invariant that makes it safe to remove — no view owns its own
+    // `WorkoutManager`, so nothing deallocates it mid-workout — is #476's
+    // rule, not a fact about which views happen to exist today: any view
+    // that ever gains `@State private var workout = WorkoutManager()` and
+    // calls `start()` reintroduces both #476's orphaned-session bug and the
+    // orphaned run-loop timer this `deinit` used to mop up, with nothing left
+    // to catch it. Today the rule is pinned only per-view, by
+    // `testWorkoutLiveViewReadsWorkoutManagerFromEnvironmentNotState` /
+    // `testRootViewReadsWorkoutManagerFromEnvironmentNotState`
+    // (`WorkoutOwnershipTests.swift`) — a NEW view needs its own such pin, or
+    // its own `deinit` guard, not a free pass from this comment. `end()` (and
+    // `stopRecordingAndAwaitInFlightPartial()`) is the one real invalidation
+    // path for every view that follows the rule, and it already runs on
+    // MainActor.
 
     func requestAuthorization() async throws {
         if let authorizationRequestOverride {
@@ -313,7 +369,7 @@ final class WorkoutManager: NSObject {
         // outlives any single workout, so a slow fetch from a PREVIOUS start
         // must not land on the workout that's running by the time it resolves.
         Task {
-            let phase = (try? await Repo.fetchCurrentPhase()) ?? "capacity"
+            let phase = await self.phaseWarmer()
             guard self.startGuard.isCurrent(generation) else { return }
             self.cachedPhase = phase
         }
@@ -324,6 +380,7 @@ final class WorkoutManager: NSObject {
         hrTimeline = HeartRateTimeline()
         lastMotionSample = nil
         hrMissingDateIntervalLogged = false
+        hrMissingDateIntervalCount = 0
         activeKcal = 0
         elapsed = 0
         relativeAltitude = 0
@@ -613,6 +670,29 @@ final class WorkoutManager: NSObject {
         }
 
         let attempts = detector.finalize()
+        // #481: `hitCap` (SendLogWatchCore's `Attempt.hitCap`, #473) had no
+        // consumer — every finalized attempt carried "closed via a duration
+        // cap, not a genuine end signal" and nothing ever read it. Same
+        // one-shot-per-workout Console breadcrumb as `hrMissingDateInterval`
+        // below, not user-facing: a caller was always meant to report this,
+        // not silently accept the clamp. #481 review F3: a merge of a capped
+        // fragment with a later clean-closing one (< `mergeGapS` apart, same
+        // source) keeps only the LAST fragment's `hitCap`
+        // (`AttemptDetector.swift`'s merge step, documented there as
+        // diagnostic-only) — so this count can under-report a real cap hit
+        // that got absorbed into a merged attempt. "at least" says that
+        // honestly instead of implying an exact count.
+        let cappedAttemptCount = attempts.filter(\.hitCap).count
+        if cappedAttemptCount > 0 {
+            Self.log.warning("at least \(cappedAttemptCount) attempt(s) this workout closed on a duration cap, not a genuine end signal (#481)")
+        }
+        // #481 (#477 F4 follow-up): `reportHRMissingDateIntervalOnce()` logs
+        // only once per workout, so Console can't tell a single blip from a
+        // whole workout of untimestampable readings. The count answers that.
+        let missingDateIntervalCount = hrMissingDateIntervalCount
+        if missingDateIntervalCount > 0 {
+            Self.log.warning("HR quantity delivered with no mostRecentQuantityDateInterval() \(missingDateIntervalCount) time(s) this workout — readings discarded, not trusted (#477/#481)")
+        }
         let avgHR = builder.statistics(for: HKQuantityType(.heartRate))?
             .averageQuantity()?
             .doubleValue(for: .count().unitDivided(by: .minute()))
@@ -851,6 +931,7 @@ final class WorkoutManager: NSObject {
     /// logs once per workout (#477 review F4) — Console/os_log output isn't
     /// otherwise observable from a unit test.
     func reportHRMissingDateIntervalOnce() {
+        hrMissingDateIntervalCount += 1
         guard !hrMissingDateIntervalLogged else { return }
         hrMissingDateIntervalLogged = true
         Self.log.warning("HR quantity delivered with no mostRecentQuantityDateInterval() — reading discarded, not trusted (#477)")
