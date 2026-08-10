@@ -53,21 +53,36 @@ function recordHealthSync(source: HealthSyncSource, changed = false): void {
   }
 }
 
-let readinessListenerStarted = false;
+let readinessListenerRegistration: Promise<void> | null = null;
 
 /// Native watch requests execute entirely in the iPhone plugin. This listener
 /// is only the phone-UI notification/re-read hook; it does not perform HealthKit
 /// work and never carries credentials or raw samples. The local latest-result
 /// read covers a result that completed before the WebView mounted its listener.
-function ensureReadinessListener(): void {
-  if (!IS_NATIVE || readinessListenerStarted) return;
-  readinessListenerStarted = true;
-  void SendLogHealth.addListener(
+///
+/// #534: the dedupe guard used to be an optimistic boolean set before
+/// `addListener` resolved — a rejected first attempt (transient bridge
+/// failure, staggered native/web version) left it `true` forever, silently
+/// disabling readiness notifications for the rest of the process. The guard
+/// is now the registration promise itself, assigned synchronously before any
+/// microtask runs, so concurrent callers coalesce onto the one in-flight
+/// attempt (CLAUDE.md's #1 defect class — a dedupe guard must be set before
+/// the first await). On rejection the guard is cleared so the next
+/// auth/foreground call retries; on success it stays set forever so a repeat
+/// call is a no-op and never installs a second listener.
+export function ensureReadinessListener(): void {
+  if (!IS_NATIVE || readinessListenerRegistration) return;
+  readinessListenerRegistration = SendLogHealth.addListener(
     "readinessRefresh",
     (result: ReadinessRefreshResult) => {
       if (result.status === "success") recordHealthSync("watch", true);
     },
-  );
+  )
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      readinessListenerRegistration = null;
+      console.error("[health] readiness listener registration failed", error);
+    });
   void SendLogHealth.getLatestReadiness()
     .then((result) => {
       if (result?.status === "success") recordHealthSync("watch", true);

@@ -79,3 +79,102 @@ describe("resyncHealthHistory", () => {
     expect(result.message).toMatch(/genuinely empty/);
   });
 });
+
+/// #534: the dedupe guard for the process-lifetime readiness listener used to
+/// be an optimistic boolean flipped to `true` before `addListener` resolved —
+/// a rejected first attempt left it stuck, permanently disabling readiness
+/// notifications. These pin the fix: the guard is the registration promise
+/// itself, cleared on rejection so a later call retries, and never cleared on
+/// success so a repeat call can't install a second listener.
+describe("ensureReadinessListener", () => {
+  afterEach(() => {
+    vi.resetModules();
+    vi.doUnmock("@capacitor/core");
+    vi.doUnmock("sendlog-health");
+    vi.restoreAllMocks();
+  });
+
+  const mockNative = (addListener: ReturnType<typeof vi.fn>) => {
+    vi.doMock("@capacitor/core", () => ({
+      Capacitor: { isNativePlatform: () => true },
+    }));
+    const getLatestReadiness = vi.fn().mockResolvedValue(null);
+    vi.doMock("sendlog-health", () => ({
+      SendLogHealth: { addListener, getLatestReadiness },
+    }));
+    return { getLatestReadiness };
+  };
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("is a no-op on web — never touches the native plugin", async () => {
+    vi.doMock("@capacitor/core", () => ({
+      Capacitor: { isNativePlatform: () => false },
+    }));
+    const addListener = vi.fn();
+    vi.doMock("sendlog-health", () => ({
+      SendLogHealth: { addListener, getLatestReadiness: vi.fn() },
+    }));
+
+    const { ensureReadinessListener } = await import("./healthSync");
+    ensureReadinessListener();
+    await flush();
+    expect(addListener).not.toHaveBeenCalled();
+  });
+
+  it("a rejected first attempt does not permanently disable notifications — a later call retries and installs exactly one listener", async () => {
+    const addListener = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("bridge failure"))
+      .mockResolvedValue({ remove: vi.fn() });
+    mockNative(addListener);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { ensureReadinessListener } = await import("./healthSync");
+
+    ensureReadinessListener();
+    await flush();
+    expect(addListener).toHaveBeenCalledTimes(1);
+    // The rejection must be handled, not left as an unhandled rejection.
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    ensureReadinessListener();
+    await flush();
+    expect(addListener).toHaveBeenCalledTimes(2);
+
+    // Success must stick: a further call installs no third listener.
+    ensureReadinessListener();
+    await flush();
+    expect(addListener).toHaveBeenCalledTimes(2);
+  });
+
+  it("concurrent ensure calls coalesce onto one in-flight registration", async () => {
+    const addListener = vi.fn().mockResolvedValue({ remove: vi.fn() });
+    mockNative(addListener);
+
+    const { ensureReadinessListener } = await import("./healthSync");
+
+    ensureReadinessListener();
+    ensureReadinessListener();
+    ensureReadinessListener();
+    await flush();
+
+    expect(addListener).toHaveBeenCalledTimes(1);
+  });
+
+  it("repeated successful calls do not duplicate listeners", async () => {
+    const addListener = vi.fn().mockResolvedValue({ remove: vi.fn() });
+    mockNative(addListener);
+
+    const { ensureReadinessListener } = await import("./healthSync");
+
+    ensureReadinessListener();
+    await flush();
+    ensureReadinessListener();
+    await flush();
+    ensureReadinessListener();
+    await flush();
+
+    expect(addListener).toHaveBeenCalledTimes(1);
+  });
+});
