@@ -19,38 +19,54 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("LiveWorkoutTerminalRetryTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        // `PendingSyncCache.shared` is process-wide (#549 finding 6) — reset
+        // it so a `.liveWorkoutTerminal` slot left behind by another test
+        // can't leak into this one's assertions.
+        PendingSyncCache.shared.reset()
     }
 
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: tempDir)
+        PendingSyncCache.shared.reset()
     }
 
-    private func sampleRow(runId: UUID = UUID(), sequence: Int = 7, userId: UUID? = nil) -> LiveWorkoutUpsert {
+    private func sampleRow(
+        runId: UUID = UUID(), sequence: Int = 7, userId: UUID? = nil,
+        startedAt: Date = Date(timeIntervalSince1970: 1_800_000_000)
+    ) -> LiveWorkoutUpsert {
         LiveWorkoutUpsert(
             userId: userId ?? testUserId, workoutId: runId, runId: runId, sequence: sequence,
             event: "end", terminal: true, status: "ended",
-            startedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            startedAt: startedAt,
             hr: nil, attemptCount: 3, activeKcal: nil, elevationGainM: nil,
             climbing: false, climbingSince: nil, restStartedAt: nil, restTargetS: nil,
-            updatedAt: Date(timeIntervalSince1970: 1_800_000_010)
+            updatedAt: startedAt.addingTimeInterval(10)
         )
     }
 
     /// Builds a retry actor signed in as `testUserId` by default — every
     /// existing (pre-#531-review) test exercises the common case where the
-    /// row's stamped account matches whoever is currently signed in.
+    /// row's stamped account matches whoever is currently signed in. #549
+    /// review finding 4: the default really is `signedInAs(testUserId)` now
+    /// (it used to be `{ nil }`, silently contradicting this doc comment —
+    /// a test trusting the comment would have asserted nothing, since
+    /// `shouldDrain` refuses every row when nobody is signed in). Tests that
+    /// want signed-out (or a different account) opt in explicitly via the
+    /// `currentUserId:` argument, same as before.
     private func makeRetry(
         upload: @escaping @Sendable (LiveWorkoutUpsert) async throws -> Void,
         sessionRelay: SessionRelayRequesting = RecordingTerminalSessionRelay(),
         scheduler: DrainScheduling = RecordingTerminalScheduler(),
-        currentUserId: @escaping @Sendable () -> UUID? = { nil }
+        fileIO: TerminalRetryFileIO = RealQueueFileIO(),
+        currentUserId: (@Sendable () -> UUID?)? = nil
     ) -> LiveWorkoutTerminalRetry {
         LiveWorkoutTerminalRetry(
             upload: upload,
             baseDir: tempDir,
             sessionRelay: sessionRelay,
             scheduler: scheduler,
-            currentUserId: currentUserId
+            fileIO: fileIO,
+            currentUserId: currentUserId ?? signedInAs(testUserId)
         )
     }
 
@@ -354,6 +370,207 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
         pending = await retry.hasPendingRetry()
         XCTAssertFalse(pending, "a different signed-in account must read the row as absent, not as its own pending retry")
     }
+
+    // MARK: - #549 review finding 1 + 3: the disk-write-failure fallback
+
+    /// Finding 1: `attemptUnpersistable`'s account-mismatch arm used to
+    /// return with no log at all, unlike its catch arm — this exercises that
+    /// branch (a mismatched account with nothing durable on disk, i.e. a
+    /// genuine, permanent loss) and pins its one observable behavior: the
+    /// row is never sent under the wrong account, same as the persisted case.
+    func testUnpersistableRowWithAccountMismatchIsNeverSent() async throws {
+        let alwaysRefusing = InMemoryTerminalFileIO(allowedWrites: 0)
+        let uploader = ScriptedTerminalUploader(failing: false)
+        let retry = makeRetry(
+            upload: { try await uploader.upload($0) },
+            fileIO: alwaysRefusing,
+            currentUserId: signedInAs(UUID())
+        )
+        let row = sampleRow(userId: testUserId)
+        await retry.handOff(row, error: URLError(.notConnectedToInternet))
+
+        let uploaded = await uploader.uploaded
+        XCTAssertTrue(uploaded.isEmpty, "an unpersistable row for a mismatched account must never be sent")
+    }
+
+    /// The ordinary disk-write-failure path still recovers via one direct
+    /// attempt when nothing else is in flight — regression coverage for
+    /// `attemptUnpersistable` now that it's routed through `drainState`.
+    func testUnpersistableFallbackStillLandsDirectlyWhenNoOtherPassIsInFlight() async throws {
+        let alwaysRefusing = InMemoryTerminalFileIO(allowedWrites: 0)
+        let uploader = ScriptedTerminalUploader(failing: false)
+        let retry = makeRetry(upload: { try await uploader.upload($0) }, fileIO: alwaysRefusing)
+        let row = sampleRow()
+        await retry.handOff(row, error: URLError(.notConnectedToInternet))
+
+        let uploaded = await uploader.uploaded
+        XCTAssertEqual(uploaded, [row.sequence], "the direct fallback must still land the row when nothing else is in flight")
+    }
+
+    /// Finding 3: `handOff` used to call `attemptUnpersistable(row)` directly,
+    /// bypassing `drainState` entirely — so it could run concurrently with an
+    /// in-flight `drainPass()`, breaking the actor's one-attempt-in-flight
+    /// property. Row A persists and its upload is gated in flight; row B's
+    /// disk write then fails (the one allowed write was A's), so B falls
+    /// into `attemptUnpersistable` WHILE A's pass still holds `drainState`.
+    /// B must not race A's in-flight upload — `GatedUploader` would hang this
+    /// test if it did (a second concurrent caller would overwrite the single
+    /// release continuation A is suspended on).
+    func testUnpersistableFallbackDoesNotRaceAnInFlightDrainPass() async throws {
+        let gated = GatedUploader()
+        let flakyIO = InMemoryTerminalFileIO(allowedWrites: 1)
+        let retry = makeRetry(upload: { try await gated.upload($0) }, fileIO: flakyIO)
+        let rowA = sampleRow(runId: UUID(), sequence: 1)
+        let rowB = sampleRow(runId: UUID(), sequence: 1)
+
+        let handOffA = Task { await retry.handOff(rowA, error: URLError(.notConnectedToInternet)) }
+        await gated.waitUntilStarted() // A's persist consumed the one allowed write; its upload is now suspended in flight
+
+        await retry.handOff(rowB, error: URLError(.notConnectedToInternet))
+
+        await gated.release()
+        await handOffA.value
+
+        let uploadedRuns = await gated.calls.map(\.runId)
+        XCTAssertEqual(
+            uploadedRuns, [rowA.runId],
+            "B's unpersistable fallback must not race A's in-flight pass — it is skipped and reported as lost, not raced"
+        )
+    }
+
+    // MARK: - #549 review finding 5: undecodable persisted row
+
+    /// A row that fails to decode used to be silently discarded (`try?`)
+    /// while staying stuck on disk forever, with `hasPendingRetry()` reading
+    /// false the whole time. It must now be reported (loudly, not
+    /// observable from a unit test — see `WorkoutManagerHRMissingDateIntervalTests`'s
+    /// note on `Logger` output) AND retained on disk untouched, per the #287
+    /// precedent, so a later compatible build gets another chance at it.
+    func testUndecodablePersistedRowIsReportedNotSwallowedAndRetainedOnDisk() async throws {
+        let fileIO = InMemoryTerminalFileIO()
+        let fileURL = tempDir.appendingPathComponent("live-workout-terminal-retry.json")
+        fileIO.seed(Data("{ this is not a valid LiveWorkoutUpsert }".utf8), at: fileURL)
+
+        let uploader = ScriptedTerminalUploader(failing: false)
+        let retry = makeRetry(upload: { try await uploader.upload($0) }, fileIO: fileIO)
+
+        let pending = await retry.hasPendingRetry()
+        XCTAssertFalse(pending, "an undecodable row can't be resolved to an account, so it can't read as pending for anyone")
+
+        await retry.retryNow()
+        let uploaded = await uploader.uploaded
+        XCTAssertTrue(uploaded.isEmpty, "an undecodable row must never be guessed at and sent")
+
+        XCTAssertNoThrow(
+            try fileIO.read(from: fileURL),
+            "the #287 rule: an undecodable row must be RETAINED on disk, never deleted, so a later compatible build can recover it"
+        )
+    }
+
+    // MARK: - #549 review finding 7: fractional-seconds ISO8601
+
+    /// `started_at` is the field `guard_live_workout_order()` compares to
+    /// order runs — a plain-seconds encode would let a persisted-and-retried
+    /// row compare differently than the original send would have.
+    func testPersistedRowRoundTripsSubSecondPrecisionOnStartedAt() async throws {
+        let preciseStartedAt = Date(timeIntervalSince1970: 1_800_000_000.123)
+        let row = sampleRow(startedAt: preciseStartedAt)
+        let failingUploader = ScriptedTerminalUploader(failing: true)
+        let retry = makeRetry(upload: { try await failingUploader.upload($0) })
+        await retry.handOff(row, error: URLError(.notConnectedToInternet))
+
+        let recoveredUploader = ScriptedTerminalUploader(failing: false)
+        let relaunched = makeRetry(upload: { try await recoveredUploader.upload($0) })
+        await relaunched.retryNow()
+
+        let landedRows = await recoveredUploader.uploadedRows
+        let landedStartedAt = try XCTUnwrap(landedRows.first?.startedAt)
+        XCTAssertEqual(
+            landedStartedAt.timeIntervalSince1970, preciseStartedAt.timeIntervalSince1970, accuracy: 0.001,
+            "sub-second started_at must survive the on-disk round trip"
+        )
+    }
+
+    /// Decode must stay tolerant of a row a PRE-#549 build persisted (plain
+    /// ISO8601, no fractional seconds) — otherwise this change would itself
+    /// manufacture finding 5's undecodable-row failure on every device that
+    /// upgrades with a row already queued.
+    func testPersistedRowFromBeforeTheFractionalSecondsChangeStillDecodes() async throws {
+        let fileIO = InMemoryTerminalFileIO()
+        let row = sampleRow()
+        let legacyEncoder = JSONEncoder()
+        legacyEncoder.dateEncodingStrategy = .iso8601 // the pre-#549 plain-seconds format
+        let legacyData = try legacyEncoder.encode(row)
+        let fileURL = tempDir.appendingPathComponent("live-workout-terminal-retry.json")
+        fileIO.seed(legacyData, at: fileURL)
+
+        let uploader = ScriptedTerminalUploader(failing: false)
+        let retry = makeRetry(upload: { try await uploader.upload($0) }, fileIO: fileIO)
+        await retry.retryNow()
+
+        let uploaded = await uploader.uploaded
+        XCTAssertEqual(
+            uploaded, [row.sequence],
+            "a row persisted by a build before the fractional-seconds change must still decode and land after the upgrade"
+        )
+    }
+
+    // MARK: - #549 review finding 6: PendingSyncCache publication
+
+    /// `PendingSyncCache.total` only resolves once every `PendingSyncQueue`
+    /// case has reported (#491) — stand in for the other three queues by
+    /// reporting zero for them directly, the way
+    /// `WatchBuild.refreshAndReportQueueStatus` would on a real launch, so
+    /// `.liveWorkoutTerminal`'s own contribution is what's under test.
+    private func reportOtherQueuesAsEmpty() {
+        for queue: PendingSyncQueue in [.workouts, .tindeqSessions, .tindeqRecordings] {
+            PendingSyncCache.shared.record(0, for: queue)
+            PendingSyncCache.shared.recordQuarantined(0, for: queue)
+            PendingSyncCache.shared.recordQuarantinedStuck(0, for: queue)
+        }
+    }
+
+    func testHandOffPublishesQueueDepthAndLandingClearsItBackToZero() async throws {
+        reportOtherQueuesAsEmpty()
+        let failingUploader = ScriptedTerminalUploader(failing: true)
+        let retry = makeRetry(upload: { try await failingUploader.upload($0) })
+        // This queue's own slot hasn't published anything yet — honestly nil,
+        // not zero, until `refreshReportedCounts()`/a hand-off counts it.
+        await retry.refreshReportedCounts()
+        XCTAssertEqual(PendingSyncCache.shared.total, 0, "nothing handed off yet")
+
+        await retry.handOff(sampleRow(), error: URLError(.notConnectedToInternet))
+        XCTAssertEqual(PendingSyncCache.shared.total, 1, "a persisted-but-unlanded row must be visible to the phone's queue banner")
+
+        let recoveredUploader = ScriptedTerminalUploader(failing: false)
+        let relaunched = makeRetry(upload: { try await recoveredUploader.upload($0) })
+        await relaunched.retryNow()
+        XCTAssertEqual(PendingSyncCache.shared.total, 0, "landing the row must clear this queue's slot back to zero")
+    }
+
+    func testRefreshReportedCountsPublishesAnHonestZeroWithNothingQueued() async throws {
+        reportOtherQueuesAsEmpty()
+        let retry = makeRetry(upload: { _ in })
+        XCTAssertEqual(retry.syncSlot, .liveWorkoutTerminal)
+        await retry.refreshReportedCounts()
+        XCTAssertEqual(PendingSyncCache.shared.total, 0)
+    }
+
+    /// This queue never quarantines anything, but must still report zero for
+    /// both quarantine slots every refresh — otherwise `quarantinedTotal`/
+    /// `quarantinedStuckTotal` would regress to permanently nil the moment
+    /// this case exists, since `PendingSyncCache` refuses to report until
+    /// EVERY case has published.
+    func testThisQueueReportsZeroQuarantineSoTheOtherTotalsDoNotRegressToNil() async throws {
+        for queue: PendingSyncQueue in [.workouts, .tindeqSessions, .tindeqRecordings] {
+            PendingSyncCache.shared.recordQuarantined(0, for: queue)
+            PendingSyncCache.shared.recordQuarantinedStuck(0, for: queue)
+        }
+        let retry = makeRetry(upload: { _ in })
+        await retry.refreshReportedCounts()
+        XCTAssertEqual(PendingSyncCache.shared.quarantinedTotal, 0)
+        XCTAssertEqual(PendingSyncCache.shared.quarantinedStuckTotal, 0)
+    }
 }
 
 private actor ScriptedTerminalUploader {
@@ -465,5 +682,57 @@ private final class MutableCurrentUserId: @unchecked Sendable {
             _value = newValue
             lock.unlock()
         }
+    }
+}
+
+/// An in-memory `TerminalRetryFileIO`: write/read/removeItem behave like a
+/// real filesystem (so a hand-off followed by a read sees what was written),
+/// but writes beyond `allowedWrites` are refused with a disk-full-shaped
+/// error — deterministic, host-filesystem-independent modeling of "this
+/// specific hand-off's persist fails" (#549 findings 3 and 5; same
+/// rationale as `OfflineQueueTests`' `AlwaysRefusingFileIO` and
+/// `PendingRecordingQueueTests`' `ScriptedFileIO`, which script refused
+/// writes for the same reason a full disk isn't reproducible on the test
+/// host's real one).
+private final class InMemoryTerminalFileIO: TerminalRetryFileIO, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [URL: Data] = [:]
+    private var writesRemaining: Int?
+
+    /// nil (default) never refuses a write.
+    init(allowedWrites: Int? = nil) {
+        self.writesRemaining = allowedWrites
+    }
+
+    func write(_ data: Data, to url: URL) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        if let remaining = writesRemaining {
+            guard remaining > 0 else { throw CocoaError(.fileWriteOutOfSpace) }
+            writesRemaining = remaining - 1
+        }
+        storage[url] = data
+    }
+
+    func removeItem(at url: URL) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        storage.removeValue(forKey: url)
+    }
+
+    func read(from url: URL) throws -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let data = storage[url] else { throw CocoaError(.fileReadNoSuchFile) }
+        return data
+    }
+
+    /// Directly seeds a raw payload — bypasses `write`'s refusal counter, for
+    /// tests that need a specific (possibly undecodable, or legacy-format)
+    /// file on disk without going through a real hand-off.
+    func seed(_ data: Data, at url: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        storage[url] = data
     }
 }

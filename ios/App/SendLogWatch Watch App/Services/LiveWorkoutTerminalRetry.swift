@@ -13,6 +13,22 @@ protocol LiveWorkoutTerminalRetrying: Sendable {
     func handOff(_ row: LiveWorkoutUpsert, error: Error) async
 }
 
+/// Read seam for this actor's single persisted file, kept separate from
+/// `UploadQueueEngine`'s `QueueFileIO` — that protocol's own doc deliberately
+/// keeps reads off the injectable seam for the many-file directory queues
+/// ("only mutations need scripting"). This actor's `readPersisted()` needs a
+/// scriptable read too, so an undecodable/unreadable row can be exercised
+/// from a test instead of only through the real filesystem (#549 finding 5).
+protocol TerminalRetryFileIO: QueueFileIO {
+    func read(from url: URL) throws -> Data
+}
+
+extension RealQueueFileIO: TerminalRetryFileIO {
+    func read(from url: URL) throws -> Data {
+        try Data(contentsOf: url)
+    }
+}
+
 /// Durable fallback for a live_workouts terminal (End) row whose upsert
 /// failed. `LiveWorkoutSync` is a per-workout actor that `WorkoutManager.end()`
 /// drops (`liveSync = nil`) right after `markEnded()` returns — and once
@@ -61,6 +77,17 @@ protocol LiveWorkoutTerminalRetrying: Sendable {
 ///    its own attempt with no missed wake-up — even when the in-flight one
 ///    SUCCEEDED, which would otherwise reset `consecutiveFailures` and skip
 ///    scheduling backoff entirely.
+///
+/// #549 review of the above (this actor's disk-write-failure fallback):
+/// `attemptUnpersistable` now requests the SAME `drainState` slot as
+/// `drainPass()` before it uploads, so it can never run concurrently with an
+/// in-flight pass — but unlike a persisted row, there is no durable copy for
+/// a coalesced rerun to pick back up. Rather than silently resend-or-lose it
+/// under that timing, a coalesced (queued) request is reported loudly as
+/// unrecoverable and skipped; if it wins the slot, any further request that
+/// coalesces onto IT is still serviced (via the normal disk-reading
+/// `drainPass()`), so a concurrently-persisted row is never the one that
+/// goes missing.
 actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
     static let shared = LiveWorkoutTerminalRetry()
 
@@ -68,12 +95,56 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
         subsystem: "com.jirathip.sendlog.watchkitapp", category: "liveWorkoutRetry"
     )
 
+    /// #549 finding 7: encodes with fractional-seconds ISO8601 so
+    /// `started_at` — the field `guard_live_workout_order()` compares to
+    /// order runs — round-trips through this on-disk cache at full
+    /// precision; a plain-seconds truncation could make a persisted-and-
+    /// retried row compare differently than the original send would have.
+    /// A fresh `ISO8601DateFormatter` per call, matching every other date
+    /// formatter in this target (`Repo.swift`, `LiveActivityManager.swift`)
+    /// — none of them are stored as shared statics, since the type is a
+    /// mutable, non-`Sendable` class.
+    private static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            var container = encoder.singleValueContainer()
+            try container.encode(formatter.string(from: date))
+        }
+        return encoder
+    }
+
+    /// Decode tries the fractional form first, then falls back to the plain
+    /// one a PRE-#549 build would have written — the encoder above always
+    /// writes fractional now, but decode must keep accepting the plain form,
+    /// or this change would itself manufacture finding 5's undecodable-row
+    /// failure on every device that upgrades with a row already queued.
+    private static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let string = try container.decode(String.self)
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = fractional.date(from: string) { return date }
+            let plain = ISO8601DateFormatter()
+            plain.formatOptions = [.withInternetDateTime]
+            if let date = plain.date(from: string) { return date }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected an ISO8601 date string (with or without fractional seconds), got \(string)"
+            )
+        }
+        return decoder
+    }
+
     private let upload: @Sendable (LiveWorkoutUpsert) async throws -> Void
     private let baseDir: URL
     private let fileName: String
     private let sessionRelay: SessionRelayRequesting
     private let scheduler: DrainScheduling
-    private let fileIO: QueueFileIO
+    private let fileIO: TerminalRetryFileIO
     /// The relayed session's `sub` claim (#265), same source
     /// `LiveWorkoutSync.resolveUserId()` reads — injected so tests can
     /// script an account without touching the real `WatchSessionStore`
@@ -89,7 +160,8 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
     /// Coalesces overlapping retry triggers (foreground + relay + a fired
     /// backoff, or a newer hand-off arriving mid-attempt) into a rerun of
     /// `drainPass()` once the current one finishes — see the type doc for
-    /// why a bare in-flight guard is not sufficient here.
+    /// why a bare in-flight guard is not sufficient here. Also now the one
+    /// gate `attemptUnpersistable` requests through (#549 finding 3).
     private var drainState = CoalescingDrain()
 
     init(
@@ -103,7 +175,7 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
         fileName: String = "live-workout-terminal-retry.json",
         sessionRelay: SessionRelayRequesting = AuthManagerRelayRequester(),
         scheduler: DrainScheduling = TaskDrainScheduler(),
-        fileIO: QueueFileIO = RealQueueFileIO(),
+        fileIO: TerminalRetryFileIO = RealQueueFileIO(),
         currentUserId: @escaping @Sendable () -> UUID? = { WatchSessionStore.shared.userId }
     ) {
         self.upload = upload
@@ -130,14 +202,23 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
     /// call), and that is reported loudly rather than swallowed.
     func handOff(_ row: LiveWorkoutUpsert, error: Error) async {
         let persisted = persist(row)
-        Self.log.error(
-            "terminal live_workouts upsert failed, queued for durable retry (persisted to disk: \(persisted, privacy: .public), run \(row.runId.uuidString, privacy: .public) seq \(row.sequence)): \(String(describing: error), privacy: .public)"
-        )
-        guard persisted else {
+        if persisted {
+            // #549 finding 2: only this branch may say "queued for durable
+            // retry" — a row IS sitting on disk for `retryNow()`/backoff/
+            // relay to keep finding.
+            Self.log.error(
+                "terminal live_workouts upsert failed, queued for durable retry (run \(row.runId.uuidString, privacy: .public) seq \(row.sequence)): \(String(describing: error), privacy: .public)"
+            )
+            await retryNow()
+        } else {
+            // #264/#549 finding 2: nothing is holding this row — saying
+            // "queued" here would be a lie. One direct in-memory attempt is
+            // all that's left before it's genuinely gone.
+            Self.log.error(
+                "terminal live_workouts upsert failed AND could not be persisted to disk — attempting one direct retry with no durable backup (run \(row.runId.uuidString, privacy: .public) seq \(row.sequence)): \(String(describing: error), privacy: .public)"
+            )
             await attemptUnpersistable(row)
-            return
         }
-        await retryNow()
     }
 
     /// Attempt whatever row is currently persisted, if any, re-checking it
@@ -146,15 +227,8 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
     /// overlapping calls into a guaranteed rerun rather than dropping them.
     func retryNow() async {
         guard drainState.request() == .start else { return }
-        var stalled = false
-        repeat {
-            stalled = await drainPass()
-        } while drainState.completePass() == .rerun
-        if stalled {
-            scheduleBackoffRetry()
-        } else {
-            consecutiveFailures = 0
-        }
+        let stalled = await drainPass()
+        await finishDrainState(initialStalled: stalled)
     }
 
     /// Whether a row is currently waiting on a retry FOR THE SIGNED-IN
@@ -214,14 +288,63 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
 
     /// The disk-write-failure fallback: one direct attempt from the in-memory
     /// row, since there is no durable copy for `drainPass()` to find.
+    ///
+    /// #549 finding 3: requests the same `drainState` slot `retryNow()` does
+    /// before uploading, so this can never run concurrently with an in-
+    /// flight `drainPass()`. Unlike a persisted row, there is nothing on disk
+    /// for a coalesced rerun to pick back up if this request loses the race
+    /// (arrives while a pass is already running) — so that case is reported
+    /// as unrecoverable rather than silently retried into the void. If this
+    /// request WINS the slot, any later request that coalesces onto it is
+    /// still serviced through the ordinary disk-reading `drainPass()` inside
+    /// `finishDrainState`, so a concurrently-persisted row is never the one
+    /// left stranded.
     private func attemptUnpersistable(_ row: LiveWorkoutUpsert) async {
-        guard shouldDrain(itemUserId: row.userId, currentUserId: currentUserId()) else { return }
+        guard drainState.request() == .start else {
+            Self.log.fault(
+                "terminal live_workouts row could not be persisted to disk and its direct retry was skipped because another retry was already in flight — this write is now unrecoverable (run \(row.runId.uuidString, privacy: .public) seq \(row.sequence))"
+            )
+            return
+        }
+        guard shouldDrain(itemUserId: row.userId, currentUserId: currentUserId()) else {
+            // #549 finding 1: unlike `drainPass()`'s mismatch arm (whose row
+            // stays safely on disk for its own account to retry later), this
+            // row has no durable copy anywhere — a mismatch here is a real,
+            // permanent loss, not a deferral, and must say so.
+            Self.log.fault(
+                "terminal live_workouts row could not be persisted to disk and the signed-in account no longer matches it — this write is now unrecoverable (run \(row.runId.uuidString, privacy: .public) seq \(row.sequence))"
+            )
+            await finishDrainState(initialStalled: false)
+            return
+        }
         do {
             try await upload(row)
         } catch {
             Self.log.fault(
                 "terminal live_workouts row could not be persisted to disk AND its direct retry failed — this write is now unrecoverable (run \(row.runId.uuidString, privacy: .public) seq \(row.sequence)): \(String(describing: error), privacy: .public)"
             )
+        }
+        // Nothing durable represents this row regardless of outcome, so
+        // there is nothing left for the #472b backoff to retry — always
+        // `false`, whether the direct attempt above succeeded or failed.
+        await finishDrainState(initialStalled: false)
+    }
+
+    /// Closes out a `drainState` request this actor's owner (`retryNow()` or
+    /// `attemptUnpersistable`) already won — looping the ordinary disk-
+    /// reading `drainPass()` for as long as further requests keep coalescing
+    /// onto this one, exactly `retryNow()`'s original loop. Factored out so
+    /// both entry points share one one-attempt-in-flight implementation
+    /// (#549 finding 3) instead of two copies that could drift.
+    private func finishDrainState(initialStalled: Bool) async {
+        var stalled = initialStalled
+        while drainState.completePass() == .rerun {
+            stalled = await drainPass()
+        }
+        if stalled {
+            scheduleBackoffRetry()
+        } else {
+            consecutiveFailures = 0
         }
     }
 
@@ -241,29 +364,86 @@ actor LiveWorkoutTerminalRetry: LiveWorkoutTerminalRetrying {
 
     @discardableResult
     private func persist(_ row: LiveWorkoutUpsert) -> Bool {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(row) else { return false }
+        guard let data = try? Self.makeEncoder().encode(row) else {
+            publishDepth()
+            return false
+        }
         do {
             try fileIO.write(data, to: fileURL)
+            publishDepth()
             return true
         } catch {
+            publishDepth()
             return false
         }
     }
 
+    /// #549 finding 5: reads through the injected `fileIO` seam (so a test
+    /// can script a read failure) and, on an undecodable row, reports it
+    /// loudly instead of the previous `try?`, which silently discarded the
+    /// row from every future pass while leaving it stuck on disk forever
+    /// with `hasPendingRetry()` reading false and nobody the wiser. Per the
+    /// #287 precedent this codebase otherwise follows: never delete or
+    /// rewrite what can't be read — the file is deliberately RETAINED so a
+    /// later compatible build gets another chance to decode it.
     private func readPersisted() -> LiveWorkoutUpsert? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(LiveWorkoutUpsert.self, from: data)
+        guard let data = try? fileIO.read(from: fileURL) else { return nil }
+        do {
+            return try Self.makeDecoder().decode(LiveWorkoutUpsert.self, from: data)
+        } catch {
+            Self.log.fault(
+                "persisted terminal live_workouts row is undecodable — retaining it on disk (#287) rather than silently discarding it from every future retry pass: \(String(describing: error), privacy: .public)"
+            )
+            return nil
+        }
     }
 
     /// Delete the persisted row only if it is still the exact row just
     /// uploaded (same run + sequence) — see the type doc's finding-1 note.
     private func clearPersistedIfMatches(_ row: LiveWorkoutUpsert) {
+        defer { publishDepth() }
         guard let current = readPersisted() else { return }
         guard current.runId == row.runId, current.sequence == row.sequence else { return }
         try? fileIO.removeItem(at: fileURL)
     }
+
+    // MARK: - #549 finding 6: PendingSyncCache publication
+
+    /// This queue's depth is 0 or 1 (it holds at most one row) — published
+    /// whenever a mutation could have changed it, same rule as the other
+    /// queues ("whenever it counts, enqueues, or drains", `PendingSyncCache`'s
+    /// own doc). Scoped to the signed-in account the same way
+    /// `UploadQueueEngine.pendingCount()` is: a row stamped for a different
+    /// CURRENT account reads as absent (its own account reports it once it's
+    /// current again), a row is always counted while nobody is signed in
+    /// (#158), and an undecodable row is always counted too — same #287
+    /// "retained and reported" rule `readPersisted()` follows, since its
+    /// account can't be determined without decoding it.
+    private func publishDepth() {
+        let uid = currentUserId()
+        let depth: Int
+        if let data = try? fileIO.read(from: fileURL) {
+            if let row = try? Self.makeDecoder().decode(LiveWorkoutUpsert.self, from: data) {
+                depth = (shouldDrain(itemUserId: row.userId, currentUserId: uid) || uid == nil) ? 1 : 0
+            } else {
+                depth = 1
+            }
+        } else {
+            depth = 0
+        }
+        PendingSyncCache.shared.record(depth, for: .liveWorkoutTerminal)
+        // This queue never quarantines anything, but `quarantinedTotal`/
+        // `quarantinedStuckTotal` stay nil until EVERY `PendingSyncQueue`
+        // case has reported (`PendingSyncCache`'s own honest-states rule) —
+        // so this slot must still report zero, every refresh, or those two
+        // totals would regress to permanently nil the moment this case
+        // exists.
+        PendingSyncCache.shared.recordQuarantined(0, for: .liveWorkoutTerminal)
+        PendingSyncCache.shared.recordQuarantinedStuck(0, for: .liveWorkoutTerminal)
+    }
+}
+
+extension LiveWorkoutTerminalRetry: QueueDepthReporting {
+    nonisolated var syncSlot: PendingSyncQueue { .liveWorkoutTerminal }
+    func refreshReportedCounts() async { publishDepth() }
 }

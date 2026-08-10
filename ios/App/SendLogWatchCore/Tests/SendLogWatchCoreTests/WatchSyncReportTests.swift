@@ -211,6 +211,8 @@ final class PendingSyncCacheTests: XCTestCase {
         cache.record(3, for: .tindeqSessions)
         XCTAssertNil(cache.total, "still missing a queue")
         cache.record(1, for: .tindeqRecordings)
+        XCTAssertNil(cache.total, "still missing a queue")
+        cache.record(0, for: .liveWorkoutTerminal)
         XCTAssertEqual(cache.total, 6, "every queue reported — the sum is finally honest")
     }
 
@@ -259,6 +261,8 @@ final class PendingSyncCacheTests: XCTestCase {
         XCTAssertNil(cache.quarantinedTotal, "a partial quarantine sum must read as not-reported")
         cache.recordQuarantined(0, for: .tindeqSessions)
         cache.recordQuarantined(1, for: .tindeqRecordings)
+        XCTAssertNil(cache.quarantinedTotal, "still missing a queue")
+        cache.recordQuarantined(0, for: .liveWorkoutTerminal)
         XCTAssertEqual(cache.quarantinedTotal, 3)
     }
 
@@ -278,7 +282,7 @@ final class PendingSyncCacheTests: XCTestCase {
         let cache = fullyReported([.workouts: 2])
         for queue in PendingSyncQueue.allCases { cache.recordQuarantined(1, for: queue) }
         XCTAssertEqual(cache.total, 2)
-        XCTAssertEqual(cache.quarantinedTotal, 3)
+        XCTAssertEqual(cache.quarantinedTotal, PendingSyncQueue.allCases.count)
     }
 
     func testNegativeQuarantinedCountsAreRefused() {
@@ -310,6 +314,8 @@ final class PendingSyncCacheTests: XCTestCase {
         XCTAssertNil(cache.quarantinedStuckTotal)
         cache.recordQuarantinedStuck(0, for: .tindeqSessions)
         cache.recordQuarantinedStuck(0, for: .tindeqRecordings)
+        XCTAssertNil(cache.quarantinedStuckTotal, "still missing a queue")
+        cache.recordQuarantinedStuck(0, for: .liveWorkoutTerminal)
         XCTAssertEqual(cache.quarantinedStuckTotal, 1)
     }
 
