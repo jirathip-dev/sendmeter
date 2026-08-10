@@ -34,6 +34,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- iPhone: reopening the app no longer shows readiness as "Synced just now" for an older watch-triggered result that actually completed hours earlier; the synced-time marker is also now kept separate per signed-in account.
 - iPhone: an outright-failed registration for watch-triggered readiness refreshes (for example, on an app version missing the needed native support) no longer disables that notification for the rest of the app session; a registration that fails silently without an error is a separate, still-open gap.
 - Routine actions now stay inside the Workout card on narrow phones; sheet headers are more compact without a redundant drag handle; and the Watch home switcher keeps full-size touch targets with slimmer visual pills.
 - Watch: the Status / Actions switcher now stays above the home content instead of covering the readiness or session cards, with the redundant home title removed to give 40mm watches more usable space.
