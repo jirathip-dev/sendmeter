@@ -353,7 +353,9 @@ enum Repo {
             note: noteParts.joined(separator: " · "),
             phase: phase,
             groupId: nil,
-            workoutSource: "watch"
+            workoutSource: "watch",
+            // #529 F6: row-level defense-in-depth — see `SessionInsert.userId`.
+            userId: ownerUserId
         )
         let workout = ClimbWorkoutInsert(
             id: workoutId,
@@ -370,7 +372,8 @@ enum Repo {
             meanEffort: (meanEffort * 100).rounded() / 100,
             attemptsPer10min: (attemptsPer10min * 100).rounded() / 100,
             sessionId: sessionId,
-            raw: tunables.keepRawTrace ? summary.rawTrace : nil
+            raw: tunables.keepRawTrace ? summary.rawTrace : nil,
+            userId: ownerUserId
         )
         let attempts = summary.attempts.map { a in
             ClimbAttemptInsert(
@@ -383,7 +386,8 @@ enum Repo {
                 peakHr: a.peakHR,
                 motionIntensity: a.motionIntensity,
                 effortScore: a.effortScore,
-                source: a.source.rawValue
+                source: a.source.rawValue,
+                userId: ownerUserId
             )
         }
         return WorkoutSaveBundle(session: session, workout: workout, attempts: attempts, enqueuedUserId: ownerUserId)

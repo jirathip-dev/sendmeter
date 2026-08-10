@@ -133,9 +133,6 @@ final class WorkoutManagerOwnershipTests: XCTestCase {
     /// and stays A-owned through any later account change, rather than
     /// discarding itself.
     func testOwnerUserIdStaysImmutableAfterAnAccountSwitchFollowingStart() async {
-        final class AccountBox: @unchecked Sendable {
-            var current: UUID?
-        }
         let box = AccountBox()
         let ownerA = UUID()
         box.current = ownerA
@@ -153,21 +150,41 @@ final class WorkoutManagerOwnershipTests: XCTestCase {
         XCTAssertEqual(manager.ownerUserId, ownerA, "a different account signing in mid-workout must not silently rebind the run")
     }
 
-    /// A concurrent double-tap on Start (`WorkoutManagerDoubleStartTests`'s
-    /// scenario) must not re-capture the owner on the rejected second call —
-    /// the guard already ensures only the first pass runs the reset block at
-    /// all, but this pins the observable consequence for ownership
-    /// specifically: the accepted run's owner is whatever the provider
-    /// returned at ITS accepted moment.
-    func testConcurrentDoubleStartCapturesTheOwnerExactlyOnce() async throws {
+    /// #529 F7: a concurrent double-tap on Start, mirroring both
+    /// `WorkoutManagerDoubleStartTests.testConcurrentDoubleStartIsAcceptedExactlyOnce`
+    /// and the repo's `gaugeSessionEnd.ts` pattern (CLAUDE.md's #295/#296
+    /// class of bug — "two concurrent calls... log exactly once", proven by
+    /// actually racing them, not by asserting on two sequential calls). The
+    /// account changes WHILE the first `start()` is suspended inside
+    /// authorization, and the second call races in before it resolves: if
+    /// the rejected second call could still re-run the reset block (the
+    /// exact regression this pins), `ownerUserId` would end up on the LATER
+    /// account, not the one the accepted call actually captured.
+    func testConcurrentDoubleStartCapturesTheOwnerExactlyOnceForTheAcceptedCall() async throws {
+        let gate = WorkoutStartConcurrencyGate()
+        let box = AccountBox()
         let ownerA = UUID()
-        let manager = makeAuthorizationFailingWorkoutManager(userIdProvider: { ownerA })
+        box.current = ownerA
+        let manager = WorkoutManager(userIdProvider: { box.current })
+        manager.authorizationRequestOverride = {
+            await gate.enter()
+            await gate.waitUntilReleased()
+            throw WorkoutSavePathAuthorizationFailure.unavailable
+        }
 
-        await manager.start()
-        await manager.start()
+        async let first: Void = manager.start()
 
-        XCTAssertEqual(manager.acceptedStartCount, 2, "sequential completed starts both accept")
-        XCTAssertEqual(manager.ownerUserId, ownerA)
+        // Do not rely on async-let scheduling or a timing yield: the first
+        // authorization call must be known to be inside its suspension
+        // before the second start (and the account switch) happen.
+        await gate.waitUntilEntered()
+        box.current = UUID() // the account changes mid-flight, before the second call
+        await manager.start() // rejected by the concurrency guard, not the account switch
+        await gate.release()
+        _ = await first
+
+        XCTAssertEqual(manager.acceptedStartCount, 1, "a concurrent double-tap on Start must pass the start guard exactly once")
+        XCTAssertEqual(manager.ownerUserId, ownerA, "the accepted call's captured owner must survive a concurrent second call racing an account switch")
     }
 
     /// `Repo.makeSaveBundle` is the seam `endAndSave()` calls with the
@@ -222,5 +239,53 @@ final class WorkoutManagerOwnershipTests: XCTestCase {
         )
 
         XCTAssertNil(bundle.enqueuedUserId)
+    }
+}
+
+/// A mutable, thread-safe box standing in for "whoever the phone currently
+/// says is signed in" — shared by the immutability test and the genuinely
+/// concurrent double-start test (#529 F7) above.
+private final class AccountBox: @unchecked Sendable {
+    var current: UUID?
+}
+
+/// #529 F7: a test-only async barrier for holding the first `start()` call's
+/// authorization override exactly across the second, concurrent `start()`
+/// invocation — same shape as `WorkoutOwnershipTests`'
+/// `AuthorizationGate`/`WorkoutManagerDoubleStartTests`, kept local to this
+/// file since Swift's top-level `private` is file-scoped. No production
+/// counterpart.
+private actor WorkoutStartConcurrencyGate {
+    private var entered = false
+    private var released = false
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func enter() {
+        entered = true
+        let waiters = entryWaiters
+        entryWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitUntilEntered() async {
+        if entered { return }
+        await withCheckedContinuation { continuation in
+            entryWaiters.append(continuation)
+        }
+    }
+
+    func waitUntilReleased() async {
+        if released { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    func release() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        waiters.forEach { $0.resume() }
     }
 }

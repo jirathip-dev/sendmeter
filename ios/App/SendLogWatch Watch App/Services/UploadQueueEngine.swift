@@ -379,6 +379,18 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
             Task { await drain() }
             return .queued
         case .uploadDirect:
+            // #529 F2: `drainPass` is the ONLY other upload path, and it
+            // gates every attempt on `shouldDrain` — this fallback (taken
+            // when persistence itself just failed) had no such guard, so an
+            // item stamped for account A but attempted while B is the
+            // active account would upload straight to B's token with no
+            // check at all. Persistence already failed here, so if this
+            // item legally can't upload under the current account either,
+            // neither path can complete: an honest `.lost` (#264), not a
+            // silent misattribution reported as success.
+            guard shouldDrain(itemUserId: item.enqueuedUserId, currentUserId: WatchSessionStore.shared.userId) else {
+                return .lost
+            }
             do {
                 try await upload(item)
                 recordPayloadReclaimIfNeeded(persistResult)

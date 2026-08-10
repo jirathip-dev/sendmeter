@@ -40,6 +40,21 @@ nonisolated struct SessionInsert: Codable {
     var phase: String
     var groupId: UUID?         // Tindeq gauge session link
     var workoutSource: String? // immutable provenance badge (SL-43): "watch" for auto workouts, nil otherwise
+    /// #529 F6: explicit row-level ownership stamp, set only by
+    /// `Repo.makeSaveBundle` (the auto-tracked workout path) from the run's
+    /// immutable `ownerUserId`. Every other caller (manual Tindeq sessions)
+    /// leaves this `nil`, which the Optional `Encodable` OMITS from the
+    /// payload entirely — the column's `default auth.uid()`
+    /// (`20260711000000_initial_schema.sql`) then behaves exactly as before
+    /// this fix, so this is additive only for the workout path. When set,
+    /// `with check (auth.uid() = user_id)` makes an insert/update sent under
+    /// the WRONG account's currently-relayed token fail closed instead of
+    /// silently landing under whichever account happens to be active at
+    /// request time — defense-in-depth behind the client-side
+    /// `shouldDrain`/`ownerUserId` guards, which only decide whether a
+    /// request is attempted at all, never which account the resulting row
+    /// actually belongs to.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, date, type, rpe, note, phase
@@ -48,6 +63,7 @@ nonisolated struct SessionInsert: Codable {
         case durationMin = "duration_min"
         case groupId = "group_id"
         case workoutSource = "workout_source"
+        case userId = "user_id"
     }
 }
 
@@ -67,6 +83,9 @@ nonisolated struct ClimbWorkoutInsert: Codable {
     var attemptsPer10min: Double
     var sessionId: UUID
     var raw: [[Double?]]?
+    /// #529 F6 — see `SessionInsert.userId`'s doc comment for the full
+    /// rationale; same stamp, same `climb_workouts` RLS shape.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, raw
@@ -83,6 +102,7 @@ nonisolated struct ClimbWorkoutInsert: Codable {
         case meanEffort = "mean_effort"
         case attemptsPer10min = "attempts_per_10min"
         case sessionId = "session_id"
+        case userId = "user_id"
     }
 }
 
@@ -99,6 +119,12 @@ nonisolated struct ClimbWorkoutPartialUpsert: Codable {
     var attemptsDetected: Int
     var attemptsConfirmed: Int
     var raw: [[Double?]]?
+    /// #529 F1/F6 — see `SessionInsert.userId`'s doc comment. This is the
+    /// row the mid-workout SL-90 flush writes with no client-side account
+    /// guard of its own (`WorkoutManager.flushPartial()`), so the stamp here
+    /// is the last line of defense if the active account changes during the
+    /// network round trip, after that guard already passed.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, raw
@@ -107,6 +133,7 @@ nonisolated struct ClimbWorkoutPartialUpsert: Codable {
         case elevationGainM = "elevation_gain_m"
         case attemptsDetected = "attempts_detected"
         case attemptsConfirmed = "attempts_confirmed"
+        case userId = "user_id"
     }
 }
 
@@ -135,6 +162,9 @@ nonisolated struct ClimbAttemptInsert: Codable {
     var motionIntensity: Double
     var effortScore: Double
     var source: String         // "auto" | "manual"
+    /// #529 F6 — see `SessionInsert.userId`'s doc comment. Same stamp, same
+    /// `climb_attempts` RLS shape.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, source
@@ -146,6 +176,7 @@ nonisolated struct ClimbAttemptInsert: Codable {
         case peakHr = "peak_hr"
         case motionIntensity = "motion_intensity"
         case effortScore = "effort_score"
+        case userId = "user_id"
     }
 }
 

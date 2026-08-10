@@ -62,6 +62,16 @@ final class WorkoutManager: NSObject {
     /// immediately), so this reliably distinguishes "still uploading" from
     /// "stuck until sign-in" without touching `drain()`/`shouldDrain`.
     var stillQueued = false
+    /// True when `stillQueued` is true SPECIFICALLY because the just-saved
+    /// bundle is held for an account other than the one currently signed in
+    /// (#529 F3) — `pendingCount()` deliberately excludes such an item from
+    /// the CURRENT account's count (#158/#189: it isn't B's problem), which
+    /// otherwise made a held A-owned save read as `stillQueued == false`
+    /// right after it happened — the copy reserved for an item that
+    /// actually uploaded. An ordinary "still syncing under my own account"
+    /// queued state and "held until the account that started this run signs
+    /// back in" must not share that copy. See `WorkoutLiveView.savedContent`.
+    var stillQueuedForAnotherAccount = false
     /// Kept in memory after both persistence and direct upload fail (#287),
     /// so Retry can replay the same idempotent bundle instead of pretending
     /// the workout was saved. **Deliberately NOT reset by `start()`**
@@ -283,6 +293,7 @@ final class WorkoutManager: NSObject {
         ending = false
         justSaved = false
         stillQueued = false
+        stillQueuedForAnotherAccount = false
         // Review finding F7: defensive — every path that sets these also
         // runs `end()`, which nils them, so this isn't reachable today, but
         // it closes the same "long-lived manager" exposure as the fields
@@ -749,8 +760,14 @@ final class WorkoutManager: NSObject {
                 tunables: .default,
                 // #529: the account captured at start(), not whoever is
                 // signed in now — `end()` may run long after an account
-                // switch mid-workout.
-                ownerUserId: ownerUserId
+                // switch mid-workout. `ownerUserId` is nil only when the run
+                // started with nobody signed in at all (unreachable via the
+                // UI today — RootView gates Start behind a relayed sign-in);
+                // in that one case there is no captured owner to preserve,
+                // so this falls back to reading the live signed-in account
+                // right now — an explicit, documented decision (#529 F5),
+                // not a silent nil sailing into the legacy queue fallback.
+                ownerUserId: ownerUserId ?? userIdProvider()
             )
             WidgetBridge.updateLiveWorkout(active: false) // clear the live widget
             await save(bundle)
@@ -788,9 +805,22 @@ final class WorkoutManager: NSObject {
         }
         await WidgetBridge.refreshStatus() // fresh ACWR after the save
         if outcome == .queued {
-            stillQueued = await OfflineQueue.shared.pendingCount() > 0
+            // #529 F3: `pendingCount()` deliberately excludes an item held
+            // for a DIFFERENT account than the one currently signed in
+            // (#158/#189) — reading that as `stillQueued == false` here
+            // would render the "uploaded" copy for a bundle that hasn't
+            // gone anywhere. Ask the honest, bundle-specific question
+            // instead of the account-wide count.
+            if shouldDrain(itemUserId: bundle.enqueuedUserId, currentUserId: userIdProvider()) {
+                stillQueued = await OfflineQueue.shared.pendingCount() > 0
+                stillQueuedForAnotherAccount = false
+            } else {
+                stillQueued = true
+                stillQueuedForAnotherAccount = true
+            }
         } else {
             stillQueued = false
+            stillQueuedForAnotherAccount = false
         }
         ending = false
         justSaved = true
@@ -959,6 +989,19 @@ final class WorkoutManager: NSObject {
         // a coalesced rerun starting now would race the final row exactly
         // like the un-awaited detached Task this replaces used to.
         guard !partialFlushSuspended else { return }
+        // #529 F1: this periodic upsert had no notion of ownership at all —
+        // unlike the end-of-run bundle (held via `shouldDrain` once it's on
+        // the queue), a flush that fires AFTER an A → signed-out/B
+        // transition would otherwise write A's in-progress `climb_workouts`
+        // row straight to the network under B's currently-relayed token,
+        // landing A's elevation/attempt data in B's account — and can also
+        // permanently strand A's later held save, since the row would then
+        // exist owned by B and A's eventual upsert would be refused by RLS.
+        // Best-effort by design (SL-90): skipping here loses nothing
+        // durable — the next flush (or the final `endAndSave()`, which DOES
+        // carry the immutable `ownerUserId`) picks the snapshot up once the
+        // real owner is active again.
+        guard userIdProvider() == ownerUserId else { return }
         switch partialFlushDrain.request() {
         case .queued:
             // One is already in flight; it will pick up the LATEST snapshot
@@ -1009,7 +1052,14 @@ final class WorkoutManager: NSObject {
             elevationGainM: detector.totalElevationGainM,
             attemptsDetected: liveAttempts,
             attemptsConfirmed: liveAttempts,
-            raw: tunables.keepRawTrace ? rawTrace : nil
+            raw: tunables.keepRawTrace ? rawTrace : nil,
+            // #529 F1/F6: defense-in-depth behind the `flushPartial()` guard
+            // above — if the active account changes DURING this call's
+            // network round trip (the guard only checks before dispatching),
+            // an explicit, wrong `user_id` makes Postgres's `with check
+            // (auth.uid() = user_id)` refuse the write instead of silently
+            // accepting it under whoever is relayed when the request lands.
+            userId: ownerUserId
         )
         let uploader = partialUploader
         let task = Task.detached(priority: .background) {
