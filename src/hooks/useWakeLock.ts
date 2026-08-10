@@ -22,7 +22,11 @@ export function useWakeLock(active: boolean): void {
     // #533: the coordinator serializes the request/release lifecycle so an
     // acquire() while a request is already pending can't leak a second,
     // untracked sentinel — see webWakeLockCoordinator.ts for the race this
-    // replaced.
+    // replaced. One instance per effect run, unlike `nativeCoordinator`
+    // above: `cleanup()` is terminal (it permanently blocks further
+    // acquires on that instance), so hoisting this to module scope would
+    // brick the web wake lock for the rest of the session after the first
+    // unmount.
     const coordinator = new WebWakeLockCoordinator(() => wl.request("screen"));
 
     coordinator.acquire();
