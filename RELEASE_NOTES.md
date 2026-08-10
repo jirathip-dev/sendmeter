@@ -34,7 +34,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
-- iPhone: registering for watch-triggered readiness refreshes can no longer get stuck permanently disabled for the rest of the app session after failing once.
+- iPhone: an outright-failed registration for watch-triggered readiness refreshes (for example, on an app version missing the needed native support) no longer disables that notification for the rest of the app session; a registration that fails silently without an error is a separate, still-open gap.
 - Routine actions now stay inside the Workout card on narrow phones; sheet headers are more compact without a redundant drag handle; and the Watch home switcher keeps full-size touch targets with slimmer visual pills.
 - Watch: the Status / Actions switcher now stays above the home content instead of covering the readiness or session cards, with the redundant home title removed to give 40mm watches more usable space.
 - Watch: Stop & Save now stays fully visible during a live Force pull on 40mm watches, with the live force trace compactly layered behind the readout instead of pushing the action offscreen.
