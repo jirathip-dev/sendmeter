@@ -58,6 +58,7 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
         sessionRelay: SessionRelayRequesting = RecordingTerminalSessionRelay(),
         scheduler: DrainScheduling = RecordingTerminalScheduler(),
         fileIO: TerminalRetryFileIO = RealQueueFileIO(),
+        lossReporter: TerminalLossReporting = RecordingTerminalLossReporter(),
         currentUserId: (@Sendable () -> UUID?)? = nil
     ) -> LiveWorkoutTerminalRetry {
         LiveWorkoutTerminalRetry(
@@ -66,6 +67,7 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
             sessionRelay: sessionRelay,
             scheduler: scheduler,
             fileIO: fileIO,
+            lossReporter: lossReporter,
             currentUserId: currentUserId ?? signedInAs(testUserId)
         )
     }
@@ -376,14 +378,19 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
     /// Finding 1: `attemptUnpersistable`'s account-mismatch arm used to
     /// return with no log at all, unlike its catch arm — this exercises that
     /// branch (a mismatched account with nothing durable on disk, i.e. a
-    /// genuine, permanent loss) and pins its one observable behavior: the
-    /// row is never sent under the wrong account, same as the persisted case.
-    func testUnpersistableRowWithAccountMismatchIsNeverSent() async throws {
+    /// genuine, permanent loss) and pins BOTH observable behaviors: the row
+    /// is never sent under the wrong account, AND (#549 F4 — the old test
+    /// only asserted the first, which was already true of the pre-fix code)
+    /// the loss is actually reported through `TerminalLossReporting`, not
+    /// just logged somewhere a test can't see.
+    func testUnpersistableRowWithAccountMismatchIsNeverSentAndReportsTheLoss() async throws {
         let alwaysRefusing = InMemoryTerminalFileIO(allowedWrites: 0)
         let uploader = ScriptedTerminalUploader(failing: false)
+        let reporter = RecordingTerminalLossReporter()
         let retry = makeRetry(
             upload: { try await uploader.upload($0) },
             fileIO: alwaysRefusing,
+            lossReporter: reporter,
             currentUserId: signedInAs(UUID())
         )
         let row = sampleRow(userId: testUserId)
@@ -391,6 +398,9 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
 
         let uploaded = await uploader.uploaded
         XCTAssertTrue(uploaded.isEmpty, "an unpersistable row for a mismatched account must never be sent")
+
+        let mismatchLosses = reporter.accountMismatchLosses
+        XCTAssertEqual(mismatchLosses, [row.runId], "the loss must be reported, not just logged where nothing can see it")
     }
 
     /// The ordinary disk-write-failure path still recovers via one direct
@@ -407,16 +417,37 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
         XCTAssertEqual(uploaded, [row.sequence], "the direct fallback must still land the row when nothing else is in flight")
     }
 
-    /// Finding 3: `handOff` used to call `attemptUnpersistable(row)` directly,
-    /// bypassing `drainState` entirely — so it could run concurrently with an
-    /// in-flight `drainPass()`, breaking the actor's one-attempt-in-flight
-    /// property. Row A persists and its upload is gated in flight; row B's
-    /// disk write then fails (the one allowed write was A's), so B falls
-    /// into `attemptUnpersistable` WHILE A's pass still holds `drainState`.
-    /// B must not race A's in-flight upload — `GatedUploader` would hang this
-    /// test if it did (a second concurrent caller would overwrite the single
-    /// release continuation A is suspended on).
-    func testUnpersistableFallbackDoesNotRaceAnInFlightDrainPass() async throws {
+    /// A direct attempt that itself fails (not merely loses the `drainState`
+    /// race) is the one genuinely unrecoverable outcome left after the F1
+    /// fix below — no durable copy exists, and the attempt it just got was
+    /// its only chance. Must be reported, not just logged.
+    func testUnpersistableFallbackReportsWhenTheDirectRetryItselfFails() async throws {
+        let alwaysRefusing = InMemoryTerminalFileIO(allowedWrites: 0)
+        let uploader = ScriptedTerminalUploader(failing: true)
+        let reporter = RecordingTerminalLossReporter()
+        let retry = makeRetry(upload: { try await uploader.upload($0) }, fileIO: alwaysRefusing, lossReporter: reporter)
+        let row = sampleRow()
+        await retry.handOff(row, error: URLError(.notConnectedToInternet))
+
+        let failures = reporter.unrecoverableUploadFailures
+        XCTAssertEqual(failures, [row.runId], "a failed direct retry with no durable backup must be reported as unrecoverable")
+    }
+
+    /// Finding 3, and its own round-1 review finding (F1): `handOff` used to
+    /// call `attemptUnpersistable(row)` directly, bypassing `drainState`
+    /// entirely, so it could run concurrently with an in-flight `drainPass()`
+    /// — breaking the actor's one-attempt-in-flight property. The first fix
+    /// for that made things WORSE: a coalesced (queued) unpersistable row was
+    /// simply discarded with zero upload attempts ever made, since the
+    /// coalesced rerun only re-reads DISK, which this row was never on. Row A
+    /// persists and its upload is gated in flight; row B's disk write then
+    /// fails (the one allowed write was A's), so B falls into
+    /// `attemptUnpersistable` WHILE A's pass still holds `drainState`. B must
+    /// not race A's in-flight upload (`GatedUploader` would hang this test if
+    /// it did — a second concurrent caller would overwrite the single release
+    /// continuation A is suspended on) — but it must still land, deferred
+    /// until A's whole coalesced chain finishes, not dropped.
+    func testUnpersistableFallbackIsDeferredNotLostWhileADrainPassIsInFlight() async throws {
         let gated = GatedUploader()
         let flakyIO = InMemoryTerminalFileIO(allowedWrites: 1)
         let retry = makeRetry(upload: { try await gated.upload($0) }, fileIO: flakyIO)
@@ -426,36 +457,47 @@ final class LiveWorkoutTerminalRetryTests: XCTestCase {
         let handOffA = Task { await retry.handOff(rowA, error: URLError(.notConnectedToInternet)) }
         await gated.waitUntilStarted() // A's persist consumed the one allowed write; its upload is now suspended in flight
 
+        // B's persist fails (no writes remain) -> falls into
+        // attemptUnpersistable, which loses the drainState race to A's
+        // in-flight pass and must be deferred, not discarded.
         await retry.handOff(rowB, error: URLError(.notConnectedToInternet))
 
-        await gated.release()
+        await gated.release() // let A's upload proceed; once A's chain fully finishes, B's deferred attempt runs
         await handOffA.value
 
         let uploadedRuns = await gated.calls.map(\.runId)
         XCTAssertEqual(
-            uploadedRuns, [rowA.runId],
-            "B's unpersistable fallback must not race A's in-flight pass — it is skipped and reported as lost, not raced"
+            uploadedRuns, [rowA.runId, rowB.runId],
+            "B must still be attempted, strictly after A finishes (not concurrently) — deferred by the coalescing gate, never dropped"
         )
+        let stillPending = await retry.hasPendingRetry()
+        XCTAssertFalse(stillPending, "both A (persisted) and B (deferred direct attempt) landed; nothing should remain queued")
     }
 
     // MARK: - #549 review finding 5: undecodable persisted row
 
     /// A row that fails to decode used to be silently discarded (`try?`)
     /// while staying stuck on disk forever, with `hasPendingRetry()` reading
-    /// false the whole time. It must now be reported (loudly, not
-    /// observable from a unit test — see `WorkoutManagerHRMissingDateIntervalTests`'s
-    /// note on `Logger` output) AND retained on disk untouched, per the #287
-    /// precedent, so a later compatible build gets another chance at it.
+    /// false the whole time. #549 F4: the old version of this test asserted
+    /// only "not uploaded" and "file retained" — both already true of the
+    /// pre-fix `try?` code, so the actual behavioral delta (the row is now
+    /// REPORTED) was unverified despite the test's name promising it. Now
+    /// asserted directly through `TerminalLossReporting`, since `Logger`
+    /// output isn't independently observable from a unit test (see
+    /// `WorkoutManagerHRMissingDateIntervalTests`'s note).
     func testUndecodablePersistedRowIsReportedNotSwallowedAndRetainedOnDisk() async throws {
         let fileIO = InMemoryTerminalFileIO()
         let fileURL = tempDir.appendingPathComponent("live-workout-terminal-retry.json")
         fileIO.seed(Data("{ this is not a valid LiveWorkoutUpsert }".utf8), at: fileURL)
 
         let uploader = ScriptedTerminalUploader(failing: false)
-        let retry = makeRetry(upload: { try await uploader.upload($0) }, fileIO: fileIO)
+        let reporter = RecordingTerminalLossReporter()
+        let retry = makeRetry(upload: { try await uploader.upload($0) }, fileIO: fileIO, lossReporter: reporter)
 
         let pending = await retry.hasPendingRetry()
         XCTAssertFalse(pending, "an undecodable row can't be resolved to an account, so it can't read as pending for anyone")
+        let reportsAfterHasPendingRetry = reporter.undecodableRowReportCount
+        XCTAssertGreaterThan(reportsAfterHasPendingRetry, 0, "the undecodable row must be reported, not just silently returned as absent")
 
         await retry.retryNow()
         let uploaded = await uploader.uploaded
@@ -734,5 +776,52 @@ private final class InMemoryTerminalFileIO: TerminalRetryFileIO, @unchecked Send
         lock.lock()
         defer { lock.unlock() }
         storage[url] = data
+    }
+}
+
+/// Records every `TerminalLossReporting` call instead of a no-op — #549 F4:
+/// makes the actual behavioral delta of "reported, not swallowed" (findings
+/// 1 and 5) assertable, since `Logger`/OSLog output is not. Lock-based
+/// (not an actor) so a call from inside `LiveWorkoutTerminalRetry` — itself
+/// an actor, calling this synchronously with no `await` — is recorded
+/// before that call returns, same rationale as this file's own
+/// `RecordingTerminalScheduler`: an actor-hop here would let a test read
+/// the recording before the hop-off `Task` actually runs, which is exactly
+/// the kind of race this codebase's CLAUDE.md calls out as its most-repeated
+/// defect class.
+private final class RecordingTerminalLossReporter: TerminalLossReporting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _accountMismatchLosses: [UUID] = []
+    private var _unrecoverableUploadFailures: [UUID] = []
+    private var _undecodableRowReportCount = 0
+
+    var accountMismatchLosses: [UUID] {
+        lock.lock(); defer { lock.unlock() }
+        return _accountMismatchLosses
+    }
+
+    var unrecoverableUploadFailures: [UUID] {
+        lock.lock(); defer { lock.unlock() }
+        return _unrecoverableUploadFailures
+    }
+
+    var undecodableRowReportCount: Int {
+        lock.lock(); defer { lock.unlock() }
+        return _undecodableRowReportCount
+    }
+
+    func reportAccountMismatchLoss(runId: UUID, sequence: Int) {
+        lock.lock(); defer { lock.unlock() }
+        _accountMismatchLosses.append(runId)
+    }
+
+    func reportUnrecoverableUploadFailure(runId: UUID, sequence: Int, error: Error) {
+        lock.lock(); defer { lock.unlock() }
+        _unrecoverableUploadFailures.append(runId)
+    }
+
+    func reportUndecodableRow(error: Error) {
+        lock.lock(); defer { lock.unlock() }
+        _undecodableRowReportCount += 1
     }
 }
