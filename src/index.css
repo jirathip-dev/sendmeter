@@ -579,6 +579,10 @@
   :root:not([data-theme="light"]) .phase-suggestion {
     background: color-mix(in srgb, var(--phase-accent) var(--phase-tint-alpha), var(--canvas));
   }
+  :root:not([data-theme="light"]) .phase-banner-name {
+    background: transparent;
+    border-color: transparent;
+  }
 }
 
 /* Increased contrast is additive: it strengthens quiet axes and bands while
@@ -1418,6 +1422,28 @@ input[type="number"] {
 .phase-banner:hover { border-color: color-mix(in srgb, var(--phase-accent) calc(var(--phase-border-alpha) + 15%), var(--canvas)); }
 .phase-banner:active { transform: scale(0.995); box-shadow: var(--shadow-sm); }
 .phase-suggestion { border-radius: 12px; }
+/* Phase name pill (#557 round 2) — `--phase-name-bg`/`--phase-name-border`
+   are set inline per phase (Dashboard.tsx) from `Phase.bg`/`Phase.border`.
+   Light-mode-only by construction: the dark override two rules below zeroes
+   both to transparent, because dark's `.phase-banner` background is ALREADY
+   a flat 12% identity wash (--phase-tint-alpha above) — stacking a second
+   12% tint here would compound to ~22.6% and fail AA for three of four
+   phases (round-2 review, measured live). Dark's identity text already
+   clears AA directly on that flat wash (~5.2–6.7:1), so it needs no pill. */
+.phase-banner-name {
+  display: inline-block;
+  font-size: var(--t-md);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-top: 4px;
+  padding: 2px 9px;
+  border-radius: 7px;
+  background: var(--phase-name-bg, transparent);
+  border: 1px solid var(--phase-name-border, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Dark keeps its original flat, edge-to-edge wash (round-2 review finding
    #5) — a solid color-mix fill, not the fading gradient light uses, matching
    what the pre-#547 inline `background: rgba(color, alpha)` rendered as.
@@ -1426,6 +1452,10 @@ input[type="number"] {
 :root[data-theme="dark"] .phase-banner,
 :root[data-theme="dark"] .phase-suggestion {
   background: color-mix(in srgb, var(--phase-accent) var(--phase-tint-alpha), var(--canvas));
+}
+:root[data-theme="dark"] .phase-banner-name {
+  background: transparent;
+  border-color: transparent;
 }
 
 /* Grid */

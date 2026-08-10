@@ -2264,6 +2264,31 @@ describe("premium visual language contracts (#517)", () => {
     expect(sessionRowSource).toContain("color: ph?.textColor");
     expect(sessionRowSource).not.toContain("color: ph?.color");
 
+    // #557 round 2: the banner name's identity pill is wired via CSS custom
+    // properties (`--phase-name-bg`/`--phase-name-border`), not literal
+    // `background`/`border` values baked in from JS — that's what lets the
+    // dark theme block neutralize it below instead of compounding with the
+    // banner's own 12% wash.
+    expect(dashboardSource).toContain('className="phase-banner-name"');
+    expect(dashboardSource).toContain('"--phase-name-bg": phase.bg');
+    expect(dashboardSource).toContain('"--phase-name-border": phase.border');
+    expect(dashboardSource).not.toMatch(/\bbackground:\s*phase\.bg\b/);
+    expect(dashboardSource).not.toMatch(/\bborder:\s*`1px solid \$\{phase\.border\}`/);
+
+    // Dark mode must neutralize the pill, not compound it: `.phase-banner`
+    // is already a flat 12% identity wash there (--phase-tint-alpha), so a
+    // second 12% pill on top would compound to ~22.6% and fail AA for
+    // three of four phases (round-2 review, measured live — capacity/power/
+    // execution dropped to ~4.36–4.42:1, and it regressed capacity/power
+    // from the previous commit's passing 4.57/4.73). Both dark-detection
+    // paths must agree, same drift risk as the --phase-text-* tokens above.
+    const darkPillRule = cssRuleBody(parsedCssRules, ':root[data-theme="dark"] .phase-banner-name');
+    const systemDarkPillRule = cssRuleBody(parsedCssRules, ':root:not([data-theme="light"]) .phase-banner-name');
+    for (const [name, rule] of [["dark", darkPillRule], ["systemDark", systemDarkPillRule]] as const) {
+      expect(rule, `${name} .phase-banner-name background`).toContain("background: transparent;");
+      expect(rule, `${name} .phase-banner-name border-color`).toContain("border-color: transparent;");
+    }
+
     // Every --phase-text-* token is declared (non-empty) in all three theme
     // blocks, and the system-dark path stays byte-identical to the explicit
     // dark path — a later edit to one dark block and not the other would
@@ -2282,6 +2307,10 @@ describe("premium visual language contracts (#517)", () => {
 
     const white = hexColor("#FFFFFF", "white");
     const f2f4f8 = hexColor("#F2F4F8", "F2F4F8");
+    // Light --phase-tint-alpha (banner's own wash, strongest where the name
+    // sits) — parsed from the token, not hardcoded, so a future retune can't
+    // silently invalidate the compounded check below.
+    const lightBannerTintAlpha = Number.parseFloat(themeDeclarations.light["--phase-tint-alpha"]!) / 100;
     const darkCanvas = resolveThemeColor("var(--canvas)", "dark", "dark canvas");
     // The real worst-case dark surface text lands on isn't plain --canvas:
     // Sheet/session-row backgrounds layer --gradient-neutral over it, and
@@ -2335,6 +2364,22 @@ describe("premium visual language contracts (#517)", () => {
       expect(
         contrastRatio(lightVariant, lightTagBg),
         `${phase.id} light vs 12%-tinted tag/card fill`,
+      ).toBeGreaterThanOrEqual(4.5);
+
+      // --- Light Dashboard banner: the name pill's 12% Phase.bg tint
+      // compounds with the banner's OWN wash (the gradient is strongest,
+      // ~--phase-tint-alpha, right where the name sits) — two stacked tints,
+      // not one. This is the surface round-2 regressed in dark mode (fixed
+      // by neutralizing the pill there instead), and light must still clear
+      // AA on the real compounded composite, not just a single 12% tint.
+      // Base is white, not #F2F4F8: `.phase-banner`'s own background-color
+      // is literally `var(--canvas)` (#FFFFFF) — the gradient is a separate
+      // background-IMAGE layer on top of that, not a page-canvas consumer.
+      const lightBannerSurface = mix(white, identity, lightBannerTintAlpha);
+      const lightBannerPillBg = mix(lightBannerSurface, identity, 0.12);
+      expect(
+        contrastRatio(lightVariant, lightBannerPillBg),
+        `${phase.id} light vs compounded banner+pill fill`,
       ).toBeGreaterThanOrEqual(4.5);
 
       // --- Hue lock: every variant that differs from identity must still be
@@ -2907,6 +2952,8 @@ describe("premium visual language contracts (#517)", () => {
       "--zone-focus-color", // Recommended training zone hue is inherited by the button.
       "--pill-tint", // Glass action tint supplied by each fullscreen control.
       "--toast-accent", // Toast kind color supplied by ToastProvider.
+      "--phase-name-bg", // Phase banner name pill fill supplied per-phase (Dashboard.tsx).
+      "--phase-name-border", // Phase banner name pill border supplied per-phase (Dashboard.tsx).
     ]);
 
     for (const match of css.matchAll(/var\(\s*(--[\w-]+)/g)) {
