@@ -78,28 +78,6 @@ export function currentPeriodStart(
   );
 }
 
-/// The effective start date for the current phase's "Day N" counter, taken from
-/// session *history* rather than the phase_periods row — so briefly switching to
-/// another phase and back (which opens a fresh period dated today) doesn't reset
-/// the count. Walks sessions newest → oldest and follows the current phase's
-/// unbroken streak (a session of a *different* phase ends it); the earliest
-/// session in that streak is when the phase actually started. Falls back to
-/// `fallbackStart` (the open period's start) when no current-phase session
-/// exists yet — e.g. a genuine fresh switch. All dates are YYYY-MM-DD.
-export function phaseStartFromHistory(
-  sessions: Pick<Session, "date" | "phase">[],
-  currentPhase: PhaseId,
-  fallbackStart: string,
-): string {
-  const desc = [...sessions].sort((a, b) => b.date.localeCompare(a.date));
-  let start: string | null = null;
-  for (const s of desc) {
-    if (s.phase !== currentPhase) break;
-    start = s.date;
-  }
-  return start ?? fallbackStart;
-}
-
 // "Low" readiness mirrors the "recover" zone floor already drawn as a
 // gridline on ReadinessCard and colored var(--danger) — see
 // RecoveryTunables.zoneRecoverBelow in sendlog-health-core (kept in sync by

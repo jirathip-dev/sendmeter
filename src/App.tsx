@@ -2,13 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as CapacitorApp } from "@capacitor/app";
 import { PHASES } from "./constants";
-import { today } from "./lib/dates";
+import { blockAge, today } from "./lib/dates";
 import {
   computeAcwr,
   computeWeeklyLoads,
   currentPeriodStart,
   getACWRStatus,
-  phaseStartFromHistory,
 } from "./lib/metrics";
 import { useAuth } from "./hooks/useAuth";
 import { useTrainingData } from "./hooks/useTrainingData";
@@ -277,16 +276,13 @@ function AuthedApp({
 
   const phase = PHASES.find((p) => p.id === currentPhase) || PHASES[0]!;
   const status = getACWRStatus(acwrData.acwr);
-  // "Day N" counts from the current phase's streak of logged sessions (auto
-  // from history), so toggling to another phase and back doesn't reset it. The
-  // open period's start (or phaseStartDate) is only the fallback when nothing's
-  // been logged in the phase yet.
+  // "Day N" counts from the canonical open phase period (or phaseStartDate as
+  // its fallback) — the SAME start PhasesView reads via currentPeriodStart —
+  // never from recent-session-streak history (issue #544: a manually-selected
+  // block started weeks ago must not read as Day 3 just because the current
+  // streak of same-phase sessions is younger than the block itself).
   const periodStart = currentPeriodStart(phasePeriods, currentPhase, phaseStartDate);
-  const phaseStart = phaseStartFromHistory(sessions, currentPhase, periodStart);
-  const phaseDays =
-    Math.floor(
-      (new Date(today()).getTime() - new Date(phaseStart).getTime()) / 86400000,
-    ) + 1;
+  const phaseDays = blockAge(periodStart)?.totalDays ?? null;
   // Today's date for the phase strip (parse as LOCAL midnight so the label is
   // right regardless of UTC offset).
   const todayLabel = new Date(today() + "T00:00:00").toLocaleDateString(

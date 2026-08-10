@@ -35,6 +35,31 @@ export function dayOffsetFromToday(date: string): number {
   return Math.round(ms / 86400000);
 }
 
+export interface BlockAge {
+  /// Total elapsed days since the block started, inclusive — the start date
+  /// itself is Day 1.
+  totalDays: number;
+  /// 1-based week number within the block (days 1-7 are week 1, 8-14 week 2, ...).
+  week: number;
+  /// 1-based day-of-week within `week` (1-7).
+  dayOfWeek: number;
+}
+
+/// Training-block age (issue #544) from a canonical local start date to
+/// today, inclusive Day-1 semantics — the start date itself is Day 1, using
+/// local calendar dates (`dayOffsetFromToday`), never raw elapsed seconds.
+/// Fails safely (returns `null`, never a negative/bogus day count) when
+/// `startDate` is malformed or in the future — a block can't have aged
+/// before it started.
+export function blockAge(startDate: string): BlockAge | null {
+  const offset = dayOffsetFromToday(startDate); // startDate - today, in days
+  if (!Number.isFinite(offset) || offset > 0) return null;
+  const totalDays = -offset + 1;
+  const week = Math.floor((totalDays - 1) / 7) + 1;
+  const dayOfWeek = ((totalDays - 1) % 7) + 1;
+  return { totalDays, week, dayOfWeek };
+}
+
 /// How a nearby day is named in prose: "yesterday" / "today" / "tomorrow" /
 /// the plain weekday inside the coming week. Past ~6 days out a bare weekday
 /// is ambiguous (which Thursday?), so it falls back to a short date.

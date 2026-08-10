@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import {
+  blockAge,
   dateStr,
   dayOffsetFromToday,
   daysAgo,
@@ -99,6 +100,60 @@ describe("relativeDayLabel", () => {
         day: "numeric",
       }),
     );
+  });
+});
+
+describe("blockAge", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it("issue #544 regression: block started 25 Jul, today 10 Aug, is Day 17 / Week 3 Day 3", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 10, 9, 0, 0));
+    expect(blockAge("2026-07-25")).toEqual({ totalDays: 17, week: 3, dayOfWeek: 3 });
+  });
+
+  it("the start date itself is Day 1, Week 1", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 10, 9, 0, 0));
+    expect(blockAge(today())).toEqual({ totalDays: 1, week: 1, dayOfWeek: 1 });
+  });
+
+  it("rolls from Week 1 Day 7 to Week 2 Day 1 at the week boundary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 10, 9, 0, 0));
+    expect(blockAge(daysAgo(6))).toEqual({ totalDays: 7, week: 1, dayOfWeek: 7 });
+    expect(blockAge(daysAgo(7))).toEqual({ totalDays: 8, week: 2, dayOfWeek: 1 });
+  });
+
+  it("counts correctly across a month/year boundary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 0, 1, 9, 0, 0)); // 2026-01-01
+    // Started 2025-12-30: Dec 30 = Day 1, Dec 31 = Day 2, Jan 1 = Day 3.
+    expect(blockAge("2025-12-30")).toEqual({ totalDays: 3, week: 1, dayOfWeek: 3 });
+  });
+
+  it("counts a whole day across a DST transition (23-hour local day)", () => {
+    vi.useFakeTimers();
+    // 2026-03-08 is a US DST spring-forward day (23h long in America/New_York).
+    vi.stubEnv("TZ", "America/New_York");
+    vi.setSystemTime(new Date(2026, 2, 9, 9, 0, 0)); // 2026-03-09
+    expect(blockAge("2026-03-07")).toEqual({ totalDays: 3, week: 1, dayOfWeek: 3 });
+  });
+
+  it("fails safely (null) for a future start date", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 10, 9, 0, 0));
+    expect(blockAge(daysAhead(1))).toBeNull();
+  });
+
+  it("fails safely (null) for a malformed start date", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 10, 9, 0, 0));
+    expect(blockAge("")).toBeNull();
+    expect(blockAge("not-a-date")).toBeNull();
   });
 });
 

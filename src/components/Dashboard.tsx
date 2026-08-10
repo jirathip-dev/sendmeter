@@ -28,7 +28,7 @@ const STEP_BACK_DISMISS_KEY = "sendmeter:phase-step-back-dismissed";
 
 interface Props {
   phase: Phase;
-  phaseDays: number;
+  phaseDays: number | null;
   todayLabel: string;
   acwrData: AcwrData;
   weeklyLoads: WeeklyLoad[];
@@ -114,7 +114,7 @@ export default function Dashboard({
                 letterSpacing: "0.1em",
               }}
             >
-              Phase · Day {phaseDays} · {todayLabel}
+              Phase · Day {phaseDays ?? "—"} · {todayLabel}
             </div>
             <div
               style={{

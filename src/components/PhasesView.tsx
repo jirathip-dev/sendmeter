@@ -1,5 +1,5 @@
 import { PHASES } from "../constants";
-import { today } from "../lib/dates";
+import { blockAge, today } from "../lib/dates";
 import { useChartHover } from "../hooks/useChartHover";
 import { currentPeriodStart } from "../lib/metrics";
 import ChartTooltip from "./ChartTooltip";
@@ -42,6 +42,9 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
   // optimistic phaseStartDate instead of showing the old phase's date under
   // the new phase's card.
   const openStart = currentPeriodStart(phasePeriods, currentPhase, phaseStartDate);
+  // Same canonical start + helper Home's phase strip uses (issue #544) — the
+  // recent-session streak never factors into this.
+  const openAge = blockAge(openStart);
 
   const segments = chronological.reduce<
     { p: PhasePeriod; days: number; startPct: number; widthPct: number }[]
@@ -166,7 +169,9 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
               )}
               {currentPhase === p.id && (
                 <div style={{ fontSize: "var(--t-eyebrow)", color: p.color, marginTop: 2 }}>
-                  Since {openStart}
+                  {openAge
+                    ? `Week ${openAge.week} · Day ${openAge.dayOfWeek} · Since ${openStart}`
+                    : `Since ${openStart}`}
                 </div>
               )}
             </div>
