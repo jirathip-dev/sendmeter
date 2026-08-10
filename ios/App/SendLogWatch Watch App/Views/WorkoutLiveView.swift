@@ -85,13 +85,21 @@ struct WorkoutLiveView: View {
     @ViewBuilder
     private var savedContent: some View {
         let queued = fixtureVisual?.stillQueued ?? workout.stillQueued
+        // #529 F3: a fixture never models the held-for-another-account state
+        // (no screenshot exercises an A → signed-out/B transition), so only
+        // the real manager's flag can ever be true here.
+        let heldForAnotherAccount = fixtureVisual == nil && workout.stillQueuedForAnotherAccount
         WatchCard(accent: WatchPalette.success) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     WatchStateChip(state: .success, title: queued ? "Saved on watch" : "Saved")
                     Spacer(minLength: 0)
                 }
-                Text(queued ? "Uploads when signed in" : "Set RPE on your phone")
+                Text(
+                    heldForAnotherAccount ? "Uploads when the account that started it signs in"
+                    : queued ? "Uploads when signed in"
+                    : "Set RPE on your phone"
+                )
                     .font(.system(.footnote, design: .rounded).weight(.semibold))
                     .foregroundStyle(WatchPalette.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)

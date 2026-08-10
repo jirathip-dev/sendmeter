@@ -82,6 +82,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: a whole-buffer recording recovered after a sign-out or connection loss can no longer enter your force curve (and the training targets/watch RPE prediction derived from it).
 - Force fullscreen: Disconnect now asks for confirmation while a rep is measuring, armed, or counting down, instead of silently discarding it.
 - Watch: force recordings now queue and retry like workouts and gauge sessions do, so a gym-basement outage no longer loses a rep outright.
+- Watch: an auto-tracked workout is now permanently attributed to the account signed in when it started — ending or retrying it after the watch switches to (or briefly signs out of) a different account no longer risks it uploading under the wrong person; it's queued and held until the original account is signed in again.
 
 ## 1.0 — 2026-08-02
 
