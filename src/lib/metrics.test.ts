@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   ACUTE_SPAN_DAYS,
@@ -11,6 +13,7 @@ import {
   currentPeriodStart,
   ewma,
   phaseAcwrFit,
+  phaseBlockAge,
   suggestPhaseStepBack,
 } from "./metrics";
 import { today, daysAgo } from "./dates";
@@ -310,6 +313,54 @@ describe("currentPeriodStart", () => {
       period("strength", "2026-07-11", null), // open, different phase
     ];
     expect(currentPeriodStart(periods, "capacity", fallback)).toBe(fallback);
+  });
+});
+
+describe("phaseBlockAge", () => {
+  it("issue #544 regression: derives from the open period's start, not from a shorter recent session streak", () => {
+    // The user's actual field scenario: a Strength block opened 2026-07-25,
+    // but the most recent UNBROKEN streak of logged Strength sessions only
+    // goes back to 2026-08-08 (a gap in logging before that). The old
+    // phaseStartFromHistory() read that streak as the block's start and
+    // showed "Day 3" on 2026-08-10 instead of the true "Day 17" — the exact
+    // bug #544 reported. phaseBlockAge takes no session parameter at all, so
+    // this streak date cannot reach it regardless of what session history
+    // exists; the recent streak's start is asserted distinct from the
+    // period's start purely to document the scenario this regression covers.
+    const recentSessionStreakStart = "2026-08-08";
+    const periods = [period("strength", "2026-07-25", null)];
+    expect(recentSessionStreakStart).not.toBe(periods[0]!.startedOn);
+    expect(phaseBlockAge(periods, "strength", "2026-07-25", "2026-08-10")).toEqual({
+      totalDays: 17,
+      week: 3,
+      dayOfWeek: 3,
+    });
+  });
+
+  it("falls back to phaseStartDate exactly like currentPeriodStart, then ages from there", () => {
+    expect(phaseBlockAge([], "capacity", "2026-07-19", "2026-07-19")).toEqual({
+      totalDays: 1,
+      week: 1,
+      dayOfWeek: 1,
+    });
+  });
+
+  it("has no session parameter in its signature — structural guard against reintroducing #544", () => {
+    // Session-history data produced the #544 bug once already
+    // (`phaseStartFromHistory` competing with the canonical open-period
+    // start); pinning the exported signature makes a reintroduction a
+    // visible diff to this function, not a silent behavior change reachable
+    // only by reading App.tsx.
+    const src = readFileSync(join(import.meta.dirname, "metrics.ts"), "utf8");
+    const match = src.match(/export function phaseBlockAge\(([\s\S]*?)\):/);
+    expect(match).not.toBeNull();
+    expect(match![1]).not.toMatch(/\bsessions\b/);
+  });
+
+  it("App.tsx derives phaseDays from phaseBlockAge and never reintroduces phaseStartFromHistory", () => {
+    const src = readFileSync(join(import.meta.dirname, "..", "App.tsx"), "utf8");
+    expect(src).toMatch(/phaseBlockAge\(\s*phasePeriods,\s*currentPhase,\s*phaseStartDate/);
+    expect(src).not.toMatch(/phaseStartFromHistory/);
   });
 });
 

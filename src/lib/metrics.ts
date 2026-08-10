@@ -9,7 +9,7 @@ import type {
   TindeqRecordingMeta,
   WeeklyLoad,
 } from "../types";
-import { daysAgo, today } from "./dates";
+import { blockAge, daysAgo, today, type BlockAge } from "./dates";
 
 export function getACWRStatus(acwr: number | null): AcwrStatus {
   // Colors are CSS-var strings — applied via inline style, they track the
@@ -76,6 +76,23 @@ export function currentPeriodStart(
     phasePeriods.find((p) => p.endedOn === null && p.phase === currentPhase)
       ?.startedOn ?? phaseStartDate
   );
+}
+
+/// The one composition Home and the Training phases sheet both call for the
+/// user-facing block-age display (issue #544) — `currentPeriodStart` feeding
+/// `blockAge`, hoisted here so the two screens can't drift onto different
+/// start dates or different day math by editing one call site and not the
+/// other (they used to: the Home strip read `phaseStartFromHistory()`'s
+/// recent-session-streak start instead of this canonical one). Deliberately
+/// has NO session parameter — the whole point of #544 is that session
+/// history must never be able to feed the displayed block age.
+export function phaseBlockAge(
+  phasePeriods: Pick<PhasePeriod, "phase" | "startedOn" | "endedOn">[],
+  currentPhase: PhaseId,
+  phaseStartDate: string,
+  referenceDate: string,
+): BlockAge | null {
+  return blockAge(currentPeriodStart(phasePeriods, currentPhase, phaseStartDate), referenceDate);
 }
 
 // "Low" readiness mirrors the "recover" zone floor already drawn as a

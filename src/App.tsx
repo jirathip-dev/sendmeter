@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { App as CapacitorApp } from "@capacitor/app";
 import { PHASES } from "./constants";
-import { blockAge, today } from "./lib/dates";
+import { today } from "./lib/dates";
 import {
   computeAcwr,
   computeWeeklyLoads,
-  currentPeriodStart,
   getACWRStatus,
+  phaseBlockAge,
 } from "./lib/metrics";
 import { useAuth } from "./hooks/useAuth";
 import { useTrainingData } from "./hooks/useTrainingData";
@@ -276,16 +276,18 @@ function AuthedApp({
 
   const phase = PHASES.find((p) => p.id === currentPhase) || PHASES[0]!;
   const status = getACWRStatus(acwrData.acwr);
+  const currentDate = today();
   // "Day N" counts from the canonical open phase period (or phaseStartDate as
-  // its fallback) — the SAME start PhasesView reads via currentPeriodStart —
-  // never from recent-session-streak history (issue #544: a manually-selected
-  // block started weeks ago must not read as Day 3 just because the current
-  // streak of same-phase sessions is younger than the block itself).
-  const periodStart = currentPeriodStart(phasePeriods, currentPhase, phaseStartDate);
-  const phaseDays = blockAge(periodStart)?.totalDays ?? null;
+  // its fallback) via the SAME phaseBlockAge() PhasesView calls — never from
+  // recent-session-streak history (issue #544: a manually-selected block
+  // started weeks ago must not read as Day 3 just because the current streak
+  // of same-phase sessions is younger than the block itself; phaseBlockAge
+  // has no session parameter at all).
+  const phaseDays =
+    phaseBlockAge(phasePeriods, currentPhase, phaseStartDate, currentDate)?.totalDays ?? null;
   // Today's date for the phase strip (parse as LOCAL midnight so the label is
   // right regardless of UTC offset).
-  const todayLabel = new Date(today() + "T00:00:00").toLocaleDateString(
+  const todayLabel = new Date(currentDate + "T00:00:00").toLocaleDateString(
     undefined,
     { weekday: "short", month: "short", day: "numeric" },
   );
