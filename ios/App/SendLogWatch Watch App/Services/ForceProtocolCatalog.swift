@@ -81,10 +81,25 @@ final class ForceProtocolCatalog {
         case .empty:
             return "No saved protocols yet"
         case .cached:
-            return errorMessage ?? "Offline · showing saved protocols"
+            // No default text: a cold launch from cache reaches `.cached`
+            // before any refresh has been attempted, so there is nothing
+            // honest to say yet beyond the title (#536 review finding 9).
+            return errorMessage
         case .failed:
-            return errorMessage ?? "Couldn’t sync protocols"
+            return errorMessage ?? ForceProtocolSyncCopy.message(for: .unknown)
         }
+    }
+
+    /// The `.cached`/`.failed` banner title. Derived from actual saved rows,
+    /// not from whether *any* cache write has ever happened
+    /// (`hasCachedSnapshot`) — an empty catalog is a legitimately persisted
+    /// cache too, so the title must never claim saved protocols exist when
+    /// there are none (#536 review finding 1). `.failed` only occurs when
+    /// nothing has ever been cached, so `myProtocols` is always empty there
+    /// and this always reads "No saved protocols yet".
+    var syncBannerTitle: String {
+        synchronizeAccountScope()
+        return myProtocols.isEmpty ? "No saved protocols yet" : "Showing saved protocols"
     }
 
     init(
@@ -182,17 +197,25 @@ final class ForceProtocolCatalog {
         guard isCurrent(generation) else { return }
 
         guard let fetched else {
+            // `technicalDescription` is expected non-nil here — `fetched ==
+            // nil` only happens after a non-cancellation `catch` set
+            // `lastError` — but a defensive log line stays cheap insurance,
+            // and `BackendFailureReason(error:)` gives the nil case an
+            // explicit, correct meaning (#536 review finding 8) rather than
+            // classifying an empty string as an unrecognized error.
             let technicalDescription = lastError?.localizedDescription
             if let technicalDescription {
-                Self.log.error("catalog refresh failed: \(technicalDescription)")
+                // `privacy: .public` is required: OSLog redacts dynamic
+                // string interpolation by default, so without this a real
+                // Watch's Console/log collect would show only "<private>",
+                // failing AC #4 (#536 review finding 4). The error text
+                // itself is never user data.
+                Self.log.error("catalog refresh failed: \(technicalDescription, privacy: .public)")
             } else {
                 Self.log.error("catalog refresh failed: no response from iPhone")
             }
             status = hasCachedSnapshot ? .cached : .failed
-            errorMessage = ForceProtocolSyncCopy.message(
-                for: BackendFailureReason(errorDescription: technicalDescription ?? ""),
-                hasCachedSnapshot: hasCachedSnapshot
-            )
+            errorMessage = ForceProtocolSyncCopy.message(for: BackendFailureReason(error: lastError))
             return
         }
 
@@ -200,7 +223,7 @@ final class ForceProtocolCatalog {
             // Never interpret an anonymous/RLS empty success as a real empty
             // catalog. This keeps both the rows and selected custom id intact.
             if hasCachedSnapshot {
-                errorMessage = "Waiting for iPhone sign-in · showing saved protocols"
+                errorMessage = "Waiting for iPhone sign-in."
                 status = .cached
             } else {
                 errorMessage = "Waiting for your iPhone to finish signing in."

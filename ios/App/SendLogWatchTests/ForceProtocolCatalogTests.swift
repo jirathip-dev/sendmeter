@@ -128,10 +128,11 @@ final class ForceProtocolCatalogTests: XCTestCase {
     }
 
     /// Regression for #536: a real "JWT expired" refresh failure must never
-    /// reach the picker as raw text. With a cached snapshot present the
-    /// catalog stays usable (`.cached`) and `errorMessage`/`statusText` carry
-    /// only the mapped product copy.
-    func testExpiredTokenFailureWithCachedSnapshotShowsProductCopyOnly() async {
+    /// reach the picker as raw text. With saved rows present the catalog
+    /// stays usable (`.cached`), the title says so, and `errorMessage`
+    /// carries only the recovery action — never a repeated cache claim
+    /// (review finding 2).
+    func testExpiredTokenFailureWithCachedSnapshotShowsProductCopyOnly() async throws {
         let defaults = makeDefaults()
         let account = UUID()
         let protocolValue = makeProtocol(id: "cached-protocol", name: "Cached protocol")
@@ -147,18 +148,17 @@ final class ForceProtocolCatalogTests: XCTestCase {
 
         XCTAssertEqual(catalog.status, .cached)
         XCTAssertEqual(catalog.myProtocols, [protocolValue])
-        XCTAssertEqual(
-            catalog.errorMessage,
-            "Open Sendmeter on iPhone to refresh · showing saved protocols"
-        )
-        assertNoRawTechnicalWording(catalog.errorMessage)
-        assertNoRawTechnicalWording(catalog.statusText)
+        XCTAssertEqual(catalog.syncBannerTitle, "Showing saved protocols")
+        let message = try XCTUnwrap(catalog.errorMessage)
+        XCTAssertEqual(message, "Open Sendmeter on iPhone to refresh.")
+        assertNoRawTechnicalWording(message)
+        assertNoRawTechnicalWording(catalog.syncBannerTitle)
     }
 
     /// Same failure, but with nothing cached yet — the catalog has no rows to
     /// fall back to, so `.failed` is correct, and the copy must still stay
     /// free of raw technical wording.
-    func testExpiredTokenFailureWithoutCachedSnapshotShowsProductCopyOnly() async {
+    func testExpiredTokenFailureWithoutCachedSnapshotShowsProductCopyOnly() async throws {
         let defaults = makeDefaults()
         let account = UUID()
         let state = ForceProtocolCatalogTestState(userId: account)
@@ -169,15 +169,67 @@ final class ForceProtocolCatalogTests: XCTestCase {
 
         XCTAssertEqual(catalog.status, .failed)
         XCTAssertEqual(catalog.myProtocols, [])
-        XCTAssertEqual(catalog.errorMessage, "Open Sendmeter on iPhone to refresh.")
-        assertNoRawTechnicalWording(catalog.errorMessage)
-        assertNoRawTechnicalWording(catalog.statusText)
+        XCTAssertEqual(catalog.syncBannerTitle, "No saved protocols yet")
+        let message = try XCTUnwrap(catalog.errorMessage)
+        XCTAssertEqual(message, "Open Sendmeter on iPhone to refresh.")
+        assertNoRawTechnicalWording(message)
+        assertNoRawTechnicalWording(catalog.syncBannerTitle)
     }
 
-    private func assertNoRawTechnicalWording(_ message: String?, file: StaticString = #filePath, line: UInt = #line) {
-        guard let message else { return }
+    /// Regression for #536 review finding 1: `persistCache()` runs on every
+    /// successful fetch including an empty one, so `hasCachedSnapshot ==
+    /// true` (a cache write happened) does not imply there are rows to show.
+    /// Seeds that exact on-disk shape directly (a live empty-but-authenticated
+    /// refresh needs a real relayed session this test harness doesn't control)
+    /// and asserts a later auth failure does NOT claim "Showing saved
+    /// protocols" — there is nothing saved to show.
+    func testExpiredTokenFailureWithEmptyPersistedCacheNeverClaimsSavedRows() async throws {
+        let defaults = makeDefaults()
+        let account = UUID()
+        seedEmptyCache(defaults: defaults, userId: account)
+        let state = ForceProtocolCatalogTestState(userId: account)
+        state.setPendingError(ForceProtocolCatalogTestAuthError())
+        let catalog = makeCatalog(defaults: defaults, state: state)
+
+        XCTAssertTrue(catalog.hasCachedSnapshot)
+        XCTAssertEqual(catalog.myProtocols, [])
+        XCTAssertEqual(catalog.status, .cached)
+
+        await catalog.refresh()
+
+        XCTAssertEqual(catalog.status, .cached)
+        XCTAssertEqual(catalog.myProtocols, [])
+        XCTAssertEqual(catalog.syncBannerTitle, "No saved protocols yet")
+        let message = try XCTUnwrap(catalog.errorMessage)
+        XCTAssertEqual(message, "Open Sendmeter on iPhone to refresh.")
+        assertNoRawTechnicalWording(message)
+        assertNoRawTechnicalWording(catalog.syncBannerTitle)
+    }
+
+    /// Writes the exact on-disk shape `ForceProtocolCatalog.persistCache()`
+    /// would have written for a legitimately-empty catalog — same key
+    /// scheme (`forceProtocolCatalog.v2.cache.<uuid>`), same `{protocols,
+    /// fetchedAt}` shape (the private `Cache` type isn't visible here, but
+    /// `Codable` matches structurally, not nominally).
+    private func seedEmptyCache(defaults: UserDefaults, userId: UUID) {
+        struct SeedCache: Codable {
+            let protocols: [WatchForceProtocol]
+            let fetchedAt: Date
+        }
+        let data = try! JSONEncoder().encode(SeedCache(protocols: [], fetchedAt: Date()))
+        defaults.set(data, forKey: "forceProtocolCatalog.v2.cache.\(userId.uuidString.lowercased())")
+    }
+
+    /// Kept in sync with `ForceProtocolSyncCopyTests.rawTechnicalTerms` in
+    /// `SendLogWatchCoreTests` (#536 review finding 7) — the two suites must
+    /// not silently diverge on what counts as a leak.
+    private func assertNoRawTechnicalWording(_ message: String, file: StaticString = #filePath, line: UInt = #line) {
         let lowered = message.lowercased()
-        let rawTerms = ["jwt", "postgrest", "pgrst", "http", "supabase", "row-level security", "401", "403"]
+        let rawTerms = [
+            "jwt", "jws", "postgrest", "pgrst", "http", "supabase", "row-level security",
+            "401", "403", "status code", "expired", "token", "unauthorized", "denied",
+            "authentication", "api key", "sqlstate"
+        ]
         for term in rawTerms {
             XCTAssertFalse(
                 lowered.contains(term),

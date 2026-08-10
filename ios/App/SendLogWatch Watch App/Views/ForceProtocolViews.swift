@@ -341,7 +341,7 @@ struct ForceProtocolChooserView: View {
         case .cached:
             WatchStateBanner(
                 state: .cached,
-                title: "Showing cached protocols",
+                title: catalog.syncBannerTitle,
                 message: catalog.statusText,
                 actionTitle: "Retry",
                 action: retry
@@ -359,7 +359,7 @@ struct ForceProtocolChooserView: View {
         case .failed:
             WatchStateBanner(
                 state: .danger,
-                title: "Couldn’t sync protocols",
+                title: catalog.syncBannerTitle,
                 message: catalog.statusText,
                 actionTitle: "Retry",
                 action: retry
