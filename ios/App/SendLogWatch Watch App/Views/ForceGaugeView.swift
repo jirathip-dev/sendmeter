@@ -490,7 +490,7 @@ struct ForceGaugeView: View {
             )
             .accessibilityHint("Opens the read-only protocol chooser")
         }
-        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.force)))
+        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
         .accessibilityIdentifier("force-setup-micro-selected-protocol")
         .environment(\.dynamicTypeSize, .medium)
     }
@@ -504,7 +504,7 @@ struct ForceGaugeView: View {
                 .allowsTightening(true)
                 .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
         }
-        .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
+        .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.primary))
         .disabled(
             tindeq.saving
                 || guidedForceRunner.isActive
@@ -552,7 +552,7 @@ struct ForceGaugeView: View {
             if !tindeq.handsFreeRequested {
                 if visibleStatus == .connected {
                     Button("Free hold") { tindeq.start() }
-                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.force)))
+                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
                         .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
                         .accessibilityLabel("Free hold")
                         .accessibilityHint("Starts one untimed force hold")
@@ -560,7 +560,11 @@ struct ForceGaugeView: View {
                 }
 
                 Button("Arm hands-free") { tindeq.armHandsFree() }
-                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.secondary)))
+                    // Neutral ink, matching "Free hold" (SL-538 round-2
+                    // review finding 4): the two are peer ways to start a
+                    // measurement on this screen, so one may not read louder
+                    // than the other.
+                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
                     .disabled(tindeq.saving || visibleStatus != .connected || tag.trimmingCharacters(in: .whitespaces).isEmpty)
                     .accessibilityHint("Arms the gauge to start when you pull")
                     .accessibilityIdentifier("force-arm-hands-free")
@@ -579,7 +583,7 @@ struct ForceGaugeView: View {
     @ViewBuilder
     private var richSetupContent: some View {
         VStack(spacing: 5) {
-            WatchCard(accent: WatchPalette.force) {
+            WatchCard(accent: WatchPalette.primary) {
                 VStack(spacing: 5) {
                     // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
                     // free text drifts from the app's tag set. New tags are created in the
@@ -640,7 +644,7 @@ struct ForceGaugeView: View {
                         .font(.body.weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
+                .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.primary))
                 .disabled(
                     tindeq.saving
                         || guidedForceRunner.isActive
@@ -670,7 +674,7 @@ struct ForceGaugeView: View {
                 // away. The timed runner owns only the selected protocol.
                 if visibleStatus == .connected {
                     Button("Free hold") { tindeq.start() }
-                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.force)))
+                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
                         .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
                         .accessibilityLabel("Free hold")
                         .accessibilityHint("Starts one untimed force hold")
@@ -678,7 +682,11 @@ struct ForceGaugeView: View {
                 }
 
                 Button("Arm hands-free") { tindeq.armHandsFree() }
-                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.secondary)))
+                    // Neutral ink, matching "Free hold" (SL-538 round-2
+                    // review finding 4): the two are peer ways to start a
+                    // measurement on this screen, so one may not read louder
+                    // than the other.
+                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
                     .disabled(tindeq.saving || visibleStatus != .connected || tag.trimmingCharacters(in: .whitespaces).isEmpty)
                     .accessibilityHint("Arms the gauge to start when you pull")
                     .accessibilityIdentifier("force-arm-hands-free")
@@ -911,7 +919,7 @@ struct ForceGaugeView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(WatchSecondaryButtonStyle(
-            tint: isPlaceholder ? WatchPalette.textSecondary : WatchPalette.foreground(WatchDesignTokens.force)
+            tint: isPlaceholder ? WatchPalette.textSecondary : WatchPalette.textPrimary
         ))
         .frame(minHeight: 44)
         .accessibilityLabel(label)
@@ -929,7 +937,7 @@ struct ForceGaugeView: View {
         let forceReadout = (Text(String(format: "%.1f", currentKg))
             .font(.system(size: 42, weight: .heavy, design: .rounded))
             .monospacedDigit()
-            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
         + Text(" kg").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
             .lineLimit(1)
             .minimumScaleFactor(0.7)
@@ -990,7 +998,7 @@ struct ForceGaugeView: View {
         }
 
         Button("Stop & Save") { tindeq.stopAndSave(reason: .userTapped) }
-            .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
+            .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.primary))
             .accessibilityIdentifier("force-stop-save")
     }
 }
@@ -1019,7 +1027,7 @@ private struct OptionPickerList: View {
                         Spacer(minLength: 4)
                         if o.value == selection {
                             Image(systemName: "checkmark")
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
                         }
                     }
                     .frame(minHeight: 44)

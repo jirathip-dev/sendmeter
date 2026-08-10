@@ -53,6 +53,12 @@ final class SendmeterWatchScreenshots: XCTestCase {
             .firstMatch
 
         let controls = [exercise, side, protocolChange, start]
+        // SL-538 round-2 review finding 5: a future eligibility regression
+        // (Start disabled, `.opacity(0.52)`) would otherwise fail the pixel
+        // scan below with a colour-shaped error message pointing at the
+        // wrong cause. Assert the actual precondition first.
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        XCTAssertTrue(start.isEnabled, "Start must be enabled for the pixel scan below to mean anything")
         var validatedPNGData: Data?
         for _ in 0..<3 {
             // A watch can remain in reduced-luminance/AOD after the navigation
@@ -76,13 +82,13 @@ final class SendmeterWatchScreenshots: XCTestCase {
             if let pngData = screenshot.image.pngData(),
                let source = CGImageSourceCreateWithData(pngData as CFData, nil),
                let encodedImage = CGImageSourceCreateImageAtIndex(source, 0, nil),
-               hasMagentaStartSurface(encodedImage) {
+               hasPrimaryStartSurface(encodedImage) {
                 validatedPNGData = pngData
                 break
             }
         }
         guard let validatedPNGData else {
-            XCTFail("40mm setup screenshot never rendered the magenta Start surface")
+            XCTFail("40mm setup screenshot never rendered the semantic-primary Start surface")
             throw ForceScreenshotCaptureError.emptyFrame
         }
         // Attach the exact validated PNG bytes; screenshot/image convenience
@@ -283,6 +289,78 @@ final class SendmeterWatchScreenshots: XCTestCase {
         }
     }
 
+    /// SL-538 round-2 review finding 1: `ForceProtocolViews.swift` was the
+    /// single most-changed file in the original commit (16 call sites
+    /// retinted) and had zero fixture/screenshot coverage. Navigates the
+    /// real production chooser (no mock) via the always-available Suggested
+    /// Movement Starter row, which needs neither network nor a signed-in
+    /// relay to render.
+    func testForceProtocolChooserRendersSuggestedProtocol() throws {
+        let app = launchFixture("forceSetup")
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        openActions(app)
+        app.staticTexts["Force Gauge"].tap()
+
+        let protocolLink = app.buttons
+            .matching(NSPredicate(format: "label == %@", "Selected protocol, Movement Starter"))
+            .firstMatch
+        XCTAssertTrue(
+            protocolLink.waitForExistence(timeout: 10),
+            "setup should expose the selected-protocol link before opening the chooser"
+        )
+        protocolLink.tap()
+
+        let suggestedRow = app.buttons["force-protocol-suggested:movement-starter"]
+        XCTAssertTrue(
+            suggestedRow.waitForExistence(timeout: 10),
+            "chooser should list the Suggested Movement Starter protocol"
+        )
+        // The row's existence (asserted above) is the coverage this test
+        // exists for — it is the regression signal a reverted/broken chooser
+        // would fail on. Bringing it fully into frame is presentation
+        // niceness for the attached screenshot only: watchOS ScrollView
+        // gestures in this simulator have proven bistable and unpredictable
+        // (a small drag and a full swipe both landed on the same two
+        // far-apart rest positions in manual testing), so scrolling here is
+        // best-effort and not asserted on.
+        app.swipeUp(velocity: .slow)
+
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "force-protocol-chooser"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    /// SL-538 round-2 review finding 1: `GuidedForceRunnerView.swift` (12
+    /// retinted call sites) also had zero coverage. The real
+    /// `GuidedForceRunner` needs a relayed signed-in account to start a run,
+    /// which this standalone watch-target test cannot provide honestly — the
+    /// `forceGuidedRun` fixture instead renders the production view directly
+    /// with fixed display data (`RootView`'s fixture bypass +
+    /// `GuidedForceRunnerView.display`), the same presentation-only pattern
+    /// `forceSetup`/`forceConnected`/etc. already use for `ForceGaugeView`.
+    func testForceGuidedRunRendersActivePhase() throws {
+        let app = launchFixture("forceGuidedRun")
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        let stop = app.buttons["force-guided-stop"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 10), "fixture should render the Stop control")
+        assertFullyVisible(stop, in: app, fixture: "forceGuidedRun")
+
+        let phaseCard = app.descendants(matching: .any)
+            .matching(NSPredicate(
+                format: "identifier == %@ OR identifier == %@ OR identifier == %@",
+                "force-guided-phase-card", "force-guided-compact-card", "force-guided-micro-card"
+            ))
+            .firstMatch
+        XCTAssertTrue(phaseCard.waitForExistence(timeout: 5), "fixture should render one of the phase-card layouts")
+
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "force-guided-run"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     func testAppStoreScreenshots() throws {
         let app = XCUIApplication()
         setupSnapshot(app, waitForAnimations: true)
@@ -339,7 +417,14 @@ final class SendmeterWatchScreenshots: XCTestCase {
         XCTAssertLessThanOrEqual(frame.maxY, bounds.maxY, "fixture \(fixture) control is clipped below")
     }
 
-    private func hasMagentaStartSurface(_ image: CGImage) -> Bool {
+    /// SL-538: the Start button fills with `WatchPalette.primary`
+    /// (`WatchDesignTokens.primary`, an indigo/violet blue — not the old
+    /// decorative magenta) at ~0.92 fill opacity over the dark canvas, so the
+    /// rendered pixel is blue-dominant with a distinctly low green channel
+    /// (unlike `secondary`'s cyan, where green tracks blue). Keep this
+    /// threshold in sync with `WatchDesignTokens.primary` if that token's
+    /// RGB ever changes.
+    private func hasPrimaryStartSurface(_ image: CGImage) -> Bool {
         let width = image.width
         let height = image.height
         guard width > 0, height > 0 else { return false }
@@ -363,17 +448,17 @@ final class SendmeterWatchScreenshots: XCTestCase {
         }
         guard rendered else { return false }
 
-        var magentaPixels = 0
+        var primaryPixels = 0
         for offset in stride(from: 0, to: rgba.count, by: 4) {
             let red = Int(rgba[offset])
             let green = Int(rgba[offset + 1])
             let blue = Int(rgba[offset + 2])
-            if red >= 180, blue >= 130, green <= 170,
-               red >= green + 45, blue >= green + 20 {
-                magentaPixels += 1
+            if blue >= 150, red >= 40,
+               blue >= red + 60, blue >= green + 70, green <= red + 40 {
+                primaryPixels += 1
             }
         }
-        return magentaPixels >= max(512, width * height / 100)
+        return primaryPixels >= max(512, width * height / 100)
     }
 
 }

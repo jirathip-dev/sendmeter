@@ -4,11 +4,38 @@ import SwiftUI
 /// Full-screen, one-glance guided Force surface.  RootView owns the switch to
 /// this view while `GuidedForceRunner` owns all execution state, so leaving
 /// setup cannot strand a timer or a BLE claim.
+/// Phase/progress chrome uses the shared semantic `primary` accent (SL-538):
+/// this screen IS the primary action in progress, and no phase (prepare,
+/// hold, rest, switch) carries a distinct data-semantic hue. `Stop` keeps
+/// `danger` since it is a destructive/abort control, not decorative.
 struct GuidedForceRunnerView: View {
     @Environment(GuidedForceRunner.self) private var runner
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
+    /// Presentation-only override for the screenshot target (SL-538 round-2
+    /// review finding 1). `display` reads the fixture when
+    /// `ScreenshotFixtures.guidedRun` is set and the real `runner` otherwise;
+    /// it never writes back to `runner`, so the fixture cannot influence the
+    /// actual run state, timers, or persistence — same guarantee
+    /// `ForceGaugeView.fixtureVisual` already gives `ForceGaugeView`.
+    private var display: GuidedRunDisplay {
+        if let fixture = ScreenshotFixtures.guidedRun {
+            return GuidedRunDisplay(fixture: fixture)
+        }
+        return GuidedRunDisplay(runner: runner)
+    }
+
+    // No top-level `.accessibilityIdentifier` here (SL-538 round-2 review
+    // finding 1, discovered while writing the first fixture/test this view
+    // ever had): on this device+OS, an identifier applied to this
+    // GeometryReader's content silently overwrote every descendant's own
+    // `.accessibilityIdentifier` (the phase card, Stop button) with its own
+    // value, regardless of ordering relative to `.toolbar`/`.watchCanvas`.
+    // Each layout/control already carries its own unique identifier
+    // (`force-guided-*`); adding a container-level one is not needed and
+    // reintroducing it should be re-tested against
+    // `testForceGuidedRunRendersActivePhase` before landing.
     var body: some View {
         GeometryReader { geometry in
             Group {
@@ -25,7 +52,6 @@ struct GuidedForceRunnerView: View {
         .toolbar(.hidden, for: .navigationBar)
         .interactiveDismissDisabled(true)
         .watchCanvas()
-        .accessibilityIdentifier("force-guided-runner")
     }
 
     private var richLayout: some View {
@@ -45,19 +71,19 @@ struct GuidedForceRunnerView: View {
     /// visible without relying on a scroll position.
     private var microLayout: some View {
         VStack(spacing: 3) {
-            WatchCard(accent: WatchPalette.force) {
+            WatchCard(accent: WatchPalette.primary) {
                 VStack(spacing: 1) {
                     HStack(alignment: .firstTextBaseline, spacing: 3) {
-                        Text(runner.phaseTitle)
+                        Text(display.phaseTitle)
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                             .lineLimit(1)
                             .minimumScaleFactor(0.66)
                         Spacer(minLength: 2)
                         compactSetRep
                     }
 
-                    Text(runner.countdownText)
+                    Text(display.countdownText)
                         .font(.system(size: 38, weight: .heavy, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(WatchPalette.textPrimary)
@@ -65,16 +91,16 @@ struct GuidedForceRunnerView: View {
                         .lineLimit(1)
                         .contentTransition(reduceMotion ? .identity : .numericText())
                         .accessibilityLabel("Phase countdown")
-                        .accessibilityValue("\(runner.countdownText) seconds")
+                        .accessibilityValue("\(display.countdownText) seconds")
 
                     HStack(spacing: 3) {
                         compactWorkStatus
                         Spacer(minLength: 2)
-                        ProgressView(value: runner.progress)
-                            .tint(WatchPalette.force)
+                        ProgressView(value: display.progress)
+                            .tint(WatchPalette.primary)
                             .frame(width: 40)
                             .accessibilityLabel("Protocol progress")
-                            .accessibilityValue("\(Int((runner.progress * 100).rounded())) percent")
+                            .accessibilityValue("\(Int((display.progress * 100).rounded())) percent")
                     }
                 }
             }
@@ -91,21 +117,21 @@ struct GuidedForceRunnerView: View {
     /// separate control, so it can never scroll below the fold.
     private var compactLayout: some View {
         VStack(spacing: 4) {
-            WatchCard(accent: WatchPalette.force) {
+            WatchCard(accent: WatchPalette.primary) {
                 VStack(spacing: 2) {
                     compactHeader
 
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(runner.phaseTitle)
+                        Text(display.phaseTitle)
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                             .lineLimit(1)
                             .minimumScaleFactor(0.72)
                         Spacer(minLength: 2)
                         compactSetRep
                     }
 
-                    Text(runner.countdownText)
+                    Text(display.countdownText)
                         .font(.system(size: 43, weight: .heavy, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(WatchPalette.textPrimary)
@@ -113,16 +139,16 @@ struct GuidedForceRunnerView: View {
                         .lineLimit(1)
                         .contentTransition(reduceMotion ? .identity : .numericText())
                         .accessibilityLabel("Phase countdown")
-                        .accessibilityValue("\(runner.countdownText) seconds")
+                        .accessibilityValue("\(display.countdownText) seconds")
 
                     HStack(spacing: 4) {
                         compactWorkStatus
                         Spacer(minLength: 2)
-                        ProgressView(value: runner.progress)
-                            .tint(WatchPalette.force)
+                        ProgressView(value: display.progress)
+                            .tint(WatchPalette.primary)
                             .frame(width: 46)
                             .accessibilityLabel("Protocol progress")
-                            .accessibilityValue("\(Int((runner.progress * 100).rounded())) percent")
+                            .accessibilityValue("\(Int((display.progress * 100).rounded())) percent")
                     }
                 }
             }
@@ -138,58 +164,58 @@ struct GuidedForceRunnerView: View {
     private var compactHeader: some View {
         HStack(spacing: 4) {
             WatchStateChip(
-                state: runner.isMeasured ? .syncing : .offline,
-                title: runner.isMeasured ? "Measured" : "Cadence only",
+                state: display.isMeasured ? .syncing : .offline,
+                title: display.isMeasured ? "Measured" : "Cadence only",
                 compact: true
             )
             Spacer(minLength: 2)
-            Text(runner.protocolValue?.name ?? "Force protocol")
+            Text(display.protocolName ?? "Force protocol")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(WatchPalette.textSecondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(runner.isMeasured ? "Measured force protocol" : "Cadence-only force protocol")
-        .accessibilityValue(runner.protocolValue?.name ?? "Force protocol")
+        .accessibilityLabel(display.isMeasured ? "Measured force protocol" : "Cadence-only force protocol")
+        .accessibilityValue(display.protocolName ?? "Force protocol")
     }
 
     private var compactSetRep: some View {
         HStack(spacing: 3) {
-            Text("S\(runner.currentSet)/\(runner.totalSets)")
-            Text("R\(runner.currentRep)/\(runner.totalReps)")
+            Text("S\(display.currentSet)/\(display.totalSets)")
+            Text("R\(display.currentRep)/\(display.totalReps)")
         }
         .font(.caption2.weight(.bold).monospacedDigit())
         .foregroundStyle(WatchPalette.textSecondary)
         .lineLimit(1)
         .minimumScaleFactor(0.72)
         .accessibilityLabel(
-            "Set \(runner.currentSet) of \(runner.totalSets), rep \(runner.currentRep) of \(runner.totalReps)"
+            "Set \(display.currentSet) of \(display.totalSets), rep \(display.currentRep) of \(display.totalReps)"
         )
     }
 
     private var compactWorkStatus: some View {
         Group {
-            if runner.isCadenceOnly {
+            if display.isCadenceOnly {
                 Label("Cadence only", systemImage: "waveform.path.ecg")
-            } else if let kg = runner.currentKg {
+            } else if let kg = display.currentKg {
                 Label(String(format: "%.1f kg", kg), systemImage: "gauge.with.dots.needle.67percent")
             } else {
-                Text(runner.side.isEmpty ? "Force ready" : sideLabel(runner.side))
+                Text(display.side.isEmpty ? "Force ready" : sideLabel(display.side))
             }
         }
         .font(.caption2.weight(.semibold))
         .foregroundStyle(
-            runner.isCadenceOnly
+            display.isCadenceOnly
                 ? WatchPalette.foreground(WatchDesignTokens.warning)
                 : WatchPalette.textSecondary
         )
         .lineLimit(1)
         .minimumScaleFactor(0.62)
         .accessibilityLabel(
-            runner.isCadenceOnly
+            display.isCadenceOnly
                 ? "Cadence only; force not measured"
-                : runner.currentKg.map { String(format: "Current force %.1f kilograms", $0) } ?? "Force ready"
+                : display.currentKg.map { String(format: "Current force %.1f kilograms", $0) } ?? "Force ready"
         )
     }
 
@@ -197,12 +223,12 @@ struct GuidedForceRunnerView: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) {
                 WatchStateChip(
-                    state: runner.isMeasured ? .syncing : .offline,
-                    title: runner.isMeasured ? "Measured" : "Cadence only",
+                    state: display.isMeasured ? .syncing : .offline,
+                    title: display.isMeasured ? "Measured" : "Cadence only",
                     compact: true
                 )
                 Spacer(minLength: 0)
-                Text(runner.protocolValue?.name ?? "Force protocol")
+                Text(display.protocolName ?? "Force protocol")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(WatchPalette.textSecondary)
                     .lineLimit(1)
@@ -210,11 +236,11 @@ struct GuidedForceRunnerView: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 WatchStateChip(
-                    state: runner.isMeasured ? .syncing : .offline,
-                    title: runner.isMeasured ? "Measured" : "Cadence only",
+                    state: display.isMeasured ? .syncing : .offline,
+                    title: display.isMeasured ? "Measured" : "Cadence only",
                     compact: true
                 )
-                Text(runner.protocolValue?.name ?? "Force protocol")
+                Text(display.protocolName ?? "Force protocol")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(WatchPalette.textSecondary)
                     .lineLimit(1)
@@ -222,28 +248,28 @@ struct GuidedForceRunnerView: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(runner.isMeasured ? "Measured force protocol" : "Cadence-only force protocol")
-        .accessibilityValue(runner.protocolValue?.name ?? "Force protocol")
+        .accessibilityLabel(display.isMeasured ? "Measured force protocol" : "Cadence-only force protocol")
+        .accessibilityValue(display.protocolName ?? "Force protocol")
     }
 
     private var phaseCard: some View {
-        WatchCard(accent: WatchPalette.force) {
+        WatchCard(accent: WatchPalette.primary) {
             VStack(spacing: 5) {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Text(runner.phaseTitle)
+                    Text(display.phaseTitle)
                         .font(.system(.headline, design: .rounded).weight(.bold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                        .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                     Spacer(minLength: 3)
-                    Text(runner.side.isEmpty ? "Side —" : sideLabel(runner.side))
+                    Text(display.side.isEmpty ? "Side —" : sideLabel(display.side))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(WatchPalette.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                 }
 
-                Text(runner.countdownText)
+                Text(display.countdownText)
                     .font(.system(size: 52, weight: .heavy, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(WatchPalette.textPrimary)
@@ -251,7 +277,7 @@ struct GuidedForceRunnerView: View {
                     .lineLimit(1)
                     .contentTransition(reduceMotion ? .identity : .numericText())
                     .accessibilityLabel("Phase countdown")
-                    .accessibilityValue("\(runner.countdownText) seconds")
+                    .accessibilityValue("\(display.countdownText) seconds")
 
                 Text("seconds")
                     .font(.caption2.weight(.semibold))
@@ -269,18 +295,18 @@ struct GuidedForceRunnerView: View {
                     }
                 }
 
-                if runner.isCadenceOnly {
+                if display.isCadenceOnly {
                     Label("Cadence only · force not measured", systemImage: "waveform.path.ecg")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                         .accessibilityLabel("Cadence only; force not measured")
-                } else if let kg = runner.currentKg {
+                } else if let kg = display.currentKg {
                     (Text(String(format: "%.1f", kg))
                         .font(.system(.title3, design: .rounded).weight(.bold))
                         .monospacedDigit()
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
                     + Text(" kg").font(.caption).foregroundStyle(WatchPalette.textSecondary))
                         .accessibilityLabel("Current force")
                         .accessibilityValue(String(format: "%.1f kilograms", kg))
@@ -292,7 +318,7 @@ struct GuidedForceRunnerView: View {
     }
 
     private var setReadout: some View {
-        Label("Set \(runner.currentSet) of \(runner.totalSets)", systemImage: "square.stack.3d.up.fill")
+        Label("Set \(display.currentSet) of \(display.totalSets)", systemImage: "square.stack.3d.up.fill")
             .font(.caption.weight(.semibold))
             .foregroundStyle(WatchPalette.textSecondary)
             .lineLimit(1)
@@ -301,7 +327,7 @@ struct GuidedForceRunnerView: View {
     }
 
     private var repReadout: some View {
-        Label("Rep \(runner.currentRep) of \(runner.totalReps)", systemImage: "repeat")
+        Label("Rep \(display.currentRep) of \(display.totalReps)", systemImage: "repeat")
             .font(.caption.weight(.semibold))
             .foregroundStyle(WatchPalette.textSecondary)
             .lineLimit(1)
@@ -310,24 +336,24 @@ struct GuidedForceRunnerView: View {
     }
 
     private var progressCard: some View {
-        WatchCard(accent: WatchPalette.force.opacity(isLuminanceReduced ? 0.36 : 0.72)) {
+        WatchCard(accent: WatchPalette.primary.opacity(isLuminanceReduced ? 0.36 : 0.72)) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(runner.tag)
+                    Text(display.tag)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(WatchPalette.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     Spacer(minLength: 4)
-                    Text("\(Int((runner.progress * 100).rounded()))%")
+                    Text("\(Int((display.progress * 100).rounded()))%")
                         .font(.caption2.monospacedDigit().weight(.bold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+                        .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
                 }
-                ProgressView(value: runner.progress)
-                    .tint(WatchPalette.force)
-                    .animation(reduceMotion ? nil : .easeOut(duration: WatchDesignTokens.motionDuration), value: runner.progress)
+                ProgressView(value: display.progress)
+                    .tint(WatchPalette.primary)
+                    .animation(reduceMotion ? nil : .easeOut(duration: WatchDesignTokens.motionDuration), value: display.progress)
                     .accessibilityLabel("Protocol progress")
-                    .accessibilityValue("\(Int((runner.progress * 100).rounded())) percent")
+                    .accessibilityValue("\(Int((display.progress * 100).rounded())) percent")
             }
         }
         .accessibilityIdentifier("force-guided-progress")
@@ -339,7 +365,7 @@ struct GuidedForceRunnerView: View {
         }
         .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.danger)))
         .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
-        .disabled(runner.phase == .stopping)
+        .disabled(!display.canStop)
         .accessibilityLabel("Stop protocol")
         .accessibilityHint("Stops now and saves any active partial set honestly")
         .accessibilityIdentifier("force-guided-stop")
@@ -352,5 +378,58 @@ struct GuidedForceRunnerView: View {
         case "both": return "Both"
         default: return value
         }
+    }
+}
+
+/// Read-only view of either the real `GuidedForceRunner` or the screenshot
+/// fixture — see `GuidedForceRunnerView.display`.
+private struct GuidedRunDisplay {
+    let phaseTitle: String
+    let countdownText: String
+    let progress: Double
+    let isMeasured: Bool
+    let isCadenceOnly: Bool
+    let protocolName: String?
+    let currentSet: Int
+    let totalSets: Int
+    let currentRep: Int
+    let totalReps: Int
+    let side: String
+    let currentKg: Double?
+    let tag: String
+    let canStop: Bool
+
+    init(runner: GuidedForceRunner) {
+        phaseTitle = runner.phaseTitle
+        countdownText = runner.countdownText
+        progress = runner.progress
+        isMeasured = runner.isMeasured
+        isCadenceOnly = runner.isCadenceOnly
+        protocolName = runner.protocolValue?.name
+        currentSet = runner.currentSet
+        totalSets = runner.totalSets
+        currentRep = runner.currentRep
+        totalReps = runner.totalReps
+        side = runner.side
+        currentKg = runner.currentKg
+        tag = runner.tag
+        canStop = runner.phase != .stopping
+    }
+
+    init(fixture: ScreenshotGuidedRunVisual) {
+        phaseTitle = fixture.phaseTitle
+        countdownText = fixture.countdownText
+        progress = fixture.progress
+        isMeasured = fixture.isMeasured
+        isCadenceOnly = fixture.isCadenceOnly
+        protocolName = fixture.protocolName
+        currentSet = fixture.currentSet
+        totalSets = fixture.totalSets
+        currentRep = fixture.currentRep
+        totalReps = fixture.totalReps
+        side = fixture.side
+        currentKg = fixture.currentKg
+        tag = fixture.tag
+        canStop = true
     }
 }
