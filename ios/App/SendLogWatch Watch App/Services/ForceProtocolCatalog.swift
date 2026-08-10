@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 import SendLogWatchCore
 
 /// Read-only Force protocol catalog for watchOS. The phone/web app owns
@@ -36,6 +37,10 @@ final class ForceProtocolCatalog {
     private static let maxAttempts = 3
     private static let perAttemptTimeoutSeconds: Double = 6
     private static let retryDelaysMs: [UInt64] = [250, 750]
+
+    private static let log = Logger(
+        subsystem: "com.jirathip.sendlog.watchkitapp", category: "forceProtocolCatalog"
+    )
 
     private let defaults: UserDefaults
     @ObservationIgnored private let accountIdProvider: @Sendable () -> UUID?
@@ -76,10 +81,37 @@ final class ForceProtocolCatalog {
         case .empty:
             return "No saved protocols yet"
         case .cached:
-            return errorMessage ?? "Offline · showing saved protocols"
+            // No default text: a cold launch from cache reaches `.cached`
+            // before any refresh has been attempted, so there is nothing
+            // honest to say yet beyond the title (#536 review finding 9).
+            return errorMessage
         case .failed:
-            return errorMessage ?? "Couldn’t sync protocols"
+            return errorMessage ?? ForceProtocolSyncCopy.message(for: .unknown)
         }
+    }
+
+    /// The `.cached`/`.failed` banner title, from the single Core source of
+    /// truth (`ForceProtocolSyncCopy.title(for:)`, #536 review round 2
+    /// finding B — this used to re-declare the same literals here).
+    ///
+    /// `.failed` must NOT reuse the empty-rows title: it means no successful
+    /// fetch has ever completed for this account, so the count is genuinely
+    /// *unknown*, not confirmed zero — an account with a stale token but 12
+    /// real saved protocols would otherwise render "No saved protocols yet",
+    /// a false factual claim from a failed request (#536 review round 2
+    /// finding A). Only `.cached` (a prior successful fetch, possibly empty,
+    /// is still on screen) may claim a count either way.
+    var syncBannerTitle: String {
+        synchronizeAccountScope()
+        let rows: ForceProtocolSyncCopy.RowsState
+        if !myProtocols.isEmpty {
+            rows = .cachedWithRows
+        } else if status == .cached {
+            rows = .cachedEmpty
+        } else {
+            rows = .neverSynced
+        }
+        return ForceProtocolSyncCopy.title(for: rows)
     }
 
     init(
@@ -177,8 +209,25 @@ final class ForceProtocolCatalog {
         guard isCurrent(generation) else { return }
 
         guard let fetched else {
-            errorMessage = lastError?.localizedDescription ?? "No response from your iPhone."
+            // `technicalDescription` is expected non-nil here — `fetched ==
+            // nil` only happens after a non-cancellation `catch` set
+            // `lastError` — but a defensive log line stays cheap insurance,
+            // and `BackendFailureReason(error:)` gives the nil case an
+            // explicit, correct meaning (#536 review finding 8) rather than
+            // classifying an empty string as an unrecognized error.
+            let technicalDescription = lastError?.localizedDescription
+            if let technicalDescription {
+                // `privacy: .public` is required: OSLog redacts dynamic
+                // string interpolation by default, so without this a real
+                // Watch's Console/log collect would show only "<private>",
+                // failing AC #4 (#536 review finding 4). The error text
+                // itself is never user data.
+                Self.log.error("catalog refresh failed: \(technicalDescription, privacy: .public)")
+            } else {
+                Self.log.error("catalog refresh failed: no response from iPhone")
+            }
             status = hasCachedSnapshot ? .cached : .failed
+            errorMessage = ForceProtocolSyncCopy.message(for: BackendFailureReason(error: lastError))
             return
         }
 
@@ -186,7 +235,7 @@ final class ForceProtocolCatalog {
             // Never interpret an anonymous/RLS empty success as a real empty
             // catalog. This keeps both the rows and selected custom id intact.
             if hasCachedSnapshot {
-                errorMessage = "Waiting for iPhone sign-in · showing saved protocols"
+                errorMessage = "Waiting for iPhone sign-in."
                 status = .cached
             } else {
                 errorMessage = "Waiting for your iPhone to finish signing in."

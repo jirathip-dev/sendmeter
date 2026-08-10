@@ -39,8 +39,19 @@ public enum TagFetchPolicy {
 }
 
 /// Thrown by `withTimeout` when `operation` doesn't finish within `seconds`.
-public struct TimeoutError: Error, Sendable {
+///
+/// Explicit `LocalizedError` conformance is load-bearing, not decoration:
+/// without it `localizedDescription` falls back to Swift's synthesized
+/// `"The operation couldn't be completed. (Module.TimeoutError error 1.)"`,
+/// which happens to contain "timeout" today only because of this type's own
+/// name — `BackendFailureReason`'s classification of a catalog-refresh
+/// timeout as `.unreachable` would silently break on a rename with nothing
+/// to catch it (#536 review finding 5). A stable, explicit description is
+/// what `BackendFailureReasonTests` pins instead.
+public struct TimeoutError: Error, Sendable, LocalizedError {
     public init() {}
+
+    public var errorDescription: String? { "The request timed out." }
 }
 
 /// Races `operation` against a `seconds` deadline using structured
