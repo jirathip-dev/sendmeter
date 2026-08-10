@@ -6,7 +6,6 @@ import { fetchLiveWorkout } from "../lib/repo";
 import type { LiveWorkout } from "../types";
 import { subscribePluginListener } from "./pluginListener";
 import {
-  acceptsPacketOwner,
   messageToLive,
   emptyLiveWorkoutMirrorState,
   reduceLiveWorkout,
@@ -17,6 +16,10 @@ import {
   type LiveWorkoutMirrorState,
   type LiveWorkoutSource,
 } from "../lib/liveWorkoutMirror";
+import {
+  acceptsPacketOwner,
+  hasAccountChangedSincePersisted,
+} from "../lib/liveMirrorOwnership";
 
 export type { LiveHrPoint };
 
@@ -51,10 +54,18 @@ export function useLiveWorkout(
   // account immediately, then reset the ref/state in a layout effect before
   // the browser can paint or a new listener can publish data.
   const accountTransition = renderedUserId !== userId;
-  // #530: once this becomes true it never resets — an unstamped (pre-#530
-  // watch) packet is only trusted BEFORE this hook has ever lived through an
-  // account transition. See `acceptsPacketOwner`'s doc comment.
-  const hasHadAccountTransitionRef = useRef(false);
+  // #530 (round-1 review F1): a `useRef` alone is inert on a real account
+  // switch — this app has no in-place swap, so sign-out → sign-in is a full
+  // UNMOUNT of this hook, not a `userId` prop change on a still-mounted one.
+  // The initial value instead consults durable storage (survives that
+  // remount); the ref then also flips true on an in-mount prop change (the
+  // narrower background/foreground relay case), same as before. Evaluated
+  // exactly once via `useState`'s lazy initializer — `hasAccountChangedSincePersisted`
+  // both reads AND writes storage, so it must not re-run on every render.
+  const [initialHasHadAccountTransition] = useState(() =>
+    hasAccountChangedSincePersisted(userId),
+  );
+  const hasHadAccountTransitionRef = useRef(initialHasHadAccountTransition);
 
   if (accountTransition) {
     setRenderedUserId(userId);
@@ -122,10 +133,16 @@ export function useLiveWorkout(
     const unsubscribeWc = Capacitor.isNativePlatform()
       ? subscribePluginListener(() =>
           SendLogAuthBridge.addListener("liveWorkout", (msg) => {
+            // #530 (round-1 review F5): the ref-based active-account check
+            // runs FIRST, matching `useLiveForce` — the packet-owner
+            // predicate below then reads the same live ref value, not the
+            // render-captured `effectUserId`, so it can never itself become
+            // the stale half of the guard.
+            if (cancelled || activeUserIdRef.current !== effectUserId) return;
             // #530: reject a packet stamped (or, per the conservative
             // mixed-version rule, un-stamped after a transition) for a
             // different account BEFORE it ever reaches messageToLive/ingest.
-            if (!acceptsPacketOwner(msg.account_user_id, effectUserId, hasHadAccountTransitionRef.current)) {
+            if (!acceptsPacketOwner(msg.account_user_id, activeUserIdRef.current, hasHadAccountTransitionRef.current)) {
               return;
             }
             const previous = mirrorRef.current.row;

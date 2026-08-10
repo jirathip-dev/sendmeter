@@ -71,36 +71,6 @@ function normalizeRunId(value: unknown): string | null {
   return trimmed ? trimmed.toLowerCase() : null;
 }
 
-/// Native ids (a Swift `UUID.uuidString`) come back UPPERCASE; supabase-js
-/// ids are lowercase — same normalization as `normalizeRunId` above and
-/// `normalizeUserId` in `healthSync.ts` (#535).
-function normalizeUserId(value: string | null | undefined): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.toLowerCase() : null;
-}
-
-/// Whether a WatchConnectivity live-workout packet stamped with
-/// `account_user_id` (#530) may reach the currently authenticated account's
-/// reducer. A packet stamped for a DIFFERENT account is always rejected — the
-/// watch may still be relaying a run that started under a previous account
-/// for a while after the phone itself has switched, and ordering (run
-/// id/sequence) alone cannot tell that apart from a legitimate late beat. An
-/// UNSTAMPED (pre-#530 watch) packet is accepted only when this mirror has
-/// never lived through an account transition in this mount's lifetime — once
-/// the phone has switched accounts at least once, an unstamped packet can no
-/// longer be trusted to belong to the new account and is dropped rather than
-/// risking a stale watch's data appearing to belong to it.
-export function acceptsPacketOwner(
-  accountUserId: string | null | undefined,
-  currentUserId: string,
-  hasHadAccountTransition: boolean,
-): boolean {
-  const owner = normalizeUserId(accountUserId);
-  if (owner === null) return !hasHadAccountTransition;
-  return owner === normalizeUserId(currentUserId);
-}
-
 function iso(sec: number | undefined): string | null {
   return sec !== undefined && Number.isFinite(sec)
     ? new Date(sec * 1000).toISOString()

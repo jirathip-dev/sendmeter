@@ -534,62 +534,158 @@ final class TindeqManualOwnershipTests: XCTestCase {
         XCTAssertNil(manager.sessionId)
     }
 
-    // MARK: #530 — live-mirror beat ownership
+    // MARK: #530 — live-mirror beat ownership (round-1 review F2)
     //
-    // `forceMirrorOwnerUserId` is a NEW, separate concept from every owner
-    // field tested above: those govern where a SAVED recording is
-    // attributed and are captured lazily (only once a rep begins), while the
-    // live-mirror beat starts firing as soon as the Progressor connects —
-    // before any tag/rep is chosen. Its only observable effect (the stamped
-    // WatchConnectivity beat) is unreachable from this unsigned test host (no
-    // real WCSession activates), so these assert on the captured field
-    // directly, the same way `WorkoutSavePathResetTests` asserts on
-    // `WorkoutManager.ownerUserId`.
+    // `currentForceMirrorOwnerUserId` is a COMPUTED property, deliberately
+    // NOT a field pinned once at `connect()` — a BLE connect outlives
+    // multiple, differently-owned gauge sessions (Progressor stays connected
+    // across Finish/`clearSession()`), so a stamp fixed at connect time could
+    // assert an owner a later session doesn't have. It re-derives from
+    // `persistenceOwnerUserId`/`manualSessionOwnerUserId`, the SAME two
+    // fields `enqueuedUserId` is computed from elsewhere in this file — these
+    // tests exercise the computed property directly, since its only other
+    // observable effect (the stamped WatchConnectivity beat) is unreachable
+    // from this unsigned test host (no real WCSession activates).
 
-    func testConnectCapturesTheForceMirrorOwnerAndNeverRereadsItAtBeatTime() {
-        let box = ManualOwnershipAccountBox()
-        let accountA = UUID()
-        box.current = accountA
+    func testCurrentForceMirrorOwnerIsNilBeforeAnySessionOrGuidedRunHasClaimedTheConnect() {
         let manager = TindeqManager(
             recordingQueue: ManualOwnershipRecordingQueue(),
             sessionQueue: ManualOwnershipSessionQueue(),
-            userIdProvider: { box.current }
+            commandWriter: { _ in },
+            userIdProvider: { UUID() }
         )
-
-        manager.connect()
-        XCTAssertEqual(
-            manager.forceMirrorOwnerUserId, accountA,
-            "connect() must capture the currently signed-in account as this run's mirror owner"
-        )
-
-        // The relayed account changes well after the mirror run began — a
-        // later beat (triggered here via a picker didSet, same as production)
-        // must still stamp A, never silently pick up B.
-        box.current = UUID()
-        manager.liveTag = "Half crimp"
-        XCTAssertEqual(
-            manager.forceMirrorOwnerUserId, accountA,
-            "the mirror owner must stay pinned to the account that opened this connect, never re-read at beat time"
+        XCTAssertNil(
+            manager.currentForceMirrorOwnerUserId,
+            "a bare connected transport with no tag/rep chosen yet has no session to attribute a mirror beat to"
         )
     }
 
-    func testANewConnectCapturesWhoeverIsCurrentlySignedInNow() {
+    func testCurrentForceMirrorOwnerFollowsTheManualSessionOwnerAndClearsWithTheSession() async throws {
         let box = ManualOwnershipAccountBox()
-        box.current = UUID()
+        let accountA = UUID()
+        box.current = accountA
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
         let manager = TindeqManager(
-            recordingQueue: ManualOwnershipRecordingQueue(),
-            sessionQueue: ManualOwnershipSessionQueue(),
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
             userIdProvider: { box.current }
         )
-        manager.connect()
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
 
+        manager.start()
+        XCTAssertEqual(
+            manager.currentForceMirrorOwnerUserId, accountA,
+            "a beat during an open manual session must stamp that session's captured owner"
+        )
+        feed(manager, [(20, 0), (25, 500_000)])
+        manager.stopAndSave(reason: .userTapped)
+        try await waitUntil { await recordings.count() == 1 && !manager.saving }
+
+        manager.logSessionNow()
+        try await waitUntil { await sessions.count() == 1 }
+        XCTAssertNil(
+            manager.currentForceMirrorOwnerUserId,
+            "once the session is closed, a between-session beat must go unstamped, not keep asserting the closed session's owner"
+        )
+    }
+
+    /// The exact F2 concrete failure: a second, differently-owned session on
+    /// the SAME BLE connect must stamp the SECOND owner, not the first.
+    func testCurrentForceMirrorOwnerTracksASecondSessionUnderADifferentAccountOnTheSameConnect() async throws {
+        let box = ManualOwnershipAccountBox()
+        let accountA = UUID()
+        box.current = accountA
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
+            userIdProvider: { box.current }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.start()
+        feed(manager, [(20, 0), (25, 500_000)])
+        manager.stopAndSave(reason: .userTapped)
+        try await waitUntil { await recordings.count() == 1 && !manager.saving }
+        manager.logSessionNow()
+        try await waitUntil { await sessions.count() == 1 }
+
+        // The Progressor stays connected; a genuinely new session begins
+        // under a DIFFERENT account (mirrors production: the watch's own
+        // relayed identity changed between the two sessions).
         let accountB = UUID()
         box.current = accountB
-        manager.connect() // a genuinely new connect
+        manager.start()
 
         XCTAssertEqual(
-            manager.forceMirrorOwnerUserId, accountB,
-            "a fresh connect must capture whoever is signed in now, not stay stuck on the previous connect's owner"
+            manager.currentForceMirrorOwnerUserId, accountB,
+            "a second session on the same connect must stamp its OWN owner, not the first session's — a stale stamp is worse than none"
+        )
+    }
+
+    /// Mirrors the #529 round-1 F5(c) precedence: while a guided run is
+    /// active it wins over an already-open manual session's owner. Once the
+    /// guided run hands persistence back (`endRun()` → `clearPersistenceOwner()`,
+    /// synchronous, before its own save Task resolves), the carry-over falls
+    /// back to X's still-open manual owner rather than going nil early; only
+    /// once the whole session actually finishes closing (its deferred
+    /// `logSessionAfterPendingSaves()`, after the save resolves) does the
+    /// mirror finally read nil. The live mirror stamp must track the SAME
+    /// three states `enqueuedUserId` does.
+    func testCurrentForceMirrorOwnerPrefersTheActiveGuidedRunThenFallsBackToTheManualOwnerThenGoesNilOnceTheSessionCloses() async throws {
+        let accountX = UUID()
+        let accountA = UUID()
+        let recordings = ManualOwnershipRecordingQueue()
+        let sessions = ManualOwnershipSessionQueue()
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            commandWriter: { _ in },
+            userIdProvider: { accountX }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.start()
+        feed(manager, [(20, 0), (25, 500_000)])
+        manager.stopAndSave(reason: .userTapped)
+        try await waitUntil { await recordings.count() == 1 && !manager.saving }
+        XCTAssertEqual(manager.currentForceMirrorOwnerUserId, accountX)
+
+        let runner = GuidedForceRunner(userIdProvider: { accountA })
+        XCTAssertTrue(
+            runner.start(protocolValue: shortMovementProtocol, tag: "Half crimp", side: "left", manager: manager)
+        )
+        XCTAssertEqual(
+            manager.currentForceMirrorOwnerUserId, accountA,
+            "an active guided run must win over the session's already-open manual owner, same as enqueuedUserId"
+        )
+
+        let startedAt = try XCTUnwrap(runner.runState?.startedAt)
+        feed(manager, [(12, 5_000_000), (25, 5_100_000)])
+        runner.advance(to: startedAt.addingTimeInterval(shortMovementProtocol.durationS))
+
+        // `advance()` is fully synchronous through `endRun()`'s
+        // `clearPersistenceOwner()` — the guided row's own save Task is
+        // still in flight at this point (mirrors `manager.saving == true`
+        // in the F5(b)/(c) tests above), so the mirror must already have
+        // fallen back to X's still-open manual session, not stay on A and
+        // not go nil before the session has actually finished closing.
+        XCTAssertEqual(
+            manager.currentForceMirrorOwnerUserId, accountX,
+            "once the guided run hands persistence back, the mirror must revert to the still-open manual session's owner"
+        )
+
+        try await waitUntil { await sessions.count() == 1 && !manager.saving }
+        XCTAssertNil(
+            manager.currentForceMirrorOwnerUserId,
+            "once the whole session finally closes, a between-session beat must go unstamped"
         )
     }
 

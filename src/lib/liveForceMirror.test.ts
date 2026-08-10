@@ -3,7 +3,6 @@ import type { LiveForceMessage } from "sendlog-auth-bridge";
 import {
   STALE_MS,
   SPARK_WINDOW_MS,
-  acceptsPacketOwner,
   isFresh,
   emptyLiveForceMirrorState,
   mergeForceBeat,
@@ -30,37 +29,11 @@ function msg(overrides: Partial<LiveForceMessage> = {}): LiveForceMessage {
   };
 }
 
-describe("acceptsPacketOwner", () => {
-  const accountA = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
-  const accountB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-
-  it("accepts a packet stamped for the current account, normalizing Swift UUID casing", () => {
-    expect(acceptsPacketOwner(accountA, accountA.toLowerCase(), false)).toBe(true);
-    expect(acceptsPacketOwner(accountA, accountA.toLowerCase(), true)).toBe(true);
-  });
-
-  it("rejects a packet stamped for a different account regardless of transition history", () => {
-    expect(acceptsPacketOwner(accountA, accountB, false)).toBe(false);
-    expect(acceptsPacketOwner(accountA, accountB, true)).toBe(false);
-  });
-
-  it("accepts an unstamped legacy packet before any account transition has occurred", () => {
-    expect(acceptsPacketOwner(undefined, accountB, false)).toBe(true);
-  });
-
-  it("rejects an unstamped legacy packet once an account transition has occurred in-process", () => {
-    expect(acceptsPacketOwner(undefined, accountB, true)).toBe(false);
-    expect(acceptsPacketOwner(null, accountB, true)).toBe(false);
-  });
-
-  it.each(["start", "telemetry", "phase", "count", "end"] as const)(
-    "rejects a late account-A %s packet once account B is active",
-    (event) => {
-      const beat = msg({ event, terminal: event === "end", account_user_id: accountA });
-      expect(acceptsPacketOwner(beat.account_user_id, accountB, true)).toBe(false);
-    },
-  );
-});
+// `acceptsPacketOwner` and the account-transition tracking it depends on now
+// live in `liveMirrorOwnership.test.ts` (round-1 review F4: single source of
+// truth for both mirrors) — including the full-pipeline late-A-after-B
+// coverage for this module's `reduceForceBeat`, with a negative control
+// proving the reducer alone would have accepted the same packet (F3).
 
 describe("mergeForceBeat", () => {
   it("returns null on an idle beat", () => {

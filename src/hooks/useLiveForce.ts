@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
 import {
-  acceptsPacketOwner,
   isFresh,
   emptyLiveForceMirrorState,
   reduceForceBeat,
@@ -10,6 +9,10 @@ import {
   type LiveForceMirrorState,
   type LiveForceSample,
 } from "../lib/liveForceMirror";
+import {
+  acceptsPacketOwner,
+  hasAccountChangedSincePersisted,
+} from "../lib/liveMirrorOwnership";
 import { subscribePluginListener } from "./pluginListener";
 
 export type { LiveForce, LiveForceSample };
@@ -27,10 +30,18 @@ export function useLiveForce(userId: string): LiveForce | null {
   // effect then clears the cursor before paint and before the next listener
   // can publish a packet.
   const accountTransition = renderedUserId !== userId;
-  // #530: once this becomes true it never resets — an unstamped (pre-#530
-  // watch) packet is only trusted BEFORE this hook has ever lived through an
-  // account transition. See `acceptsPacketOwner`'s doc comment.
-  const hasHadAccountTransitionRef = useRef(false);
+  // #530 (round-1 review F1): a `useRef` alone is inert on a real account
+  // switch — this app has no in-place swap, so sign-out → sign-in is a full
+  // UNMOUNT of this hook, not a `userId` prop change on a still-mounted one.
+  // The initial value instead consults durable storage (survives that
+  // remount); the ref then also flips true on an in-mount prop change (the
+  // narrower background/foreground relay case), same as before. Evaluated
+  // exactly once via `useState`'s lazy initializer — `hasAccountChangedSincePersisted`
+  // both reads AND writes storage, so it must not re-run on every render.
+  const [initialHasHadAccountTransition] = useState(() =>
+    hasAccountChangedSincePersisted(userId),
+  );
+  const hasHadAccountTransitionRef = useRef(initialHasHadAccountTransition);
 
   if (accountTransition) {
     setRenderedUserId(userId);
@@ -63,8 +74,9 @@ export function useLiveForce(userId: string): LiveForce | null {
         if (cancelled || activeUserIdRef.current !== effectUserId) return;
         // #530: reject a packet stamped (or, per the conservative
         // mixed-version rule, un-stamped after a transition) for a different
-        // account BEFORE it ever reaches reduceForceBeat.
-        if (!acceptsPacketOwner(msg.account_user_id, effectUserId, hasHadAccountTransitionRef.current)) {
+        // account BEFORE it ever reaches reduceForceBeat. Reads the live ref
+        // value (round-1 review F5), not the render-captured `effectUserId`.
+        if (!acceptsPacketOwner(msg.account_user_id, activeUserIdRef.current, hasHadAccountTransitionRef.current)) {
           return;
         }
         // The ref is the authoritative cursor: event callbacks can arrive

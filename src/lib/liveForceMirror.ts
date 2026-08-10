@@ -84,31 +84,6 @@ function normalizeRunId(value: unknown): string | null {
   return trimmed ? trimmed.toLowerCase() : null;
 }
 
-/// Native ids (a Swift `UUID.uuidString`) come back UPPERCASE; supabase-js
-/// ids are lowercase — same normalization as `normalizeRunId` above and
-/// `normalizeUserId` in `healthSync.ts` (#535).
-function normalizeUserId(value: string | null | undefined): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.toLowerCase() : null;
-}
-
-/// Whether a WatchConnectivity live-force packet stamped with
-/// `account_user_id` (#530) may reach the currently authenticated account's
-/// reducer. Same policy as `liveWorkoutMirror.ts`'s `acceptsPacketOwner`: a
-/// stamped mismatch is always rejected, and an unstamped (pre-#530 watch)
-/// packet is trusted only before this mirror has ever lived through an
-/// account transition in this mount's lifetime.
-export function acceptsPacketOwner(
-  accountUserId: string | null | undefined,
-  currentUserId: string,
-  hasHadAccountTransition: boolean,
-): boolean {
-  const owner = normalizeUserId(accountUserId);
-  if (owner === null) return !hasHadAccountTransition;
-  return owner === normalizeUserId(currentUserId);
-}
-
 function eventFor(msg: LiveForceMessage, previous: LiveForce | null): LiveMirrorEvent {
   if (msg.status === "idle" || msg.terminal === true) return "end";
   if (EVENTS.has(msg.event ?? "")) return msg.event as LiveMirrorEvent;
