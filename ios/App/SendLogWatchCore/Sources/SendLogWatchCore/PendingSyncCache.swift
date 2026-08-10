@@ -12,6 +12,14 @@ public enum PendingSyncQueue: String, Sendable, CaseIterable {
     case tindeqSessions
     /// `PendingRecordingQueue` — individual Tindeq force recordings (#486).
     case tindeqRecordings
+    /// `LiveWorkoutTerminalRetry` (#531/#549) — the single durable fallback
+    /// row for a failed terminal `live_workouts` upsert. Unlike the other
+    /// three (many-file, disk-directory queues with a quarantine concept),
+    /// this is a single JSON file holding at most one row and never
+    /// quarantines anything — it still reports 0 for both quarantine slots
+    /// every refresh so `quarantinedTotal`/`quarantinedStuckTotal` don't
+    /// permanently stick at nil once this case exists.
+    case liveWorkoutTerminal
 }
 
 /// Last known depth of each queue, readable **synchronously** (#21).

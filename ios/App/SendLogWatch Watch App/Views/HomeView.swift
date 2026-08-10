@@ -317,14 +317,19 @@ private struct ActionsView: View {
             // that marker at all, and no retry machinery of its own) made the
             // signal describe something neither queue actually does. The
             // combined `pendingUploads` badge above is unrelated and keeps
-            // counting both, same as before.
+            // counting all four queues, same as before.
             async let workouts = OfflineQueue.shared.pendingCount()
             async let sessions = PendingSessionQueue.shared.pendingCount()
             async let lastSync = OfflineQueue.shared.lastSuccessfulSyncAt()
             async let armed = OfflineQueue.shared.isRetryScheduled()
             async let recordings = PendingRecordingQueue.shared.pendingCount()
-            let (workoutCount, sessionCount, recordingCount, syncedAt, isArmed) = await (workouts, sessions, recordings, lastSync, armed)
-            pendingUploads = workoutCount + sessionCount + recordingCount
+            // #549 F2: the phone's reported total now includes this queue
+            // (`PendingSyncCache`) — the watch's own badge must sum the same
+            // four queues, or the two surfaces disagree about a stuck row.
+            async let liveWorkoutTerminal = LiveWorkoutTerminalRetry.shared.pendingCount()
+            let (workoutCount, sessionCount, recordingCount, syncedAt, isArmed, terminalCount) =
+                await (workouts, sessions, recordings, lastSync, armed, liveWorkoutTerminal)
+            pendingUploads = workoutCount + sessionCount + recordingCount + terminalCount
             retryScheduled = isArmed
             syncFreshness = SyncFreshnessPolicy.evaluate(
                 lastSuccessfulSyncAt: syncedAt,

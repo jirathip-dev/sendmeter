@@ -87,6 +87,7 @@ enum WatchBuild {
         OfflineQueue.shared,
         PendingSessionQueue.shared,
         PendingRecordingQueue.shared,
+        LiveWorkoutTerminalRetry.shared,
     ]
 
     /// Count every queue's totals first so a fresh install reports an honest
