@@ -12,11 +12,37 @@ const IS_NATIVE = Capacitor.isNativePlatform();
 
 const SYNCED_AT_KEY = "sendmeter:health-synced-at";
 
+/// The authenticated user the health-sync marker is currently scoped to.
+/// Set synchronously (before any listener/bootstrap work) by
+/// `relayHealthSession`, which is the same module-level-ref pattern
+/// CLAUDE.md's stale-closure rule requires elsewhere in this file: an async
+/// callback reads this live value at resolution time rather than a value it
+/// closed over before its await, so an account switch mid-flight is visible
+/// to it (#535).
+let activeHealthUserId: string | null = null;
+
+/// The most recent native readiness `requestId` this module has already
+/// recorded a sync for. Guards against reporting the SAME native result
+/// twice as a fresh change — e.g. the live listener push and the one-shot
+/// catch-up read (`ensureReadinessCatchUpRead`) both observing the same
+/// already-completed request. Deliberately module-scoped (not
+/// once-per-launch) so it stays correct if a future caller replays more
+/// than once in one process (#552).
+let lastProcessedReadinessRequestId: string | null = null;
+
+function syncedAtStorageKey(userId: string | null): string | null {
+  return userId ? `${SYNCED_AT_KEY}:${userId}` : null;
+}
+
 /// Epoch ms of the last successful health sync, or null (SL-31). Drives the
 /// "Last synced" line on the readiness card so a sync gives visible feedback.
+/// Scoped to the currently active account (#535) — a marker written for a
+/// previous account is never read back for a different one.
 export function healthLastSyncedAt(): number | null {
+  const key = syncedAtStorageKey(activeHealthUserId);
+  if (!key) return null;
   try {
-    const v = localStorage.getItem(SYNCED_AT_KEY);
+    const v = localStorage.getItem(key);
     return v ? Number(v) : null;
   } catch {
     return null;
@@ -42,9 +68,17 @@ export type HealthSyncSource = "background" | "foreground" | "resync" | "watch";
 /// call resolved" does NOT imply "new data landed"; only App.tsx's foreground
 /// toast reads `changed` (source === "foreground" && changed), but it's
 /// carried for every source so the event shape doesn't vary by call site.
-function recordHealthSync(source: HealthSyncSource, changed = false): void {
+///
+/// `at` defaults to "now", correct for every JS-initiated call site
+/// (background/foreground/resync — the sync genuinely just happened here).
+/// The watch-replay path (#535) passes the native `completedAt` explicitly
+/// instead, since a cached result replayed on relaunch may have completed
+/// hours earlier.
+function recordHealthSync(source: HealthSyncSource, changed = false, at: number = Date.now()): void {
+  const key = syncedAtStorageKey(activeHealthUserId);
+  if (!key) return;
   try {
-    localStorage.setItem(SYNCED_AT_KEY, String(Date.now()));
+    localStorage.setItem(key, String(at));
     // Nudge any mounted readiness card to re-read the timestamp.
     window.dispatchEvent(
       new CustomEvent("sendmeter:health-synced", { detail: { source, changed } }),
@@ -52,6 +86,37 @@ function recordHealthSync(source: HealthSyncSource, changed = false): void {
   } catch {
     /* ignore */
   }
+}
+
+/// Applies one native `ReadinessRefreshResult` — from either the live
+/// listener push or a replayed `getLatestReadiness()` — as a health sync,
+/// guarding against exactly the failure modes #535 was filed for:
+///
+/// - `requestedForUserId` is a snapshot of `activeHealthUserId` taken before
+///   the (possibly async) native call that produced `result`. Comparing it
+///   against the CURRENT `activeHealthUserId` here is the guard, not the
+///   snapshot itself (CLAUDE.md: a captured value cannot invalidate another
+///   in-flight closure's read of it) — an account switch mid-flight fails
+///   this check and the result is dropped rather than risk crediting the
+///   wrong account's marker.
+/// - `result.completedAt` (native epoch seconds) is used for the recorded
+///   timestamp instead of `Date.now()`, so a stale cached replay reports its
+///   real age rather than "just now".
+/// - `result.requestId` is deduped against the last request this module
+///   already recorded, so the same completed request observed twice (e.g.
+///   the live push and the catch-up read both seeing it) is not reported as
+///   a second new change.
+function processReadinessResult(
+  result: ReadinessRefreshResult | null | undefined,
+  requestedForUserId: string | null,
+): void {
+  if (!result || result.status !== "success") return;
+  if (!requestedForUserId || activeHealthUserId !== requestedForUserId) return;
+  if (result.requestId && result.requestId === lastProcessedReadinessRequestId) return;
+  if (result.requestId) lastProcessedReadinessRequestId = result.requestId;
+  const completedAtMs =
+    typeof result.completedAt === "number" ? result.completedAt * 1000 : Date.now();
+  recordHealthSync("watch", true, completedAtMs);
 }
 
 let readinessListenerRegistration: Promise<void> | null = null;
@@ -108,9 +173,7 @@ export function ensureReadinessListener(): void {
   }
   readinessListenerRegistration = SendLogHealth.addListener(
     "readinessRefresh",
-    (result: ReadinessRefreshResult) => {
-      if (result.status === "success") recordHealthSync("watch", true);
-    },
+    (result: ReadinessRefreshResult) => processReadinessResult(result, activeHealthUserId),
   )
     .then((handle) => {
       if (!handle || typeof handle.remove !== "function") {
@@ -153,10 +216,9 @@ function reportReadinessListenerFailure(error: unknown): void {
 function ensureReadinessCatchUpRead(): void {
   if (readinessCatchUpRequested) return;
   readinessCatchUpRequested = true;
+  const requestedForUserId = activeHealthUserId;
   void SendLogHealth.getLatestReadiness()
-    .then((result) => {
-      if (result?.status === "success") recordHealthSync("watch", true);
-    })
+    .then((result) => processReadinessResult(result, requestedForUserId))
     .catch(() => {
       // A pre-#520 native shell simply has no method/result yet.
     });
@@ -173,6 +235,14 @@ function ensureReadinessCatchUpRead(): void {
 /// `watchAuthRelay.ts` and the plugin's `definitions.ts`. Only supabase-js
 /// here owns rotation.
 export function relayHealthSession(session: Session | null): void {
+  // Scope the sync marker + replay dedupe to whichever account is now
+  // authenticated — set synchronously, before any listener/bootstrap work,
+  // so nothing below can read a stale account (#535). Tracked regardless of
+  // platform: on web this only affects `healthLastSyncedAt()`'s bookkeeping,
+  // since sync itself never runs there.
+  const userId = session?.user.id ?? null;
+  if (userId !== activeHealthUserId) lastProcessedReadinessRequestId = null;
+  activeHealthUserId = userId;
   if (!IS_NATIVE) return;
   ensureReadinessListener();
   if (session) {
