@@ -178,6 +178,9 @@ private func makeAuthorizationFailingWorkoutManager(
     manager.authorizationRequestOverride = {
         throw WorkoutManagerAuthorizationFailure.unavailable
     }
+    // #481: start() fires a background phase warm-up against the real
+    // Repo — stub it so this test host never dials 127.0.0.1:54321.
+    manager.phaseWarmer = { "capacity" }
     return manager
 }
 

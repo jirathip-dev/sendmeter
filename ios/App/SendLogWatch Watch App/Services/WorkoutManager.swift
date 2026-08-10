@@ -170,6 +170,12 @@ final class WorkoutManager: NSObject {
     /// actually makes the "once" behavior real — is what SendLogWatchTests
     /// asserts on instead.
     var hrMissingDateIntervalLogged = false
+    /// #481 (#477 F4 follow-up): `hrMissingDateIntervalLogged` only says
+    /// whether Console has been told at all — it can't distinguish a single
+    /// blip from a whole workout of untimestampable readings. This counts
+    /// every occurrence regardless of the one-shot log gate; `end()` reports
+    /// the total.
+    var hrMissingDateIntervalCount = 0
     // MARK: Partial-flush ordering (#477)
     //
     // `flushPartial()` used to fire an unconstrained `Task.detached` every
@@ -219,6 +225,15 @@ final class WorkoutManager: NSObject {
     var partialUploader: (ClimbWorkoutPartialUpsert) async -> Void = { partial in
         try? await Repo.flushPartialWorkout(partial)
     }
+    /// Not `private`, same reasoning as `partialUploader`: the production
+    /// default is the real `Repo.fetchCurrentPhase()` warm-up `start()` fires
+    /// in the background, but a unit-test host has no Supabase to reach — left
+    /// unstubbed, this dialed 127.0.0.1:54321 from every test that calls
+    /// `start()`, a measured 2-in-5 flake at ~32s/run (#481). Tests inject a
+    /// synchronous stub so `start()` never touches the network.
+    var phaseWarmer: () async -> String = {
+        (try? await Repo.fetchCurrentPhase()) ?? "capacity"
+    }
     /// Double haptic when the rest countdown hits zero (#476 F5: hoisted out
     /// of WorkoutLiveView, same reasoning as the save path — a rest alarm
     /// scheduled while the view was on screen used to be silently cancelled
@@ -239,14 +254,20 @@ final class WorkoutManager: NSObject {
         super.init()
     }
 
-    /// `end()` already invalidates the fusion timer, but that's not the only
-    /// way this object goes away — invalidate here too, or a path that skips
-    /// `end()` (deallocation without an explicit stop) leaves the timer
-    /// registered on the run loop, which retains it and keeps firing forever
-    /// into a `[weak self]` that's already nil.
-    deinit {
-        fusionTimer?.invalidate()
-    }
+    // #481: this used to carry a `deinit { fusionTimer?.invalidate() }`,
+    // added when `WorkoutManager` was `@State` inside `WorkoutLiveView` (a
+    // navigationDestination) and really could deallocate mid-workout (a nav
+    // pop). #476 hoisted it to App scope (`SendLogWatchApp`'s `@State`), so
+    // in production it now lives for the whole process — the deallocation
+    // path the guard existed for is exactly the one the hoist removed. It
+    // was also never correctly thread-safe where it WAS reachable:
+    // `Timer.invalidate()` must be called from the thread that installed the
+    // timer (`startFusion()`, always MainActor-adjacent), but `deinit`
+    // carries no isolation and could in principle run on whatever thread
+    // drops the last strong reference. Removed rather than kept as a guard
+    // that only looked active — `end()` (and
+    // `stopRecordingAndAwaitInFlightPartial()`) is the one real invalidation
+    // path now, and it already runs on MainActor.
 
     func requestAuthorization() async throws {
         if let authorizationRequestOverride {
@@ -313,7 +334,7 @@ final class WorkoutManager: NSObject {
         // outlives any single workout, so a slow fetch from a PREVIOUS start
         // must not land on the workout that's running by the time it resolves.
         Task {
-            let phase = (try? await Repo.fetchCurrentPhase()) ?? "capacity"
+            let phase = await self.phaseWarmer()
             guard self.startGuard.isCurrent(generation) else { return }
             self.cachedPhase = phase
         }
@@ -324,6 +345,7 @@ final class WorkoutManager: NSObject {
         hrTimeline = HeartRateTimeline()
         lastMotionSample = nil
         hrMissingDateIntervalLogged = false
+        hrMissingDateIntervalCount = 0
         activeKcal = 0
         elapsed = 0
         relativeAltitude = 0
@@ -613,6 +635,23 @@ final class WorkoutManager: NSObject {
         }
 
         let attempts = detector.finalize()
+        // #481: `hitCap` (SendLogWatchCore's `Attempt.hitCap`, #473) had no
+        // consumer — every finalized attempt carried "closed via a duration
+        // cap, not a genuine end signal" and nothing ever read it. Same
+        // one-shot-per-workout Console breadcrumb as `hrMissingDateInterval`
+        // below, not user-facing: a caller was always meant to report this,
+        // not silently accept the clamp.
+        let cappedAttemptCount = attempts.filter(\.hitCap).count
+        if cappedAttemptCount > 0 {
+            Self.log.warning("\(cappedAttemptCount) attempt(s) this workout closed on a duration cap, not a genuine end signal (#481)")
+        }
+        // #481 (#477 F4 follow-up): `reportHRMissingDateIntervalOnce()` logs
+        // only once per workout, so Console can't tell a single blip from a
+        // whole workout of untimestampable readings. The count answers that.
+        let missingDateIntervalCount = hrMissingDateIntervalCount
+        if missingDateIntervalCount > 0 {
+            Self.log.warning("HR quantity delivered with no mostRecentQuantityDateInterval() \(missingDateIntervalCount) time(s) this workout — readings discarded, not trusted (#477/#481)")
+        }
         let avgHR = builder.statistics(for: HKQuantityType(.heartRate))?
             .averageQuantity()?
             .doubleValue(for: .count().unitDivided(by: .minute()))
@@ -851,6 +890,7 @@ final class WorkoutManager: NSObject {
     /// logs once per workout (#477 review F4) — Console/os_log output isn't
     /// otherwise observable from a unit test.
     func reportHRMissingDateIntervalOnce() {
+        hrMissingDateIntervalCount += 1
         guard !hrMissingDateIntervalLogged else { return }
         hrMissingDateIntervalLogged = true
         Self.log.warning("HR quantity delivered with no mostRecentQuantityDateInterval() — reading discarded, not trusted (#477)")

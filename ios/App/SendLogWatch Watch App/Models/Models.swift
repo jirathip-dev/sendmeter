@@ -468,10 +468,16 @@ nonisolated enum QuarantineReason: String, Codable {
 /// queue purge equivalent to the web's `discardQueueOnUserSignOut`), so a
 /// `.quarantine` file is effectively permanent on-device storage. Quarantine
 /// is expected to be rare, but `bundle.workout.raw` is the 1Hz debug trace
-/// (hundreds of KB for a long workout when `keepRawTrace` is on), so this is
+/// (hundreds of KB for a long workout when `keepRawTrace` is on), so this was
 /// unbounded growth in the pathological case, not a fixed-size record (#475
-/// F8) — a future build could reasonably prune `raw` before quarantining,
-/// or add a purge path, without losing the fields that matter for support.
+/// F8) — #481's named cheap win, pruning `raw` before quarantining, is now
+/// done: see `UploadQueueEngine.stripsPayloadOnQuarantine` / `QueueUploadItem
+/// .strippedOfHeavyPayload()` (#491), which generalized this workout-specific
+/// type into `QueueQuarantineRecord<Item>`. `QuarantinedUpload` itself is
+/// legacy now — kept only so tests can prove the new on-disk shape stays
+/// byte-compatible with records quarantined by an older build. A purge path
+/// (actually deleting an old `.quarantine` file, not just shrinking it) is
+/// still unimplemented and would need real design, not a one-liner.
 nonisolated struct QuarantinedUpload: Codable {
     var bundle: WorkoutSaveBundle
     var reason: QuarantineReason

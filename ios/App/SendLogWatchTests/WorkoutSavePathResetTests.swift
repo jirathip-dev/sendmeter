@@ -14,6 +14,9 @@ private func makeAuthorizationFailingWorkoutManager(
     manager.authorizationRequestOverride = {
         throw WorkoutSavePathAuthorizationFailure.unavailable
     }
+    // #481: start() fires a background phase warm-up against the real
+    // Repo — stub it so this test host never dials 127.0.0.1:54321.
+    manager.phaseWarmer = { "capacity" }
     return manager
 }
 
@@ -172,6 +175,8 @@ final class WorkoutManagerOwnershipTests: XCTestCase {
             await gate.waitUntilReleased()
             throw WorkoutSavePathAuthorizationFailure.unavailable
         }
+        // #481: stub the background phase warm-up — no real network in this test host.
+        manager.phaseWarmer = { "capacity" }
 
         async let first: Void = manager.start()
 

@@ -160,6 +160,9 @@ final class WorkoutManagerDoubleStartTests: XCTestCase {
 
     private func makeAuthorizationFailingManager(gate: AuthorizationGate? = nil) -> WorkoutManager {
         let manager = WorkoutManager()
+        // #481: start() fires a background phase warm-up against the real
+        // Repo — stub it so this test host never dials 127.0.0.1:54321.
+        manager.phaseWarmer = { "capacity" }
         if let gate {
             manager.authorizationRequestOverride = {
                 await gate.enter()
@@ -217,24 +220,16 @@ private actor AuthorizationGate {
     }
 }
 
-/// Issue #476: the fusion timer used to be invalidated only in `end()` — any
-/// other path to deallocation (skipping an explicit stop) left it registered
-/// on the run loop, which retains it and keeps firing into a `[weak self]`
-/// that's already nil.
-final class WorkoutManagerDeinitTests: XCTestCase {
-    @MainActor
-    func testFusionTimerIsInvalidatedWhenTheManagerDeinits() {
-        var manager: WorkoutManager? = WorkoutManager()
-        manager?.startFusion()
-        let timer = manager?.fusionTimer
-        XCTAssertEqual(timer?.isValid, true, "startFusion() should have created a live timer")
-        manager = nil
-        XCTAssertEqual(
-            timer?.isValid, false,
-            "deinit must invalidate fusionTimer, or the run loop keeps firing it forever"
-        )
-    }
-}
+// Issue #476 added a `deinit { fusionTimer?.invalidate() }` and this test to
+// pin it, for the `WorkoutManager`-owned-by-a-navigationDestination shape of
+// that era, where the manager really could deallocate mid-workout. #481
+// (cross-wave residual F6) found that guard dead post-#476's own hoist to
+// App scope (`WorkoutManager` now lives for the process) and not actually
+// thread-safe where it was reachable (`Timer.invalidate()` needs the
+// installing thread; `deinit` carries no isolation) — so the deinit was
+// removed rather than kept as a guard that only looked active. `end()` /
+// `stopRecordingAndAwaitInFlightPartial()` is the one real invalidation path
+// now, and `WorkoutManagerPartialFlushOrderingTests` already covers it.
 
 /// #480 review F2: `WorkoutSessionActivationTests` (`SendLogWatchCore`)
 /// proves the ALGORITHM — a `beginCollection` failure detaches, ends, and
