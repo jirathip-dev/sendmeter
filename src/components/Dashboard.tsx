@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import type {
   AcwrData,
   AcwrStatus,
@@ -99,11 +99,10 @@ export default function Dashboard({
             flexDirection: "column",
             justifyContent: "space-between",
             gap: 6,
-            // Tinted with the current phase's color, matching the phase cards
-            // in the info sheet.
-            background: phase.bg,
-            border: `1px solid ${phase.border}`,
-          }}
+            // Restrained phase-color wash (#547) — see .phase-banner in
+            // index.css for the theme-tuned tint recipe this drives.
+            "--phase-accent": phase.color,
+          } as CSSProperties}
         >
           <div style={{ minWidth: 0 }}>
             <div
@@ -165,16 +164,15 @@ export default function Dashboard({
           the banner above rather than a new alert. */}
       {showStepBack && (
         <div
+          className="phase-suggestion"
           style={{
             display: "flex",
             alignItems: "center",
             gap: 8,
             marginBottom: 10,
             padding: "9px 12px",
-            borderRadius: 12,
-            background: phase.bg,
-            border: `1px solid ${phase.border}`,
-          }}
+            "--phase-accent": phase.color,
+          } as CSSProperties}
         >
           <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.4, flex: 1 }}>
             Readiness has been low for {stepBack.streakDays} days — consider

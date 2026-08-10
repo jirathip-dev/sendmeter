@@ -75,7 +75,10 @@
   --hairline: #E4E8F0;
   --ink: #182131;
   --ink-muted: #647087;
-  --ink-faint: #8B96AA;
+  /* Darkened from the original #8B96AA (~3:1 on white — too faint once cards
+     lost their tinted backgrounds, #547) to ~3.8:1 while staying visibly
+     lighter than --ink-muted's 5.1:1. */
+  --ink-faint: #77839C;
   --primary: #5B5FC7;
   --primary-hover: #4A4EB3;
   --primary-accent: #4E53B9; /* primary used as text/underline */
@@ -176,15 +179,31 @@
   --accent-interaction: var(--primary);
   --accent-info: var(--info);
 
-  /* Restrained washes: never put these behind a dense paragraph. */
+  /* Restrained washes: never put these behind a dense paragraph.
+     #547: structural/analytical cards (readiness, load, force, workout,
+     history) read as near-white in light mode — a feature-tinted card reads
+     as competing chrome on a light canvas even though the same wash works on
+     dark. Data/state color moves inward (values, chart lines, status text)
+     instead of washing the whole card. Dark keeps its richer per-surface
+     tints (below), since dark backgrounds can carry colored illumination. */
   --gradient-neutral: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(244,247,252,0.96));
-  --gradient-readiness: linear-gradient(135deg, rgba(46,150,240,0.13), rgba(255,255,255,0) 58%);
-  --gradient-caution: linear-gradient(135deg, rgba(199,149,34,0.12), rgba(255,255,255,0) 58%);
-  --gradient-load: linear-gradient(135deg, rgba(217,104,50,0.11), rgba(255,255,255,0) 58%);
-  --gradient-force: linear-gradient(135deg, rgba(217,133,43,0.13), rgba(255,255,255,0) 60%);
-  --gradient-interaction: linear-gradient(135deg, rgba(91,95,199,0.14), rgba(255,255,255,0) 62%);
+  --gradient-readiness: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(244,247,252,0.96));
+  --gradient-caution: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(244,247,252,0.96));
+  --gradient-load: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(244,247,252,0.96));
+  --gradient-force: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(244,247,252,0.96));
+  --gradient-interaction: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(244,247,252,0.96));
   --ambient-field: radial-gradient(circle at 8% -8%, rgba(91,95,199,0.12), transparent 34%), radial-gradient(circle at 96% 26%, rgba(46,150,240,0.08), transparent 30%);
   --iris: linear-gradient(135deg, rgba(91,95,199,0.56), rgba(46,150,240,0.36) 35%, rgba(199,149,34,0.28) 70%, rgba(217,104,50,0.38));
+  /* Iridescent card-edge ring (.card::before): a rainbow hairline reads as
+     decorative glow on a light canvas, so light mode keeps it almost off —
+     dark mode is unchanged (0.45, set in the dark blocks below). */
+  --card-ring-opacity: 0.06;
+  /* Phase-color wash on .phase-banner/.phase-suggestion (#547) — restrained
+     in light so the strip reads as a neutral card with the phase name/target
+     carrying the color, not a full-card tint. Dark mode keeps close to the
+     original saturated wash. */
+  --phase-tint-alpha: 5%;
+  --phase-border-alpha: 20%;
 
   /* Elevation and material tokens. A single recipe keeps cards, rows and
      sheets related while still letting the shell sit above the content. */
@@ -329,6 +348,11 @@
   --gradient-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
   --ambient-field: radial-gradient(circle at 8% -8%, rgba(115,120,226,0.22), transparent 36%), radial-gradient(circle at 96% 24%, rgba(88,184,255,0.12), transparent 30%);
   --iris: linear-gradient(135deg, rgba(115,120,226,0.72), rgba(88,184,255,0.54) 35%, rgba(240,201,87,0.42) 70%, rgba(241,138,80,0.52));
+  /* Dark keeps the original glow/tint strength — see the light :root above
+     for why these are much lower there (#547). */
+  --card-ring-opacity: 0.45;
+  --phase-tint-alpha: 12%;
+  --phase-border-alpha: 35%;
   --shadow-xs: 0 1px 2px rgba(0,0,0,0.28);
   --shadow-sm: 0 4px 14px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
   --shadow-card: 0 1px 2px rgba(0,0,0,0.32), 0 12px 30px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06);
@@ -446,6 +470,9 @@
     --gradient-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
     --ambient-field: radial-gradient(circle at 8% -8%, rgba(115,120,226,0.22), transparent 36%), radial-gradient(circle at 96% 24%, rgba(88,184,255,0.12), transparent 30%);
     --iris: linear-gradient(135deg, rgba(115,120,226,0.72), rgba(88,184,255,0.54) 35%, rgba(240,201,87,0.42) 70%, rgba(241,138,80,0.52));
+    --card-ring-opacity: 0.45;
+    --phase-tint-alpha: 12%;
+    --phase-border-alpha: 35%;
     --shadow-xs: 0 1px 2px rgba(0,0,0,0.28);
     --shadow-sm: 0 4px 14px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
     --shadow-card: 0 1px 2px rgba(0,0,0,0.32), 0 12px 30px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06);
@@ -1194,7 +1221,7 @@ input[type="number"] {
   -webkit-mask-composite: xor;
           mask-composite: exclude;
   pointer-events: none;
-  opacity: 0.45;
+  opacity: var(--card-ring-opacity, 0.45);
 }
 .card.tappable:hover { border-color: color-mix(in srgb, var(--accent-interaction) 22%, var(--card-border)); }
 .card.tappable:active { transform: scale(0.995); box-shadow: var(--shadow-sm); }
@@ -1262,10 +1289,22 @@ input[type="number"] {
 .modal-sheet .card::before { content: none; }
 .card + .card { margin-top: 10px; }
 
-/* Phase banner (tinted card) */
-.phase-banner { background: var(--canvas); background-image: var(--gradient-interaction); border: 1px solid var(--card-border); border-radius: var(--radius-card); padding: 16px; margin-bottom: 10px; box-shadow: var(--shadow-card); transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface); }
-.phase-banner:hover { border-color: color-mix(in srgb, var(--accent-interaction) 26%, var(--card-border)); }
+/* Phase banner — a restrained phase-color wash (#547): --phase-accent is set
+   inline per phase (Dashboard.tsx), --phase-tint-alpha/--phase-border-alpha
+   are theme-tuned tokens (near-neutral in light, close to the old saturated
+   wash in dark) so the strip stays a mostly neutral card and the phase name
+   text carries the color. .phase-suggestion (the step-back nudge) shares the
+   same recipe so it reads as attached to the banner above it. */
+.phase-banner, .phase-suggestion {
+  --phase-accent: var(--primary);
+  background: var(--canvas);
+  background-image: linear-gradient(135deg, color-mix(in srgb, var(--phase-accent) var(--phase-tint-alpha), transparent), transparent 60%);
+  border: 1px solid color-mix(in srgb, var(--phase-accent) var(--phase-border-alpha), var(--card-border));
+}
+.phase-banner { border-radius: var(--radius-card); padding: 16px; margin-bottom: 10px; box-shadow: var(--shadow-card); transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface); }
+.phase-banner:hover { border-color: color-mix(in srgb, var(--phase-accent) calc(var(--phase-border-alpha) + 15%), var(--card-border)); }
 .phase-banner:active { transform: scale(0.995); box-shadow: var(--shadow-sm); }
+.phase-suggestion { border-radius: 12px; }
 
 /* Grid */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
