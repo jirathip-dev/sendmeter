@@ -91,11 +91,11 @@
      the round-1 fix measured only 4.13:1 — under AA — despite clearing
      4.55:1 on pure white. This value clears AA on both (~4.97:1 on white,
      ~4.51:1 on #F2F4F8). Phase-identity colors used as text (PHASES[].color
-     in src/constants.ts) remain below AA on the new neutral surfaces — a
+     in src/constants.ts) were below AA on these neutral surfaces — a
      pre-existing condition unrelated to this token, shared with dark mode's
-     healthy contrast, and tracked as a follow-up on issue #557 rather than
-     fixed here (it spans the whole phase palette, used well beyond the
-     Dashboard #547 migrates). */
+     healthy contrast — fixed by the `--phase-text-*` tokens below (issue
+     #557) rather than here, since it spans the whole phase palette, used
+     well beyond the Dashboard #547 migrates. */
   --ink-faint: #617090;
   --primary: #5B5FC7;
   --primary-hover: #4A4EB3;
@@ -237,6 +237,23 @@
      original saturated wash. */
   --phase-tint-alpha: 5%;
   --phase-border-alpha: 20%;
+  /* Light-mode text variant of each PHASES[].color identity hue (issue
+     #557) — `Phase.textColor` in src/constants.ts is a var() reference to
+     one of the four properties below, so every text consumer (phase banner
+     name, History session-type tags, PhasesView) reads AA-legible without a
+     per-component branch. Each value is the identity hue uniformly darkened
+     (RGB scaled toward black, same hue/HSV-saturation, only value lowered —
+     the hue stays recognizable) until it clears WCAG AA 4.5:1 against every
+     real background it lands on in light mode: plain #FFFFFF/#F2F4F8 AND the
+     ~12%-phase-tinted tag/card fills (`Phase.bg`), which is the binding
+     constraint (measured, not eyeballed — see the "phase identity's text
+     variant" test in premiumVisualInvariants.test.ts). Dark mode redefines
+     these to equal `color` below (already ~8.4:1+ on the dark canvas —
+     untouched). */
+  --phase-text-capacity: #216AAA;
+  --phase-text-strength: #816722;
+  --phase-text-power: #A05129;
+  --phase-text-execution: #5A60AD;
 
   /* Elevation and material tokens. A single recipe keeps cards, rows and
      sheets related while still letting the shell sit above the content. */
@@ -390,6 +407,12 @@
   --nav-ring-opacity: 0.85;
   --phase-tint-alpha: 12%;
   --phase-border-alpha: 35%;
+  /* Dark mode's identity hues already clear ~8.4:1+ on the dark canvas
+     (#557) — text uses the same value as the decorative `color`. */
+  --phase-text-capacity: #2E96F0;
+  --phase-text-strength: #DDB13A;
+  --phase-text-power: #E5743A;
+  --phase-text-execution: #7B83EB;
   --shadow-xs: 0 1px 2px rgba(0,0,0,0.28);
   --shadow-sm: 0 4px 14px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
   --shadow-card: 0 1px 2px rgba(0,0,0,0.32), 0 12px 30px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06);
@@ -514,6 +537,10 @@
     --nav-ring-opacity: 0.85;
     --phase-tint-alpha: 12%;
     --phase-border-alpha: 35%;
+    --phase-text-capacity: #2E96F0;
+    --phase-text-strength: #DDB13A;
+    --phase-text-power: #E5743A;
+    --phase-text-execution: #7B83EB;
     --shadow-xs: 0 1px 2px rgba(0,0,0,0.28);
     --shadow-sm: 0 4px 14px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
     --shadow-card: 0 1px 2px rgba(0,0,0,0.32), 0 12px 30px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06);

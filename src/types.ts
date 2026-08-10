@@ -9,6 +9,13 @@ export interface Phase {
   id: PhaseId;
   name: string;
   color: string;
+  /// Light-mode-legible text variant of `color` (issue #557) — a CSS
+  /// custom-property reference (`var(--phase-text-<id>)`), resolved per
+  /// theme in index.css: darkened to clear WCAG AA 4.5:1 on light-mode's
+  /// near-white surfaces, equal to `color` in dark mode (already ~8.4:1+
+  /// there). Use this for every consumer that renders the phase identity
+  /// as small text; `color` stays the decorative/chart/chip/dark-mode value.
+  textColor: string;
   bg: string;
   border: string;
   acwr: string; // display band, e.g. "0.9–1.1"

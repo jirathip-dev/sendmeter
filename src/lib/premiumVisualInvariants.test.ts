@@ -17,6 +17,7 @@ const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
 };
 const viteConfig = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
 const themeSource = readFileSync(join(SRC, "lib", "theme.ts"), "utf8");
+const constantsSource = readFileSync(join(SRC, "constants.ts"), "utf8");
 const bootstrapSource = indexHtml.match(
   /<script\b[^>]*data-theme-bootstrap[^>]*>([\s\S]*?)<\/script>/i,
 )?.[1] ?? "";
@@ -2206,6 +2207,87 @@ describe("premium visual language contracts (#517)", () => {
       const active = cssRuleBody(parsedCssRules, `.phase-option[data-active="true"][data-phase="${phase}"]`);
       expect(active).toContain("box-shadow:");
       expect(active).not.toMatch(/color:\s*#fff/i);
+    }
+  });
+
+  // #557: PHASES[].color reads AA on dark (~8.4:1+) but fails AA as small
+  // text on light mode's near-white surfaces (e.g. Strength #DDB13A on white
+  // ~2.0:1). Every text consumer must use `Phase.textColor` — a
+  // `var(--phase-text-<id>)` reference — instead of the raw identity `color`.
+  it("keeps every phase identity's text variant AA-readable in light mode and hue-locked in dark", () => {
+    const phases = [
+      { id: "capacity", hue: "#2E96F0" },
+      { id: "strength", hue: "#DDB13A" },
+      { id: "power", hue: "#E5743A" },
+      { id: "execution", hue: "#7B83EB" },
+    ] as const;
+
+    // constants.ts wires every phase to its CSS custom property, not a
+    // hardcoded/raw hex and not the decorative `color` field.
+    for (const phase of phases) {
+      expect(constantsSource).toContain(
+        `textColor: "var(--phase-text-${phase.id})"`,
+      );
+    }
+
+    // Every known text consumer of the palette reads `textColor`, never the
+    // decorative `color` (chart/chip/background/border uses keep `color`).
+    const dashboardSource = component("Dashboard.tsx");
+    const phasesViewSource = component("PhasesView.tsx");
+    const sessionRowSource = component("SessionRow.tsx");
+    expect(dashboardSource).toContain("color: phase.textColor,");
+    expect(dashboardSource).not.toContain("color: phase.color,");
+    expect(phasesViewSource).not.toMatch(/color:\s*p\.color[,\s]/);
+    expect(sessionRowSource).toContain("color: ph?.textColor");
+    expect(sessionRowSource).not.toContain("color: ph?.color");
+
+    for (const phase of phases) {
+      const identity = hexColor(phase.hue, `${phase.id} identity`);
+
+      // Dark mode: the text token equals the decorative identity hue, which
+      // already clears AA comfortably on the dark canvas.
+      const darkVar = themeDeclarations.dark[`--phase-text-${phase.id}`];
+      expect(darkVar, `dark --phase-text-${phase.id}`).toBe(phase.hue);
+      const darkCanvas = resolveThemeColor("var(--canvas)", "dark", "dark canvas");
+      expect(
+        contrastRatio(identity, darkCanvas),
+        `dark ${phase.id} identity on canvas`,
+      ).toBeGreaterThanOrEqual(4.5);
+
+      // Light mode: the text token must be a darkened variant (same hue,
+      // lower value) that clears AA against every real background it lands
+      // on — plain white/#F2F4F8 AND the ~12%-phase-tinted tag/card fill
+      // (Phase.bg), which is the stricter, binding constraint.
+      const lightVarValue = themeDeclarations.light[`--phase-text-${phase.id}`];
+      expect(lightVarValue, `light --phase-text-${phase.id} declared`).toBeTruthy();
+      const variant = hexColor(lightVarValue!, `light --phase-text-${phase.id}`);
+      expect(variant, `${phase.id} variant differs from identity`).not.toEqual(identity);
+
+      const white = hexColor("#FFFFFF", "white");
+      const f2f4f8 = hexColor("#F2F4F8", "F2F4F8");
+      const tagBg = mix(f2f4f8, identity, 0.12);
+      expect(contrastRatio(variant, white), `${phase.id} vs #FFFFFF`).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(variant, f2f4f8), `${phase.id} vs #F2F4F8`).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(variant, tagBg),
+        `${phase.id} vs 12%-tinted tag/card fill`,
+      ).toBeGreaterThanOrEqual(4.5);
+
+      // The hue itself must stay recognizable — same RGB ratios, just darker
+      // (an HSV hue/saturation-preserving shade), not a different color.
+      const [ir, ig, ib] = identity;
+      const [vr, vg, vb] = variant;
+      const maxIdentity = Math.max(ir, ig, ib);
+      const maxVariant = Math.max(vr, vg, vb);
+      expect(maxVariant, `${phase.id} variant is darker`).toBeLessThan(maxIdentity);
+      for (const [i, v] of [[ir, vr], [ig, vg], [ib, vb]] as const) {
+        // Same channel ratio (±1 for rounding) proves hue/saturation are
+        // unchanged — only value (brightness) was scaled down.
+        expect(
+          Math.abs(i / maxIdentity - v / maxVariant),
+          `${phase.id} channel ratio drift`,
+        ).toBeLessThan(0.02);
+      }
     }
   });
 

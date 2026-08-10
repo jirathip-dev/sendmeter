@@ -119,7 +119,7 @@ export default function Dashboard({
               style={{
                 fontSize: "var(--t-md)",
                 fontWeight: 700,
-                color: phase.color,
+                color: phase.textColor,
                 letterSpacing: "-0.01em",
                 marginTop: 2,
                 overflow: "hidden",
