@@ -14,6 +14,7 @@ struct ForceGaugeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
+    @State private var showingFinishConfirmation = false
 
     // Exercise setup — set once before the first rep, tweak side between reps.
     // Stop always saves with whatever tag/side is set (no post-stop decision).
@@ -189,6 +190,25 @@ struct ForceGaugeView: View {
         // live gauge — it returns the moment the rep stops (status flips back
         // to .connected).
         .toolbar(visibleStatus == .measuring ? .hidden : .visible, for: .navigationBar)
+        // #588 review F6: the finish-session icon shares the Workout finish's
+        // checkered-flag glyph and danger tint, so it must also share the
+        // ask-first behavior — an identical control that sometimes asks and
+        // sometimes fires immediately is the exact ambiguity #580 scope 1
+        // exists to avoid. This does NOT reintroduce the #295/#280 log-time
+        // prompt: confirming still auto-logs immediately with the predicted
+        // RPE (`rpe_confirmed = false`, editable later in History) — the
+        // card is a tap-guard for the compact destructive control, not an
+        // RPE/duration review step.
+        .watchFinishConfirmation(
+            isPresented: $showingFinishConfirmation,
+            title: "Finish session?",
+            message: "Logs your session to History.",
+            confirmIdentifier: "force-finish-confirm",
+            confirmHint: "Logs the session and ends it",
+            cancelIdentifier: "force-finish-cancel"
+        ) {
+            tindeq.logSessionNow()
+        }
         .watchCanvas()
         .onReceive(sparkTimer) { _ in
             if tindeq.status == .measuring {
@@ -304,15 +324,24 @@ struct ForceGaugeView: View {
         // setupContent's for fitting the smallest watch without scrolling.
         if tindeq.sessionId != nil || (fixtureVisual?.sessionCount ?? 0) > 0 {
             WatchCard(accent: WatchPalette.primary) {
-                // One row on every size now: the compact icon finish always
-                // fits beside the chip — the old 44pt text pill was wider
-                // than the inner card on 40mm and needed a ViewThatFits
-                // stack fallback that made the control read enormous there
-                // (SL-580 follow-up).
-                HStack(spacing: 7) {
-                    sessionChip
-                    Spacer(minLength: 0)
-                    finishButton
+                // The compact icon finish fits beside the chip on every
+                // current size — the old 44pt text pill was wider than the
+                // inner 40mm card, which made the stacked fallback read
+                // enormous there (SL-580 follow-up). The ViewThatFits
+                // fallback itself stays (#588 review F7): if the chip's
+                // copy ever grows or starts scaling, the row degrades to a
+                // stack instead of compressing either essential control.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 7) {
+                        sessionChip
+                        Spacer(minLength: 0)
+                        finishButton
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        sessionChip
+                        finishButton
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
                 }
             }
         }
@@ -328,31 +357,25 @@ struct ForceGaugeView: View {
 
     /// Compact icon-only finish — the same `WatchIconButton` treatment as
     /// the live Workout's finish control (SL-580 follow-up), so "finish this
-    /// activity" reads identically on both screens. Deliberately NO
-    /// confirmation step, mirroring the behavior this replaces: logging a
-    /// Force session is not destructive (#280 — it logs immediately with a
-    /// predicted RPE and stays editable in History), unlike ending a workout.
+    /// activity" reads identically on both screens: same glyph, same tint,
+    /// same ask-first behavior (#588 review F6 — see the shared
+    /// `watchFinishConfirmation` attachment in `body`). The confirm still
+    /// auto-logs with the predicted RPE, exactly the #280 semantics the old
+    /// unconfirmed text pill had.
     private var finishButton: some View {
         WatchIconButton(
             systemImage: tindeq.saving ? "ellipsis" : WatchIconSymbol.finishWorkout,
             accessibilityLabel: tindeq.saving ? "Finishing session" : "Finish session",
             accessibilityHint: tindeq.saving
                 ? "Logging the session"
-                : "Logs this force session to History",
+                : "Shows a confirmation before logging this force session",
             accessibilityIdentifier: "force-session-finish",
             tint: WatchDesignTokens.danger,
             usesTintWhenUnselected: true,
             isDisabled: tindeq.saving
         ) {
-            finish()
+            showingFinishConfirmation = true
         }
-    }
-
-    private func finish() {
-        // A session only exists after ≥1 saved rep, so there's always
-        // something to log. #280: no prompt any more — the RPE is predicted
-        // from the session's W' depletion and the session logs immediately.
-        tindeq.logSessionNow()
     }
 
     /// Deliberate disconnect (SL-75: there was no button). Logs any saved reps

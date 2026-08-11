@@ -100,6 +100,19 @@ struct HomeView: View {
     /// breath) so nothing sits under the buttons until the user scrolls.
     private static let selectorBarHeight: CGFloat = 44
 
+    /// Per-button legibility backdrop (#588 review F3): a canvas-colored
+    /// disc matching the primitive's 30pt visible circle. Over the dark
+    /// at-rest canvas it is invisible; over a bright card sliding under the
+    /// transparent bar it keeps the dim unselected glyph readable — the
+    /// user's direction is per-button backdrops, never a bar-wide band.
+    /// `canvas` is the same in full and reduced luminance, so Always-On
+    /// needs no variant.
+    private var selectorButtonBackdrop: some View {
+        Circle()
+            .fill(WatchPalette.canvas.opacity(0.9))
+            .frame(width: 30, height: 30)
+    }
+
     private var activeLossNotice: LossNotice? { lossQueue.first }
 
     var body: some View {
@@ -151,7 +164,12 @@ struct HomeView: View {
                         startPoint: .top,
                         endPoint: .bottom
                     )
-                    .frame(height: 40)
+                    // Exactly the bar's chrome height (#588 review F4): the
+                    // fade reaches full opacity at the bar's bottom edge, so
+                    // the least-faded content strip begins where the chrome
+                    // ends instead of leaving a fully-unfaded band beside
+                    // the buttons.
+                    .frame(height: Self.selectorBarHeight)
                     Rectangle().fill(Color.black)
                 }
             }
@@ -169,11 +187,15 @@ struct HomeView: View {
             // chrome must overlay, not flex): the bar area itself is
             // transparent, each page insets its at-rest content below it
             // (see the per-page `safeAreaPadding` above), and scrolled
-            // content passes underneath visibly. The buttons' own circular
-            // fills are what keep them legible over passing content; the
-            // overlay renders above the pages, so the controls can never be
-            // covered or lose their hit targets — the actual #578
-            // regression this layout must not reintroduce.
+            // content passes underneath visibly. Per-button canvas-colored
+            // backdrops (below) are what keep the buttons legible over
+            // passing content — the unselected primitive's own fill is a
+            // near-transparent 8% white, which is not legibility over a
+            // bright card (#588 review F3) — while the bar itself stays
+            // backdrop-free per the user's direction. The overlay renders
+            // above the pages, so the controls can never be covered or lose
+            // their hit targets — the actual #578 regression this layout
+            // must not reintroduce.
             .overlay(alignment: .top) {
                 HStack(spacing: 6) {
                     Spacer(minLength: 0)
@@ -185,6 +207,7 @@ struct HomeView: View {
                         isSelected: selection == .status,
                         action: { selection = .status }
                     )
+                    .background { selectorButtonBackdrop }
                     WatchIconButton(
                         systemImage: WatchIconSymbol.actions,
                         accessibilityLabel: "Show Actions",
@@ -194,6 +217,7 @@ struct HomeView: View {
                         tint: WatchDesignTokens.secondary,
                         action: { selection = .actions }
                     )
+                    .background { selectorButtonBackdrop }
                 }
                 .padding(.trailing, 10)
                 .frame(height: Self.selectorBarHeight, alignment: .center)
