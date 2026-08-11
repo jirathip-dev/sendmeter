@@ -357,6 +357,47 @@ private struct WatchPageControlItem: View {
     }
 }
 
+/// Shared visual chrome for a compact icon-only control (SL-537 lead-in for
+/// #539's shared primitive extraction — same spec: fixed icon size inside a
+/// 44pt minimum hit frame, so #539's replacement is a drop-in, not a new
+/// call-site pattern to migrate). Used by both `WatchIconButton` and any
+/// `NavigationLink` that needs the identical icon-only look.
+struct WatchIconGlyph: View {
+    let systemImage: String
+    var size: CGFloat = 15
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: size, weight: .semibold))
+            .frame(
+                width: CGFloat(WatchDesignTokens.minimumHitTarget),
+                height: CGFloat(WatchDesignTokens.minimumHitTarget)
+            )
+    }
+}
+
+/// Compact icon-only button for secondary/navigation actions (#541's
+/// icon-first rule): an icon, an accessibility label, an accessibility hint,
+/// a 44pt hit target and a semantic token tint — every icon-only control
+/// needs all four. Prefer this over a one-off `Image` + `Button` pairing so
+/// #539's shared primitive is a mechanical swap later.
+struct WatchIconButton: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    let accessibilityHint: String
+    var tint: Color = WatchPalette.textPrimary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            WatchIconGlyph(systemImage: systemImage)
+        }
+        .buttonStyle(WatchSecondaryButtonStyle(tint: tint))
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint)
+    }
+}
+
 struct WatchLoadingState: View {
     let title: String
     var message: String? = nil

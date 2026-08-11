@@ -43,16 +43,20 @@ final class SendmeterWatchScreenshots: XCTestCase {
         openActions(app)
         app.staticTexts["Force Gauge"].tap()
 
-        let exercise = app.buttons["force-exercise-picker"]
-        let side = app.buttons["force-side-picker"]
-        let protocolChange = app.buttons
-            .matching(NSPredicate(format: "label == %@", "Selected protocol, Movement Starter"))
-            .firstMatch
+        // SL-537: the redesigned setup screen centers on one ready/start
+        // card with a compact top-right context action (exercise/side/
+        // protocol now live one tap away in the chooser, not as separate
+        // main-screen controls) and Free hold as the explicit manual
+        // fallback. Disconnect and connection state are demoted below the
+        // fold — this primary path (context action, ready/start card, Free
+        // hold) is the no-scroll guarantee, not the whole screen.
+        let context = app.buttons["force-context-button"]
         let start = app.buttons
             .matching(NSPredicate(format: "label == %@", "Start selected protocol"))
             .firstMatch
+        let freeHold = app.buttons["force-free-hold"]
 
-        let controls = [exercise, side, protocolChange, start]
+        let controls = [context, start, freeHold]
         // SL-538 round-2 review finding 5: a future eligibility regression
         // (Start disabled, `.opacity(0.52)`) would otherwise fail the pixel
         // scan below with a colour-shaped error message pointing at the
@@ -76,6 +80,26 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 )
                 assertFullyVisible(control, in: app, fixture: "forceSetup")
             }
+            // Strengthened (SL-537): prove the actual hierarchy, not just
+            // that each control happens to be present — the context action
+            // reads at/near the top of the ready/start card (it's a small
+            // corner overlay, so a few points of inset padding is expected),
+            // which itself sits above Free hold.
+            XCTAssertLessThanOrEqual(
+                context.frame.minY, start.frame.minY + 8,
+                "the compact context action must read at the top of the ready/start card, not below it"
+            )
+            XCTAssertLessThanOrEqual(
+                start.frame.maxY, freeHold.frame.minY,
+                "Free hold must not overlap or outrank the ready/start card"
+            )
+            // Disconnect is demoted to a secondary/passive action (#537 #4):
+            // it must not be part of the no-scroll primary path.
+            let disconnect = app.buttons["disconnect-progressor"]
+            XCTAssertFalse(
+                disconnect.exists && disconnect.isHittable && disconnect.frame.maxY <= freeHold.frame.maxY + 4,
+                "disconnect must not compete with the primary path for the initial viewport"
+            )
 
             Thread.sleep(forTimeInterval: 1)
             let screenshot = app.screenshot()
@@ -199,7 +223,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
         }
 
         let forceStates: [(fixture: String, identifier: String)] = [
-            ("forceIdle", "Connect Progressor"),
+            ("forceIdle", "force-connect-progressor"),
             ("forceConnecting", "Connecting…"),
             ("forceConnected", "force-session-finish"),
             ("forceLive", "Stop & Save"),
@@ -216,24 +240,47 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     .waitForExistence(timeout: 10),
                 "fixture \(item.fixture) should expose \(item.identifier)"
             )
-            if item.fixture == "forceSaved" {
-                let exercise = app.buttons["force-exercise-picker"]
-                let side = app.buttons["force-side-picker"]
-                XCTAssertTrue(exercise.waitForExistence(timeout: 5))
-                XCTAssertTrue(side.waitForExistence(timeout: 5))
-                for _ in 0..<4 where !exercise.isHittable || !side.isHittable {
-                    app.swipeUp(velocity: .slow)
-                }
-                assertFullyVisible(exercise, in: app, fixture: item.fixture)
-                assertFullyVisible(side, in: app, fixture: item.fixture)
+            if item.fixture == "forceSaved" || item.fixture == "forceConnected" {
+                // SL-537: exercise/side now live behind the one compact
+                // top-right context action rather than as separate
+                // main-screen controls.
+                let context = app.buttons["force-context-button"]
+                XCTAssertTrue(
+                    context.waitForExistence(timeout: 5),
+                    "fixture \(item.fixture) should expose the compact context action"
+                )
+                assertFullyVisible(context, in: app, fixture: item.fixture)
+                context.tap()
+                // Both fixtures set tag "Crimp edge" / side "Left" (see
+                // `ScreenshotFixtures.force`). The chooser itself was never
+                // part of the no-scroll guarantee — only Force setup's
+                // primary path is — and Side plus the first exercise row
+                // don't both fit the 40mm viewport at once. Existence is the
+                // regression signal this block exists for (same standard
+                // `testForceProtocolChooserRendersSuggestedProtocol` uses for
+                // this same lazily-loaded list); a lazy list's precise scroll
+                // offset is not worth pinning down further.
+                let exerciseRow = app.buttons["force-exercise-Crimp edge"]
+                let sideOption = app.buttons["Show Left"]
+                XCTAssertTrue(exerciseRow.waitForExistence(timeout: 5), "chooser should list the fixture's exercise")
+                XCTAssertTrue(sideOption.waitForExistence(timeout: 5), "chooser should expose the Side control")
+                app.buttons["BackButton"].tap()
+                XCTAssertTrue(
+                    context.waitForExistence(timeout: 5),
+                    "tapping Back should return to Force setup"
+                )
             }
             if item.fixture == "forceConnected" {
                 let finish = app.buttons["force-session-finish"]
-                let exercise = app.buttons["force-exercise-picker"]
-                let side = app.buttons["force-side-picker"]
-                // watchOS can drop a Button's identifier when ViewThatFits
-                // selects a fallback branch, while retaining its production
-                // accessibility label. Accept either semantic path.
+                XCTAssertTrue(
+                    finish.waitForExistence(timeout: 5),
+                    "fixture \(item.fixture) should expose \(finish.identifier)"
+                )
+                assertFullyVisible(finish, in: app, fixture: item.fixture)
+
+                // Disconnect is demoted to a passive/secondary action (#537
+                // #4) — still reachable, but only after scrolling past the
+                // primary ready path.
                 let disconnect = app.buttons
                     .matching(
                         NSPredicate(
@@ -243,26 +290,6 @@ final class SendmeterWatchScreenshots: XCTestCase {
                         )
                     )
                     .firstMatch
-                for control in [finish, exercise, side] {
-                    XCTAssertTrue(
-                        control.waitForExistence(timeout: 5),
-                        "fixture \(item.fixture) should expose \(control.identifier)"
-                    )
-                }
-                // The fixture starts at the session row, then proves the
-                // setup controls remain reachable through the narrow 40mm
-                // layout. Exercise/Side and the secondary disconnect action
-                // occupy intentionally different scroll positions, so prove
-                // each position independently. The same assertions run on
-                // Ultra.
-                assertFullyVisible(finish, in: app, fixture: item.fixture)
-                for _ in 0..<4 where !exercise.isHittable || !side.isHittable {
-                    app.swipeUp(velocity: .slow)
-                }
-                assertFullyVisible(exercise, in: app, fixture: item.fixture)
-                assertFullyVisible(side, in: app, fixture: item.fixture)
-                // SwiftUI does not instantiate the micro layout's secondary
-                // controls until their scroll region approaches the viewport.
                 for _ in 0..<6 where !disconnect.isHittable {
                     app.swipeUp(velocity: .slow)
                 }
@@ -301,16 +328,21 @@ final class SendmeterWatchScreenshots: XCTestCase {
         openActions(app)
         app.staticTexts["Force Gauge"].tap()
 
-        let protocolLink = app.buttons
-            .matching(NSPredicate(format: "label == %@", "Selected protocol, Movement Starter"))
-            .firstMatch
+        let contextButton = app.buttons["force-context-button"]
         XCTAssertTrue(
-            protocolLink.waitForExistence(timeout: 10),
-            "setup should expose the selected-protocol link before opening the chooser"
+            contextButton.waitForExistence(timeout: 10),
+            "setup should expose the compact context action before opening the chooser"
         )
-        protocolLink.tap()
+        contextButton.tap()
 
+        // SL-537: Side and Exercise sections now sit above Suggested/My
+        // protocols in this same chooser (it's the one compact top-level
+        // selector for all three), so the LazyVStack no longer materializes
+        // the Suggested row until the view scrolls near it.
         let suggestedRow = app.buttons["force-protocol-suggested:movement-starter"]
+        for _ in 0..<6 where !suggestedRow.exists {
+            app.swipeUp(velocity: .slow)
+        }
         XCTAssertTrue(
             suggestedRow.waitForExistence(timeout: 10),
             "chooser should list the Suggested Movement Starter protocol"
@@ -321,8 +353,8 @@ final class SendmeterWatchScreenshots: XCTestCase {
         // niceness for the attached screenshot only: watchOS ScrollView
         // gestures in this simulator have proven bistable and unpredictable
         // (a small drag and a full swipe both landed on the same two
-        // far-apart rest positions in manual testing), so scrolling here is
-        // best-effort and not asserted on.
+        // far-apart rest positions in manual testing), so further scrolling
+        // here is best-effort and not asserted on.
         app.swipeUp(velocity: .slow)
 
         let capture = XCTAttachment(screenshot: app.screenshot())

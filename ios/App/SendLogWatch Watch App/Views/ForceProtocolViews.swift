@@ -2,6 +2,20 @@ import Foundation
 import SendLogWatchCore
 import SwiftUI
 
+/// Shared with `ForceGaugeView` (which owns the `tag`/`side` state) — moved
+/// here because `ForceProtocolChooserView` is now the one compact top-level
+/// selector for exercise, side AND protocol (issue #537).
+let SIDE_OPTIONS: [(value: String, label: String)] = [
+    ("", "—"),
+    ("left", "Left"),
+    ("right", "Right"),
+    ("both", "Both"),
+]
+
+func sideLabel(_ value: String) -> String {
+    SIDE_OPTIONS.first { $0.value == value }?.label ?? value
+}
+
 /// Presentation-only helpers for the read-only watch protocol catalog.
 /// Storage names such as `reverse_action` stay below this boundary; the watch
 /// speaks in the terms a climber sees while setting up a session.
@@ -69,231 +83,47 @@ enum ForceProtocolPresentation {
     }
 }
 
-/// The selected protocol is intentionally one card: it is the visual bridge
-/// between exercise/side setup and the primary Start action. Tapping anywhere
-/// on it opens the read-only chooser; there are no watch-side edit controls.
-/// Uses the shared semantic `primary` accent throughout (SL-538) — no
-/// protocol or zone carries its own hue here, so there is no data semantic to
-/// preserve; this card is chrome for "the protocol Start will run."
-struct ForceSelectedProtocolCard: View {
-    let protocolValue: WatchForceProtocol
-    let catalog: ForceProtocolCatalog
-    let compact: Bool
-
-    init(
-        protocolValue: WatchForceProtocol,
-        catalog: ForceProtocolCatalog,
-        compact: Bool = false
-    ) {
-        self.protocolValue = protocolValue
-        self.catalog = catalog
-        self.compact = compact
-    }
-
-    private var isSuggested: Bool {
-        catalog.suggested.contains(where: { $0.id == protocolValue.id })
-    }
-
-    var body: some View {
-        NavigationLink {
-            ForceProtocolChooserView(catalog: catalog)
-        } label: {
-            WatchCard(accent: WatchPalette.primary) {
-                if compact {
-                    compactCardContent
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) {
-                            WatchEyebrow(text: "Selected protocol")
-                            Spacer(minLength: 4)
-                            protocolKindPill
-                        }
-                        VStack(alignment: .leading, spacing: 5) {
-                            WatchEyebrow(text: "Selected protocol")
-                            protocolKindPill
-                        }
-                    }
-
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Image(systemName: protocolValue.mode == .hold
-                            ? "hand.raised.fill"
-                            : "figure.strengthtraining.traditional")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-                            .frame(width: 24, height: 24)
-
-                        Text(protocolValue.name)
-                            .font(.system(.headline, design: .rounded).weight(.bold))
-                            .foregroundStyle(WatchPalette.textPrimary)
-                            .lineLimit(2)
-                            .minimumScaleFactor(0.78)
-
-                        Spacer(minLength: 2)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(WatchPalette.textSecondary)
-                            .accessibilityHidden(true)
-                    }
-
-                    Text(ForceProtocolPresentation.modeDescription(for: protocolValue))
-                        .font(.system(.caption, design: .rounded).weight(.semibold))
-                        .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-
-                    Text(ForceProtocolPresentation.detail(for: protocolValue))
-                        .font(.system(.caption2, design: .rounded))
-                        .foregroundStyle(WatchPalette.textSecondary)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.78)
-
-                    if let availability = ForceProtocolPresentation.watchAvailability(for: protocolValue) {
-                        Text(availability)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.68)
-                    }
-
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) {
-                            sourcePill
-                            Spacer(minLength: 0)
-                            Text("Change")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            sourcePill
-                            Text("Change protocol")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-                        }
-                    }
-                    }
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "Selected protocol, \(protocolValue.name), "
-                + "\(ForceProtocolPresentation.category(for: protocolValue))"
-        )
-        .accessibilityValue(
-            [
-                ForceProtocolPresentation.detail(for: protocolValue),
-                ForceProtocolPresentation.watchAvailability(for: protocolValue)
-            ]
-            .compactMap { $0 }
-            .joined(separator: ". ")
-        )
-        .accessibilityHint("Opens the read-only protocol chooser")
-        .accessibilityIdentifier("force-selected-protocol")
-    }
-
-    private var compactCardContent: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 6) {
-                    protocolKindPill
-                    Text(protocolValue.name)
-                        .font(.system(.footnote, design: .rounded).weight(.bold))
-                        .foregroundStyle(WatchPalette.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                    Spacer(minLength: 2)
-                    sourcePill
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        protocolKindPill
-                        Text(protocolValue.name)
-                            .font(.system(.footnote, design: .rounded).weight(.bold))
-                            .foregroundStyle(WatchPalette.textPrimary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.72)
-                    }
-                    sourcePill
-                }
-            }
-
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 5) {
-                    compactDetailText
-                    Spacer(minLength: 2)
-                    changeText
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    compactDetailText
-                    Text("Change protocol")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-                }
-            }
-
-            if let availability = ForceProtocolPresentation.watchAvailability(for: protocolValue) {
-                Text(availability)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.68)
-            }
-        }
-    }
-
-    private var compactDetailText: some View {
-        Text(ForceProtocolPresentation.compactDetail(for: protocolValue))
-            .font(.system(.caption2, design: .rounded).weight(.semibold))
-            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-            .lineLimit(1)
-            .minimumScaleFactor(0.62)
-    }
-
-    private var changeText: some View {
-        Text("Change")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-    }
-
-    private var protocolKindPill: some View {
-        Text(ForceProtocolPresentation.category(for: protocolValue))
-            .font(.system(size: 10, weight: .bold, design: .rounded))
-            .tracking(0.7)
-            .foregroundStyle(WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary))
-            .padding(.horizontal, 7)
-            .frame(minHeight: 24)
-            .background(Capsule().fill(WatchPalette.primary.opacity(0.16)))
-            .overlay(Capsule().stroke(WatchPalette.primary.opacity(0.45), lineWidth: 0.8))
-            .accessibilityHidden(true)
-    }
-
-    private var sourcePill: some View {
-        Label(
-            isSuggested ? "Suggested" : "My protocol",
-            systemImage: isSuggested ? "sparkles" : "person.crop.circle"
-        )
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(WatchPalette.textSecondary)
-        .lineLimit(1)
-    }
-}
-
-/// Full-height read-only protocol chooser. Suggested content is always
-/// available, even while the user's catalog is loading or unavailable, so the
-/// safe Movement Starter default never disappears during a token relay.
+/// Full-height read-only exercise/side/protocol chooser — the one compact
+/// top-level selector issue #537 asks for (`ForceGaugeView`'s top-right
+/// context action opens this). Exercise and side stay pick-only here for the
+/// same reason they always have (typing on a watch is miserable, and side
+/// has only four real values); Suggested content is always available, even
+/// while the user's protocol catalog is loading or unavailable, so the safe
+/// Movement Starter default never disappears during a token relay.
 struct ForceProtocolChooserView: View {
     @Bindable private var catalog: ForceProtocolCatalog
+    @Binding private var tag: String
+    @Binding private var side: String
+    let recentTags: [String]
+    let tagsLoading: Bool
+    let onRetryTags: () -> Void
     @Environment(\.dismiss) private var dismiss
 
-    init(catalog: ForceProtocolCatalog) {
+    init(
+        catalog: ForceProtocolCatalog,
+        tag: Binding<String>,
+        side: Binding<String>,
+        recentTags: [String],
+        tagsLoading: Bool,
+        onRetryTags: @escaping () -> Void
+    ) {
         _catalog = Bindable(wrappedValue: catalog)
+        _tag = tag
+        _side = side
+        self.recentTags = recentTags
+        self.tagsLoading = tagsLoading
+        self.onRetryTags = onRetryTags
     }
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
+                sectionHeader("Side")
+                sideControl
+
+                sectionHeader("Exercise")
+                exerciseSection
+
                 catalogStatus
 
                 sectionHeader("Suggested")
@@ -310,7 +140,7 @@ struct ForceProtocolChooserView: View {
                     }
                 }
 
-                Text("Protocols are managed on your iPhone.")
+                Text("Exercises and protocols are managed on your iPhone.")
                     .font(.caption2)
                     .foregroundStyle(WatchPalette.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -321,13 +151,81 @@ struct ForceProtocolChooserView: View {
             .padding(.top, 4)
             .padding(.bottom, 14)
         }
-        .navigationTitle("Choose protocol")
+        .navigationTitle("Force setup")
         .navigationBarTitleDisplayMode(.inline)
         .scrollIndicators(.hidden)
         .scrollContentBackground(.hidden)
         .background(WatchPalette.canvas)
         .watchCanvas()
         .accessibilityIdentifier("force-protocol-chooser")
+    }
+
+    private var sideControl: some View {
+        WatchPageControl(
+            selection: SIDE_OPTIONS.firstIndex(where: { $0.value == side }) ?? 0,
+            labels: SIDE_OPTIONS.map(\.label),
+            onSelect: { index in side = SIDE_OPTIONS[index].value }
+        )
+    }
+
+    /// Deliberately NOT a `.navigationLink` Picker (#279's reasoning still
+    /// applies): tapping selects immediately and stays on this screen, since
+    /// exercise, side and protocol are peer selections the user may want to
+    /// review together before returning to Force setup.
+    @ViewBuilder
+    private var exerciseSection: some View {
+        if tagsLoading && recentTags.isEmpty {
+            WatchLoadingState(title: "Loading exercises…")
+        } else if recentTags.isEmpty {
+            WatchCard(accent: WatchPalette.warning) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("No exercises yet")
+                        .font(.system(.footnote, design: .rounded).weight(.bold))
+                        .foregroundStyle(WatchPalette.textPrimary)
+                    Text("Create an exercise in the iPhone app, then try again.")
+                        .font(.caption2)
+                        .foregroundStyle(WatchPalette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Retry", action: onRetryTags)
+                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.warning)))
+                }
+            }
+            .accessibilityIdentifier("force-exercise-empty")
+        } else {
+            ForEach(recentTags, id: \.self) { option in
+                exerciseRow(option)
+            }
+        }
+    }
+
+    private func exerciseRow(_ option: String) -> some View {
+        let selected = option == tag
+        return Button {
+            tag = option
+        } label: {
+            WatchCard(accent: selected ? WatchPalette.primary : nil) {
+                HStack(spacing: 8) {
+                    Text(option)
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(WatchPalette.textPrimary)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    Spacer(minLength: 0)
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(
+                                WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary, accent: WatchDesignTokens.primary)
+                            )
+                    }
+                }
+                .frame(minHeight: 44)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(option)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityHint("Selects this exercise")
+        .accessibilityIdentifier("force-exercise-\(option)")
     }
 
     @ViewBuilder

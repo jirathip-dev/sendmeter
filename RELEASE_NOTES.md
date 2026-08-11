@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Apple Watch Force setup is now a single glanceable ready screen: current force, "Ready to pull", and your selected exercise/protocol are centered together, with exercise/side/protocol selection moved behind one compact icon, connection state shown passively, and Free hold kept one tap away as the manual fallback. Hands-free arming still requires an explicit tap.
 - Apple Watch screens now use a consistent glanceable visual language with clearer state cues, larger action targets, and safer reduced-motion and Always-On fallbacks across status, workout, and Force flows.
 - Watch workout and Force mirrors now keep a stable run identity, ignore
   duplicate or out-of-order updates, and close decisively even when a late
