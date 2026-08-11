@@ -15,6 +15,7 @@ CI, dependency updates, and refactors unless users experience a change.
 ### Improved
 
 - Apple Watch Home no longer clips the readiness card on 40/41mm watches, and the full-width Status/Actions pill is now a compact icon-based switcher.
+- Apple Watch Force setup is now a single glanceable ready screen: current force, "Ready to pull", and your selected exercise/protocol are centered together, with exercise/side/protocol selection moved behind one compact icon, connection state shown passively, and Free hold kept one tap away as the manual fallback. Hands-free arming still requires an explicit tap.
 - Apple Watch screens now use a consistent glanceable visual language with clearer state cues, larger action targets, and safer reduced-motion and Always-On fallbacks across status, workout, and Force flows.
 - Watch workout and Force mirrors now keep a stable run identity, ignore
   duplicate or out-of-order updates, and close decisively even when a late
@@ -23,6 +24,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Watch readiness now asks the paired iPhone to refresh Health data immediately, keeps the cached score visible while it syncs or is offline, and updates the watch complication and open phone dashboard from the same result.
 - Sendmeter's Home, Workout, Force, and History surfaces now share a richer light and dark visual system, with clearer metric accents, tactile controls, more dimensional cards and sheets, and theme-aware browser/PWA chrome while keeping the same information density.
 - Light mode's Home tab now reads as a calmer, near-white surface: Readiness, ACWR, and the phase strip lost their full-card color tints and rainbow borders, with data still called out in blue/gold/orange where it means something; muted metadata text is also easier to read.
+- Phase names and tags (phase banner, History session-type tags, Training phases) now use an easier-to-read shade of each phase's color in both light and dark mode; the phase banner name also gets a subtle color-matched pill so its identity stays recognizable at a glance.
 - Charts now share a restrained, theme-aware visual system with clearer focus, reference bands, gradients, and selected-point emphasis across readiness, load, workouts, Force, and History.
 - History session details and Training balance now open as sticky-header bottom sheets, so chart scrubbing never swipes the detail surface away.
 - The app's typeface now ships inside the app instead of loading from Google Fonts — nothing is requested from Google on launch any more, and the font renders identically, works offline, and no longer depends on network conditions.

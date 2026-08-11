@@ -251,17 +251,17 @@ enum ScreenshotFixtures {
     static var force: ScreenshotForceVisual? {
         switch state {
         case .forceIdle:
-            ScreenshotForceVisual(status: .idle, tag: "", side: "", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
+            ScreenshotForceVisual(status: .idle, tag: "Half crimp", side: "left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
         case .forceConnecting:
             ScreenshotForceVisual(status: .connecting, tag: "", side: "", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
         case .forceSetup:
-            ScreenshotForceVisual(status: .connected, tag: "Half crimp", side: "Left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
+            ScreenshotForceVisual(status: .connected, tag: "Half crimp", side: "left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
         case .forceConnected:
-            ScreenshotForceVisual(status: .connected, tag: "Crimp edge", side: "Left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 3, savedMessage: nil, errorMessage: nil)
+            ScreenshotForceVisual(status: .connected, tag: "Crimp edge", side: "right", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 3, savedMessage: nil, errorMessage: nil)
         case .forceLive:
-            ScreenshotForceVisual(status: .measuring, tag: "Crimp edge", side: "Left", currentKg: 34.7, peakKg: 38.2, elapsedS: 7.4, sessionCount: 3, savedMessage: nil, errorMessage: nil)
+            ScreenshotForceVisual(status: .measuring, tag: "Crimp edge", side: "left", currentKg: 34.7, peakKg: 38.2, elapsedS: 7.4, sessionCount: 3, savedMessage: nil, errorMessage: nil)
         case .forceSaved:
-            ScreenshotForceVisual(status: .connected, tag: "Crimp edge", side: "Left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 3, savedMessage: "Saved · 38.2 kg · Crimp edge", errorMessage: nil)
+            ScreenshotForceVisual(status: .connected, tag: "Crimp edge", side: "left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 3, savedMessage: "Saved · 38.2 kg · Crimp edge", errorMessage: nil)
         case .forceError:
             ScreenshotForceVisual(status: .connected, tag: "", side: "", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: "Progressor is out of range. Check the gauge and try again.")
         default: nil

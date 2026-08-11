@@ -311,6 +311,8 @@ enum WatchIconSymbol {
     static let actions = "bolt.fill"
     static let force = "scalemass" // matches ActionsView's Force Gauge row
     static let workout = "figure.climbing" // matches ActionsView's Climb Workout row
+    static let forceContext = "slider.horizontal.3" // Force exercise/protocol chooser
+    static let disconnect = "xmark" // Progressor disconnect action
     static let refresh = "arrow.triangle.2.circlepath" // matches WatchVisualState.syncing
     static let history = "clock.arrow.circlepath" // matches WatchVisualState.cached
     static let settings = "gearshape.fill" // not yet wired to a call site
@@ -352,6 +354,10 @@ struct WatchIconButton: View {
     var accessibilityIdentifier: String? = nil
     var isSelected: Bool = false
     var tint: PhaseRGB = WatchDesignTokens.primary
+    /// Secondary actions such as disconnect need their semantic colour even
+    /// when they are not selected; navigation controls stay tertiary when
+    /// inactive so the compact Home switcher does not become another pill.
+    var usesTintWhenUnselected = false
     let action: () -> Void
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
@@ -368,7 +374,13 @@ struct WatchIconButton: View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(isSelected ? WatchPalette.textPrimary : WatchPalette.textTertiary)
+                .foregroundStyle(
+                    isSelected
+                        ? WatchPalette.textPrimary
+                        : (usesTintWhenUnselected
+                            ? WatchPalette.foreground(tint)
+                            : WatchPalette.textTertiary)
+                )
                 .frame(width: Self.visibleDiameter, height: Self.visibleDiameter)
                 .background {
                     Circle()
@@ -423,6 +435,24 @@ private struct WatchIconButtonIdentifier: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+/// Shared icon glyph for a compact `NavigationLink` label. `WatchIconButton`
+/// above owns the button hit-target/accessibility contract; this lighter glyph
+/// remains useful where a caller supplies its own link/button styling (for
+/// example Force's context chooser).
+struct WatchIconGlyph: View {
+    let systemImage: String
+    var size: CGFloat = 15
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: size, weight: .semibold))
+            .frame(
+                width: CGFloat(WatchDesignTokens.minimumHitTarget),
+                height: CGFloat(WatchDesignTokens.minimumHitTarget)
+            )
     }
 }
 

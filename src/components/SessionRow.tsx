@@ -335,7 +335,7 @@ export default function SessionRow({
                 className="tag"
                 style={{
                   background: ph?.bg || "var(--border)",
-                  color: ph?.color || "var(--ink-muted)",
+                  color: ph?.textColor || "var(--ink-muted)",
                   border: `1px solid ${ph?.border || "var(--border)"}`,
                 }}
               >

@@ -102,7 +102,7 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
                     fontFamily: "Inter, sans-serif",
                     fontSize: "var(--t-lg)",
                     fontWeight: 800,
-                    color: p.color,
+                    color: p.textColor,
                   }}
                 >
                   {p.name.toUpperCase()}
@@ -149,7 +149,7 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
               <div
                 style={{
                   fontSize: "var(--t-lg)",
-                  color: p.color,
+                  color: p.textColor,
                   fontFamily: "Inter, sans-serif",
                   fontWeight: 800,
                 }}
@@ -168,7 +168,7 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
                 </div>
               )}
               {currentPhase === p.id && (
-                <div style={{ fontSize: "var(--t-eyebrow)", color: p.color, marginTop: 2 }}>
+                <div style={{ fontSize: "var(--t-eyebrow)", color: p.textColor, marginTop: 2 }}>
                   {/* "Day" pairs with the SAME totalDays Home's phase strip
                       shows — never the within-week dayOfWeek — so the two
                       screens never disagree on what "Day N" means (#544). */}
