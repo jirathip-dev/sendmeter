@@ -36,7 +36,19 @@ import ThemeSection from "./ThemeSection";
 interface Props {
   onClose: () => void;
   onSignOut: SignOut;
+  /// Signed-in identity for the Account & Security group — passed down from
+  /// App's live useAuth session rather than re-read here (a getSession() call
+  /// is NOT a plain storage read: it refreshes a merely-expired session, see
+  /// useAuth.ts).
+  email: string | null;
 }
+
+/// #586 review (F1): a single error outlet at the bottom of the whole surface
+/// sits several viewport-heights below the actions near the top — a failed
+/// "Clear & resync" (a hard delete) would read as a no-op with its only
+/// signal off-screen. Every failure is scoped to the subsection that raised
+/// it and rendered directly beneath that subsection's controls.
+type ErrorScope = "health" | "password" | "passkey" | "danger";
 
 // #494 (N5): "Clear health data & resync"'s success copy differs by
 // platform — native's device-resync claim is only true where a device
@@ -99,7 +111,7 @@ function AppleWatchStatusCard({ status }: { status: WatchStatusPresentation }) {
   );
 }
 
-export default function AccountSheet({ onClose, onSignOut }: Props) {
+export default function AccountSheet({ onClose, onSignOut, email }: Props) {
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
   const [resetting, setResetting] = useState(false);
@@ -110,7 +122,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   // "Add a passkey" or the enrolled list (with per-key Remove).
   const [passkeys, setPasskeys] = useState<PasskeyListItem[] | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ scope: ErrorScope; message: string } | null>(null);
   const [showDanger, setShowDanger] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -158,19 +170,6 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
 
   const watchStatus = watchStatusPresentation(useWatchInfo());
 
-  // Signed-in identity for the Account & Security group. getSession reads the
-  // locally stored session — no network round-trip on every sheet open.
-  const [email, setEmail] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void supabase.auth.getSession().then(({ data: { session } }) => {
-      if (alive && session?.user.email) setEmail(session.user.email);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   useEffect(() => {
     if (!passkeysSupported) return;
     let alive = true;
@@ -217,7 +216,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         .catch(() => {});
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Couldn't add passkey";
-      if (!/cancel|not allowed|aborted/i.test(msg)) setError(msg);
+      if (!/cancel|not allowed|aborted/i.test(msg)) setError({ scope: "passkey", message: msg });
     } finally {
       setAddingPasskey(false);
     }
@@ -231,7 +230,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       setPasskeys((list) => (list ?? []).filter((p) => p.id !== id));
       setPasskeyMsg(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't remove passkey");
+      setError({
+        scope: "passkey",
+        message: e instanceof Error ? e.message : "Couldn't remove passkey",
+      });
     } finally {
       setRemovingId(null);
     }
@@ -247,7 +249,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     } = await supabase.auth.getUser();
     const email = user?.email;
     if (!email) {
-      setError("No email on this account.");
+      setError({ scope: "password", message: "No email on this account." });
       setResetting(false);
       return;
     }
@@ -257,7 +259,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       redirectTo: authRedirectUrl(),
     });
     setResetting(false);
-    if (err) setError(err.message);
+    if (err) setError({ scope: "password", message: err.message });
     else setResetEmail(email);
   }
 
@@ -268,7 +270,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       await deleteAccount();
       // signed out by deleteAccount → auth gate takes over
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to delete account");
+      setError({
+        scope: "danger",
+        message: e instanceof Error ? e.message : "Failed to delete account",
+      });
       setDeleting(false);
     }
   }
@@ -301,7 +306,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
       setClearOutcome(outcome);
       toast(toastText);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to clear health data");
+      setError({
+        scope: "health",
+        message: e instanceof Error ? e.message : "Failed to clear health data",
+      });
     } finally {
       setClearing(false);
     }
@@ -322,19 +330,20 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   );
 
   // Group headings for the single scrollable Settings surface (#577) — one
-  // visual level above the uppercase subsection eyebrows.
+  // visual level above the uppercase subsection eyebrows. Real headings (h3
+  // under the sheet's h2 title) so the long surface has landmarks for
+  // assistive tech now that the focusable tab strip is gone.
   const groupTitle = (text: string) => (
-    <div
-      style={{
-        fontSize: "var(--t-base)",
-        fontWeight: 700,
-        color: "var(--ink)",
-        marginBottom: 12,
-      }}
-    >
-      {text}
-    </div>
+    <h3 className="settings-group-title">{text}</h3>
   );
+
+  // Renders this subsection's failure directly beneath its controls (F1).
+  const scopeError = (scope: ErrorScope) =>
+    error?.scope === scope ? (
+      <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 14 }}>
+        {error.message}
+      </div>
+    ) : null;
 
   return (
     <Sheet title="Settings" onClose={onClose}>
@@ -344,7 +353,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         <ThemeSection />
 
         {/* Health & Devices */}
-        <div style={{ marginTop: 28, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
+        <div className="settings-group">
           {groupTitle("Health & Devices")}
           <div>
             {eyebrow("Health data")}
@@ -386,6 +395,8 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               </div>
             )}
 
+            {scopeError("health")}
+
             {watchStatus && (
               <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
                 {eyebrow("Apple Watch")}
@@ -396,7 +407,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
         </div>
 
         {/* Account & Security */}
-        <div style={{ marginTop: 28, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
+        <div className="settings-group">
           {groupTitle("Account & Security")}
           <div>
             {email && (
@@ -425,6 +436,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 </button>
               </div>
             )}
+            {scopeError("password")}
 
             {/* Passkeys */}
             {passkeysSupported && (
@@ -483,6 +495,7 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                     </button>
                   </div>
                 )}
+                {scopeError("passkey")}
               </div>
             )}
 
@@ -501,53 +514,11 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               </button>
             </div>
 
-            <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
-              {eyebrow("Danger zone", true)}
-              {!showDanger ? (
-                  <button
-                    className="btn-ghost btn-inline"
-                    style={{ fontSize: "var(--t-sm)" }}
-                  onClick={() => setShowDanger(true)}
-                >
-                  Reveal delete option
-                </button>
-              ) : confirmingDelete ? (
-                <div>
-                  <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
-                    This permanently deletes your account and every session,
-                    recording, workout, and health metric. There is no undo.
-                  </div>
-                  <button
-                    className="btn-danger"
-                    disabled={deleting}
-                    onClick={() => void runDelete()}
-                  >
-                    {deleting ? "Deleting…" : "Yes, delete everything"}
-                  </button>
-                  <div style={{ marginTop: 8 }}>
-                    <button
-                      className="btn-ghost"
-                      disabled={deleting}
-                      onClick={() => setConfirmingDelete(false)}
-                    >
-                      Keep my account
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  className="btn-danger btn-inline"
-                  onClick={() => setConfirmingDelete(true)}
-                >
-                  Delete account…
-                </button>
-              )}
-            </div>
           </div>
         </div>
 
         {/* About & Support */}
-        <div style={{ marginTop: 28, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
+        <div className="settings-group">
           {groupTitle("About & Support")}
           <div>
             {eyebrow("Help")}
@@ -568,7 +539,10 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 <summary>Sign-in diagnostics</summary>
                 <div className="troubleshooting-body">
                   <div>
-                    {build ? `Sendmeter ${build}` : "Sendmeter (web)"} ·{" "}
+                    {/* #202 wants the build readable off the same screen as
+                        the events; the Version section directly above now
+                        shows it permanently, so this line only carries the
+                        store the ring lives in. */}
                     {STORE_LABELS[diagStatus.store]}
                   </div>
                   {diagStatus.webviewWiped && (
@@ -626,11 +600,52 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
           </div>
         </div>
 
-        {error && (
-          <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 14 }}>
-            {error}
-          </div>
-        )}
+        {/* Danger zone — deliberately the last content on the surface (#586
+            review F3), keeping the destructive block spatially apart from
+            every routine preference above it. */}
+        <div className="settings-group">
+          {eyebrow("Danger zone", true)}
+          {!showDanger ? (
+            <button
+              className="btn-ghost btn-inline"
+              style={{ fontSize: "var(--t-sm)" }}
+              onClick={() => setShowDanger(true)}
+            >
+              Reveal delete option
+            </button>
+          ) : confirmingDelete ? (
+            <div>
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
+                This permanently deletes your account and every session,
+                recording, workout, and health metric. There is no undo.
+              </div>
+              <button
+                className="btn-danger"
+                disabled={deleting}
+                onClick={() => void runDelete()}
+              >
+                {deleting ? "Deleting…" : "Yes, delete everything"}
+              </button>
+              <div style={{ marginTop: 8 }}>
+                <button
+                  className="btn-ghost"
+                  disabled={deleting}
+                  onClick={() => setConfirmingDelete(false)}
+                >
+                  Keep my account
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="btn-danger btn-inline"
+              onClick={() => setConfirmingDelete(true)}
+            >
+              Delete account…
+            </button>
+          )}
+          {scopeError("danger")}
+        </div>
       </div>
 
       {showHelp && <HelpSheet onClose={() => setShowHelp(false)} />}

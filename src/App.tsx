@@ -72,7 +72,11 @@ export default function App() {
     <RealtimeVersionProvider userId={session.user.id}>
       <ToastProvider>
         <TindeqProvider>
-          <AuthedApp userId={session.user.id} onSignOut={signOut} />
+          <AuthedApp
+            userId={session.user.id}
+            userEmail={session.user.email ?? null}
+            onSignOut={signOut}
+          />
         </TindeqProvider>
       </ToastProvider>
     </RealtimeVersionProvider>
@@ -81,9 +85,11 @@ export default function App() {
 
 function AuthedApp({
   userId,
+  userEmail,
   onSignOut,
 }: {
   userId: string;
+  userEmail: string | null;
   onSignOut: SignOut;
 }) {
   const {
@@ -511,6 +517,7 @@ function AuthedApp({
         <AccountSheet
           onClose={() => setShowAccountSheet(false)}
           onSignOut={onSignOut}
+          email={userEmail}
         />
       )}
 
