@@ -279,12 +279,18 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 let sideOption = app.buttons["force-side-left"]
                 XCTAssertTrue(sideOption.waitForExistence(timeout: 5), "chooser should expose the Side control")
                 let viewport = app.windows.firstMatch.frame
-                for _ in 0..<6 where
-                    !sideOption.isHittable
+                // A full watch swipe jumps the LazyVStack past Side and
+                // unloads these rows entirely on the simulator. Use a
+                // bounded ~20pt drag instead: the row starts only roughly
+                // 19pt below the 40mm viewport and this brings it fully in
+                // frame without changing the lazy materialization region.
+                if !sideOption.isHittable
                     || sideOption.frame.minY < viewport.minY
                     || sideOption.frame.maxY > viewport.maxY
                 {
-                    app.swipeUp(velocity: .slow)
+                    let dragStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                    let dragEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+                    dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
                 }
                 assertFullyVisible(sideOption, in: app, fixture: item.fixture)
 
