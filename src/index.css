@@ -1623,12 +1623,11 @@ textarea.field { resize: none; }
 /* Load preview */
 .load-preview { background: var(--surface-2); background-image: var(--well-tint-load); border: 1px solid color-mix(in srgb, var(--accent-load) 18%, var(--border)); border-radius: var(--radius-control); padding: 14px 16px; margin-top: 14px; display: flex; justify-content: space-between; align-items: center; box-shadow: var(--shadow-xs); }
 
-/* Account sheet — tab bar (segmented, icon over label) */
-.acct-tabs { display: flex; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-control); padding: 4px; margin: 16px 0 6px; box-shadow: inset 0 1px 2px rgba(20,30,50,0.06); }
-.acct-tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 2px; border: none; border-radius: 8px; background: transparent; color: var(--ink-muted); font-family: inherit; font-size: var(--t-2xs); font-weight: 600; cursor: pointer; transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast); -webkit-tap-highlight-color: transparent; }
-.acct-tab svg { width: 18px; height: 18px; }
-.acct-tab.active { background: var(--canvas-raised); color: var(--ink); box-shadow: var(--shadow-xs); }
-.acct-tab:active { transform: scale(0.97); }
+/* Settings sheet — grouped sections (#577) */
+.settings-group { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--hairline); }
+.settings-group-title { margin: 0 0 12px; font-size: var(--t-base); font-weight: 700; color: var(--ink); }
+
+/* Settings sheet — theme switcher (segmented) */
 .theme-switcher { display: flex; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-control); padding: 4px; box-shadow: inset 0 1px 2px rgba(20,30,50,0.06); }
 .theme-option { flex: 1; min-height: 38px; padding: 8px 0; border: 0; border-radius: 8px; background: transparent; color: var(--ink-muted); font-family: inherit; font-size: var(--t-sm); font-weight: 600; cursor: pointer; transition: transform var(--transition-fast), background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast); }
 .theme-option:hover { color: var(--ink); background: color-mix(in srgb, var(--accent-interaction) 7%, transparent); }
