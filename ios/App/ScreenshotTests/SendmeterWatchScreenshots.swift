@@ -257,6 +257,12 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     .waitForExistence(timeout: 10),
                 "fixture \(item.fixture) should expose \(item.identifier)"
             )
+            if item.fixture == "forceIdle" {
+                let start = app.buttons["force-start-selected"]
+                XCTAssertTrue(start.waitForExistence(timeout: 5))
+                XCTAssertTrue(start.isEnabled, "cadence-only Start must be enabled with the fixture exercise selected")
+                XCTAssertTrue(start.isHittable, "cadence-only Start must be hittable while disconnected")
+            }
             if item.fixture == "forceSaved" || item.fixture == "forceConnected" {
                 // SL-537: exercise/side now live behind the one compact
                 // top-right context action rather than as separate
@@ -268,31 +274,31 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 )
                 assertFullyVisible(context, in: app, fixture: item.fixture)
                 context.tap()
-                // Both fixtures set tag "Crimp edge" / side "Left" (see
-                // `ScreenshotFixtures.force`). The chooser itself was never
+                // Both fixtures set tag "Crimp edge" and a canonical lowercase
+                // side (see `ScreenshotFixtures.force`). The chooser itself was never
                 // part of the no-scroll guarantee — only Force setup's
                 // primary path is — and Side plus the first exercise row
                 // don't both fit the 40mm viewport at once. Side is near the
-                // top, but the selected Left row is below the initial
-                // viewport on 40mm; scroll it into view before the
-                // fully-visible assertion so that check is meaningful.
-                let sideOption = app.buttons["force-side-left"]
+                // top, but the selected side row may be below the initial
+                // viewport; tapping lets XCUITest scroll it into view.
+                let sideOption = app.buttons[
+                    item.fixture == "forceConnected" ? "force-side-right" : "force-side-left"
+                ]
                 XCTAssertTrue(sideOption.waitForExistence(timeout: 5), "chooser should expose the Side control")
-                let viewport = app.windows.firstMatch.frame
-                // A full watch swipe jumps the LazyVStack past Side and
-                // unloads these rows entirely on the simulator. Use a
-                // bounded ~20pt drag instead: the row starts only roughly
-                // 19pt below the 40mm viewport and this brings it fully in
-                // frame without changing the lazy materialization region.
-                if !sideOption.isHittable
-                    || sideOption.frame.minY < viewport.minY
-                    || sideOption.frame.maxY > viewport.maxY
-                {
-                    let dragStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-                    let dragEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
-                    dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
+                XCTAssertEqual(sideOption.value as? String, "Selected")
+                sideOption.tap()
+                XCTAssertEqual(sideOption.value as? String, "Selected")
+
+                if item.fixture == "forceConnected" {
+                    let leftOption = app.buttons["force-side-left"]
+                    XCTAssertTrue(leftOption.waitForExistence(timeout: 5))
+                    leftOption.tap()
+                    XCTAssertEqual(leftOption.value as? String, "Selected")
+                    XCTAssertEqual(sideOption.value as? String, "Not selected")
+                    sideOption.tap()
+                    XCTAssertEqual(sideOption.value as? String, "Selected")
+                    XCTAssertEqual(leftOption.value as? String, "Not selected")
                 }
-                assertFullyVisible(sideOption, in: app, fixture: item.fixture)
 
                 // Exercise rows are below the new four-row vertical Side
                 // list inside a LazyVStack, so they are not necessarily
@@ -309,6 +315,19 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     context.waitForExistence(timeout: 5),
                     "tapping Back should return to Force setup"
                 )
+                if item.fixture == "forceConnected" {
+                    let readyContext = app.descendants(matching: .any)
+                        .matching(NSPredicate(
+                            format: "label CONTAINS %@ AND label CONTAINS %@",
+                            "Crimp edge",
+                            "Right"
+                        ))
+                        .firstMatch
+                    XCTAssertTrue(
+                        readyContext.waitForExistence(timeout: 5),
+                        "ready context should reflect the selected Right side after returning from the chooser"
+                    )
+                }
             }
             if item.fixture == "forceConnected" {
                 let finish = app.buttons["force-session-finish"]
@@ -380,22 +399,39 @@ final class SendmeterWatchScreenshots: XCTestCase {
         // selector for all three), so the LazyVStack no longer materializes
         // the Suggested row until the view scrolls near it.
         let suggestedRow = app.buttons["force-protocol-suggested:movement-starter"]
-        for _ in 0..<6 where !suggestedRow.exists {
-            app.swipeUp(velocity: .slow)
+        let viewport = app.windows.firstMatch.frame
+        for _ in 0..<20 {
+            if suggestedRow.exists {
+                let frame = suggestedRow.frame
+                if suggestedRow.isHittable,
+                   frame.minY >= viewport.minY,
+                   frame.maxY <= viewport.maxY {
+                    break
+                }
+                if frame.minY < viewport.minY {
+                    // The small reverse nudge recovers from watchOS snapping
+                    // the lazy row above the viewport after an upward drag.
+                    let dragStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+                    let dragEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.50))
+                    dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
+                    continue
+                }
+            }
+            // Full watch swipes can jump past a LazyVStack row entirely. A
+            // bounded upward drag advances the chooser by ~20pt until the
+            // lazy row materializes and reaches the viewport.
+            let dragStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+            let dragEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+            dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
         }
         XCTAssertTrue(
             suggestedRow.waitForExistence(timeout: 10),
             "chooser should list the Suggested Movement Starter protocol"
         )
-        // The row's existence (asserted above) is the coverage this test
-        // exists for — it is the regression signal a reverted/broken chooser
-        // would fail on. Bringing it fully into frame is presentation
-        // niceness for the attached screenshot only: watchOS ScrollView
-        // gestures in this simulator have proven bistable and unpredictable
-        // (a small drag and a full swipe both landed on the same two
-        // far-apart rest positions in manual testing), so further scrolling
-        // here is best-effort and not asserted on.
-        app.swipeUp(velocity: .slow)
+        // Keep the protocol itself in the retained attachment. Existence alone
+        // can pass while a lazy row is offscreen, producing a footer-only
+        // screenshot that proves nothing about the picker presentation.
+        assertFullyVisible(suggestedRow, in: app, fixture: "forceSetup")
 
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "force-protocol-chooser"
