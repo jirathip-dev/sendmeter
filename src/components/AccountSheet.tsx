@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import { Capacitor } from "@capacitor/core";
 import { deleteAccount, deleteHealthMetrics } from "../lib/repo";
 import { resyncHealthHistory } from "../lib/healthSync";
@@ -39,8 +38,6 @@ interface Props {
   onSignOut: SignOut;
 }
 
-type TabId = "appearance" | "health" | "account";
-
 // #494 (N5): "Clear health data & resync"'s success copy differs by
 // platform — native's device-resync claim is only true where a device
 // actually runs one.
@@ -63,38 +60,6 @@ const STORE_LABELS: Record<AuthEventStoreKind, string> = {
   "local-storage": "Browser storage",
   unavailable: "Not persisted",
 };
-
-const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
-  {
-    id: "appearance",
-    label: "Appearance",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
-      </svg>
-    ),
-  },
-  {
-    id: "health",
-    label: "Health",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M20.8 6.6a5 5 0 0 0-8.8-2.2A5 5 0 0 0 3.2 6.6c-1 3 1.4 6 8.8 11 7.4-5 9.8-8 8.8-11z" />
-      </svg>
-    ),
-  },
-  {
-    id: "account",
-    label: "Account",
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="8.2" r="3.4" />
-        <path d="M5 20c1.2-3.4 3.8-5 7-5s5.8 1.6 7 5" />
-      </svg>
-    ),
-  },
-];
 
 function AppleWatchStatusCard({ status }: { status: WatchStatusPresentation }) {
   const color =
@@ -137,7 +102,6 @@ function AppleWatchStatusCard({ status }: { status: WatchStatusPresentation }) {
 export default function AccountSheet({ onClose, onSignOut }: Props) {
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
-  const [tab, setTab] = useState<TabId>("appearance");
   const [resetting, setResetting] = useState(false);
   const [resetEmail, setResetEmail] = useState<string | null>(null);
   const [addingPasskey, setAddingPasskey] = useState(false);
@@ -193,6 +157,19 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
   }, []);
 
   const watchStatus = watchStatusPresentation(useWatchInfo());
+
+  // Signed-in identity for the Account & Security group. getSession reads the
+  // locally stored session — no network round-trip on every sheet open.
+  const [email, setEmail] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void supabase.auth.getSession().then(({ data: { session } }) => {
+      if (alive && session?.user.email) setEmail(session.user.email);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!passkeysSupported) return;
@@ -344,28 +321,90 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
     </div>
   );
 
+  // Group headings for the single scrollable Settings surface (#577) — one
+  // visual level above the uppercase subsection eyebrows.
+  const groupTitle = (text: string) => (
+    <div
+      style={{
+        fontSize: "var(--t-base)",
+        fontWeight: 700,
+        color: "var(--ink)",
+        marginBottom: 12,
+      }}
+    >
+      {text}
+    </div>
+  );
+
   return (
-    <Sheet title="Account" onClose={onClose}>
-      {/* Tabs */}
-      <div className="acct-tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            className={`acct-tab${tab === t.id ? " active" : ""}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.icon}
-            {t.label}
-          </button>
-        ))}
-      </div>
+    <Sheet title="Settings" onClose={onClose}>
+      <div style={{ paddingTop: 12 }}>
+        {/* General */}
+        {groupTitle("General")}
+        <ThemeSection />
 
-      {/* Panel */}
-      <div style={{ paddingTop: 12, minHeight: 180 }}>
-        {tab === "appearance" && <ThemeSection />}
-
-        {tab === "account" && (
+        {/* Health & Devices */}
+        <div style={{ marginTop: 28, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
+          {groupTitle("Health & Devices")}
           <div>
+            {eyebrow("Health data")}
+            {clearOutcome ? (
+              <HealthClearedStatus outcome={clearOutcome} native={IS_NATIVE} />
+            ) : confirmingClear ? (
+              <div>
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
+                  Deletes all stored daily health metrics (HRV, resting heart
+                  rate, sleep, readiness). Your device re-reads them fresh from
+                  Apple Health afterward.
+                </div>
+                <button
+                  className="btn-primary"
+                  disabled={clearing}
+                  onClick={() => void runClearHealth()}
+                >
+                  {clearing ? "Clearing…" : "Clear & resync"}
+                </button>
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    className="btn-ghost"
+                    disabled={clearing}
+                    onClick={() => setConfirmingClear(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
+                  Clear all stored health metrics and re-sync them fresh from
+                  Apple Health.
+                </div>
+                <button className="btn-ghost" onClick={() => setConfirmingClear(true)}>
+                  Clear health data & resync…
+                </button>
+              </div>
+            )}
+
+            {watchStatus && (
+              <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
+                {eyebrow("Apple Watch")}
+                <AppleWatchStatusCard status={watchStatus} />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Account & Security */}
+        <div style={{ marginTop: 28, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
+          {groupTitle("Account & Security")}
+          <div>
+            {email && (
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 14, lineHeight: 1.5 }}>
+                Signed in as {email}
+              </div>
+            )}
+
             {/* Password */}
             {eyebrow("Password")}
             {resetEmail ? (
@@ -447,65 +486,6 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
               </div>
             )}
 
-            {watchStatus && (
-              <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
-                {eyebrow("Apple Watch")}
-                <AppleWatchStatusCard status={watchStatus} />
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === "health" && (
-          <div>
-            {eyebrow("Health data")}
-            {clearOutcome ? (
-              <HealthClearedStatus outcome={clearOutcome} native={IS_NATIVE} />
-            ) : confirmingClear ? (
-              <div>
-                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
-                  Deletes all stored daily health metrics (HRV, resting heart
-                  rate, sleep, readiness). Your device re-reads them fresh from
-                  Apple Health afterward.
-                </div>
-                <button
-                  className="btn-primary"
-                  disabled={clearing}
-                  onClick={() => void runClearHealth()}
-                >
-                  {clearing ? "Clearing…" : "Clear & resync"}
-                </button>
-                <div style={{ marginTop: 8 }}>
-                  <button
-                    className="btn-ghost"
-                    disabled={clearing}
-                    onClick={() => setConfirmingClear(false)}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div>
-                <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 10, lineHeight: 1.5 }}>
-                  Clear all stored health metrics and re-sync them fresh from
-                  Apple Health.
-                </div>
-                <button className="btn-ghost" onClick={() => setConfirmingClear(true)}>
-                  Clear health data & resync…
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {tab === "account" && (
-          <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
-            {eyebrow("Help")}
-            <button className="btn-ghost" onClick={() => setShowHelp(true)}>
-              Help & FAQ
-            </button>
-
             <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
               {eyebrow("Session")}
               <button
@@ -519,6 +499,67 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                     ? "Uploading recordings…"
                     : "Signing out…"}
               </button>
+            </div>
+
+            <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
+              {eyebrow("Danger zone", true)}
+              {!showDanger ? (
+                  <button
+                    className="btn-ghost btn-inline"
+                    style={{ fontSize: "var(--t-sm)" }}
+                  onClick={() => setShowDanger(true)}
+                >
+                  Reveal delete option
+                </button>
+              ) : confirmingDelete ? (
+                <div>
+                  <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
+                    This permanently deletes your account and every session,
+                    recording, workout, and health metric. There is no undo.
+                  </div>
+                  <button
+                    className="btn-danger"
+                    disabled={deleting}
+                    onClick={() => void runDelete()}
+                  >
+                    {deleting ? "Deleting…" : "Yes, delete everything"}
+                  </button>
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      className="btn-ghost"
+                      disabled={deleting}
+                      onClick={() => setConfirmingDelete(false)}
+                    >
+                      Keep my account
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  className="btn-danger btn-inline"
+                  onClick={() => setConfirmingDelete(true)}
+                >
+                  Delete account…
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* About & Support */}
+        <div style={{ marginTop: 28, paddingTop: 18, borderTop: "1px solid var(--hairline)" }}>
+          {groupTitle("About & Support")}
+          <div>
+            {eyebrow("Help")}
+            <button className="btn-ghost" onClick={() => setShowHelp(true)}>
+              Help & FAQ
+            </button>
+
+            <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
+              {eyebrow("Version")}
+              <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)" }}>
+                {build ? `Sendmeter ${build}` : "Sendmeter (web)"}
+              </div>
             </div>
 
             <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
@@ -582,51 +623,8 @@ export default function AccountSheet({ onClose, onSignOut }: Props) {
                 </div>
               </details>
             </div>
-
-            <div style={{ marginTop: 22, paddingTop: 16, borderTop: "1px solid var(--hairline)" }}>
-              {eyebrow("Danger zone", true)}
-              {!showDanger ? (
-                  <button
-                    className="btn-ghost btn-inline"
-                    style={{ fontSize: "var(--t-sm)" }}
-                  onClick={() => setShowDanger(true)}
-                >
-                  Reveal delete option
-                </button>
-              ) : confirmingDelete ? (
-                <div>
-                  <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", marginBottom: 12, lineHeight: 1.5 }}>
-                    This permanently deletes your account and every session,
-                    recording, workout, and health metric. There is no undo.
-                  </div>
-                  <button
-                    className="btn-danger"
-                    disabled={deleting}
-                    onClick={() => void runDelete()}
-                  >
-                    {deleting ? "Deleting…" : "Yes, delete everything"}
-                  </button>
-                  <div style={{ marginTop: 8 }}>
-                    <button
-                      className="btn-ghost"
-                      disabled={deleting}
-                      onClick={() => setConfirmingDelete(false)}
-                    >
-                      Keep my account
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  className="btn-danger btn-inline"
-                  onClick={() => setConfirmingDelete(true)}
-                >
-                  Delete account…
-                </button>
-              )}
-            </div>
           </div>
-        )}
+        </div>
 
         {error && (
           <div style={{ fontSize: "var(--t-xs)", color: "var(--danger)", marginTop: 14 }}>

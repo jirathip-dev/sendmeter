@@ -345,11 +345,11 @@ function AuthedApp({
 
   return (
     <div className={`app-shell${chromeHidden ? " chrome-hidden" : ""}`}>
-      {/* Floating account button — the whole header is just this circle;
+      {/* Floating settings button — the whole header is just this circle;
           branding and phase info live in the content (phase banner). */}
       <button
         className="account-fab"
-        aria-label="Account"
+        aria-label="Settings"
         onClick={() => setShowAccountSheet(true)}
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
