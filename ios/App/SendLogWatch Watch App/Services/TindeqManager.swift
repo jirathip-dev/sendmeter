@@ -169,6 +169,11 @@ final class TindeqManager: NSObject {
     /// Test seam: production writes through CoreBluetooth; watch target tests
     /// inject this observer so the real command ordering is inspectable.
     private let commandWriter: ((Tindeq.Cmd) -> Void)?
+#if DEBUG && targetEnvironment(simulator)
+    /// The simulator-only transport still enters through `handleNotification`
+    /// and `handleTransportDisconnect`; it never owns a recording or queue.
+    private let fakeTransport: FakeTindeqTransport?
+#endif
     private var fakeTransportConnected: Bool
     // Live-force beat backfill watermark (issue #148): the last `t` a beat
     // successfully sent, so the next beat only ships what's new instead of a
@@ -206,16 +211,42 @@ final class TindeqManager: NSObject {
         recordingQueue: any TindeqRecordingQueueing = PendingRecordingQueue.shared,
         sessionQueue: any TindeqSessionQueueing = PendingSessionQueue.shared,
         armTimeoutSeconds: TimeInterval = 10 * 60,
+        // Kept as AnyObject so the simulator-only fake type never appears in
+        // a release/device signature. The value is cast only in the gated
+        // implementation below; existing commandWriter tests remain intact.
+        fakeTransport: AnyObject? = nil,
         commandWriter: ((Tindeq.Cmd) -> Void)? = nil,
         userIdProvider: @escaping @Sendable () -> UUID? = { WatchSessionStore.shared.userId }
     ) {
         self.recordingQueue = recordingQueue
         self.sessionQueue = sessionQueue
         self.armTimeoutSeconds = armTimeoutSeconds
+#if DEBUG && targetEnvironment(simulator)
+        self.fakeTransport = (fakeTransport as? FakeTindeqTransport)
+            ?? (commandWriter == nil
+                ? FakeTindeqLaunchConfiguration.script().map(FakeTindeqTransport.init(script:))
+                : nil)
+#endif
         self.commandWriter = commandWriter
         self.userIdProvider = userIdProvider
         self.fakeTransportConnected = commandWriter != nil
         super.init()
+#if DEBUG && targetEnvironment(simulator)
+        self.fakeTransport?.onConnect = { [weak self] in
+            guard let self else { return }
+            self.fakeTransportConnected = true
+            self.status = .connected
+            self.lowBattery = false
+            self.write(.sampleBattery)
+            self.pushForceBeat()
+        }
+        self.fakeTransport?.onNotification = { [weak self] data in
+            self?.handleNotification(data)
+        }
+        self.fakeTransport?.onDisconnect = { [weak self] error in
+            self?.handleTransportDisconnect(error: error, wasIntentionalOverride: false)
+        }
+#endif
         // A command writer is a complete fake transport for unit tests.
         if commandWriter != nil { status = .connected }
     }
@@ -378,6 +409,12 @@ final class TindeqManager: NSObject {
         forceMirrorTag = liveTag
         forceMirrorSide = liveSide
         status = .scanning
+#if DEBUG && targetEnvironment(simulator)
+        if let fakeTransport {
+            fakeTransport.connect()
+            return
+        }
+#endif
         if central == nil {
             central = CBCentralManager(delegate: self, queue: .main)
         } else {
@@ -397,6 +434,9 @@ final class TindeqManager: NSObject {
             intentionalDisconnect = true
             central?.cancelPeripheralConnection(p)
         }
+#if DEBUG && targetEnvironment(simulator)
+        fakeTransport?.disconnect()
+#endif
         peripheral = nil
         fakeTransportConnected = false
         controlChar = nil
@@ -518,6 +558,9 @@ final class TindeqManager: NSObject {
         measuring = false
         central?.stopScan()
         if let p = peripheral { central?.cancelPeripheralConnection(p) }
+#if DEBUG && targetEnvironment(simulator)
+        fakeTransport?.disconnect()
+#endif
         peripheral = nil
         fakeTransportConnected = false
         controlChar = nil
@@ -835,6 +878,9 @@ final class TindeqManager: NSObject {
 
     private func write(_ cmd: Tindeq.Cmd) {
         commandWriter?(cmd)
+#if DEBUG && targetEnvironment(simulator)
+        fakeTransport?.write(cmd)
+#endif
         guard let p = peripheral, let c = controlChar else { return }
         p.writeValue(Data([cmd.rawValue]), for: c, type: .withResponse)
     }

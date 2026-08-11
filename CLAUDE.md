@@ -126,6 +126,14 @@ xcrun simctl install booted "<...>/Debug-watchsimulator/SendLogWatch Watch App.a
 xcrun simctl launch booted com.jirathip.sendlog.watchkitapp
 ```
 
+- **Fake Tindeq on the watch simulator (#567):** build and launch the watch
+  app in **Debug** with `-sendmeter-fake-tindeq pull`, or set
+  `SENDMETER_FAKE_TINDEQ=1` in the launch environment. Use
+  `-sendmeter-fake-tindeq mid-rep-disconnect` (or the matching environment
+  value) to exercise disconnect salvage; the simulator transport feeds the
+  normal parser, sample, recording, attempt-detection, guided, and hands-free
+  paths. The flag is ignored outside a Debug simulator build, and real BLE
+  behavior remains device-only.
 - **Never run two xcodebuilds on this project concurrently** — they corrupt
   each other's SPM checkouts in shared DerivedData ("couldn't be removed /
   File exists" resolve errors). Build sequentially; a failed resolve just
