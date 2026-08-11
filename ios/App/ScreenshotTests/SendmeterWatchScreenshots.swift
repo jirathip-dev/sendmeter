@@ -254,6 +254,14 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     XCTAssertTrue(syncLabel.waitForExistence(timeout: 5), "fixture \(item.fixture) should expose status-sync-label")
                     assertNotClipped(syncLabel, in: app, fixture: item.fixture)
                 }
+                // Keep one retained frame for every status variant, not only
+                // empty/offline. This makes the exported evidence cover the
+                // requested auth-required, unsupported and failed cards too,
+                // including their bottom edge after the frame assertions.
+                let statusCapture = XCTAttachment(screenshot: app.screenshot())
+                statusCapture.name = "\(item.fixture)-status"
+                statusCapture.lifetime = .keepAlways
+                add(statusCapture)
                 // #539 round-1 review F3: the state chip (shares a row with
                 // the eyebrow now) must stay fully within the card even at
                 // its longest real titles, not merely present. Not a tap
@@ -478,7 +486,12 @@ final class SendmeterWatchScreenshots: XCTestCase {
         // the Suggested row until the view scrolls near it.
         let suggestedRow = app.buttons["force-protocol-suggested:movement-starter"]
         let viewport = app.windows.firstMatch.frame
-        for _ in 0..<20 {
+        // The chooser's four side rows plus exercise/catalog sections can
+        // require several bounded drags on a 40mm watch. Keep the loop finite
+        // and calibrate each correction from the row's actual frame: fixed
+        // nudges either left the row 53pt above the viewport or over-corrected
+        // it 64pt below it on watchOS 26.
+        for _ in 0..<60 {
             if suggestedRow.exists {
                 let frame = suggestedRow.frame
                 if suggestedRow.isHittable,
@@ -487,20 +500,32 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     break
                 }
                 if frame.minY < viewport.minY {
-                    // The small reverse nudge recovers from watchOS snapping
-                    // the lazy row above the viewport after an upward drag.
-                    let dragStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
-                    let dragEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.50))
-                    dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
+                    dragChooser(
+                        app,
+                        viewport: viewport,
+                        points: viewport.minY - frame.minY + 12,
+                        contentDirection: 1
+                    )
+                    continue
+                }
+                if frame.maxY > viewport.maxY {
+                    dragChooser(
+                        app,
+                        viewport: viewport,
+                        points: frame.maxY - viewport.maxY + 12,
+                        contentDirection: -1
+                    )
                     continue
                 }
             }
-            // Full watch swipes can jump past a LazyVStack row entirely. A
-            // bounded upward drag advances the chooser by ~20pt until the
-            // lazy row materializes and reaches the viewport.
-            let dragStart = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-            let dragEnd = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
-            dragStart.press(forDuration: 0.1, thenDragTo: dragEnd)
+            // The row may not yet be materialized by LazyVStack; advance by a
+            // small bounded amount until its frame becomes queryable.
+            dragChooser(
+                app,
+                viewport: viewport,
+                points: min(viewport.height * 0.12, 24),
+                contentDirection: -1
+            )
         }
         XCTAssertTrue(
             suggestedRow.waitForExistence(timeout: 10),
@@ -515,6 +540,31 @@ final class SendmeterWatchScreenshots: XCTestCase {
         capture.name = "force-protocol-chooser"
         capture.lifetime = .keepAlways
         add(capture)
+    }
+
+    /// Move the chooser content by a measured number of screen points. Using
+    /// the window's normalized center keeps the gesture inside the ScrollView,
+    /// while deriving the endpoint from `points` avoids the fixed-nudge
+    /// overshoot that made the retained chooser screenshot prove a clipped
+    /// row instead of a visible one.
+    private func dragChooser(
+        _ app: XCUIApplication,
+        viewport: CGRect,
+        points: CGFloat,
+        contentDirection: CGFloat
+    ) {
+        let boundedPoints = min(max(points, 4), viewport.height * 0.3)
+        let normalizedDelta = boundedPoints / viewport.height
+        let startY: CGFloat = 0.5
+        let endY = min(max(startY + contentDirection * normalizedDelta, 0.15), 0.85)
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
+        let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endY))
+        start.press(
+            forDuration: 0.1,
+            thenDragTo: end,
+            withVelocity: .slow,
+            thenHoldForDuration: 0
+        )
     }
 
     /// SL-538 round-2 review finding 1: `GuidedForceRunnerView.swift` (12
