@@ -62,6 +62,16 @@ final class SendmeterWatchScreenshots: XCTestCase {
         assertNotClipped(readinessCard, in: pager, fixture: "status-ax-large")
         assertNotClipped(readinessRing, in: pager, fixture: "status-ax-large")
         assertNotClipped(syncLabel, in: pager, fixture: "status-ax-large")
+        // #588 review F2: same at-rest bar bound as the matrix — the pager
+        // element contains the floating bar now, so the pager-bounded checks
+        // above cannot catch a card sliding under the selector.
+        let selectorBar = app.buttons.matching(identifier: "home-nav-status").firstMatch
+        XCTAssertTrue(selectorBar.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(
+            readinessCard.frame.minY, selectorBar.frame.maxY,
+            "at-rest status card must sit fully below the selector bar at accessibility size"
+        )
+        assertNotClipped(readinessCard, in: app, fixture: "status-ax-large")
 
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "40mm-status-accessibility-large"
@@ -312,22 +322,91 @@ final class SendmeterWatchScreenshots: XCTestCase {
         capture.lifetime = .keepAlways
         add(capture)
 
-        // The destructive control must ask first. Cancel the confirmation so
-        // the fixture remains live and no workout is ended or saved by this
-        // layout test.
+        // The compact finish control must ask first. Cancel the confirmation
+        // so the fixture remains live and no workout is ended or saved by
+        // this layout test. The confirmation is now the app's own compact
+        // card (SL-580 follow-up — the full-screen system dialog was
+        // replaced), so its controls carry real identifiers and the same
+        // 44pt/fit contract as every other live control.
         finish.tap()
-        // watchOS presents confirmation actions in a system sheet and does
-        // not retain caller-supplied identifiers on those action cells; the
-        // visible destructive title is the stable semantic contract here.
-        let confirm = app.buttons["Finish Workout"]
+        let confirm = smallestButton(in: app, identifier: "finish-workout-confirm")
+        let cancel = smallestButton(in: app, identifier: "finish-workout-cancel")
         XCTAssertTrue(confirm.waitForExistence(timeout: 10))
-        let cancel = app.buttons.matching(identifier: "AX_ActionContentControllerCancelButton").firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        XCTAssertEqual(confirm.label, "Finish")
+        XCTAssertEqual(cancel.label, "Cancel")
+        assertFullyVisible(confirm, in: app, fixture: "workoutRest")
+        assertFullyVisible(cancel, in: app, fixture: "workoutRest")
+        // #588 review F1: the confirm card's layout is part of its contract.
+        // At accessibility sizes the two buttons must STACK full-width —
+        // side by side, the confirm title compressed past its scale floor
+        // into a truncated "Fi…" on 40mm, which the accessibility label
+        // (always "Finish") cannot catch. Stacked + near-card-width is the
+        // geometry under which truncation is impossible; at normal sizes
+        // the approved side-by-side row must hold.
+        if accessibilityLarge {
+            XCTAssertLessThanOrEqual(
+                confirm.frame.maxY, cancel.frame.minY + 0.5,
+                "confirmation actions must stack at accessibility sizes"
+            )
+            XCTAssertGreaterThanOrEqual(
+                confirm.frame.width, 100,
+                "stacked confirm button must span the card, not compress its title"
+            )
+        } else {
+            XCTAssertLessThanOrEqual(
+                cancel.frame.maxX, confirm.frame.minX + 0.5,
+                "confirmation actions must sit side by side at normal sizes"
+            )
+        }
+        // The scrim must block the live controls while the confirmation is
+        // up — a stray tap around the card must not toggle a boulder or
+        // change a rest target. (The modal trait may remove the background
+        // from the accessibility tree entirely; either way it must not be
+        // tappable.)
+        XCTAssertFalse(
+            boulder.exists && boulder.isHittable,
+            "live controls must be blocked behind the confirmation scrim"
+        )
+        let confirmCapture = XCTAttachment(screenshot: app.screenshot())
+        confirmCapture.name = "\(captureName)-confirm"
+        confirmCapture.lifetime = .keepAlways
+        add(confirmCapture)
         cancel.tap()
-        XCTAssertTrue(waitForElementToDisappear(confirm), "finish confirmation action must dismiss after Cancel")
-        XCTAssertTrue(waitForElementToDisappear(cancel), "finish confirmation sheet must dismiss after Cancel")
+        XCTAssertTrue(waitForElementToDisappear(confirm), "finish confirmation must dismiss after Cancel")
+        XCTAssertTrue(waitForElementToDisappear(cancel), "finish confirmation must dismiss after Cancel")
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
         XCTAssertEqual(finish.label, "Finish workout")
+
+        // #588 review F5: exercise the confirm path's PRODUCTION wiring —
+        // there is deliberately no fixture branch in the confirm action, so
+        // this tap drives the real `endAndSave()`. With no live session the
+        // manager bails out of `end()`'s session guard and resets `ending`,
+        // so the control must return to its idle label instead of wedging
+        // in "Finishing workout" — which is also the regression guard for
+        // the fixture-hang this flow once had.
+        finish.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        XCTAssertTrue(waitForElementToDisappear(confirm), "confirmation must dismiss after Finish")
+        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForLabel(finish, expected: "Finish workout"),
+            "finish control must settle back to idle after the no-session save bails out"
+        )
+    }
+
+    private func waitForLabel(
+        _ element: XCUIElement,
+        expected: String,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.exists, element.label == expected { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return element.exists && element.label == expected
     }
 
     /// #539 navigation regression guard: use the explicit Home controls for
@@ -554,6 +633,37 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     waitForStableFrame(app.staticTexts["Force Gauge"], timeout: 5),
                     "Actions page must settle before returning to Status"
                 )
+                // SL-580 follow-up: the bar area is transparent chrome now —
+                // content is ALLOWED to pass underneath it (the old hard clip
+                // edge is gone). The intent the layout must keep is that the
+                // selector controls stay on top, legible and hittable, even
+                // with page content scrolled under them. Measured drag, not a
+                // blind momentum swipe (#588 review F10 — same calibration
+                // doctrine as `tapHomeAction`), so the Force card ends up
+                // deterministically under the bar for the retained evidence.
+                let windowFrame = app.windows.firstMatch.frame
+                dragChooser(
+                    app,
+                    viewport: windowFrame,
+                    points: min(windowFrame.height * 0.25, 50),
+                    contentDirection: -1
+                )
+                XCTAssertTrue(
+                    statusPage.isHittable,
+                    "page selector must stay hittable above scrolled content"
+                )
+                XCTAssertTrue(
+                    actionsPage.isHittable,
+                    "page selector must stay hittable above scrolled content"
+                )
+                // #588 review F3: retain the scrolled-under state — the
+                // per-button backdrops are the legibility mechanism for the
+                // transparent bar, and this is the frame that shows them
+                // doing that job over a bright card.
+                let scrolledUnder = XCTAttachment(screenshot: app.screenshot())
+                scrolledUnder.name = "home-bar-scrolled-under"
+                scrolledUnder.lifetime = .keepAlways
+                add(scrolledUnder)
                 statusPage.tap()
                 let returningCard = app.descendants(matching: .any)
                     .matching(identifier: "readiness-card").firstMatch
@@ -588,6 +698,20 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 // are still behind TabView's `.clipped()` boundary.
                 assertNotClipped(readinessCard, in: pager, fixture: item.fixture)
                 assertNotClipped(readinessRing, in: pager, fixture: item.fixture)
+                // #588 review F2: with the selector floating INSIDE the pager
+                // element, the pager-bounded check above can no longer fail
+                // for a card rendered under the buttons — the exact #578
+                // regression. Bound the at-rest card against the bar's own
+                // hit frame (2.5pt of designed clearance, no ring slack) and
+                // against the window, so a `selectorBarHeight` /
+                // per-page-inset drift cannot ship green.
+                let selectorBar = app.buttons.matching(identifier: "home-nav-status").firstMatch
+                XCTAssertTrue(selectorBar.waitForExistence(timeout: 5))
+                XCTAssertGreaterThanOrEqual(
+                    readinessCard.frame.minY, selectorBar.frame.maxY,
+                    "fixture \(item.fixture): at-rest status card must sit fully below the selector bar"
+                )
+                assertNotClipped(readinessCard, in: app, fixture: item.fixture)
                 // Empty/offline states render the full phone-sync guidance as
                 // visible content (the ring announces only "No data" to avoid
                 // duplicate VoiceOver copy), so they get the same load-bearing
@@ -777,6 +901,27 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     "fixture \(item.fixture) should expose \(finish.identifier)"
                 )
                 assertFullyVisible(finish, in: app, fixture: item.fixture)
+
+                // #588 review F6: the Force finish shares the Workout
+                // finish's glyph, so it must share the ask-first behavior —
+                // the same shared confirmation card, cancelled here so the
+                // fixture's session state is untouched.
+                finish.tap()
+                let forceConfirm = smallestButton(in: app, identifier: "force-finish-confirm")
+                let forceCancel = smallestButton(in: app, identifier: "force-finish-cancel")
+                XCTAssertTrue(forceConfirm.waitForExistence(timeout: 10))
+                XCTAssertTrue(forceCancel.waitForExistence(timeout: 10))
+                assertFullyVisible(forceConfirm, in: app, fixture: item.fixture)
+                assertFullyVisible(forceCancel, in: app, fixture: item.fixture)
+                forceCancel.tap()
+                XCTAssertTrue(
+                    waitForElementToDisappear(forceConfirm),
+                    "force finish confirmation must dismiss after Cancel"
+                )
+                XCTAssertTrue(
+                    finish.waitForExistence(timeout: 5),
+                    "force setup must return after cancelling the finish confirmation"
+                )
 
                 // Disconnect is demoted to a passive/secondary action (#537
                 // #4) — still reachable, but only after scrolling past the
@@ -1044,8 +1189,12 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
         let forceGauge = app.staticTexts["Force Gauge"]
         XCTAssertTrue(forceGauge.waitForExistence(timeout: 10))
+        // 6s, not the helper's default 3: with the pages underlapping the
+        // floating selector bar (SL-580 follow-up), the scroll view settles
+        // its top inset after the page transition and the first card's frame
+        // can keep moving past the old window.
         XCTAssertTrue(
-            waitForStableFrame(forceGauge),
+            waitForStableFrame(forceGauge, timeout: 6),
             "Actions page must settle before destination navigation"
         )
     }

@@ -315,10 +315,12 @@ enum WatchIconSymbol {
     static let disconnect = "xmark" // Progressor disconnect action
     static let refresh = "arrow.triangle.2.circlepath" // matches WatchVisualState.syncing
     static let history = "clock.arrow.circlepath" // matches WatchVisualState.cached
-    // Finish-workout is a checkered flag, deliberately NOT the in-row boulder
-    // stop glyph (stop.fill): the two controls end different scopes (the whole
-    // workout vs. one boulder) and sharing a glyph would make them ambiguous
-    // (#580 scope 1).
+    // Finishing an activity is a checkered flag — shared by the live
+    // Workout's finish control and Force's finish-session control so the
+    // concept reads identically on both screens. Deliberately NOT the
+    // in-row boulder stop glyph (stop.fill): those controls end different
+    // scopes (the whole workout vs. one boulder) and sharing a glyph would
+    // make them ambiguous (#580 scope 1).
     static let finishWorkout = "flag.checkered"
     static let settings = "gearshape.fill" // not yet wired to a call site
     static let connection = "antenna.radiowaves.left.and.right" // not yet wired
@@ -534,6 +536,155 @@ private struct WatchIconButtonIdentifier: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+extension View {
+    /// The watch's one compact finish/confirm affordance (SL-580 follow-up):
+    /// a small in-design card over a blocking scrim, replacing the
+    /// full-screen system `confirmationDialog` (too big on 40mm, and its red
+    /// destructive treatment read as alarming for safe, expected actions).
+    /// ONE implementation on purpose — the Workout finish and the Force
+    /// session finish share the same checkered-flag trigger glyph, so they
+    /// must also share the exact ask-first behavior; a second copy is how
+    /// the two would drift.
+    ///
+    /// Contract (mirrors what the system dialog provided):
+    /// - `onConfirm` is reachable only through the explicit confirm button —
+    ///   the compact destructive trigger can never complete on one tap.
+    /// - The scrim blocks every control underneath and tapping it cancels
+    ///   (always safe); the presenting content also leaves the accessibility
+    ///   tree, so VoiceOver focus cannot land on covered controls, and the
+    ///   card takes the escape gesture as the scrim-tap's VoiceOver
+    ///   equivalent.
+    /// - No animation on present/dismiss — nothing for Reduce Motion to
+    ///   reduce; the card chrome flows through `WatchCard`'s Always-On path.
+    func watchFinishConfirmation(
+        isPresented: Binding<Bool>,
+        title: String,
+        message: String,
+        confirmIdentifier: String,
+        confirmHint: String,
+        cancelIdentifier: String,
+        onConfirm: @escaping () -> Void
+    ) -> some View {
+        self
+            .accessibilityHidden(isPresented.wrappedValue)
+            .overlay {
+                if isPresented.wrappedValue {
+                    WatchFinishConfirmationCard(
+                        isPresented: isPresented,
+                        title: title,
+                        message: message,
+                        confirmIdentifier: confirmIdentifier,
+                        confirmHint: confirmHint,
+                        cancelIdentifier: cancelIdentifier,
+                        onConfirm: onConfirm
+                    )
+                }
+            }
+    }
+}
+
+private struct WatchFinishConfirmationCard: View {
+    @Binding var isPresented: Bool
+    let title: String
+    let message: String
+    let confirmIdentifier: String
+    let confirmHint: String
+    let cancelIdentifier: String
+    let onConfirm: () -> Void
+    /// The user's REAL size — read before the `.xxLarge` cap below, so the
+    /// accessibility layout branch keys off what the user actually chose.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        ZStack {
+            // Deep enough that the screen behind reads as background in both
+            // full and reduced luminance; the card on top stays the focus.
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { isPresented = false }
+                .accessibilityHidden(true)
+            WatchCard(accent: WatchPalette.secondary) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title)
+                        .font(.system(.footnote, design: .rounded).weight(.bold))
+                        .foregroundStyle(WatchPalette.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // At accessibility sizes the supporting line is dropped
+                    // (the title carries the decision and the confirm hint
+                    // repeats the consequence) — its rows are what the
+                    // stacked full-width buttons below need to fit 40mm.
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Text(message)
+                            .font(.system(.caption2, design: .rounded))
+                            .foregroundStyle(WatchPalette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    actions
+                }
+            }
+            .padding(.horizontal, 6)
+            // VoiceOver treats the card as a modal so focus stays on the
+            // confirmation instead of the dimmed controls behind it; escape
+            // (two-finger scrub) is the scrim-tap's VoiceOver equivalent.
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { isPresented = false }
+        }
+        // Bounded like the live screen's readouts: the compact card plus two
+        // 44pt buttons must fit a 40mm viewport with no scroll fallback, so
+        // the visual scale stops at .xxLarge while the full VoiceOver labels
+        // and hints stay intact.
+        .dynamicTypeSize(.medium ... .xxLarge)
+    }
+
+    /// Side by side at normal sizes; STACKED full-width at accessibility
+    /// sizes (#588 review F1): in the row layout the two labels compete for
+    /// ~128pt of 40mm card width, and at accessibility scale the confirm
+    /// title compressed past `minimumScaleFactor` into a truncated "Fi…" on
+    /// the app's one irreversible confirmation. Stacking removes the
+    /// compression entirely — each button gets the full row — and the
+    /// screenshot suite asserts the stacked geometry at accessibility size.
+    @ViewBuilder
+    private var actions: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 6) {
+                confirmButton
+                cancelButton
+            }
+            .frame(maxWidth: .infinity)
+        } else {
+            HStack(spacing: 6) {
+                cancelButton
+                confirmButton
+            }
+        }
+    }
+
+    private var cancelButton: some View {
+        Button("Cancel") { isPresented = false }
+            .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
+            // One line each in the tight side-by-side row on 40mm, scaling
+            // down a step instead of hyphenating when the width demands it.
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .accessibilityIdentifier(cancelIdentifier)
+            .accessibilityHint("Cancels without finishing")
+    }
+
+    private var confirmButton: some View {
+        Button("Finish") {
+            isPresented = false
+            onConfirm()
+        }
+        .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.secondary))
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .accessibilityIdentifier(confirmIdentifier)
+        .accessibilityHint(confirmHint)
     }
 }
 

@@ -54,27 +54,33 @@ struct WorkoutLiveView: View {
         // next to an End button, the title is telling nobody anything.
         .navigationTitle(currentScreen == .live ? "" : "Climb")
         .navigationBarBackButtonHidden(currentScreen == .live)
-        // Attached here, outside every Dynamic Type cap the live screen
-        // applies to its own rows (#582 review F7): the one irreversible
-        // confirmation must render at the user's own accessibility text
-        // size, never at the dashboard's capped size.
-        .confirmationDialog(
-            "Finish workout?",
+        // The compact in-design confirmation replaces the full-screen system
+        // confirmationDialog (user decision after trying #582 on a 40mm
+        // device: the system sheet was too big and the red destructive
+        // treatment too alarming for what is a safe, expected action). The
+        // shared modifier owns the scrim/modal/Reduce-Motion/Dynamic-Type
+        // contract — see `watchFinishConfirmation`'s doc comment — and it
+        // sits outside every Dynamic Type cap the live screen applies to its
+        // own rows (#582 review F7 still applies). One-tap guarantee: on
+        // THIS screen, `endAndSave()` runs only from the confirmation's
+        // explicit Finish button. (`WaitingForPhoneView`'s "End Workout"
+        // banner also calls `endAndSave()` on one tap — a pre-existing,
+        // full-width labelled text button with a different accidental-tap
+        // profile than a compact icon, deliberately unchanged here.)
+        // No fixture branch in the confirm action: the production wiring
+        // runs as-is under fixtures too, and the screenshot suite exercises
+        // it (#588 review F5) — `endAndSave()` on a manager with no live
+        // session bails out of `end()`'s session guard and resets `ending`,
+        // so the fixture cannot wedge.
+        .watchFinishConfirmation(
             isPresented: $showingFinishConfirmation,
-            titleVisibility: .visible
+            title: "Finish workout?",
+            message: "Saves your climb to this watch.",
+            confirmIdentifier: "finish-workout-confirm",
+            confirmHint: "Saves and ends the workout",
+            cancelIdentifier: "finish-workout-cancel"
         ) {
-            // The compact destructive control must never end a workout on a
-            // single (possibly accidental) tap — `endAndSave()` runs only
-            // after this explicit confirmation (#580 scope 1). No
-            // accessibility identifier: watchOS does not retain caller
-            // identifiers on system action cells (the screenshot test
-            // matches the visible destructive title instead).
-            Button("Finish Workout", role: .destructive) {
-                workout.endAndSave()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Your climbing data will be saved on this watch.")
+            workout.endAndSave()
         }
         .watchCanvas()
     }
