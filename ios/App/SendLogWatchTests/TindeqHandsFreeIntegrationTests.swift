@@ -531,6 +531,212 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertEqual(runner.phase, .completed)
     }
 
+#if DEBUG && targetEnvironment(simulator)
+    func testSimulatorFakeTransportDropsStaleQueuedConnectCallbackAfterReconnect() async throws {
+        let transport = FakeTindeqTransport(script: shortFakeScript())
+        var connectCount = 0
+        transport.onConnect = { connectCount += 1 }
+
+        transport.connect()
+        transport.disconnect()
+        transport.connect()
+
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(connectCount, 1)
+        XCTAssertTrue(transport.connected)
+        transport.disconnect()
+    }
+
+    func testSimulatorFakeTransportStopsWithoutDisconnectAfterSynchronousNotificationStop() async throws {
+        let script = FakeTindeqScript(
+            scenario: .midRepDisconnect,
+            waveform: FakeTindeqWaveform(
+                configuration: FakeTindeqWaveformConfiguration(
+                    baselineKg: 0.2,
+                    peakKg: 12,
+                    rampMs: 1,
+                    holdMs: 2,
+                    releaseMs: 100,
+                    restMs: 100,
+                    sampleIntervalMs: 20,
+                    noiseKg: 0,
+                    seed: 567
+                )
+            )
+        )
+        let transport = FakeTindeqTransport(script: script)
+        var notificationCount = 0
+        var disconnectCount = 0
+        transport.onNotification = { [weak transport] _ in
+            notificationCount += 1
+            if notificationCount == 2 {
+                transport?.write(.stop)
+            }
+        }
+        transport.onDisconnect = { _ in disconnectCount += 1 }
+
+        transport.connect()
+        transport.write(.startWeight)
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(notificationCount, 2)
+        XCTAssertEqual(disconnectCount, 0)
+        XCTAssertTrue(transport.connected)
+        transport.disconnect()
+    }
+
+    func testSimulatorFakeTransportConnectsManualRecordAndExplicitDisconnectUsesManagerPath() async throws {
+        let recordings = RecordingQueueSpy()
+        let transport = FakeTindeqTransport(script: shortFakeScript())
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: SessionQueueSpy(),
+            fakeTransport: transport,
+            userIdProvider: { UUID() }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.connect()
+        try await waitUntil { manager.status == .connected }
+        XCTAssertTrue(transport.connected)
+
+        manager.start()
+        try await waitUntil { manager.status == .measuring && manager.elapsedMs > 0 }
+        manager.stopAndSave(reason: .userTapped)
+        try await waitUntil { await recordings.count() == 1 && !manager.saving }
+
+        let manualRows = await recordings.snapshot()
+        let row = try XCTUnwrap(manualRows.first?.row)
+        XCTAssertEqual(row.tag, "Half crimp")
+        XCTAssertEqual(row.side, "left")
+        XCTAssertGreaterThan(row.samples.count, 1)
+
+        // The explicit path is intentionally silent to the salvage handler.
+        manager.disconnect()
+        XCTAssertEqual(manager.status, .idle)
+        XCTAssertFalse(transport.connected)
+    }
+
+    func testSimulatorFakeTransportHandsFreePullTriggersReleaseAndRearms() async throws {
+        let recordings = RecordingQueueSpy()
+        let transport = FakeTindeqTransport(script: shortFakeScript())
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: SessionQueueSpy(),
+            armTimeoutSeconds: 30,
+            fakeTransport: transport
+        )
+        manager.liveTag = "Open hand"
+        manager.liveSide = "right"
+
+        manager.connect()
+        try await waitUntil { manager.status == .connected }
+        manager.armHandsFree()
+        try await waitUntil(timeout: .seconds(8)) {
+            await recordings.count() == 1 && !manager.saving
+        }
+
+        XCTAssertEqual(manager.handsFreeState, .armed(aboveSinceMs: nil))
+        XCTAssertEqual(manager.sessionCount, 1)
+        let handsFreeRows = await recordings.snapshot()
+        XCTAssertEqual(handsFreeRows.first?.row.side, "right")
+        manager.cancelHandsFree()
+        manager.disconnect()
+    }
+
+    func testSimulatorFakeTransportGuidedStaticHoldUsesMeasuredSavePath() async throws {
+        let recordings = RecordingQueueSpy()
+        let transport = FakeTindeqTransport(script: shortFakeScript())
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: SessionQueueSpy(),
+            fakeTransport: transport,
+            userIdProvider: { UUID() }
+        )
+        let protocolValue = WatchForceProtocol(
+            id: "fake-static",
+            name: "Fake static",
+            holdS: 2,
+            reps: 1,
+            sets: 1,
+            restRepsS: 0,
+            restSetsS: 0
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+        manager.connect()
+        try await waitUntil { manager.status == .connected }
+
+        XCTAssertTrue(
+            manager.startMeasuredStaticHold(
+                protocolValue: protocolValue,
+                runId: UUID(),
+                set: 1,
+                rep: 1,
+                tag: "Half crimp",
+                side: "left"
+            )
+        )
+        try await waitUntil { manager.status == .measuring && manager.elapsedMs > 0 }
+        XCTAssertTrue(manager.finishMeasuredStaticHold())
+        try await waitUntil { await recordings.count() == 1 && !manager.saving }
+
+        let guidedRows = await recordings.snapshot()
+        let row = try XCTUnwrap(guidedRows.first?.row)
+        XCTAssertNotNil(row.protocolRunId)
+        XCTAssertEqual(row.side, "left")
+        XCTAssertGreaterThan(row.samples.count, 1)
+        manager.disconnect()
+    }
+
+    func testSimulatorFakeTransportMidRepDisconnectSalvagesAndAutoLogs() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        let transport = FakeTindeqTransport(script: shortFakeScript(.midRepDisconnect))
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            fakeTransport: transport,
+            userIdProvider: { UUID() }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+        manager.connect()
+        try await waitUntil { manager.status == .connected }
+
+        manager.start()
+        try await waitUntil(timeout: .seconds(4)) {
+            await sessions.count() == 1 && !manager.saving
+        }
+
+        let salvageRows = await recordings.snapshot()
+        let row = try XCTUnwrap(salvageRows.first?.row)
+        XCTAssertEqual(row.note, "Recovered after connection loss")
+        XCTAssertGreaterThan(row.samples.count, 1)
+        XCTAssertEqual(manager.status, .idle)
+    }
+
+    private func shortFakeScript(_ scenario: FakeTindeqScenario = .pull) -> FakeTindeqScript {
+        FakeTindeqScript(
+            scenario: scenario,
+            waveform: FakeTindeqWaveform(
+                configuration: FakeTindeqWaveformConfiguration(
+                    baselineKg: 0.2,
+                    peakKg: 12,
+                    rampMs: 400,
+                    holdMs: 600,
+                    releaseMs: 2_400,
+                    restMs: 1_800,
+                    sampleIntervalMs: 20,
+                    noiseKg: 0,
+                    seed: 567
+                )
+            )
+        )
+    }
+#endif
+
     private func feed(_ manager: TindeqManager, _ samples: [(Float, UInt32)]) {
         var data = Data([0x01, UInt8(samples.count * 8)])
         for (kg, us) in samples {

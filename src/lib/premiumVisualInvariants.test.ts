@@ -17,6 +17,7 @@ const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
 };
 const viteConfig = readFileSync(join(SRC, "..", "vite.config.ts"), "utf8");
 const themeSource = readFileSync(join(SRC, "lib", "theme.ts"), "utf8");
+const constantsSource = readFileSync(join(SRC, "constants.ts"), "utf8");
 const bootstrapSource = indexHtml.match(
   /<script\b[^>]*data-theme-bootstrap[^>]*>([\s\S]*?)<\/script>/i,
 )?.[1] ?? "";
@@ -1435,6 +1436,10 @@ const THEME_TOKENS = [
   "--chrome-bg",
   "--chrome-border",
   "--focus-ring",
+  "--phase-text-capacity",
+  "--phase-text-strength",
+  "--phase-text-power",
+  "--phase-text-execution",
   "--primary-action",
   "--primary-action-shade",
   "--primary-action-hover",
@@ -1513,6 +1518,25 @@ function mix(a: RGB, b: RGB, amount: number): RGB {
     a[1] + (b[1] - a[1]) * amount,
     a[2] + (b[2] - a[2]) * amount,
   ];
+}
+
+/** Hue angle in degrees [0, 360). Used to prove a "same color family" claim
+ * independent of how a variant was derived — a shade (mixed toward black,
+ * light mode) preserves HSL saturation exactly; a tint (mixed toward white,
+ * dark mode) does not, by definition of the sRGB/HSL relationship. Hue is
+ * the only channel both derivations are expected to hold fixed. */
+function hueDegrees([r, g, b]: RGB): number {
+  const [rn, gn, bn] = [r / 255, g / 255, b / 255];
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const d = max - min;
+  if (d === 0) return 0;
+  let h: number;
+  if (max === rn) h = ((gn - bn) / d) % 6;
+  else if (max === gn) h = (bn - rn) / d + 2;
+  else h = (rn - gn) / d + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
 }
 
 function gradientEndpoints(value: string, background: RGB, name: string): RGB[] {
@@ -2209,6 +2233,179 @@ describe("premium visual language contracts (#517)", () => {
     }
   });
 
+  // #557: PHASES[].color reads AA on dark (~8.4:1+) but fails AA as small
+  // text on light mode's near-white surfaces (e.g. Strength #DDB13A on white
+  // ~2.0:1). Every text consumer must use `Phase.textColor` — a
+  // `var(--phase-text-<id>)` reference — instead of the raw identity `color`.
+  it("keeps every phase identity's text variant AA-readable in light mode and hue-locked in dark", () => {
+    const phases = [
+      { id: "capacity", hue: "#2E96F0" },
+      { id: "strength", hue: "#DDB13A" },
+      { id: "power", hue: "#E5743A" },
+      { id: "execution", hue: "#7B83EB" },
+    ] as const;
+
+    // constants.ts wires every phase to its CSS custom property, not a
+    // hardcoded/raw hex and not the decorative `color` field.
+    for (const phase of phases) {
+      expect(constantsSource).toContain(
+        `textColor: "var(--phase-text-${phase.id})"`,
+      );
+    }
+
+    // Every known text consumer of the palette reads `textColor`, never the
+    // decorative `color` (chart/chip/background/border uses keep `color`).
+    const dashboardSource = component("Dashboard.tsx");
+    const phasesViewSource = component("PhasesView.tsx");
+    const sessionRowSource = component("SessionRow.tsx");
+    expect(dashboardSource).toContain("color: phase.textColor,");
+    expect(dashboardSource).not.toMatch(/color:\s*phase\.color\b/);
+    expect(phasesViewSource).not.toMatch(/color:\s*p\.color\b/);
+    expect(sessionRowSource).toContain("color: ph?.textColor");
+    expect(sessionRowSource).not.toContain("color: ph?.color");
+
+    // #557 round 2: the banner name's identity pill is wired via CSS custom
+    // properties (`--phase-name-bg`/`--phase-name-border`), not literal
+    // `background`/`border` values baked in from JS — that's what lets the
+    // dark theme block neutralize it below instead of compounding with the
+    // banner's own 12% wash.
+    expect(dashboardSource).toContain('className="phase-banner-name"');
+    expect(dashboardSource).toContain('"--phase-name-bg": phase.bg');
+    expect(dashboardSource).toContain('"--phase-name-border": phase.border');
+    expect(dashboardSource).not.toMatch(/\bbackground:\s*phase\.bg\b/);
+    expect(dashboardSource).not.toMatch(/\bborder:\s*`1px solid \$\{phase\.border\}`/);
+
+    // Dark mode must neutralize the pill, not compound it: `.phase-banner`
+    // is already a flat 12% identity wash there (--phase-tint-alpha), so a
+    // second 12% pill on top would compound to ~22.6% and fail AA for
+    // three of four phases (round-2 review, measured live — capacity/power/
+    // execution dropped to ~4.36–4.42:1, and it regressed capacity/power
+    // from the previous commit's passing 4.57/4.73). Both dark-detection
+    // paths must agree, same drift risk as the --phase-text-* tokens above.
+    const darkPillRule = cssRuleBody(parsedCssRules, ':root[data-theme="dark"] .phase-banner-name');
+    const systemDarkPillRule = cssRuleBody(parsedCssRules, ':root:not([data-theme="light"]) .phase-banner-name');
+    for (const [name, rule] of [["dark", darkPillRule], ["systemDark", systemDarkPillRule]] as const) {
+      expect(rule, `${name} .phase-banner-name background`).toContain("background: transparent;");
+      expect(rule, `${name} .phase-banner-name border-color`).toContain("border-color: transparent;");
+    }
+
+    // Every --phase-text-* token is declared (non-empty) in all three theme
+    // blocks, and the system-dark path stays byte-identical to the explicit
+    // dark path — a later edit to one dark block and not the other would
+    // otherwise silently leave a system-dark user on a stale/under-contrast
+    // value while every other assertion here (which only reads
+    // `themeDeclarations.dark`) stayed green.
+    for (const phase of phases) {
+      const token = `--phase-text-${phase.id}`;
+      for (const theme of Object.keys(themeDeclarations) as ThemeName[]) {
+        expect(themeDeclarations[theme][token], `${theme} ${token} declared`).toBeTruthy();
+      }
+      expect(themeDeclarations.dark[token], `${token} dark === systemDark`).toBe(
+        themeDeclarations.systemDark[token],
+      );
+    }
+
+    const white = hexColor("#FFFFFF", "white");
+    const f2f4f8 = hexColor("#F2F4F8", "F2F4F8");
+    // Light --phase-tint-alpha (banner's own wash, strongest where the name
+    // sits) — parsed from the token, not hardcoded, so a future retune can't
+    // silently invalidate the compounded check below.
+    const lightBannerTintAlpha = Number.parseFloat(themeDeclarations.light["--phase-tint-alpha"]!) / 100;
+    const darkCanvas = resolveThemeColor("var(--canvas)", "dark", "dark canvas");
+    // The real worst-case dark surface text lands on isn't plain --canvas:
+    // Sheet/session-row backgrounds layer --gradient-neutral over it, and
+    // its lighter stop is the strictest bound for light-on-dark contrast
+    // (round-2 review — a plain-canvas-only check missed capacity/power/
+    // execution measuring below AA on this real composite).
+    const darkGradientStops = gradientEndpoints(
+      resolveGradientDeclaration(
+        themeDeclarations.dark["--gradient-neutral"]!,
+        "dark",
+        "dark gradient-neutral",
+      ),
+      darkCanvas,
+      "dark gradient-neutral",
+    );
+    const darkWorstSurface = darkGradientStops.reduce((lightest, stop) =>
+      luminance(stop) > luminance(lightest) ? stop : lightest,
+    );
+
+    for (const phase of phases) {
+      const identity = hexColor(phase.hue, `${phase.id} identity`);
+
+      // --- Dark mode: only strength has real headroom (~6.3:1+ measured) to
+      // stay at the identity hex. capacity/power/execution measure
+      // ~4.17-4.47:1 on the real 12%-tinted dark card/tag fill at full
+      // identity strength (below AA) — each gets its own lightened variant.
+      const darkVarValue = themeDeclarations.dark[`--phase-text-${phase.id}`]!;
+      const darkVariant = hexColor(darkVarValue, `dark --phase-text-${phase.id}`);
+      const darkTintedWorst = mix(darkWorstSurface, identity, 0.12);
+      if (phase.id === "strength") {
+        expect(darkVarValue, "strength dark stays at identity").toBe(phase.hue);
+      } else {
+        expect(darkVariant, `${phase.id} dark variant differs from identity`).not.toEqual(identity);
+      }
+      expect(contrastRatio(darkVariant, darkCanvas), `${phase.id} dark vs --canvas`).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(darkVariant, darkTintedWorst),
+        `${phase.id} dark vs 12%-tinted worst-case dark surface`,
+      ).toBeGreaterThanOrEqual(4.5);
+
+      // --- Light mode: the token must be a darkened variant (same hue,
+      // lower value) that clears AA against every real background it lands
+      // on — plain white/#F2F4F8 AND the ~12%-phase-tinted tag/card fill
+      // (Phase.bg), which is the stricter, binding constraint.
+      const lightVarValue = themeDeclarations.light[`--phase-text-${phase.id}`]!;
+      const lightVariant = hexColor(lightVarValue, `light --phase-text-${phase.id}`);
+      expect(lightVariant, `${phase.id} light variant differs from identity`).not.toEqual(identity);
+      const lightTagBg = mix(f2f4f8, identity, 0.12);
+      expect(contrastRatio(lightVariant, white), `${phase.id} light vs #FFFFFF`).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(lightVariant, f2f4f8), `${phase.id} light vs #F2F4F8`).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(lightVariant, lightTagBg),
+        `${phase.id} light vs 12%-tinted tag/card fill`,
+      ).toBeGreaterThanOrEqual(4.5);
+
+      // --- Light Dashboard banner: the name pill's 12% Phase.bg tint
+      // compounds with the banner's OWN wash (the gradient is strongest,
+      // ~--phase-tint-alpha, right where the name sits) — two stacked tints,
+      // not one. This is the surface round-2 regressed in dark mode (fixed
+      // by neutralizing the pill there instead), and light must still clear
+      // AA on the real compounded composite, not just a single 12% tint.
+      // Base is white, not #F2F4F8: `.phase-banner`'s own background-color
+      // is literally `var(--canvas)` (#FFFFFF) — the gradient is a separate
+      // background-IMAGE layer on top of that, not a page-canvas consumer.
+      const lightBannerSurface = mix(white, identity, lightBannerTintAlpha);
+      const lightBannerPillBg = mix(lightBannerSurface, identity, 0.12);
+      expect(
+        contrastRatio(lightVariant, lightBannerPillBg),
+        `${phase.id} light vs compounded banner+pill fill`,
+      ).toBeGreaterThanOrEqual(4.5);
+
+      // --- Hue lock: every variant that differs from identity must still be
+      // recognizably the same hue. Light variants are shades (RGB scaled
+      // toward black), which preserves HSL saturation exactly as a free
+      // consequence — but dark variants are tints (mixed toward white,
+      // needed for execution/capacity to reach 4.5:1 at all; a pure
+      // saturation-preserving scale tops out at ~4.42:1 for execution even
+      // at max headroom before channel clipping), and tinting reduces
+      // saturation by definition of the sRGB/HSL relationship. So hue angle
+      // — not per-channel ratio-to-max — is the invariant both directions
+      // actually guarantee, and the one that matters for "still reads as
+      // the same color family".
+      const identityHue = hueDegrees(identity);
+      const variantsToCheck: Array<[string, typeof identity]> = [["light", lightVariant]];
+      if (phase.id !== "strength") variantsToCheck.push(["dark", darkVariant]);
+      for (const [themeName, variant] of variantsToCheck) {
+        const hueDrift = Math.abs(hueDegrees(variant) - identityHue);
+        expect(
+          Math.min(hueDrift, 360 - hueDrift),
+          `${phase.id} ${themeName} hue drift`,
+        ).toBeLessThan(2);
+      }
+    }
+  });
+
   it("keeps runtime zone and workout accents in decoration, not low-contrast text", () => {
     const zoneSource = component("ZoneFocusCard.tsx");
     const phoneSource = component("PhoneWorkoutFullscreen.tsx");
@@ -2755,6 +2952,8 @@ describe("premium visual language contracts (#517)", () => {
       "--zone-focus-color", // Recommended training zone hue is inherited by the button.
       "--pill-tint", // Glass action tint supplied by each fullscreen control.
       "--toast-accent", // Toast kind color supplied by ToastProvider.
+      "--phase-name-bg", // Phase banner name pill fill supplied per-phase (Dashboard.tsx).
+      "--phase-name-border", // Phase banner name pill border supplied per-phase (Dashboard.tsx).
     ]);
 
     for (const match of css.matchAll(/var\(\s*(--[\w-]+)/g)) {

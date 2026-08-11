@@ -116,16 +116,27 @@ export default function Dashboard({
               Phase · Day {phaseDays ?? "—"} · {todayLabel}
             </div>
             <div
+              className="phase-banner-name"
               style={{
-                fontSize: "var(--t-md)",
-                fontWeight: 700,
-                color: phase.color,
-                letterSpacing: "-0.01em",
-                marginTop: 2,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
+                maxWidth: "100%",
+                color: phase.textColor,
+                // #557 round 2: the banner's own tint (--phase-accent at
+                // --phase-tint-alpha) fades to ~transparent by the time it
+                // reaches the name, so in LIGHT mode the darkened, less
+                // saturated text (esp. Strength's gold, which reads brown at
+                // AA-legible lightness) is the only identity signal left —
+                // reintroduce it the same way History's session-type tags do,
+                // with the phase's own identity bg/border. Passed as custom
+                // properties, not literal `background`/`border`: dark mode's
+                // `.phase-banner` is already a flat 12% identity wash
+                // (index.css .phase-banner-name dark override zeroes these
+                // out there), so a second 12% layered on top would compound
+                // to ~22.6% and fail AA for three of four phases (round-2
+                // review, measured live) — the class resolves per theme
+                // instead of a literal value baked in from JS.
+                "--phase-name-bg": phase.bg,
+                "--phase-name-border": phase.border,
+              } as CSSProperties}
             >
               {phase.name}
             </div>
