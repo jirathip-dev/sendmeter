@@ -152,9 +152,23 @@ struct HomeView: View {
             .tabViewStyle(.page(indexDisplayMode: .never))
             // Page-style TabView does not reliably clip its children on
             // watchOS; make the ownership boundary explicit so scrollable
-            // cards can never render through the selector again.
+            // cards can never render through the selector again. Apply this
+            // after the root's safe-area expansion so the marker and the clip
+            // edge describe the same full-height pager.
             .clipped()
+            // Identify the actual pager container for clipping assertions.
+            // This is metadata on TabView itself, not a transparent overlay:
+            // it cannot sit above the two page trees and steal their hit tests.
+            .accessibilityIdentifier("home-pager-viewport")
         }
+        // The bottom safe-area inset is the rounded-corner / Digital Crown
+        // exclusion zone, not an additional visual gutter for this full-screen
+        // pager. Keeping it on the root stack left the pager's clip edge ~19pt
+        // above the captured framebuffer on a 40mm watch, which cuts the
+        // scored readiness card after its production sync line. Expand the
+        // root first so the TabView receives the full display height while its
+        // explicit `.clipped()` boundary remains in force.
+        .ignoresSafeArea(.container, edges: .bottom)
         // The home title duplicated the app identity while consuming the
         // exact vertical budget the 40mm status card needs. The system time
         // remains visible; pushed screens still provide their own titles.
@@ -248,6 +262,7 @@ private struct ActionsView: View {
                         .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("home-action-force")
                     .accessibilityHint("Opens force gauge setup")
                 }
 
@@ -275,6 +290,7 @@ private struct ActionsView: View {
                         .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("home-action-workout")
                     .accessibilityHint("Opens climb workout")
                 }
 

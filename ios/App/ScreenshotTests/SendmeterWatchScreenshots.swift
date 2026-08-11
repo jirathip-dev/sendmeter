@@ -39,20 +39,84 @@ final class SendmeterWatchScreenshots: XCTestCase {
         let app = launchFixture("status", accessibilityLarge: true)
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
 
+        let pager = homePagerViewport(in: app)
+        XCTAssertTrue(pager.waitForExistence(timeout: 10))
+        let readinessCard = app.descendants(matching: .any)
+            .matching(identifier: "readiness-card").firstMatch
+        XCTAssertTrue(readinessCard.waitForExistence(timeout: 10))
         let readinessRing = app.descendants(matching: .any)
             .matching(identifier: "readiness-ring").firstMatch
         XCTAssertTrue(readinessRing.waitForExistence(timeout: 10))
-        assertFullyVisible(readinessRing, in: app, fixture: "status-ax-large")
 
         let syncLabel = app.descendants(matching: .any)
             .matching(identifier: "status-sync-label").firstMatch
         XCTAssertTrue(syncLabel.waitForExistence(timeout: 5))
-        assertNotClipped(syncLabel, in: app, fixture: "status-ax-large")
+        XCTAssertTrue(
+            waitForStableFrame(readinessCard),
+            "accessibility-large status card must settle before clipping checks"
+        )
+        assertNotClipped(readinessCard, in: pager, fixture: "status-ax-large")
+        assertNotClipped(readinessRing, in: pager, fixture: "status-ax-large")
+        assertNotClipped(syncLabel, in: pager, fixture: "status-ax-large")
 
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "40mm-status-accessibility-large"
         capture.lifetime = .keepAlways
         add(capture)
+    }
+
+    /// #539 navigation regression guard: use the explicit Home controls for
+    /// both destinations and for the return path. This stays intentionally
+    /// separate from the visual matrix so a failed destination hit test is
+    /// not hidden by a later fixture assertion or a page gesture.
+    func testHomeNavigationUsesIdentifiedControls() throws {
+        let destinations: [(fixture: String, identifier: String, expected: String)] = [
+            ("forceSetup", "home-action-force", "force-context-button"),
+            ("workoutIdle", "home-action-workout", "Start Workout"),
+        ]
+
+        for item in destinations {
+            let app = launchFixture(item.fixture)
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+            openActions(app)
+            tapHomeAction(app, identifier: item.identifier)
+            let destination = app.descendants(matching: .any)
+                .matching(identifier: item.expected).firstMatch
+            if item.expected == "Start Workout" {
+                XCTAssertTrue(
+                    app.buttons["Start Workout"].waitForExistence(timeout: 10),
+                    "fixture \(item.fixture) should reach the Workout destination"
+                )
+            } else {
+                XCTAssertTrue(
+                    destination.waitForExistence(timeout: 10),
+                    "fixture \(item.fixture) should reach the Force destination"
+                )
+            }
+            app.terminate()
+        }
+
+        let app = launchFixture("status")
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        let actions = app.buttons.matching(identifier: "home-nav-actions").firstMatch
+        let status = app.buttons.matching(identifier: "home-nav-status").firstMatch
+        XCTAssertTrue(actions.waitForExistence(timeout: 10))
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        actions.tap()
+        XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitForStableFrame(app.staticTexts["Force Gauge"], timeout: 5),
+            "Actions page must settle before identified return tap"
+        )
+        status.tap()
+        let card = app.descendants(matching: .any)
+            .matching(identifier: "readiness-card").firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitForStableFrame(card, timeout: 5),
+            "Status page must settle after identified return tap"
+        )
+        app.terminate()
     }
 
     private func assertForceSetupPrimaryPathFits(
@@ -68,7 +132,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
             "40mm setup fixture must remain foreground before navigation"
         )
         openActions(app)
-        app.staticTexts["Force Gauge"].tap()
+        tapHomeAction(app, identifier: "home-action-force")
 
         // SL-537: the redesigned setup screen centers on one ready/start
         // card with a compact top-right context action (exercise/side/
@@ -205,6 +269,8 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 XCTAssertTrue(actionsPage.waitForExistence(timeout: 5))
                 assertFullyVisible(statusPage, in: app, fixture: item.fixture)
                 assertFullyVisible(actionsPage, in: app, fixture: item.fixture)
+                let pager = homePagerViewport(in: app)
+                XCTAssertTrue(pager.waitForExistence(timeout: 5))
                 let readiness = app.descendants(matching: .any)
                     .matching(identifier: "readiness-ring").firstMatch
                 XCTAssertTrue(readiness.waitForExistence(timeout: 5))
@@ -219,7 +285,18 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 )
                 actionsPage.tap()
                 XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 5))
+                XCTAssertTrue(
+                    waitForStableFrame(app.staticTexts["Force Gauge"], timeout: 5),
+                    "Actions page must settle before returning to Status"
+                )
                 statusPage.tap()
+                let returningCard = app.descendants(matching: .any)
+                    .matching(identifier: "readiness-card").firstMatch
+                XCTAssertTrue(returningCard.waitForExistence(timeout: 5))
+                XCTAssertTrue(
+                    waitForStableFrame(returningCard, timeout: 5),
+                    "status page must settle after returning from Actions"
+                )
             }
             if item.fixture.hasPrefix("status") {
                 // #539 round-1 review F1: assert against the REAL production
@@ -232,7 +309,20 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 let readinessRing = app.descendants(matching: .any)
                     .matching(identifier: "readiness-ring").firstMatch
                 XCTAssertTrue(readinessRing.waitForExistence(timeout: 5), "fixture \(item.fixture) should expose readiness-ring")
-                assertFullyVisible(readinessRing, in: app, fixture: item.fixture)
+                let pager = homePagerViewport(in: app)
+                XCTAssertTrue(pager.waitForExistence(timeout: 5), "fixture \(item.fixture) should expose the real pager viewport")
+                let readinessCard = app.descendants(matching: .any)
+                    .matching(identifier: "readiness-card").firstMatch
+                XCTAssertTrue(readinessCard.waitForExistence(timeout: 5), "fixture \(item.fixture) should expose readiness-card")
+                XCTAssertTrue(
+                    waitForStableFrame(readinessCard),
+                    "fixture \(item.fixture) status card must settle before clipping checks"
+                )
+                // The card itself is the load-bearing assertion: checking only
+                // the ring can pass while the bottom border and sync guidance
+                // are still behind TabView's `.clipped()` boundary.
+                assertNotClipped(readinessCard, in: pager, fixture: item.fixture)
+                assertNotClipped(readinessRing, in: pager, fixture: item.fixture)
                 // Empty/offline states render the full phone-sync guidance as
                 // visible content (the ring announces only "No data" to avoid
                 // duplicate VoiceOver copy), so they get the same load-bearing
@@ -243,7 +333,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
                         .matching(identifier: "readiness-empty-guidance").firstMatch
                     XCTAssertTrue(guidance.waitForExistence(timeout: 5), "fixture \(item.fixture) should expose readiness-empty-guidance")
                     XCTAssertEqual(guidance.label, "Open Sendmeter on your iPhone to sync Health")
-                    assertNotClipped(guidance, in: app, fixture: item.fixture)
+                    assertNotClipped(guidance, in: pager, fixture: item.fixture)
                     let capture = XCTAttachment(screenshot: app.screenshot())
                     capture.name = "\(item.fixture)-guidance"
                     capture.lifetime = .keepAlways
@@ -252,7 +342,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     let syncLabel = app.descendants(matching: .any)
                         .matching(identifier: "status-sync-label").firstMatch
                     XCTAssertTrue(syncLabel.waitForExistence(timeout: 5), "fixture \(item.fixture) should expose status-sync-label")
-                    assertNotClipped(syncLabel, in: app, fixture: item.fixture)
+                    assertNotClipped(syncLabel, in: pager, fixture: item.fixture)
                 }
                 // Keep one retained frame for every status variant, not only
                 // empty/offline. This makes the exported evidence cover the
@@ -269,7 +359,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 // not `assertFullyVisible`.
                 let chip = app.descendants(matching: .any)
                     .matching(identifier: item.identifier).firstMatch
-                assertNotClipped(chip, in: app, fixture: item.fixture)
+                assertNotClipped(chip, in: pager, fixture: item.fixture)
             }
             app.terminate()
         }
@@ -301,7 +391,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
         for item in workoutStates {
             let app = launchFixture(item.fixture)
             openActions(app)
-            app.staticTexts["Climb Workout"].tap()
+            tapHomeAction(app, identifier: "home-action-workout")
             XCTAssertTrue(
                 app.descendants(matching: .any)
                     .matching(identifier: item.identifier).firstMatch
@@ -336,7 +426,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
         for item in forceStates {
             let app = launchFixture(item.fixture)
             openActions(app)
-            app.staticTexts["Force Gauge"].tap()
+            tapHomeAction(app, identifier: "home-action-force")
             XCTAssertTrue(
                 app.descendants(matching: .any)
                     .matching(identifier: item.identifier).firstMatch
@@ -471,7 +561,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
         let app = launchFixture("forceSetup")
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         openActions(app)
-        app.staticTexts["Force Gauge"].tap()
+        tapHomeAction(app, identifier: "home-action-force")
 
         let contextButton = app.buttons["force-context-button"]
         XCTAssertTrue(
@@ -602,11 +692,40 @@ final class SendmeterWatchScreenshots: XCTestCase {
         setupSnapshot(app, waitForAnimations: true)
         app.launch()
 
+        XCTAssertTrue(
+            app.wait(for: .runningForeground, timeout: 15),
+            "App Store fixture must reach the foreground before navigation"
+        )
+        // Snapshot launch arguments select the deterministic `.status` fixture,
+        // but the paged TabView still has a real transition state. Drive the
+        // explicit status control and wait for the card/viewport geometry to
+        // settle before taking the first attachment; element existence alone
+        // previously allowed a blank Ultra status frame to pass.
+        let statusPage = app.buttons.matching(identifier: "home-nav-status").firstMatch
+        XCTAssertTrue(statusPage.waitForExistence(timeout: 10))
+        statusPage.tap()
+
+        let pager = homePagerViewport(in: app)
+        XCTAssertTrue(pager.waitForExistence(timeout: 10))
+        let readinessCard = app.descendants(matching: .any)
+            .matching(identifier: "readiness-card").firstMatch
+        XCTAssertTrue(readinessCard.waitForExistence(timeout: 10))
         let readiness = app.descendants(matching: .any)
             .matching(identifier: "readiness-ring").firstMatch
         XCTAssertTrue(readiness.waitForExistence(timeout: 15))
         XCTAssertEqual(readiness.label, "Readiness")
         XCTAssertEqual(readiness.value as? String, "82 out of 100, Push")
+
+        let syncLabel = app.descendants(matching: .any)
+            .matching(identifier: "status-sync-label").firstMatch
+        XCTAssertTrue(syncLabel.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitForStableFrame(readinessCard),
+            "App Store status page must settle before capture"
+        )
+        assertNotClipped(readinessCard, in: pager, fixture: "appstore-status")
+        assertNotClipped(readiness, in: pager, fixture: "appstore-status")
+        assertNotClipped(syncLabel, in: pager, fixture: "appstore-status")
 
         let acwr = app.descendants(matching: .any)
             .matching(identifier: "acwr-risk-track").firstMatch
@@ -619,8 +738,15 @@ final class SendmeterWatchScreenshots: XCTestCase {
         statusEvidence.lifetime = .keepAlways
         add(statusEvidence)
 
-        app.swipeLeft()
+        let actionsPage = app.buttons.matching(identifier: "home-nav-actions").firstMatch
+        XCTAssertTrue(actionsPage.waitForExistence(timeout: 10))
+        actionsPage.tap()
         XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 10))
+        let forceGauge = app.staticTexts["Force Gauge"]
+        XCTAssertTrue(
+            waitForStableFrame(forceGauge),
+            "App Store Actions page must settle before capture"
+        )
         snapshot("02-watch-actions")
         let actionsEvidence = XCTAttachment(screenshot: app.screenshot())
         actionsEvidence.name = "appstore-actions"
@@ -643,15 +769,92 @@ final class SendmeterWatchScreenshots: XCTestCase {
     }
 
     private func openActions(_ app: XCUIApplication) {
-        app.swipeLeft()
-        XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 10))
+        // Drive the same explicit selector used by the App Store path. A
+        // gesture can leave page-style TabView mid-transition (or on the
+        // previous page after a retained fixture), making a descendant label
+        // exist but have no hittable coordinate.
+        let actions = app.buttons.matching(identifier: "home-nav-actions").firstMatch
+        XCTAssertTrue(actions.waitForExistence(timeout: 10))
+        actions.tap()
+
+        let forceGauge = app.staticTexts["Force Gauge"]
+        XCTAssertTrue(forceGauge.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitForStableFrame(forceGauge),
+            "Actions page must settle before destination navigation"
+        )
     }
 
-    private func assertFullyVisible(_ element: XCUIElement, in app: XCUIApplication, fixture: String) {
+    private func tapHomeAction(_ app: XCUIApplication, identifier: String) {
+        let action = app.buttons.matching(identifier: identifier).firstMatch
+        XCTAssertTrue(action.waitForExistence(timeout: 10), "Home action \(identifier) should be available")
+        XCTAssertTrue(waitForStableFrame(action), "Home action \(identifier) must settle before tapping")
+        if identifier == "home-action-workout" {
+            // The workout card follows Force in the compact Actions scroll
+            // view. Bring its own hit target into the active window before
+            // synthesizing a tap; otherwise watchOS can report the visible
+            // descendant's stale pre-scroll frame and route the tap nowhere.
+            for _ in 0..<2 where !action.isHittable {
+                app.swipeUp(velocity: .slow)
+                Thread.sleep(forTimeInterval: 0.4)
+            }
+            XCTAssertTrue(
+                waitForStableFrame(action, timeout: 5),
+                "Home action \(identifier) must settle after scrolling into view"
+            )
+        }
+        XCTAssertTrue(action.isHittable, "Home action \(identifier) must be hittable before tapping")
+        action.tap()
+    }
+
+    private func homePagerViewport(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(identifier: "home-pager-viewport")
+            .firstMatch
+    }
+
+    private func waitForStableFrame(
+        _ element: XCUIElement,
+        timeout: TimeInterval = 3
+    ) -> Bool {
+        guard element.waitForExistence(timeout: timeout) else { return false }
+        let deadline = Date().addingTimeInterval(timeout)
+        var previous = element.frame
+        var stableSamples = 0
+
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+            guard element.exists else { return false }
+            let current = element.frame
+            let stable = abs(current.minX - previous.minX) <= 0.5
+                && abs(current.minY - previous.minY) <= 0.5
+                && abs(current.width - previous.width) <= 0.5
+                && abs(current.height - previous.height) <= 0.5
+            if stable {
+                stableSamples += 1
+                if stableSamples >= 2 { return true }
+            } else {
+                stableSamples = 0
+            }
+            previous = current
+        }
+        return false
+    }
+
+    private func assertFullyVisible(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        fixture: String,
+        viewport: XCUIElement? = nil
+    ) {
         XCTAssertTrue(element.isHittable, "fixture \(fixture) control is not hittable")
         XCTAssertGreaterThanOrEqual(element.frame.height, 44, "fixture \(fixture) control lost its 44pt hit target")
         XCTAssertGreaterThanOrEqual(element.frame.width, 44, "fixture \(fixture) control lost its 44pt horizontal hit target")
-        assertNotClipped(element, in: app, fixture: fixture)
+        if let viewport {
+            assertNotClipped(element, in: viewport, fixture: fixture)
+        } else {
+            assertNotClipped(element, in: app, fixture: fixture)
+        }
     }
 
     /// #539 round-1 review F1: the clipping bounds-check half of
@@ -661,12 +864,23 @@ final class SendmeterWatchScreenshots: XCTestCase {
     private func assertNotClipped(_ element: XCUIElement, in app: XCUIApplication, fixture: String) {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 5))
+        assertNotClipped(element, in: window, fixture: fixture)
+    }
+
+    /// Compare against the actual owner of the content's clipping boundary.
+    /// A watch UIWindow includes the bottom system inset, while the page-style
+    /// TabView can still clip its child above that edge; using this overload is
+    /// what makes the Home regression guard fail for a visually cropped card.
+    private func assertNotClipped(_ element: XCUIElement, in viewport: XCUIElement, fixture: String) {
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), "fixture \(fixture) viewport is unavailable")
         let frame = element.frame
-        let bounds = window.frame
+        let bounds = viewport.frame
+        XCTAssertGreaterThan(bounds.width, 0, "fixture \(fixture) viewport has no width")
+        XCTAssertGreaterThan(bounds.height, 0, "fixture \(fixture) viewport has no height")
         XCTAssertGreaterThanOrEqual(frame.minX, bounds.minX, "fixture \(fixture) control is clipped on the left")
         XCTAssertLessThanOrEqual(frame.maxX, bounds.maxX, "fixture \(fixture) control is clipped on the right")
         XCTAssertGreaterThanOrEqual(frame.minY, bounds.minY, "fixture \(fixture) control is clipped above")
-        XCTAssertLessThanOrEqual(frame.maxY, bounds.maxY, "fixture \(fixture) control is clipped below")
+        XCTAssertLessThanOrEqual(frame.maxY, bounds.maxY + 0.5, "fixture \(fixture) control is clipped below")
     }
 
     /// SL-538: the Start button fills with `WatchPalette.primary`

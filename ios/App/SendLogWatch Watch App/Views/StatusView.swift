@@ -89,10 +89,18 @@ struct StatusView: View {
                     // watch. Keep the scored card's established rhythm, but
                     // reclaim the minimum space needed for that guidance
                     // before the card reaches the paged viewport edge.
-                    padding: snap.readiness == nil ? 4 : 9
+                    // Scored cards also need to leave room for the production
+                    // sync label below the ring. The pager now consumes the
+                    // bottom display inset, and this compact inner padding
+                    // keeps the complete scored card inside that actual
+                    // viewport on 40mm at normal and accessibility-large
+                    // captures without changing the larger ACWR card.
+                    padding: 4
                 ) {
                     readiness
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("readiness-card")
                 WatchCard(accent: acwrAccent(
                     StatusPresentation.acwrRiskBand(snap.acwr),
                     reducedLuminance: isLuminanceReduced
