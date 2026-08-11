@@ -614,10 +614,18 @@ final class SendmeterWatchScreenshots: XCTestCase {
         XCTAssertEqual(acwr.label, "ACWR")
         XCTAssertEqual(acwr.value as? String, "1.08, Optimal")
         snapshot("01-watch-status")
+        let statusEvidence = XCTAttachment(screenshot: app.screenshot())
+        statusEvidence.name = "appstore-status"
+        statusEvidence.lifetime = .keepAlways
+        add(statusEvidence)
 
         app.swipeLeft()
         XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 10))
         snapshot("02-watch-actions")
+        let actionsEvidence = XCTAttachment(screenshot: app.screenshot())
+        actionsEvidence.name = "appstore-actions"
+        actionsEvidence.lifetime = .keepAlways
+        add(actionsEvidence)
     }
 
     private func launchFixture(
