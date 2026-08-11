@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Dark mode cards now sit on calm neutral surfaces like light mode: the per-tab color washes (blue Readiness, orange Load/Force, purple Workout) are gone from card backgrounds, while readiness/load/force data, status colors, and the subtle rainbow hairline stay exactly as before.
 - Apple Watch live Workout now fits 40mm watches: finishing is a compact flag icon with a confirmation before saving, all four rest targets (1m/2m/3m/5m) stay visible as small color-coded pills with full-size tap areas, and the play/stop control no longer clips at the bottom edge.
 - Apple Watch Home no longer clips the readiness card on 40/41mm watches, and the full-width Status/Actions pill is now a compact icon-based switcher.
 - Apple Watch Force setup is now a single glanceable ready screen: current force, "Ready to pull", and your selected exercise/protocol are centered together, with exercise/side/protocol selection moved behind one compact icon, connection state shown passively, and Free hold kept one tap away as the manual fallback. Hands-free arming still requires an explicit tap.

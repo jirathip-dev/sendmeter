@@ -202,10 +202,11 @@
      history) read as near-white in light mode — a feature-tinted card reads
      as competing chrome on a light canvas even though the same wash works on
      dark. Data/state color moves inward (values, chart lines, status text)
-     instead of washing the whole card. Dark keeps its richer per-surface
-     tints (below), since dark backgrounds can carry colored illumination.
-     All five point at one literal (--gradient-neutral) via var() — a single
-     semantic token, not five copies to drift out of sync. */
+     instead of washing the whole card. Dark followed in #585 — its tints
+     survived colored illumination better but still decorated pure container
+     cards with meaningless domain color, so both dark blocks below collapse
+     the same way. All five point at one literal (--gradient-neutral) via
+     var() — a single semantic token, not five copies to drift out of sync. */
   --gradient-neutral: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(244,247,252,0.96));
   --gradient-readiness: var(--gradient-neutral);
   --gradient-caution: var(--gradient-neutral);
@@ -393,12 +394,17 @@
   --accent-force: var(--orange);
   --accent-interaction: var(--primary);
   --accent-info: var(--info);
+  /* #585: dark adopts #547's collapse — a per-domain card wash tints pure
+     container cards (Force's Bluetooth notice, Exercise & Side) with a color
+     that communicates nothing. All five point at the dark --gradient-neutral;
+     data/state color stays inward, and the non-structural --well-tint-* pair
+     below keeps its real tint (same carve-out as light). */
   --gradient-neutral: linear-gradient(135deg, rgba(30,39,55,0.98), rgba(21,27,39,0.98));
-  --gradient-readiness: linear-gradient(135deg, rgba(88,184,255,0.16), rgba(23,29,42,0) 60%);
-  --gradient-caution: linear-gradient(135deg, rgba(240,201,87,0.14), rgba(23,29,42,0) 60%);
-  --gradient-load: linear-gradient(135deg, rgba(241,138,80,0.14), rgba(23,29,42,0) 60%);
-  --gradient-force: linear-gradient(135deg, rgba(240,167,83,0.16), rgba(23,29,42,0) 62%);
-  --gradient-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
+  --gradient-readiness: var(--gradient-neutral);
+  --gradient-caution: var(--gradient-neutral);
+  --gradient-load: var(--gradient-neutral);
+  --gradient-force: var(--gradient-neutral);
+  --gradient-interaction: var(--gradient-neutral);
   --well-tint-load: linear-gradient(135deg, rgba(241,138,80,0.14), rgba(23,29,42,0) 60%);
   --well-tint-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
   --well-tint-readiness: linear-gradient(135deg, rgba(88,184,255,0.16), rgba(23,29,42,0) 60%);
@@ -540,12 +546,14 @@
     --accent-force: var(--orange);
     --accent-interaction: var(--primary);
     --accent-info: var(--info);
+    /* #585: dark card washes collapsed to neutral — see the
+       :root[data-theme="dark"] block for the rationale. */
     --gradient-neutral: linear-gradient(135deg, rgba(30,39,55,0.98), rgba(21,27,39,0.98));
-    --gradient-readiness: linear-gradient(135deg, rgba(88,184,255,0.16), rgba(23,29,42,0) 60%);
-    --gradient-caution: linear-gradient(135deg, rgba(240,201,87,0.14), rgba(23,29,42,0) 60%);
-    --gradient-load: linear-gradient(135deg, rgba(241,138,80,0.14), rgba(23,29,42,0) 60%);
-    --gradient-force: linear-gradient(135deg, rgba(240,167,83,0.16), rgba(23,29,42,0) 62%);
-    --gradient-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
+    --gradient-readiness: var(--gradient-neutral);
+    --gradient-caution: var(--gradient-neutral);
+    --gradient-load: var(--gradient-neutral);
+    --gradient-force: var(--gradient-neutral);
+    --gradient-interaction: var(--gradient-neutral);
     --well-tint-load: linear-gradient(135deg, rgba(241,138,80,0.14), rgba(23,29,42,0) 60%);
     --well-tint-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
     --well-tint-readiness: linear-gradient(135deg, rgba(88,184,255,0.16), rgba(23,29,42,0) 60%);
