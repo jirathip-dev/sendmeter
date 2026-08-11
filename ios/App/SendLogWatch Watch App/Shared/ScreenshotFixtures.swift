@@ -36,6 +36,9 @@ enum ScreenshotFixtureState: String, CaseIterable {
     case forceLive
     case forceSaved
     case forceError
+    /// #569 foundation gallery: exercises the shared icon action/navigation
+    /// primitive without changing a production destination or persistence path.
+    case iconPrimitives
     /// SL-538 round-2 review finding 1: puts `GuidedForceRunnerView` on
     /// screen directly (see `RootView`'s fixture bypass) without driving the
     /// real `GuidedForceRunner` through a signed-in relay — that service
