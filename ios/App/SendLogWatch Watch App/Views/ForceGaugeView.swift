@@ -440,7 +440,7 @@ struct ForceGaugeView: View {
                 onRetryTags: loadTags
             )
         } label: {
-            WatchIconGlyph(systemImage: "slider.horizontal.3")
+            WatchIconGlyph(systemImage: WatchIconSymbol.forceContext)
         }
         .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textPrimary))
         .accessibilityLabel("Exercise and protocol")
@@ -744,10 +744,11 @@ struct ForceGaugeView: View {
 
     private var disconnectButton: some View {
         WatchIconButton(
-            systemImage: "xmark",
+            systemImage: WatchIconSymbol.disconnect,
             accessibilityLabel: "Disconnect Progressor",
             accessibilityHint: "Ends the session and disconnects the Progressor",
-            tint: WatchPalette.foreground(WatchDesignTokens.danger),
+            tint: WatchDesignTokens.danger,
+            usesTintWhenUnselected: true,
             action: disconnectTapped
         )
         .accessibilityIdentifier("disconnect-progressor")
