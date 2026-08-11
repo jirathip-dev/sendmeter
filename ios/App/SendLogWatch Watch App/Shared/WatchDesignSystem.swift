@@ -315,10 +315,12 @@ enum WatchIconSymbol {
     static let disconnect = "xmark" // Progressor disconnect action
     static let refresh = "arrow.triangle.2.circlepath" // matches WatchVisualState.syncing
     static let history = "clock.arrow.circlepath" // matches WatchVisualState.cached
-    // Finish-workout is a checkered flag, deliberately NOT the in-row boulder
-    // stop glyph (stop.fill): the two controls end different scopes (the whole
-    // workout vs. one boulder) and sharing a glyph would make them ambiguous
-    // (#580 scope 1).
+    // Finishing an activity is a checkered flag — shared by the live
+    // Workout's finish control and Force's finish-session control so the
+    // concept reads identically on both screens. Deliberately NOT the
+    // in-row boulder stop glyph (stop.fill): those controls end different
+    // scopes (the whole workout vs. one boulder) and sharing a glyph would
+    // make them ambiguous (#580 scope 1).
     static let finishWorkout = "flag.checkered"
     static let settings = "gearshape.fill" // not yet wired to a call site
     static let connection = "antenna.radiowaves.left.and.right" // not yet wired

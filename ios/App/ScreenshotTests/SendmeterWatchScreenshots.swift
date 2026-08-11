@@ -312,20 +312,37 @@ final class SendmeterWatchScreenshots: XCTestCase {
         capture.lifetime = .keepAlways
         add(capture)
 
-        // The destructive control must ask first. Cancel the confirmation so
-        // the fixture remains live and no workout is ended or saved by this
-        // layout test.
+        // The compact finish control must ask first. Cancel the confirmation
+        // so the fixture remains live and no workout is ended or saved by
+        // this layout test. The confirmation is now the app's own compact
+        // card (SL-580 follow-up — the full-screen system dialog was
+        // replaced), so its controls carry real identifiers and the same
+        // 44pt/fit contract as every other live control.
         finish.tap()
-        // watchOS presents confirmation actions in a system sheet and does
-        // not retain caller-supplied identifiers on those action cells; the
-        // visible destructive title is the stable semantic contract here.
-        let confirm = app.buttons["Finish Workout"]
+        let confirm = smallestButton(in: app, identifier: "finish-workout-confirm")
+        let cancel = smallestButton(in: app, identifier: "finish-workout-cancel")
         XCTAssertTrue(confirm.waitForExistence(timeout: 10))
-        let cancel = app.buttons.matching(identifier: "AX_ActionContentControllerCancelButton").firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        XCTAssertEqual(confirm.label, "Finish")
+        XCTAssertEqual(cancel.label, "Cancel")
+        assertFullyVisible(confirm, in: app, fixture: "workoutRest")
+        assertFullyVisible(cancel, in: app, fixture: "workoutRest")
+        // The scrim must block the live controls while the confirmation is
+        // up — a stray tap around the card must not toggle a boulder or
+        // change a rest target. (The modal trait may remove the background
+        // from the accessibility tree entirely; either way it must not be
+        // tappable.)
+        XCTAssertFalse(
+            boulder.exists && boulder.isHittable,
+            "live controls must be blocked behind the confirmation scrim"
+        )
+        let confirmCapture = XCTAttachment(screenshot: app.screenshot())
+        confirmCapture.name = "\(captureName)-confirm"
+        confirmCapture.lifetime = .keepAlways
+        add(confirmCapture)
         cancel.tap()
-        XCTAssertTrue(waitForElementToDisappear(confirm), "finish confirmation action must dismiss after Cancel")
-        XCTAssertTrue(waitForElementToDisappear(cancel), "finish confirmation sheet must dismiss after Cancel")
+        XCTAssertTrue(waitForElementToDisappear(confirm), "finish confirmation must dismiss after Cancel")
+        XCTAssertTrue(waitForElementToDisappear(cancel), "finish confirmation must dismiss after Cancel")
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
         XCTAssertEqual(finish.label, "Finish workout")
     }
@@ -553,6 +570,20 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 XCTAssertTrue(
                     waitForStableFrame(app.staticTexts["Force Gauge"], timeout: 5),
                     "Actions page must settle before returning to Status"
+                )
+                // SL-580 follow-up: the bar area is transparent chrome now —
+                // content is ALLOWED to pass underneath it (the old hard clip
+                // edge is gone). The intent the layout must keep is that the
+                // selector controls stay on top, legible and hittable, even
+                // with page content scrolled under them.
+                app.swipeUp(velocity: .slow)
+                XCTAssertTrue(
+                    statusPage.isHittable,
+                    "page selector must stay hittable above scrolled content"
+                )
+                XCTAssertTrue(
+                    actionsPage.isHittable,
+                    "page selector must stay hittable above scrolled content"
                 )
                 statusPage.tap()
                 let returningCard = app.descendants(matching: .any)
@@ -1044,8 +1075,12 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
         let forceGauge = app.staticTexts["Force Gauge"]
         XCTAssertTrue(forceGauge.waitForExistence(timeout: 10))
+        // 6s, not the helper's default 3: with the pages underlapping the
+        // floating selector bar (SL-580 follow-up), the scroll view settles
+        // its top inset after the page transition and the first card's frame
+        // can keep moving past the old window.
         XCTAssertTrue(
-            waitForStableFrame(forceGauge),
+            waitForStableFrame(forceGauge, timeout: 6),
             "Actions page must settle before destination navigation"
         )
     }

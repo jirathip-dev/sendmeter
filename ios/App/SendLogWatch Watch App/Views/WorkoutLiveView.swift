@@ -54,29 +54,102 @@ struct WorkoutLiveView: View {
         // next to an End button, the title is telling nobody anything.
         .navigationTitle(currentScreen == .live ? "" : "Climb")
         .navigationBarBackButtonHidden(currentScreen == .live)
+        // While the compact confirmation is up, the screen behind it leaves
+        // the accessibility tree entirely: the scrim already blocks touch
+        // hit-testing, but VoiceOver focus (and XCUITest hittability) walk
+        // the tree, not the scrim — without this, swiping VoiceOver focus
+        // could still land on and activate the covered live controls.
+        .accessibilityHidden(showingFinishConfirmation)
+        // The compact in-design confirmation replaces the full-screen system
+        // confirmationDialog (user decision after trying #582 on a 40mm
+        // device: the system sheet was too big and the red destructive
+        // treatment too alarming for what is a safe, expected action).
         // Attached here, outside every Dynamic Type cap the live screen
-        // applies to its own rows (#582 review F7): the one irreversible
-        // confirmation must render at the user's own accessibility text
-        // size, never at the dashboard's capped size.
-        .confirmationDialog(
-            "Finish workout?",
-            isPresented: $showingFinishConfirmation,
-            titleVisibility: .visible
-        ) {
-            // The compact destructive control must never end a workout on a
-            // single (possibly accidental) tap — `endAndSave()` runs only
-            // after this explicit confirmation (#580 scope 1). No
-            // accessibility identifier: watchOS does not retain caller
-            // identifiers on system action cells (the screenshot test
-            // matches the visible destructive title instead).
-            Button("Finish Workout", role: .destructive) {
-                workout.endAndSave()
+        // applies to its own rows (#582 review F7 still applies), and the
+        // one-tap guarantee is unchanged: `endAndSave()` is reachable only
+        // through the overlay's explicit Finish button.
+        .overlay {
+            if showingFinishConfirmation {
+                finishConfirmationOverlay
             }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Your climbing data will be saved on this watch.")
         }
         .watchCanvas()
+    }
+
+    /// Compact confirmation card in the watch design language: `WatchCard`
+    /// chrome (accent hairline, Always-On-aware gradient) with the calmer
+    /// shared secondary accent instead of a red destructive treatment —
+    /// finishing is the expected end of every workout, not an emergency.
+    /// The scrim blocks every live control underneath (a stray tap cannot
+    /// toggle a boulder mid-confirmation) and tapping it cancels, which is
+    /// always safe. Appears/disappears without animation, so there is no
+    /// motion for Reduce Motion to reduce.
+    private var finishConfirmationOverlay: some View {
+        ZStack {
+            // Deep enough that the live screen reads as background in both
+            // full and reduced luminance; the card on top stays the focus.
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { showingFinishConfirmation = false }
+                .accessibilityHidden(true)
+            WatchCard(accent: WatchPalette.secondary) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Finish workout?")
+                        .font(.system(.footnote, design: .rounded).weight(.bold))
+                        .foregroundStyle(WatchPalette.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Saves your climb to this watch.")
+                        .font(.system(.caption2, design: .rounded))
+                        .foregroundStyle(WatchPalette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        Button("Cancel") {
+                            showingFinishConfirmation = false
+                        }
+                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
+                        // Neither title may hyphenate-wrap in the tight
+                        // side-by-side row on 40mm: one line each, scaling
+                        // down a step instead when the width demands it.
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .layoutPriority(1)
+                        .accessibilityIdentifier("finish-workout-cancel")
+                        .accessibilityHint("Keeps the workout running")
+                        Button("Finish") {
+                            showingFinishConfirmation = false
+                            // Presentation-only fixture guard: the workout
+                            // fixtures force the live screen while no real
+                            // workout is running (production cannot reach
+                            // that state — `.live` requires `isRunning`), so
+                            // the real save path has nothing valid to end
+                            // and would leave the fixture stuck mid-save.
+                            // Fixtures never drive queues or saves, same as
+                            // `fixtureRestTargetS` above.
+                            if ScreenshotFixtures.enabled, ScreenshotFixtures.workout != nil {
+                                return
+                            }
+                            workout.endAndSave()
+                        }
+                        .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.secondary))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .accessibilityIdentifier("finish-workout-confirm")
+                        .accessibilityHint("Saves and ends the workout")
+                    }
+                }
+            }
+            .padding(.horizontal, 6)
+            // VoiceOver treats the card as a modal so focus stays on the
+            // confirmation instead of the dimmed live controls behind it.
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+        }
+        // Bounded like the HR readouts (#582 review F3's cap style): the
+        // compact card plus two 44pt buttons must fit a 40mm viewport with
+        // no scroll fallback, so the visual scale stops at .xxLarge while
+        // the full VoiceOver labels and hints stay intact.
+        .dynamicTypeSize(.medium ... .xxLarge)
     }
 
     /// The exact decision `body` renders, as a testable seam (#476 R3a):

@@ -304,22 +304,15 @@ struct ForceGaugeView: View {
         // setupContent's for fitting the smallest watch without scrolling.
         if tindeq.sessionId != nil || (fixtureVisual?.sessionCount ?? 0) > 0 {
             WatchCard(accent: WatchPalette.primary) {
-                // The chip plus a 44pt Finish target is wider than the inner
-                // card on a 40mm watch once the button's label padding is
-                // included. ViewThatFits keeps the compact row on Ultra and
-                // deliberately stacks it before SwiftUI can compress either
-                // essential control on SE.
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 7) {
-                        sessionChip
-                        Spacer(minLength: 0)
-                        finishButton
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        sessionChip
-                        finishButton
-                            .frame(maxWidth: .infinity)
-                    }
+                // One row on every size now: the compact icon finish always
+                // fits beside the chip — the old 44pt text pill was wider
+                // than the inner card on 40mm and needed a ViewThatFits
+                // stack fallback that made the control read enormous there
+                // (SL-580 follow-up).
+                HStack(spacing: 7) {
+                    sessionChip
+                    Spacer(minLength: 0)
+                    finishButton
                 }
             }
         }
@@ -333,11 +326,26 @@ struct ForceGaugeView: View {
         )
     }
 
+    /// Compact icon-only finish — the same `WatchIconButton` treatment as
+    /// the live Workout's finish control (SL-580 follow-up), so "finish this
+    /// activity" reads identically on both screens. Deliberately NO
+    /// confirmation step, mirroring the behavior this replaces: logging a
+    /// Force session is not destructive (#280 — it logs immediately with a
+    /// predicted RPE and stays editable in History), unlike ending a workout.
     private var finishButton: some View {
-        Button("Finish") { finish() }
-            .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.primary)))
-            .disabled(tindeq.saving)
-            .accessibilityIdentifier("force-session-finish")
+        WatchIconButton(
+            systemImage: tindeq.saving ? "ellipsis" : WatchIconSymbol.finishWorkout,
+            accessibilityLabel: tindeq.saving ? "Finishing session" : "Finish session",
+            accessibilityHint: tindeq.saving
+                ? "Logging the session"
+                : "Logs this force session to History",
+            accessibilityIdentifier: "force-session-finish",
+            tint: WatchDesignTokens.danger,
+            usesTintWhenUnselected: true,
+            isDisabled: tindeq.saving
+        ) {
+            finish()
+        }
     }
 
     private func finish() {

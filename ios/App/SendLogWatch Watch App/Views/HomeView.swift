@@ -95,6 +95,11 @@ struct HomeView: View {
     @State private var lossQueue: [LossNotice] = []
     @State private var showLossAlert = false
 
+    /// The floating selector bar's chrome height: the shared icon primitive's
+    /// 44pt hit target. Pages pad their at-rest content past it (plus a 2pt
+    /// breath) so nothing sits under the buttons until the user scrolls.
+    private static let selectorBarHeight: CGFloat = 44
+
     private var activeLossNotice: LossNotice? { lossQueue.first }
 
     var body: some View {
@@ -107,59 +112,92 @@ struct HomeView: View {
                 )
                 .padding(.horizontal, 4)
             }
-            // Keep the explicit page selector above the page viewport. When
-            // it followed TabView, watchOS let the page paint beyond its
-            // proposed bounds, making this control appear to cover the
-            // readiness/Force cards on both 40mm and 49mm watches.
-            //
-            // #539/#541: a full-width text pill here read as heavier than the
-            // status it was gating (though at the same 44pt-minimum hit
-            // target, it took no *more* vertical space — the clipping fix
-            // itself came from StatusView's removed "Today" row, below). Two
-            // compact `WatchIconButton`s (#541's shared primitive) replace
-            // it — same explicit two-way affordance (VoiceOver users get
-            // named "Show Status"/"Show Actions" controls instead of relying
-            // on a blind swipe), far less visual weight.
-            HStack(spacing: 6) {
-                Spacer(minLength: 0)
-                WatchIconButton(
-                    systemImage: WatchIconSymbol.status,
-                    accessibilityLabel: "Show Status",
-                    accessibilityHint: "Displays today's readiness and training load",
-                    accessibilityIdentifier: "home-nav-status",
-                    isSelected: selection == .status,
-                    action: { selection = .status }
-                )
-                WatchIconButton(
-                    systemImage: WatchIconSymbol.actions,
-                    accessibilityLabel: "Show Actions",
-                    accessibilityHint: "Displays Force Gauge and Climb Workout",
-                    accessibilityIdentifier: "home-nav-actions",
-                    isSelected: selection == .actions,
-                    tint: WatchDesignTokens.secondary,
-                    action: { selection = .actions }
-                )
-            }
-            .padding(.trailing, 10)
             TabView(selection: $selection) {
+                // Applied per page, NOT via `safeAreaInset` on the TabView:
+                // page-style TabView children are their own hosting roots on
+                // watchOS and never received the TabView-level inset — at
+                // rest, the readiness/Force cards rendered straight under
+                // the selector circles (the fixture matrix caught it). The
+                // safe-area padding gives each page's at-rest content a
+                // clear top margin below the floating bar while its scrolled
+                // content still passes visibly underneath.
                 StatusView()
+                    .safeAreaPadding(.top, Self.selectorBarHeight + 2)
                     .tag(WatchHomePage.status)
                 ActionsView()
+                    .safeAreaPadding(.top, Self.selectorBarHeight + 2)
                     .tag(WatchHomePage.actions)
             }
-            // The explicit selector above is the only pagination affordance;
-            // the native dots duplicate it and consume scarce 40mm height.
+            // The explicit selector (the safeAreaInset bar below) is the only
+            // pagination affordance; the native dots duplicate it and consume
+            // scarce 40mm height.
             .tabViewStyle(.page(indexDisplayMode: .never))
-            // Page-style TabView does not reliably clip its children on
-            // watchOS; make the ownership boundary explicit so scrollable
-            // cards can never render through the selector again. Apply this
-            // after the root's safe-area expansion so the marker and the clip
-            // edge describe the same full-height pager.
-            .clipped()
-            // Identify the actual pager container for clipping assertions.
-            // This is metadata on TabView itself, not a transparent overlay:
-            // it cannot sit above the two page trees and steal their hit tests.
+            // #578's guarantee, softened (SL-580 follow-up): the pages must
+            // never paint OVER the selector controls or escape the pager, but
+            // the old hard `.clipped()` guillotined scrolled cards at a
+            // razor-straight line just under the icons — a bright card cut
+            // mid-body made the whole selector row read as a solid black
+            // band. This alpha mask keeps the same ownership boundary (all
+            // painting outside the pager's bounds is still fully masked
+            // away) while the top of the scroll region fades over the bar's
+            // height, so content visibly slides UNDER the transparent bar
+            // and dissolves instead of being chopped. Pure geometry — no
+            // color is introduced, so Always-On dimming and Reduce Motion
+            // are untouched.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [.clear, .black],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 40)
+                    Rectangle().fill(Color.black)
+                }
+            }
+            // Identify the pager container for clipping assertions BEFORE
+            // mounting the bar overlay: an identifier on a node that contains
+            // the bar swallows the buttons' own identifiers (the documented
+            // container-identifier footgun — the nav buttons vanished from
+            // the accessibility tree when this was ordered the other way).
             .accessibilityIdentifier("home-pager-viewport")
+            // #539/#541: two compact `WatchIconButton`s as the explicit
+            // two-way page affordance (VoiceOver gets named "Show Status"/
+            // "Show Actions" controls instead of a blind swipe). Now mounted
+            // as floating chrome OVER the pager (the watch analogue of the
+            // web app's floating glass chrome — DESIGN.md: auto-hiding
+            // chrome must overlay, not flex): the bar area itself is
+            // transparent, each page insets its at-rest content below it
+            // (see the per-page `safeAreaPadding` above), and scrolled
+            // content passes underneath visibly. The buttons' own circular
+            // fills are what keep them legible over passing content; the
+            // overlay renders above the pages, so the controls can never be
+            // covered or lose their hit targets — the actual #578
+            // regression this layout must not reintroduce.
+            .overlay(alignment: .top) {
+                HStack(spacing: 6) {
+                    Spacer(minLength: 0)
+                    WatchIconButton(
+                        systemImage: WatchIconSymbol.status,
+                        accessibilityLabel: "Show Status",
+                        accessibilityHint: "Displays today's readiness and training load",
+                        accessibilityIdentifier: "home-nav-status",
+                        isSelected: selection == .status,
+                        action: { selection = .status }
+                    )
+                    WatchIconButton(
+                        systemImage: WatchIconSymbol.actions,
+                        accessibilityLabel: "Show Actions",
+                        accessibilityHint: "Displays Force Gauge and Climb Workout",
+                        accessibilityIdentifier: "home-nav-actions",
+                        isSelected: selection == .actions,
+                        tint: WatchDesignTokens.secondary,
+                        action: { selection = .actions }
+                    )
+                }
+                .padding(.trailing, 10)
+                .frame(height: Self.selectorBarHeight, alignment: .center)
+            }
         }
         // The bottom safe-area inset is the rounded-corner / Digital Crown
         // exclusion zone, not an additional visual gutter for this full-screen
