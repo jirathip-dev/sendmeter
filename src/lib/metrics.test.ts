@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   ACUTE_SPAN_DAYS,
@@ -11,7 +13,7 @@ import {
   currentPeriodStart,
   ewma,
   phaseAcwrFit,
-  phaseStartFromHistory,
+  phaseBlockAge,
   suggestPhaseStepBack,
 } from "./metrics";
 import { today, daysAgo } from "./dates";
@@ -314,46 +316,51 @@ describe("currentPeriodStart", () => {
   });
 });
 
-describe("phaseStartFromHistory", () => {
-  const fallback = "2026-07-19";
-
-  it("falls back when no current-phase session exists yet", () => {
-    expect(phaseStartFromHistory([], "capacity", fallback)).toBe(fallback);
-    // newest session is a different phase → streak is empty → fallback
-    expect(
-      phaseStartFromHistory([{ date: "2026-07-18", phase: "strength" }], "capacity", fallback),
-    ).toBe(fallback);
+describe("phaseBlockAge", () => {
+  it("issue #544 regression: derives from the open period's start, not from a shorter recent session streak", () => {
+    // The user's actual field scenario: a Strength block opened 2026-07-25,
+    // but the most recent UNBROKEN streak of logged Strength sessions only
+    // goes back to 2026-08-08 (a gap in logging before that). The old
+    // phaseStartFromHistory() read that streak as the block's start and
+    // showed "Day 3" on 2026-08-10 instead of the true "Day 17" — the exact
+    // bug #544 reported. phaseBlockAge takes no session parameter at all, so
+    // this streak date cannot reach it regardless of what session history
+    // exists; the recent streak's start is asserted distinct from the
+    // period's start purely to document the scenario this regression covers.
+    const recentSessionStreakStart = "2026-08-08";
+    const periods = [period("strength", "2026-07-25", null)];
+    expect(recentSessionStreakStart).not.toBe(periods[0]!.startedOn);
+    expect(phaseBlockAge(periods, "strength", "2026-07-25", "2026-08-10")).toEqual({
+      totalDays: 17,
+      week: 3,
+      dayOfWeek: 3,
+    });
   });
 
-  it("returns the earliest session of the current phase's streak", () => {
-    const sessions = [
-      { date: "2026-07-18", phase: "capacity" as const },
-      { date: "2026-07-15", phase: "capacity" as const },
-      { date: "2026-07-10", phase: "capacity" as const }, // earliest in streak
-    ];
-    expect(phaseStartFromHistory(sessions, "capacity", fallback)).toBe("2026-07-10");
+  it("falls back to phaseStartDate exactly like currentPeriodStart, then ages from there", () => {
+    expect(phaseBlockAge([], "capacity", "2026-07-19", "2026-07-19")).toEqual({
+      totalDays: 1,
+      week: 1,
+      dayOfWeek: 1,
+    });
   });
 
-  it("survives a brief toggle to another phase that logged nothing", () => {
-    // Capacity for days, a Strength period was opened + closed with no session,
-    // now back on Capacity. All sessions are capacity → count from the first.
-    const sessions = [
-      { date: "2026-07-19", phase: "capacity" as const }, // after returning
-      { date: "2026-07-12", phase: "capacity" as const },
-      { date: "2026-07-02", phase: "capacity" as const }, // real start
-    ];
-    // fallback (today's fresh period) would wrongly give Day 1
-    expect(phaseStartFromHistory(sessions, "capacity", fallback)).toBe("2026-07-02");
+  it("has no session parameter in its signature — structural guard against reintroducing #544", () => {
+    // Session-history data produced the #544 bug once already
+    // (`phaseStartFromHistory` competing with the canonical open-period
+    // start); pinning the exported signature makes a reintroduction a
+    // visible diff to this function, not a silent behavior change reachable
+    // only by reading App.tsx.
+    const src = readFileSync(join(import.meta.dirname, "metrics.ts"), "utf8");
+    const match = src.match(/export function phaseBlockAge\(([\s\S]*?)\):/);
+    expect(match).not.toBeNull();
+    expect(match![1]).not.toMatch(/\bsessions\b/);
   });
 
-  it("resets when a real different-phase block interrupts the streak", () => {
-    const sessions = [
-      { date: "2026-07-18", phase: "capacity" as const },
-      { date: "2026-07-16", phase: "capacity" as const }, // new capacity block start
-      { date: "2026-07-14", phase: "strength" as const }, // breaks the streak
-      { date: "2026-07-05", phase: "capacity" as const }, // older — not counted
-    ];
-    expect(phaseStartFromHistory(sessions, "capacity", fallback)).toBe("2026-07-16");
+  it("App.tsx derives phaseDays from phaseBlockAge and never reintroduces phaseStartFromHistory", () => {
+    const src = readFileSync(join(import.meta.dirname, "..", "App.tsx"), "utf8");
+    expect(src).toMatch(/phaseBlockAge\(\s*phasePeriods,\s*currentPhase,\s*phaseStartDate/);
+    expect(src).not.toMatch(/phaseStartFromHistory/);
   });
 });
 

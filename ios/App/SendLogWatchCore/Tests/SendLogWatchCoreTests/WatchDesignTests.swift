@@ -83,6 +83,26 @@ final class WatchDesignTests: XCTestCase {
         }
     }
 
+    /// SL-538 round-2 review finding 2: `readableForeground` only pins
+    /// contrast against the four flat surfaces, but `WatchCard` paints an
+    /// accent-tinted card as a gradient starting at `accent` over the base —
+    /// not the flat base itself. A label using the default `foreground(_:)`
+    /// surface can therefore pass this pinned invariant on paper while
+    /// rendering below the floor on the actual accent-tinted corner it sits
+    /// on. `accentCardSurface` models that corner; every semantic accent must
+    /// stay readable there too via `foregroundOnAccentCard`'s resolver.
+    func testReadableForegroundMeetsAAOnAccentTintedCardCorner() {
+        for accent in WatchDesignTokens.semanticAccents {
+            let corner = WatchDesignTokens.accentCardSurface(accent)
+            let foreground = WatchDesignTokens.readableForeground(accent, on: corner)
+            XCTAssertGreaterThanOrEqual(
+                foreground.contrastRatio(to: corner),
+                WatchDesignTokens.minimumForegroundContrast,
+                "semantic accent \(accent) must remain readable on its own accent-tinted WatchCard corner"
+            )
+        }
+    }
+
     func testReducedAccentIsDecorativeOnlyAndCannotBeUsedAsForeground() {
         for accent in WatchDesignTokens.semanticAccents {
             let reduced = WatchDesignTokens.accent(accent, reducedLuminance: true)

@@ -11,6 +11,15 @@ enum ScreenshotFixtureState: String, CaseIterable {
     case statusSyncing
     case statusOffline
     case statusCached
+    /// #539 round-1 review F1/F3: the three `ReadinessManager.syncState`
+    /// cases with the longest real `syncLabel`/chip-title strings
+    /// (`"Open Sendmeter on iPhone to refresh"`, `"iPhone readiness
+    /// unavailable"`, `"Refresh failed · showing cached"` and `"Phone
+    /// needed"`/`"Update phone"`) had no fixture, so nothing ever exercised
+    /// the readiness card at its longest real content width.
+    case statusAuthRequired
+    case statusUnsupported
+    case statusFailed
     case waiting
     case actions
     case actionsOffline
@@ -27,6 +36,15 @@ enum ScreenshotFixtureState: String, CaseIterable {
     case forceLive
     case forceSaved
     case forceError
+    /// SL-538 round-2 review finding 1: puts `GuidedForceRunnerView` on
+    /// screen directly (see `RootView`'s fixture bypass) without driving the
+    /// real `GuidedForceRunner` through a signed-in relay — that service
+    /// legitimately requires a relayed account (`WatchSessionStore.userId`)
+    /// to start a run, which a standalone watch-target screenshot test has
+    /// no way to fake honestly. This fixture overrides only what the view
+    /// *displays* (`ScreenshotFixtures.guidedRun`), the same presentation-
+    /// only pattern `ScreenshotForceVisual` already uses for `ForceGaugeView`.
+    case forceGuidedRun
 }
 
 struct ScreenshotWorkoutVisual {
@@ -55,6 +73,25 @@ struct ScreenshotForceVisual {
     let sessionCount: Int
     let savedMessage: String?
     let errorMessage: String?
+}
+
+/// Presentation-only stand-in for the fields `GuidedForceRunnerView` reads
+/// off the real `GuidedForceRunner`. Never feeds back into the runner or any
+/// of its persistence/queue paths — see `ScreenshotFixtureState.forceGuidedRun`.
+struct ScreenshotGuidedRunVisual {
+    let phaseTitle: String
+    let countdownText: String
+    let progress: Double
+    let isMeasured: Bool
+    let isCadenceOnly: Bool
+    let protocolName: String
+    let currentSet: Int
+    let totalSets: Int
+    let currentRep: Int
+    let totalReps: Int
+    let side: String
+    let currentKg: Double?
+    let tag: String
 }
 
 /// Deterministic App Store screenshot data. Fastlane's official SnapshotHelper
@@ -116,6 +153,32 @@ enum ScreenshotFixtures {
                 workoutActive: false, boulders: 0, climbing: false,
                 phaseSinceEpoch: nil, restTargetS: 180, updatedAt: 1_788_000_000
             )
+        }
+    }
+
+    /// The line `StatusView`'s readiness card renders below the ring/zone —
+    /// mirrors `ReadinessManager.syncLabel`'s real strings (#539 round-1
+    /// review F1) instead of leaving the card's fixture path shorter than
+    /// what production renders. `.statusAuthRequired`/`.statusUnsupported`/
+    /// `.statusFailed` carry the three longest real strings.
+    static var statusSyncLabel: String {
+        switch state {
+        case .statusEmpty:
+            return "Waiting for iPhone"
+        case .statusSyncing:
+            return "Syncing from iPhone…"
+        case .statusOffline:
+            return "Offline · showing cached"
+        case .statusCached:
+            return "Cached · afternoon freeze"
+        case .statusAuthRequired:
+            return "Open Sendmeter on iPhone to refresh"
+        case .statusUnsupported:
+            return "iPhone readiness unavailable"
+        case .statusFailed:
+            return "Refresh failed · showing cached"
+        default:
+            return "Fresh from iPhone"
         }
     }
 
@@ -188,20 +251,37 @@ enum ScreenshotFixtures {
     static var force: ScreenshotForceVisual? {
         switch state {
         case .forceIdle:
-            ScreenshotForceVisual(status: .idle, tag: "", side: "", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
+            ScreenshotForceVisual(status: .idle, tag: "Half crimp", side: "left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
         case .forceConnecting:
             ScreenshotForceVisual(status: .connecting, tag: "", side: "", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
         case .forceSetup:
-            ScreenshotForceVisual(status: .connected, tag: "Half crimp", side: "Left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
+            ScreenshotForceVisual(status: .connected, tag: "Half crimp", side: "left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: nil)
         case .forceConnected:
-            ScreenshotForceVisual(status: .connected, tag: "Crimp edge", side: "Left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 3, savedMessage: nil, errorMessage: nil)
+            ScreenshotForceVisual(status: .connected, tag: "Crimp edge", side: "right", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 3, savedMessage: nil, errorMessage: nil)
         case .forceLive:
-            ScreenshotForceVisual(status: .measuring, tag: "Crimp edge", side: "Left", currentKg: 34.7, peakKg: 38.2, elapsedS: 7.4, sessionCount: 3, savedMessage: nil, errorMessage: nil)
+            ScreenshotForceVisual(status: .measuring, tag: "Crimp edge", side: "left", currentKg: 34.7, peakKg: 38.2, elapsedS: 7.4, sessionCount: 3, savedMessage: nil, errorMessage: nil)
         case .forceSaved:
-            ScreenshotForceVisual(status: .connected, tag: "Crimp edge", side: "Left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 3, savedMessage: "Saved · 38.2 kg · Crimp edge", errorMessage: nil)
+            ScreenshotForceVisual(status: .connected, tag: "Crimp edge", side: "left", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 3, savedMessage: "Saved · 38.2 kg · Crimp edge", errorMessage: nil)
         case .forceError:
             ScreenshotForceVisual(status: .connected, tag: "", side: "", currentKg: 0, peakKg: 0, elapsedS: 0, sessionCount: 0, savedMessage: nil, errorMessage: "Progressor is out of range. Check the gauge and try again.")
         default: nil
         }
+    }
+
+    static var guidedRun: ScreenshotGuidedRunVisual? {
+        guard state == .forceGuidedRun else { return nil }
+        return ScreenshotGuidedRunVisual(
+            phaseTitle: "Hold",
+            countdownText: "7",
+            progress: 0.42,
+            isMeasured: true,
+            isCadenceOnly: false,
+            protocolName: "Static PR Ladder",
+            currentSet: 2, totalSets: 3,
+            currentRep: 1, totalReps: 2,
+            side: "left",
+            currentKg: 24.6,
+            tag: "Crimp edge"
+        )
     }
 }

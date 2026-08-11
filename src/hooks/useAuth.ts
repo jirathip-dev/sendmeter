@@ -18,6 +18,7 @@ import {
   syncHealthNow,
 } from "../lib/healthSync";
 import { setMonitoringUser } from "../lib/monitoring";
+import { recordAuthenticatedAccountForLiveMirror } from "../lib/liveMirrorOwnership";
 
 // Keep the local seeded-account implementation out of every production graph.
 // Vite folds this compile-time branch before Rollup creates chunks, so the
@@ -64,6 +65,14 @@ export function useAuth() {
         // gap to the next recorded event is what turns a bare cause into
         // "valid at 23:40, gone at 06:50, cause X".
         recordSessionHeartbeat(s);
+        // #530 round-2 review R2-F1: the SINGLE writer for the live-mirror
+        // account-transition marker — `onSession` is the one funnel for
+        // both the ordinary sign-in/out path (via `applySession`) and the
+        // narrower in-place A→B swap on a `visibilitychange` re-check
+        // below, so recording here (not inside a mirror hook) means any
+        // number of Workout/Force/History mirrors can later READ the same
+        // signal without one disarming it for the others.
+        recordAuthenticatedAccountForLiveMirror(s.user.id);
       }
     }
 

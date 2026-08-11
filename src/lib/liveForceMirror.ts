@@ -6,6 +6,7 @@ import type {
   LiveForceMessage,
   LiveMirrorEvent,
 } from "sendlog-auth-bridge";
+import { acceptsPacketOwner } from "./liveMirrorOwnership";
 
 /// How long the beat may go quiet before the mirror hides. The watch beats
 /// ~2 Hz while measuring and on every status change; 8s of silence means the
@@ -231,6 +232,33 @@ export function reduceForceBeat(
     accepted: true,
     state: { beat: next, cursor: nextCursor },
   };
+}
+
+export interface LiveForceAdmissionResult extends LiveForceReduceResult {
+  /// True when this admission is positive evidence the watch has caught up
+  /// to a #530-aware build — a genuinely STAMPED (not legacy-absent) packet
+  /// was accepted. Callers should durably clear the transition marker via
+  /// `recordStampedPacketAccepted` in `liveMirrorOwnership.ts`.
+  stampedAcceptance: boolean;
+}
+
+/// The FULL WatchConnectivity packet admission pipeline for one incoming
+/// message, in one call: the account-ownership guard (#530), then
+/// `reduceForceBeat` — a rejected owner never reaches the reducer at all.
+/// Round-2 review R2-F6: this is the ONLY function `useLiveForce`'s WC
+/// listener calls, so a test exercising this function directly is
+/// exercising the exact wiring that ships.
+export function admitLiveForceMessage(
+  previous: LiveForceMirrorState,
+  msg: LiveForceMessage,
+  currentUserId: string,
+  hasHadAccountTransition: boolean,
+): LiveForceAdmissionResult {
+  if (!acceptsPacketOwner(msg.account_user_id, currentUserId, hasHadAccountTransition)) {
+    return { state: previous, accepted: false, stampedAcceptance: false };
+  }
+  const reduced = reduceForceBeat(previous, msg);
+  return { ...reduced, stampedAcceptance: msg.account_user_id !== undefined };
 }
 
 /// Whether the given beat is still within the staleness window.

@@ -48,6 +48,9 @@ struct SendLogWatchApp: App {
                 Task { await OfflineQueue.shared.drain() }
                 Task { await PendingSessionQueue.shared.drain() }
                 Task { await PendingRecordingQueue.shared.drain() }
+                // #531: a failed terminal live_workouts upsert has no other
+                // trigger once its owning LiveWorkoutSync actor is gone.
+                Task { await LiveWorkoutTerminalRetry.shared.retryNow() }
                 Task { await WatchBuild.refreshAndReportQueueStatus() }
                 // One watch-triggered path keeps the cached score, widgets,
                 // and open status UI in sync; there is no duplicate foreground
@@ -64,6 +67,13 @@ struct SendLogWatchApp: App {
         .onChange(of: auth.state) { _, _ in
             forceProtocolCatalog.synchronizeAccountScope()
             guidedForceRunner.authStateDidChange(to: auth.state)
+            // #529 slice-2 review F2: a manual/hands-free gauge session has
+            // no natural end of its own (it spans the whole connect, not one
+            // run) — called AFTER the guided runner so persistenceOwnerAssigned
+            // truthfully reflects whether ITS teardown (discardWithoutSaving())
+            // already ran this same event; tindeq.handleAccountTransition
+            // no-ops while a guided run still owns the manager either way.
+            tindeq.handleAccountTransition(to: auth.state.userId)
         }
     }
 }

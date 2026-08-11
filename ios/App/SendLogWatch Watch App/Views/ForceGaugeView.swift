@@ -2,13 +2,6 @@ import Combine
 import SendLogWatchCore
 import SwiftUI
 
-private let SIDE_OPTIONS: [(value: String, label: String)] = [
-    ("", "—"),
-    ("left", "Left"),
-    ("right", "Right"),
-    ("both", "Both"),
-]
-
 private let LAST_TAG_KEY = "lastTindeqTag"
 private let LAST_SIDE_KEY = "lastTindeqSide"
 
@@ -104,11 +97,7 @@ struct ForceGaugeView: View {
                                 )
 
                             case .idle:
-                                setupContent(availableSize: geometry.size)
-                                Button("Connect Progressor") { tindeq.connect() }
-                                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.secondary)))
-                                    .accessibilityHint("Connect a Progressor to measure force, or start a movement cadence without one")
-                                    .accessibilityIdentifier("force-connect-progressor")
+                                setupContent()
                                 if let msg = fixtureVisual?.errorMessage ?? tindeq.errorMsg {
                                     WatchStateBanner(state: .danger, title: "Could not connect", message: msg)
                                 }
@@ -120,7 +109,7 @@ struct ForceGaugeView: View {
                                 )
 
                             case .connected:
-                                setupContent(availableSize: geometry.size)
+                                setupContent()
                                 if let msg = fixtureVisual?.errorMessage {
                                     WatchStateBanner(state: .danger, title: "Could not save", message: msg)
                                 }
@@ -366,330 +355,241 @@ struct ForceGaugeView: View {
         tindeq.disconnect()
     }
 
-    // MARK: Connected (setup) — exercise/side, protocol, Start.
-
+    // MARK: Connected/idle setup — one primary ready state (issue #537).
+    //
+    // The setup screen centers on ONE ready/measurement state: a live force
+    // reading, a status line and the selected exercise/side/protocol
+    // context, all inside a single card that IS the Start control.
+    // Everything that used to compete with it for space (separate
+    // exercise/side/protocol rows, the full protocol detail card, a
+    // "Connected" chip, disconnect) is either folded into that one card,
+    // demoted to a compact top-right context action, or made
+    // passive/below-the-fold — see #541's icon-first rule for the same
+    // move. Hands-free arming keeps its exact behavior (TindeqManager owns
+    // it untouched); only its position and the "Free hold" fallback's
+    // visual weight change here.
+    //
+    // Round-1 review (SL-537): every current Watch size measures as
+    // `isMicroSetupSize` here once the nav bar is subtracted, so this no
+    // longer branches on size — there is one design, proven to fit on the
+    // smallest supported watch, used everywhere. That is a deliberate
+    // simplification, not an oversight: a size-conditional design that only
+    // one branch ever exercises is worse than one always-verified design.
+    // `isMicroSetupSize` itself is untouched and still used correctly by
+    // `measuringContent` and the `navigationTitle` reclaim below — this
+    // screen just stopped being one of its callers.
+    //
+    // No container-level `.accessibilityIdentifier` here — see
+    // `GuidedForceRunnerView`'s note on this exact footgun: on this
+    // device+OS an identifier on a container silently overwrites every
+    // descendant's own identifier (Free hold, Arm hands-free, disconnect
+    // all reported back as this container's ID during this redesign's own
+    // testing). Every control below already carries its own unique
+    // `force-*` identifier, so no container ID is needed.
     @ViewBuilder
-    private func setupContent(availableSize: CGSize) -> some View {
-        if isMicroSetupSize(availableSize) {
-            VStack(spacing: 5) {
-                microSetupContent
-                microSecondaryContent
-            }
-        } else {
-            richSetupContent
+    private func setupContent() -> some View {
+        VStack(spacing: 5) {
+            primaryReadyPath
+                // The primary path (ready card + Free hold) is the no-scroll
+                // guarantee: cap Dynamic Type here exactly like the old
+                // micro rows did, so an accessibility text size cannot push
+                // Free hold below the fold. Everything below stays free to
+                // scale and may scroll, same as before this redesign.
+                .environment(\.dynamicTypeSize, .medium)
+            secondaryContent
         }
     }
 
     /// The viewport is finite even though the setup ScrollView's content
     /// proposal is unbounded. Keep this threshold in one place so the
-    /// accessibility navigation treatment and the row treatment make the
-    /// same 40mm decision.
+    /// accessibility navigation treatment and `measuringContent`'s row
+    /// treatment make the same 40mm decision.
     private func isMicroSetupSize(_ size: CGSize) -> Bool {
         size.height <= 205 || size.width < 180
     }
 
-    /// A 40mm setup deliberately uses flat rows instead of two padded cards.
-    /// The outer GeometryReader measures the viewport (not the ScrollView's
-    /// unbounded content proposal), so these three 44pt targets remain above
-    /// the fold while secondary connection/actions stay below intentional
-    /// scrolling.
+    /// The no-scroll guarantee: the ready card (with the compact context
+    /// action layered in its corner, not spent as its own row) plus Free
+    /// hold, the one manual fallback the issue calls out as needing to stay
+    /// reachable without competing for equal weight.
     @ViewBuilder
-    private var microSetupContent: some View {
-        VStack(spacing: 3) {
-            microExerciseSideRow
-            microProtocolRow
-            if tindeq.handsFreeRequested {
-                microHandsFreeRow
-            } else {
-                microStartButton
-            }
+    private var primaryReadyPath: some View {
+        ZStack(alignment: .topTrailing) {
+            readyCard
+            contextButton
+                .padding(.top, 3)
+                .padding(.trailing, 3)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityIdentifier("force-setup-micro")
+        if visibleStatus == .connected && !tindeq.handsFreeRequested {
+            freeHoldButton
+        }
     }
 
-    private var microExerciseSideRow: some View {
-        Group {
-            if tagsLoading && recentTags.isEmpty {
-                HStack(spacing: 5) {
-                    Text("Loading exercises…")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WatchPalette.textSecondary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    sidePickerCompact
-                }
-            } else if recentTags.isEmpty {
-                HStack(spacing: 5) {
-                    Text("No exercises yet")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    sidePickerCompact
-                }
-            } else {
-                HStack(spacing: 3) {
-                    exercisePicker
-                        .frame(minWidth: 96, maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .layoutPriority(1)
-                    sidePickerCompact
-                        .frame(width: 56)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("force-setup-micro-exercise-side")
-        // Keep the three-row micro layout deterministic at accessibility
-        // sizes; VoiceOver still receives the full picker labels above.
-        .environment(\.dynamicTypeSize, .medium)
-    }
-
-    private var microProtocolRow: some View {
+    /// One top-right entry point (#537 AC-1) for exercise, side and protocol
+    /// — Suggested and Custom both live in `ForceProtocolChooserView`. A
+    /// sibling of the ready card (via the `ZStack` above), never nested
+    /// inside its Button, so the two tap targets never conflict.
+    private var contextButton: some View {
         NavigationLink {
-            ForceProtocolChooserView(catalog: protocolCatalog)
-        } label: {
-            HStack(spacing: 5) {
-                Text(protocolCatalog.selected.name)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(WatchPalette.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .allowsTightening(true)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .layoutPriority(1)
-                if ForceProtocolPresentation.watchAvailability(for: protocolCatalog.selected) != nil {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
-                        .frame(width: 14)
-                        .accessibilityHidden(true)
-                }
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(WatchPalette.textSecondary)
-                    .frame(width: 16)
-                    .accessibilityHidden(true)
-            }
-            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44, alignment: .leading)
-            // NavigationLink can expose its label as the runtime button node;
-            // keep the semantic element on this content so VoiceOver/XCTest
-            // receives the selected protocol rather than the visual children.
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Selected protocol, \(protocolCatalog.selected.name)")
-            .accessibilityValue(
-                [
-                    "Selected",
-                    ForceProtocolPresentation.detail(for: protocolCatalog.selected),
-                    ForceProtocolPresentation.watchAvailability(for: protocolCatalog.selected)
-                ]
-                .compactMap { $0 }
-                .joined(separator: ". ")
+            ForceProtocolChooserView(
+                catalog: protocolCatalog,
+                tag: $tag,
+                side: $side,
+                recentTags: recentTags,
+                tagsLoading: tagsLoading,
+                onRetryTags: loadTags
             )
-            .accessibilityHint("Opens the read-only protocol chooser")
+        } label: {
+            WatchIconGlyph(systemImage: WatchIconSymbol.forceContext)
         }
-        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.force)))
-        .accessibilityIdentifier("force-setup-micro-selected-protocol")
-        .environment(\.dynamicTypeSize, .medium)
+        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textPrimary))
+        .accessibilityLabel("Exercise and protocol")
+        .accessibilityHint("Choose exercise, side and protocol")
+        .accessibilityIdentifier("force-context-button")
     }
 
-    private var microStartButton: some View {
-        Button { startSelectedProtocol() } label: {
-            Text("Start")
-                .font(.body.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .allowsTightening(true)
-                .frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44)
+    /// Round-1 review finding 1 (BLOCKER): a movement protocol is runnable
+    /// as cadence-only without a Progressor (`GuidedForcePolicy` returns
+    /// `.allowed` with `sensorConnected: false`, and the always-available
+    /// `movementStarter` default is exactly that mode) — the pre-#537
+    /// design always kept a Start control on screen for this reason. Route
+    /// to the Start card whenever eligible, connected or not; only fall
+    /// back to "Connect Progressor" when starting genuinely requires the
+    /// sensor (a static hold) or the protocol can't run on watch at all.
+    @ViewBuilder
+    private var readyCard: some View {
+        if visibleStatus == .connected && tindeq.handsFreeRequested {
+            armedReadyCard
+        } else if visibleStatus == .connected || selectedStartEligibility == .allowed {
+            startReadyCard
+        } else {
+            connectReadyCard
         }
-        .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
-        .disabled(
-            tindeq.saving
-                || guidedForceRunner.isActive
-                || tag.trimmingCharacters(in: .whitespaces).isEmpty
-                || selectedStartEligibility != .allowed
-        )
-        .opacity(selectedStartEligibility == .allowed ? 1 : 0.52)
+    }
+
+    private var startReadyCard: some View {
+        let eligible = !tindeq.saving
+            && !guidedForceRunner.isActive
+            && !tag.trimmingCharacters(in: .whitespaces).isEmpty
+            && selectedStartEligibility == .allowed
+        return Button { startSelectedProtocol() } label: {
+            readyCardBody(token: WatchDesignTokens.primary, status: readyStatusText)
+        }
+        .buttonStyle(.plain)
+        .disabled(!eligible)
+        .opacity(eligible ? 1 : 0.52)
         .accessibilityLabel("Start selected protocol")
         .accessibilityHint(startHint)
         .accessibilityIdentifier("force-start-selected")
-        .environment(\.dynamicTypeSize, .medium)
     }
 
-    private var microHandsFreeRow: some View {
+    private var armedReadyCard: some View {
         Button { tindeq.cancelHandsFree() } label: {
-            Text(tindeq.saving ? "Saving…" : "Armed — pull to start")
-                .font(.body.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 44)
+            readyCardBody(
+                token: WatchDesignTokens.success,
+                status: tindeq.saving ? "Saving…" : "Armed — pull to start"
+            )
         }
-        .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.success))
+        .buttonStyle(.plain)
         .disabled(tindeq.saving)
         .accessibilityLabel("Hands-free mode")
         .accessibilityHint("Tap to disarm hands-free mode")
         .accessibilityIdentifier("force-hands-free-armed")
     }
 
-    /// Secondary controls intentionally follow the three-row micro mainline.
-    /// They remain reachable by scrolling, but never displace Exercise/Side,
-    /// protocol selection, or Start on the 40mm viewport.
-    @ViewBuilder
-    private var microSecondaryContent: some View {
-        VStack(spacing: 5) {
-            if let error = guidedForceRunner.errorMessage {
-                WatchStateBanner(state: .danger, title: "Protocol not saved", message: error)
-            } else if let message = guidedForceRunner.completionMessage {
-                WatchStateBanner(state: .success, title: message, message: nil)
-            }
-
-            if visibleStatus == .connected {
-                connectionRow
-            } else {
-                noSensorRow
-            }
-
-            if !tindeq.handsFreeRequested {
-                if visibleStatus == .connected {
-                    Button("Free hold") { tindeq.start() }
-                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.force)))
-                        .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .accessibilityLabel("Free hold")
-                        .accessibilityHint("Starts one untimed force hold")
-                        .accessibilityIdentifier("force-free-hold")
-                }
-
-                Button("Arm hands-free") { tindeq.armHandsFree() }
-                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.secondary)))
-                    .disabled(tindeq.saving || visibleStatus != .connected || tag.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .accessibilityHint("Arms the gauge to start when you pull")
-                    .accessibilityIdentifier("force-arm-hands-free")
-            }
-
-            if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
-                Text("Pick an exercise to start.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .accessibilityHint("Exercise is required before starting")
-            }
+    private var connectReadyCard: some View {
+        Button { tindeq.connect() } label: {
+            readyCardBody(token: WatchDesignTokens.secondary, status: "Connect Progressor")
         }
-        .accessibilityIdentifier("force-setup-micro-secondary")
+        .buttonStyle(.plain)
+        .accessibilityLabel("Connect Progressor")
+        .accessibilityHint("Connect a Progressor to measure force, or start a movement cadence without one")
+        .accessibilityIdentifier("force-connect-progressor")
     }
 
-    @ViewBuilder
-    private var richSetupContent: some View {
-        VStack(spacing: 5) {
-            WatchCard(accent: WatchPalette.force) {
-                VStack(spacing: 5) {
-                    // Tag is PICK-ONLY on the watch — typing on a watch is miserable and
-                    // free text drifts from the app's tag set. New tags are created in the
-                    // iPhone/web Force tab; the watch selects from what already exists.
-                    if tagsLoading && recentTags.isEmpty {
-                        WatchLoadingState(title: "Loading exercises…")
-                        sidePickerTitled
-                    } else if recentTags.isEmpty {
-                        WatchStateBanner(
-                            state: .warning,
-                            title: "No exercises yet",
-                            message: "Create an exercise in the iPhone app, then try again.",
-                            actionTitle: "Retry",
-                            action: { loadTags() }
-                        )
-                        sidePickerTitled
-                    } else {
-                        // Prefer one row, but let the controls stack when their
-                        // measured content cannot fit on a 40mm card. The
-                        // navigation links keep their 44pt targets in either
-                        // layout, so a narrow display never clips an essential
-                        // exercise/side control.
-                        compactPickers
-                    }
+    /// The context button overlays this card's top-trailing corner (see
+    /// `primaryReadyPath`) rather than spending its own row. Round-1 review
+    /// finding 2 (HIGH): on 40mm at normal Dynamic Type the centered readout
+    /// and status line rendered UNDER that icon. Reserve real trailing space
+    /// for exactly those two lines — sized to clear the icon's 44pt frame
+    /// plus its 3pt inset — rather than trusting the two siblings not to
+    /// overlap; the context line stays fully centered since it sits below
+    /// the icon's vertical extent.
+    private static let contextIconReservedWidth: CGFloat = 40
+
+    /// Shared visual shape for every ready-state card: the live/placeholder
+    /// force reading, a status line, and the selected exercise/side/protocol
+    /// context — the "one primary ready state" the setup screen centers on.
+    /// Never itself a `Button`; callers wrap it so each state carries its own
+    /// accessibility label/hint/identifier.
+    private func readyCardBody(token: PhaseRGB, status: String) -> some View {
+        WatchCard(accent: WatchPalette.color(token)) {
+            VStack(spacing: 2) {
+                VStack(spacing: 1) {
+                    readyForceReadout(token: token)
+                    Text(status)
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(WatchPalette.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                 }
+                .padding(.trailing, Self.contextIconReservedWidth)
+                readyContextLine(token: token)
             }
-
-            ForceSelectedProtocolCard(
-                protocolValue: protocolCatalog.selected,
-                catalog: protocolCatalog,
-                compact: false
-            )
-
-            if let availability = ForceProtocolPresentation.watchAvailability(for: protocolCatalog.selected) {
-                Text(availability)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.62)
-                    .accessibilityLabel(availability)
-                    .accessibilityIdentifier("force-protocol-watch-availability")
-            }
-
-            if tindeq.handsFreeRequested {
-                Button { tindeq.cancelHandsFree() } label: {
-                    Text(tindeq.saving ? "Saving…" : "Armed — pull to start")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.success))
-                .disabled(tindeq.saving)
-                .accessibilityLabel("Hands-free mode")
-                .accessibilityHint("Tap to disarm hands-free mode")
-                .accessibilityIdentifier("force-hands-free-armed")
-            } else {
-                Button { startSelectedProtocol() } label: {
-                    Text("Start")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
-                .disabled(
-                    tindeq.saving
-                        || guidedForceRunner.isActive
-                        || tag.trimmingCharacters(in: .whitespaces).isEmpty
-                        || selectedStartEligibility != .allowed
-                )
-                .opacity(selectedStartEligibility == .allowed ? 1 : 0.52)
-                .accessibilityLabel("Start selected protocol")
-                .accessibilityHint(
-                    startHint
-                )
-                .accessibilityIdentifier("force-start-selected")
-
-                if let error = guidedForceRunner.errorMessage {
-                    WatchStateBanner(state: .danger, title: "Protocol not saved", message: error)
-                } else if let message = guidedForceRunner.completionMessage {
-                    WatchStateBanner(state: .success, title: message, message: nil)
-                }
-
-                if visibleStatus == .connected {
-                    connectionRow
-                } else {
-                    noSensorRow
-                }
-
-                // Keep the original free-hold and hands-free paths one tap
-                // away. The timed runner owns only the selected protocol.
-                if visibleStatus == .connected {
-                    Button("Free hold") { tindeq.start() }
-                        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.force)))
-                        .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
-                        .accessibilityLabel("Free hold")
-                        .accessibilityHint("Starts one untimed force hold")
-                        .accessibilityIdentifier("force-free-hold")
-                }
-
-                Button("Arm hands-free") { tindeq.armHandsFree() }
-                    .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.secondary)))
-                    .disabled(tindeq.saving || visibleStatus != .connected || tag.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .accessibilityHint("Arms the gauge to start when you pull")
-                    .accessibilityIdentifier("force-arm-hands-free")
-            }
-            if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
-                Text("Pick an exercise to start.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .accessibilityHint("Exercise is required before starting")
-            }
+            .frame(maxWidth: .infinity)
         }
+    }
+
+    private func readyForceReadout(token: PhaseRGB) -> some View {
+        (Text(String(format: "%.1f", fixtureVisual?.currentKg ?? tindeq.currentKg))
+            .font(.system(size: 26, weight: .heavy, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(WatchPalette.foregroundOnAccentCard(token, accent: token))
+        + Text(" kg").font(.caption).foregroundStyle(WatchPalette.textSecondary))
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+    }
+
+    /// Round-1 review finding 3(a) (HIGH): Side is sticky across reps
+    /// (`lastTindeqSide`) and drives per-side PR/curve comparisons, so
+    /// hiding it here removed the user's only pre-recording confirmation of
+    /// which side a rep will be attributed to. Always show it — `lineLimit`
+    /// stays 1 (not 2) so a long exercise/protocol name shrinks via
+    /// `minimumScaleFactor` instead of wrapping into a second line, which is
+    /// what the 40mm no-scroll budget actually depends on, not which facts
+    /// are present.
+    private func readyContextLine(token: PhaseRGB) -> some View {
+        let exercise = tag.isEmpty ? "No exercise" : tag
+        let sideText = side.isEmpty ? nil : sideLabel(side)
+        let pieces = [exercise, sideText, protocolCatalog.selected.name].compactMap { $0 }
+        return Text(pieces.joined(separator: " · "))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(WatchPalette.foregroundOnAccentCard(token, accent: token))
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
+            .multilineTextAlignment(.center)
+    }
+
+    private var readyStatusText: String {
+        if tag.trimmingCharacters(in: .whitespaces).isEmpty { return "Pick an exercise" }
+        switch selectedStartEligibility {
+        case .allowed:
+            return visibleStatus == .connected ? "Ready to pull" : "Ready · cadence only"
+        case .requiresProgressor: return "Connect Progressor"
+        case .alternatingSidesUnsupported: return "Unsupported on watch"
+        }
+    }
+
+    /// The clear, explicit manual fallback (#537 AC-3) — same action and
+    /// identifier as before, just no longer sharing a row with Arm
+    /// hands-free so it isn't visually paired as an equal-weight peer.
+    private var freeHoldButton: some View {
+        Button("Free hold") { tindeq.start() }
+            .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
+            .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
+            .accessibilityLabel("Free hold")
+            .accessibilityHint("Starts one untimed force hold")
+            .accessibilityIdentifier("force-free-hold")
     }
 
     private func startSelectedProtocol() {
@@ -709,6 +609,69 @@ struct ForceGaugeView: View {
             return "Connect Progressor to measure this static hold"
         case .alternatingSidesUnsupported:
             return "Run this alternating-sides protocol on your iPhone; alternating sides are unsupported on watch"
+        }
+    }
+
+    /// Everything below the no-scroll primary path: Arm hands-free
+    /// (repositioned per #537 #2 — behavior is untouched), warnings, and the
+    /// passive connection/disconnect footer. Reachable by scrolling, same
+    /// acceptance the pre-#537 design already gave its secondary controls.
+    @ViewBuilder
+    private var secondaryContent: some View {
+        if let error = guidedForceRunner.errorMessage {
+            WatchStateBanner(state: .danger, title: "Protocol not saved", message: error)
+        } else if let message = guidedForceRunner.completionMessage {
+            WatchStateBanner(state: .success, title: message, message: nil)
+        }
+
+        if let availability = ForceProtocolPresentation.watchAvailability(for: protocolCatalog.selected) {
+            Text(availability)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
+                .lineLimit(1)
+                .minimumScaleFactor(0.62)
+                .accessibilityLabel(availability)
+                .accessibilityIdentifier("force-protocol-watch-availability")
+        }
+
+        if visibleStatus != .connected {
+            noSensorRow
+        }
+
+        if visibleStatus == .connected && !tindeq.handsFreeRequested {
+            Button("Arm hands-free") { tindeq.armHandsFree() }
+                // Neutral ink, matching "Free hold": the two remain peer
+                // ways to start a measurement, so one may not read louder
+                // than the other even after moving below the fold.
+                .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
+                .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityHint("Arms the gauge to start when you pull")
+                .accessibilityIdentifier("force-arm-hands-free")
+        }
+
+        if visibleStatus == .connected {
+            passiveConnectionFooter
+        }
+
+        if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
+            Text("Pick an exercise to start.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .accessibilityHint("Exercise is required before starting")
+        }
+
+        if tagsLoading && recentTags.isEmpty {
+            Text("Loading exercises…")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(WatchPalette.textSecondary)
+        } else if recentTags.isEmpty {
+            WatchStateBanner(
+                state: .warning,
+                title: "No exercises yet",
+                message: "Create an exercise in the iPhone app, then try again.",
+                actionTitle: "Retry",
+                action: { loadTags() }
+            )
         }
     }
 
@@ -752,170 +715,43 @@ struct ForceGaugeView: View {
         }
     }
 
-    /// The battery label and disconnect action used to compete with the
-    /// connected chip for the narrowest card width. ViewThatFits keeps the
-    /// compact row on larger watches, then falls back to two short rows before
-    /// SwiftUI can truncate or clip the destructive control.
-    @ViewBuilder
-    private var connectionRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 4) {
-                WatchStateChip(state: .ready, title: "Connected", compact: true)
-                Spacer(minLength: 0)
-                if tindeq.lowBattery {
-                    Label("Low battery", systemImage: "battery.25")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                }
-                disconnectButton
+    /// Connection state, deliberately not a `WatchCard`: it reads as passive
+    /// chrome (#537 #4), not another card competing with the ready state
+    /// above it. Disconnect keeps its full 44pt icon-only target, demoted
+    /// here as the secondary action the issue asks for.
+    private var passiveConnectionFooter: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(WatchPalette.foreground(WatchDesignTokens.success))
+                .frame(width: 6, height: 6)
+                .accessibilityHidden(true)
+            Text("Connected")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(WatchPalette.textSecondary)
+            if tindeq.lowBattery {
+                Image(systemName: "battery.25")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
+                    .accessibilityLabel("Low battery")
             }
-            HStack(spacing: 4) {
-                WatchStateChip(state: .ready, title: "Connected", compact: true)
-                Spacer(minLength: 0)
-                if tindeq.lowBattery {
-                    Image(systemName: "battery.25")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
-                        .frame(width: 22, height: 22)
-                        .accessibilityLabel("Low battery")
-                }
-                disconnectButton
-            }
-            VStack(spacing: 2) {
-                HStack(spacing: 4) {
-                    WatchStateChip(state: .ready, title: "Connected", compact: true)
-                    Spacer(minLength: 0)
-                    if tindeq.lowBattery {
-                        Image(systemName: "battery.25")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
-                            .frame(width: 22, height: 22)
-                            .accessibilityLabel("Low battery")
-                    }
-                }
-                HStack {
-                    Spacer(minLength: 0)
-                    disconnectButton
-                }
-            }
+            Spacer(minLength: 4)
+            disconnectButton
         }
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("force-connection-status")
     }
 
-    @ViewBuilder
     private var disconnectButton: some View {
-        Button {
-            disconnectTapped()
-        } label: {
-            Image(systemName: "xmark")
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: 44, height: 44)
-        }
-        .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.danger)))
-        .accessibilityLabel("Disconnect Progressor")
+        WatchIconButton(
+            systemImage: WatchIconSymbol.disconnect,
+            accessibilityLabel: "Disconnect Progressor",
+            accessibilityHint: "Ends the session and disconnects the Progressor",
+            tint: WatchDesignTokens.danger,
+            usesTintWhenUnselected: true,
+            action: disconnectTapped
+        )
         .accessibilityIdentifier("disconnect-progressor")
-    }
-
-    @ViewBuilder
-    private var compactPickers: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 4) {
-                exercisePicker
-                    .layoutPriority(1)
-                sidePickerCompact
-                    .frame(width: 56)
-            }
-            VStack(spacing: 4) {
-                exercisePicker
-                sidePickerCompact
-            }
-        }
-    }
-
-    /// Exercise selector — deliberately NOT a `.navigationLink` Picker any
-    /// more (#279). A Picker can only *display* a value that also exists as a
-    /// row in its list, which is why the placeholder used to be an explicit
-    /// `Text("pick…").tag("")` row: selectable, so "no exercise" was something
-    /// the user could actively choose, which reads as broken. A NavigationLink
-    /// over an explicit list splits the two — the placeholder is displayed,
-    /// never offered. The SL-75 guard is untouched: nothing here can set `tag`
-    /// to "", and Start stays disabled while it is.
-    private var exercisePicker: some View {
-        pickerLink(
-            display: tag.isEmpty ? "pick…" : tag,
-            isPlaceholder: tag.isEmpty,
-            label: "Exercise"
-        ) {
-            OptionPickerList(
-                title: "Exercise",
-                options: recentTags.map { (value: $0, label: $0) },
-                selection: $tag
-            )
-        }
-    }
-
-    /// Side, sharing the row with the exercise picker. Same link-shaped control
-    /// rather than a `.navigationLink` Picker because that style stacks its
-    /// title *above* the value — two lines where one has to do (#279), and
-    /// `.labelsHidden()` doesn't suppress it on watchOS. Unset shows "Side",
-    /// which doubles as the missing title; an unspecified side stays a real,
-    /// pickable option here (unlike an empty exercise).
-    private var sidePickerCompact: some View {
-        pickerLink(
-            display: side.isEmpty ? "Side" : sideLabel(side),
-            isPlaceholder: side.isEmpty,
-            label: "Side"
-        ) {
-            OptionPickerList(title: "Side", options: SIDE_OPTIONS, selection: $side)
-        }
-    }
-
-    /// The titled, full-width Side picker kept for the loading/empty-tag
-    /// states: with no exercise value beside it, a lone "—" has nothing to give
-    /// it context.
-    private var sidePickerTitled: some View {
-        Picker("Side", selection: $side) {
-            ForEach(SIDE_OPTIONS, id: \.value) { o in
-                Text(o.label).tag(o.value)
-            }
-        }
-        .pickerStyle(.navigationLink)
-        .font(.system(.footnote, design: .rounded).weight(.semibold))
-        .frame(minHeight: 44)
-    }
-
-    private func sideLabel(_ value: String) -> String {
-        SIDE_OPTIONS.first { $0.value == value }?.label ?? value
-    }
-
-    /// One compact row of the setup screen: current value (or placeholder) on a
-    /// mini bordered button that pushes its own list. Titles are dropped in the
-    /// side-by-side row — there's no width for them at 40mm — so VoiceOver gets
-    /// the name via `accessibilityLabel`.
-    private func pickerLink<Destination: View>(
-        display: String,
-        isPlaceholder: Bool,
-        label: String,
-        @ViewBuilder destination: @escaping () -> Destination
-    ) -> some View {
-        NavigationLink {
-            destination()
-        } label: {
-            Text(display)
-                .font(.caption2)
-                .foregroundStyle(isPlaceholder ? Color.secondary : Color.primary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .buttonStyle(WatchSecondaryButtonStyle(
-            tint: isPlaceholder ? WatchPalette.textSecondary : WatchPalette.foreground(WatchDesignTokens.force)
-        ))
-        .frame(minHeight: 44)
-        .accessibilityLabel(label)
-        .accessibilityIdentifier("force-\(label.lowercased())-picker")
     }
 
     // MARK: Measuring — the live gauge owns the whole screen.
@@ -929,7 +765,7 @@ struct ForceGaugeView: View {
         let forceReadout = (Text(String(format: "%.1f", currentKg))
             .font(.system(size: 42, weight: .heavy, design: .rounded))
             .monospacedDigit()
-            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
+            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
         + Text(" kg").font(.footnote).foregroundStyle(WatchPalette.textSecondary))
             .lineLimit(1)
             .minimumScaleFactor(0.7)
@@ -990,44 +826,7 @@ struct ForceGaugeView: View {
         }
 
         Button("Stop & Save") { tindeq.stopAndSave(reason: .userTapped) }
-            .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.force))
+            .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.primary))
             .accessibilityIdentifier("force-stop-save")
-    }
-}
-
-/// The list behind the setup pickers (#279). Only the options handed to it are
-/// offered — the exercise list is built from `recentTags`, so unlike the old
-/// `Text("pick…").tag("")` row there is nothing here that labels a rep with no
-/// exercise. Tapping selects and pops straight back, same feel as the
-/// `.navigationLink` Picker it replaces.
-private struct OptionPickerList: View {
-    let title: String
-    let options: [(value: String, label: String)]
-    @Binding var selection: String
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        List {
-            ForEach(options, id: \.value) { o in
-                Button {
-                    selection = o.value
-                    dismiss()
-                } label: {
-                    HStack {
-                        Text(o.label)
-                            .lineLimit(2)
-                        Spacer(minLength: 4)
-                        if o.value == selection {
-                            Image(systemName: "checkmark")
-                            .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.force))
-                        }
-                    }
-                    .frame(minHeight: 44)
-                }
-            }
-        }
-        .navigationTitle(title)
-        .scrollContentBackground(.hidden)
-        .watchCanvas()
     }
 }

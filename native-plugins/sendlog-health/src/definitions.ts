@@ -35,6 +35,10 @@ export interface ReadinessRefreshResult {
   status: ReadinessRefreshStatus;
   freshness: ReadinessFreshness;
   snapshot?: ReadinessSnapshot | null;
+  /// UUID of the account whose phone-side session produced this result
+  /// (native `ReadinessRefreshResult.accountUserId`, ios/App/SendLogWatchCore).
+  /// Absent only for legacy unstamped native replies.
+  accountUserId?: string;
   errorCode?: string;
   errorMessage?: string;
 }

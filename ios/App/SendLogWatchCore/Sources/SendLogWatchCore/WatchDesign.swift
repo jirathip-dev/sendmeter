@@ -39,6 +39,18 @@ public enum WatchDesignTokens {
     public static let success = PhaseRGB(0.30, 0.93, 0.68)
     public static let warning = PhaseRGB(1.0, 0.76, 0.32)
     public static let danger = PhaseRGB(1.0, 0.38, 0.46)
+    /// Reserved for the Home screen's Force-module nav-card identity only
+    /// (`HomeView`'s "Force Gauge" card, matching Climb Workout's `secondary`
+    /// treatment). Generic Force controls/cards (ForceGaugeView,
+    /// ForceProtocolViews, GuidedForceRunnerView) use
+    /// `primary`/`success`/`warning`/`danger` like the rest of the app
+    /// (SL-538); none of them carry protocol- or zone-specific hues.
+    /// Keeping the per-module nav hue on Home while retiring it everywhere
+    /// else in Force is an accepted, revertible deviation from issue #538's
+    /// AC-2 ("navigation and generic buttons should follow the shared app
+    /// theme") — recorded on the issue as a maintainer decision, not
+    /// self-certified here. See the #538 discussion for the reasoning and to
+    /// overrule it.
     public static let force = PhaseRGB(1.0, 0.43, 0.76)
 
     public static let semanticAccents: [PhaseRGB] = [
@@ -96,6 +108,26 @@ public enum WatchDesignTokens {
     /// The reduced variant keeps semantic hue while cutting emitted light.
     public static func alwaysOn(_ color: PhaseRGB) -> PhaseRGB {
         accent(color, reducedLuminance: true)
+    }
+
+    /// `WatchCard`'s `cardGradient` paints an accent card as
+    /// `[accent.opacity(accentCardTintOpacity), base, card]` from topLeading —
+    /// so a label sitting near that corner is not on the flat `base` surface
+    /// `readableForeground`/`foreground(_:)` assume by default. Checking
+    /// contrast against the untinted surface alone can pass while the pixel
+    /// the label actually renders on falls below `minimumForegroundContrast`
+    /// (SL-538 round-2 review finding 2).
+    public static let accentCardTintOpacity: Double = 0.24
+
+    /// The worst-case surface a label can sit on inside an accent-tinted
+    /// `WatchCard`: `accent` composited over `base` at `accentCardTintOpacity`.
+    /// Pass this as the `on:` surface (via `WatchPalette.foregroundOnAccentCard`)
+    /// for any label placed at or near that corner.
+    public static func accentCardSurface(
+        _ accent: PhaseRGB,
+        over base: PhaseRGB = cardStrong
+    ) -> PhaseRGB {
+        accent.over(base, opacity: accentCardTintOpacity)
     }
 }
 /// State language used by chips, banners and accessibility labels throughout

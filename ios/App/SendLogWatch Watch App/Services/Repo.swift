@@ -227,7 +227,13 @@ enum Repo {
             note: pending.note,
             phase: phase,
             groupId: pending.groupId,
-            workoutSource: nil
+            workoutSource: nil,
+            // #529 slice 2: row-level defense-in-depth, same rationale as
+            // `SessionInsert.userId`'s doc comment — `pending.enqueuedUserId`
+            // is the same immutable owner `shouldDrain` already gated this
+            // drain attempt on, carried into the row itself so a race during
+            // the network round trip still fails closed under RLS.
+            userId: pending.enqueuedUserId
         )
         try await SupabaseService.from("sessions")
             .upsert(session, onConflict: "id", ignoreDuplicates: true)
@@ -313,12 +319,18 @@ enum Repo {
         return ISO8601DateFormatter().string(from: date)
     }()
 
+    /// `ownerUserId` has no default on purpose (#529): the caller must pass
+    /// the account captured at `WorkoutManager.start()`, not re-derive
+    /// whoever happens to be signed in right now — that re-derivation at
+    /// save time (instead of at run-start time) is exactly the cross-account
+    /// misattribution this fix closes. See `WorkoutSaveBundle.enqueuedUserId`.
     static func makeSaveBundle(
         summary: WorkoutSummary,
         boulders: Int,
         rpe: Double,
         phase: String,
-        tunables: Tunables
+        tunables: Tunables,
+        ownerUserId: UUID?
     ) -> WorkoutSaveBundle {
         let sessionId = UUID()
         // Reuse the id generated at workout start so the live_workouts row and
@@ -347,7 +359,9 @@ enum Repo {
             note: noteParts.joined(separator: " · "),
             phase: phase,
             groupId: nil,
-            workoutSource: "watch"
+            workoutSource: "watch",
+            // #529 F6: row-level defense-in-depth — see `SessionInsert.userId`.
+            userId: ownerUserId
         )
         let workout = ClimbWorkoutInsert(
             id: workoutId,
@@ -364,7 +378,8 @@ enum Repo {
             meanEffort: (meanEffort * 100).rounded() / 100,
             attemptsPer10min: (attemptsPer10min * 100).rounded() / 100,
             sessionId: sessionId,
-            raw: tunables.keepRawTrace ? summary.rawTrace : nil
+            raw: tunables.keepRawTrace ? summary.rawTrace : nil,
+            userId: ownerUserId
         )
         let attempts = summary.attempts.map { a in
             ClimbAttemptInsert(
@@ -377,10 +392,11 @@ enum Repo {
                 peakHr: a.peakHR,
                 motionIntensity: a.motionIntensity,
                 effortScore: a.effortScore,
-                source: a.source.rawValue
+                source: a.source.rawValue,
+                userId: ownerUserId
             )
         }
-        return WorkoutSaveBundle(session: session, workout: workout, attempts: attempts)
+        return WorkoutSaveBundle(session: session, workout: workout, attempts: attempts, enqueuedUserId: ownerUserId)
     }
 
     /// Best-effort mid-workout flush (SL-90) — merge-upserts the partial row.

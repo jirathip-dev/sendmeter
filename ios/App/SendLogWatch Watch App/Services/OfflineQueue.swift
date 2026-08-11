@@ -27,7 +27,12 @@ actor OfflineQueue {
         clock: QueueClock = SystemQueueClock(),
         baseDir: URL? = nil,
         sessionRelay: SessionRelayRequesting = AuthManagerRelayRequester(),
-        scheduler: DrainScheduling = TaskDrainScheduler()
+        scheduler: DrainScheduling = TaskDrainScheduler(),
+        // #529 F2: injectable so a test can script a REFUSED persist write
+        // (disk full) and exercise `enqueue`'s `.uploadDirect` fallback
+        // deterministically — mirrors `PendingRecordingQueue`'s existing
+        // seam, added here for the same reason.
+        fileIO: QueueFileIO = RealQueueFileIO()
     ) {
         engine = UploadQueueEngine(
             slot: .workouts,
@@ -41,6 +46,7 @@ actor OfflineQueue {
             baseDir: baseDir ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],
             sessionRelay: sessionRelay,
             scheduler: scheduler,
+            fileIO: fileIO,
             // #481 / #491 review F1: `workout.raw` (the 1Hz debug trace,
             // hundreds of KB with keepRawTrace on) is shed before the
             // potentially-forever quarantine.

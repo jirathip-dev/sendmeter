@@ -74,8 +74,29 @@
   --border: #D6DDE9;
   --hairline: #E4E8F0;
   --ink: #182131;
-  --ink-muted: #647087;
-  --ink-faint: #8B96AA;
+  /* Darkened from the original #647087 (4.99:1) to ~6.93:1 (#547 round 2,
+     finding A) — round 2's --ink-faint fix (below) closed the gap to
+     --ink-muted down to a 1.10:1 step between the two, collapsing the
+     secondary/tertiary tiers into one visual weight. Darkening this token
+     too restores a real step (~1.4:1) while keeping the three-tier ladder
+     (--ink 16.1:1 → --ink-muted ~6.9:1 → --ink-faint ~5.0:1 on white) each
+     comfortably clearing AA on its own. */
+  --ink-muted: #4F5A70;
+  /* Darkened from the original #8B96AA (2.98:1 on white) through two
+     intermediate values (#77839C at 3.81:1, #6A7692 at 4.55:1 — both
+     measured against pure white, #547 rounds 1–2) to this value, retuned
+     (round 2 finding B) against the *greyest real surface it lands on*:
+     several consumers (inactive `.nav-label`, History's `Trash` button) sit
+     on the floating chrome's glass over `--bg` (~#F2F4F8 effective), where
+     the round-1 fix measured only 4.13:1 — under AA — despite clearing
+     4.55:1 on pure white. This value clears AA on both (~4.97:1 on white,
+     ~4.51:1 on #F2F4F8). Phase-identity colors used as text (PHASES[].color
+     in src/constants.ts) were below AA on these neutral surfaces — a
+     pre-existing condition unrelated to this token, shared with dark mode's
+     healthy contrast — fixed by the `--phase-text-*` tokens below (issue
+     #557) rather than here, since it spans the whole phase palette, used
+     well beyond the Dashboard #547 migrates. */
+  --ink-faint: #617090;
   --primary: #5B5FC7;
   --primary-hover: #4A4EB3;
   --primary-accent: #4E53B9; /* primary used as text/underline */
@@ -176,15 +197,66 @@
   --accent-interaction: var(--primary);
   --accent-info: var(--info);
 
-  /* Restrained washes: never put these behind a dense paragraph. */
+  /* Restrained washes: never put these behind a dense paragraph.
+     #547: structural/analytical cards (readiness, load, force, workout,
+     history) read as near-white in light mode — a feature-tinted card reads
+     as competing chrome on a light canvas even though the same wash works on
+     dark. Data/state color moves inward (values, chart lines, status text)
+     instead of washing the whole card. Dark keeps its richer per-surface
+     tints (below), since dark backgrounds can carry colored illumination.
+     All five point at one literal (--gradient-neutral) via var() — a single
+     semantic token, not five copies to drift out of sync. */
   --gradient-neutral: linear-gradient(135deg, rgba(255,255,255,0.96), rgba(244,247,252,0.96));
-  --gradient-readiness: linear-gradient(135deg, rgba(46,150,240,0.13), rgba(255,255,255,0) 58%);
-  --gradient-caution: linear-gradient(135deg, rgba(199,149,34,0.12), rgba(255,255,255,0) 58%);
-  --gradient-load: linear-gradient(135deg, rgba(217,104,50,0.11), rgba(255,255,255,0) 58%);
-  --gradient-force: linear-gradient(135deg, rgba(217,133,43,0.13), rgba(255,255,255,0) 60%);
-  --gradient-interaction: linear-gradient(135deg, rgba(91,95,199,0.14), rgba(255,255,255,0) 62%);
+  --gradient-readiness: var(--gradient-neutral);
+  --gradient-caution: var(--gradient-neutral);
+  --gradient-load: var(--gradient-neutral);
+  --gradient-force: var(--gradient-neutral);
+  --gradient-interaction: var(--gradient-neutral);
+  /* Non-structural wells/banners keep a real (non-neutralized) tint even in
+     light mode — they are recessed inputs or state cues, not analytical
+     cards, so the AC's "kill full-card tints" doesn't apply to them (round-2
+     review findings #1/#7). Values are this file's pre-#547 light gradients,
+     scoped to just these consumers instead of the shared vocabulary. */
+  --well-tint-load: linear-gradient(135deg, rgba(217,104,50,0.11), rgba(255,255,255,0) 58%);
+  --well-tint-interaction: linear-gradient(135deg, rgba(91,95,199,0.14), rgba(255,255,255,0) 62%);
+  --well-tint-readiness: linear-gradient(135deg, rgba(46,150,240,0.13), rgba(255,255,255,0) 58%);
   --ambient-field: radial-gradient(circle at 8% -8%, rgba(91,95,199,0.12), transparent 34%), radial-gradient(circle at 96% 26%, rgba(46,150,240,0.08), transparent 30%);
   --iris: linear-gradient(135deg, rgba(91,95,199,0.56), rgba(46,150,240,0.36) 35%, rgba(199,149,34,0.28) 70%, rgba(217,104,50,0.38));
+  /* Iridescent card-edge ring (.card::before): a rainbow hairline reads as
+     decorative glow on a light canvas, so light mode keeps it almost off —
+     dark mode is unchanged (0.45, set in the dark blocks below). */
+  --card-ring-opacity: 0.06;
+  /* Same idea for the bottom nav's active-item ring (round-2 review finding
+     #2): it kept a hard-coded 0.85 rainbow conic-gradient regardless of
+     theme, which became the single loudest color in an otherwise-neutralized
+     light UI. Substantially reduced here; dark keeps the original 0.85. */
+  --nav-ring-opacity: 0.35;
+  /* Phase-color wash on .phase-banner/.phase-suggestion (#547) — restrained
+     in light so the strip reads as a neutral card with the phase name/target
+     carrying the color, not a full-card tint. Dark mode keeps close to the
+     original saturated wash. */
+  --phase-tint-alpha: 5%;
+  --phase-border-alpha: 20%;
+  /* Light-mode text variant of each PHASES[].color identity hue (issue
+     #557) — `Phase.textColor` in src/constants.ts is a var() reference to
+     one of the four properties below, so every text consumer (phase banner
+     name, History session-type tags, PhasesView) reads AA-legible without a
+     per-component branch. Each value is the identity hue uniformly darkened
+     (RGB scaled toward black, same hue/HSV-saturation, only value lowered —
+     the hue stays recognizable) until it clears WCAG AA 4.5:1 against every
+     real background it lands on in light mode: plain #FFFFFF/#F2F4F8 AND the
+     ~12%-phase-tinted tag/card fills (`Phase.bg`), which is the binding
+     constraint (measured, not eyeballed — see the "phase identity's text
+     variant" test in premiumVisualInvariants.test.ts). Dark mode below is
+     NOT simply "identity, already safe" — round-1 review measured capacity/
+     power/execution at ~4.17–4.47:1 on the real ~12%-tinted dark card/tag
+     fill (below AA), so three of the four hues get their own lightened dark
+     variant too; only strength clears AA at full identity strength there
+     (~6.3:1+). See the dark block below for the actual per-hue numbers. */
+  --phase-text-capacity: #216AAA;
+  --phase-text-strength: #816722;
+  --phase-text-power: #A05129;
+  --phase-text-execution: #5A60AD;
 
   /* Elevation and material tokens. A single recipe keeps cards, rows and
      sheets related while still letting the shell sit above the content. */
@@ -327,8 +399,38 @@
   --gradient-load: linear-gradient(135deg, rgba(241,138,80,0.14), rgba(23,29,42,0) 60%);
   --gradient-force: linear-gradient(135deg, rgba(240,167,83,0.16), rgba(23,29,42,0) 62%);
   --gradient-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
+  --well-tint-load: linear-gradient(135deg, rgba(241,138,80,0.14), rgba(23,29,42,0) 60%);
+  --well-tint-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
+  --well-tint-readiness: linear-gradient(135deg, rgba(88,184,255,0.16), rgba(23,29,42,0) 60%);
   --ambient-field: radial-gradient(circle at 8% -8%, rgba(115,120,226,0.22), transparent 36%), radial-gradient(circle at 96% 24%, rgba(88,184,255,0.12), transparent 30%);
   --iris: linear-gradient(135deg, rgba(115,120,226,0.72), rgba(88,184,255,0.54) 35%, rgba(240,201,87,0.42) 70%, rgba(241,138,80,0.52));
+  /* Dark keeps the original glow/tint strength — see the light :root above
+     for why these are much lower there (#547). */
+  --card-ring-opacity: 0.45;
+  --nav-ring-opacity: 0.85;
+  --phase-tint-alpha: 12%;
+  --phase-border-alpha: 35%;
+  /* #557 round-2 review: dark identity hues do NOT uniformly clear AA text
+     contrast on the real ~12%-tinted dark card/tag fill (`Phase.bg` over the
+     dark canvas/sheet surface) — only strength has real headroom there.
+     Measured (identity vs. that tinted fill, dark canvas #171D2A / sheet
+     surface ~#1E2737): capacity ~4.2:1, strength ~6.3:1+, power ~4.5:1,
+     execution ~4.2:1 — three of four below or right at the 4.5:1 line.
+     Strength keeps the identity hex (headroom is real and large); capacity/
+     power/execution get their own lightened dark variant — a tint (mixed
+     toward white), not a saturation-preserving value scale: at maximum
+     scale before channel clipping, execution only reaches ~4.42:1 against
+     the tinted fill, still short of 4.5:1, so a small, expected saturation
+     loss (a real property of tints, not a bug) buys the rest. Hue itself is
+     exact (±0 – 2°) so each still reads as its own color family. All four
+     clear AA at ≥4.5:1 against both plain --canvas and the tinted fill —
+     see the "phase identity's text variant" test in
+     premiumVisualInvariants.test.ts, which pins the measured floor, not
+     just plain --canvas. */
+  --phase-text-capacity: #47A2F2;
+  --phase-text-strength: #DDB13A;
+  --phase-text-power: #E7804C;
+  --phase-text-execution: #8E95EE;
   --shadow-xs: 0 1px 2px rgba(0,0,0,0.28);
   --shadow-sm: 0 4px 14px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
   --shadow-card: 0 1px 2px rgba(0,0,0,0.32), 0 12px 30px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06);
@@ -444,8 +546,23 @@
     --gradient-load: linear-gradient(135deg, rgba(241,138,80,0.14), rgba(23,29,42,0) 60%);
     --gradient-force: linear-gradient(135deg, rgba(240,167,83,0.16), rgba(23,29,42,0) 62%);
     --gradient-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
+    --well-tint-load: linear-gradient(135deg, rgba(241,138,80,0.14), rgba(23,29,42,0) 60%);
+    --well-tint-interaction: linear-gradient(135deg, rgba(115,120,226,0.18), rgba(23,29,42,0) 64%);
+    --well-tint-readiness: linear-gradient(135deg, rgba(88,184,255,0.16), rgba(23,29,42,0) 60%);
     --ambient-field: radial-gradient(circle at 8% -8%, rgba(115,120,226,0.22), transparent 36%), radial-gradient(circle at 96% 24%, rgba(88,184,255,0.12), transparent 30%);
     --iris: linear-gradient(135deg, rgba(115,120,226,0.72), rgba(88,184,255,0.54) 35%, rgba(240,201,87,0.42) 70%, rgba(241,138,80,0.52));
+    --card-ring-opacity: 0.45;
+    --nav-ring-opacity: 0.85;
+    --phase-tint-alpha: 12%;
+    --phase-border-alpha: 35%;
+    /* Mirrors :root[data-theme="dark"] exactly (#557 round 2) — this is the
+       system-dark/no-explicit-theme path, and it must stay byte-identical to
+       the explicit dark block or a system-dark user silently keeps a stale
+       or under-contrast value (pinned in premiumVisualInvariants.test.ts). */
+    --phase-text-capacity: #47A2F2;
+    --phase-text-strength: #DDB13A;
+    --phase-text-power: #E7804C;
+    --phase-text-execution: #8E95EE;
     --shadow-xs: 0 1px 2px rgba(0,0,0,0.28);
     --shadow-sm: 0 4px 14px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.06);
     --shadow-card: 0 1px 2px rgba(0,0,0,0.32), 0 12px 30px rgba(0,0,0,0.34), inset 0 1px 0 rgba(255,255,255,0.06);
@@ -455,6 +572,16 @@
     --chrome-bg: rgba(23,29,42,0.74);
     --chrome-border: rgba(196,211,239,0.15);
     --focus-ring: #A3A8FF;
+  }
+  /* Same flat-wash restore as the explicit :root[data-theme="dark"] rule
+     above, for a system-dark/no-explicit-theme user (#547 round 2). */
+  :root:not([data-theme="light"]) .phase-banner,
+  :root:not([data-theme="light"]) .phase-suggestion {
+    background: color-mix(in srgb, var(--phase-accent) var(--phase-tint-alpha), var(--canvas));
+  }
+  :root:not([data-theme="light"]) .phase-banner-name {
+    background: transparent;
+    border-color: transparent;
   }
 }
 
@@ -1150,7 +1277,7 @@ input[type="number"] {
   background: conic-gradient(from 210deg, #ff5f6d, #ffc371, #47e0a0, #4facfe, #b06ab3, #ff5f6d);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask-composite: exclude;
-  opacity: 0.85; pointer-events: none;
+  opacity: var(--nav-ring-opacity, 0.85); pointer-events: none;
 }
 .nav-item:active { transform: scale(0.96); }
 .nav-item:focus-visible { outline-color: var(--focus-ring); }
@@ -1194,7 +1321,7 @@ input[type="number"] {
   -webkit-mask-composite: xor;
           mask-composite: exclude;
   pointer-events: none;
-  opacity: 0.45;
+  opacity: var(--card-ring-opacity, 0.45);
 }
 .card.tappable:hover { border-color: color-mix(in srgb, var(--accent-interaction) 22%, var(--card-border)); }
 .card.tappable:active { transform: scale(0.995); box-shadow: var(--shadow-sm); }
@@ -1207,14 +1334,25 @@ input[type="number"] {
 .surface-history { --card-gradient: var(--gradient-neutral); }
 .phone-workout-resume {
   background: var(--canvas);
-  background-image: var(--card-gradient, var(--gradient-interaction));
+  /* Uses the non-neutralized --well-tint-* pair, not --gradient-interaction/
+     --gradient-readiness (#547 round 2 finding #7) — this banner's fill is
+     the primary climbing/resting state cue, so it keeps its tint in light
+     mode instead of inheriting the analytical-card neutralization.
+     The explicit --card-gradient assignment here is load-bearing, not
+     decorative (#547 round 3 finding C): the component also carries
+     `.surface-workout` (PhoneWorkoutCard.tsx), whose own rule above already
+     defines --card-gradient, so the var(--card-gradient, well-tint) fallback
+     below could never fire for the resting state — this re-assignment, at
+     equal specificity but later in source order, is what actually wins. */
+  --card-gradient: var(--well-tint-interaction);
+  background-image: var(--card-gradient, var(--well-tint-interaction));
   border: 1px solid color-mix(in srgb, var(--accent-interaction) 42%, var(--card-border));
   border-radius: 12px;
   box-shadow: var(--shadow-card);
   cursor: pointer;
   transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface);
 }
-.phone-workout-resume.climbing { --accent-interaction: var(--accent-readiness); --card-gradient: var(--gradient-readiness); }
+.phone-workout-resume.climbing { --accent-interaction: var(--accent-readiness); --card-gradient: var(--well-tint-readiness); }
 .phone-workout-resume:hover { border-color: color-mix(in srgb, var(--accent-interaction) 60%, var(--card-border)); }
 .phone-workout-resume:active { transform: scale(0.995); box-shadow: var(--shadow-sm); }
 .phone-workout-resume:disabled {
@@ -1262,10 +1400,63 @@ input[type="number"] {
 .modal-sheet .card::before { content: none; }
 .card + .card { margin-top: 10px; }
 
-/* Phase banner (tinted card) */
-.phase-banner { background: var(--canvas); background-image: var(--gradient-interaction); border: 1px solid var(--card-border); border-radius: var(--radius-card); padding: 16px; margin-bottom: 10px; box-shadow: var(--shadow-card); transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface); }
-.phase-banner:hover { border-color: color-mix(in srgb, var(--accent-interaction) 26%, var(--card-border)); }
+/* Phase banner — a restrained phase-color wash (#547): --phase-accent is set
+   inline per phase (Dashboard.tsx), --phase-tint-alpha/--phase-border-alpha
+   are theme-tuned tokens (near-neutral in light, close to the old saturated
+   wash in dark) so the strip stays a mostly neutral card and the phase name
+   text carries the color. .phase-suggestion (the step-back nudge) shares the
+   same recipe so it reads as attached to the banner above it.
+   The border mixes against --canvas (not --card-border): color-mix(in srgb,
+   accent A%, canvas) is the same linear math as alpha-compositing
+   `rgba(accent, A%)` over an opaque canvas — i.e. exactly what the old
+   per-theme inline `border: 1px solid rgba(color, alpha)` rendered as — so
+   this reproduces that math instead of a visually-different double-alpha
+   blend against the (itself translucent) --card-border token. */
+.phase-banner, .phase-suggestion {
+  --phase-accent: var(--primary);
+  background: var(--canvas);
+  background-image: linear-gradient(135deg, color-mix(in srgb, var(--phase-accent) var(--phase-tint-alpha), transparent), transparent 60%);
+  border: 1px solid color-mix(in srgb, var(--phase-accent) var(--phase-border-alpha), var(--canvas));
+}
+.phase-banner { border-radius: var(--radius-card); padding: 16px; margin-bottom: 10px; box-shadow: var(--shadow-card); transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-surface); }
+.phase-banner:hover { border-color: color-mix(in srgb, var(--phase-accent) calc(var(--phase-border-alpha) + 15%), var(--canvas)); }
 .phase-banner:active { transform: scale(0.995); box-shadow: var(--shadow-sm); }
+.phase-suggestion { border-radius: 12px; }
+/* Phase name pill (#557 round 2) — `--phase-name-bg`/`--phase-name-border`
+   are set inline per phase (Dashboard.tsx) from `Phase.bg`/`Phase.border`.
+   Light-mode-only by construction: the dark override two rules below zeroes
+   both to transparent, because dark's `.phase-banner` background is ALREADY
+   a flat 12% identity wash (--phase-tint-alpha above) — stacking a second
+   12% tint here would compound to ~22.6% and fail AA for three of four
+   phases (round-2 review, measured live). Dark's identity text already
+   clears AA directly on that flat wash (~5.2–6.7:1), so it needs no pill. */
+.phase-banner-name {
+  display: inline-block;
+  font-size: var(--t-md);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin-top: 4px;
+  padding: 2px 9px;
+  border-radius: 7px;
+  background: var(--phase-name-bg, transparent);
+  border: 1px solid var(--phase-name-border, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Dark keeps its original flat, edge-to-edge wash (round-2 review finding
+   #5) — a solid color-mix fill, not the fading gradient light uses, matching
+   what the pre-#547 inline `background: rgba(color, alpha)` rendered as.
+   Repeated for the explicit-attribute and system-preference dark paths, same
+   as every other themed token/rule in this file. */
+:root[data-theme="dark"] .phase-banner,
+:root[data-theme="dark"] .phase-suggestion {
+  background: color-mix(in srgb, var(--phase-accent) var(--phase-tint-alpha), var(--canvas));
+}
+:root[data-theme="dark"] .phase-banner-name {
+  background: transparent;
+  border-color: transparent;
+}
 
 /* Grid */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -1422,7 +1613,7 @@ textarea.field { resize: none; }
 .stepper-val { flex: 1; text-align: center; font-size: var(--t-xl); color: var(--ink); font-weight: 800; letter-spacing: -0.02em; }
 
 /* Load preview */
-.load-preview { background: var(--surface-2); background-image: var(--gradient-load); border: 1px solid color-mix(in srgb, var(--accent-load) 18%, var(--border)); border-radius: var(--radius-control); padding: 14px 16px; margin-top: 14px; display: flex; justify-content: space-between; align-items: center; box-shadow: var(--shadow-xs); }
+.load-preview { background: var(--surface-2); background-image: var(--well-tint-load); border: 1px solid color-mix(in srgb, var(--accent-load) 18%, var(--border)); border-radius: var(--radius-control); padding: 14px 16px; margin-top: 14px; display: flex; justify-content: space-between; align-items: center; box-shadow: var(--shadow-xs); }
 
 /* Account sheet — tab bar (segmented, icon over label) */
 .acct-tabs { display: flex; gap: 4px; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-control); padding: 4px; margin: 16px 0 6px; box-shadow: inset 0 1px 2px rgba(20,30,50,0.06); }
@@ -1674,18 +1865,29 @@ textarea.field { resize: none; }
 
 /* User preference takes precedence over the decorative material treatment. */
 @media (prefers-contrast: more) {
+  /* Boost the ring tokens instead of hard-coding opacity on the pseudo-
+     elements (round-2 review finding #3) — a literal opacity here has equal
+     specificity to and comes after .card::before's `var(--card-ring-opacity)`
+     rule, so it silently won it every time and brought the light-mode rainbow
+     ring back at full strength for high-contrast users regardless of the
+     token. Setting the token instead means the base rules keep reading
+     through var(), and any future retune of the tokens' normal values stays
+     in sync here for free. */
   :root,
   :root[data-theme="light"] {
     --card-border: rgba(35,48,72,0.24);
     --chrome-border: rgba(35,48,72,0.3);
     --hairline: #CAD2E0;
+    --card-ring-opacity: 0.72;
+    --nav-ring-opacity: 0.72;
   }
   :root[data-theme="dark"] {
     --card-border: rgba(231,239,255,0.3);
     --chrome-border: rgba(231,239,255,0.34);
     --hairline: #52617A;
+    --card-ring-opacity: 0.72;
+    --nav-ring-opacity: 0.72;
   }
-  .card::before, .nav-item.active::before { opacity: 0.72; }
 }
 
 /* The system-dark theme is selected by a higher-specificity selector than
@@ -1697,6 +1899,8 @@ textarea.field { resize: none; }
     --card-border: rgba(231,239,255,0.3);
     --chrome-border: rgba(231,239,255,0.34);
     --hairline: #52617A;
+    --card-ring-opacity: 0.72;
+    --nav-ring-opacity: 0.72;
   }
 }
 
@@ -2132,7 +2336,9 @@ textarea.field { resize: none; }
     background: color-mix(in srgb, var(--primary) 16%, transparent);
     color: var(--primary-accent);
   }
-  .nav-item.active::before { opacity: 0.6; }
+  /* Same ~0.71x dampening the desktop pill always had relative to the base
+     ring, now relative to the theme-tuned token instead of a flat literal. */
+  .nav-item.active::before { opacity: calc(var(--nav-ring-opacity, 0.85) * 0.7); }
   .nav-item:active { transform: none; }
   .nav-icon svg { width: 14px; height: 14px; }
   .nav-label { font-size: var(--t-eyebrow); }

@@ -109,4 +109,28 @@ final class LiveMirrorProtocolTests: XCTestCase {
         XCTAssertEqual(beat.wireFields["event"] as? String, "end")
         XCTAssertEqual(beat.wireFields["terminal"] as? Bool, true)
     }
+
+    // MARK: LiveMirrorOwnership (#530)
+
+    func testStampedAddsTheRawUppercaseUUIDString() {
+        let owner = UUID()
+        let stamped = LiveMirrorOwnership.stamped(["kind": "liveWorkout"], ownerUserId: owner)
+        XCTAssertEqual(stamped[LiveMirrorOwnership.accountUserIdKey] as? String, owner.uuidString)
+        XCTAssertEqual(stamped["kind"] as? String, "liveWorkout")
+    }
+
+    func testStampedLeavesTheKeyOffEntirelyForANilOwner() {
+        let stamped = LiveMirrorOwnership.stamped(["kind": "liveWorkout"], ownerUserId: nil)
+        XCTAssertNil(stamped[LiveMirrorOwnership.accountUserIdKey])
+        XCTAssertEqual(stamped.count, 1, "a nil owner must not add any key, not even a null")
+    }
+
+    func testStampedDoesNotDisturbOtherWireFields() {
+        let owner = UUID()
+        let beat = LiveMirrorBeat(runId: UUID(), sequence: 3, event: .telemetry)
+        let message = LiveMirrorOwnership.stamped(beat.wireFields, ownerUserId: owner)
+        XCTAssertEqual(message["sequence"] as? Int, 3)
+        XCTAssertEqual(message["event"] as? String, "telemetry")
+        XCTAssertEqual(message[LiveMirrorOwnership.accountUserIdKey] as? String, owner.uuidString)
+    }
 }

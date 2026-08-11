@@ -40,6 +40,21 @@ nonisolated struct SessionInsert: Codable {
     var phase: String
     var groupId: UUID?         // Tindeq gauge session link
     var workoutSource: String? // immutable provenance badge (SL-43): "watch" for auto workouts, nil otherwise
+    /// #529 F6: explicit row-level ownership stamp, set only by
+    /// `Repo.makeSaveBundle` (the auto-tracked workout path) from the run's
+    /// immutable `ownerUserId`. Every other caller (manual Tindeq sessions)
+    /// leaves this `nil`, which the Optional `Encodable` OMITS from the
+    /// payload entirely — the column's `default auth.uid()`
+    /// (`20260711000000_initial_schema.sql`) then behaves exactly as before
+    /// this fix, so this is additive only for the workout path. When set,
+    /// `with check (auth.uid() = user_id)` makes an insert/update sent under
+    /// the WRONG account's currently-relayed token fail closed instead of
+    /// silently landing under whichever account happens to be active at
+    /// request time — defense-in-depth behind the client-side
+    /// `shouldDrain`/`ownerUserId` guards, which only decide whether a
+    /// request is attempted at all, never which account the resulting row
+    /// actually belongs to.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, date, type, rpe, note, phase
@@ -48,6 +63,7 @@ nonisolated struct SessionInsert: Codable {
         case durationMin = "duration_min"
         case groupId = "group_id"
         case workoutSource = "workout_source"
+        case userId = "user_id"
     }
 }
 
@@ -67,6 +83,9 @@ nonisolated struct ClimbWorkoutInsert: Codable {
     var attemptsPer10min: Double
     var sessionId: UUID
     var raw: [[Double?]]?
+    /// #529 F6 — see `SessionInsert.userId`'s doc comment for the full
+    /// rationale; same stamp, same `climb_workouts` RLS shape.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, raw
@@ -83,6 +102,7 @@ nonisolated struct ClimbWorkoutInsert: Codable {
         case meanEffort = "mean_effort"
         case attemptsPer10min = "attempts_per_10min"
         case sessionId = "session_id"
+        case userId = "user_id"
     }
 }
 
@@ -99,6 +119,12 @@ nonisolated struct ClimbWorkoutPartialUpsert: Codable {
     var attemptsDetected: Int
     var attemptsConfirmed: Int
     var raw: [[Double?]]?
+    /// #529 F1/F6 — see `SessionInsert.userId`'s doc comment. This is the
+    /// row the mid-workout SL-90 flush writes with no client-side account
+    /// guard of its own (`WorkoutManager.flushPartial()`), so the stamp here
+    /// is the last line of defense if the active account changes during the
+    /// network round trip, after that guard already passed.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, raw
@@ -107,6 +133,7 @@ nonisolated struct ClimbWorkoutPartialUpsert: Codable {
         case elevationGainM = "elevation_gain_m"
         case attemptsDetected = "attempts_detected"
         case attemptsConfirmed = "attempts_confirmed"
+        case userId = "user_id"
     }
 }
 
@@ -135,6 +162,9 @@ nonisolated struct ClimbAttemptInsert: Codable {
     var motionIntensity: Double
     var effortScore: Double
     var source: String         // "auto" | "manual"
+    /// #529 F6 — see `SessionInsert.userId`'s doc comment. Same stamp, same
+    /// `climb_attempts` RLS shape.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, source
@@ -146,6 +176,7 @@ nonisolated struct ClimbAttemptInsert: Codable {
         case peakHr = "peak_hr"
         case motionIntensity = "motion_intensity"
         case effortScore = "effort_score"
+        case userId = "user_id"
     }
 }
 
@@ -189,6 +220,12 @@ nonisolated struct TindeqRecordingInsert: Codable {
     var capacityEvidence: Bool? = nil
     var completedReps: Int? = nil
     var completionStatus: String? = nil
+    /// #529 slice 2 — see `SessionInsert.userId`'s doc comment for the full
+    /// rationale; same row-level defense-in-depth, same `tindeq_recordings`
+    /// RLS shape. Stamped by `TindeqManager.persistPreparedRecording` from
+    /// whichever owner (`persistenceOwnerUserId` for a guided run,
+    /// `manualSessionOwnerUserId` for manual/hands-free) governs the save.
+    var userId: UUID? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, note, samples, tag, side, zone, source, outcome
@@ -214,6 +251,7 @@ nonisolated struct TindeqRecordingInsert: Codable {
         case capacityEvidence = "capacity_evidence"
         case completedReps = "completed_reps"
         case completionStatus = "completion_status"
+        case userId = "user_id"
     }
 }
 
@@ -233,7 +271,17 @@ nonisolated struct PendingTindeqRecording: Codable {
     /// next drains. `nil` only for items written before this field existed
     /// (there are none pre-#486, but the pattern is kept identical to the
     /// other two queues); see `shouldDrain`.
-    var enqueuedUserId: UUID? = nil
+    ///
+    /// Deliberately has NO default (#529 slice 2, mirrors
+    /// `WorkoutSaveBundle.enqueuedUserId`): every production constructor
+    /// (`TindeqManager.persistPreparedRecording`) must pass this explicitly
+    /// — captured at measurement start, not re-derived at save time — so a
+    /// future call site cannot forget to stamp an owner and silently fall
+    /// back to `UploadQueueEngine.enqueue`'s nil→current-user stamp, which
+    /// is reserved for genuinely legacy on-disk files. `nil` remains a legal
+    /// VALUE here (a legacy file, or a recording made while nobody was
+    /// signed in); see `shouldDrain`.
+    var enqueuedUserId: UUID?
 }
 
 nonisolated struct TindeqTagRow: Codable {
@@ -368,13 +416,23 @@ nonisolated struct WorkoutSaveBundle: Codable {
     var session: SessionInsert
     var workout: ClimbWorkoutInsert
     var attempts: [ClimbAttemptInsert]
-    /// Which account was signed in when this bundle was persisted to disk
-    /// (issue #158) — stamped by `OfflineQueue.persist`, checked by `drain()`
-    /// so an item queued under one account can't silently upload under
-    /// whichever account happens to be signed in when the queue next drains.
-    /// `nil` only for items written before this field existed (legacy
-    /// on-disk files); see `shouldDrain`.
-    var enqueuedUserId: UUID? = nil
+    /// The account that owned the run when `WorkoutManager.start()` accepted
+    /// it (issue #529) — captured once, immutably, and carried through
+    /// end/retry/offline-queue untouched, exactly like
+    /// `GuidedForceRunner.ownerUserId`. Checked by `drain()`/`pendingCount()`
+    /// (`shouldDrain`) so a bundle built under one account can't silently
+    /// upload under whichever account happens to be signed in when the queue
+    /// next drains or when the run is later ended.
+    ///
+    /// Deliberately has NO default: every *production* constructor
+    /// (`Repo.makeSaveBundle`) must pass this explicitly, so a future call
+    /// site cannot forget to stamp an owner and silently fall back to
+    /// `UploadQueueEngine.enqueue`'s nil→current-user stamp — that fallback
+    /// is reserved for genuinely legacy on-disk files written before this
+    /// field existed. `nil` remains a legal value here (an unattributed
+    /// legacy file, or a run that started while nobody was signed in); see
+    /// `shouldDrain`.
+    var enqueuedUserId: UUID?
 }
 
 /// Why a bundle was quarantined (#475 F3) — kept distinct because the two
@@ -410,10 +468,16 @@ nonisolated enum QuarantineReason: String, Codable {
 /// queue purge equivalent to the web's `discardQueueOnUserSignOut`), so a
 /// `.quarantine` file is effectively permanent on-device storage. Quarantine
 /// is expected to be rare, but `bundle.workout.raw` is the 1Hz debug trace
-/// (hundreds of KB for a long workout when `keepRawTrace` is on), so this is
+/// (hundreds of KB for a long workout when `keepRawTrace` is on), so this was
 /// unbounded growth in the pathological case, not a fixed-size record (#475
-/// F8) — a future build could reasonably prune `raw` before quarantining,
-/// or add a purge path, without losing the fields that matter for support.
+/// F8) — #481's named cheap win, pruning `raw` before quarantining, is now
+/// done: see `UploadQueueEngine.stripsPayloadOnQuarantine` / `QueueUploadItem
+/// .strippedOfHeavyPayload()` (#491), which generalized this workout-specific
+/// type into `QueueQuarantineRecord<Item>`. `QuarantinedUpload` itself is
+/// legacy now — kept only so tests can prove the new on-disk shape stays
+/// byte-compatible with records quarantined by an older build. A purge path
+/// (actually deleting an old `.quarantine` file, not just shrinking it) is
+/// still unimplemented and would need real design, not a one-liner.
 nonisolated struct QuarantinedUpload: Codable {
     var bundle: WorkoutSaveBundle
     var reason: QuarantineReason

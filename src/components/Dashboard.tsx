@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import type {
   AcwrData,
   AcwrStatus,
@@ -28,7 +28,7 @@ const STEP_BACK_DISMISS_KEY = "sendmeter:phase-step-back-dismissed";
 
 interface Props {
   phase: Phase;
-  phaseDays: number;
+  phaseDays: number | null;
   todayLabel: string;
   acwrData: AcwrData;
   weeklyLoads: WeeklyLoad[];
@@ -99,11 +99,10 @@ export default function Dashboard({
             flexDirection: "column",
             justifyContent: "space-between",
             gap: 6,
-            // Tinted with the current phase's color, matching the phase cards
-            // in the info sheet.
-            background: phase.bg,
-            border: `1px solid ${phase.border}`,
-          }}
+            // Restrained phase-color wash (#547) — see .phase-banner in
+            // index.css for the theme-tuned tint recipe this drives.
+            "--phase-accent": phase.color,
+          } as CSSProperties}
         >
           <div style={{ minWidth: 0 }}>
             <div
@@ -114,19 +113,30 @@ export default function Dashboard({
                 letterSpacing: "0.1em",
               }}
             >
-              Phase · Day {phaseDays} · {todayLabel}
+              Phase · Day {phaseDays ?? "—"} · {todayLabel}
             </div>
             <div
+              className="phase-banner-name"
               style={{
-                fontSize: "var(--t-md)",
-                fontWeight: 700,
-                color: phase.color,
-                letterSpacing: "-0.01em",
-                marginTop: 2,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
+                maxWidth: "100%",
+                color: phase.textColor,
+                // #557 round 2: the banner's own tint (--phase-accent at
+                // --phase-tint-alpha) fades to ~transparent by the time it
+                // reaches the name, so in LIGHT mode the darkened, less
+                // saturated text (esp. Strength's gold, which reads brown at
+                // AA-legible lightness) is the only identity signal left —
+                // reintroduce it the same way History's session-type tags do,
+                // with the phase's own identity bg/border. Passed as custom
+                // properties, not literal `background`/`border`: dark mode's
+                // `.phase-banner` is already a flat 12% identity wash
+                // (index.css .phase-banner-name dark override zeroes these
+                // out there), so a second 12% layered on top would compound
+                // to ~22.6% and fail AA for three of four phases (round-2
+                // review, measured live) — the class resolves per theme
+                // instead of a literal value baked in from JS.
+                "--phase-name-bg": phase.bg,
+                "--phase-name-border": phase.border,
+              } as CSSProperties}
             >
               {phase.name}
             </div>
@@ -165,16 +175,15 @@ export default function Dashboard({
           the banner above rather than a new alert. */}
       {showStepBack && (
         <div
+          className="phase-suggestion"
           style={{
             display: "flex",
             alignItems: "center",
             gap: 8,
             marginBottom: 10,
             padding: "9px 12px",
-            borderRadius: 12,
-            background: phase.bg,
-            border: `1px solid ${phase.border}`,
-          }}
+            "--phase-accent": phase.color,
+          } as CSSProperties}
         >
           <span style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.4, flex: 1 }}>
             Readiness has been low for {stepBack.streakDays} days — consider

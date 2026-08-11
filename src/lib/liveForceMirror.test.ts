@@ -29,6 +29,12 @@ function msg(overrides: Partial<LiveForceMessage> = {}): LiveForceMessage {
   };
 }
 
+// `acceptsPacketOwner` and the account-transition tracking it depends on now
+// live in `liveMirrorOwnership.test.ts` (round-1 review F4: single source of
+// truth for both mirrors) — including the full-pipeline late-A-after-B
+// coverage for this module's `reduceForceBeat`, with a negative control
+// proving the reducer alone would have accepted the same packet (F3).
+
 describe("mergeForceBeat", () => {
   it("returns null on an idle beat", () => {
     expect(mergeForceBeat(null, msg({ status: "idle" }))).toBeNull();

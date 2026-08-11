@@ -111,12 +111,36 @@ struct HomeView: View {
             // it followed TabView, watchOS let the page paint beyond its
             // proposed bounds, making this control appear to cover the
             // readiness/Force cards on both 40mm and 49mm watches.
-            WatchPageControl(
-                selection: selection == .status ? 0 : 1,
-                labels: ["Status", "Actions"],
-                onSelect: { selection = $0 == 0 ? .status : .actions }
-            )
-            .padding(.horizontal, 18)
+            //
+            // #539/#541: a full-width text pill here read as heavier than the
+            // status it was gating (though at the same 44pt-minimum hit
+            // target, it took no *more* vertical space — the clipping fix
+            // itself came from StatusView's removed "Today" row, below). Two
+            // compact `WatchIconButton`s (#541's shared primitive) replace
+            // it — same explicit two-way affordance (VoiceOver users get
+            // named "Show Status"/"Show Actions" controls instead of relying
+            // on a blind swipe), far less visual weight.
+            HStack(spacing: 6) {
+                Spacer(minLength: 0)
+                WatchIconButton(
+                    systemImage: WatchIconSymbol.status,
+                    accessibilityLabel: "Show Status",
+                    accessibilityHint: "Displays today's readiness and training load",
+                    accessibilityIdentifier: "home-nav-status",
+                    isSelected: selection == .status,
+                    action: { selection = .status }
+                )
+                WatchIconButton(
+                    systemImage: WatchIconSymbol.actions,
+                    accessibilityLabel: "Show Actions",
+                    accessibilityHint: "Displays Force Gauge and Climb Workout",
+                    accessibilityIdentifier: "home-nav-actions",
+                    isSelected: selection == .actions,
+                    tint: WatchDesignTokens.secondary,
+                    action: { selection = .actions }
+                )
+            }
+            .padding(.trailing, 10)
             TabView(selection: $selection) {
                 StatusView()
                     .tag(WatchHomePage.status)
@@ -128,9 +152,23 @@ struct HomeView: View {
             .tabViewStyle(.page(indexDisplayMode: .never))
             // Page-style TabView does not reliably clip its children on
             // watchOS; make the ownership boundary explicit so scrollable
-            // cards can never render through the selector again.
+            // cards can never render through the selector again. Apply this
+            // after the root's safe-area expansion so the marker and the clip
+            // edge describe the same full-height pager.
             .clipped()
+            // Identify the actual pager container for clipping assertions.
+            // This is metadata on TabView itself, not a transparent overlay:
+            // it cannot sit above the two page trees and steal their hit tests.
+            .accessibilityIdentifier("home-pager-viewport")
         }
+        // The bottom safe-area inset is the rounded-corner / Digital Crown
+        // exclusion zone, not an additional visual gutter for this full-screen
+        // pager. Keeping it on the root stack left the pager's clip edge ~19pt
+        // above the captured framebuffer on a 40mm watch, which cuts the
+        // scored readiness card after its production sync line. Expand the
+        // root first so the TabView receives the full display height while its
+        // explicit `.clipped()` boundary remains in force.
+        .ignoresSafeArea(.container, edges: .bottom)
         // The home title duplicated the app identity while consuming the
         // exact vertical budget the 40mm status card needs. The system time
         // remains visible; pushed screens still provide their own titles.
@@ -178,6 +216,13 @@ private struct ActionsView: View {
     /// nil until the `.task` below resolves (review F22) — unknown must not
     /// render as `.current`/healthy, so the row simply doesn't show until
     /// there's an actual reading, rather than defaulting to "fine".
+    /// #481 (#472 F23): this is a snapshot taken once by `.task` when the view
+    /// appears, not re-evaluated while it stays on screen — a queue that goes
+    /// stale (or recovers) mid-appearance won't move this row until the next
+    /// appearance, and `staleSyncMessage`'s "retrying automatically" is only
+    /// ever true as of that one fetch. Recorded rather than fixed: a live
+    /// refresh needs a real trigger (a timer or a queue-state publisher), not
+    /// a one-line change.
     @State private var syncFreshness: SyncFreshness?
     /// Whether `OfflineQueue` currently has a backoff retry armed (review
     /// F18) — read alongside `syncFreshness` so the row's copy can say
@@ -217,6 +262,7 @@ private struct ActionsView: View {
                         .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("home-action-force")
                     .accessibilityHint("Opens force gauge setup")
                 }
 
@@ -244,6 +290,7 @@ private struct ActionsView: View {
                         .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("home-action-workout")
                     .accessibilityHint("Opens climb workout")
                 }
 
@@ -317,14 +364,19 @@ private struct ActionsView: View {
             // that marker at all, and no retry machinery of its own) made the
             // signal describe something neither queue actually does. The
             // combined `pendingUploads` badge above is unrelated and keeps
-            // counting both, same as before.
+            // counting all four queues, same as before.
             async let workouts = OfflineQueue.shared.pendingCount()
             async let sessions = PendingSessionQueue.shared.pendingCount()
             async let lastSync = OfflineQueue.shared.lastSuccessfulSyncAt()
             async let armed = OfflineQueue.shared.isRetryScheduled()
             async let recordings = PendingRecordingQueue.shared.pendingCount()
-            let (workoutCount, sessionCount, recordingCount, syncedAt, isArmed) = await (workouts, sessions, recordings, lastSync, armed)
-            pendingUploads = workoutCount + sessionCount + recordingCount
+            // #549 F2: the phone's reported total now includes this queue
+            // (`PendingSyncCache`) — the watch's own badge must sum the same
+            // four queues, or the two surfaces disagree about a stuck row.
+            async let liveWorkoutTerminal = LiveWorkoutTerminalRetry.shared.pendingCount()
+            let (workoutCount, sessionCount, recordingCount, syncedAt, isArmed, terminalCount) =
+                await (workouts, sessions, recordings, lastSync, armed, liveWorkoutTerminal)
+            pendingUploads = workoutCount + sessionCount + recordingCount + terminalCount
             retryScheduled = isArmed
             syncFreshness = SyncFreshnessPolicy.evaluate(
                 lastSuccessfulSyncAt: syncedAt,

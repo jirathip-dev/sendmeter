@@ -124,7 +124,8 @@ final class PendingTindeqSessionTests: XCTestCase {
             now: now,
             recordingCount: 11,
             rpe: 7.5,
-            groupId: groupId
+            groupId: groupId,
+            enqueuedUserId: nil
         )
 
         XCTAssertEqual(pending.date, started.localDateString)
@@ -140,7 +141,8 @@ final class PendingTindeqSessionTests: XCTestCase {
             now: Date(),
             recordingCount: 1,
             rpe: 5,
-            groupId: groupId
+            groupId: groupId,
+            enqueuedUserId: nil
         )
         XCTAssertEqual(pending.note, "1 recording")
     }
@@ -156,7 +158,8 @@ final class PendingTindeqSessionTests: XCTestCase {
             now: now,
             recordingCount: 3,
             rpe: 6,
-            groupId: groupId
+            groupId: groupId,
+            enqueuedUserId: nil
         )
         XCTAssertEqual(pending.durationMin, 1)
         XCTAssertEqual(pending.date, now.localDateString)
@@ -169,7 +172,8 @@ final class PendingTindeqSessionTests: XCTestCase {
             now: now,
             recordingCount: 2,
             rpe: 5,
-            groupId: groupId
+            groupId: groupId,
+            enqueuedUserId: nil
         )
         XCTAssertEqual(pending.durationMin, 1)
     }
@@ -182,7 +186,8 @@ final class PendingTindeqSessionTests: XCTestCase {
             now: now,
             recordingCount: 4,
             rpe: 8,
-            groupId: groupId
+            groupId: groupId,
+            enqueuedUserId: nil
         )
         XCTAssertEqual(pending.durationMin, 600)
     }
@@ -199,7 +204,8 @@ final class PendingTindeqSessionTests: XCTestCase {
             durationMin: 17,
             rpe: 6.5,
             note: "11 recordings",
-            groupId: groupId
+            groupId: groupId,
+            enqueuedUserId: nil
         )
 
         let encoder = JSONEncoder()

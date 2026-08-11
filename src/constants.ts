@@ -1,10 +1,27 @@
 import type { NavItem, Phase, SessionType } from "./types";
 
+// Accessibility note (#547 light-theme contrast audit, closed by #557): these
+// four `color` hexes are used both as chart/phase accents (fine — decorative,
+// large) and as small (9-15px) text/tag foreground on near-white light
+// surfaces (phase banner name, History session-type tags) — e.g. Strength
+// #DDB13A on white measures ~2.0:1, well under WCAG AA's 4.5:1 for normal
+// text. `textColor` (below) is the fix: a `var(--phase-text-<id>)` reference
+// resolved per theme in index.css — darkened in light mode to clear AA on
+// every real consumer background (plain near-white AND the ~12%-phase-tinted
+// tag/card fills). Dark mode is NOT simply the unchanged identity hex either
+// (round-2 review, #557): three of the four hues (all but strength) measure
+// below 4.5:1 on the real ~12%-tinted dark card/tag fill, so they get their
+// own lightened dark variant too — see the comment above the dark
+// `--phase-text-*` block in index.css for the measured per-hue numbers.
+// Every text consumer of the palette must use `textColor`, never `color` —
+// `color` stays for chart/chip/border/background (non-text) uses, where the
+// original saturated hue is correct in both themes.
 export const PHASES: Phase[] = [
   {
     id: "capacity",
     name: "Capacity",
     color: "#2E96F0",
+    textColor: "var(--phase-text-capacity)",
     bg: "rgba(46,150,240,0.12)",
     border: "rgba(46,150,240,0.35)",
     acwr: "0.9–1.1",
@@ -19,6 +36,7 @@ export const PHASES: Phase[] = [
     id: "strength",
     name: "Strength",
     color: "#DDB13A",
+    textColor: "var(--phase-text-strength)",
     bg: "rgba(221,177,58,0.12)",
     border: "rgba(221,177,58,0.35)",
     acwr: "0.8–1.0",
@@ -33,6 +51,7 @@ export const PHASES: Phase[] = [
     id: "power",
     name: "Power",
     color: "#E5743A",
+    textColor: "var(--phase-text-power)",
     bg: "rgba(229,116,58,0.12)",
     border: "rgba(229,116,58,0.35)",
     acwr: "0.8–1.0",
@@ -47,6 +66,7 @@ export const PHASES: Phase[] = [
     id: "execution",
     name: "Execution",
     color: "#7B83EB",
+    textColor: "var(--phase-text-execution)",
     bg: "rgba(123,131,235,0.12)",
     border: "rgba(123,131,235,0.35)",
     acwr: "0.7–0.9",

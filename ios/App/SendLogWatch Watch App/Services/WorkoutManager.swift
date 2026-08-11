@@ -62,6 +62,16 @@ final class WorkoutManager: NSObject {
     /// immediately), so this reliably distinguishes "still uploading" from
     /// "stuck until sign-in" without touching `drain()`/`shouldDrain`.
     var stillQueued = false
+    /// True when `stillQueued` is true SPECIFICALLY because the just-saved
+    /// bundle is held for an account other than the one currently signed in
+    /// (#529 F3) — `pendingCount()` deliberately excludes such an item from
+    /// the CURRENT account's count (#158/#189: it isn't B's problem), which
+    /// otherwise made a held A-owned save read as `stillQueued == false`
+    /// right after it happened — the copy reserved for an item that
+    /// actually uploaded. An ordinary "still syncing under my own account"
+    /// queued state and "held until the account that started this run signs
+    /// back in" must not share that copy. See `WorkoutLiveView.savedContent`.
+    var stillQueuedForAnotherAccount = false
     /// Kept in memory after both persistence and direct upload fail (#287),
     /// so Retry can replay the same idempotent bundle instead of pretending
     /// the workout was saved. **Deliberately NOT reset by `start()`**
@@ -73,6 +83,20 @@ final class WorkoutManager: NSObject {
     /// `WorkoutScreenSelection` (SendLogWatchCore) for the render-order
     /// rules this depends on.
     var failedBundle: WorkoutSaveBundle?
+
+    /// Stable account identity captured the moment `start()` accepts a run
+    /// (issue #529) — mirrors `GuidedForceRunner.ownerUserId`. Unlike a
+    /// guided Force run, an ordinary workout does NOT discard itself on a
+    /// later account change: an `HKWorkoutSession` is a live recording the
+    /// user is mid-climb inside, so this stays fixed at the account that
+    /// started it and is never re-read from `userIdProvider()` again for
+    /// this run — `endAndSave()`/`retryFailedSave()` stamp every save with
+    /// this value, so an A → signed-out/B transition holds the eventual
+    /// save under A (`shouldDrain`) instead of silently uploading it under
+    /// whichever account is signed in when Stop is finally tapped.
+    private(set) var ownerUserId: UUID?
+
+    @ObservationIgnored private let userIdProvider: @Sendable () -> UUID?
 
     private static func loadRestTarget() -> Int {
         let v = UserDefaults.standard.integer(forKey: "restTargetS")
@@ -146,6 +170,12 @@ final class WorkoutManager: NSObject {
     /// actually makes the "once" behavior real — is what SendLogWatchTests
     /// asserts on instead.
     var hrMissingDateIntervalLogged = false
+    /// #481 (#477 F4 follow-up): `hrMissingDateIntervalLogged` only says
+    /// whether Console has been told at all — it can't distinguish a single
+    /// blip from a whole workout of untimestampable readings. This counts
+    /// every occurrence regardless of the one-shot log gate; `end()` reports
+    /// the total.
+    var hrMissingDateIntervalCount = 0
     // MARK: Partial-flush ordering (#477)
     //
     // `flushPartial()` used to fire an unconstrained `Task.detached` every
@@ -195,6 +225,41 @@ final class WorkoutManager: NSObject {
     var partialUploader: (ClimbWorkoutPartialUpsert) async -> Void = { partial in
         try? await Repo.flushPartialWorkout(partial)
     }
+    /// #481 review F8: extracted out of `phaseWarmer`'s default closure so
+    /// the CONDITION — the thing that can regress (inverted, deleted by a
+    /// well-meaning "no test-awareness in production code" tidy-up) — is
+    /// independently inspectable and assertable, rather than folded into a
+    /// closure whose only observable output (`"capacity"`) is also what the
+    /// unguarded path returns in every environment this suite runs in (dead
+    /// port → `try?` swallows the failure; a live-but-unauthenticated stack
+    /// → 401 → same; `Repo.fetchCurrentPhase` itself falls back to
+    /// `"capacity"` on an empty result). A pin on the return value alone
+    /// cannot fail; `testWorkoutManagerIsRunningUnderTestHostDuringTests`
+    /// (`WorkoutOwnershipTests.swift`) asserts on this property directly.
+    static let isRunningUnderTestHost = NSClassFromString("XCTestCase") != nil
+    /// Not `private`: `WorkoutOwnershipTests.swift` calls this directly
+    /// (`@testable import` only reaches `internal`+) to prove the DEFAULT —
+    /// not an override — is what resolves under test. `start()` fires this
+    /// in the background so save-on-stop needs no network round trip. #481:
+    /// left as a bare `Repo.fetchCurrentPhase()` call, this dialed
+    /// 127.0.0.1:54321 from every test that calls `start()` — a measured
+    /// 2-in-5 flake at ~32s/run. #481 review F1/F5/F6: an injectable
+    /// per-instance property only closes that hole for constructions that
+    /// remember to override it — a round-1 fix that instead tried to
+    /// STATICALLY SCAN the test target for missed overrides turned out to be
+    /// evadable by ordinary XCTest idioms (`setUp()` + a stored property, a
+    /// computed-property factory, a cross-file factory, a factory that calls
+    /// `start()` itself) and could silently stop scanning partway through a
+    /// file — a pin that can go quiet is not a pin. The actual fix is
+    /// constructional, not conventional: the DEFAULT closure itself checks
+    /// `isRunningUnderTestHost` and returns the same fallback `start()`
+    /// already used for a failed fetch, before ever reaching `Repo`. This
+    /// makes every construction shape safe — including ones nobody has
+    /// written yet — with nothing to remember and nothing to scan for.
+    var phaseWarmer: () async -> String = {
+        guard !WorkoutManager.isRunningUnderTestHost else { return "capacity" }
+        return (try? await Repo.fetchCurrentPhase()) ?? "capacity"
+    }
     /// Double haptic when the rest countdown hits zero (#476 F5: hoisted out
     /// of WorkoutLiveView, same reasoning as the save path — a rest alarm
     /// scheduled while the view was on screen used to be silently cancelled
@@ -205,20 +270,39 @@ final class WorkoutManager: NSObject {
     /// directly, means it survives navigation exactly like everything else.
     private var restAlarmTask: Task<Void, Never>?
 
-    init(tunables: Tunables = .default) {
+    init(
+        tunables: Tunables = .default,
+        userIdProvider: @escaping @Sendable () -> UUID? = { WatchSessionStore.shared.userId }
+    ) {
         self.tunables = tunables
         self.detector = AttemptDetector(tunables: tunables)
+        self.userIdProvider = userIdProvider
         super.init()
     }
 
-    /// `end()` already invalidates the fusion timer, but that's not the only
-    /// way this object goes away — invalidate here too, or a path that skips
-    /// `end()` (deallocation without an explicit stop) leaves the timer
-    /// registered on the run loop, which retains it and keeps firing forever
-    /// into a `[weak self]` that's already nil.
-    deinit {
-        fusionTimer?.invalidate()
-    }
+    // #481: this used to carry a `deinit { fusionTimer?.invalidate() }`,
+    // added when `WorkoutManager` was `@State` inside `WorkoutLiveView` (a
+    // navigationDestination) and really could deallocate mid-workout (a nav
+    // pop). It was also never correctly thread-safe where it WAS reachable:
+    // `Timer.invalidate()` must be called from the thread that installed the
+    // timer (`startFusion()`, always MainActor-adjacent), but `deinit`
+    // carries no isolation and could in principle run on whatever thread
+    // drops the last strong reference.
+    //
+    // The invariant that makes it safe to remove — no view owns its own
+    // `WorkoutManager`, so nothing deallocates it mid-workout — is #476's
+    // rule, not a fact about which views happen to exist today: any view
+    // that ever gains `@State private var workout = WorkoutManager()` and
+    // calls `start()` reintroduces both #476's orphaned-session bug and the
+    // orphaned run-loop timer this `deinit` used to mop up, with nothing left
+    // to catch it. Today the rule is pinned only per-view, by
+    // `testWorkoutLiveViewReadsWorkoutManagerFromEnvironmentNotState` /
+    // `testRootViewReadsWorkoutManagerFromEnvironmentNotState`
+    // (`WorkoutOwnershipTests.swift`) — a NEW view needs its own such pin, or
+    // its own `deinit` guard, not a free pass from this comment. `end()` (and
+    // `stopRecordingAndAwaitInFlightPartial()`) is the one real invalidation
+    // path for every view that follows the rule, and it already runs on
+    // MainActor.
 
     func requestAuthorization() async throws {
         if let authorizationRequestOverride {
@@ -265,6 +349,7 @@ final class WorkoutManager: NSObject {
         ending = false
         justSaved = false
         stillQueued = false
+        stillQueuedForAnotherAccount = false
         // Review finding F7: defensive — every path that sets these also
         // runs `end()`, which nils them, so this isn't reachable today, but
         // it closes the same "long-lived manager" exposure as the fields
@@ -273,13 +358,18 @@ final class WorkoutManager: NSObject {
         builder = nil
         startDate = nil
         liveSync = nil
+        // #529: captured once, synchronously, for THIS accepted run — never
+        // re-read after this point. See `ownerUserId`'s doc comment for why
+        // a workout must stay bound to the account that started it rather
+        // than whoever is signed in when it's eventually saved.
+        ownerUserId = userIdProvider()
         cancelRestAlarm() // review finding F5: no stale alarm from a previous rest
         // Warm the phase in the background so save-on-stop needs no network.
         // Stamped with this start's generation: once hoisted, this manager
         // outlives any single workout, so a slow fetch from a PREVIOUS start
         // must not land on the workout that's running by the time it resolves.
         Task {
-            let phase = (try? await Repo.fetchCurrentPhase()) ?? "capacity"
+            let phase = await self.phaseWarmer()
             guard self.startGuard.isCurrent(generation) else { return }
             self.cachedPhase = phase
         }
@@ -290,6 +380,7 @@ final class WorkoutManager: NSObject {
         hrTimeline = HeartRateTimeline()
         lastMotionSample = nil
         hrMissingDateIntervalLogged = false
+        hrMissingDateIntervalCount = 0
         activeKcal = 0
         elapsed = 0
         relativeAltitude = 0
@@ -327,46 +418,25 @@ final class WorkoutManager: NSObject {
             builder.delegate = self
 
             let start = Date()
-            do {
-                // #480: `startActivity` makes the session live in HealthKit
-                // immediately (watchOS now holds it as THE single active
-                // session), but nothing under `self` references it yet. If
-                // `beginCollection` throws next, that session would
-                // otherwise be orphaned — active, but unreachable, because
-                // `self.session` is only assigned below on success, and
-                // `end()` guards on `guard let session`. End + discard it
-                // right here, before rethrowing, so watchOS's one-active-
-                // session slot is freed for the retry the user is about to
-                // make. Deliberately local: this manager is long-lived
-                // across workouts (#476A), so this failure path must never
-                // assign to `self.session`/`self.builder` — a handle set
-                // here would either dangle into workout N+1's render or
-                // need its own cleanup on the next `start()`, which is the
-                // exact bug this closes.
-                session.startActivity(with: start)
-                try await builder.beginCollection(at: start)
-            } catch {
-                // #480 review F1/F2: `session`/`builder` were wired to
-                // `self` as their delegate two lines above the inner `do`,
-                // BEFORE either can fail — a delegate callback on this
-                // now-discarded pair (`didFailWithError`, `didCollectDataOf`)
-                // is otherwise indistinguishable from one on whatever
-                // workout is running when it lands, and both write `self`
-                // state (`errorMsg`, `activeKcal`) with no identity check.
-                // Detach first so HealthKit stops targeting `self` for
-                // anything from this pair, THEN end/discard. This can't be
-                // the only guard — Apple doesn't document `delegate = nil`
-                // as synchronously cancelling an already-dispatched
-                // callback — so `workoutSession(_:didFailWithError:)` and
-                // `workoutBuilder(_:didCollectDataOf:)` below also compare
-                // the callback's sender against `self.session`/`self.builder`
-                // before writing anything, as the actual backstop.
-                session.delegate = nil
-                builder.delegate = nil
-                session.end()
-                builder.discardWorkout()
-                throw error
-            }
+            // #480: a `beginCollection` failure must not orphan the session
+            // `startActivity` just made live in HealthKit — `self.session`/
+            // `self.builder` are only assigned below, on success, so without
+            // cleanup `end()` could never reach it. See
+            // `WorkoutSessionActivation`'s doc comment (SendLogWatchCore) for
+            // the full reasoning and why detach-then-end-then-discard is the
+            // right order; `workoutSession(_:didFailWithError:)` and
+            // `workoutBuilder(_:didCollectDataOf:)` below carry the identity
+            // guard that backstops the detach.
+            try await WorkoutSessionActivation.run(
+                startActivity: { session.startActivity(with: start) },
+                beginCollection: { try await builder.beginCollection(at: start) },
+                detachDelegates: {
+                    session.delegate = nil
+                    builder.delegate = nil
+                },
+                endSession: { session.end() },
+                discardBuilder: { builder.discardWorkout() }
+            )
 
             self.session = session
             self.builder = builder
@@ -497,6 +567,9 @@ final class WorkoutManager: NSObject {
             msg["active_kcal"] = kcal
             if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
             if let rs { msg["rest_started_at"] = rs.timeIntervalSince1970 }
+            // #530: this run's immutable owner (#529), never re-read from
+            // `userIdProvider()` here — see `ownerUserId`'s doc comment.
+            msg = LiveMirrorOwnership.stamped(msg, ownerUserId: ownerUserId)
             session.sendMessage(WatchBuild.stamp(msg), replyHandler: nil, errorHandler: nil)
         }
     }
@@ -597,6 +670,29 @@ final class WorkoutManager: NSObject {
         }
 
         let attempts = detector.finalize()
+        // #481: `hitCap` (SendLogWatchCore's `Attempt.hitCap`, #473) had no
+        // consumer — every finalized attempt carried "closed via a duration
+        // cap, not a genuine end signal" and nothing ever read it. Same
+        // one-shot-per-workout Console breadcrumb as `hrMissingDateInterval`
+        // below, not user-facing: a caller was always meant to report this,
+        // not silently accept the clamp. #481 review F3: a merge of a capped
+        // fragment with a later clean-closing one (< `mergeGapS` apart, same
+        // source) keeps only the LAST fragment's `hitCap`
+        // (`AttemptDetector.swift`'s merge step, documented there as
+        // diagnostic-only) — so this count can under-report a real cap hit
+        // that got absorbed into a merged attempt. "at least" says that
+        // honestly instead of implying an exact count.
+        let cappedAttemptCount = attempts.filter(\.hitCap).count
+        if cappedAttemptCount > 0 {
+            Self.log.warning("at least \(cappedAttemptCount) attempt(s) this workout closed on a duration cap, not a genuine end signal (#481)")
+        }
+        // #481 (#477 F4 follow-up): `reportHRMissingDateIntervalOnce()` logs
+        // only once per workout, so Console can't tell a single blip from a
+        // whole workout of untimestampable readings. The count answers that.
+        let missingDateIntervalCount = hrMissingDateIntervalCount
+        if missingDateIntervalCount > 0 {
+            Self.log.warning("HR quantity delivered with no mostRecentQuantityDateInterval() \(missingDateIntervalCount) time(s) this workout — readings discarded, not trusted (#477/#481)")
+        }
         let avgHR = builder.statistics(for: HKQuantityType(.heartRate))?
             .averageQuantity()?
             .doubleValue(for: .count().unitDivided(by: .minute()))
@@ -723,7 +819,17 @@ final class WorkoutManager: NSObject {
                 // 0.5-step steppers are for MANUAL entry only (SL-89).
                 rpe: RPEQuantization.autoTracked(summary.predictedRPE),
                 phase: cachedPhase,
-                tunables: .default
+                tunables: .default,
+                // #529: the account captured at start(), not whoever is
+                // signed in now — `end()` may run long after an account
+                // switch mid-workout. `ownerUserId` is nil only when the run
+                // started with nobody signed in at all (unreachable via the
+                // UI today — RootView gates Start behind a relayed sign-in);
+                // in that one case there is no captured owner to preserve,
+                // so this falls back to reading the live signed-in account
+                // right now — an explicit, documented decision (#529 F5),
+                // not a silent nil sailing into the legacy queue fallback.
+                ownerUserId: ownerUserId ?? userIdProvider()
             )
             WidgetBridge.updateLiveWorkout(active: false) // clear the live widget
             await save(bundle)
@@ -761,9 +867,22 @@ final class WorkoutManager: NSObject {
         }
         await WidgetBridge.refreshStatus() // fresh ACWR after the save
         if outcome == .queued {
-            stillQueued = await OfflineQueue.shared.pendingCount() > 0
+            // #529 F3: `pendingCount()` deliberately excludes an item held
+            // for a DIFFERENT account than the one currently signed in
+            // (#158/#189) — reading that as `stillQueued == false` here
+            // would render the "uploaded" copy for a bundle that hasn't
+            // gone anywhere. Ask the honest, bundle-specific question
+            // instead of the account-wide count.
+            if shouldDrain(itemUserId: bundle.enqueuedUserId, currentUserId: userIdProvider()) {
+                stillQueued = await OfflineQueue.shared.pendingCount() > 0
+                stillQueuedForAnotherAccount = false
+            } else {
+                stillQueued = true
+                stillQueuedForAnotherAccount = true
+            }
         } else {
             stillQueued = false
+            stillQueuedForAnotherAccount = false
         }
         ending = false
         justSaved = true
@@ -812,6 +931,7 @@ final class WorkoutManager: NSObject {
     /// logs once per workout (#477 review F4) — Console/os_log output isn't
     /// otherwise observable from a unit test.
     func reportHRMissingDateIntervalOnce() {
+        hrMissingDateIntervalCount += 1
         guard !hrMissingDateIntervalLogged else { return }
         hrMissingDateIntervalLogged = true
         Self.log.warning("HR quantity delivered with no mostRecentQuantityDateInterval() — reading discarded, not trusted (#477)")
@@ -932,6 +1052,19 @@ final class WorkoutManager: NSObject {
         // a coalesced rerun starting now would race the final row exactly
         // like the un-awaited detached Task this replaces used to.
         guard !partialFlushSuspended else { return }
+        // #529 F1: this periodic upsert had no notion of ownership at all —
+        // unlike the end-of-run bundle (held via `shouldDrain` once it's on
+        // the queue), a flush that fires AFTER an A → signed-out/B
+        // transition would otherwise write A's in-progress `climb_workouts`
+        // row straight to the network under B's currently-relayed token,
+        // landing A's elevation/attempt data in B's account — and can also
+        // permanently strand A's later held save, since the row would then
+        // exist owned by B and A's eventual upsert would be refused by RLS.
+        // Best-effort by design (SL-90): skipping here loses nothing
+        // durable — the next flush (or the final `endAndSave()`, which DOES
+        // carry the immutable `ownerUserId`) picks the snapshot up once the
+        // real owner is active again.
+        guard userIdProvider() == ownerUserId else { return }
         switch partialFlushDrain.request() {
         case .queued:
             // One is already in flight; it will pick up the LATEST snapshot
@@ -982,7 +1115,14 @@ final class WorkoutManager: NSObject {
             elevationGainM: detector.totalElevationGainM,
             attemptsDetected: liveAttempts,
             attemptsConfirmed: liveAttempts,
-            raw: tunables.keepRawTrace ? rawTrace : nil
+            raw: tunables.keepRawTrace ? rawTrace : nil,
+            // #529 F1/F6: defense-in-depth behind the `flushPartial()` guard
+            // above — if the active account changes DURING this call's
+            // network round trip (the guard only checks before dispatching),
+            // an explicit, wrong `user_id` makes Postgres's `with check
+            // (auth.uid() = user_id)` refuse the write instead of silently
+            // accepting it under whoever is relayed when the request lands.
+            userId: ownerUserId
         )
         let uploader = partialUploader
         let task = Task.detached(priority: .background) {
@@ -1022,6 +1162,36 @@ final class WorkoutManager: NSObject {
                 // #477: one or more flushes were requested while this one
                 // was in flight — coalesce them into exactly one more run,
                 // built from state as of NOW, not as of the earlier request.
+                // #529 slice-2 review R1: `flushPartial()`'s own ownership
+                // guard only protects the request that arrives WHILE this
+                // one is already in flight — the account can just as well
+                // change during the network round trip itself, and this
+                // coalesced rerun calls `runPartialFlush()` directly,
+                // bypassing that guard entirely. Re-check here too, or an
+                // A → signed-out/B transition mid-flight lets one more
+                // partial upsert fire under B's currently-relayed token
+                // after `flushPartial()` would have refused a fresh call.
+                guard self.userIdProvider() == self.ownerUserId else {
+                    // #529 slice-2 review F3: `completePass()` above already
+                    // consumed the rerun request but left `running == true`
+                    // (its contract: a `.rerun` caller is expected to
+                    // actually perform another pass and complete THAT one
+                    // too). Declining to run without resolving the drain
+                    // wedges it `running` forever — every later
+                    // `flushPartial()` on this still-live workout would hit
+                    // `.request()` → `.queued` and do nothing, exactly the
+                    // "durable flushing silently dead for the rest of the
+                    // workout" hazard `partialFlushEpoch`'s own doc comment
+                    // warns about 80 lines up, just reached from an ownership
+                    // mismatch instead of a stale epoch. A second
+                    // `completePass()` call here sees `requestedAgain ==
+                    // false` (already cleared above) and returns `.idle`,
+                    // clearing `running` — safe to call synchronously with no
+                    // intervening `await`, so nothing else can have re-armed
+                    // `requestedAgain` in between.
+                    _ = self.partialFlushDrain.completePass()
+                    return
+                }
                 self.runPartialFlush()
             }
         }

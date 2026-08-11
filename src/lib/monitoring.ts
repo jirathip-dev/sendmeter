@@ -305,6 +305,10 @@ const HANDLED_OPERATIONS = {
   "session.restore": { dedupeForLaunch: false },
   "session.purge": { dedupeForLaunch: false },
   "workout.insert": { dedupeForLaunch: false },
+  // #534: a persistently broken native listener registration would
+  // otherwise re-report on every foreground/auth event for the rest of the
+  // launch with no new information — dedupe it like a load failure.
+  "health.readiness-listener": { dedupeForLaunch: true },
 } as const;
 
 export type HandledFailureOperation = keyof typeof HANDLED_OPERATIONS;

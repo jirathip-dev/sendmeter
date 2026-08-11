@@ -122,7 +122,10 @@ struct WaitingForPhoneView: View {
             async let workouts = OfflineQueue.shared.pendingCount()
             async let sessions = PendingSessionQueue.shared.pendingCount()
             async let recordings = PendingRecordingQueue.shared.pendingCount()
-            pendingUploads = await workouts + sessions + recordings
+            // #549 F2: keep this sum in step with the phone-reported total,
+            // which now includes this queue too (`PendingSyncCache`).
+            async let liveWorkoutTerminal = LiveWorkoutTerminalRetry.shared.pendingCount()
+            pendingUploads = await workouts + sessions + recordings + liveWorkoutTerminal
         }
     }
 

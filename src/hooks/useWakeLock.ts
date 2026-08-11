@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Capacitor } from "@capacitor/core";
 import { KeepAwake } from "@capacitor-community/keep-awake";
 import { KeepAwakeCoordinator } from "../lib/keepAwakeCoordinator";
+import { WebWakeLockCoordinator } from "../lib/webWakeLockCoordinator";
 
 const nativeCoordinator = new KeepAwakeCoordinator((active) =>
   active ? KeepAwake.keepAwake() : KeepAwake.allowSleep(),
@@ -18,40 +19,28 @@ export function useWakeLock(active: boolean): void {
     const wl = navigator.wakeLock;
     if (!wl) return;
 
-    let sentinel: WakeLockSentinel | null = null;
-    let cancelled = false;
+    // #533: the coordinator serializes the request/release lifecycle so an
+    // acquire() while a request is already pending can't leak a second,
+    // untracked sentinel — see webWakeLockCoordinator.ts for the race this
+    // replaced. One instance per effect run, unlike `nativeCoordinator`
+    // above: `cleanup()` is terminal (it permanently blocks further
+    // acquires on that instance), so hoisting this to module scope would
+    // brick the web wake lock for the rest of the session after the first
+    // unmount.
+    const coordinator = new WebWakeLockCoordinator(() => wl.request("screen"));
 
-    const acquire = () => {
-      if (sentinel || cancelled) return;
-      wl.request("screen")
-        .then((s) => {
-          if (cancelled) {
-            void s.release().catch(() => {});
-            return;
-          }
-          sentinel = s;
-          // iOS releases the lock when the page hides — clear our handle so the
-          // visibility listener re-acquires on return.
-          s.addEventListener("release", () => {
-            sentinel = null;
-          });
-        })
-        .catch(() => {
-          /* denied / not visible — fine, best-effort */
-        });
-    };
-
-    acquire();
+    coordinator.acquire();
     const onVis = () => {
-      if (document.visibilityState === "visible") acquire();
+      // iOS releases the lock when the page hides — the sentinel's own
+      // "release" listener clears the coordinator's tracked reference, so
+      // returning to visible needs a fresh acquire().
+      if (document.visibilityState === "visible") coordinator.acquire();
     };
     document.addEventListener("visibilitychange", onVis);
 
     return () => {
-      cancelled = true;
       document.removeEventListener("visibilitychange", onVis);
-      void sentinel?.release().catch(() => {});
-      sentinel = null;
+      coordinator.cleanup();
     };
   }, [active]);
 
