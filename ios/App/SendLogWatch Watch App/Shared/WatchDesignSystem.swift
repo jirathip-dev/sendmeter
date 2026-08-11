@@ -294,6 +294,95 @@ struct WatchSecondaryButtonStyle: ButtonStyle {
     }
 }
 
+/// Visual weight for `WatchIconActionButton` — mirrors the filled/outline
+/// split of `WatchPrimaryButtonStyle`/`WatchSecondaryButtonStyle`, scaled down
+/// to a compact icon-only footprint. Deliberately has no destructive variant:
+/// Start/Stop/Save/Finish and destructive/recovery actions stay text-labeled
+/// per #541's icon-vs-text rule and must never adopt this control.
+enum WatchIconActionRole {
+    case prominent
+    case plain
+}
+
+/// Shared metrics/colour math for `WatchIconActionButton`, factored out of
+/// `WatchIconActionButtonStyle` so previews can render the pressed state
+/// deterministically — a `ButtonStyle`'s `configuration.isPressed` only ever
+/// reflects a real touch, never something a preview can set.
+private enum WatchIconActionVisuals {
+    static let glyphDiameter: CGFloat = 30
+    static let iconSize: CGFloat = 15
+
+    static func fill(role: WatchIconActionRole, tint: Color, isPressed: Bool) -> Color {
+        switch role {
+        case .prominent: tint.opacity(isPressed ? 0.65 : 0.92)
+        case .plain: tint.opacity(isPressed ? 0.22 : 0.12)
+        }
+    }
+
+    static func foreground(role: WatchIconActionRole, tint: Color) -> Color {
+        role == .prominent ? .white : tint
+    }
+
+    static func strokeWidth(role: WatchIconActionRole) -> CGFloat {
+        role == .plain ? 1 : 0
+    }
+}
+
+struct WatchIconActionButtonStyle: ButtonStyle {
+    let role: WatchIconActionRole
+    let tint: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed
+        configuration.label
+            .font(.system(size: WatchIconActionVisuals.iconSize, weight: .bold))
+            .foregroundStyle(WatchIconActionVisuals.foreground(role: role, tint: tint))
+            .frame(width: WatchIconActionVisuals.glyphDiameter, height: WatchIconActionVisuals.glyphDiameter)
+            .background {
+                Circle()
+                    .fill(WatchIconActionVisuals.fill(role: role, tint: tint, isPressed: pressed))
+                    .overlay {
+                        Circle().stroke(tint.opacity(0.5), lineWidth: WatchIconActionVisuals.strokeWidth(role: role))
+                    }
+            }
+            .frame(
+                minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
+                minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
+            )
+            .opacity(pressed ? 0.84 : 1)
+            .contentShape(Rectangle())
+    }
+}
+
+/// Compact circular icon-only action control (#541 slice 1). The painted
+/// glyph is a small `glyphDiameter` circle, but the tappable frame is always
+/// padded out to `WatchDesignTokens.minimumHitTarget` — the same "small
+/// visually, full-size to the touch" shape as `WatchSecondaryButtonStyle`.
+/// Reserved for secondary/navigation actions; Start/Stop/Save/Finish and
+/// destructive/recovery actions keep their explicit text labels.
+struct WatchIconActionButton: View {
+    let systemImage: String
+    var role: WatchIconActionRole = .plain
+    var tint: Color = WatchPalette.primary
+    /// Required, not defaulted: an icon-only control has no text fallback for
+    /// VoiceOver, so a caller cannot construct one without stating what it does.
+    let accessibilityLabel: String
+    var accessibilityHint: String? = nil
+    var isDisabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+        }
+        .buttonStyle(WatchIconActionButtonStyle(role: role, tint: tint))
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.4 : 1)
+        .accessibilityLabel(accessibilityLabel)
+        .watchAccessibilityHint(accessibilityHint)
+    }
+}
+
 struct WatchPageControl: View {
     let selection: Int
     let labels: [String]
@@ -357,6 +446,50 @@ private struct WatchPageControlItem: View {
     }
 }
 
+/// Compact icon-navigation item (#541 slice 1) — a single destination in an
+/// icon-only nav row, with the same selected/unselected visual language as
+/// `WatchPageControlItem` but an SF Symbol in place of a text label. The
+/// #539 replacement for the text-heavy Status/Actions pill is expected to
+/// lay a row of these out; this issue adds the item only, not that row.
+struct WatchIconNavItem: View {
+    let systemImage: String
+    let isSelected: Bool
+    /// Required, not defaulted: an icon-only control has no text fallback for
+    /// VoiceOver, so a caller cannot construct one without stating what it does.
+    let accessibilityLabel: String
+    var accessibilityHint: String? = nil
+    let action: () -> Void
+
+    private var iconWeight: Font.Weight { isSelected ? .bold : .medium }
+    private var foreground: Color { isSelected ? WatchPalette.textPrimary : WatchPalette.textTertiary }
+    private var fill: Color { isSelected ? WatchPalette.primary.opacity(0.72) : Color.white.opacity(0.06) }
+    private var strokeOpacity: Double { isSelected ? 0.24 : 0.1 }
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(fill)
+                    .overlay(Circle().stroke(Color.white.opacity(strokeOpacity), lineWidth: 0.7))
+                Image(systemName: systemImage)
+                    .font(.system(size: 15, weight: iconWeight))
+            }
+            .frame(width: 30, height: 30)
+        }
+        .buttonStyle(.plain)
+        .frame(
+            minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
+            minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
+        )
+        .foregroundStyle(foreground)
+        .contentShape(Rectangle())
+        .accessibilityLabel(accessibilityLabel)
+        .watchAccessibilityHint(accessibilityHint)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 struct WatchLoadingState: View {
     let title: String
     var message: String? = nil
@@ -402,6 +535,17 @@ extension View {
     func watchCanvas() -> some View {
         modifier(WatchCanvasModifier())
     }
+
+    /// `accessibilityHint(_:)` has no overload that accepts `nil`; this
+    /// applies one only when the caller actually supplied non-empty text.
+    @ViewBuilder
+    func watchAccessibilityHint(_ hint: String?) -> some View {
+        if let hint, !hint.isEmpty {
+            accessibilityHint(hint)
+        } else {
+            self
+        }
+    }
 }
 
 private struct WatchCanvasModifier: ViewModifier {
@@ -415,3 +559,159 @@ private struct WatchCanvasModifier: ViewModifier {
             }
     }
 }
+
+#if DEBUG
+/// The two screens the layout has to hold, in points: the smallest supported
+/// watch and the largest — same pinned-frame approach as
+/// `WorkoutLiveView`'s preview screens (the `#Preview` macro ignores
+/// `previewDevice`; it takes the device from the Canvas picker).
+private enum WatchIconPreviewScreen {
+    /// Apple Watch SE / Series 4-6, 40mm.
+    static let mm40 = CGSize(width: 162, height: 197)
+    /// Apple Watch Ultra / Ultra 2, 49mm.
+    static let mm49 = CGSize(width: 205, height: 251)
+}
+
+/// Preview-only: renders `WatchIconActionButton`'s exact fill/foreground math
+/// for an explicit pressed/disabled state. `ButtonStyle.configuration.isPressed`
+/// only ever reflects a real touch, which a preview canvas can't produce, so
+/// this reuses the same `WatchIconActionVisuals` math outside a live `Button`.
+private struct WatchIconActionSwatch: View {
+    let systemImage: String
+    let role: WatchIconActionRole
+    let tint: Color
+    var isPressed = false
+    var isDisabled = false
+    let caption: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.system(size: WatchIconActionVisuals.iconSize, weight: .bold))
+                .foregroundStyle(WatchIconActionVisuals.foreground(role: role, tint: tint))
+                .frame(width: WatchIconActionVisuals.glyphDiameter, height: WatchIconActionVisuals.glyphDiameter)
+                .background {
+                    Circle()
+                        .fill(WatchIconActionVisuals.fill(role: role, tint: tint, isPressed: isPressed))
+                        .overlay {
+                            Circle().stroke(
+                                tint.opacity(0.5),
+                                lineWidth: WatchIconActionVisuals.strokeWidth(role: role)
+                            )
+                        }
+                }
+                .frame(
+                    minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
+                    minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
+                )
+                .opacity(isDisabled ? 0.4 : (isPressed ? 0.84 : 1))
+                // Preview-only: outlines the tappable frame so the padding
+                // between the small glyph and the full hit target (AC2) is
+                // visible at a glance, not just true in code.
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.red.opacity(0.35), lineWidth: 1)
+                }
+            Text(caption)
+                .font(.system(size: 8, design: .rounded))
+                .foregroundStyle(WatchPalette.textSecondary)
+        }
+    }
+}
+
+private func watchIconActionGallery(_ size: CGSize) -> some View {
+    ScrollView {
+        VStack(spacing: 10) {
+            WatchEyebrow(text: "Prominent")
+            HStack(spacing: 8) {
+                WatchIconActionSwatch(
+                    systemImage: "bell.fill", role: .prominent, tint: WatchPalette.primary,
+                    caption: "Normal"
+                )
+                WatchIconActionSwatch(
+                    systemImage: "bell.fill", role: .prominent, tint: WatchPalette.primary,
+                    isPressed: true, caption: "Pressed"
+                )
+                WatchIconActionSwatch(
+                    systemImage: "bell.fill", role: .prominent, tint: WatchPalette.primary,
+                    isDisabled: true, caption: "Disabled"
+                )
+            }
+            WatchEyebrow(text: "Plain")
+            HStack(spacing: 8) {
+                WatchIconActionSwatch(
+                    systemImage: "gearshape.fill", role: .plain, tint: WatchPalette.secondary,
+                    caption: "Normal"
+                )
+                WatchIconActionSwatch(
+                    systemImage: "gearshape.fill", role: .plain, tint: WatchPalette.secondary,
+                    isPressed: true, caption: "Pressed"
+                )
+                WatchIconActionSwatch(
+                    systemImage: "gearshape.fill", role: .plain, tint: WatchPalette.secondary,
+                    isDisabled: true, caption: "Disabled"
+                )
+            }
+            // Exercises the real initializer (not just the swatch math)
+            // wired to a no-op action.
+            WatchIconActionButton(
+                systemImage: "arrow.clockwise",
+                role: .plain,
+                tint: WatchPalette.warning,
+                accessibilityLabel: "Retry sync",
+                accessibilityHint: "Retries the last failed upload",
+                action: {}
+            )
+        }
+        .padding(10)
+    }
+    .frame(width: size.width, height: size.height)
+    .watchCanvas()
+    .clipped()
+}
+
+#Preview("Icon action · 40mm") {
+    watchIconActionGallery(WatchIconPreviewScreen.mm40)
+}
+
+#Preview("Icon action · 49mm") {
+    watchIconActionGallery(WatchIconPreviewScreen.mm49)
+}
+
+#Preview("Icon action · 40mm · accessibility") {
+    watchIconActionGallery(WatchIconPreviewScreen.mm40)
+        .environment(\.dynamicTypeSize, .accessibility3)
+}
+
+private func watchIconNavGallery(_ size: CGSize) -> some View {
+    VStack(spacing: 14) {
+        WatchEyebrow(text: "First item selected")
+        HStack(spacing: 8) {
+            WatchIconNavItem(systemImage: "heart.fill", isSelected: true, accessibilityLabel: "Status", action: {})
+            WatchIconNavItem(systemImage: "bolt.fill", isSelected: false, accessibilityLabel: "Actions", action: {})
+        }
+        WatchEyebrow(text: "Second item selected")
+        HStack(spacing: 8) {
+            WatchIconNavItem(systemImage: "heart.fill", isSelected: false, accessibilityLabel: "Status", action: {})
+            WatchIconNavItem(systemImage: "bolt.fill", isSelected: true, accessibilityLabel: "Actions", action: {})
+        }
+    }
+    .padding(10)
+    .frame(width: size.width, height: size.height)
+    .watchCanvas()
+    .clipped()
+}
+
+#Preview("Icon nav · 40mm") {
+    watchIconNavGallery(WatchIconPreviewScreen.mm40)
+}
+
+#Preview("Icon nav · 49mm") {
+    watchIconNavGallery(WatchIconPreviewScreen.mm49)
+}
+
+#Preview("Icon nav · 40mm · accessibility") {
+    watchIconNavGallery(WatchIconPreviewScreen.mm40)
+        .environment(\.dynamicTypeSize, .accessibility3)
+}
+#endif
