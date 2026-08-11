@@ -357,6 +357,55 @@ private struct WatchPageControlItem: View {
     }
 }
 
+/// Shared visual chrome for a compact icon-only control (SL-537 lead-in for
+/// #541's shared icon/navigation primitive — #541 is the design-system rule
+/// and owns that primitive; #539 only *consumes* it for Home's oversized
+/// Status/Actions control, it does not define one, so this is NOT #539's
+/// primitive). Same spec: fixed icon size inside a 44pt minimum hit frame,
+/// so swapping onto #541's eventual primitive is a drop-in, not a new
+/// call-site pattern to migrate. Used by both `WatchIconButton` and any
+/// `NavigationLink` that needs the identical icon-only look.
+///
+/// Merge note: a sibling branch may add its own icon primitive to this same
+/// file, at this same natural insertion point — coordinate merge order, or
+/// rename one side pre-emptively, so a duplicate `WatchIconButton` type
+/// isn't a silent compile error instead of a visible conflict.
+struct WatchIconGlyph: View {
+    let systemImage: String
+    var size: CGFloat = 15
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: size, weight: .semibold))
+            .frame(
+                width: CGFloat(WatchDesignTokens.minimumHitTarget),
+                height: CGFloat(WatchDesignTokens.minimumHitTarget)
+            )
+    }
+}
+
+/// Compact icon-only button for secondary/navigation actions (#541's
+/// icon-first rule): an icon, an accessibility label, an accessibility hint,
+/// a 44pt hit target and a semantic token tint — every icon-only control
+/// needs all four. Prefer this over a one-off `Image` + `Button` pairing so
+/// swapping onto #541's shared primitive is a mechanical change later.
+struct WatchIconButton: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    let accessibilityHint: String
+    var tint: Color = WatchPalette.textPrimary
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            WatchIconGlyph(systemImage: systemImage)
+        }
+        .buttonStyle(WatchSecondaryButtonStyle(tint: tint))
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint(accessibilityHint)
+    }
+}
+
 struct WatchLoadingState: View {
     let title: String
     var message: String? = nil
