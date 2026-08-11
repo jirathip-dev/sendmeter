@@ -231,10 +231,10 @@ final class SendmeterWatchScreenshots: XCTestCase {
             .firstMatch
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
 
-        let finish = largestButton(in: app, identifier: "finish-workout")
-        let boulder = largestButton(in: app, identifier: "workout-boulder-toggle")
+        let finish = smallestButton(in: app, identifier: "finish-workout")
+        let boulder = smallestButton(in: app, identifier: "workout-boulder-toggle")
         let restControls = [60, 120, 180, 300].map {
-            largestButton(in: app, identifier: "rest-target-\($0)")
+            smallestButton(in: app, identifier: "rest-target-\($0)")
         }
 
         XCTAssertTrue(finish.waitForExistence(timeout: 10))
@@ -246,10 +246,20 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
         for control in restControls {
             XCTAssertTrue(control.waitForExistence(timeout: 10))
-            assertRestPillVisible(control, in: viewport, fixture: "workoutRest")
+            assertRestPillVisible(control, in: app, viewport: viewport, fixture: "workoutRest")
         }
+        // #582 review F1: the action row is the later sibling, so any pill /
+        // play-stop hit-frame overlap silently routes taps on visible pill
+        // pixels to Start/Stop boulder. The layout promises disjoint hit
+        // frames (pill slots end at their visible bottom edge; the action
+        // row pads by the full 7pt overhang) — hold it to that.
+        let lowestPillHitEdge = restControls.map { $0.frame.maxY }.max() ?? .infinity
+        XCTAssertGreaterThanOrEqual(
+            boulder.frame.minY, lowestPillHitEdge,
+            "play/stop hit frame must not overlap the rest pills' hit frames"
+        )
         assertRestTargetSelection(restControls, selectedIndex: 2)
-        assertWorkoutReadouts(app)
+        assertWorkoutReadouts(app, accessibilityLarge: accessibilityLarge)
 
         // Exercise every direct target, including both endpoints, and verify
         // the shared setter drives exactly one selected accessibility state.
@@ -280,7 +290,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
             assertFullyVisible(finish, in: app, fixture: "workoutRest", viewport: viewport)
             assertFullyVisible(boulder, in: app, fixture: "workoutRest", viewport: viewport)
             for control in restControls {
-                assertRestPillVisible(control, in: viewport, fixture: "workoutRest")
+                assertRestPillVisible(control, in: app, viewport: viewport, fixture: "workoutRest")
             }
 
             Thread.sleep(forTimeInterval: 1)
@@ -660,7 +670,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 // The climbing state is the one `assertWorkoutLiveControls`
                 // does not pose: the in-row toggle must read as the boulder
                 // stop — a different scope (and glyph) than the finish flag.
-                let boulder = largestButton(in: app, identifier: "workout-boulder-toggle")
+                let boulder = smallestButton(in: app, identifier: "workout-boulder-toggle")
                 XCTAssertTrue(boulder.waitForExistence(timeout: 5))
                 XCTAssertEqual(boulder.label, "Stop boulder")
                 assertFullyVisible(boulder, in: app, fixture: item.fixture)
@@ -1049,22 +1059,44 @@ final class SendmeterWatchScreenshots: XCTestCase {
             // view. Bring its own hit target into the active window before
             // synthesizing a tap; otherwise watchOS can report the visible
             // descendant's stale pre-scroll frame and route the tap nowhere.
-            for _ in 0..<2 where !action.isHittable {
-                app.swipeUp(velocity: .slow)
-                Thread.sleep(forTimeInterval: 0.4)
+            // Measured drags (same calibration as `dragChooser`) instead of
+            // blind `swipeUp`s: a momentum swipe can overshoot and leave the
+            // card parked half outside the window, which is what used to
+            // make the hard hittability guard below look flaky. The guard
+            // itself stays hard — it is the #539 regression check for this
+            // exact control and must not be weakened (#582 review F2).
+            let viewport = app.windows.firstMatch.frame
+            for _ in 0..<8 {
+                let frame = action.frame
+                if action.isHittable, frame.minY >= viewport.minY, frame.maxY <= viewport.maxY {
+                    break
+                }
+                if frame.maxY > viewport.maxY {
+                    dragChooser(
+                        app,
+                        viewport: viewport,
+                        points: frame.maxY - viewport.maxY + 12,
+                        contentDirection: -1
+                    )
+                } else if frame.minY < viewport.minY {
+                    dragChooser(
+                        app,
+                        viewport: viewport,
+                        points: viewport.minY - frame.minY + 12,
+                        contentDirection: 1
+                    )
+                } else {
+                    // Fully inside yet not hittable: the scroll view is still
+                    // settling (or rubber-banding) — a small nudge forces a
+                    // fresh layout pass.
+                    dragChooser(app, viewport: viewport, points: 8, contentDirection: -1)
+                }
+                Thread.sleep(forTimeInterval: 0.3)
             }
             XCTAssertTrue(
                 waitForStableFrame(action, timeout: 5),
                 "Home action \(identifier) must settle after scrolling into view"
             )
-            // SwiftUI's watchOS scroll container can report the card as
-            // non-hittable even when tap() can deterministically scroll it
-            // into the active viewport. Let XCTest perform that final scroll
-            // rather than recording a false layout failure here.
-            if !action.isHittable {
-                action.tap()
-                return
-            }
         }
         XCTAssertTrue(action.isHittable, "Home action \(identifier) must be hittable before tapping")
         action.tap()
@@ -1072,14 +1104,22 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
     /// watchOS can expose a styled button through more than one accessibility
     /// node carrying the same identifier (a layout wrapper plus the styled
-    /// label that owns the real 44pt target). Select the largest matching
-    /// node so geometry assertions inspect the tappable primitive rather
-    /// than a shortened wrapper.
-    private func largestButton(in app: XCUIApplication, identifier: String) -> XCUIElement {
-        let matches = app.buttons.matching(identifier: identifier).allElementsBoundByIndex
-        return matches.max {
+    /// label), and an identifier on a container has been observed swallowing
+    /// its descendants' (`ForceGaugeView`'s documented footgun). Selecting
+    /// the LARGEST match would let a huge container satisfy every `>= 44`
+    /// geometry check vacuously (#582 review F5) — pick the smallest match,
+    /// which biases every assertion toward failing, and flag duplicates so a
+    /// silently split node is a finding rather than a coin toss.
+    private func smallestButton(in app: XCUIApplication, identifier: String) -> XCUIElement {
+        let query = app.buttons.matching(identifier: identifier)
+        let matches = query.allElementsBoundByIndex
+        XCTAssertLessThanOrEqual(
+            matches.count, 1,
+            "expected one button for \(identifier), found \(matches.count) — geometry checks would be ambiguous"
+        )
+        return matches.min {
             ($0.frame.width * $0.frame.height) < ($1.frame.width * $1.frame.height)
-        } ?? app.buttons.matching(identifier: identifier).firstMatch
+        } ?? query.firstMatch
     }
 
     private func waitForAccessibilityValue(
@@ -1112,7 +1152,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
     /// the live Workout screen rendered its readouts. Pin the fixture's
     /// semantic values too, so accessibility-large truncation (for example
     /// `142` becoming `1…`) fails before a misleading capture is retained.
-    private func assertWorkoutReadouts(_ app: XCUIApplication) {
+    private func assertWorkoutReadouts(_ app: XCUIApplication, accessibilityLarge: Bool) {
         for label in ["142", "46:33", "RESTING", "02:07", "12", "341 kcal", "1.4m"] {
             let readout = app.staticTexts[label]
             XCTAssertTrue(
@@ -1120,20 +1160,41 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 "workout fixture readout \(label) must render completely"
             )
         }
+        // #582 review F3: the accessibility-large run must exercise a
+        // genuinely different render, or it can never fail differently from
+        // the normal run. The HR readout is the screen's Dynamic
+        // Type-scalable text (capped at .xxLarge, where the fixed 30pt row
+        // stops fitting), so under `-sendmeter-accessibility-large` it must
+        // render measurably taller than at the normal size — watchOS body
+        // is ~17-18.5pt tall at normal sizes and ~21-23pt at .xxLarge, so
+        // 20 sits between them. This fails if the whole screen is ever
+        // re-capped at .large, and also if width pressure quietly hands the
+        // growth back via `minimumScaleFactor` (how F3 originally hid).
+        if accessibilityLarge {
+            let heartRate = app.staticTexts["142"]
+            XCTAssertGreaterThanOrEqual(
+                heartRate.frame.height, 20,
+                "accessibility-large must scale the HR readout (got \(heartRate.frame.height)pt) — the Dynamic Type cap has collapsed to the normal size"
+            )
+        }
     }
 
     /// #580: four rest pills share one 40mm row, so a literal 44pt-wide
     /// target per pill cannot exist (4 × 44 > the 162pt panel). The contract
-    /// is: full 44pt vertical hit slot, a readable-width pill, hittable, and
-    /// zero horizontal clipping — the exact regression the issue fixes.
+    /// is: full 44pt-tall hit slot, an equal ≥36pt-wide share of the row
+    /// (the real 40mm width is ~37.5pt — the floor sits just under it so a
+    /// genuine shrink fails, #582 review F6), hittable, and zero clipping
+    /// against the window and the live viewport.
     private func assertRestPillVisible(
         _ element: XCUIElement,
-        in viewport: XCUIElement,
+        in app: XCUIApplication,
+        viewport: XCUIElement,
         fixture: String
     ) {
         XCTAssertTrue(element.isHittable, "fixture \(fixture) rest pill is not hittable")
         XCTAssertGreaterThanOrEqual(element.frame.height, 44, "fixture \(fixture) rest pill lost its vertical 44pt target")
-        XCTAssertGreaterThanOrEqual(element.frame.width, 30, "fixture \(fixture) rest pill became too narrow to read")
+        XCTAssertGreaterThanOrEqual(element.frame.width, 36, "fixture \(fixture) rest pill lost its width share of the row")
+        assertNotClipped(element, in: app, fixture: fixture)
         assertNotClipped(element, in: viewport, fixture: fixture)
     }
 
@@ -1193,10 +1254,14 @@ final class SendmeterWatchScreenshots: XCTestCase {
         XCTAssertTrue(element.isHittable, "fixture \(fixture) control is not hittable")
         XCTAssertGreaterThanOrEqual(element.frame.height, 44, "fixture \(fixture) control lost its 44pt hit target")
         XCTAssertGreaterThanOrEqual(element.frame.width, 44, "fixture \(fixture) control lost its 44pt horizontal hit target")
+        // Always bound against the window too (#582 review F4): a viewport
+        // element that is itself the overflowing content (a SwiftUI stack
+        // reports its full size when it outgrows its proposal) moves WITH
+        // the overflow, so the viewport check alone can go vacuous exactly
+        // when the screen stops fitting.
+        assertNotClipped(element, in: app, fixture: fixture)
         if let viewport {
             assertNotClipped(element, in: viewport, fixture: fixture)
-        } else {
-            assertNotClipped(element, in: app, fixture: fixture)
         }
     }
 
