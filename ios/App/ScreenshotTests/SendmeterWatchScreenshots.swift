@@ -28,6 +28,33 @@ final class SendmeterWatchScreenshots: XCTestCase {
         )
     }
 
+    /// #539 round-1 review F4: the AC ("Layout is verified at normal and at
+    /// least one accessibility Dynamic Type size") was previously ticked on
+    /// two byte-identical screenshots — `testDeterministicFixtureMatrix`
+    /// never passed `accessibilityLarge: true`, so nothing in the suite
+    /// actually launched Status under `-sendmeter-accessibility-large`. This
+    /// does, and captures a real screenshot either way, so a future Dynamic
+    /// Type change to `StatusView` gets a live check instead of a vacuous one.
+    func testStatusFitsAtAccessibilityLargeType() throws {
+        let app = launchFixture("status", accessibilityLarge: true)
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        let readinessRing = app.descendants(matching: .any)
+            .matching(identifier: "readiness-ring").firstMatch
+        XCTAssertTrue(readinessRing.waitForExistence(timeout: 10))
+        assertFullyVisible(readinessRing, in: app, fixture: "status-ax-large")
+
+        let syncLabel = app.descendants(matching: .any)
+            .matching(identifier: "status-sync-label").firstMatch
+        XCTAssertTrue(syncLabel.waitForExistence(timeout: 5))
+        assertNotClipped(syncLabel, in: app, fixture: "status-ax-large")
+
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "40mm-status-accessibility-large"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     private func assertForceSetupPrimaryPathFits(
         accessibilityLarge: Bool,
         captureName: String
@@ -110,6 +137,13 @@ final class SendmeterWatchScreenshots: XCTestCase {
             ("statusSyncing", "watch-state-syncing"),
             ("statusOffline", "watch-state-offline"),
             ("statusCached", "watch-state-cached"),
+            // #539 round-1 review F1/F3: the three sync states with the
+            // longest real `syncLabel`/chip-title strings — nothing exercised
+            // these before, which is how the round-1 fix shipped verified
+            // against a card production never renders.
+            ("statusAuthRequired", "watch-state-warning"),
+            ("statusUnsupported", "watch-state-warning"),
+            ("statusFailed", "watch-state-warning"),
             ("waiting", "watch-state-syncing"),
         ]
 
@@ -124,8 +158,10 @@ final class SendmeterWatchScreenshots: XCTestCase {
             )
             if item.fixture == "status" {
                 XCTAssertEqual(app.pageIndicators.count, 0, "explicit page selector must replace native dots")
-                let statusPage = app.buttons["Show Status"]
-                let actionsPage = app.buttons["Show Actions"]
+                // #539 round-1 review F5: identifier-based, not copy-based —
+                // a label change can no longer silently break this guard.
+                let statusPage = app.buttons.matching(identifier: "home-nav-status").firstMatch
+                let actionsPage = app.buttons.matching(identifier: "home-nav-actions").firstMatch
                 XCTAssertTrue(statusPage.waitForExistence(timeout: 5))
                 XCTAssertTrue(actionsPage.waitForExistence(timeout: 5))
                 assertFullyVisible(statusPage, in: app, fixture: item.fixture)
@@ -142,20 +178,51 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     statusPage.frame.intersects(readiness.frame),
                     "home page selector must never obscure readiness content"
                 )
-                // #539: the primary readiness card must fit un-cropped in the
-                // first viewport on 40/41mm and Ultra — this is the
-                // regression guard for the clipping bug, independent of the
-                // curated App Store screenshots. `readiness-ring` sits near
-                // the card's bottom edge, so an un-clipped ring is a reliable
-                // proxy for an un-clipped card without needing a container-
-                // level identifier (one was tried and swallowed the ring's
-                // own identifier from the accessibility tree — SwiftUI
-                // collapses a tagged container's children into one opaque
-                // element).
-                assertFullyVisible(readiness, in: app, fixture: item.fixture)
                 actionsPage.tap()
                 XCTAssertTrue(app.staticTexts["Force Gauge"].waitForExistence(timeout: 5))
                 statusPage.tap()
+            }
+            if item.fixture.hasPrefix("status") {
+                // #539 round-1 review F1: assert against the REAL production
+                // card — the ring near its top AND whichever explanatory line
+                // it renders at the bottom (every fixture used to suppress
+                // both entirely, which is exactly how the round-1 fix shipped
+                // verified against a shorter stand-in). This is the
+                // regression guard for the clipping bug, independent of the
+                // curated App Store screenshots.
+                let readinessRing = app.descendants(matching: .any)
+                    .matching(identifier: "readiness-ring").firstMatch
+                XCTAssertTrue(readinessRing.waitForExistence(timeout: 5), "fixture \(item.fixture) should expose readiness-ring")
+                assertFullyVisible(readinessRing, in: app, fixture: item.fixture)
+                // Empty/offline states render the full phone-sync guidance as
+                // visible content (the ring announces only "No data" to avoid
+                // duplicate VoiceOver copy), so they get the same load-bearing
+                // frame assertion as scored states.
+                let nilReadinessFixtures: Set<String> = ["statusEmpty", "statusOffline"]
+                if nilReadinessFixtures.contains(item.fixture) {
+                    let guidance = app.descendants(matching: .any)
+                        .matching(identifier: "readiness-empty-guidance").firstMatch
+                    XCTAssertTrue(guidance.waitForExistence(timeout: 5), "fixture \(item.fixture) should expose readiness-empty-guidance")
+                    XCTAssertEqual(guidance.label, "Open Sendmeter on your iPhone to sync Health")
+                    assertNotClipped(guidance, in: app, fixture: item.fixture)
+                    let capture = XCTAttachment(screenshot: app.screenshot())
+                    capture.name = "\(item.fixture)-guidance"
+                    capture.lifetime = .keepAlways
+                    add(capture)
+                } else {
+                    let syncLabel = app.descendants(matching: .any)
+                        .matching(identifier: "status-sync-label").firstMatch
+                    XCTAssertTrue(syncLabel.waitForExistence(timeout: 5), "fixture \(item.fixture) should expose status-sync-label")
+                    assertNotClipped(syncLabel, in: app, fixture: item.fixture)
+                }
+                // #539 round-1 review F3: the state chip (shares a row with
+                // the eyebrow now) must stay fully within the card even at
+                // its longest real titles, not merely present. Not a tap
+                // target, so no 44pt hit-target requirement — `assertNotClipped`,
+                // not `assertFullyVisible`.
+                let chip = app.descendants(matching: .any)
+                    .matching(identifier: item.identifier).firstMatch
+                assertNotClipped(chip, in: app, fixture: item.fixture)
             }
             app.terminate()
         }
@@ -415,13 +482,21 @@ final class SendmeterWatchScreenshots: XCTestCase {
     }
 
     private func assertFullyVisible(_ element: XCUIElement, in app: XCUIApplication, fixture: String) {
+        XCTAssertTrue(element.isHittable, "fixture \(fixture) control is not hittable")
+        XCTAssertGreaterThanOrEqual(element.frame.height, 44, "fixture \(fixture) control lost its 44pt hit target")
+        XCTAssertGreaterThanOrEqual(element.frame.width, 44, "fixture \(fixture) control lost its 44pt horizontal hit target")
+        assertNotClipped(element, in: app, fixture: fixture)
+    }
+
+    /// #539 round-1 review F1: the clipping bounds-check half of
+    /// `assertFullyVisible`, without the 44pt hit-target requirement — for
+    /// non-interactive content (a text line, a state chip) that has no tap
+    /// target to protect but must still stay within the viewport.
+    private func assertNotClipped(_ element: XCUIElement, in app: XCUIApplication, fixture: String) {
         let window = app.windows.firstMatch
         XCTAssertTrue(window.waitForExistence(timeout: 5))
         let frame = element.frame
         let bounds = window.frame
-        XCTAssertTrue(element.isHittable, "fixture \(fixture) control is not hittable")
-        XCTAssertGreaterThanOrEqual(frame.height, 44, "fixture \(fixture) control lost its 44pt hit target")
-        XCTAssertGreaterThanOrEqual(frame.width, 44, "fixture \(fixture) control lost its 44pt horizontal hit target")
         XCTAssertGreaterThanOrEqual(frame.minX, bounds.minX, "fixture \(fixture) control is clipped on the left")
         XCTAssertLessThanOrEqual(frame.maxX, bounds.maxX, "fixture \(fixture) control is clipped on the right")
         XCTAssertGreaterThanOrEqual(frame.minY, bounds.minY, "fixture \(fixture) control is clipped above")

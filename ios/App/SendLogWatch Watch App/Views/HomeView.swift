@@ -112,28 +112,31 @@ struct HomeView: View {
             // proposed bounds, making this control appear to cover the
             // readiness/Force cards on both 40mm and 49mm watches.
             //
-            // #539/#541: a full-width text pill here was the single biggest
-            // consumer of the 40/41mm first viewport and read as heavier than
-            // the status it was gating. Two compact `WatchIconButton`s
-            // (#541's shared primitive) replace it — same explicit two-way
-            // affordance (VoiceOver users get named "Show Status"/"Show
-            // Actions" controls instead of relying on a blind swipe), far
-            // less visual weight.
+            // #539/#541: a full-width text pill here read as heavier than the
+            // status it was gating (though at the same 44pt-minimum hit
+            // target, it took no *more* vertical space — the clipping fix
+            // itself came from StatusView's removed "Today" row, below). Two
+            // compact `WatchIconButton`s (#541's shared primitive) replace
+            // it — same explicit two-way affordance (VoiceOver users get
+            // named "Show Status"/"Show Actions" controls instead of relying
+            // on a blind swipe), far less visual weight.
             HStack(spacing: 6) {
                 Spacer(minLength: 0)
                 WatchIconButton(
-                    systemImage: "chart.bar.fill",
+                    systemImage: WatchIconSymbol.status,
                     accessibilityLabel: "Show Status",
                     accessibilityHint: "Displays today's readiness and training load",
+                    accessibilityIdentifier: "home-nav-status",
                     isSelected: selection == .status,
                     action: { selection = .status }
                 )
                 WatchIconButton(
-                    systemImage: "bolt.fill",
+                    systemImage: WatchIconSymbol.actions,
                     accessibilityLabel: "Show Actions",
                     accessibilityHint: "Displays Force Gauge and Climb Workout",
+                    accessibilityIdentifier: "home-nav-actions",
                     isSelected: selection == .actions,
-                    tint: WatchPalette.secondary,
+                    tint: WatchDesignTokens.secondary,
                     action: { selection = .actions }
                 )
             }

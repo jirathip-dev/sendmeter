@@ -109,17 +109,24 @@ enum WatchPalette {
 
 struct WatchCard<Content: View>: View {
     private let accent: Color?
+    /// Override for the tightest cards on the smallest watch — the readiness
+    /// card (#539 round-1 review F1) needed a few points back after its sync
+    /// line went from suppressed-under-fixtures to always rendered. Every
+    /// other call site keeps the default so this is not a visual-rhythm
+    /// change app-wide.
+    private let padding: CGFloat
     private let content: () -> Content
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
-    init(accent: Color? = nil, @ViewBuilder content: @escaping () -> Content) {
+    init(accent: Color? = nil, padding: CGFloat = 11, @ViewBuilder content: @escaping () -> Content) {
         self.accent = accent
+        self.padding = padding
         self.content = content
     }
 
     var body: some View {
         content()
-            .padding(11)
+            .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -294,6 +301,23 @@ struct WatchSecondaryButtonStyle: ButtonStyle {
     }
 }
 
+/// Canonical SF Symbol per navigation/secondary-action concept (#541). Call
+/// sites read from here instead of inlining a symbol string, so the mapping
+/// can't drift between HomeView's switcher, #537's Force setup, and future
+/// `WatchIconButton` consumers. Entries commented "not yet wired" exist so a
+/// future call site has one place to look rather than guessing a new glyph.
+enum WatchIconSymbol {
+    static let status = "chart.bar.fill"
+    static let actions = "bolt.fill"
+    static let force = "scalemass" // matches ActionsView's Force Gauge row
+    static let workout = "figure.climbing" // matches ActionsView's Climb Workout row
+    static let refresh = "arrow.triangle.2.circlepath" // matches WatchVisualState.syncing
+    static let history = "clock.arrow.circlepath" // matches WatchVisualState.cached
+    static let settings = "gearshape.fill" // not yet wired to a call site
+    static let connection = "antenna.radiowaves.left.and.right" // not yet wired
+    static let protocolPicker = "list.bullet.clipboard" // not yet wired (Force protocol chooser)
+}
+
 /// Shared compact icon control for Watch navigation and secondary actions —
 /// the primitive #541 (icon-first design system) asks for. Any icon-only
 /// control on the watch (Home's Status/Actions switcher below, #537's Force
@@ -304,25 +328,41 @@ struct WatchSecondaryButtonStyle: ButtonStyle {
 ///
 /// - `accessibilityLabel` is required: an icon with no announced name is not
 ///   accessible (#541's rule). `accessibilityHint` is optional extra context
-///   ("Opens force gauge setup").
+///   ("Opens force gauge setup"); `accessibilityIdentifier` is optional and
+///   lets a caller (or a UI test) target the control independent of its
+///   announced copy.
 /// - The hit target is `WatchDesignTokens.minimumHitTarget` (44pt) on both
-///   axes regardless of how small `systemImage` renders — same guarantee
-///   `WatchPrimaryButtonStyle`/`WatchSecondaryButtonStyle` already give text
-///   buttons.
+///   axes regardless of how small `systemImage` renders. The frame/shape that
+///   deliver it are applied to the *button's label content*, not the button
+///   wrapper — a `.frame`/`.contentShape` chained after a `Button` only
+///   resizes the layout box around it and does not enlarge the tappable
+///   region, so it has to sit inside, matching where
+///   `WatchPrimaryButtonStyle`/`WatchSecondaryButtonStyle` put theirs
+///   (`configuration.label`).
 /// - `isSelected` reuses the same fill/opacity language as
-///   `WatchStateChip`/segmented tabs elsewhere for an active state.
+///   `WatchStateChip`/segmented tabs elsewhere for an active state, and
+///   `tint` takes a `PhaseRGB` (not a `Color`) so the selected fill can run
+///   through `WatchPalette.accent(_:reducedLuminance:)` — the file's one
+///   shared Always-On dimming conversion — like every other decorative
+///   accent here.
 struct WatchIconButton: View {
     let systemImage: String
     let accessibilityLabel: String
     var accessibilityHint: String? = nil
+    var accessibilityIdentifier: String? = nil
     var isSelected: Bool = false
-    var tint: Color = WatchPalette.primary
+    var tint: PhaseRGB = WatchDesignTokens.primary
     let action: () -> Void
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     /// Painted circle diameter — deliberately smaller than the hit target so
     /// a row of these reads as compact chrome rather than another full-size
     /// button bar (the #539 complaint about the old full-width pill).
     private static let visibleDiameter: CGFloat = 30
+
+    private var resolvedTint: Color {
+        WatchPalette.accent(tint, reducedLuminance: isLuminanceReduced)
+    }
 
     var body: some View {
         Button(action: action) {
@@ -332,26 +372,29 @@ struct WatchIconButton: View {
                 .frame(width: Self.visibleDiameter, height: Self.visibleDiameter)
                 .background {
                     Circle()
-                        .fill(isSelected ? tint.opacity(0.72) : Color.white.opacity(0.08))
+                        .fill(isSelected ? resolvedTint.opacity(0.72) : Color.white.opacity(0.08))
                         .overlay {
                             Circle().stroke(Color.white.opacity(isSelected ? 0.24 : 0.1), lineWidth: 0.7)
                         }
                 }
+                // Inside the button's label, not chained after `Button` —
+                // see the doc comment above (#541 round-1 review F2).
+                .frame(
+                    minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
+                    minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
+                )
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .frame(
-            minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
-            minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
-        )
-        .contentShape(Rectangle())
         // No `.accessibilityElement(children: .ignore)` here: on a `Button`
         // (unlike the plain `Label` `WatchStateChip` uses) it left the SF
         // Symbol's own auto-generated name ("Chart Column", "Flash") as the
-        // announced label instead of the one set below — verified against
-        // `WatchPageControlItem`'s working equivalent, which never called it.
+        // announced label instead of the one set below, regardless of
+        // modifier order — omitting the call is what fixed it.
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .modifier(WatchIconButtonHint(hint: accessibilityHint))
+        .modifier(WatchIconButtonIdentifier(identifier: accessibilityIdentifier))
     }
 }
 
@@ -364,6 +407,19 @@ private struct WatchIconButtonHint: ViewModifier {
     func body(content: Content) -> some View {
         if let hint {
             content.accessibilityHint(hint)
+        } else {
+            content
+        }
+    }
+}
+
+/// Same shape as `WatchIconButtonHint`, for the optional identifier.
+private struct WatchIconButtonIdentifier: ViewModifier {
+    let identifier: String?
+
+    func body(content: Content) -> some View {
+        if let identifier {
+            content.accessibilityIdentifier(identifier)
         } else {
             content
         }
