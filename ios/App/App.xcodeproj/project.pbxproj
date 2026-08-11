@@ -59,6 +59,7 @@
 		B236F6402A44ADB22E10CF75 /* OfflineQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B28F88178C2F1F022EEC67 /* OfflineQueueTests.swift */; };
 		B2BDC891B802A9C5B86D735B /* MovementSetMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B72C3B7A2DA2A55CF06D773B /* MovementSetMetricsTests.swift */; };
 		B7E22200E079359981A2C982 /* GuidedForceHapticPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194478CD0ED3E2CB144F0FA3 /* GuidedForceHapticPolicyTests.swift */; };
+		C083B3C8AFABE16B9E5C727C /* FakeTindeqTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51AF3A49C0285EA8AF8E964D /* FakeTindeqTests.swift */; };
 		C0A1E5C1D8A14B4EB2B5A001 /* CoalescingDrainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0A1E5C1D8A14B4EB2B5A002 /* CoalescingDrainTests.swift */; };
 		C511593E04395BCD0436322D /* ForceProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FCBB53FFD92A5507EAFF66B /* ForceProtocolTests.swift */; };
 		CB69AC7F60CAE8915D5F5CF7 /* GuidedForceRunStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE52BE81EC8CD5BB22918D54 /* GuidedForceRunStateTests.swift */; };
@@ -196,6 +197,7 @@
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		51AF3A49C0285EA8AF8E964D /* FakeTindeqTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FakeTindeqTests.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/FakeTindeqTests.swift; sourceTree = "<group>"; };
 		539E33D1C1B9F05EB7F17CF3 /* TindeqHandsFreeIntegrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TindeqHandsFreeIntegrationTests.swift; sourceTree = "<group>"; };
 		553B8BF3677F8970A9F8B943 /* RPEModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ../SendLogWatchCore/Tests/SendLogWatchCoreTests/RPEModelTests.swift; sourceTree = "<group>"; };
 		56044BF7621E26700DF3ACBC /* LiveActivityIntents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LiveActivityIntents.swift; sourceTree = "<group>"; };
@@ -371,6 +373,7 @@
 				D1A6EFB4E72129DAD5B7165F /* LiveWorkoutSyncTests.swift */,
 				C78BAA80A2F314497A5BD91A /* LiveWorkoutTerminalRetryTests.swift */,
 				48F79679DFA82552B469F247 /* TindeqManualOwnershipTests.swift */,
+				51AF3A49C0285EA8AF8E964D /* FakeTindeqTests.swift */,
 			);
 			path = SendLogWatchTests;
 			sourceTree = SOURCE_ROOT;
@@ -762,6 +765,7 @@
 				74314E505442F247623FCB40 /* LiveWorkoutSyncTests.swift in Sources */,
 				4D84C3B92A3D75B9FBA09DE3 /* LiveWorkoutTerminalRetryTests.swift in Sources */,
 				64FB2430181FB9A5B9F53287 /* TindeqManualOwnershipTests.swift in Sources */,
+				C083B3C8AFABE16B9E5C727C /* FakeTindeqTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
