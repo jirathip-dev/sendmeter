@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Training phases now make it clear you're in control: the phases sheet says "Current block" instead of "Active" and states blocks are managed by you, with the ACWR band and typical duration labeled as guidance rather than rules.
 - Apple Watch Force setup is now a single glanceable ready screen: current force, "Ready to pull", and your selected exercise/protocol are centered together, with exercise/side/protocol selection moved behind one compact icon, connection state shown passively, and Free hold kept one tap away as the manual fallback. Hands-free arming still requires an explicit tap.
 - Apple Watch screens now use a consistent glanceable visual language with clearer state cues, larger action targets, and safer reduced-motion and Always-On fallbacks across status, workout, and Force flows.
 - Watch workout and Force mirrors now keep a stable run identity, ignore
