@@ -160,12 +160,47 @@ struct ForceProtocolChooserView: View {
         .accessibilityIdentifier("force-protocol-chooser")
     }
 
+    /// Round-1 review finding 4 (MEDIUM): `WatchPageControl` was built for
+    /// two items (`HomeView`'s Status/Actions) — each `WatchPageControlItem`
+    /// enforces a 44pt `minWidth`, so four of them need ≥194pt before
+    /// spacing/padding, well over the ~146pt this chooser has on 40/41mm.
+    /// Vertical rows (same shape as `exerciseRow` below) have no width
+    /// ceiling to blow through.
     private var sideControl: some View {
-        WatchPageControl(
-            selection: SIDE_OPTIONS.firstIndex(where: { $0.value == side }) ?? 0,
-            labels: SIDE_OPTIONS.map(\.label),
-            onSelect: { index in side = SIDE_OPTIONS[index].value }
-        )
+        VStack(spacing: 4) {
+            ForEach(SIDE_OPTIONS, id: \.value) { option in
+                sideRow(option)
+            }
+        }
+    }
+
+    private func sideRow(_ option: (value: String, label: String)) -> some View {
+        let selected = option.value == side
+        return Button {
+            side = option.value
+        } label: {
+            WatchCard(accent: selected ? WatchPalette.primary : nil) {
+                HStack(spacing: 8) {
+                    Text(option.label)
+                        .font(.system(.footnote, design: .rounded).weight(.semibold))
+                        .foregroundStyle(WatchPalette.textPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(
+                                WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary, accent: WatchDesignTokens.primary)
+                            )
+                    }
+                }
+                .frame(minHeight: 44)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(option.value.isEmpty ? "Unspecified side" : option.label)
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+        .accessibilityHint("Selects this side")
+        .accessibilityIdentifier("force-side-\(option.value.isEmpty ? "unspecified" : option.value)")
     }
 
     /// Deliberately NOT a `.navigationLink` Picker (#279's reasoning still

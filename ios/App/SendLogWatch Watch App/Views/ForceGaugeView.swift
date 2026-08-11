@@ -97,7 +97,7 @@ struct ForceGaugeView: View {
                                 )
 
                             case .idle:
-                                setupContent(availableSize: geometry.size)
+                                setupContent()
                                 if let msg = fixtureVisual?.errorMessage ?? tindeq.errorMsg {
                                     WatchStateBanner(state: .danger, title: "Could not connect", message: msg)
                                 }
@@ -109,7 +109,7 @@ struct ForceGaugeView: View {
                                 )
 
                             case .connected:
-                                setupContent(availableSize: geometry.size)
+                                setupContent()
                                 if let msg = fixtureVisual?.errorMessage {
                                     WatchStateBanner(state: .danger, title: "Could not save", message: msg)
                                 }
@@ -358,15 +358,27 @@ struct ForceGaugeView: View {
     // MARK: Connected/idle setup — one primary ready state (issue #537).
     //
     // The setup screen centers on ONE ready/measurement state: a live force
-    // reading, a status line and the selected exercise/protocol context, all
-    // inside a single card that IS the Start control. Everything that used
-    // to compete with it for space (separate exercise/side/protocol rows,
-    // the full protocol detail card, a "Connected" chip, disconnect) is
-    // either folded into that one card, demoted to a compact top-right
-    // context action, or made passive/below-the-fold — see #541's icon-first
-    // rule for the same move. Hands-free arming keeps its exact behavior
-    // (TindeqManager owns it untouched); only its position and the "Free
-    // hold" fallback's visual weight change here.
+    // reading, a status line and the selected exercise/side/protocol
+    // context, all inside a single card that IS the Start control.
+    // Everything that used to compete with it for space (separate
+    // exercise/side/protocol rows, the full protocol detail card, a
+    // "Connected" chip, disconnect) is either folded into that one card,
+    // demoted to a compact top-right context action, or made
+    // passive/below-the-fold — see #541's icon-first rule for the same
+    // move. Hands-free arming keeps its exact behavior (TindeqManager owns
+    // it untouched); only its position and the "Free hold" fallback's
+    // visual weight change here.
+    //
+    // Round-1 review (SL-537): every current Watch size measures as
+    // `isMicroSetupSize` here once the nav bar is subtracted, so this no
+    // longer branches on size — there is one design, proven to fit on the
+    // smallest supported watch, used everywhere. That is a deliberate
+    // simplification, not an oversight: a size-conditional design that only
+    // one branch ever exercises is worse than one always-verified design.
+    // `isMicroSetupSize` itself is untouched and still used correctly by
+    // `measuringContent` and the `navigationTitle` reclaim below — this
+    // screen just stopped being one of its callers.
+    //
     // No container-level `.accessibilityIdentifier` here — see
     // `GuidedForceRunnerView`'s note on this exact footgun: on this
     // device+OS an identifier on a container silently overwrites every
@@ -375,24 +387,23 @@ struct ForceGaugeView: View {
     // testing). Every control below already carries its own unique
     // `force-*` identifier, so no container ID is needed.
     @ViewBuilder
-    private func setupContent(availableSize: CGSize) -> some View {
-        let compact = isMicroSetupSize(availableSize)
-        VStack(spacing: compact ? 5 : 8) {
-            primaryReadyPath(compact: compact)
+    private func setupContent() -> some View {
+        VStack(spacing: 5) {
+            primaryReadyPath
                 // The primary path (ready card + Free hold) is the no-scroll
-                // guarantee on 40mm: cap Dynamic Type here exactly like the
-                // old micro rows did, so an accessibility text size cannot
-                // push Free hold below the fold. Everything below stays free
-                // to scale and may scroll, same as before this redesign.
-                .environment(\.dynamicTypeSize, compact ? .medium : dynamicTypeSize)
+                // guarantee: cap Dynamic Type here exactly like the old
+                // micro rows did, so an accessibility text size cannot push
+                // Free hold below the fold. Everything below stays free to
+                // scale and may scroll, same as before this redesign.
+                .environment(\.dynamicTypeSize, .medium)
             secondaryContent
         }
     }
 
     /// The viewport is finite even though the setup ScrollView's content
     /// proposal is unbounded. Keep this threshold in one place so the
-    /// accessibility navigation treatment and the row treatment make the
-    /// same 40mm decision.
+    /// accessibility navigation treatment and `measuringContent`'s row
+    /// treatment make the same 40mm decision.
     private func isMicroSetupSize(_ size: CGSize) -> Bool {
         size.height <= 205 || size.width < 180
     }
@@ -402,9 +413,9 @@ struct ForceGaugeView: View {
     /// hold, the one manual fallback the issue calls out as needing to stay
     /// reachable without competing for equal weight.
     @ViewBuilder
-    private func primaryReadyPath(compact: Bool) -> some View {
+    private var primaryReadyPath: some View {
         ZStack(alignment: .topTrailing) {
-            readyCard(compact: compact)
+            readyCard
             contextButton
                 .padding(.top, 3)
                 .padding(.trailing, 3)
@@ -437,26 +448,32 @@ struct ForceGaugeView: View {
         .accessibilityIdentifier("force-context-button")
     }
 
+    /// Round-1 review finding 1 (BLOCKER): a movement protocol is runnable
+    /// as cadence-only without a Progressor (`GuidedForcePolicy` returns
+    /// `.allowed` with `sensorConnected: false`, and the always-available
+    /// `movementStarter` default is exactly that mode) — the pre-#537
+    /// design always kept a Start control on screen for this reason. Route
+    /// to the Start card whenever eligible, connected or not; only fall
+    /// back to "Connect Progressor" when starting genuinely requires the
+    /// sensor (a static hold) or the protocol can't run on watch at all.
     @ViewBuilder
-    private func readyCard(compact: Bool) -> some View {
-        if visibleStatus == .connected {
-            if tindeq.handsFreeRequested {
-                armedReadyCard(compact: compact)
-            } else {
-                startReadyCard(compact: compact)
-            }
+    private var readyCard: some View {
+        if visibleStatus == .connected && tindeq.handsFreeRequested {
+            armedReadyCard
+        } else if visibleStatus == .connected || selectedStartEligibility == .allowed {
+            startReadyCard
         } else {
-            connectReadyCard(compact: compact)
+            connectReadyCard
         }
     }
 
-    private func startReadyCard(compact: Bool) -> some View {
+    private var startReadyCard: some View {
         let eligible = !tindeq.saving
             && !guidedForceRunner.isActive
             && !tag.trimmingCharacters(in: .whitespaces).isEmpty
             && selectedStartEligibility == .allowed
         return Button { startSelectedProtocol() } label: {
-            readyCardBody(token: WatchDesignTokens.primary, status: readyStatusText, compact: compact)
+            readyCardBody(token: WatchDesignTokens.primary, status: readyStatusText)
         }
         .buttonStyle(.plain)
         .disabled(!eligible)
@@ -466,12 +483,11 @@ struct ForceGaugeView: View {
         .accessibilityIdentifier("force-start-selected")
     }
 
-    private func armedReadyCard(compact: Bool) -> some View {
+    private var armedReadyCard: some View {
         Button { tindeq.cancelHandsFree() } label: {
             readyCardBody(
                 token: WatchDesignTokens.success,
-                status: tindeq.saving ? "Saving…" : "Armed — pull to start",
-                compact: compact
+                status: tindeq.saving ? "Saving…" : "Armed — pull to start"
             )
         }
         .buttonStyle(.plain)
@@ -481,9 +497,9 @@ struct ForceGaugeView: View {
         .accessibilityIdentifier("force-hands-free-armed")
     }
 
-    private func connectReadyCard(compact: Bool) -> some View {
+    private var connectReadyCard: some View {
         Button { tindeq.connect() } label: {
-            readyCardBody(token: WatchDesignTokens.secondary, status: "Connect Progressor", compact: compact)
+            readyCardBody(token: WatchDesignTokens.secondary, status: "Connect Progressor")
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Connect Progressor")
@@ -491,29 +507,42 @@ struct ForceGaugeView: View {
         .accessibilityIdentifier("force-connect-progressor")
     }
 
+    /// The context button overlays this card's top-trailing corner (see
+    /// `primaryReadyPath`) rather than spending its own row. Round-1 review
+    /// finding 2 (HIGH): on 40mm at normal Dynamic Type the centered readout
+    /// and status line rendered UNDER that icon. Reserve real trailing space
+    /// for exactly those two lines — sized to clear the icon's 44pt frame
+    /// plus its 3pt inset — rather than trusting the two siblings not to
+    /// overlap; the context line stays fully centered since it sits below
+    /// the icon's vertical extent.
+    private static let contextIconReservedWidth: CGFloat = 40
+
     /// Shared visual shape for every ready-state card: the live/placeholder
     /// force reading, a status line, and the selected exercise/side/protocol
     /// context — the "one primary ready state" the setup screen centers on.
     /// Never itself a `Button`; callers wrap it so each state carries its own
     /// accessibility label/hint/identifier.
-    private func readyCardBody(token: PhaseRGB, status: String, compact: Bool) -> some View {
+    private func readyCardBody(token: PhaseRGB, status: String) -> some View {
         WatchCard(accent: WatchPalette.color(token)) {
-            VStack(spacing: compact ? 1 : 4) {
-                readyForceReadout(token: token, compact: compact)
-                Text(status)
-                    .font(.system(.subheadline, design: .rounded).weight(.bold))
-                    .foregroundStyle(WatchPalette.textPrimary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                readyContextLine(token: token, compact: compact)
+            VStack(spacing: 2) {
+                VStack(spacing: 1) {
+                    readyForceReadout(token: token)
+                    Text(status)
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(WatchPalette.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                .padding(.trailing, Self.contextIconReservedWidth)
+                readyContextLine(token: token)
             }
             .frame(maxWidth: .infinity)
         }
     }
 
-    private func readyForceReadout(token: PhaseRGB, compact: Bool) -> some View {
+    private func readyForceReadout(token: PhaseRGB) -> some View {
         (Text(String(format: "%.1f", fixtureVisual?.currentKg ?? tindeq.currentKg))
-            .font(.system(size: compact ? 24 : 34, weight: .heavy, design: .rounded))
+            .font(.system(size: 26, weight: .heavy, design: .rounded))
             .monospacedDigit()
             .foregroundStyle(WatchPalette.foregroundOnAccentCard(token, accent: token))
         + Text(" kg").font(.caption).foregroundStyle(WatchPalette.textSecondary))
@@ -521,27 +550,31 @@ struct ForceGaugeView: View {
             .minimumScaleFactor(0.7)
     }
 
-    /// Side is deliberately left out of this line on 40mm (it's one more tap
-    /// away in the context chooser): the mockup keeps exercise and protocol
-    /// as the two context facts on the ready card, and a wrapped second line
-    /// here was the exact height overflow that first broke the 40mm no-scroll
-    /// budget while building this redesign.
-    private func readyContextLine(token: PhaseRGB, compact: Bool) -> some View {
+    /// Round-1 review finding 3(a) (HIGH): Side is sticky across reps
+    /// (`lastTindeqSide`) and drives per-side PR/curve comparisons, so
+    /// hiding it here removed the user's only pre-recording confirmation of
+    /// which side a rep will be attributed to. Always show it — `lineLimit`
+    /// stays 1 (not 2) so a long exercise/protocol name shrinks via
+    /// `minimumScaleFactor` instead of wrapping into a second line, which is
+    /// what the 40mm no-scroll budget actually depends on, not which facts
+    /// are present.
+    private func readyContextLine(token: PhaseRGB) -> some View {
         let exercise = tag.isEmpty ? "No exercise" : tag
-        let sideText = compact ? nil : (side.isEmpty ? nil : sideLabel(side))
+        let sideText = side.isEmpty ? nil : sideLabel(side)
         let pieces = [exercise, sideText, protocolCatalog.selected.name].compactMap { $0 }
         return Text(pieces.joined(separator: " · "))
             .font(.caption2.weight(.semibold))
             .foregroundStyle(WatchPalette.foregroundOnAccentCard(token, accent: token))
-            .lineLimit(compact ? 1 : 2)
-            .minimumScaleFactor(0.6)
+            .lineLimit(1)
+            .minimumScaleFactor(0.5)
             .multilineTextAlignment(.center)
     }
 
     private var readyStatusText: String {
         if tag.trimmingCharacters(in: .whitespaces).isEmpty { return "Pick an exercise" }
         switch selectedStartEligibility {
-        case .allowed: return "Ready to pull"
+        case .allowed:
+            return visibleStatus == .connected ? "Ready to pull" : "Ready · cadence only"
         case .requiresProgressor: return "Connect Progressor"
         case .alternatingSidesUnsupported: return "Unsupported on watch"
         }

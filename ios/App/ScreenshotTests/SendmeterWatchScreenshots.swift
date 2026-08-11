@@ -94,8 +94,23 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 "Free hold must not overlap or outrank the ready/start card"
             )
             // Disconnect is demoted to a secondary/passive action (#537 #4):
-            // it must not be part of the no-scroll primary path.
-            let disconnect = app.buttons["disconnect-progressor"]
+            // it must not be part of the no-scroll primary path. Round-1
+            // review finding 6: an identifier-only lookup lets this pass
+            // vacuously if the identifier ever stops resolving (watchOS has
+            // been observed collapsing descendant identifiers onto a
+            // container elsewhere in this same view tree) — match by
+            // identifier OR label, same predicate the matrix test already
+            // uses for this exact control, so a lost identifier still finds
+            // the button and the assertion means what it says.
+            let disconnect = app.buttons
+                .matching(
+                    NSPredicate(
+                        format: "identifier == %@ OR label == %@",
+                        "disconnect-progressor",
+                        "Disconnect Progressor"
+                    )
+                )
+                .firstMatch
             XCTAssertFalse(
                 disconnect.exists && disconnect.isHittable && disconnect.frame.maxY <= freeHold.frame.maxY + 4,
                 "disconnect must not compete with the primary path for the initial viewport"
@@ -223,7 +238,9 @@ final class SendmeterWatchScreenshots: XCTestCase {
         }
 
         let forceStates: [(fixture: String, identifier: String)] = [
-            ("forceIdle", "force-connect-progressor"),
+            // Movement Starter remains cadence-eligible without a connected
+            // Progressor, so idle exposes the Start card rather than Connect.
+            ("forceIdle", "force-start-selected"),
             ("forceConnecting", "Connecting…"),
             ("forceConnected", "force-session-finish"),
             ("forceLive", "Stop & Save"),
@@ -255,15 +272,32 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 // `ScreenshotFixtures.force`). The chooser itself was never
                 // part of the no-scroll guarantee — only Force setup's
                 // primary path is — and Side plus the first exercise row
-                // don't both fit the 40mm viewport at once. Existence is the
-                // regression signal this block exists for (same standard
-                // `testForceProtocolChooserRendersSuggestedProtocol` uses for
-                // this same lazily-loaded list); a lazy list's precise scroll
-                // offset is not worth pinning down further.
-                let exerciseRow = app.buttons["force-exercise-Crimp edge"]
-                let sideOption = app.buttons["Show Left"]
-                XCTAssertTrue(exerciseRow.waitForExistence(timeout: 5), "chooser should list the fixture's exercise")
+                // don't both fit the 40mm viewport at once. Side is near the
+                // top, but the selected Left row is below the initial
+                // viewport on 40mm; scroll it into view before the
+                // fully-visible assertion so that check is meaningful.
+                let sideOption = app.buttons["force-side-left"]
                 XCTAssertTrue(sideOption.waitForExistence(timeout: 5), "chooser should expose the Side control")
+                let viewport = app.windows.firstMatch.frame
+                for _ in 0..<6 where
+                    !sideOption.isHittable
+                    || sideOption.frame.minY < viewport.minY
+                    || sideOption.frame.maxY > viewport.maxY
+                {
+                    app.swipeUp(velocity: .slow)
+                }
+                assertFullyVisible(sideOption, in: app, fixture: item.fixture)
+
+                // Exercise rows are below the new four-row vertical Side
+                // list inside a LazyVStack, so they are not necessarily
+                // materialized immediately after opening the chooser. Use
+                // the same bounded scroll-to-find pattern as the Suggested
+                // protocol coverage above before checking existence.
+                let exerciseRow = app.buttons["force-exercise-Crimp edge"]
+                for _ in 0..<6 where !exerciseRow.exists {
+                    app.swipeUp(velocity: .slow)
+                }
+                XCTAssertTrue(exerciseRow.waitForExistence(timeout: 5), "chooser should list the fixture's exercise")
                 app.buttons["BackButton"].tap()
                 XCTAssertTrue(
                     context.waitForExistence(timeout: 5),

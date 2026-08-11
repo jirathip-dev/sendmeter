@@ -358,10 +358,18 @@ private struct WatchPageControlItem: View {
 }
 
 /// Shared visual chrome for a compact icon-only control (SL-537 lead-in for
-/// #539's shared primitive extraction — same spec: fixed icon size inside a
-/// 44pt minimum hit frame, so #539's replacement is a drop-in, not a new
-/// call-site pattern to migrate). Used by both `WatchIconButton` and any
+/// #541's shared icon/navigation primitive — #541 is the design-system rule
+/// and owns that primitive; #539 only *consumes* it for Home's oversized
+/// Status/Actions control, it does not define one, so this is NOT #539's
+/// primitive). Same spec: fixed icon size inside a 44pt minimum hit frame,
+/// so swapping onto #541's eventual primitive is a drop-in, not a new
+/// call-site pattern to migrate. Used by both `WatchIconButton` and any
 /// `NavigationLink` that needs the identical icon-only look.
+///
+/// Merge note: a sibling branch may add its own icon primitive to this same
+/// file, at this same natural insertion point — coordinate merge order, or
+/// rename one side pre-emptively, so a duplicate `WatchIconButton` type
+/// isn't a silent compile error instead of a visible conflict.
 struct WatchIconGlyph: View {
     let systemImage: String
     var size: CGFloat = 15
@@ -380,7 +388,7 @@ struct WatchIconGlyph: View {
 /// icon-first rule): an icon, an accessibility label, an accessibility hint,
 /// a 44pt hit target and a semantic token tint — every icon-only control
 /// needs all four. Prefer this over a one-off `Image` + `Button` pairing so
-/// #539's shared primitive is a mechanical swap later.
+/// swapping onto #541's shared primitive is a mechanical change later.
 struct WatchIconButton: View {
     let systemImage: String
     let accessibilityLabel: String
