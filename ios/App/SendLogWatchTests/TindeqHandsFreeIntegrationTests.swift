@@ -532,6 +532,59 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
     }
 
 #if DEBUG && targetEnvironment(simulator)
+    func testSimulatorFakeTransportDropsStaleQueuedConnectCallbackAfterReconnect() async throws {
+        let transport = FakeTindeqTransport(script: shortFakeScript())
+        var connectCount = 0
+        transport.onConnect = { connectCount += 1 }
+
+        transport.connect()
+        transport.disconnect()
+        transport.connect()
+
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(connectCount, 1)
+        XCTAssertTrue(transport.connected)
+        transport.disconnect()
+    }
+
+    func testSimulatorFakeTransportStopsWithoutDisconnectAfterSynchronousNotificationStop() async throws {
+        let script = FakeTindeqScript(
+            scenario: .midRepDisconnect,
+            waveform: FakeTindeqWaveform(
+                configuration: FakeTindeqWaveformConfiguration(
+                    baselineKg: 0.2,
+                    peakKg: 12,
+                    rampMs: 1,
+                    holdMs: 2,
+                    releaseMs: 100,
+                    restMs: 100,
+                    sampleIntervalMs: 20,
+                    noiseKg: 0,
+                    seed: 567
+                )
+            )
+        )
+        let transport = FakeTindeqTransport(script: script)
+        var notificationCount = 0
+        var disconnectCount = 0
+        transport.onNotification = { [weak transport] _ in
+            notificationCount += 1
+            if notificationCount == 2 {
+                transport?.write(.stop)
+            }
+        }
+        transport.onDisconnect = { _ in disconnectCount += 1 }
+
+        transport.connect()
+        transport.write(.startWeight)
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(notificationCount, 2)
+        XCTAssertEqual(disconnectCount, 0)
+        XCTAssertTrue(transport.connected)
+        transport.disconnect()
+    }
+
     func testSimulatorFakeTransportConnectsManualRecordAndExplicitDisconnectUsesManagerPath() async throws {
         let recordings = RecordingQueueSpy()
         let transport = FakeTindeqTransport(script: shortFakeScript())

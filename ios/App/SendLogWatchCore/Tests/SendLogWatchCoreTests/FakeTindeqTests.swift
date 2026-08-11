@@ -40,19 +40,25 @@ final class FakeTindeqTests: XCTestCase {
             noiseKg: 0.25,
             seed: 1234
         )
-        let first = FakeTindeqWaveform(configuration: configuration)
+        let noisyWaveform = FakeTindeqWaveform(configuration: configuration)
+        var noiselessConfiguration = configuration
+        noiselessConfiguration.noiseKg = 0
+        let noiselessWaveform = FakeTindeqWaveform(configuration: noiselessConfiguration)
+        let first = noisyWaveform
             .samples(forDurationMs: 400)
-        let second = FakeTindeqWaveform(configuration: configuration)
+        let second = noisyWaveform
             .samples(forDurationMs: 400)
 
         XCTAssertEqual(first, second)
-        XCTAssertTrue(first.contains { abs($0.kg - 4) > 0 }, "the fake should include noise")
+        var observedNonZeroNoise = false
         for sample in first {
-            let ideal = FakeTindeqWaveform(configuration: configuration)
-                .sample(at: sample.elapsedMs)
-            XCTAssertEqual(sample, ideal)
+            let ideal = noiselessWaveform.sample(at: sample.elapsedMs)
+            let delta = sample.kg - ideal.kg
+            observedNonZeroNoise = observedNonZeroNoise || abs(delta) > 0
+            XCTAssertLessThanOrEqual(abs(delta), configuration.noiseKg + 1e-12)
             XCTAssertGreaterThanOrEqual(sample.kg, 0)
         }
+        XCTAssertTrue(observedNonZeroNoise, "the fake should include noise")
     }
 
     func testSamplesUseFixedStepsAndIncludeExactEnd() {

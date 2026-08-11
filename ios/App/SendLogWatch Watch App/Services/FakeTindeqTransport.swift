@@ -52,6 +52,8 @@ final class FakeTindeqTransport {
 
     private var timer: Timer?
     private var elapsedMs: UInt32 = 0
+    private var connectionGeneration: UInt64 = 0
+    private var streamGeneration: UInt64 = 0
 
     init(script: FakeTindeqScript) {
         self.script = script
@@ -63,12 +65,17 @@ final class FakeTindeqTransport {
 
     func connect() {
         guard !connected else { return }
+        connectionGeneration &+= 1
+        let generation = connectionGeneration
         connected = true
         // CoreBluetooth reports didConnect asynchronously. Mirroring that
         // ordering prevents a synchronous first fake sample from racing the
         // manager's connected state.
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.connected else { return }
+            guard let self,
+                  self.connected,
+                  self.connectionGeneration == generation
+            else { return }
             self.onConnect?()
         }
     }
@@ -78,6 +85,7 @@ final class FakeTindeqTransport {
     /// `simulateUnplannedDisconnect()` below and do invoke the manager's real
     /// disconnect handler.
     func disconnect() {
+        connectionGeneration &+= 1
         connected = false
         stopStream()
     }
@@ -96,29 +104,33 @@ final class FakeTindeqTransport {
 
     private func startStream() {
         stopStream()
+        streamGeneration &+= 1
+        let generation = streamGeneration
         elapsedMs = 0
         let interval = TimeInterval(script.waveform.configuration.sampleIntervalMs) / 1000
         let next = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            self?.emitSample()
+            self?.emitSample(streamGeneration: generation)
         }
         timer = next
         RunLoop.main.add(next, forMode: .common)
     }
 
     private func stopStream() {
+        streamGeneration &+= 1
         timer?.invalidate()
         timer = nil
     }
 
-    private func emitSample() {
-        guard connected else { return }
+    private func emitSample(streamGeneration: UInt64) {
+        guard connected, self.streamGeneration == streamGeneration else { return }
         let sample = script.waveform.sample(at: elapsedMs)
         onNotification?(Self.weightFrame(for: sample))
 
         // A notification can cause the manager to stop the stream (hands-free
-        // release) while this callback is running. Do not continue the script
-        // or manufacture a disconnect after that synchronous stop.
-        guard connected else { return }
+        // release) while this callback is running. Do not continue the script,
+        // manufacture a disconnect, or advance elapsed time after that
+        // synchronous stop.
+        guard connected, self.streamGeneration == streamGeneration else { return }
         if let disconnectAt = script.disconnectAfterMs, elapsedMs >= disconnectAt {
             simulateUnplannedDisconnect()
             return
@@ -128,6 +140,7 @@ final class FakeTindeqTransport {
 
     private func simulateUnplannedDisconnect() {
         guard connected else { return }
+        connectionGeneration &+= 1
         connected = false
         stopStream()
         let error = NSError(
