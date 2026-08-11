@@ -195,6 +195,141 @@ final class SendmeterWatchScreenshots: XCTestCase {
         add(capture)
     }
 
+    /// #580: the live Workout screen must hold every control — compact
+    /// finish, four rest pills, play/stop — inside the viewport with real
+    /// hit targets. The fixture drives the production hierarchy (same
+    /// `WorkoutLiveView` control path as a real workout) while keeping
+    /// ending and attempt persistence out of the test; the screenshot
+    /// schemes run this against both the 40mm and 49mm destinations, and
+    /// the second test repeats it at an accessibility Dynamic Type size.
+    func testWorkoutLiveControlsFitAtNormalText() throws {
+        try assertWorkoutLiveControls(
+            accessibilityLarge: false,
+            captureName: "workout-live-normal"
+        )
+    }
+
+    func testWorkoutLiveControlsFitAtAccessibilityLargeText() throws {
+        try assertWorkoutLiveControls(
+            accessibilityLarge: true,
+            captureName: "workout-live-accessibility-large"
+        )
+    }
+
+    private func assertWorkoutLiveControls(
+        accessibilityLarge: Bool,
+        captureName: String
+    ) throws {
+        let app = launchFixture("workoutRest", accessibilityLarge: accessibilityLarge)
+        defer { app.terminate() }
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        openActions(app)
+        tapHomeAction(app, identifier: "home-action-workout")
+
+        let viewport = app.descendants(matching: .any)
+            .matching(identifier: "workout-live-viewport")
+            .firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+
+        let finish = smallestButton(in: app, identifier: "finish-workout")
+        let boulder = smallestButton(in: app, identifier: "workout-boulder-toggle")
+        let restControls = [60, 120, 180, 300].map {
+            smallestButton(in: app, identifier: "rest-target-\($0)")
+        }
+
+        XCTAssertTrue(finish.waitForExistence(timeout: 10))
+        XCTAssertEqual(finish.label, "Finish workout")
+        assertFullyVisible(finish, in: app, fixture: "workoutRest", viewport: viewport)
+        XCTAssertTrue(boulder.waitForExistence(timeout: 10))
+        XCTAssertEqual(boulder.label, "Start boulder")
+        assertFullyVisible(boulder, in: app, fixture: "workoutRest", viewport: viewport)
+
+        for control in restControls {
+            XCTAssertTrue(control.waitForExistence(timeout: 10))
+            assertRestPillVisible(control, in: app, viewport: viewport, fixture: "workoutRest")
+        }
+        // #582 review F1: the action row is the later sibling, so any pill /
+        // play-stop hit-frame overlap silently routes taps on visible pill
+        // pixels to Start/Stop boulder. The layout promises disjoint hit
+        // frames (pill slots end at their visible bottom edge; the action
+        // row pads by the full 7pt overhang) — hold it to that.
+        let lowestPillHitEdge = restControls.map { $0.frame.maxY }.max() ?? .infinity
+        XCTAssertGreaterThanOrEqual(
+            boulder.frame.minY, lowestPillHitEdge,
+            "play/stop hit frame must not overlap the rest pills' hit frames"
+        )
+        assertRestTargetSelection(restControls, selectedIndex: 2)
+        assertWorkoutReadouts(app, accessibilityLarge: accessibilityLarge)
+
+        // Exercise every direct target, including both endpoints, and verify
+        // the shared setter drives exactly one selected accessibility state.
+        // End back on the fixture default (3m) so the retained capture shows
+        // the state the fixture describes.
+        for selectedIndex in [0, 1, 3, 2] {
+            restControls[selectedIndex].tap()
+            assertRestTargetSelection(restControls, selectedIndex: selectedIndex)
+        }
+
+        // Capture the live state before opening the destructive confirmation:
+        // watchOS can retain the prior system-sheet framebuffer after its
+        // accessibility tree dismisses, so this ordering keeps the retained
+        // PNG honest while the confirmation is verified immediately after.
+        var validatedPNGData: Data?
+        for _ in 0..<3 {
+            // The watch can expose a fresh accessibility tree while its AOD
+            // framebuffer is still blank. Wake the chrome (a dead spot above
+            // the content, never a control), then repeat the geometry
+            // assertions before retaining the screenshot bytes.
+            let wakeChrome = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.17))
+            wakeChrome.tap()
+            Thread.sleep(forTimeInterval: 0.2)
+            wakeChrome.tap()
+            for control in [finish, boulder] + restControls {
+                XCTAssertTrue(control.waitForExistence(timeout: 10))
+            }
+            assertFullyVisible(finish, in: app, fixture: "workoutRest", viewport: viewport)
+            assertFullyVisible(boulder, in: app, fixture: "workoutRest", viewport: viewport)
+            for control in restControls {
+                assertRestPillVisible(control, in: app, viewport: viewport, fixture: "workoutRest")
+            }
+
+            Thread.sleep(forTimeInterval: 1)
+            let screenshot = app.screenshot()
+            if let pngData = screenshot.image.pngData(),
+               let source = CGImageSourceCreateWithData(pngData as CFData, nil),
+               let encodedImage = CGImageSourceCreateImageAtIndex(source, 0, nil),
+               hasWorkoutPhaseSurface(encodedImage) {
+                validatedPNGData = pngData
+                break
+            }
+        }
+        guard let validatedPNGData else {
+            XCTFail("workout fixture screenshot never rendered the live phase surface below the clock")
+            throw ForceScreenshotCaptureError.emptyFrame
+        }
+        let capture = XCTAttachment(data: validatedPNGData, uniformTypeIdentifier: "public.png")
+        capture.name = captureName
+        capture.lifetime = .keepAlways
+        add(capture)
+
+        // The destructive control must ask first. Cancel the confirmation so
+        // the fixture remains live and no workout is ended or saved by this
+        // layout test.
+        finish.tap()
+        // watchOS presents confirmation actions in a system sheet and does
+        // not retain caller-supplied identifiers on those action cells; the
+        // visible destructive title is the stable semantic contract here.
+        let confirm = app.buttons["Finish Workout"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        let cancel = app.buttons.matching(identifier: "AX_ActionContentControllerCancelButton").firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        cancel.tap()
+        XCTAssertTrue(waitForElementToDisappear(confirm), "finish confirmation action must dismiss after Cancel")
+        XCTAssertTrue(waitForElementToDisappear(cancel), "finish confirmation sheet must dismiss after Cancel")
+        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        XCTAssertEqual(finish.label, "Finish workout")
+    }
+
     /// #539 navigation regression guard: use the explicit Home controls for
     /// both destinations and for the return path. This stays intentionally
     /// separate from the visual matrix so a failed destination hit test is
@@ -513,8 +648,11 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
         let workoutStates: [(fixture: String, identifier: String)] = [
             ("workoutIdle", "Start Workout"),
-            ("workoutLive", "End"),
-            ("workoutRest", "End"),
+            // #580: End moved out of the toolbar into the compact icon-only
+            // finish action; the rest-pill selection/geometry matrix lives in
+            // `assertWorkoutLiveControls`, which also runs accessibility-large.
+            ("workoutLive", "finish-workout"),
+            ("workoutRest", "finish-workout"),
             ("workoutSaved", "watch-state-success"),
             ("workoutError", "watch-banner-danger"),
         ]
@@ -528,17 +666,14 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     .waitForExistence(timeout: 10),
                 "fixture \(item.fixture) should expose \(item.identifier)"
             )
-            if item.fixture == "workoutRest" {
-                let oneMinute = app.buttons["rest-target-60"]
-                let twoMinutes = app.buttons["rest-target-120"]
-                XCTAssertTrue(oneMinute.waitForExistence(timeout: 5))
-                XCTAssertTrue(twoMinutes.waitForExistence(timeout: 5))
-                assertFullyVisible(oneMinute, in: app, fixture: item.fixture)
-                assertFullyVisible(twoMinutes, in: app, fixture: item.fixture)
-                XCTAssertEqual(twoMinutes.value as? String, "Not selected")
-                twoMinutes.tap()
-                XCTAssertEqual(twoMinutes.value as? String, "Selected")
-                XCTAssertEqual(oneMinute.value as? String, "Not selected")
+            if item.fixture == "workoutLive" {
+                // The climbing state is the one `assertWorkoutLiveControls`
+                // does not pose: the in-row toggle must read as the boulder
+                // stop — a different scope (and glyph) than the finish flag.
+                let boulder = smallestButton(in: app, identifier: "workout-boulder-toggle")
+                XCTAssertTrue(boulder.waitForExistence(timeout: 5))
+                XCTAssertEqual(boulder.label, "Stop boulder")
+                assertFullyVisible(boulder, in: app, fixture: item.fixture)
             }
             app.terminate()
         }
@@ -924,9 +1059,39 @@ final class SendmeterWatchScreenshots: XCTestCase {
             // view. Bring its own hit target into the active window before
             // synthesizing a tap; otherwise watchOS can report the visible
             // descendant's stale pre-scroll frame and route the tap nowhere.
-            for _ in 0..<2 where !action.isHittable {
-                app.swipeUp(velocity: .slow)
-                Thread.sleep(forTimeInterval: 0.4)
+            // Measured drags (same calibration as `dragChooser`) instead of
+            // blind `swipeUp`s: a momentum swipe can overshoot and leave the
+            // card parked half outside the window, which is what used to
+            // make the hard hittability guard below look flaky. The guard
+            // itself stays hard — it is the #539 regression check for this
+            // exact control and must not be weakened (#582 review F2).
+            let viewport = app.windows.firstMatch.frame
+            for _ in 0..<8 {
+                let frame = action.frame
+                if action.isHittable, frame.minY >= viewport.minY, frame.maxY <= viewport.maxY {
+                    break
+                }
+                if frame.maxY > viewport.maxY {
+                    dragChooser(
+                        app,
+                        viewport: viewport,
+                        points: frame.maxY - viewport.maxY + 12,
+                        contentDirection: -1
+                    )
+                } else if frame.minY < viewport.minY {
+                    dragChooser(
+                        app,
+                        viewport: viewport,
+                        points: viewport.minY - frame.minY + 12,
+                        contentDirection: 1
+                    )
+                } else {
+                    // Fully inside yet not hittable: the scroll view is still
+                    // settling (or rubber-banding) — a small nudge forces a
+                    // fresh layout pass.
+                    dragChooser(app, viewport: viewport, points: 8, contentDirection: -1)
+                }
+                Thread.sleep(forTimeInterval: 0.3)
             }
             XCTAssertTrue(
                 waitForStableFrame(action, timeout: 5),
@@ -935,6 +1100,115 @@ final class SendmeterWatchScreenshots: XCTestCase {
         }
         XCTAssertTrue(action.isHittable, "Home action \(identifier) must be hittable before tapping")
         action.tap()
+    }
+
+    /// watchOS can expose a styled button through more than one accessibility
+    /// node carrying the same identifier (a layout wrapper plus the styled
+    /// label), and an identifier on a container has been observed swallowing
+    /// its descendants' (`ForceGaugeView`'s documented footgun). Selecting
+    /// the LARGEST match would let a huge container satisfy every `>= 44`
+    /// geometry check vacuously (#582 review F5) — pick the smallest match,
+    /// which biases every assertion toward failing, and flag duplicates so a
+    /// silently split node is a finding rather than a coin toss.
+    private func smallestButton(in app: XCUIApplication, identifier: String) -> XCUIElement {
+        let query = app.buttons.matching(identifier: identifier)
+        let matches = query.allElementsBoundByIndex
+        XCTAssertLessThanOrEqual(
+            matches.count, 1,
+            "expected one button for \(identifier), found \(matches.count) — geometry checks would be ambiguous"
+        )
+        return matches.min {
+            ($0.frame.width * $0.frame.height) < ($1.frame.width * $1.frame.height)
+        } ?? query.firstMatch
+    }
+
+    private func waitForAccessibilityValue(
+        _ element: XCUIElement,
+        expected: String,
+        timeout: TimeInterval = 3
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.exists, (element.value as? String) == expected {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return (element.value as? String) == expected
+    }
+
+    private func waitForElementToDisappear(
+        _ element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// A rendered pixel elsewhere on a watch framebuffer is not proof that
+    /// the live Workout screen rendered its readouts. Pin the fixture's
+    /// semantic values too, so accessibility-large truncation (for example
+    /// `142` becoming `1…`) fails before a misleading capture is retained.
+    private func assertWorkoutReadouts(_ app: XCUIApplication, accessibilityLarge: Bool) {
+        for label in ["142", "46:33", "RESTING", "02:07", "12", "341 kcal", "1.4m"] {
+            let readout = app.staticTexts[label]
+            XCTAssertTrue(
+                readout.waitForExistence(timeout: 5),
+                "workout fixture readout \(label) must render completely"
+            )
+        }
+        // #582 review F3: the accessibility-large run must exercise a
+        // genuinely different render, or it can never fail differently from
+        // the normal run. The HR readout is the screen's Dynamic
+        // Type-scalable text (capped at .xxLarge, where the fixed 30pt row
+        // stops fitting), so under `-sendmeter-accessibility-large` it must
+        // render measurably taller than at the normal size — watchOS body
+        // is ~17-18.5pt tall at normal sizes and ~21-23pt at .xxLarge, so
+        // 20 sits between them. This fails if the whole screen is ever
+        // re-capped at .large, and also if width pressure quietly hands the
+        // growth back via `minimumScaleFactor` (how F3 originally hid).
+        if accessibilityLarge {
+            let heartRate = app.staticTexts["142"]
+            XCTAssertGreaterThanOrEqual(
+                heartRate.frame.height, 20,
+                "accessibility-large must scale the HR readout (got \(heartRate.frame.height)pt) — the Dynamic Type cap has collapsed to the normal size"
+            )
+        }
+    }
+
+    /// #580: four rest pills share one 40mm row, so a literal 44pt-wide
+    /// target per pill cannot exist (4 × 44 > the 162pt panel). The contract
+    /// is: full 44pt-tall hit slot, an equal ≥36pt-wide share of the row
+    /// (the real 40mm width is ~37.5pt — the floor sits just under it so a
+    /// genuine shrink fails, #582 review F6), hittable, and zero clipping
+    /// against the window and the live viewport.
+    private func assertRestPillVisible(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        viewport: XCUIElement,
+        fixture: String
+    ) {
+        XCTAssertTrue(element.isHittable, "fixture \(fixture) rest pill is not hittable")
+        XCTAssertGreaterThanOrEqual(element.frame.height, 44, "fixture \(fixture) rest pill lost its vertical 44pt target")
+        XCTAssertGreaterThanOrEqual(element.frame.width, 36, "fixture \(fixture) rest pill lost its width share of the row")
+        assertNotClipped(element, in: app, fixture: fixture)
+        assertNotClipped(element, in: viewport, fixture: fixture)
+    }
+
+    private func assertRestTargetSelection(
+        _ controls: [XCUIElement],
+        selectedIndex: Int
+    ) {
+        for (index, control) in controls.enumerated() {
+            let expected = index == selectedIndex ? "Selected" : "Not selected"
+            XCTAssertTrue(
+                waitForAccessibilityValue(control, expected: expected),
+                "rest target index \(index) should announce \(expected)"
+            )
+        }
     }
 
     private func homePagerViewport(in app: XCUIApplication) -> XCUIElement {
@@ -980,10 +1254,14 @@ final class SendmeterWatchScreenshots: XCTestCase {
         XCTAssertTrue(element.isHittable, "fixture \(fixture) control is not hittable")
         XCTAssertGreaterThanOrEqual(element.frame.height, 44, "fixture \(fixture) control lost its 44pt hit target")
         XCTAssertGreaterThanOrEqual(element.frame.width, 44, "fixture \(fixture) control lost its 44pt horizontal hit target")
+        // Always bound against the window too (#582 review F4): a viewport
+        // element that is itself the overflowing content (a SwiftUI stack
+        // reports its full size when it outgrows its proposal) moves WITH
+        // the overflow, so the viewport check alone can go vacuous exactly
+        // when the screen stops fitting.
+        assertNotClipped(element, in: app, fixture: fixture)
         if let viewport {
             assertNotClipped(element, in: viewport, fixture: fixture)
-        } else {
-            assertNotClipped(element, in: app, fixture: fixture)
         }
     }
 
@@ -1055,6 +1333,73 @@ final class SendmeterWatchScreenshots: XCTestCase {
             }
         }
         return primaryPixels >= max(512, width * height / 100)
+    }
+
+    /// #580: the resting phase band is the rendered-pixel proof for a
+    /// retained workout capture. Accessibility can remain current after
+    /// watchOS has entered a blank Always-On framebuffer, so a black image
+    /// must not be accepted as visual evidence for the compact controls. The
+    /// band (`WorkoutPhasePalette`'s resting purple) must form a wide
+    /// contiguous surface below the clock, and the rest selector must
+    /// contribute cyan pixels (the 2m pill's `WatchDesignTokens.secondary`
+    /// text/stroke) so a stray blue pixel elsewhere cannot satisfy this.
+    private func hasWorkoutPhaseSurface(_ image: CGImage) -> Bool {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return false }
+
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = rgba.withUnsafeMutableBytes { rawBuffer -> Bool in
+            guard let baseAddress = rawBuffer.baseAddress,
+                  let context = CGContext(
+                      data: baseAddress,
+                      width: width,
+                      height: height,
+                      bitsPerComponent: 8,
+                      bytesPerRow: width * 4,
+                      space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else {
+                return false
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return false }
+
+        var phasePixels = 0
+        var cyanSelectorPixels = 0
+        var widestPhaseRow = 0
+        var substantialPhaseRows = 0
+        let clockRows = max(1, height / 5)
+        let bottomRows = min(height, height * 4 / 5)
+        for y in clockRows..<bottomRows {
+            var phaseRowPixels = 0
+            for x in 0..<width {
+                let offset = (y * width + x) * 4
+                let red = Int(rgba[offset])
+                let green = Int(rgba[offset + 1])
+                let blue = Int(rgba[offset + 2])
+                // The resting band is a broad blue/purple surface. Keep the
+                // threshold tolerant of the gradient and Always-On dimming,
+                // but require a contiguous band-sized row below.
+                if blue >= 55, blue >= red + 35, blue >= green + 12 {
+                    phasePixels += 1
+                    phaseRowPixels += 1
+                }
+                if green >= 70, blue >= 70, green >= red + 40, blue >= green - 10 {
+                    cyanSelectorPixels += 1
+                }
+            }
+            widestPhaseRow = max(widestPhaseRow, phaseRowPixels)
+            if phaseRowPixels >= width * 55 / 100 {
+                substantialPhaseRows += 1
+            }
+        }
+        return phasePixels >= max(64, width * height / 2_500)
+            && widestPhaseRow >= width * 55 / 100
+            && substantialPhaseRows >= max(6, height / 40)
+            && cyanSelectorPixels >= 24
     }
 
     /// #569: prove the retained icon fixture is a rendered app frame, not the
