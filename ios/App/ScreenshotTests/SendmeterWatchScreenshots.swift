@@ -7,6 +7,10 @@ private enum ForceScreenshotCaptureError: Error {
     case emptyFrame
 }
 
+private enum IconScreenshotCaptureError: Error {
+    case emptyFrame
+}
+
 @MainActor
 final class SendmeterWatchScreenshots: XCTestCase {
     /// The 40mm release gate: the primary setup path must fit before any
@@ -61,6 +65,132 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "40mm-status-accessibility-large"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    /// #569: the shared icon primitive must expose every promised visual state
+    /// in the real watch hierarchy at the simulator's native size. The same
+    /// helper is run as two independent tests so a normal launch/termination
+    /// cannot skip the accessibility-large assertions; the Canvas pins the
+    /// fixture at both 40mm and 49mm.
+    func testIconPrimitiveStatesAtNormal() throws {
+        try assertIconPrimitiveStates(
+            accessibilityLarge: false,
+            captureName: "icon-primitives-normal"
+        )
+    }
+
+    func testIconPrimitiveStatesAtAccessibilityLarge() throws {
+        try assertIconPrimitiveStates(
+            accessibilityLarge: true,
+            captureName: "icon-primitives-accessibility-large"
+        )
+    }
+
+    private func assertIconPrimitiveStates(
+        accessibilityLarge: Bool,
+        captureName: String
+    ) throws {
+        let app = launchFixture("iconPrimitives", accessibilityLarge: accessibilityLarge)
+        defer { app.terminate() }
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        let viewport = app.descendants(matching: .any)
+            .matching(identifier: "icon-primitives-viewport")
+            .firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+
+        let normal = app.buttons["icon-action-normal"]
+        let disabled = app.buttons["icon-action-disabled"]
+        let unselected = app.buttons["icon-nav-unselected"]
+        let selected = app.buttons["icon-nav-selected"]
+        for control in [normal, disabled, unselected, selected] {
+            XCTAssertTrue(
+                control.waitForExistence(timeout: 10),
+                "icon fixture should expose \(control.identifier)"
+            )
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+            assertNotClipped(
+                control,
+                in: viewport,
+                fixture: accessibilityLarge ? "icon-primitives-ax-large" : "icon-primitives"
+            )
+        }
+        XCTAssertTrue(normal.isEnabled)
+        XCTAssertFalse(disabled.isEnabled)
+        XCTAssertEqual(normal.label, "Normal icon action")
+        XCTAssertEqual(disabled.label, "Disabled icon action")
+        XCTAssertEqual(unselected.label, "Show status")
+        XCTAssertEqual(selected.label, "Show actions")
+
+        // The selected trait is the only selection announcement owned by
+        // the primitive; there is deliberately no explicit
+        // accessibilityValue("Selected") to announce it twice.
+        if let value = selected.value as? String {
+            XCTAssertFalse(
+                value.localizedCaseInsensitiveContains("selected, selected"),
+                "selected navigation must not duplicate its VoiceOver state"
+            )
+        }
+
+        let pressed = app.descendants(matching: .any)
+            .matching(identifier: "icon-action-pressed")
+            .firstMatch
+        XCTAssertTrue(pressed.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(pressed.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(pressed.frame.height, 44)
+        assertNotClipped(
+            pressed,
+            in: viewport,
+            fixture: accessibilityLarge ? "icon-primitives-ax-large" : "icon-primitives"
+        )
+
+        var validatedPNGData: Data?
+        for _ in 0..<3 {
+            // A watch can remain in reduced-luminance/AOD after launch even
+            // while its accessibility tree is current. Wake only the
+            // non-control chrome, then reassert every icon state before
+            // accepting the framebuffer as screenshot evidence.
+            let wakeChrome = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.17))
+            wakeChrome.tap()
+            Thread.sleep(forTimeInterval: 0.2)
+            wakeChrome.tap()
+
+            for control in [normal, disabled, unselected, selected] {
+                XCTAssertTrue(
+                    control.waitForExistence(timeout: 10),
+                    "icon fixture should expose \(control.identifier) before capture"
+                )
+                XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+                XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+                assertNotClipped(
+                    control,
+                    in: viewport,
+                    fixture: accessibilityLarge ? "icon-primitives-ax-large" : "icon-primitives"
+                )
+            }
+
+            Thread.sleep(forTimeInterval: 1)
+            let screenshot = app.screenshot()
+            if let pngData = screenshot.image.pngData(),
+               let source = CGImageSourceCreateWithData(pngData as CFData, nil),
+               let encodedImage = CGImageSourceCreateImageAtIndex(source, 0, nil),
+               hasSelectedIconSurface(encodedImage) {
+                validatedPNGData = pngData
+                break
+            }
+        }
+        guard let validatedPNGData else {
+            XCTFail("icon primitive screenshot never rendered the selected cyan surface below the clock")
+            throw IconScreenshotCaptureError.emptyFrame
+        }
+
+        // Attach the exact validated PNG bytes; screenshot/image convenience
+        // initializers can re-read or re-render a watch framebuffer while it dims.
+        let capture = XCTAttachment(data: validatedPNGData, uniformTypeIdentifier: "public.png")
+        capture.name = captureName
         capture.lifetime = .keepAlways
         add(capture)
     }
@@ -925,6 +1055,49 @@ final class SendmeterWatchScreenshots: XCTestCase {
             }
         }
         return primaryPixels >= max(512, width * height / 100)
+    }
+
+    /// #569: prove the retained icon fixture is a rendered app frame, not the
+    /// black/AOD framebuffer that can still expose a live accessibility tree.
+    /// The selected navigation control uses the shared cyan accent, so require
+    /// a bounded count of cyan pixels below the upper clock region. The lower
+    /// scan window also keeps system clock text from satisfying the assertion.
+    private func hasSelectedIconSurface(_ image: CGImage) -> Bool {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return false }
+
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = rgba.withUnsafeMutableBytes { rawBuffer -> Bool in
+            guard let baseAddress = rawBuffer.baseAddress,
+                  let context = CGContext(
+                      data: baseAddress,
+                      width: width,
+                      height: height,
+                      bitsPerComponent: 8,
+                      bytesPerRow: width * 4,
+                      space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else {
+                return false
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return false }
+
+        var cyanPixels = 0
+        let clockRows = max(1, height / 5)
+        for offset in stride(from: clockRows * width * 4, to: rgba.count, by: 4) {
+            let red = Int(rgba[offset])
+            let green = Int(rgba[offset + 1])
+            let blue = Int(rgba[offset + 2])
+            if green >= 45, blue >= 55,
+               blue >= green + 3, green >= red + 25 {
+                cyanPixels += 1
+            }
+        }
+        return cyanPixels >= max(64, width * height / 2_500)
     }
 
 }
