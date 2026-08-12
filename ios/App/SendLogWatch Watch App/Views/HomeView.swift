@@ -105,13 +105,20 @@ struct HomeView: View {
     ///
     /// Half of `WatchIconButtonVisuals.visibleDiameter` (30pt) — KEEP IN
     /// SYNC, same contract as `selectorButtonBackdrop`'s 30pt disc below.
-    /// The disc centers sit at `systemClockCenterY(strip:)` (never above
-    /// the calibration's lower anchor), so the visible ink stays ≥0.2pt
-    /// inside the physical top edge on the smallest case size.
+    /// The disc centers sit at `systemClockCenterY(strip:)`, which never
+    /// returns less than `discRadius + 1` (16pt) — the visible ink stays
+    /// ≥1pt inside the physical top edge on the smallest case size (see
+    /// the floor's comment in `systemClockCenterY`).
     private static let discRadius: CGFloat = 15
-    /// Defensive floor for the measured strip; no real watch reports less,
-    /// but a zero inset must not put the icons on top of at-rest content.
-    private static let minimumStripHeight: CGFloat = 24
+    /// Defensive floor for the measured strip, set to the measured 40mm
+    /// value — the smallest any real watch reports (32.5pt; the 46mm and
+    /// 49mm strips measure 44.5/47.5). If the inset ever reads 0 again
+    /// (the #597 failure mode), this floor keeps the WHOLE layout coherent
+    /// on the 40mm geometry — the disc calibration clamps to the 40mm
+    /// anchor, and the fade mask, the workout banner's top pad and the
+    /// at-rest content inset all degrade to the same device's numbers
+    /// instead of three different ones.
+    private static let minimumStripHeight: CGFloat = 32.5
     /// Breath between the chrome's bottom edge (the strip, or the discs'
     /// lower edge when a device's clock sits low in the strip) and at-rest
     /// page content, so the discs never touch the cards until the user
@@ -140,6 +147,18 @@ struct HomeView: View {
     /// outside it must not push the discs above the measured 40mm position
     /// (which would cross the physical top edge) or below the 49mm one.
     /// Re-measure this table if a watchOS update moves the system clock.
+    ///
+    /// The result additionally floors at `discRadius + 1` (16pt). This is a
+    /// CLEARANCE floor, not a mechanism: it binds only on the smallest case
+    /// size (the 40mm clock center is 15.2pt, and the 30pt disc against a
+    /// ~10.5pt clock band has sub-pixel headroom at the physical top edge —
+    /// 0.2pt at 2x is a single pixel row, invisible to the screenshot suite
+    /// because it reconstructs the disc rect from the hit frame's midY
+    /// rather than reading rendered ink). The 1pt clearance restores the
+    /// #597-era margin there at a cost of 0.8pt of alignment — inside the
+    /// ±2pt clock-center band — and never binds on 46/49mm. #597's floor
+    /// failed because it dominated EVERY device on a fictional input; this
+    /// one yields to the calibration on every device but the smallest.
     private static func systemClockCenterY(strip: CGFloat) -> CGFloat {
         let strip40mm: CGFloat = 32.5
         let strip49mm: CGFloat = 47.5
@@ -147,7 +166,7 @@ struct HomeView: View {
         let center49mm: CGFloat = 28.0
         let clamped = min(max(strip, strip40mm), strip49mm)
         let fraction = (clamped - strip40mm) / (strip49mm - strip40mm)
-        return center40mm + (center49mm - center40mm) * fraction
+        return max(center40mm + (center49mm - center40mm) * fraction, Self.discRadius + 1)
     }
 
     /// Per-button legibility backdrop (#588 review F3): a canvas-colored
@@ -173,8 +192,8 @@ struct HomeView: View {
     /// midline; the offset then pins the disc centers at
     /// `systemClockCenterY(strip:)` — the system clock's measured optical
     /// center on this case size — never letting visible ink cross the
-    /// physical top edge (the calibration clamps to the measured 40mm
-    /// anchor, where the disc top sits 0.2pt inside the edge).
+    /// physical top edge (the calibration's clearance floor keeps the disc
+    /// top ≥1pt inside the edge on the smallest case size).
     private func selectorRow(strip: CGFloat) -> some View {
         let discCenterY = Self.systemClockCenterY(strip: strip)
         return HStack(spacing: 2) {
@@ -246,13 +265,19 @@ struct HomeView: View {
                     // same hosting-root independence also keeps each page's
                     // OWN container safe area (the true top strip, ~32.5pt on
                     // 40mm) even though the outer stack ignores it — so each
-                    // page must ignore it itself. The safe-area padding sits
-                    // FIRST, inside the ignore: reversed (ignore then pad),
-                    // `ignoresSafeArea` eats the padding and the at-rest
-                    // cards land back under the discs (measured 0.5pt, caught
-                    // by the suite's card-below-discs assertion). The padding
-                    // then gives each page's at-rest content a clear top
-                    // margin below the discs (the real chrome, per the
+                    // page must ignore it itself. TOP only: the bottom inset
+                    // (the rounded-corner / Digital Crown exclusion) is
+                    // system-owned and the outer stack's bottom ignore is
+                    // what historically let the pager reach the framebuffer
+                    // bottom — the pages keep their own bottom inset so
+                    // at-rest content still clears the corner curve, which a
+                    // rect-bounded assertion could never catch. The safe-area
+                    // padding sits FIRST, inside the ignore: reversed (ignore
+                    // then pad), `ignoresSafeArea` eats the padding and the
+                    // at-rest cards land back under the discs (measured 0.5pt,
+                    // caught by the suite's card-below-discs assertion). The
+                    // padding then gives each page's at-rest content a clear
+                    // top margin below the discs (the real chrome, per the
                     // SL-586 follow-up) while its scrolled content still
                     // passes visibly underneath. Deliberately constant even
                     // when the workout banner pushes the pager below the
@@ -260,11 +285,11 @@ struct HomeView: View {
                     // at-rest cards half-dissolved.
                     StatusView()
                         .safeAreaPadding(.top, contentTop)
-                        .ignoresSafeArea(.container, edges: [.top, .bottom])
+                        .ignoresSafeArea(.container, edges: .top)
                         .tag(WatchHomePage.status)
                     ActionsView()
                         .safeAreaPadding(.top, contentTop)
-                        .ignoresSafeArea(.container, edges: [.top, .bottom])
+                        .ignoresSafeArea(.container, edges: .top)
                         .tag(WatchHomePage.actions)
                 }
                 // The explicit selector (the clock-level icons below) is the
