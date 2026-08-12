@@ -207,6 +207,43 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertEqual(logged, 0, "nothing was banked, so nothing may be logged")
     }
 
+    /// SL-585 (#591): with NOTHING selected, arming is the free-hold primary
+    /// — the old manager-level empty-tag refusals (armHandsFree's guard and
+    /// beginArmedRecording's cancel-and-toast) are gone. An untagged pull
+    /// must arm, record, and save as a `""`-tagged rep (the recordings
+    /// schema's own default — Free hold's existing representation, no new
+    /// tag scheme), losing nothing.
+    func testUntaggedArmRecordsFreeHoldRepAndLosesNothing() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        var commands: [Tindeq.Cmd] = []
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            armTimeoutSeconds: 600,
+            commandWriter: { commands.append($0) }
+        )
+        manager.liveTag = ""
+        manager.liveSide = ""
+
+        manager.armHandsFree()
+        XCTAssertTrue(manager.handsFreeRequested, "an empty tag must not refuse arming any more (#591)")
+        XCTAssertEqual(manager.handsFreeState, .armed(aboveSinceMs: nil))
+
+        feed(manager, [(3, 0), (3, 600_000), (15, 700_000), (0, 800_000), (0, 2_300_000)])
+        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
+
+        let rows = await recordings.snapshot().map(\.row)
+        XCTAssertEqual(rows.count, 1, "the untagged pull must record exactly one rep")
+        let rep = try XCTUnwrap(rows.first)
+        XCTAssertEqual(rep.tag, "", "a free hold records with the schema's own empty-tag default")
+        XCTAssertEqual(rep.groupId, manager.sessionId, "the untagged rep joins the per-connect session like any other")
+        XCTAssertEqual(
+            manager.handsFreeState, .armed(aboveSinceMs: nil),
+            "hands-free re-arms after the untagged save, same as tagged"
+        )
+    }
+
     func testArmedStreamAutoDisarmsAtTenMinuteIdleBound() {
         var commands: [Tindeq.Cmd] = []
         let manager = TindeqManager(

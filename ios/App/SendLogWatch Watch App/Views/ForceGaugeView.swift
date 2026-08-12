@@ -440,11 +440,18 @@ struct ForceGaugeView: View {
     private var selectorRow: some View {
         HStack(spacing: 4) {
             if quickTags.isEmpty {
+                // #590 review finding 10: the placeholder truncated to
+                // "No ex…" beside the side toggle on 40mm. Same recipe as
+                // the chips (whose scaling provably works): a fixed-height
+                // flexible frame OUTSIDE the scale floor, so the text gets a
+                // definite proposal to scale into instead of truncating.
                 Text(tagsLoading ? "Loading…" : "No exercises")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(WatchPalette.textTertiary)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .foregroundStyle(WatchPalette.textTertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: 28)
             } else {
                 ForEach(quickTags, id: \.self) { name in
                     quickTagChip(name)
@@ -461,7 +468,9 @@ struct ForceGaugeView: View {
         let selected = tag == name
         let accent = WatchPalette.accent(WatchDesignTokens.secondary, reducedLuminance: isLuminanceReduced)
         return Button {
-            tag = name
+            // SL-585: tapping the selected chip DESELECTS — back to the
+            // free-hold primary. `""` is a first-class selection now.
+            tag = (tag == name) ? "" : name
         } label: {
             Text(name)
                 .font(.system(size: 12, weight: selected ? .heavy : .semibold, design: .rounded))
@@ -490,7 +499,7 @@ struct ForceGaugeView: View {
         .accessibilityLabel(name)
         .accessibilityValue(tag == name ? "Selected" : "Not selected")
         .accessibilityAddTraits(tag == name ? .isSelected : [])
-        .accessibilityHint("Selects this exercise")
+        .accessibilityHint(selected ? "Deselects this exercise, returning to free hold" : "Selects this exercise")
         .accessibilityIdentifier("force-quick-tag-\(name)")
     }
 
@@ -511,6 +520,14 @@ struct ForceGaugeView: View {
         let selected = side == value
         let accent = WatchPalette.accent(WatchDesignTokens.primary, reducedLuminance: isLuminanceReduced)
         return Button {
+            // SL-585 follow-up: L|R are the only offered sides on the watch
+            // now (the chooser's list is gone; "both"/unspecified stay
+            // web-only). A LEGACY persisted "both"/"" renders with neither
+            // segment selected and is rewritten only here, on an explicit
+            // user tap — never silently on appear. Tapping the already-
+            // selected segment is a no-op: clearing back to unspecified is
+            // deliberately not offered.
+            guard side != value else { return }
             side = value
         } label: {
             Text(label)
@@ -722,7 +739,6 @@ struct ForceGaugeView: View {
             ForceProtocolChooserView(
                 catalog: protocolCatalog,
                 tag: $tag,
-                side: $side,
                 recentTags: recentTags,
                 tagsLoading: tagsLoading,
                 onRetryTags: loadTags
@@ -795,28 +811,38 @@ struct ForceGaugeView: View {
             startReadyCard
         } else if isPresentingConnecting {
             connectingCard
-        } else if selectedStartEligibility == .allowed {
+        } else if selectedStartEligibility == .allowed && !noExerciseSelected {
             // No device answered (or none was sought): cadence-only
-            // fallback — reachable only through this disconnected path,
-            // never while connected (approved design).
+            // fallback — reachable only through this disconnected path with
+            // an exercise selected, never while connected (approved design).
             startReadyCard
         } else {
+            // Disconnected with nothing selected lands here too (SL-585):
+            // a free hold needs the sensor, so the primary action is the
+            // connect retry — there is no refused dead-end state any more.
             connectReadyCard
         }
     }
 
+    /// SL-585: `""` IS the free-hold selection — there is no refused
+    /// "Pick an exercise" state any more. With nothing selected the primary
+    /// card arms (or starts) an untagged free hold; picking a chip switches
+    /// to the tagged flow.
+    private var noExerciseSelected: Bool {
+        tag.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
     /// The default connected primary (SL-584): tap ARMS hands-free — the
     /// explicit tap the accidental-start guard requires; auto-connect never
-    /// arms. With no exercise picked the card stays visible but refused
-    /// (#222 pattern: disabled + dimmed, not hidden), gating on the chips.
+    /// arms. With no exercise picked this is the free-hold primary (SL-585):
+    /// same arm, untagged rep — the dead-end refusal is gone.
     private var armHandsFreeCard: some View {
-        let noExercise = tag.trimmingCharacters(in: .whitespaces).isEmpty
-        let refused = tindeq.saving || noExercise
+        let refused = tindeq.saving
         return Button { tindeq.armHandsFree() } label: {
             readyCardBody(
                 token: WatchDesignTokens.primary,
-                status: noExercise ? "Pick an exercise" : "Arm hands-free",
-                symbol: noExercise ? nil : "hand.raised.fill"
+                status: noExerciseSelected ? "Arm hands-free · Free hold" : "Arm hands-free",
+                symbol: "hand.raised.fill"
             )
         }
         .buttonStyle(.plain)
@@ -824,8 +850,8 @@ struct ForceGaugeView: View {
         .opacity(refused ? 0.52 : 1)
         .accessibilityLabel("Arm hands-free")
         .accessibilityHint(
-            noExercise
-                ? "Pick an exercise first"
+            noExerciseSelected
+                ? "Arms the gauge to start an untagged free hold when you pull"
                 : "Arms the gauge to start when you pull"
         )
         .accessibilityIdentifier("force-arm-hands-free")
@@ -838,12 +864,22 @@ struct ForceGaugeView: View {
             .accessibilityIdentifier("force-connecting-card")
     }
 
+    /// Tap-to-start mode. With an exercise selected this starts the guided
+    /// protocol exactly as shipped; with nothing selected (SL-585, only
+    /// reachable while connected) the tap starts a manual untagged free
+    /// hold — `tindeq.start()`, the same action the below-the-fold Free
+    /// hold button has always run, with the same `""` tag semantics.
     private var startReadyCard: some View {
         let eligible = !tindeq.saving
             && !guidedForceRunner.isActive
-            && !tag.trimmingCharacters(in: .whitespaces).isEmpty
-            && selectedStartEligibility == .allowed
-        return Button { startSelectedProtocol() } label: {
+            && (noExerciseSelected || selectedStartEligibility == .allowed)
+        return Button {
+            if noExerciseSelected {
+                tindeq.start()
+            } else {
+                startSelectedProtocol()
+            }
+        } label: {
             readyCardBody(
                 token: WatchDesignTokens.primary,
                 status: readyStatusText,
@@ -853,8 +889,8 @@ struct ForceGaugeView: View {
         .buttonStyle(.plain)
         .disabled(!eligible)
         .opacity(eligible ? 1 : 0.52)
-        .accessibilityLabel("Start selected protocol")
-        .accessibilityHint(startHint)
+        .accessibilityLabel(noExerciseSelected ? "Start free hold" : "Start selected protocol")
+        .accessibilityHint(noExerciseSelected ? "Starts one untimed free hold" : startHint)
         .accessibilityIdentifier("force-start-selected")
     }
 
@@ -933,7 +969,8 @@ struct ForceGaugeView: View {
     // only.
 
     private var readyStatusText: String {
-        if tag.trimmingCharacters(in: .whitespaces).isEmpty { return "Pick an exercise" }
+        // SL-585: nothing selected means free hold, never a refusal.
+        if noExerciseSelected { return "Start free hold" }
         switch selectedStartEligibility {
         case .allowed:
             return visibleStatus == .connected ? "Ready to pull" : "Ready · cadence only"
@@ -942,13 +979,16 @@ struct ForceGaugeView: View {
         }
     }
 
-    /// The clear, explicit manual fallback (#537 AC-3) — same action and
-    /// identifier as before, just no longer sharing a row with Arm
-    /// hands-free so it isn't visually paired as an equal-weight peer.
+    /// The clear, explicit manual fallback (#537 AC-3) for the TAGGED flow —
+    /// with an exercise selected, this starts a tagged untimed hold beside
+    /// the guided primary. With nothing selected it is hidden (SL-585): the
+    /// primary card IS free hold then, and duplicating it below the fold
+    /// would be noise. The old empty-tag disable is gone with the refusal
+    /// state itself.
     private var freeHoldButton: some View {
         Button("Free hold") { tindeq.start() }
             .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
-            .disabled(tindeq.saving || tag.trimmingCharacters(in: .whitespaces).isEmpty)
+            .disabled(tindeq.saving)
             .accessibilityLabel("Free hold")
             .accessibilityHint("Starts one untimed force hold")
             .accessibilityIdentifier("force-free-hold")
@@ -983,7 +1023,7 @@ struct ForceGaugeView: View {
     /// disconnect (unified into the finish flag).
     @ViewBuilder
     private var secondaryContent: some View {
-        if visibleStatus == .connected && !tindeq.handsFreeRequested {
+        if visibleStatus == .connected && !tindeq.handsFreeRequested && !noExerciseSelected {
             freeHoldButton
         }
 
@@ -1011,11 +1051,12 @@ struct ForceGaugeView: View {
             noSensorRow
         }
 
-        if tag.trimmingCharacters(in: .whitespaces).isEmpty && !recentTags.isEmpty {
-            Text("Pick an exercise to start.")
+        if noExerciseSelected && !recentTags.isEmpty {
+            // SL-585: guidance, not a gate — free hold starts untagged.
+            Text("Pick an exercise to tag your holds.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-                .accessibilityHint("Exercise is required before starting")
+                .accessibilityHint("Holds record untagged until an exercise is selected")
         }
 
         if tagsLoading && recentTags.isEmpty {
