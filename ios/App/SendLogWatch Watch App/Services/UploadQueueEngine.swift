@@ -432,9 +432,17 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// - `.schemaRejection` is proven permanent (`QuarantineRetryPolicy`) —
     ///   never restored, a retry of it is known to fail. Not offered, not
     ///   attempted.
-    /// - Another account's record is skipped (`shouldDrain`, #475 F4): a
-    ///   manual retry must respect the same ownership the automatic drain
-    ///   does.
+    /// - Another account's record is skipped (`shouldDrain`, #475 F4) — and
+    ///   so is EVERYTHING while nobody is signed in: unlike the counting
+    ///   sweeps, whose `|| currentUserId == nil` exists so a signed-out watch
+    ///   doesn't report its queues as zero, this is a MUTATION path. Restoring
+    ///   another account's record (or a signed-out watch restoring every
+    ///   record) would destroy the very forensic header #599 exists to
+    ///   preserve — `stage`, `httpStatus`, `postgrestCode`, `errorMessage`,
+    ///   `attemptCount`, `quarantinedAt` are gone the moment the record
+    ///   becomes a plain pending `.json` — and `drainPass` would not upload
+    ///   it anyway (its own per-file guard re-checks, #158). Review finding
+    ///   1 of #599/#600: the escape hatch stays reserved for reads.
     /// - An unreadable/undecodable record is skipped AND retained (#287) —
     ///   never deleted, never rewritten, exactly like every other read path.
     ///
@@ -457,6 +465,12 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// this returns and the UI refreshes against post-drain reality.
     @discardableResult
     func retryQuarantinedItems() async -> Int {
+        // Read once, not per file — unlike `drainPass`, this loop contains NO
+        // `await`, so the actor cannot suspend in the middle of it and the
+        // account decision is atomic for the whole pass (a mid-loop account
+        // switch cannot interleave here; it would make a half-restored set
+        // that neither account chose). `drainPass` re-reads per file only
+        // because its `upload` await is a suspension point.
         let currentUserId = WatchSessionStore.shared.userId
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -471,9 +485,8 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
                 let record = try? decoder.decode(QueueQuarantineRecord<Item>.self, from: data)
             else { continue } // #287: retained, never deleted
             guard QuarantineRetryPolicy.isManuallyRetryable(record.reason) else { continue }
-            guard shouldDrain(itemUserId: record.item.enqueuedUserId, currentUserId: currentUserId)
-                || currentUserId == nil
-            else { continue }
+            // No `|| currentUserId == nil` here — see the doc comment above.
+            guard shouldDrain(itemUserId: record.item.enqueuedUserId, currentUserId: currentUserId) else { continue }
             guard let itemData = try? encoder.encode(record.item) else { continue }
             let pendingURL = pendingDir.appendingPathComponent("\(record.item.queueFileId.uuidString).json")
             do {

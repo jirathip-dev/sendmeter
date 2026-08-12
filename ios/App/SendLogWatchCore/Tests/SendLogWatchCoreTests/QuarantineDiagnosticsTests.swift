@@ -122,6 +122,17 @@ final class QuarantineDiagnosticsTests: XCTestCase {
         XCTAssertEqual(QuarantineRetryPolicy.resultSummary(restored: 2, kept: 1), "2 uploads moved back to the queue · 1 left in quarantine")
     }
 
+    /// A zero-restore outcome must not read as success: nothing claims
+    /// anything "moved back" when nothing did — only the kept count is said,
+    /// and the VIEW (not this copy) picks a non-success tone for it.
+    func testResultSummaryWithZeroRestoredNeverClaimsAMove() {
+        XCTAssertEqual(QuarantineRetryPolicy.resultSummary(restored: 0, kept: 3), "3 left in quarantine")
+        XCTAssertFalse(
+            QuarantineRetryPolicy.resultSummary(restored: 0, kept: 3)!.lowercased().contains("moved back"),
+            "zero restores must never read as a move"
+        )
+    }
+
     func testResultSummaryIsNilWhenNothingWasAttempted() {
         XCTAssertNil(QuarantineRetryPolicy.resultSummary(restored: 0, kept: 0))
     }

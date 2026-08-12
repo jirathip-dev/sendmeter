@@ -29,6 +29,10 @@ struct QuarantineDiagnosticsView: View {
     /// action, cleared by the next load.
     @State private var isRetrying = false
     @State private var retrySummary: String?
+    /// How many records the LAST retry pass actually restored — drives the
+    /// result banner's tone, because a zero-restore outcome is NOT a success
+    /// (review finding 2). Retired on the next `load()`.
+    @State private var lastRetryRestored: Int?
 
     var body: some View {
         ScrollView {
@@ -40,9 +44,13 @@ struct QuarantineDiagnosticsView: View {
                 }
 
                 if let retrySummary {
+                    let retrySucceeded = (lastRetryRestored ?? 0) > 0
+                    // #600 review finding 2: zero restored is not a success —
+                    // the banner must say so with tone and title, or a failed
+                    // pass reads as a completed one.
                     WatchStateBanner(
-                        state: .success,
-                        title: "Retried",
+                        state: retrySucceeded ? .success : .warning,
+                        title: retrySucceeded ? "Retried" : "Nothing was retried",
                         message: retrySummary
                     )
                 }
@@ -107,12 +115,17 @@ struct QuarantineDiagnosticsView: View {
         async let recordings = PendingRecordingQueue.shared.retryQuarantinedItems()
         async let terminal = LiveWorkoutTerminalRetry.shared.retryQuarantinedItems()
         let restored = await (workouts + sessions + recordings + terminal)
-        isRetrying = false
+        // The guard stays armed through the reload (review finding 3): the
+        // button must not come back live before the view reflects the pass
+        // it just ran, or a second tap starts another pass mid-refresh.
         await load()
-        // `kept` is what the reload still finds quarantined — permanent
-        // rejections, unreadable records, other-account items, or a restore
-        // the disk refused. Saying that out loud keeps the result honest.
-        let kept = quarantinedTotal ?? 0
+        isRetrying = false
+        lastRetryRestored = restored
+        // `kept` is the retry CANDIDATES the reload still finds quarantined —
+        // a restore the disk refused (the only way a candidate survives).
+        // Permanent rejections, unreadable records and other-account items
+        // were never candidates and must not read as "attempted and refused".
+        let kept = retryableCount
         retrySummary = QuarantineRetryPolicy.resultSummary(restored: restored, kept: kept)
     }
 
@@ -193,13 +206,20 @@ struct QuarantineDiagnosticsView: View {
     /// the rest (`.schemaRejection` plus any unreadable record, which is
     /// counted as the cautious schema-like default by `quarantinedCount`)
     /// gets the "will not retry" wording. Mirrors the phone split exactly.
+    ///
+    /// Never collapses an unknown breakdown into a zero (review nit): if the
+    /// `.stuckRetrying` slot hasn't reported, saying "0 retrying
+    /// automatically" would invent a fact — the honest sentence says the
+    /// breakdown isn't reported yet.
     private func splitSummary(total: Int) -> String {
-        let stuck = quarantinedStuckTotal ?? 0
-        let permanent = max(0, total - stuck)
+        guard let stuck = quarantinedStuckTotal else {
+            return "The retry breakdown hasn't been reported yet."
+        }
         var parts: [String] = []
         if stuck > 0 {
             parts.append("\(stuck) retrying automatically")
         }
+        let permanent = max(0, total - stuck)
         if permanent > 0 {
             parts.append("\(permanent) will not retry")
         }

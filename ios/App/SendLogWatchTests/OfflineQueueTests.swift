@@ -1379,6 +1379,31 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(restoredByOwner, 1, "its owner can retry it")
     }
 
+    /// #599/#600 review finding 1: the `|| currentUserId == nil` escape hatch
+    /// belongs to the COUNTING sweeps (so a signed-out watch doesn't report
+    /// its queues as zero) and must never ride into a MUTATION path. A
+    /// signed-out retry restores NOTHING — every record's forensic header
+    /// (stage, httpStatus, postgrestCode, errorMessage, attemptCount,
+    /// quarantinedAt) would vanish the moment it became a plain pending
+    /// .json, and `drainPass` wouldn't upload it anyway.
+    func testRetryRestoresNothingWhileSignedOut() async throws {
+        let stuck = makeBundle(id: UUID(), enqueuedUserId: testUserId)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        WatchSessionStore.shared.clear() // signed out
+
+        let uploader = ScriptedUploader(failing: [:])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+        let restored = await queue.retryQuarantinedItems()
+        XCTAssertEqual(restored, 0, "a signed-out retry must restore nothing")
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(stuck.workout.id.uuidString).quarantine"), "the record and its forensics must survive untouched")
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).json"), "no half-restored pending file")
+        let uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.isEmpty)
+    }
+
     /// The retry clears any leftover `<uuid>.retry` ledger so the restored
     /// item starts with a fresh budget — and a transport failure during the
     /// follow-up drain does not immediately re-earn one (the F11 rule: no
