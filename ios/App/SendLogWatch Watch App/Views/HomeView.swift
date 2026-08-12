@@ -95,10 +95,32 @@ struct HomeView: View {
     @State private var lossQueue: [LossNotice] = []
     @State private var showLossAlert = false
 
-    /// The floating selector bar's chrome height: the shared icon primitive's
-    /// 44pt hit target. Pages pad their at-rest content past it (plus a 2pt
-    /// breath) so nothing sits under the buttons until the user scrolls.
-    private static let selectorBarHeight: CGFloat = 44
+    /// SL-586 raises the page-toggle icons from their own 44pt row into the
+    /// system top strip (the safe-area band where watchOS draws the time,
+    /// top-RIGHT — the icons take the top-LEFT region beside it), freeing
+    /// that whole row for content. The strip height is measured from the
+    /// live safe-area inset (GeometryReader below), never hardcoded: it
+    /// differs per case size (≈28pt on 40mm, ≈37pt on 49mm).
+    ///
+    /// Half of `WatchIconButtonVisuals.visibleDiameter` (30pt) — KEEP IN
+    /// SYNC, same contract as `selectorButtonBackdrop`'s 30pt disc below.
+    /// Used to pin the discs fully on screen: the disc centers sit at
+    /// `max(strip × discCenterFraction, discRadius + 1)`, so even a shallow
+    /// strip cannot push visible ink past the physical top edge.
+    private static let discRadius: CGFloat = 15
+    /// Vertical center of the icon discs as a fraction of the strip height.
+    /// 0.5 would be the geometric center; biased slightly low so the discs
+    /// optically align with the system time's text band, which hugs the
+    /// strip's lower half (the upper part of the strip absorbs the curved
+    /// bezel). One tunable on purpose — adjust here after visual review.
+    private static let discCenterFraction: CGFloat = 0.55
+    /// Defensive floor for the measured strip; no real watch reports less,
+    /// but a zero inset must not put the icons on top of at-rest content.
+    private static let minimumStripHeight: CGFloat = 24
+    /// Breath between the strip's bottom edge and at-rest page content, so
+    /// the discs (which can reach ~1pt past the strip bottom on 40mm) never
+    /// touch the cards until the user scrolls.
+    private static let contentBreath: CGFloat = 6
 
     /// Per-button legibility backdrop (#588 review F3): a canvas-colored
     /// disc matching the primitive's 30pt visible circle. Over the dark
@@ -115,122 +137,167 @@ struct HomeView: View {
 
     private var activeLossNotice: LossNotice? { lossQueue.first }
 
+    /// The clock-level icon row (SL-586). Leading padding + tight spacing
+    /// keep both visible discs well clear of the system time on a 162pt-wide
+    /// 40mm face: discs span x ≈ 13…89 while the rendered clock starts
+    /// ≈ 110+ — the screenshot suite asserts that margin explicitly. The
+    /// `.frame(height: strip)` centers the 44pt buttons on the strip's
+    /// midline; the offset then pins the disc centers at
+    /// `max(strip × discCenterFraction, discRadius + 1)` — optically on the
+    /// clock's text band, but never letting visible ink cross the physical
+    /// top edge on a shallow strip.
+    private func selectorRow(strip: CGFloat) -> some View {
+        let discCenterY = max(strip * Self.discCenterFraction, Self.discRadius + 1)
+        return HStack(spacing: 2) {
+            WatchIconButton(
+                systemImage: WatchIconSymbol.status,
+                accessibilityLabel: "Show Status",
+                accessibilityHint: "Displays today's readiness and training load",
+                accessibilityIdentifier: "home-nav-status",
+                isSelected: selection == .status,
+                action: { selection = .status }
+            )
+            .background { selectorButtonBackdrop }
+            WatchIconButton(
+                systemImage: WatchIconSymbol.actions,
+                accessibilityLabel: "Show Actions",
+                accessibilityHint: "Displays Force Gauge and Climb Workout",
+                accessibilityIdentifier: "home-nav-actions",
+                isSelected: selection == .actions,
+                tint: WatchDesignTokens.secondary,
+                action: { selection = .actions }
+            )
+            .background { selectorButtonBackdrop }
+        }
+        .padding(.leading, 6)
+        .frame(height: strip, alignment: .center)
+        .offset(y: discCenterY - strip / 2)
+    }
+
     var body: some View {
-        VStack(spacing: 2) {
-            if workout.isRunning {
-                WatchStateBanner(
-                    state: .warning,
-                    title: "Workout in progress",
-                    message: "Open Climb Workout to end it safely."
-                )
-                .padding(.horizontal, 4)
-            }
-            TabView(selection: $selection) {
-                // Applied per page, NOT via `safeAreaInset` on the TabView:
-                // page-style TabView children are their own hosting roots on
-                // watchOS and never received the TabView-level inset — at
-                // rest, the readiness/Force cards rendered straight under
-                // the selector circles (the fixture matrix caught it). The
-                // safe-area padding gives each page's at-rest content a
-                // clear top margin below the floating bar while its scrolled
-                // content still passes visibly underneath.
-                StatusView()
-                    .safeAreaPadding(.top, Self.selectorBarHeight + 2)
-                    .tag(WatchHomePage.status)
-                ActionsView()
-                    .safeAreaPadding(.top, Self.selectorBarHeight + 2)
-                    .tag(WatchHomePage.actions)
-            }
-            // The explicit selector (the safeAreaInset bar below) is the only
-            // pagination affordance; the native dots duplicate it and consume
-            // scarce 40mm height.
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            // #578's guarantee, softened (SL-580 follow-up): the pages must
-            // never paint OVER the selector controls or escape the pager, but
-            // the old hard `.clipped()` guillotined scrolled cards at a
-            // razor-straight line just under the icons — a bright card cut
-            // mid-body made the whole selector row read as a solid black
-            // band. This alpha mask keeps the same ownership boundary (all
-            // painting outside the pager's bounds is still fully masked
-            // away) while the top of the scroll region fades over the bar's
-            // height, so content visibly slides UNDER the transparent bar
-            // and dissolves instead of being chopped. Pure geometry — no
-            // color is introduced, so Always-On dimming and Reduce Motion
-            // are untouched.
-            .mask {
-                VStack(spacing: 0) {
-                    LinearGradient(
-                        colors: [.clear, .black],
-                        startPoint: .top,
-                        endPoint: .bottom
+        // The root ignores the TOP safe area as well as the bottom one now
+        // (SL-586), so the pager runs under the system strip and the icons
+        // can sit inside it. The GeometryReader is what still knows where
+        // the strip ends: expanded to the physical screen, it reports the
+        // ignored inset via `safeAreaInsets.top`, which every piece of the
+        // new geometry (icon row, fade height, at-rest content inset)
+        // derives from instead of a hardcoded bar height.
+        GeometryReader { geo in
+            let strip = max(geo.safeAreaInsets.top, Self.minimumStripHeight)
+            VStack(spacing: 2) {
+                if workout.isRunning {
+                    WatchStateBanner(
+                        state: .warning,
+                        title: "Workout in progress",
+                        message: "Open Climb Workout to end it safely."
                     )
-                    // Exactly the bar's chrome height (#588 review F4): the
-                    // fade reaches full opacity at the bar's bottom edge, so
-                    // the least-faded content strip begins where the chrome
-                    // ends instead of leaving a fully-unfaded band beside
-                    // the buttons.
-                    .frame(height: Self.selectorBarHeight)
-                    Rectangle().fill(Color.black)
+                    .padding(.horizontal, 4)
+                    // The stack starts at the physical top now — keep the
+                    // banner's card out of the system strip (and from under
+                    // the clock-level icons).
+                    .padding(.top, strip)
                 }
+                TabView(selection: $selection) {
+                    // Applied per page, NOT via `safeAreaInset` on the TabView:
+                    // page-style TabView children are their own hosting roots on
+                    // watchOS and never received the TabView-level inset — at
+                    // rest, the readiness/Force cards rendered straight under
+                    // the selector circles (the fixture matrix caught it). The
+                    // safe-area padding gives each page's at-rest content a
+                    // clear top margin below the system strip while its
+                    // scrolled content still passes visibly underneath.
+                    // Deliberately constant even when the workout banner
+                    // pushes the pager below the strip: a pad shorter than
+                    // the fade mask would leave at-rest cards half-dissolved.
+                    StatusView()
+                        .safeAreaPadding(.top, strip + Self.contentBreath)
+                        .tag(WatchHomePage.status)
+                    ActionsView()
+                        .safeAreaPadding(.top, strip + Self.contentBreath)
+                        .tag(WatchHomePage.actions)
+                }
+                // The explicit selector (the clock-level icons below) is the
+                // only pagination affordance; the native dots duplicate it
+                // and consume scarce 40mm height.
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                // #578's guarantee, softened (SL-580 follow-up): the pages must
+                // never paint OVER the selector controls or escape the pager, but
+                // the old hard `.clipped()` guillotined scrolled cards at a
+                // razor-straight line just under the icons — a bright card cut
+                // mid-body made the whole selector row read as a solid black
+                // band. This alpha mask keeps the same ownership boundary (all
+                // painting outside the pager's bounds is still fully masked
+                // away) while the top of the scroll region fades over the
+                // strip's height, so content visibly slides UNDER the icons
+                // and the system clock and dissolves instead of being
+                // chopped. Pure geometry — no color is introduced, so
+                // Always-On dimming and Reduce Motion are untouched.
+                .mask {
+                    VStack(spacing: 0) {
+                        LinearGradient(
+                            colors: [.clear, .black],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        // Exactly the chrome's height (#588 review F4,
+                        // rebased onto the strip): the fade reaches full
+                        // opacity at the strip's bottom edge, so the
+                        // least-faded content band begins where the chrome
+                        // ends instead of leaving a fully-unfaded strip
+                        // beside the icons/clock.
+                        .frame(height: strip)
+                        Rectangle().fill(Color.black)
+                    }
+                }
+                // Identify the pager for clipping assertions. The icon row
+                // lives on the OUTER stack now (it must hold clock level even
+                // when the workout banner pushes the pager down), which also
+                // retires the old ordering footgun — the identifier no longer
+                // shares a node with the buttons at all, so it cannot swallow
+                // their identifiers (the documented container-identifier
+                // trap that once removed the nav buttons from the tree).
+                .accessibilityIdentifier("home-pager-viewport")
             }
-            // Identify the pager container for clipping assertions BEFORE
-            // mounting the bar overlay: an identifier on a node that contains
-            // the bar swallows the buttons' own identifiers (the documented
-            // container-identifier footgun — the nav buttons vanished from
-            // the accessibility tree when this was ordered the other way).
-            .accessibilityIdentifier("home-pager-viewport")
             // #539/#541: two compact `WatchIconButton`s as the explicit
             // two-way page affordance (VoiceOver gets named "Show Status"/
-            // "Show Actions" controls instead of a blind swipe). Now mounted
-            // as floating chrome OVER the pager (the watch analogue of the
-            // web app's floating glass chrome — DESIGN.md: auto-hiding
-            // chrome must overlay, not flex): the bar area itself is
-            // transparent, each page insets its at-rest content below it
-            // (see the per-page `safeAreaPadding` above), and scrolled
-            // content passes underneath visibly. Per-button canvas-colored
-            // backdrops (below) are what keep the buttons legible over
-            // passing content — the unselected primitive's own fill is a
-            // near-transparent 8% white, which is not legibility over a
-            // bright card (#588 review F3) — while the bar itself stays
-            // backdrop-free per the user's direction. The overlay renders
-            // above the pages, so the controls can never be covered or lose
-            // their hit targets — the actual #578 regression this layout
-            // must not reintroduce.
-            .overlay(alignment: .top) {
-                HStack(spacing: 6) {
-                    Spacer(minLength: 0)
-                    WatchIconButton(
-                        systemImage: WatchIconSymbol.status,
-                        accessibilityLabel: "Show Status",
-                        accessibilityHint: "Displays today's readiness and training load",
-                        accessibilityIdentifier: "home-nav-status",
-                        isSelected: selection == .status,
-                        action: { selection = .status }
-                    )
-                    .background { selectorButtonBackdrop }
-                    WatchIconButton(
-                        systemImage: WatchIconSymbol.actions,
-                        accessibilityLabel: "Show Actions",
-                        accessibilityHint: "Displays Force Gauge and Climb Workout",
-                        accessibilityIdentifier: "home-nav-actions",
-                        isSelected: selection == .actions,
-                        tint: WatchDesignTokens.secondary,
-                        action: { selection = .actions }
-                    )
-                    .background { selectorButtonBackdrop }
-                }
-                .padding(.trailing, 10)
-                .frame(height: Self.selectorBarHeight, alignment: .center)
+            // "Show Actions" controls instead of a blind swipe). SL-586
+            // raises them to the system-time level: watchOS reserves the
+            // strip's top-RIGHT for the clock, so the icons take the LEFT
+            // region beside it and the old dedicated bar row goes back to
+            // content. Still floating chrome OVER the pager (DESIGN.md:
+            // auto-hiding chrome must overlay, not flex) with the strip area
+            // itself transparent; per-button canvas-colored backdrops keep
+            // the buttons legible over passing content — the unselected
+            // primitive's own fill is a near-transparent 8% white, which is
+            // not legibility over a bright card (#588 review F3) — while the
+            // strip stays backdrop-free per the user's direction. The
+            // overlay renders above the pages, so the controls can never be
+            // covered or lose their hit targets — the actual #578 regression
+            // this layout must not reintroduce.
+            //
+            // NOT a toolbar `.topBarLeading` item, on purpose: #580 already
+            // established that the shared 44pt primitive inside a watchOS
+            // toolbar renders as an oversized square whose frame "is
+            // watchOS's to clip" (WorkoutLiveView's app-owned top row is the
+            // surviving fix). This overlay is the topBarLeading *equivalent*
+            // that keeps the fixture/production control path intact. The
+            // 44pt hit frames cannot fit inside a ~28pt strip, so they
+            // follow WorkoutLiveView's shorter-slot doctrine: the invisible
+            // overhang crosses only the physical top bezel and the pages'
+            // top breath — never another control or visible content.
+            .overlay(alignment: .topLeading) {
+                selectorRow(strip: strip)
             }
         }
-        // The bottom safe-area inset is the rounded-corner / Digital Crown
-        // exclusion zone, not an additional visual gutter for this full-screen
-        // pager. Keeping it on the root stack left the pager's clip edge ~19pt
-        // above the captured framebuffer on a 40mm watch, which cuts the
-        // scored readiness card after its production sync line. Expand the
-        // root first so the TabView receives the full display height while its
-        // explicit `.clipped()` boundary remains in force.
-        .ignoresSafeArea(.container, edges: .bottom)
+        // The safe-area insets are the rounded-corner / Digital Crown
+        // exclusion zones, not additional visual gutters for this
+        // full-screen pager. Bottom: keeping the inset on the root stack
+        // left the pager's clip edge ~19pt above the captured framebuffer on
+        // a 40mm watch, which cut the scored readiness card after its
+        // production sync line. Top (SL-586): the strip must be paintable so
+        // scrolled content dissolves under the clock and the icons can sit
+        // beside it.
+        .ignoresSafeArea(.container, edges: [.top, .bottom])
         // The home title duplicated the app identity while consuming the
         // exact vertical budget the 40mm status card needs. The system time
         // remains visible; pushed screens still provide their own titles.
