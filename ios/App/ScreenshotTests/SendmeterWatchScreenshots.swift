@@ -486,11 +486,21 @@ final class SendmeterWatchScreenshots: XCTestCase {
             app.buttons["force-hands-free-armed"].exists,
             "auto-connect must never arm hands-free — arming stays behind its explicit tap"
         )
+        // SL-585: this unauthenticated launch IS the empty-account state (no
+        // exercises exist, nothing selected) — and it must have a live
+        // primary with zero scrolling: the card is the free-hold arm, fully
+        // enabled. The old "refused until an exercise is picked" dead-end is
+        // gone by design (#591).
         let arm = app.buttons["force-arm-hands-free"]
         XCTAssertTrue(arm.waitForExistence(timeout: 5))
-        XCTAssertFalse(
+        XCTAssertTrue(
             arm.isEnabled,
-            "the primary must stay refused (visible, #222 pattern) until an exercise is picked"
+            "with nothing selected the primary must be the ENABLED free-hold arm — no dead-end refusal (#591)"
+        )
+        assertFullyVisible(arm, in: app, fixture: "force-auto-connect")
+        XCTAssertTrue(
+            app.staticTexts["Arm hands-free · Free hold"].waitForExistence(timeout: 5),
+            "the empty-selection primary must read as a free-hold start"
         )
 
         let capture = XCTAttachment(screenshot: app.screenshot())
@@ -621,6 +631,39 @@ final class SendmeterWatchScreenshots: XCTestCase {
         capture.name = captureName
         capture.lifetime = .keepAlways
         add(capture)
+
+        // SL-585 (#591): tapping the SELECTED chip deselects — the card must
+        // switch live to the enabled free-hold primary (no refused state
+        // exists any more), the below-the-fold Free hold button must vanish
+        // (it would duplicate the primary), and re-selecting must restore
+        // the tagged flow exactly as shipped.
+        XCTAssertTrue(
+            waitForAccessibilityValue(chip, expected: "Selected"),
+            "the fixture's chip must start selected"
+        )
+        chip.tap()
+        XCTAssertTrue(
+            waitForAccessibilityValue(chip, expected: "Not selected"),
+            "tapping the selected chip must deselect it"
+        )
+        XCTAssertTrue(
+            app.staticTexts["Arm hands-free · Free hold"].waitForExistence(timeout: 5),
+            "deselecting must switch the primary to the free-hold arm"
+        )
+        XCTAssertTrue(arm.isEnabled, "the free-hold primary must be enabled with nothing selected")
+        XCTAssertFalse(
+            app.buttons["force-free-hold"].exists,
+            "the below-the-fold Free hold duplicate must be hidden while the primary IS free hold"
+        )
+        chip.tap()
+        XCTAssertTrue(
+            waitForAccessibilityValue(chip, expected: "Selected"),
+            "re-tapping must restore the tagged selection"
+        )
+        XCTAssertTrue(
+            app.staticTexts["Arm hands-free"].waitForExistence(timeout: 5),
+            "re-selecting must restore the tagged arm primary"
+        )
     }
 
     /// Keep the fixture matrix exercised without adding extra App Store
@@ -880,10 +923,52 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 XCTAssertTrue(start.isEnabled, "cadence-only Start must be enabled with the fixture exercise selected")
                 XCTAssertTrue(start.isHittable, "cadence-only Start must be hittable while disconnected")
             }
+            if item.fixture == "forceConnecting" {
+                // SL-585 follow-up: this fixture's side is "" — the legacy /
+                // unspecified case ("both" behaves identically). The toggle
+                // must render with NEITHER segment selected, and nothing may
+                // rewrite the stored value on appear; only an explicit tap
+                // sets left/right.
+                for identifier in ["force-main-side-left", "force-main-side-right"] {
+                    let segment = app.buttons[identifier]
+                    XCTAssertTrue(segment.waitForExistence(timeout: 5))
+                    XCTAssertTrue(
+                        waitForAccessibilityValue(segment, expected: "Not selected"),
+                        "a legacy/unspecified side must render with no segment selected"
+                    )
+                }
+            }
             if item.fixture == "forceSaved" || item.fixture == "forceConnected" {
-                // SL-537: exercise/side now live behind the one compact
-                // top-right context action rather than as separate
-                // main-screen controls.
+                // SL-585 follow-up: side coverage lives on the MAIN page's
+                // L|R toggle now — the chooser's side list is gone (the
+                // watch offers only Left/Right; "both"/unspecified stay
+                // web-only). Both fixtures set a canonical lowercase side.
+                let fixtureSide = item.fixture == "forceConnected" ? "right" : "left"
+                let selectedSegment = app.buttons["force-main-side-\(fixtureSide)"]
+                let otherSegment = app.buttons[
+                    "force-main-side-\(fixtureSide == "right" ? "left" : "right")"
+                ]
+                XCTAssertTrue(selectedSegment.waitForExistence(timeout: 5))
+                XCTAssertTrue(
+                    waitForAccessibilityValue(selectedSegment, expected: "Selected"),
+                    "the main toggle must reflect the fixture's persisted side"
+                )
+                // Tapping the SELECTED segment is a no-op — clearing back to
+                // unspecified is deliberately not offered any more.
+                selectedSegment.tap()
+                XCTAssertTrue(
+                    waitForAccessibilityValue(selectedSegment, expected: "Selected"),
+                    "tapping the selected side segment must stay selected (no clear-to-unspecified)"
+                )
+                if item.fixture == "forceConnected" {
+                    otherSegment.tap()
+                    XCTAssertTrue(waitForAccessibilityValue(otherSegment, expected: "Selected"))
+                    XCTAssertTrue(waitForAccessibilityValue(selectedSegment, expected: "Not selected"))
+                    selectedSegment.tap()
+                    XCTAssertTrue(waitForAccessibilityValue(selectedSegment, expected: "Selected"))
+                    XCTAssertTrue(waitForAccessibilityValue(otherSegment, expected: "Not selected"))
+                }
+
                 let context = app.buttons["force-context-button"]
                 XCTAssertTrue(
                     context.waitForExistence(timeout: 5),
@@ -891,34 +976,15 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 )
                 assertFullyVisible(context, in: app, fixture: item.fixture)
                 context.tap()
-                // Both fixtures set tag "Crimp edge" and a canonical lowercase
-                // side (see `ScreenshotFixtures.force`). The chooser itself was never
-                // part of the no-scroll guarantee — only Force setup's
-                // primary path is — and Side plus the first exercise row
-                // don't both fit the 40mm viewport at once. Side is near the
-                // top, but the selected side row may be below the initial
-                // viewport; tapping lets XCUITest scroll it into view.
-                let sideOption = app.buttons[
-                    item.fixture == "forceConnected" ? "force-side-right" : "force-side-left"
-                ]
-                XCTAssertTrue(sideOption.waitForExistence(timeout: 5), "chooser should expose the Side control")
-                XCTAssertEqual(sideOption.value as? String, "Selected")
-                sideOption.tap()
-                XCTAssertEqual(sideOption.value as? String, "Selected")
-
-                if item.fixture == "forceConnected" {
-                    let leftOption = app.buttons["force-side-left"]
-                    XCTAssertTrue(leftOption.waitForExistence(timeout: 5))
-                    leftOption.tap()
-                    XCTAssertEqual(leftOption.value as? String, "Selected")
-                    XCTAssertEqual(sideOption.value as? String, "Not selected")
-                    sideOption.tap()
-                    XCTAssertEqual(sideOption.value as? String, "Selected")
-                    XCTAssertEqual(leftOption.value as? String, "Not selected")
+                // The chooser must NOT expose side rows any more — matched
+                // across all three old identifiers so a partial revert fails.
+                for gone in ["force-side-left", "force-side-right", "force-side-both", "force-side-unspecified"] {
+                    XCTAssertFalse(
+                        app.buttons[gone].exists,
+                        "the chooser's side list was removed (SL-585 follow-up) — \(gone) must not return"
+                    )
                 }
-
-                // Exercise rows are below the new four-row vertical Side
-                // list inside a LazyVStack, so they are not necessarily
+                // Exercise rows sit in a LazyVStack and are not necessarily
                 // materialized immediately after opening the chooser. Use
                 // the same bounded scroll-to-find pattern as the Suggested
                 // protocol coverage above before checking existence.
