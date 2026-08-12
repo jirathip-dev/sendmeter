@@ -125,6 +125,88 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         XCTAssertEqual(manager.handsFreeState, .idle)
     }
 
+    /// #590 review F1, layer by layer against the REAL manager: with
+    /// hands-free armed, a pull can start a rep while the finish
+    /// confirmation covers the gauge. `ForceFinishPolicy` (Core) is the
+    /// seam `ForceGaugeView` routes both protection layers through — the
+    /// status flip to `.measuring` is what dismisses the card, and a
+    /// same-instant confirm tap must refuse to execute. Then the guarded
+    /// (refused) confirm provably costs nothing: the rep completes and
+    /// saves normally.
+    func testFinishPolicyRefusesMidPullAndGuardedRepStillSaves() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        var commands: [Tindeq.Cmd] = []
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            armTimeoutSeconds: 600,
+            commandWriter: { commands.append($0) }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.armHandsFree()
+        // Armed but idle: the confirmation may open, and finishing may run.
+        XCTAssertTrue(ForceFinishPolicy.mayExecuteFinish(isMeasuring: manager.status == .measuring))
+        XCTAssertFalse(ForceFinishPolicy.shouldDismissConfirmation(isMeasuring: manager.status == .measuring))
+
+        // The pull lands mid-confirmation.
+        feed(manager, [(3, 0), (15, 600_000)])
+        XCTAssertEqual(manager.status, .measuring)
+        XCTAssertTrue(
+            ForceFinishPolicy.shouldDismissConfirmation(isMeasuring: manager.status == .measuring),
+            "an open confirmation must dismiss the moment recording starts"
+        )
+        XCTAssertFalse(
+            ForceFinishPolicy.mayExecuteFinish(isMeasuring: manager.status == .measuring),
+            "a confirm tap racing the pull must execute nothing"
+        )
+
+        // The guarded (refused) confirm is a no-op: the rep completes and
+        // saves exactly as if the flag had never been tapped.
+        feed(manager, [(14, 700_000), (0, 800_000), (0, 2_300_000)])
+        try await waitUntil { manager.sessionCount == 1 && !manager.saving }
+        let savedRows = await recordings.snapshot()
+        XCTAssertEqual(savedRows.count, 1, "the rep the guard protected must save")
+    }
+
+    /// The hazard itself, demonstrated: the UNGUARDED finish pairing
+    /// (`logSessionNow()` + `disconnect()`) mid-pull discards the recording
+    /// rep — `disconnect()` drops the claim and marks the disconnect
+    /// intentional, which also suppresses the BLE-loss salvage. This is the
+    /// canary for the guard's reason to exist: if the manager ever stops
+    /// discarding here, the policy can be revisited.
+    func testUnguardedFinishMidPullDiscardsTheRecordingRep() async throws {
+        let recordings = RecordingQueueSpy()
+        let sessions = SessionQueueSpy()
+        var commands: [Tindeq.Cmd] = []
+        let manager = TindeqManager(
+            recordingQueue: recordings,
+            sessionQueue: sessions,
+            armTimeoutSeconds: 600,
+            commandWriter: { commands.append($0) }
+        )
+        manager.liveTag = "Half crimp"
+        manager.liveSide = "left"
+
+        manager.armHandsFree()
+        feed(manager, [(3, 0), (15, 600_000)])
+        XCTAssertEqual(manager.status, .measuring)
+
+        manager.logSessionNow()
+        manager.disconnect()
+
+        try await waitUntil { manager.status == .idle && !manager.saving }
+        // A discarded claim cannot save late; give any stray async work a
+        // beat before asserting the loss is real.
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let rows = await recordings.snapshot()
+        XCTAssertEqual(rows.count, 0, "mid-pull disconnect discards the recording rep — the interleaving the policy exists to prevent")
+        let logged = await sessions.count()
+        XCTAssertEqual(logged, 0, "nothing was banked, so nothing may be logged")
+    }
+
     func testArmedStreamAutoDisarmsAtTenMinuteIdleBound() {
         var commands: [Tindeq.Cmd] = []
         let manager = TindeqManager(

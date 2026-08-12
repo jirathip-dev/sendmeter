@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Apple Watch Force is now one page: exercise quick-select chips with a Left/Right toggle up top (nothing pre-selected on entry), connection shown as a small pill that starts connecting automatically when you open the screen, hands-free arming as the default start (a small link switches to tap-to-start), and one flag control that finishes the session and disconnects together. The full exercise and protocol lists stay behind the settings icon, which no longer overlaps the force readout on 40mm watches.
 - Dark mode cards now sit on calm neutral surfaces like light mode: the per-tab color washes (blue Readiness, orange Load/Force, purple Workout) are gone from card backgrounds, while readiness/load/force data, status colors, and the subtle rainbow hairline stay exactly as before.
 - The Account sheet is now Settings: one scrollable surface grouped into General, Health & Devices, Account & Security, and About & Support instead of the Appearance/Health/Account tabs. Every control works as before; Clear health data & resync now lives under Health & Devices as a maintenance action, and the sheet shows which account you're signed in to plus the app version.
 - Apple Watch finish-workout confirmation is now a compact in-app card in the watch design language (calmer accent, small Cancel/Finish buttons) instead of a full-screen red system dialog; finishing still always requires an explicit confirm tap.
