@@ -34,6 +34,14 @@ final class TindeqManager: NSObject {
     var elapsedMs: Double = 0
     private(set) var handsFreeState = idleHandsFreeForce()
     private(set) var handsFreeRequested = false
+    /// SL-584: which start affordance the Force ready card presents while
+    /// connected — hands-free arm (default) or the classic tap-to-start.
+    /// Deliberately per-launch and NOT persisted (approved design Q3):
+    /// hands-free is the decided default flow, and a persisted tap
+    /// preference would silently defeat it on every future launch. Lives
+    /// here rather than in view `@State` so the choice survives the Force
+    /// view being popped and recreated within one app launch.
+    var preferTapToStart = false
     private(set) var saving = false
     private(set) var savedMsg: String?
 
