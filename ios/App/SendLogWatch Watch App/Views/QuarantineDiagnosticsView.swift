@@ -35,6 +35,10 @@ struct QuarantineDiagnosticsView: View {
             VStack(spacing: 8) {
                 summaryCard
 
+                if retryableCount > 0 {
+                    retryCard
+                }
+
                 if let retrySummary {
                     WatchStateBanner(
                         state: .success,
@@ -79,6 +83,74 @@ struct QuarantineDiagnosticsView: View {
         quarantinedStuckTotal = caches.quarantinedStuckTotal
         entries = [merged.0, merged.1, merged.2, merged.3].flatMap { $0 }
         isLoading = false
+    }
+
+    /// #600: how many listed records are worth a manual retry — the button
+    /// only exists when this is positive. `.schemaRejection` items are
+    /// proven permanent and are never offered as an equal option.
+    private var retryableCount: Int {
+        entries.filter {
+            if case .record(let item) = $0 { return QuarantineRetryPolicy.isManuallyRetryable(item.reason) }
+            return false
+        }.count
+    }
+
+    /// Issue #600: the manual retry. Every queue's engine restores its own
+    /// retryable records (crash-safely), republishes the counts and tells
+    /// the phone, then drains — this view then reloads against post-retry
+    /// reality and reports what stayed behind.
+    private func retryStuckUploads() async {
+        guard !isRetrying else { return }
+        isRetrying = true
+        async let workouts = OfflineQueue.shared.retryQuarantinedItems()
+        async let sessions = PendingSessionQueue.shared.retryQuarantinedItems()
+        async let recordings = PendingRecordingQueue.shared.retryQuarantinedItems()
+        async let terminal = LiveWorkoutTerminalRetry.shared.retryQuarantinedItems()
+        let restored = await (workouts + sessions + recordings + terminal)
+        isRetrying = false
+        await load()
+        // `kept` is what the reload still finds quarantined — permanent
+        // rejections, unreadable records, other-account items, or a restore
+        // the disk refused. Saying that out loud keeps the result honest.
+        let kept = quarantinedTotal ?? 0
+        retrySummary = QuarantineRetryPolicy.resultSummary(restored: restored, kept: kept)
+    }
+
+    // MARK: - Retry card (#600)
+
+    @ViewBuilder
+    private var retryCard: some View {
+        WatchCard(accent: WatchPalette.primary) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(QuarantineRetryPolicy.retryActionTitle)
+                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                    .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.primary))
+                Text(QuarantineRetryPolicy.retryActionDetail)
+                    .font(.caption2)
+                    .foregroundStyle(WatchPalette.textSecondary)
+                if isRetrying {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                        Text("Retrying…")
+                            .font(.caption2)
+                            .foregroundStyle(WatchPalette.textSecondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget), alignment: .leading)
+                } else {
+                    Button {
+                        Task { await retryStuckUploads() }
+                    } label: {
+                        Text("Retry \(retryableCount) upload\(retryableCount == 1 ? "" : "s")")
+                            .font(.system(.footnote, design: .rounded).weight(.bold))
+                            .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(WatchPalette.primary)
+                    .accessibilityIdentifier("quarantine-retry-button")
+                    .accessibilityHint("Tries the retryable uploads again now instead of waiting for the automatic retry")
+                }
+            }
+        }
     }
 
     // MARK: - Summary

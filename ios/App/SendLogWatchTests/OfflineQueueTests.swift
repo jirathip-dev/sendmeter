@@ -124,6 +124,58 @@ final class OfflineQueueTests: XCTestCase {
             .map(\.lastPathComponent)
     }
 
+    /// #600 fixture: a `.stuckRetrying` quarantine record written directly
+    /// (same shape `drainPass` produces after 20 unrecognized rejections),
+    /// so retry tests don't need 20 failing drain passes per record.
+    @discardableResult
+    private func writeStuckQuarantine(
+        _ bundle: WorkoutSaveBundle,
+        at date: Date,
+        payloadDropped: Bool? = nil
+    ) throws -> URL {
+        try writeQuarantine(
+            bundle,
+            at: date,
+            reason: .stuckRetrying,
+            attemptCount: QueueRetryPolicy.maxConsecutiveFailures,
+            payloadDropped: payloadDropped
+        )
+    }
+
+    @discardableResult
+    private func writeSchemaRejection(_ bundle: WorkoutSaveBundle, at date: Date) throws -> URL {
+        try writeQuarantine(bundle, at: date, reason: .schemaRejection, attemptCount: nil, payloadDropped: nil)
+    }
+
+    @discardableResult
+    private func writeQuarantine(
+        _ bundle: WorkoutSaveBundle,
+        at date: Date,
+        reason: QuarantineReason,
+        attemptCount: Int?,
+        payloadDropped: Bool?
+    ) throws -> URL {
+        try FileManager.default.createDirectory(at: pendingDir, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let record = QueueQuarantineRecord(
+            item: bundle,
+            reason: reason,
+            stage: .session,
+            httpStatus: 400,
+            postgrestCode: "PGRST205",
+            errorMessage: "fixture failure",
+            attemptCount: attemptCount,
+            quarantinedAt: date,
+            payloadDropped: payloadDropped
+        )
+        let url = pendingDir
+            .appendingPathComponent(bundle.workout.id.uuidString)
+            .appendingPathExtension("quarantine")
+        try encoder.encode(record).write(to: url, options: .atomic)
+        return url
+    }
+
     private let durationCheckViolation = PostgrestError(
         code: "23514",
         message: "new row for relation \"climb_attempts\" violates check constraint \"climb_attempts_duration_s_check\""
@@ -1198,6 +1250,179 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(second.id, newer)
     }
 
+    // MARK: #600 — manual retry of quarantined items
+
+    /// The named acceptance criterion: "Retry stuck uploads" restores every
+    /// retryable record to the pending rotation and drains it in the SAME
+    /// call — the user standing there with working network doesn't wait for
+    /// the 7-day backoff. `.schemaRejection` is left quarantined, never
+    /// offered as a retry.
+    func testRetryQuarantinedItemsRestoresStuckRecordsAndDrainsThem() async throws {
+        let stuck = makeBundle(id: UUID(), attempts: [makeHealthyAttempt(workoutId: UUID())])
+        let permanent = makeBundle(id: UUID(), attempts: [makePoisonedAttempt(workoutId: UUID())])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        try writeSchemaRejection(permanent, at: now.addingTimeInterval(1))
+
+        let uploader = ScriptedUploader(failing: [:])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        let restored = await queue.retryQuarantinedItems()
+        XCTAssertEqual(restored, 1, "exactly the retryable record is restored")
+
+        let uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(stuck.workout.id), "the restored item is drained immediately")
+        XCTAssertFalse(uploaded.contains(permanent.workout.id), "a proven-permanent rejection is never retried")
+
+        let remaining = try filesOnDisk()
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).quarantine"))
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).json"), "restored item uploaded, not just re-pended")
+        XCTAssertTrue(remaining.contains("\(permanent.workout.id.uuidString).quarantine"), "the schema-rejected record stays quarantined")
+
+        let quarantined = await queue.quarantinedCount()
+        XCTAssertEqual(quarantined, 1)
+        let pending = await queue.pendingCount()
+        XCTAssertEqual(pending, 0)
+    }
+
+    /// A retry whose restored item fails again does NOT lose it — it goes
+    /// back through the ordinary pipeline (pending, retry ledger, eventual
+    /// quarantine again at the threshold). The retry never deletes a queued
+    /// item on failure (CLAUDE.md #273).
+    func testARestoredItemThatFailsAgainStaysPending() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        // A real, SERVER-evaluated ambiguous rejection (403) — unlike a
+        // transport failure (which per F11 never writes a ledger), a 403
+        // proves the restored item is back on the ordinary retry pipeline.
+        let uploader = ScriptedUploader(failing: [
+            stuck.workout.id: StagedUploadError(
+                stage: .session,
+                underlying: HTTPError(data: Data(), response: HTTPURLResponse(
+                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                )!)
+            ),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        let restored = await queue.retryQuarantinedItems()
+        XCTAssertEqual(restored, 1)
+
+        let remaining = try filesOnDisk()
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).quarantine"))
+        XCTAssertTrue(remaining.contains("\(stuck.workout.id.uuidString).json"), "failed retry keeps the item pending — never deleted")
+        XCTAssertTrue(remaining.contains("\(stuck.workout.id.uuidString).retry"), "a server verdict starts a fresh retry ledger")
+        let pending = await queue.pendingCount()
+        XCTAssertEqual(pending, 1, "still reported as pending — it IS on the upload path again")
+    }
+
+    /// Crash-safe in the durable direction: if the pending write is refused,
+    /// the quarantine record must survive untouched — the item is never
+    /// risked on an unconfirmed write (the exact inverse of `quarantine()`).
+    func testRetryIsCrashSafeWhenThePendingWriteFails() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        let queue = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]),
+            clock: FixedClock(now),
+            baseDir: tempDir,
+            fileIO: AlwaysRefusingFileIO()
+        )
+
+        let restored = await queue.retryQuarantinedItems()
+        XCTAssertEqual(restored, 0, "a refused write restores nothing")
+
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(stuck.workout.id.uuidString).quarantine"), "the record survives a refused write")
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).json"), "no half-restored pending file")
+        let quarantined = await queue.quarantinedCount()
+        XCTAssertEqual(quarantined, 1, "still counted, still eligible for a later retry")
+    }
+
+    /// An undecodable `.quarantine` file is skipped and RETAINED by the
+    /// retry — never deleted, never rewritten (#287), even though it blocks
+    /// nothing (the readable record next to it is restored normally).
+    func testRetrySkipsAndRetainsAnUndecodableRecord() async throws {
+        let stuck = makeBundle(id: UUID())
+        let garbageId = UUID()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        try FileManager.default.createDirectory(at: pendingDir, withIntermediateDirectories: true)
+        try Data("not a record".utf8).write(
+            to: pendingDir.appendingPathComponent("\(garbageId.uuidString).quarantine"),
+            options: .atomic
+        )
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+
+        let restored = await queue.retryQuarantinedItems()
+        XCTAssertEqual(restored, 1, "the readable record is restored; the undecodable one is not")
+        XCTAssertTrue(try filesOnDisk().contains("\(garbageId.uuidString).quarantine"), "an undecodable record is never deleted")
+    }
+
+    /// A manual retry respects the same ownership the automatic drain does:
+    /// account A's quarantined item is not restored while B is signed in.
+    func testRetryRespectsAccountOwnership() async throws {
+        let stuck = makeBundle(id: UUID(), enqueuedUserId: testUserId)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        signIn(as: UUID())
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+
+        let restored = await queue.retryQuarantinedItems()
+        XCTAssertEqual(restored, 0, "A's record must not be restored under B")
+        XCTAssertTrue(try filesOnDisk().contains("\(stuck.workout.id.uuidString).quarantine"))
+
+        signIn(as: testUserId)
+        let restoredByOwner = await queue.retryQuarantinedItems()
+        XCTAssertEqual(restoredByOwner, 1, "its owner can retry it")
+    }
+
+    /// The retry clears any leftover `<uuid>.retry` ledger so the restored
+    /// item starts with a fresh budget — and a transport failure during the
+    /// follow-up drain does not immediately re-earn one (the F11 rule: no
+    /// server verdict, no ledger entry).
+    func testRetryClearsTheLeftoverRetryLedger() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        try Data("stale".utf8).write(
+            to: pendingDir.appendingPathComponent("\(stuck.workout.id.uuidString).retry"),
+            options: .atomic
+        )
+        let uploader = ScriptedUploader(failing: [
+            stuck.workout.id: StagedUploadError(stage: .session, underlying: URLError(.notConnectedToInternet)),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        _ = await queue.retryQuarantinedItems()
+
+        XCTAssertFalse(try filesOnDisk().contains("\(stuck.workout.id.uuidString).retry"), "the restored item starts with a fresh budget")
+    }
+
+    /// A payload stripped at quarantine time (workouts shed `raw`, #481)
+    /// restores without it and must not block the retry — the item uploads
+    /// its real summary stats, never described as a full restore (the
+    /// diagnostics surface carries the `payloadDropped` provenance).
+    func testRetryRestoresAStrippedPayloadItemAsIs() async throws {
+        var stuck = makeBundle(id: UUID(), attempts: [makeHealthyAttempt(workoutId: UUID())])
+        stuck.workout.raw = nil // as stripped by `stripsPayloadOnQuarantine`
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now, payloadDropped: true)
+
+        let uploader = ScriptedUploader(failing: [:])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        let restored = await queue.retryQuarantinedItems()
+        XCTAssertEqual(restored, 1, "a stripped payload never blocks the retry")
+
+        let uploaded = await uploader.uploadedBundles
+        XCTAssertEqual(uploaded.count, 1)
+        XCTAssertNil(uploaded[0].workout.raw, "the restored item is exactly the stripped copy — summary data only")
+        XCTAssertEqual(uploaded[0].workout.id, stuck.workout.id)
+    }
+
     // MARK: #472b review F21 — a dropped scheduler callback must not disarm the backoff forever
     /// Exercises the REAL production `TaskDrainScheduler`, not a test
     /// double — the only test in this file that does, closing the "never
@@ -1446,6 +1671,9 @@ private actor RanFlag {
 private actor ScriptedUploader: WorkoutBundleUploading {
     private var failing: [UUID: Error]
     private(set) var uploadedIds: Set<UUID> = []
+    /// #600: the full bundles as uploaded, so a retry test can assert on the
+    /// RESTORED item's shape (e.g. that a stripped payload stays stripped).
+    private(set) var uploadedBundles: [WorkoutSaveBundle] = []
 
     init(failing: [UUID: Error]) {
         self.failing = failing
@@ -1456,6 +1684,7 @@ private actor ScriptedUploader: WorkoutBundleUploading {
             throw error
         }
         uploadedIds.insert(bundle.workout.id)
+        uploadedBundles.append(bundle)
     }
 
     /// Simulates whatever was wrong resolving itself before a scheduled

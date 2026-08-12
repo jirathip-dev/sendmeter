@@ -422,6 +422,87 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         return records.map(QuarantineDiagnosticEntry.record) + unreadable.map(QuarantineDiagnosticEntry.unreadable)
     }
 
+    /// Issue #600: the user's explicit "Retry stuck uploads" — restore every
+    /// retryable `.quarantine` record to the ordinary pending rotation and
+    /// drain it now, instead of waiting out the 7-day automatic backoff
+    /// (which is the right default for an unattended watch and the wrong and
+    /// only option when the user is standing there with working network).
+    ///
+    /// Per record (returns how many were restored):
+    /// - `.schemaRejection` is proven permanent (`QuarantineRetryPolicy`) —
+    ///   never restored, a retry of it is known to fail. Not offered, not
+    ///   attempted.
+    /// - Another account's record is skipped (`shouldDrain`, #475 F4): a
+    ///   manual retry must respect the same ownership the automatic drain
+    ///   does.
+    /// - An unreadable/undecodable record is skipped AND retained (#287) —
+    ///   never deleted, never rewritten, exactly like every other read path.
+    ///
+    /// Crash-safe in the durable direction, the exact inverse of
+    /// `quarantine(...)`: the pending `<uuid>.json` is written FIRST and only
+    /// a committed write earns the quarantine file's deletion — never risk
+    /// the item on an unconfirmed write (CLAUDE.md #264/#287). A refused
+    /// write leaves the record quarantined, eligible again next time.
+    ///
+    /// A record whose payload was stripped at quarantine time
+    /// (`stripsPayloadOnQuarantine` — workouts shed `raw`) restores as-is:
+    /// it uploads its real summary stats, not the original buffer, which the
+    /// diagnostics surface already says (`payloadDropped`). The restore is
+    /// not blocked by it, and no path here describes it as a full restore.
+    ///
+    /// Counts are republished and the phone told afterwards
+    /// (`refreshReportedCounts` + `WatchBuild.reportQueueStatus`) — otherwise
+    /// the phone's banner keeps holding the pre-retry report (#600 ask 2) —
+    /// and `drain()` is awaited so the restored items are attempted before
+    /// this returns and the UI refreshes against post-drain reality.
+    @discardableResult
+    func retryQuarantinedItems() async -> Int {
+        let currentUserId = WatchSessionStore.shared.userId
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let files = ((try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == quarantineExtension }
+        var restored = 0
+        for file in files {
+            guard
+                let data = try? Data(contentsOf: file),
+                let record = try? decoder.decode(QueueQuarantineRecord<Item>.self, from: data)
+            else { continue } // #287: retained, never deleted
+            guard QuarantineRetryPolicy.isManuallyRetryable(record.reason) else { continue }
+            guard shouldDrain(itemUserId: record.item.enqueuedUserId, currentUserId: currentUserId)
+                || currentUserId == nil
+            else { continue }
+            guard let itemData = try? encoder.encode(record.item) else { continue }
+            let pendingURL = pendingDir.appendingPathComponent("\(record.item.queueFileId.uuidString).json")
+            do {
+                try fileIO.write(itemData, to: pendingURL)
+            } catch {
+                // Crash-safe refusal: the record stays quarantined — the
+                // item was never risked on an unconfirmed write.
+                continue
+            }
+            // The write committed; only now may the quarantine record go.
+            try? fileIO.removeItem(at: file)
+            clearRetryLedger(for: record.item) // a fresh budget, same as F12's resurrection
+            restored += 1
+        }
+        // #600: republish + tell the phone — even a zero-restore outcome is
+        // fresh information (the automatic path may have changed things since
+        // the last report), and after a restore the phone must not keep
+        // holding the pre-retry report. `drainPass` republishes again when
+        // it finishes.
+        refreshReportedCounts()
+        Task { @MainActor in WatchBuild.reportQueueStatus() }
+        if restored > 0 {
+            await drain()
+            refreshReportedCounts()
+            Task { @MainActor in WatchBuild.reportQueueStatus() }
+        }
+        return restored
+    }
+
     /// Persist the item and return as soon as it's on disk — the upload runs
     /// in the background (the queue retries until it lands). If persistence
     /// fails, keep the in-memory value alive long enough to attempt the
