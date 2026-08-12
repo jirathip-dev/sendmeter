@@ -5,6 +5,9 @@ import SwiftUI
 /// Shared with `ForceGaugeView` (which owns the `tag`/`side` state) — moved
 /// here because `ForceProtocolChooserView` is now the one compact top-level
 /// selector for exercise, side AND protocol (issue #537).
+// SL-585 follow-up: the watch offers only Left/Right (the main page's
+// toggle); "both"/unspecified are web-only now, kept in this table solely
+// so `sideLabel` can still DISPLAY legacy values on old runs/recordings.
 let SIDE_OPTIONS: [(value: String, label: String)] = [
     ("", "—"),
     ("left", "Left"),
@@ -93,7 +96,6 @@ enum ForceProtocolPresentation {
 struct ForceProtocolChooserView: View {
     @Bindable private var catalog: ForceProtocolCatalog
     @Binding private var tag: String
-    @Binding private var side: String
     let recentTags: [String]
     let tagsLoading: Bool
     let onRetryTags: () -> Void
@@ -102,14 +104,12 @@ struct ForceProtocolChooserView: View {
     init(
         catalog: ForceProtocolCatalog,
         tag: Binding<String>,
-        side: Binding<String>,
         recentTags: [String],
         tagsLoading: Bool,
         onRetryTags: @escaping () -> Void
     ) {
         _catalog = Bindable(wrappedValue: catalog)
         _tag = tag
-        _side = side
         self.recentTags = recentTags
         self.tagsLoading = tagsLoading
         self.onRetryTags = onRetryTags
@@ -118,9 +118,10 @@ struct ForceProtocolChooserView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                sectionHeader("Side")
-                sideControl
-
+                // SL-585 follow-up: no Side section any more — the main
+                // page's L|R toggle is the one side control on the watch
+                // ("both"/unspecified stay web-only by decision; legacy
+                // stored values still display and never get rewritten).
                 sectionHeader("Exercise")
                 exerciseSection
 
@@ -158,49 +159,6 @@ struct ForceProtocolChooserView: View {
         .background(WatchPalette.canvas)
         .watchCanvas()
         .accessibilityIdentifier("force-protocol-chooser")
-    }
-
-    /// Round-1 review finding 4 (MEDIUM): `WatchPageControl` was built for
-    /// two items (`HomeView`'s Status/Actions) — each `WatchPageControlItem`
-    /// enforces a 44pt `minWidth`, so four of them need ≥194pt before
-    /// spacing/padding, well over the ~146pt this chooser has on 40/41mm.
-    /// Vertical rows (same shape as `exerciseRow` below) have no width
-    /// ceiling to blow through.
-    private var sideControl: some View {
-        VStack(spacing: 4) {
-            ForEach(SIDE_OPTIONS, id: \.value) { option in
-                sideRow(option)
-            }
-        }
-    }
-
-    private func sideRow(_ option: (value: String, label: String)) -> some View {
-        let selected = option.value == side
-        return Button {
-            side = option.value
-        } label: {
-            WatchCard(accent: selected ? WatchPalette.primary : nil) {
-                HStack(spacing: 8) {
-                    Text(option.label)
-                        .font(.system(.footnote, design: .rounded).weight(.semibold))
-                        .foregroundStyle(WatchPalette.textPrimary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    if selected {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(
-                                WatchPalette.foregroundOnAccentCard(WatchDesignTokens.primary, accent: WatchDesignTokens.primary)
-                            )
-                    }
-                }
-                .frame(minHeight: 44)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(option.value.isEmpty ? "Unspecified side" : option.label)
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-        .accessibilityHint("Selects this side")
-        .accessibilityIdentifier("force-side-\(option.value.isEmpty ? "unspecified" : option.value)")
     }
 
     /// Deliberately NOT a `.navigationLink` Picker (#279's reasoning still

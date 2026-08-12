@@ -510,13 +510,18 @@ are safe regardless.
   **tag + side before Start** and **auto-save on Stop** — no post-stop discard/save
   prompt (in-app has an Undo; the watch hides tag/side/session controls *while
   measuring* so the live gauge fits one screen). Ending the session (phone
-  Finish, watch, or a disconnect) **auto-logs to history with no confirm
-  step** (#295, mirrors the watch's `TindeqManager.logSessionNow()`) — RPE is
+  Finish, watch, or a disconnect) **auto-logs to history with no log-time
+  review step** (#295, mirrors the watch's `TindeqManager.logSessionNow()`) — RPE is
   the #280 W'-depletion prediction (or its fallback), always banked
   `rpe_confirmed = false` since nobody reviewed it, and duration is the
   recordings' actual span. Reviewing/editing RPE (or duration) happens
   post-hoc via History's `EditSessionSheet`. Don't reintroduce the end-of-
-  session RPE prompt or an editable duration at log time.
+  session RPE prompt or an editable duration at log time. **Nuance (#588
+  review sign-off):** the watch's compact finish/disconnect controls show a
+  lightweight `watchFinishConfirmation` tap-guard first — that is an
+  accidental-tap shield for a compact destructive icon, NOT a log-time
+  review: confirming still auto-logs immediately with the predicted RPE and
+  no editable fields, so #295's substance stands.
 - **The recording queue is TWO stores, and the split is load-bearing** (#269).
   **IndexedDB** (`src/lib/recordingDb.ts`) is the main queue — every path that
   can await (ForceView's failed-insert handler, the drain, the manual retry)

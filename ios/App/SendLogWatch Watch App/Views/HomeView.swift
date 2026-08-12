@@ -95,6 +95,24 @@ struct HomeView: View {
     @State private var lossQueue: [LossNotice] = []
     @State private var showLossAlert = false
 
+    /// The floating selector bar's chrome height: the shared icon primitive's
+    /// 44pt hit target. Pages pad their at-rest content past it (plus a 2pt
+    /// breath) so nothing sits under the buttons until the user scrolls.
+    private static let selectorBarHeight: CGFloat = 44
+
+    /// Per-button legibility backdrop (#588 review F3): a canvas-colored
+    /// disc matching the primitive's 30pt visible circle. Over the dark
+    /// at-rest canvas it is invisible; over a bright card sliding under the
+    /// transparent bar it keeps the dim unselected glyph readable — the
+    /// user's direction is per-button backdrops, never a bar-wide band.
+    /// `canvas` is the same in full and reduced luminance, so Always-On
+    /// needs no variant.
+    private var selectorButtonBackdrop: some View {
+        Circle()
+            .fill(WatchPalette.canvas.opacity(0.9))
+            .frame(width: 30, height: 30)
+    }
+
     private var activeLossNotice: LossNotice? { lossQueue.first }
 
     var body: some View {
@@ -107,30 +125,112 @@ struct HomeView: View {
                 )
                 .padding(.horizontal, 4)
             }
-            // Keep the explicit page selector above the page viewport. When
-            // it followed TabView, watchOS let the page paint beyond its
-            // proposed bounds, making this control appear to cover the
-            // readiness/Force cards on both 40mm and 49mm watches.
-            WatchPageControl(
-                selection: selection == .status ? 0 : 1,
-                labels: ["Status", "Actions"],
-                onSelect: { selection = $0 == 0 ? .status : .actions }
-            )
-            .padding(.horizontal, 18)
             TabView(selection: $selection) {
+                // Applied per page, NOT via `safeAreaInset` on the TabView:
+                // page-style TabView children are their own hosting roots on
+                // watchOS and never received the TabView-level inset — at
+                // rest, the readiness/Force cards rendered straight under
+                // the selector circles (the fixture matrix caught it). The
+                // safe-area padding gives each page's at-rest content a
+                // clear top margin below the floating bar while its scrolled
+                // content still passes visibly underneath.
                 StatusView()
+                    .safeAreaPadding(.top, Self.selectorBarHeight + 2)
                     .tag(WatchHomePage.status)
                 ActionsView()
+                    .safeAreaPadding(.top, Self.selectorBarHeight + 2)
                     .tag(WatchHomePage.actions)
             }
-            // The explicit selector above is the only pagination affordance;
-            // the native dots duplicate it and consume scarce 40mm height.
+            // The explicit selector (the safeAreaInset bar below) is the only
+            // pagination affordance; the native dots duplicate it and consume
+            // scarce 40mm height.
             .tabViewStyle(.page(indexDisplayMode: .never))
-            // Page-style TabView does not reliably clip its children on
-            // watchOS; make the ownership boundary explicit so scrollable
-            // cards can never render through the selector again.
-            .clipped()
+            // #578's guarantee, softened (SL-580 follow-up): the pages must
+            // never paint OVER the selector controls or escape the pager, but
+            // the old hard `.clipped()` guillotined scrolled cards at a
+            // razor-straight line just under the icons — a bright card cut
+            // mid-body made the whole selector row read as a solid black
+            // band. This alpha mask keeps the same ownership boundary (all
+            // painting outside the pager's bounds is still fully masked
+            // away) while the top of the scroll region fades over the bar's
+            // height, so content visibly slides UNDER the transparent bar
+            // and dissolves instead of being chopped. Pure geometry — no
+            // color is introduced, so Always-On dimming and Reduce Motion
+            // are untouched.
+            .mask {
+                VStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [.clear, .black],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    // Exactly the bar's chrome height (#588 review F4): the
+                    // fade reaches full opacity at the bar's bottom edge, so
+                    // the least-faded content strip begins where the chrome
+                    // ends instead of leaving a fully-unfaded band beside
+                    // the buttons.
+                    .frame(height: Self.selectorBarHeight)
+                    Rectangle().fill(Color.black)
+                }
+            }
+            // Identify the pager container for clipping assertions BEFORE
+            // mounting the bar overlay: an identifier on a node that contains
+            // the bar swallows the buttons' own identifiers (the documented
+            // container-identifier footgun — the nav buttons vanished from
+            // the accessibility tree when this was ordered the other way).
+            .accessibilityIdentifier("home-pager-viewport")
+            // #539/#541: two compact `WatchIconButton`s as the explicit
+            // two-way page affordance (VoiceOver gets named "Show Status"/
+            // "Show Actions" controls instead of a blind swipe). Now mounted
+            // as floating chrome OVER the pager (the watch analogue of the
+            // web app's floating glass chrome — DESIGN.md: auto-hiding
+            // chrome must overlay, not flex): the bar area itself is
+            // transparent, each page insets its at-rest content below it
+            // (see the per-page `safeAreaPadding` above), and scrolled
+            // content passes underneath visibly. Per-button canvas-colored
+            // backdrops (below) are what keep the buttons legible over
+            // passing content — the unselected primitive's own fill is a
+            // near-transparent 8% white, which is not legibility over a
+            // bright card (#588 review F3) — while the bar itself stays
+            // backdrop-free per the user's direction. The overlay renders
+            // above the pages, so the controls can never be covered or lose
+            // their hit targets — the actual #578 regression this layout
+            // must not reintroduce.
+            .overlay(alignment: .top) {
+                HStack(spacing: 6) {
+                    Spacer(minLength: 0)
+                    WatchIconButton(
+                        systemImage: WatchIconSymbol.status,
+                        accessibilityLabel: "Show Status",
+                        accessibilityHint: "Displays today's readiness and training load",
+                        accessibilityIdentifier: "home-nav-status",
+                        isSelected: selection == .status,
+                        action: { selection = .status }
+                    )
+                    .background { selectorButtonBackdrop }
+                    WatchIconButton(
+                        systemImage: WatchIconSymbol.actions,
+                        accessibilityLabel: "Show Actions",
+                        accessibilityHint: "Displays Force Gauge and Climb Workout",
+                        accessibilityIdentifier: "home-nav-actions",
+                        isSelected: selection == .actions,
+                        tint: WatchDesignTokens.secondary,
+                        action: { selection = .actions }
+                    )
+                    .background { selectorButtonBackdrop }
+                }
+                .padding(.trailing, 10)
+                .frame(height: Self.selectorBarHeight, alignment: .center)
+            }
         }
+        // The bottom safe-area inset is the rounded-corner / Digital Crown
+        // exclusion zone, not an additional visual gutter for this full-screen
+        // pager. Keeping it on the root stack left the pager's clip edge ~19pt
+        // above the captured framebuffer on a 40mm watch, which cuts the
+        // scored readiness card after its production sync line. Expand the
+        // root first so the TabView receives the full display height while its
+        // explicit `.clipped()` boundary remains in force.
+        .ignoresSafeArea(.container, edges: .bottom)
         // The home title duplicated the app identity while consuming the
         // exact vertical budget the 40mm status card needs. The system time
         // remains visible; pushed screens still provide their own titles.
@@ -224,6 +324,7 @@ private struct ActionsView: View {
                         .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("home-action-force")
                     .accessibilityHint("Opens force gauge setup")
                 }
 
@@ -251,6 +352,7 @@ private struct ActionsView: View {
                         .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("home-action-workout")
                     .accessibilityHint("Opens climb workout")
                 }
 

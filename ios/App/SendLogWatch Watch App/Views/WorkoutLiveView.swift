@@ -14,9 +14,14 @@ struct WorkoutLiveView: View {
     /// and battery liability — the palette has a reduced variant for it (#243).
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Read at the view boundary, so this sees the user's REAL size —
+    /// deliberately before `liveStack`'s `.dynamicTypeSize` caps clamp what
+    /// the rows render at.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private let restTargets = [60, 120, 180, 300]
     @State private var fixtureRestTargetS: Int? = ScreenshotFixtures.workoutRestTargetS
+    @State private var showingFinishConfirmation = false
 
     private var fixtureVisual: ScreenshotWorkoutVisual? { ScreenshotFixtures.workout }
     private var visibleRestTargetS: Int { fixtureRestTargetS ?? workout.restTargetS }
@@ -49,6 +54,34 @@ struct WorkoutLiveView: View {
         // next to an End button, the title is telling nobody anything.
         .navigationTitle(currentScreen == .live ? "" : "Climb")
         .navigationBarBackButtonHidden(currentScreen == .live)
+        // The compact in-design confirmation replaces the full-screen system
+        // confirmationDialog (user decision after trying #582 on a 40mm
+        // device: the system sheet was too big and the red destructive
+        // treatment too alarming for what is a safe, expected action). The
+        // shared modifier owns the scrim/modal/Reduce-Motion/Dynamic-Type
+        // contract — see `watchFinishConfirmation`'s doc comment — and it
+        // sits outside every Dynamic Type cap the live screen applies to its
+        // own rows (#582 review F7 still applies). One-tap guarantee: on
+        // THIS screen, `endAndSave()` runs only from the confirmation's
+        // explicit Finish button. (`WaitingForPhoneView`'s "End Workout"
+        // banner also calls `endAndSave()` on one tap — a pre-existing,
+        // full-width labelled text button with a different accidental-tap
+        // profile than a compact icon, deliberately unchanged here.)
+        // No fixture branch in the confirm action: the production wiring
+        // runs as-is under fixtures too, and the screenshot suite exercises
+        // it (#588 review F5) — `endAndSave()` on a manager with no live
+        // session bails out of `end()`'s session guard and resets `ending`,
+        // so the fixture cannot wedge.
+        .watchFinishConfirmation(
+            isPresented: $showingFinishConfirmation,
+            title: "Finish workout?",
+            message: "Saves your climb to this watch.",
+            confirmIdentifier: "finish-workout-confirm",
+            confirmHint: "Saves and ends the workout",
+            cancelIdentifier: "finish-workout-cancel"
+        ) {
+            workout.endAndSave()
+        }
         .watchCanvas()
     }
 
@@ -137,7 +170,10 @@ struct WorkoutLiveView: View {
 
     // Same logic as the phone fullscreen: CLIMBING counts up from the boulder
     // start; stopping drops straight into a RESTING countdown toward the
-    // persisted target. One screen, no scrolling — End lives in the toolbar.
+    // persisted target. One screen, no scrolling — Finish lives in the
+    // app-owned top row (#580): the old toolbar End button rendered as an
+    // oversized square that dominated the header and competed with the
+    // system clock, and a toolbar item's frame is watchOS's to clip.
     //
     // One TimelineView drives BOTH the phase band and the phase timer (#243)
     // so they flip on the same tick — a band that says RESTING behind a
@@ -154,22 +190,27 @@ struct WorkoutLiveView: View {
             liveStack(phase: phase, fill: fill)
                 .background(color(fill.screen).ignoresSafeArea())
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(workout.ending ? "…" : "End") {
-                    workout.endAndSave()
-                }
-                .font(.system(size: 12, weight: .semibold))
-                .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.foreground(WatchDesignTokens.danger)))
-                .frame(minWidth: 44, minHeight: 44)
-                // Phone's "act now" orange (#277 follow-up) — ending a
-                // workout is the same weight of action as the phone
-                // fullscreen's Stop pill, and it now sits on black rather
-                // than on a band that itself can be red, so the two colours
-                // never collide.
-                .tint(color(WorkoutPhasePalette.phoneDanger))
-                .disabled(workout.ending)
-            }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("workout-live-viewport")
+    }
+
+    /// Compact, icon-only finish action — the shared `WatchIconButton`
+    /// primitive with the semantic danger tint. The checkered-flag glyph is
+    /// deliberately not the in-row boulder stop glyph: the two controls end
+    /// different scopes (see `WatchIconSymbol.finishWorkout`).
+    private var finishWorkoutButton: some View {
+        WatchIconButton(
+            systemImage: workout.ending ? "ellipsis" : WatchIconSymbol.finishWorkout,
+            accessibilityLabel: workout.ending ? "Finishing workout" : "Finish workout",
+            accessibilityHint: workout.ending
+                ? "Saving the workout"
+                : "Shows a confirmation before saving and ending the workout",
+            accessibilityIdentifier: "finish-workout",
+            tint: WatchDesignTokens.danger,
+            usesTintWhenUnselected: true,
+            isDisabled: workout.ending
+        ) {
+            showingFinishConfirmation = true
         }
     }
 
@@ -196,7 +237,7 @@ struct WorkoutLiveView: View {
     ) -> some View {
         content()
             .foregroundStyle(color(fill.label))
-            .padding(.vertical, 3)
+            .padding(.vertical, 2)
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity)
             .background(
@@ -209,42 +250,102 @@ struct WorkoutLiveView: View {
             )
     }
 
+    /// The height every control row *consumes* in layout. Each interactive
+    /// primitive still carries its full 44pt hit frame (inside its button
+    /// label — see `WatchIconButtonStyle`), fitted into this shorter slot so
+    /// the invisible margin overhangs adjacent NON-INTERACTIVE surfaces only
+    /// — never another control's visible pixels — instead of spending
+    /// 3 × 44pt of a ~160pt viewport on padding. Where each overhang lands
+    /// (#582 review F1, per-row):
+    /// - finish: symmetric ±7pt over the HR readout text and the gap above
+    ///   the band;
+    /// - rest pills: the whole 16pt margin extends UPWARD over the phase
+    ///   band (`alignment: .bottom` slot + top-padded label), so the pills'
+    ///   hit slots end exactly at their visible bottom edge;
+    /// - play/stop: symmetric ±7pt, kept clear of the pills by
+    ///   `actionRow`'s explicit 7pt top padding (equal to the overhang) —
+    ///   `assertWorkoutLiveControls` asserts the pill and play/stop hit
+    ///   frames are disjoint, because the action row is the later sibling
+    ///   and would otherwise silently win taps on visible pill pixels.
+    private static let controlRowHeight: CGFloat = 30
+
     @ViewBuilder
     private func liveStack(phase: WorkoutPhase, fill: PhaseFill) -> some View {
         let heartRate = fixtureVisual?.heartRate ?? workout.heartRate
         let elapsed = fixtureVisual?.elapsed ?? workout.elapsed
-        // Spacing is 2, not the usual 4: RESTING stacks the HR line, the band,
-        // the rest chips and the action row, and on a 40mm screen the gaps are
-        // the difference between the button clearing the bottom edge and
-        // sitting flush against it.
         VStack(spacing: 2) {
-            // HR + total elapsed on ONE line at the LEFT. They used to be
-            // stacked, which cost a whole footnote line of height that RESTING
-            // — the tall phase, band + chips + action row — does not have on a
-            // 40mm screen. Still left-aligned: the elapsed time sat top-right
-            // once and collided with the End toolbar button.
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                HStack(spacing: 4) {
-                    Image(systemName: "heart.fill")
-                        .font(.footnote)
-                        .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.danger))
-                    Text(heartRate.map { "\(Int($0.rounded()))" } ?? "--")
-                        .font(.body).monospacedDigit()
+            // HR + total elapsed on ONE line at the LEFT, the compact finish
+            // action at the RIGHT. The readouts used to be stacked, which
+            // cost a whole footnote line of height RESTING does not have on
+            // 40mm; the finish action now shares this row instead of
+            // competing with the system clock in the toolbar.
+            HStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HStack(spacing: 4) {
+                        // Dropped at accessibility sizes (ForceGaugeView's
+                        // progressive-disclosure house style): the readouts
+                        // are the row's information and the glyph is what
+                        // makes them width-bound on 40mm — with it, the
+                        // `.xxLarge` cap's growth was silently eaten by
+                        // `minimumScaleFactor` and accessibility users got
+                        // normal-size ink back (#582 review F3).
+                        if !dynamicTypeSize.isAccessibilitySize {
+                            Image(systemName: "heart.fill")
+                                .font(.footnote)
+                                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.danger))
+                        }
+                        Text(heartRate.map { "\(Int($0.rounded()))" } ?? "--")
+                            .font(.body).monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    Text(timeString(elapsed))
+                        .font(.footnote).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                 }
-                Text(timeString(elapsed))
-                    .font(.footnote).monospacedDigit()
-                    .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
+                finishWorkoutButton
+                    .frame(height: Self.controlRowHeight)
             }
+            .frame(height: Self.controlRowHeight)
 
             Spacer(minLength: 0)
 
+            // The band, pills and action row are the fixed glanceable core:
+            // a no-scroll dashboard whose rows use fixed type sizes by
+            // design, so accessibility Dynamic Type cannot push the action
+            // row off a 40mm viewport with no way to reach it — the same
+            // cap-the-fixed-core house style as `ForceGaugeView`'s primary
+            // path (#582 review F3). Controls keep their full VoiceOver
+            // labels/hints, 44pt-tall hit slots, and (for the four
+            // shared-width pills) a ≥36pt-wide share of the row — four
+            // literal 44pt widths cannot exist side by side on a 162pt panel.
             phaseTimer(phase: phase, fill: fill)
+                .dynamicTypeSize(.medium ... .large)
 
             Spacer(minLength: 0)
 
             actionRow
+                .dynamicTypeSize(.medium ... .large)
         }
+        // The HR/elapsed readout line above is the screen's one Dynamic
+        // Type-scalable run; it stops at .xxLarge, where the fixed 30pt row
+        // stops fitting the glyphs. This looser screen-level bound (instead
+        // of the old whole-screen .large cap) is what makes the
+        // accessibility-large screenshot run render differently from the
+        // normal one, so that test can fail on its own (#582 review F3).
+        // Order matters: this outer range must be the widest, because an
+        // outer clamp collapses the environment value before an inner range
+        // could re-expand it.
+        .dynamicTypeSize(.medium ... .xxLarge)
+        // The finish and play/stop hit frames overhang their 30pt rows by
+        // 7pt; this padding keeps the top (finish) and bottom (play/stop)
+        // overhang inside the viewport instead of poking into the clock or
+        // past the bottom edge — the exact clip #580 exists to fix.
+        .padding(.top, 7)
+        .padding(.bottom, 7)
     }
 
     /// BOULDERS · play/stop · kcal + altitude, all on one line (#277). The
@@ -269,31 +370,40 @@ struct WorkoutLiveView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Text("\(attempts)")
-                    .font(.title3).monospacedDigit()
+                    // 18pt rounded, not .title3: the count shares its row
+                    // with the 30pt play/stop slot and .title3's Dynamic
+                    // Type growth is what used to push this row into the
+                    // bottom edge on 40mm.
+                    .font(.system(size: 18, weight: .medium, design: .rounded))
+                    .monospacedDigit()
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             // Play = start a boulder, stop = drop off into the rest countdown
-            // (phone-workout logic; icons instead of words). 44pt is Apple's
-            // minimum tap target and here the visual circle IS the tap target
-            // — no invisible padding to get out of step with the artwork.
-            // `fixedSize` keeps it at 44 whatever the readouts either side ask
-            // for, down to 40mm.
-            Button {
+            // (phone-workout logic; icons instead of words). The shared icon
+            // primitive keeps the visible circle compact while its label owns
+            // the full 44pt hit target; the 30pt row slot lets the invisible
+            // margin overhang the readouts either side instead of pushing the
+            // whole row past the bottom edge on 40mm. The GLYPH takes the
+            // phase hues (#277 follow-up: stop = rest-over orange "act now",
+            // play = climbing blue "go") while unselected the circle keeps
+            // the primitive's neutral fill; selected (climbing) fills the
+            // circle with the orange outright.
+            WatchIconButton(
+                systemImage: isClimbing ? "stop.fill" : "play.fill",
+                accessibilityLabel: isClimbing ? "Stop boulder" : "Start boulder",
+                accessibilityHint: isClimbing
+                    ? "Ends this boulder and starts the rest timer"
+                    : "Starts a manual boulder attempt",
+                accessibilityIdentifier: "workout-boulder-toggle",
+                isSelected: isClimbing,
+                tint: isClimbing ? WorkoutPhasePalette.phoneDanger : WorkoutPhasePalette.phoneSuccess,
+                usesTintWhenUnselected: true
+            ) {
                 workout.toggleManualAttempt()
-            } label: {
-                Image(systemName: isClimbing ? "stop.fill" : "play.fill")
-                    .font(.system(size: 16, weight: .bold))
-                    .frame(width: 44, height: 44)
             }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.circle)
-            // Same hues as the phase band (#277 follow-up): stop reads "act
-            // now" like rest-over, play reads "go" like climbing.
-            .tint(color(isClimbing ? WorkoutPhasePalette.phoneDanger : WorkoutPhasePalette.phoneSuccess))
-            .fixedSize()
-            .accessibilityLabel(isClimbing ? "Stop boulder" : "Start boulder")
+            .frame(height: Self.controlRowHeight)
 
             VStack(alignment: .trailing, spacing: 0) {
                 Text("\(Int(kcal)) kcal")
@@ -309,6 +419,14 @@ struct WorkoutLiveView: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
         }
+        // Exactly the play/stop hit frame's 7pt upward overhang: with the
+        // pills' hit slots ending at their visible bottom edge (see
+        // `restTargetControls`), this guaranteed gap keeps the two hit
+        // frames disjoint — the action row is the later sibling, so any
+        // overlap would silently route taps on visible pill pixels to
+        // Start/Stop boulder (#582 review F1). `assertWorkoutLiveControls`
+        // asserts the disjointness.
+        .padding(.top, 7)
     }
 
     // CLIMBING count-up / RESTING countdown, inside the phase band. The phase
@@ -330,7 +448,7 @@ struct WorkoutLiveView: View {
                             .font(.system(size: 11, weight: .bold))
                             .lineLimit(1)
                         Text(fixtureVisual.currentTimer)
-                            .font(.system(size: 34, weight: .heavy, design: .rounded))
+                            .font(.system(size: 31, weight: .heavy, design: .rounded))
                             .monospacedDigit()
                             .lineLimit(1)
                             .minimumScaleFactor(0.65)
@@ -348,7 +466,7 @@ struct WorkoutLiveView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.75)
                     Text(timerInterval: since...since.addingTimeInterval(3600), countsDown: false)
-                        .font(.system(size: 34, weight: .heavy, design: .rounded))
+                        .font(.system(size: 31, weight: .heavy, design: .rounded))
                         .monospacedDigit()
                         .lineLimit(1)
                         .minimumScaleFactor(0.65)
@@ -365,7 +483,7 @@ struct WorkoutLiveView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
                         Text(timerInterval: rest...end, countsDown: true)
-                            .font(.system(size: 34, weight: .heavy, design: .rounded))
+                            .font(.system(size: 31, weight: .heavy, design: .rounded))
                             .monospacedDigit()
                             .lineLimit(1)
                             .minimumScaleFactor(0.65)
@@ -381,33 +499,86 @@ struct WorkoutLiveView: View {
     /// fixture. Keeping one production control path makes the fixture useful
     /// for catching small-screen clipping and selection regressions instead of
     /// merely drawing a row of labels.
+    ///
+    /// All four targets stay visible at once as compact colour-coded capsules
+    /// (#580 scope 2): the old `WatchSecondaryButtonStyle` row asked for
+    /// 4 × 44pt of visible chrome, which cannot fit 40mm — its horizontal
+    /// ScrollView clipped the trailing option instead. The visible capsule is
+    /// 28pt tall; each button's slot is still 44pt tall, delivered inside the
+    /// button label so the tap area does not shrink with the artwork. The
+    /// slot is deliberately ASYMMETRIC (#582 review F1): all 16 extra points
+    /// extend upward over the non-interactive phase band (`.padding(.top)` on
+    /// the label + a bottom-aligned row), so each pill's hit frame ends
+    /// exactly at its visible bottom edge and can never contest the play/stop
+    /// control's upward overhang below.
     @ViewBuilder
     private var restTargetControls: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 4) {
-                ForEach(restTargets, id: \.self) { t in
-                    let selected = visibleRestTargetS == t
-                    Button("\(t / 60)m") {
-                        workout.restTargetS = t
-                        if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .workoutRest {
-                            fixtureRestTargetS = t
-                        }
+        HStack(spacing: 3) {
+            ForEach(restTargets, id: \.self) { target in
+                let selected = visibleRestTargetS == target
+                let minutes = target / 60
+                let tint = Self.restTargetRamp(for: target)
+                let accent = WatchPalette.accent(tint, reducedLuminance: isLuminanceReduced)
+                Button {
+                    workout.restTargetS = target
+                    if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .workoutRest {
+                        fixtureRestTargetS = target
                     }
-                    .font(.system(size: 11, weight: selected ? .bold : .regular))
-                    .buttonStyle(
-                        WatchSecondaryButtonStyle(
-                            tint: selected ? WatchPalette.textPrimary : WatchPalette.textTertiary
+                } label: {
+                    Text("\(minutes)m")
+                        .font(.system(size: 12, weight: selected ? .heavy : .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .foregroundStyle(
+                            selected
+                                ? WatchPalette.textPrimary
+                                : WatchPalette.foreground(tint)
                         )
-                    )
-                    .frame(minWidth: 44, minHeight: 44)
-                    .accessibilityIdentifier("rest-target-\(t)")
-                    .accessibilityLabel("Rest \(t / 60) minutes")
-                    .accessibilityValue(selected ? "Selected" : "Not selected")
-                    .accessibilityAddTraits(selected ? .isSelected : [])
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 28)
+                        .background {
+                            Capsule()
+                                .fill(accent.opacity(selected ? 0.42 : 0.14))
+                                .overlay {
+                                    Capsule().stroke(
+                                        accent.opacity(selected ? 0.9 : 0.38),
+                                        lineWidth: selected ? 1.2 : 0.8
+                                    )
+                                }
+                        }
+                        .padding(.top, CGFloat(WatchDesignTokens.minimumHitTarget) - 28)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("rest-target-\(target)")
+                .accessibilityLabel("Rest \(minutes) \(minutes == 1 ? "minute" : "minutes")")
+                .accessibilityValue(selected ? "Selected" : "Not selected")
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
         }
-        .scrollIndicators(.hidden)
+        // 44pt-tall hit slots in a 30pt layout row, bottom-aligned so the
+        // whole overhang lands on the band above (non-interactive) and none
+        // of it extends below the visible capsules.
+        .frame(height: Self.controlRowHeight, alignment: .bottom)
+    }
+
+    /// One hue per target so the selection reads at a glance (#580's "more
+    /// colorful"): a DEDICATED decorative ramp, deliberately not aliased to
+    /// the semantic state tokens (#582 review F10) — a five-minute rest is
+    /// not a `warning` and a one-minute rest is not `success`, and coupling
+    /// durations to state tokens would both dilute what those hues mean
+    /// elsewhere on the watch and silently recolor this row if a state token
+    /// is ever retuned. The values intentionally match the accent family's
+    /// look (and `WatchPalette.accent`'s Always-On dimming applies the same
+    /// way); only the *meaning* is decoupled.
+    private static func restTargetRamp(for target: Int) -> PhaseRGB {
+        switch target {
+        case 60: PhaseRGB(0.30, 0.93, 0.68) // mint
+        case 120: PhaseRGB(0.18, 0.84, 0.96) // cyan — the screenshot suite's selector pixel proof
+        case 180: PhaseRGB(0.48, 0.40, 1.0) // indigo
+        default: PhaseRGB(1.0, 0.76, 0.32) // amber
+        }
     }
 
     private func timeString(_ t: TimeInterval) -> String {

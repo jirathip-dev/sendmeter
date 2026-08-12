@@ -58,7 +58,12 @@ struct RootView: View {
         // round-2 review finding 1). `ScreenshotFixtures.enabled` is always
         // false outside a `-FASTLANE_SNAPSHOT YES` launch, so this never
         // affects production navigation.
-        if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .forceGuidedRun {
+        if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .iconPrimitives {
+            // #569's gallery uses the real shared WatchIconButton and stays
+            // behind the deterministic screenshot launch flag so no
+            // production navigation changes.
+            WatchIconPrimitiveFixtureView()
+        } else if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .forceGuidedRun {
             GuidedForceRunnerView()
         } else if guidedForceRunner.isActive {
             GuidedForceRunnerView()

@@ -34,6 +34,14 @@ final class TindeqManager: NSObject {
     var elapsedMs: Double = 0
     private(set) var handsFreeState = idleHandsFreeForce()
     private(set) var handsFreeRequested = false
+    /// SL-584: which start affordance the Force ready card presents while
+    /// connected — hands-free arm (default) or the classic tap-to-start.
+    /// Deliberately per-launch and NOT persisted (approved design Q3):
+    /// hands-free is the decided default flow, and a persisted tap
+    /// preference would silently defeat it on every future launch. Lives
+    /// here rather than in view `@State` so the choice survives the Force
+    /// view being popped and recreated within one app launch.
+    var preferTapToStart = false
     private(set) var saving = false
     private(set) var savedMsg: String?
 
@@ -612,8 +620,13 @@ final class TindeqManager: NSObject {
     /// does not append them to `samples`; the claimed Start transition resets
     /// the buffer/t0 and only then promotes the stream to a recording.
     func armHandsFree() {
+        // SL-585: no empty-tag refusal any more — an empty `liveTag` IS the
+        // free-hold representation (the DB's own column default is `''` and
+        // the manual `start()` path never required a tag). With no exercise
+        // selected, the Force page's primary card arms an untagged free
+        // hold; picking an exercise later tags subsequent reps as always.
         guard status == .connected, !handsFreeRequested, !saving,
-              guidedClaims.active == nil, !trimmedLiveTag.isEmpty else { return }
+              guidedClaims.active == nil else { return }
         captureManualSessionOwnerIfNeeded()
         savedMsgGeneration += 1
         savedMsg = nil
@@ -1103,12 +1116,12 @@ final class TindeqManager: NSObject {
         armTimeoutTimer?.invalidate()
         armTimeoutTimer = nil
         resetRecordingBuffer()
-        guard !trimmedLiveTag.isEmpty else {
-            cancelHandsFree()
-            savedMsg = "Pick an exercise to start"
-            scheduleSavedMsgDismiss()
-            return
-        }
+        // SL-585: an empty tag no longer cancels the armed pull — it records
+        // as an untagged free hold, exactly what the manual `start()` path
+        // has always allowed (`repClaims.begin` and the recordings schema
+        // both accept `""`). The old cancel-and-toast here was the
+        // hands-free half of the "Pick an exercise" refusal that SL-585
+        // removes.
         guard repClaims.begin(tag: trimmedLiveTag, side: liveSide) != nil else {
             cancelHandsFree()
             return
