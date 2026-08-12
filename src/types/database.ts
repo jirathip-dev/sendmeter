@@ -573,6 +573,7 @@ export type Database = {
           reverse_curve_fitted_at: string | null
           reverse_curve_recording_count: number | null
           reverse_w_prime_kgs: number | null
+          side_mode: string
           user_id: string
           w_prime_kgs: number | null
         }
@@ -588,6 +589,7 @@ export type Database = {
           reverse_curve_fitted_at?: string | null
           reverse_curve_recording_count?: number | null
           reverse_w_prime_kgs?: number | null
+          side_mode?: string
           user_id?: string
           w_prime_kgs?: number | null
         }
@@ -603,6 +605,7 @@ export type Database = {
           reverse_curve_fitted_at?: string | null
           reverse_curve_recording_count?: number | null
           reverse_w_prime_kgs?: number | null
+          side_mode?: string
           user_id?: string
           w_prime_kgs?: number | null
         }

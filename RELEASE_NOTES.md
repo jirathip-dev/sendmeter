@@ -14,6 +14,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Training phases now make it clear you're in control: the phases sheet says "Current block" instead of "Active" and states blocks are managed by you, with the ACWR band and typical duration labeled as guidance rather than rules.
 - Apple Watch Force always has a one-tap start now: with no exercise selected the main card is a free-hold start (hands-free by default, untagged) instead of a "Pick an exercise" dead end — tap a chip to switch to the tagged flow, tap it again to go back to free hold. The empty exercise list no longer shows cut-off text on 40mm watches.
 - Apple Watch Force's side selection is now just the Left/Right toggle on the main page — the settings screen's separate side list is gone. "Both" and unspecified sides can still be set from the phone/web app; existing recordings with those values are unaffected, and a stored one shows as neither segment selected until you tap L or R.
 - Apple Watch Force is now one page: exercise quick-select chips with a Left/Right toggle up top (nothing pre-selected on entry), connection shown as a small pill that starts connecting automatically when you open the screen, hands-free arming as the default start (a small link switches to tap-to-start), and one flag control that finishes the session and disconnects together. The full exercise and protocol lists stay behind the settings icon, which no longer overlaps the force readout on 40mm watches.
@@ -45,6 +46,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Apple Watch Force now offers the same read-only Suggested and saved-protocol chooser, runs guided Static or resisted-movement sessions from a glanceable timer, and can follow Movement Starter cadence without a connected force sensor while clearly marking force as unmeasured.
 - Force: shortened the brief pause after Stop while your force curve recomputes, without changing any of the numbers it produces.
 - Apple Watch Force screens now match the rest of Sendmeter's visual language: the primary Start button, protocol card, and guided-run timer use the same blue/indigo accent as the rest of the app instead of a separate pink/purple identity, with connection, warning, and error states still called out in their usual colors.
+- Force's Exercise & Side card now shows a compact "Manage exercises" icon button instead of a text button, and the manager sheet it opens is titled "Manage exercises".
 
 ### Fixed
 

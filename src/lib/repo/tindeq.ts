@@ -25,6 +25,7 @@ import {
   parseReverseActionSetMetrics,
 } from "../reverseAction";
 import { normalizeMovementPreset } from "../movementProtocol";
+import { normalizeSideMode, type ExerciseSideMode } from "../sideMode";
 
 const RECORDING_COLS =
   "id, recorded_at, duration_ms, peak_kg, avg_kg, sample_count, note, tag, side, group_id, protocol_run_id, set_no, zone, source, external_load_kg, outcome, planned_duration_ms, actual_duration_ms, rep_no, protocol_mode, target_kg, target_low_kg, target_high_kg, cadence_out_s, cadence_return_s, cadence_markers, set_metrics, setup_note, capacity_evidence, completed_reps, completion_status";
@@ -626,6 +627,34 @@ export async function fetchHiddenTags(): Promise<string[]> {
     await supabase.from("tindeq_tags").select("name").eq("hidden", true),
   );
   return data.map((r) => r.name);
+}
+
+/// A tag's side-applicability policy (#543 slice 1) — a registry row exists
+/// only once it's non-default, so a tag missing here is `unilateral_or_bilateral`
+/// (`normalizeSideMode`'s default, matching the migration's column default).
+export interface TagSideMode {
+  name: string;
+  sideMode: ExerciseSideMode;
+}
+
+export async function fetchTagSideModes(): Promise<TagSideMode[]> {
+  const data = unwrap<{ name: string; side_mode: string }[]>(
+    await supabase.from("tindeq_tags").select("name, side_mode"),
+  );
+  return data.map((r) => ({ name: r.name, sideMode: normalizeSideMode(r.side_mode) }));
+}
+
+/// Set a tag's side-mode policy. Upserts the registry row (user_id defaults
+/// to auth.uid()); the payload carries only `name` + `side_mode` so PostgREST's
+/// upsert can't clobber `hidden` or the curve columns on an existing row.
+export async function setTagSideMode(
+  name: string,
+  sideMode: ExerciseSideMode,
+): Promise<void> {
+  const { error } = await supabase
+    .from("tindeq_tags")
+    .upsert({ name, side_mode: sideMode }, { onConflict: "user_id,name" });
+  if (error) throw error;
 }
 
 /// A tag's persisted critical-force fit, partitioned by execution modality.
