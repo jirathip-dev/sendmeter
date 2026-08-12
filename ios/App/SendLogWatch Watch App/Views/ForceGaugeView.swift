@@ -224,12 +224,32 @@ struct ForceGaugeView: View {
                 : "Disconnects the Progressor",
             cancelIdentifier: "force-finish-cancel"
         ) {
+            // #590 review F1 backstop: with hands-free armed, a pull can
+            // start a rep while the confirmation card covers the gauge, and
+            // `disconnect()` would discard that in-flight rep AND suppress
+            // the salvage path — the one interleaving where finishing loses
+            // data. The `onChange` below dismisses the card the moment
+            // recording starts; this guard closes the same-instant race
+            // where the confirm tap lands as the pull begins. The rep
+            // always wins — the user re-taps the flag after it completes.
+            // Decision lives in Core (`ForceFinishPolicy`) so both layers
+            // are unit-tested against the real manager interleaving.
+            guard ForceFinishPolicy.mayExecuteFinish(isMeasuring: tindeq.status == .measuring) else {
+                return
+            }
             tindeq.logSessionNow()
             tindeq.disconnect()
             // A deliberate disconnect means "I'm done" — no auto-reconnect
             // for the rest of this visit (approved design Q5); re-entering
             // the Force screen from Home starts a fresh visit.
             autoConnectSuppressed = true
+        }
+        // #590 review F1 layer 1: a live pull means the user is not done —
+        // an open finish confirmation must never sit over a recording rep.
+        .onChange(of: tindeq.status) { _, status in
+            if ForceFinishPolicy.shouldDismissConfirmation(isMeasuring: status == .measuring) {
+                showingFinishConfirmation = false
+            }
         }
         .watchCanvas()
         .onReceive(sparkTimer) { _ in
@@ -386,6 +406,22 @@ struct ForceGaugeView: View {
         tindeq.connect()
     }
 
+    /// Manual retry (the stale pill or the Connect card). #590 review F5:
+    /// the ~8s fallback is presentation-only, so the ORIGINAL scan is often
+    /// still running when the user taps retry — and `connect()` has no
+    /// re-entrancy guard (it resets the phone-mirror pipeline and mints a
+    /// fresh run identity). Only enter `connect()` from idle; over a live
+    /// scan, just re-arm the presentation window and let that scan finish.
+    private func retryConnect() {
+        autoConnectSuppressed = false
+        if tindeq.status == .idle {
+            startConnectAttempt()
+        } else {
+            connectAttemptStale = false
+            connectAttempt += 1
+        }
+    }
+
     /// The 2 most recent exercises as quick-select chips: the chips ARE the
     /// tag selector (approved design Q1) — cadence-only and every start path
     /// gates on picking one here (or the full list behind the settings
@@ -530,6 +566,13 @@ struct ForceGaugeView: View {
         visibleStatus == .scanning || visibleStatus == .connecting
     }
 
+    /// True while the page presents the in-flight connect state (first ~8s
+    /// of an attempt). After the stale fallback the same scan may still be
+    /// running, but the page has moved on to the cadence-only presentation.
+    private var isPresentingConnecting: Bool {
+        isSearching && !connectAttemptStale
+    }
+
     @ViewBuilder
     private var connectPill: some View {
         if visibleStatus == .connected {
@@ -544,7 +587,7 @@ struct ForceGaugeView: View {
                     ? "Connected, session of \(fixtureVisual?.sessionCount ?? tindeq.sessionCount)"
                     : "Connected"
             )
-        } else if isSearching && !connectAttemptStale {
+        } else if isPresentingConnecting {
             connectPillLabel(dotToken: WatchDesignTokens.secondary, text: "Connecting…")
                 .accessibilityLabel("Connecting")
         } else {
@@ -552,8 +595,7 @@ struct ForceGaugeView: View {
             // retry. The underlying scan is still running in the stale case,
             // so a late device connects either way.
             Button {
-                autoConnectSuppressed = false
-                startConnectAttempt()
+                retryConnect()
             } label: {
                 connectPillLabel(dotToken: WatchDesignTokens.warning, text: "Connect")
                     .frame(minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
@@ -751,7 +793,7 @@ struct ForceGaugeView: View {
             armHandsFreeCard
         } else if visibleStatus == .connected {
             startReadyCard
-        } else if isSearching && !connectAttemptStale {
+        } else if isPresentingConnecting {
             connectingCard
         } else if selectedStartEligibility == .allowed {
             // No device answered (or none was sought): cadence-only
@@ -832,8 +874,7 @@ struct ForceGaugeView: View {
 
     private var connectReadyCard: some View {
         Button {
-            autoConnectSuppressed = false
-            startConnectAttempt()
+            retryConnect()
         } label: {
             readyCardBody(token: WatchDesignTokens.secondary, status: "Connect Progressor")
         }
@@ -962,7 +1003,11 @@ struct ForceGaugeView: View {
                 .accessibilityIdentifier("force-protocol-watch-availability")
         }
 
-        if visibleStatus != .connected {
+        // #590 review F9: while the page itself says "Connecting…", a
+        // "Cadence only · force not measured" row directly below it is a
+        // contradiction — the sensor verdict isn't in yet. The row returns
+        // with the stale cadence-only fallback.
+        if visibleStatus != .connected && !isPresentingConnecting {
             noSensorRow
         }
 
