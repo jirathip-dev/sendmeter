@@ -62,14 +62,25 @@ final class SendmeterWatchScreenshots: XCTestCase {
         assertNotClipped(readinessCard, in: pager, fixture: "status-ax-large")
         assertNotClipped(readinessRing, in: pager, fixture: "status-ax-large")
         assertNotClipped(syncLabel, in: pager, fixture: "status-ax-large")
-        // #588 review F2: same at-rest bar bound as the matrix — the pager
-        // element contains the floating bar now, so the pager-bounded checks
-        // above cannot catch a card sliding under the selector.
+        // #588 review F2, rebased for SL-586: same at-rest disc bound as the
+        // matrix — the pager spans the physical top now, so the
+        // pager-bounded checks above cannot catch a card sliding under the
+        // clock-level selector. The icons don't scale with Dynamic Type
+        // (fixed 30pt discs), so the AX run must hold the same clock-level
+        // geometry as the normal one.
         let selectorBar = app.buttons.matching(identifier: "home-nav-status").firstMatch
+        let actionsBar = app.buttons.matching(identifier: "home-nav-actions").firstMatch
         XCTAssertTrue(selectorBar.waitForExistence(timeout: 5))
+        XCTAssertTrue(actionsBar.waitForExistence(timeout: 5))
+        assertHomeNavAtClockLevel(
+            status: selectorBar,
+            actions: actionsBar,
+            in: app,
+            fixture: "status-ax-large"
+        )
         XCTAssertGreaterThanOrEqual(
-            readinessCard.frame.minY, selectorBar.frame.maxY,
-            "at-rest status card must sit fully below the selector bar at accessibility size"
+            readinessCard.frame.minY, homeNavDisc(of: selectorBar).maxY,
+            "at-rest status card must sit fully below the clock-level selector discs at accessibility size"
         )
         assertNotClipped(readinessCard, in: app, fixture: "status-ax-large")
 
@@ -704,8 +715,16 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 let actionsPage = app.buttons.matching(identifier: "home-nav-actions").firstMatch
                 XCTAssertTrue(statusPage.waitForExistence(timeout: 5))
                 XCTAssertTrue(actionsPage.waitForExistence(timeout: 5))
-                assertFullyVisible(statusPage, in: app, fixture: item.fixture)
-                assertFullyVisible(actionsPage, in: app, fixture: item.fixture)
+                // SL-586: not `assertFullyVisible` — the hit frames overhang
+                // the physical top by design now; the clock-level helper
+                // asserts the visible discs, the strip band, and the
+                // no-clock-overlap margin instead.
+                assertHomeNavAtClockLevel(
+                    status: statusPage,
+                    actions: actionsPage,
+                    in: app,
+                    fixture: item.fixture
+                )
                 let pager = homePagerViewport(in: app)
                 XCTAssertTrue(pager.waitForExistence(timeout: 5))
                 let readiness = app.descendants(matching: .any)
@@ -791,18 +810,19 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 // are still behind TabView's `.clipped()` boundary.
                 assertNotClipped(readinessCard, in: pager, fixture: item.fixture)
                 assertNotClipped(readinessRing, in: pager, fixture: item.fixture)
-                // #588 review F2: with the selector floating INSIDE the pager
-                // element, the pager-bounded check above can no longer fail
-                // for a card rendered under the buttons — the exact #578
-                // regression. Bound the at-rest card against the bar's own
-                // hit frame (2.5pt of designed clearance, no ring slack) and
-                // against the window, so a `selectorBarHeight` /
+                // #588 review F2, rebased for SL-586: the pager spans the
+                // physical top now, so the pager-bounded check above can no
+                // longer fail for a card rendered under the buttons — the
+                // exact #578 regression. Bound the at-rest card against the
+                // selector's VISIBLE disc (its 44pt hit frame is allowed to
+                // overhang the pages' top breath — non-interactive space —
+                // per the shorter-slot doctrine), so a strip-inset /
                 // per-page-inset drift cannot ship green.
                 let selectorBar = app.buttons.matching(identifier: "home-nav-status").firstMatch
                 XCTAssertTrue(selectorBar.waitForExistence(timeout: 5))
                 XCTAssertGreaterThanOrEqual(
-                    readinessCard.frame.minY, selectorBar.frame.maxY,
-                    "fixture \(item.fixture): at-rest status card must sit fully below the selector bar"
+                    readinessCard.frame.minY, homeNavDisc(of: selectorBar).maxY,
+                    "fixture \(item.fixture): at-rest status card must sit fully below the clock-level selector discs"
                 )
                 assertNotClipped(readinessCard, in: app, fixture: item.fixture)
                 // Empty/offline states render the full phone-sync guidance as
@@ -1526,6 +1546,95 @@ final class SendmeterWatchScreenshots: XCTestCase {
             previous = current
         }
         return false
+    }
+
+    /// Half of `WatchIconButtonVisuals.visibleDiameter` — KEEP IN SYNC with
+    /// the design system (and `HomeView.discRadius`). XCUI only sees the
+    /// 44pt hit frame; the visible 30pt disc is reconstructed from its
+    /// center, which is honest because the primitive centers its circle in
+    /// the hit frame by contract.
+    private static let homeNavDiscRadius: CGFloat = 15
+    /// The system time is right-aligned inside the top strip. XCUI cannot
+    /// query it (it renders in the system process), so the suite reserves
+    /// the trailing 56pt of the strip for it — wider than the rendered
+    /// "10:09" on every supported case size — and requires visible icon ink
+    /// to stay a further `homeNavClockMargin` clear of that reserve.
+    private static let homeNavClockReserveWidth: CGFloat = 56
+    private static let homeNavClockMargin: CGFloat = 8
+
+    private func homeNavDisc(of element: XCUIElement) -> CGRect {
+        let frame = element.frame
+        return CGRect(
+            x: frame.midX - Self.homeNavDiscRadius,
+            y: frame.midY - Self.homeNavDiscRadius,
+            width: Self.homeNavDiscRadius * 2,
+            height: Self.homeNavDiscRadius * 2
+        )
+    }
+
+    /// SL-586: the Home page-toggle icons sit at the system-time level — in
+    /// the top strip's LEFT region, beside the clock. Their 44pt hit frames
+    /// deliberately overhang the physical top edge (the shorter-slot
+    /// pattern — `WorkoutLiveView.controlRowHeight` — where the invisible
+    /// margin may cross non-interactive surfaces only), so
+    /// `assertFullyVisible`'s window-bounds check no longer applies to them.
+    /// The contract asserted instead: hittable with the full 44pt hit frame;
+    /// the VISIBLE 30pt disc fully on screen and vertically inside the strip
+    /// band; and a real horizontal margin between visible ink and the
+    /// system clock's reserved trailing region — watchOS owns the top-right,
+    /// and overlap would be invisible to element queries because the clock
+    /// is not in the app's tree.
+    private func assertHomeNavAtClockLevel(
+        status: XCUIElement,
+        actions: XCUIElement,
+        in app: XCUIApplication,
+        fixture: String
+    ) {
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        let bounds = window.frame
+        let clockReserveMinX = bounds.maxX - Self.homeNavClockReserveWidth
+        var previousDiscMaxX = bounds.minX
+        for (name, element) in [("status", status), ("actions", actions)] {
+            XCTAssertTrue(
+                element.isHittable,
+                "fixture \(fixture): home-nav-\(name) is not hittable at clock level"
+            )
+            XCTAssertGreaterThanOrEqual(
+                element.frame.height, 44,
+                "fixture \(fixture): home-nav-\(name) lost its 44pt hit target"
+            )
+            XCTAssertGreaterThanOrEqual(
+                element.frame.width, 44,
+                "fixture \(fixture): home-nav-\(name) lost its 44pt horizontal hit target"
+            )
+            let disc = homeNavDisc(of: element)
+            XCTAssertGreaterThanOrEqual(
+                disc.minX, bounds.minX,
+                "fixture \(fixture): home-nav-\(name) disc is clipped on the left"
+            )
+            XCTAssertGreaterThanOrEqual(
+                disc.minY, bounds.minY,
+                "fixture \(fixture): home-nav-\(name) disc is clipped at the physical top"
+            )
+            // Both supported case sizes put the strip midline well under
+            // this: disc center ≈15pt (40mm, ~28pt strip) / ≈20pt (49mm,
+            // ~37pt strip). Failing this bound means the icons fell back to
+            // a below-the-strip row — the exact regression SL-586 removes.
+            XCTAssertLessThanOrEqual(
+                disc.midY, 26,
+                "fixture \(fixture): home-nav-\(name) disc must sit at clock level in the top strip (midY \(disc.midY))"
+            )
+            XCTAssertLessThanOrEqual(
+                disc.maxX + Self.homeNavClockMargin, clockReserveMinX,
+                "fixture \(fixture): home-nav-\(name) disc must keep ≥\(Self.homeNavClockMargin)pt of real margin to the system clock reserve (disc ends \(disc.maxX), reserve starts \(clockReserveMinX))"
+            )
+            XCTAssertGreaterThanOrEqual(
+                disc.minX, previousDiscMaxX,
+                "fixture \(fixture): home-nav discs must not overlap each other"
+            )
+            previousDiscMaxX = disc.maxX
+        }
     }
 
     private func assertFullyVisible(
