@@ -2236,16 +2236,15 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           <div className="label-eyebrow">Exercise &amp; Side</div>
           {tagCounts.length > 0 && (
             <button
-              className="btn-ghost btn-inline"
+              className="del-btn"
               onClick={() => setShowTagManager(true)}
-              style={{
-                fontFamily: "Inter, sans-serif",
-                fontWeight: 700,
-                fontSize: "var(--t-xs)",
-                padding: 0,
-              }}
+              aria-label="Manage exercises"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", margin: 0 }}
             >
-              Manage tags
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+              </svg>
             </button>
           )}
         </div>
@@ -2265,7 +2264,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         {!pendingTag.trim() &&
           (status === "connected" || status === "armed" || status === "measuring") && (
             <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-faint)", marginTop: 8 }}>
-              Add a tag to start recording.
+              Add an exercise to start recording.
             </div>
           )}
         {justSaved && status === "connected" && (
