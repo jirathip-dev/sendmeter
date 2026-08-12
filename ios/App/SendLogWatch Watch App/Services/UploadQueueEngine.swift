@@ -113,13 +113,15 @@ nonisolated struct QueueQuarantineRecord<Item: Codable>: Codable {
 
 /// #491 review F2: the header-only projection of a `QueueQuarantineRecord`,
 /// for the two per-pass sweeps that must not materialize every quarantined
-/// recording's full sample array on a watch (`quarantinedCount` and the
-/// not-yet-due majority of `resurrectDueStuckRetries`). `enqueuedUserId` is
-/// the one item field the #475-F4 account scoping needs, and every
-/// `QueueUploadItem` encodes it under that same synthesized key, so the
-/// probe can reach into the legacy "bundle" object without knowing the item
-/// type. Decode failure is handled exactly like the full record's ("counted
-/// as the cautious default").
+/// recording's full sample array on a watch (`quarantinedCount`, the
+/// not-yet-due majority of `resurrectDueStuckRetries`) — and, since #599,
+/// for `quarantinedDiagnostics()`, which displays the record's header fields
+/// without ever decoding its item payload. `enqueuedUserId` is the one item
+/// field the #475-F4 account scoping needs, and every `QueueUploadItem`
+/// encodes it under that same synthesized key, so the probe can reach into
+/// the legacy "bundle" object without knowing the item type. Decode failure
+/// is handled exactly like the full record's ("counted as the cautious
+/// default").
 private nonisolated struct QueueQuarantineProbe: Decodable {
     struct ItemStamp: Decodable {
         var enqueuedUserId: UUID?
@@ -127,11 +129,17 @@ private nonisolated struct QueueQuarantineProbe: Decodable {
 
     var item: ItemStamp
     var reason: QuarantineReason
+    var stage: UploadStage?
+    var httpStatus: Int?
+    var postgrestCode: String?
+    var errorMessage: String?
+    var attemptCount: Int?
     var quarantinedAt: Date
+    var payloadDropped: Bool?
 
     enum CodingKeys: String, CodingKey {
         case item = "bundle"
-        case reason, quarantinedAt
+        case reason, stage, httpStatus, postgrestCode, errorMessage, attemptCount, quarantinedAt, payloadDropped
     }
 }
 
@@ -351,6 +359,161 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     func refreshReportedCounts() {
         _ = pendingCount()
         _ = quarantinedCount()
+    }
+
+    /// The #599 diagnostics read: every quarantined item's header fields for
+    /// display, oldest first. Same header-only probe as `quarantinedCount()`
+    /// — the item payload (a recording's sample array, a workout's raw
+    /// trace) is never decoded, because the only thing displayed is the
+    /// record's own header.
+    ///
+    /// Account-scoped the same way as the count (#475 F4): another account's
+    /// quarantined item is not this account's business and is left out. An
+    /// unreadable/undecodable `.quarantine` file is retained on disk, never
+    /// deleted (#287), and reported as `.unreadable` rather than silently
+    /// vanishing from the list (it is already counted by
+    /// `quarantinedCount()` the same way).
+    func quarantinedDiagnostics() -> [QuarantineDiagnosticEntry] {
+        let currentUserId = WatchSessionStore.shared.userId
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let files = ((try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == quarantineExtension }
+        var records: [QuarantineDiagnosticItem] = []
+        var unreadable: [UUID] = []
+        for file in files {
+            // The file name is `<queueFileId>.quarantine` (built in
+            // `quarantine(...)`), so the item's id survives even when the
+            // contents don't. A name outside that convention cannot be
+            // produced by this engine; the random fallback only guards a
+            // hand-edited file and is never persisted.
+            let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent) ?? UUID()
+            guard
+                let data = try? Data(contentsOf: file),
+                let probe = try? decoder.decode(QueueQuarantineProbe.self, from: data)
+            else {
+                // #287: retained on disk, never deleted — and still VISIBLE
+                // as unreadable rather than silently vanishing from the
+                // count.
+                unreadable.append(id)
+                continue
+            }
+            guard shouldDrain(itemUserId: probe.item.enqueuedUserId, currentUserId: currentUserId)
+                || currentUserId == nil
+            else { continue }
+            records.append(
+                QuarantineDiagnosticItem(
+                    id: id,
+                    reason: probe.reason,
+                    stage: probe.stage,
+                    httpStatus: probe.httpStatus,
+                    postgrestCode: probe.postgrestCode,
+                    errorMessage: probe.errorMessage.map { QuarantineDiagnostics.truncatedErrorMessage($0) },
+                    attemptCount: probe.attemptCount,
+                    quarantinedAt: probe.quarantinedAt,
+                    payloadDropped: probe.payloadDropped
+                )
+            )
+        }
+        // Oldest first, matching the queues' own drain order — the item that
+        // has been stuck the longest is the one to read first. Unreadable
+        // records (no date to sort by) come last.
+        records.sort { $0.quarantinedAt < $1.quarantinedAt }
+        return records.map(QuarantineDiagnosticEntry.record) + unreadable.map(QuarantineDiagnosticEntry.unreadable)
+    }
+
+    /// Issue #600: the user's explicit "Retry stuck uploads" — restore every
+    /// retryable `.quarantine` record to the ordinary pending rotation and
+    /// drain it now, instead of waiting out the 7-day automatic backoff
+    /// (which is the right default for an unattended watch and the wrong and
+    /// only option when the user is standing there with working network).
+    ///
+    /// Per record (returns how many were restored):
+    /// - `.schemaRejection` is proven permanent (`QuarantineRetryPolicy`) —
+    ///   never restored, a retry of it is known to fail. Not offered, not
+    ///   attempted.
+    /// - Another account's record is skipped (`shouldDrain`, #475 F4) — and
+    ///   so is EVERYTHING while nobody is signed in: unlike the counting
+    ///   sweeps, whose `|| currentUserId == nil` exists so a signed-out watch
+    ///   doesn't report its queues as zero, this is a MUTATION path. Restoring
+    ///   another account's record (or a signed-out watch restoring every
+    ///   record) would destroy the very forensic header #599 exists to
+    ///   preserve — `stage`, `httpStatus`, `postgrestCode`, `errorMessage`,
+    ///   `attemptCount`, `quarantinedAt` are gone the moment the record
+    ///   becomes a plain pending `.json` — and `drainPass` would not upload
+    ///   it anyway (its own per-file guard re-checks, #158). Review finding
+    ///   1 of #599/#600: the escape hatch stays reserved for reads.
+    /// - An unreadable/undecodable record is skipped AND retained (#287) —
+    ///   never deleted, never rewritten, exactly like every other read path.
+    ///
+    /// Crash-safe in the durable direction, the exact inverse of
+    /// `quarantine(...)`: the pending `<uuid>.json` is written FIRST and only
+    /// a committed write earns the quarantine file's deletion — never risk
+    /// the item on an unconfirmed write (CLAUDE.md #264/#287). A refused
+    /// write leaves the record quarantined, eligible again next time.
+    ///
+    /// A record whose payload was stripped at quarantine time
+    /// (`stripsPayloadOnQuarantine` — workouts shed `raw`) restores as-is:
+    /// it uploads its real summary stats, not the original buffer, which the
+    /// diagnostics surface already says (`payloadDropped`). The restore is
+    /// not blocked by it, and no path here describes it as a full restore.
+    ///
+    /// Counts are republished and the phone told afterwards
+    /// (`refreshReportedCounts` + `WatchBuild.reportQueueStatus`) — otherwise
+    /// the phone's banner keeps holding the pre-retry report (#600 ask 2) —
+    /// and `drain()` is awaited so the restored items are attempted before
+    /// this returns and the UI refreshes against post-drain reality.
+    @discardableResult
+    func retryQuarantinedItems() async -> Int {
+        // Read once, not per file — unlike `drainPass`, this loop contains NO
+        // `await`, so the actor cannot suspend in the middle of it and the
+        // account decision is atomic for the whole pass (a mid-loop account
+        // switch cannot interleave here; it would make a half-restored set
+        // that neither account chose). `drainPass` re-reads per file only
+        // because its `upload` await is a suspension point.
+        let currentUserId = WatchSessionStore.shared.userId
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let files = ((try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == quarantineExtension }
+        var restored = 0
+        for file in files {
+            guard
+                let data = try? Data(contentsOf: file),
+                let record = try? decoder.decode(QueueQuarantineRecord<Item>.self, from: data)
+            else { continue } // #287: retained, never deleted
+            guard QuarantineRetryPolicy.isManuallyRetryable(record.reason) else { continue }
+            // No `|| currentUserId == nil` here — see the doc comment above.
+            guard shouldDrain(itemUserId: record.item.enqueuedUserId, currentUserId: currentUserId) else { continue }
+            guard let itemData = try? encoder.encode(record.item) else { continue }
+            let pendingURL = pendingDir.appendingPathComponent("\(record.item.queueFileId.uuidString).json")
+            do {
+                try fileIO.write(itemData, to: pendingURL)
+            } catch {
+                // Crash-safe refusal: the record stays quarantined — the
+                // item was never risked on an unconfirmed write.
+                continue
+            }
+            // The write committed; only now may the quarantine record go.
+            try? fileIO.removeItem(at: file)
+            clearRetryLedger(for: record.item) // a fresh budget, same as F12's resurrection
+            restored += 1
+        }
+        // #600: republish + tell the phone — even a zero-restore outcome is
+        // fresh information (the automatic path may have changed things since
+        // the last report), and after a restore the phone must not keep
+        // holding the pre-retry report. `drainPass` republishes again when
+        // it finishes.
+        refreshReportedCounts()
+        Task { @MainActor in WatchBuild.reportQueueStatus() }
+        if restored > 0 {
+            await drain()
+            refreshReportedCounts()
+            Task { @MainActor in WatchBuild.reportQueueStatus() }
+        }
+        return restored
     }
 
     /// Persist the item and return as soon as it's on disk — the upload runs

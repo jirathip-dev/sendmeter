@@ -87,6 +87,7 @@ struct RootView: View {
                     switch dest {
                     case .force: ForceGaugeView()
                     case .workout: WorkoutLiveView()
+                    case .uploadDiagnostics: QuarantineDiagnosticsView()
                     }
                 }
         }

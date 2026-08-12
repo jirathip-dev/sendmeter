@@ -14,6 +14,28 @@ public enum UploadStage: String, Sendable, Codable, CaseIterable {
     case climbAttempts
 }
 
+/// Why a bundle was quarantined (#475 F3) — kept distinct because the two
+/// cases carry different confidence: one is a proven-permanent DB rejection,
+/// the other is a bet that a bundle failing this many times in a row is not
+/// coming back. Lives in Core (not the watch app's Models.swift) so the
+/// copy/retry decisions that differ per case are unit-testable on Linux —
+/// the on-disk raw values are part of the quarantine record's wire shape and
+/// must never change.
+public enum QuarantineReason: String, Codable, Sendable, CaseIterable {
+    /// `UploadErrorClassifier` positively identified the bundle as violating
+    /// the one check constraint this PR set out to catch — quarantined on
+    /// the very first attempt. Proven permanent: no retry is ever worth
+    /// offering for this kind.
+    case schemaRejection
+    /// The bundle failed `QueueRetryPolicy.maxConsecutiveFailures` consecutive
+    /// drain passes without the classifier ever recognizing why. Not
+    /// provably permanent — but bounded, so an unrecognized permanent error
+    /// (a different check constraint, a persistently invalid account, …)
+    /// can't park the rest of the queue behind it either. A bet, so a
+    /// manual retry is a legitimate option.
+    case stuckRetrying
+}
+
 /// What `OfflineQueue`'s drain loop should do with a failed upload.
 public enum UploadErrorOutcome: Sendable, Equatable {
     /// Transient (network / timeout / 5xx / 408 / 429) or ambiguous (403 —
