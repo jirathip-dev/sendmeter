@@ -68,7 +68,9 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
     <div>
       <div className="section-sub">
         Your training blocks — what each targets and when you ran it. Change the
-        current phase from the phase strip on Home.
+        current phase from the phase strip on Home. Training blocks are managed
+        by you — Sendmeter uses your readiness and training load to show how
+        each block is tracking; the figures below are guidance, not rules.
       </div>
 
       {PHASES.map((p) => (
@@ -112,7 +114,7 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
                     className="tag"
                     style={{ background: p.color, color: "var(--ink)" }}
                   >
-                    Active
+                    Current block
                   </span>
                 )}
               </div>
@@ -144,7 +146,7 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
                   marginBottom: 3,
                 }}
               >
-                ACWR
+                Target ACWR
               </div>
               <div
                 style={{
@@ -157,7 +159,7 @@ export default function PhasesView({ currentPhase, phasePeriods, phaseStartDate 
                 {p.acwr}
               </div>
               <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 3 }}>
-                {p.weeks}
+                Typical {p.weeks}
               </div>
               <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)" }}>
                 {p.intensity}
