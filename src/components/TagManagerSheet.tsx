@@ -60,15 +60,15 @@ export default function TagManagerSheet({ tags, hidden, onClose }: Props) {
   const sorted = [...tags].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
-    <Sheet title="Manage tags" onClose={onClose}>
+    <Sheet title="Manage exercises" onClose={onClose}>
       <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginBottom: 12 }}>
-        Rename updates every recording with that tag. Hiding keeps the data but
-        drops the tag from the pickers and trend.
+        Rename updates every recording with that exercise. Hiding keeps the data but
+        drops the exercise from the pickers and trend.
       </div>
 
       {sorted.length === 0 && (
         <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-faint)", padding: "12px 0" }}>
-          No tags yet — record a rep with a tag first.
+          No exercises yet — record a rep with an exercise first.
         </div>
       )}
 
