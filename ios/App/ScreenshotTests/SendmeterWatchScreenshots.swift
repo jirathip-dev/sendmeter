@@ -7,6 +7,10 @@ private enum ForceScreenshotCaptureError: Error {
     case emptyFrame
 }
 
+private enum IconScreenshotCaptureError: Error {
+    case emptyFrame
+}
+
 @MainActor
 final class SendmeterWatchScreenshots: XCTestCase {
     /// The 40mm release gate: the primary setup path must fit before any
@@ -58,11 +62,351 @@ final class SendmeterWatchScreenshots: XCTestCase {
         assertNotClipped(readinessCard, in: pager, fixture: "status-ax-large")
         assertNotClipped(readinessRing, in: pager, fixture: "status-ax-large")
         assertNotClipped(syncLabel, in: pager, fixture: "status-ax-large")
+        // #588 review F2: same at-rest bar bound as the matrix — the pager
+        // element contains the floating bar now, so the pager-bounded checks
+        // above cannot catch a card sliding under the selector.
+        let selectorBar = app.buttons.matching(identifier: "home-nav-status").firstMatch
+        XCTAssertTrue(selectorBar.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(
+            readinessCard.frame.minY, selectorBar.frame.maxY,
+            "at-rest status card must sit fully below the selector bar at accessibility size"
+        )
+        assertNotClipped(readinessCard, in: app, fixture: "status-ax-large")
 
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "40mm-status-accessibility-large"
         capture.lifetime = .keepAlways
         add(capture)
+    }
+
+    /// #569: the shared icon primitive must expose every promised visual state
+    /// in the real watch hierarchy at the simulator's native size. The same
+    /// helper is run as two independent tests so a normal launch/termination
+    /// cannot skip the accessibility-large assertions; the Canvas pins the
+    /// fixture at both 40mm and 49mm.
+    func testIconPrimitiveStatesAtNormal() throws {
+        try assertIconPrimitiveStates(
+            accessibilityLarge: false,
+            captureName: "icon-primitives-normal"
+        )
+    }
+
+    func testIconPrimitiveStatesAtAccessibilityLarge() throws {
+        try assertIconPrimitiveStates(
+            accessibilityLarge: true,
+            captureName: "icon-primitives-accessibility-large"
+        )
+    }
+
+    private func assertIconPrimitiveStates(
+        accessibilityLarge: Bool,
+        captureName: String
+    ) throws {
+        let app = launchFixture("iconPrimitives", accessibilityLarge: accessibilityLarge)
+        defer { app.terminate() }
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+
+        let viewport = app.descendants(matching: .any)
+            .matching(identifier: "icon-primitives-viewport")
+            .firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+
+        let normal = app.buttons["icon-action-normal"]
+        let disabled = app.buttons["icon-action-disabled"]
+        let unselected = app.buttons["icon-nav-unselected"]
+        let selected = app.buttons["icon-nav-selected"]
+        for control in [normal, disabled, unselected, selected] {
+            XCTAssertTrue(
+                control.waitForExistence(timeout: 10),
+                "icon fixture should expose \(control.identifier)"
+            )
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+            assertNotClipped(
+                control,
+                in: viewport,
+                fixture: accessibilityLarge ? "icon-primitives-ax-large" : "icon-primitives"
+            )
+        }
+        XCTAssertTrue(normal.isEnabled)
+        XCTAssertFalse(disabled.isEnabled)
+        XCTAssertEqual(normal.label, "Normal icon action")
+        XCTAssertEqual(disabled.label, "Disabled icon action")
+        XCTAssertEqual(unselected.label, "Show status")
+        XCTAssertEqual(selected.label, "Show actions")
+
+        // The selected trait is the only selection announcement owned by
+        // the primitive; there is deliberately no explicit
+        // accessibilityValue("Selected") to announce it twice.
+        if let value = selected.value as? String {
+            XCTAssertFalse(
+                value.localizedCaseInsensitiveContains("selected, selected"),
+                "selected navigation must not duplicate its VoiceOver state"
+            )
+        }
+
+        let pressed = app.descendants(matching: .any)
+            .matching(identifier: "icon-action-pressed")
+            .firstMatch
+        XCTAssertTrue(pressed.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(pressed.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(pressed.frame.height, 44)
+        assertNotClipped(
+            pressed,
+            in: viewport,
+            fixture: accessibilityLarge ? "icon-primitives-ax-large" : "icon-primitives"
+        )
+
+        var validatedPNGData: Data?
+        for _ in 0..<3 {
+            // A watch can remain in reduced-luminance/AOD after launch even
+            // while its accessibility tree is current. Wake only the
+            // non-control chrome, then reassert every icon state before
+            // accepting the framebuffer as screenshot evidence.
+            let wakeChrome = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.17))
+            wakeChrome.tap()
+            Thread.sleep(forTimeInterval: 0.2)
+            wakeChrome.tap()
+
+            for control in [normal, disabled, unselected, selected] {
+                XCTAssertTrue(
+                    control.waitForExistence(timeout: 10),
+                    "icon fixture should expose \(control.identifier) before capture"
+                )
+                XCTAssertGreaterThanOrEqual(control.frame.width, 44)
+                XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+                assertNotClipped(
+                    control,
+                    in: viewport,
+                    fixture: accessibilityLarge ? "icon-primitives-ax-large" : "icon-primitives"
+                )
+            }
+
+            Thread.sleep(forTimeInterval: 1)
+            let screenshot = app.screenshot()
+            if let pngData = screenshot.image.pngData(),
+               let source = CGImageSourceCreateWithData(pngData as CFData, nil),
+               let encodedImage = CGImageSourceCreateImageAtIndex(source, 0, nil),
+               hasSelectedIconSurface(encodedImage) {
+                validatedPNGData = pngData
+                break
+            }
+        }
+        guard let validatedPNGData else {
+            XCTFail("icon primitive screenshot never rendered the selected cyan surface below the clock")
+            throw IconScreenshotCaptureError.emptyFrame
+        }
+
+        // Attach the exact validated PNG bytes; screenshot/image convenience
+        // initializers can re-read or re-render a watch framebuffer while it dims.
+        let capture = XCTAttachment(data: validatedPNGData, uniformTypeIdentifier: "public.png")
+        capture.name = captureName
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    /// #580: the live Workout screen must hold every control — compact
+    /// finish, four rest pills, play/stop — inside the viewport with real
+    /// hit targets. The fixture drives the production hierarchy (same
+    /// `WorkoutLiveView` control path as a real workout) while keeping
+    /// ending and attempt persistence out of the test; the screenshot
+    /// schemes run this against both the 40mm and 49mm destinations, and
+    /// the second test repeats it at an accessibility Dynamic Type size.
+    func testWorkoutLiveControlsFitAtNormalText() throws {
+        try assertWorkoutLiveControls(
+            accessibilityLarge: false,
+            captureName: "workout-live-normal"
+        )
+    }
+
+    func testWorkoutLiveControlsFitAtAccessibilityLargeText() throws {
+        try assertWorkoutLiveControls(
+            accessibilityLarge: true,
+            captureName: "workout-live-accessibility-large"
+        )
+    }
+
+    private func assertWorkoutLiveControls(
+        accessibilityLarge: Bool,
+        captureName: String
+    ) throws {
+        let app = launchFixture("workoutRest", accessibilityLarge: accessibilityLarge)
+        defer { app.terminate() }
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        openActions(app)
+        tapHomeAction(app, identifier: "home-action-workout")
+
+        let viewport = app.descendants(matching: .any)
+            .matching(identifier: "workout-live-viewport")
+            .firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+
+        let finish = smallestButton(in: app, identifier: "finish-workout")
+        let boulder = smallestButton(in: app, identifier: "workout-boulder-toggle")
+        let restControls = [60, 120, 180, 300].map {
+            smallestButton(in: app, identifier: "rest-target-\($0)")
+        }
+
+        XCTAssertTrue(finish.waitForExistence(timeout: 10))
+        XCTAssertEqual(finish.label, "Finish workout")
+        assertFullyVisible(finish, in: app, fixture: "workoutRest", viewport: viewport)
+        XCTAssertTrue(boulder.waitForExistence(timeout: 10))
+        XCTAssertEqual(boulder.label, "Start boulder")
+        assertFullyVisible(boulder, in: app, fixture: "workoutRest", viewport: viewport)
+
+        for control in restControls {
+            XCTAssertTrue(control.waitForExistence(timeout: 10))
+            assertRestPillVisible(control, in: app, viewport: viewport, fixture: "workoutRest")
+        }
+        // #582 review F1: the action row is the later sibling, so any pill /
+        // play-stop hit-frame overlap silently routes taps on visible pill
+        // pixels to Start/Stop boulder. The layout promises disjoint hit
+        // frames (pill slots end at their visible bottom edge; the action
+        // row pads by the full 7pt overhang) — hold it to that.
+        let lowestPillHitEdge = restControls.map { $0.frame.maxY }.max() ?? .infinity
+        XCTAssertGreaterThanOrEqual(
+            boulder.frame.minY, lowestPillHitEdge,
+            "play/stop hit frame must not overlap the rest pills' hit frames"
+        )
+        assertRestTargetSelection(restControls, selectedIndex: 2)
+        assertWorkoutReadouts(app, accessibilityLarge: accessibilityLarge)
+
+        // Exercise every direct target, including both endpoints, and verify
+        // the shared setter drives exactly one selected accessibility state.
+        // End back on the fixture default (3m) so the retained capture shows
+        // the state the fixture describes.
+        for selectedIndex in [0, 1, 3, 2] {
+            restControls[selectedIndex].tap()
+            assertRestTargetSelection(restControls, selectedIndex: selectedIndex)
+        }
+
+        // Capture the live state before opening the destructive confirmation:
+        // watchOS can retain the prior system-sheet framebuffer after its
+        // accessibility tree dismisses, so this ordering keeps the retained
+        // PNG honest while the confirmation is verified immediately after.
+        var validatedPNGData: Data?
+        for _ in 0..<3 {
+            // The watch can expose a fresh accessibility tree while its AOD
+            // framebuffer is still blank. Wake the chrome (a dead spot above
+            // the content, never a control), then repeat the geometry
+            // assertions before retaining the screenshot bytes.
+            let wakeChrome = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.17))
+            wakeChrome.tap()
+            Thread.sleep(forTimeInterval: 0.2)
+            wakeChrome.tap()
+            for control in [finish, boulder] + restControls {
+                XCTAssertTrue(control.waitForExistence(timeout: 10))
+            }
+            assertFullyVisible(finish, in: app, fixture: "workoutRest", viewport: viewport)
+            assertFullyVisible(boulder, in: app, fixture: "workoutRest", viewport: viewport)
+            for control in restControls {
+                assertRestPillVisible(control, in: app, viewport: viewport, fixture: "workoutRest")
+            }
+
+            Thread.sleep(forTimeInterval: 1)
+            let screenshot = app.screenshot()
+            if let pngData = screenshot.image.pngData(),
+               let source = CGImageSourceCreateWithData(pngData as CFData, nil),
+               let encodedImage = CGImageSourceCreateImageAtIndex(source, 0, nil),
+               hasWorkoutPhaseSurface(encodedImage) {
+                validatedPNGData = pngData
+                break
+            }
+        }
+        guard let validatedPNGData else {
+            XCTFail("workout fixture screenshot never rendered the live phase surface below the clock")
+            throw ForceScreenshotCaptureError.emptyFrame
+        }
+        let capture = XCTAttachment(data: validatedPNGData, uniformTypeIdentifier: "public.png")
+        capture.name = captureName
+        capture.lifetime = .keepAlways
+        add(capture)
+
+        // The compact finish control must ask first. Cancel the confirmation
+        // so the fixture remains live and no workout is ended or saved by
+        // this layout test. The confirmation is now the app's own compact
+        // card (SL-580 follow-up — the full-screen system dialog was
+        // replaced), so its controls carry real identifiers and the same
+        // 44pt/fit contract as every other live control.
+        finish.tap()
+        let confirm = smallestButton(in: app, identifier: "finish-workout-confirm")
+        let cancel = smallestButton(in: app, identifier: "finish-workout-cancel")
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        XCTAssertEqual(confirm.label, "Finish")
+        XCTAssertEqual(cancel.label, "Cancel")
+        assertFullyVisible(confirm, in: app, fixture: "workoutRest")
+        assertFullyVisible(cancel, in: app, fixture: "workoutRest")
+        // #588 review F1: the confirm card's layout is part of its contract.
+        // At accessibility sizes the two buttons must STACK full-width —
+        // side by side, the confirm title compressed past its scale floor
+        // into a truncated "Fi…" on 40mm, which the accessibility label
+        // (always "Finish") cannot catch. Stacked + near-card-width is the
+        // geometry under which truncation is impossible; at normal sizes
+        // the approved side-by-side row must hold.
+        if accessibilityLarge {
+            XCTAssertLessThanOrEqual(
+                confirm.frame.maxY, cancel.frame.minY + 0.5,
+                "confirmation actions must stack at accessibility sizes"
+            )
+            XCTAssertGreaterThanOrEqual(
+                confirm.frame.width, 100,
+                "stacked confirm button must span the card, not compress its title"
+            )
+        } else {
+            XCTAssertLessThanOrEqual(
+                cancel.frame.maxX, confirm.frame.minX + 0.5,
+                "confirmation actions must sit side by side at normal sizes"
+            )
+        }
+        // The scrim must block the live controls while the confirmation is
+        // up — a stray tap around the card must not toggle a boulder or
+        // change a rest target. (The modal trait may remove the background
+        // from the accessibility tree entirely; either way it must not be
+        // tappable.)
+        XCTAssertFalse(
+            boulder.exists && boulder.isHittable,
+            "live controls must be blocked behind the confirmation scrim"
+        )
+        let confirmCapture = XCTAttachment(screenshot: app.screenshot())
+        confirmCapture.name = "\(captureName)-confirm"
+        confirmCapture.lifetime = .keepAlways
+        add(confirmCapture)
+        cancel.tap()
+        XCTAssertTrue(waitForElementToDisappear(confirm), "finish confirmation must dismiss after Cancel")
+        XCTAssertTrue(waitForElementToDisappear(cancel), "finish confirmation must dismiss after Cancel")
+        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        XCTAssertEqual(finish.label, "Finish workout")
+
+        // #588 review F5: exercise the confirm path's PRODUCTION wiring —
+        // there is deliberately no fixture branch in the confirm action, so
+        // this tap drives the real `endAndSave()`. With no live session the
+        // manager bails out of `end()`'s session guard and resets `ending`,
+        // so the control must return to its idle label instead of wedging
+        // in "Finishing workout" — which is also the regression guard for
+        // the fixture-hang this flow once had.
+        finish.tap()
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        confirm.tap()
+        XCTAssertTrue(waitForElementToDisappear(confirm), "confirmation must dismiss after Finish")
+        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForLabel(finish, expected: "Finish workout"),
+            "finish control must settle back to idle after the no-session save bails out"
+        )
+    }
+
+    private func waitForLabel(
+        _ element: XCUIElement,
+        expected: String,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.exists, element.label == expected { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return element.exists && element.label == expected
     }
 
     /// #539 navigation regression guard: use the explicit Home controls for
@@ -119,6 +463,52 @@ final class SendmeterWatchScreenshots: XCTestCase {
         app.terminate()
     }
 
+    /// SL-584: auto-connect on entry, driven end to end with the #567 fake
+    /// transport. The Home `status` fixture leaves the Force screen
+    /// un-posed, so navigating there runs the REAL entry path: the pill
+    /// must reach Connected without any tap, nothing may arm on its own
+    /// (the explicit-tap guard), and the primary card must sit visibly
+    /// refused on "Pick an exercise" because nothing is pre-selected on
+    /// entry (user decision).
+    func testForceAutoConnectsWithFakeTransport() throws {
+        let app = launchFixture("status", extraArguments: ["-sendmeter-fake-tindeq", "pull"])
+        defer { app.terminate() }
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        openActions(app)
+        tapHomeAction(app, identifier: "home-action-force")
+
+        let connectedPill = app.staticTexts["Connected"]
+        XCTAssertTrue(
+            connectedPill.waitForExistence(timeout: 10),
+            "Force must auto-initiate the connection on entry when a device is available"
+        )
+        XCTAssertFalse(
+            app.buttons["force-hands-free-armed"].exists,
+            "auto-connect must never arm hands-free — arming stays behind its explicit tap"
+        )
+        // SL-585: this unauthenticated launch IS the empty-account state (no
+        // exercises exist, nothing selected) — and it must have a live
+        // primary with zero scrolling: the card is the free-hold arm, fully
+        // enabled. The old "refused until an exercise is picked" dead-end is
+        // gone by design (#591).
+        let arm = app.buttons["force-arm-hands-free"]
+        XCTAssertTrue(arm.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            arm.isEnabled,
+            "with nothing selected the primary must be the ENABLED free-hold arm — no dead-end refusal (#591)"
+        )
+        assertFullyVisible(arm, in: app, fixture: "force-auto-connect")
+        XCTAssertTrue(
+            app.staticTexts["Arm hands-free · Free hold"].waitForExistence(timeout: 5),
+            "the empty-selection primary must read as a free-hold start"
+        )
+
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "force-auto-connect"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     private func assertForceSetupPrimaryPathFits(
         accessibilityLarge: Bool,
         captureName: String
@@ -134,65 +524,79 @@ final class SendmeterWatchScreenshots: XCTestCase {
         openActions(app)
         tapHomeAction(app, identifier: "home-action-force")
 
-        // SL-537: the redesigned setup screen centers on one ready/start
-        // card with a compact top-right context action (exercise/side/
-        // protocol now live one tap away in the chooser, not as separate
-        // main-screen controls) and Free hold as the explicit manual
-        // fallback. Disconnect and connection state are demoted below the
-        // fold — this primary path (context action, ready/start card, Free
-        // hold) is the no-scroll guarantee, not the whole screen.
+        // SL-584: the one-page primary path is the selector row (exercise
+        // chips + L|R + settings icon), the connection row (pill + unified
+        // finish flag) and the ready card — hands-free arm by default for
+        // the connected fixture. Free hold and the mode toggle live below
+        // the fold by design (approved layout); the old separate disconnect
+        // control no longer exists at all.
         let context = app.buttons["force-context-button"]
-        let start = app.buttons
-            .matching(NSPredicate(format: "label == %@", "Start selected protocol"))
-            .firstMatch
-        let freeHold = app.buttons["force-free-hold"]
+        let chip = app.buttons["force-quick-tag-Half crimp"]
+        let sideLeft = app.buttons["force-main-side-left"]
+        let sideRight = app.buttons["force-main-side-right"]
+        let finish = app.buttons["force-session-finish"]
+        let arm = app.buttons["force-arm-hands-free"]
 
-        let controls = [context, start, freeHold]
-        // SL-538 round-2 review finding 5: a future eligibility regression
-        // (Start disabled, `.opacity(0.52)`) would otherwise fail the pixel
-        // scan below with a colour-shaped error message pointing at the
-        // wrong cause. Assert the actual precondition first.
-        XCTAssertTrue(start.waitForExistence(timeout: 10))
-        XCTAssertTrue(start.isEnabled, "Start must be enabled for the pixel scan below to mean anything")
+        let fullTargets = [context, chip, finish, arm]
+        let sideSegments = [sideLeft, sideRight]
+        // A future eligibility regression (arm refused, `.opacity(0.52)`)
+        // would otherwise fail the pixel scan below with a colour-shaped
+        // error pointing at the wrong cause — the fixture selects a tag, so
+        // arming must be offered for the scan to mean anything.
+        XCTAssertTrue(arm.waitForExistence(timeout: 10))
+        XCTAssertTrue(arm.isEnabled, "Arm must be enabled for the pixel scan below to mean anything")
         var validatedPNGData: Data?
         for _ in 0..<3 {
             // A watch can remain in reduced-luminance/AOD after the navigation
             // tap even while its accessibility tree is current. Wake only the
             // non-control chrome, then reassert every setup control before capture.
-            let wakeChrome = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.17))
+            let wakeChrome = app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.17))
             wakeChrome.tap()
             Thread.sleep(forTimeInterval: 0.2)
             wakeChrome.tap()
 
-            for control in controls {
+            for control in fullTargets {
                 XCTAssertTrue(
                     control.waitForExistence(timeout: 10),
                     "40mm setup should expose \(control.identifier) before any scroll"
                 )
                 assertFullyVisible(control, in: app, fixture: "forceSetup")
             }
-            // Strengthened (SL-537): prove the actual hierarchy, not just
-            // that each control happens to be present — the context action
-            // reads at/near the top of the ready/start card (it's a small
-            // corner overlay, so a few points of inset padding is expected),
-            // which itself sits above Free hold.
+            // The L|R segments share the selector row with flexible chips
+            // and the settings icon — like #582's rest pills, a literal
+            // 44pt-wide target per segment cannot exist there. The honest
+            // contract: full 44pt-tall slot, the real 24pt design width,
+            // hittable, unclipped; the chooser's full-width side rows
+            // remain the large-target path.
+            for segment in sideSegments {
+                XCTAssertTrue(segment.waitForExistence(timeout: 10))
+                XCTAssertTrue(segment.isHittable, "side segment must be hittable")
+                XCTAssertGreaterThanOrEqual(segment.frame.height, 44, "side segment lost its 44pt-tall slot")
+                XCTAssertGreaterThanOrEqual(segment.frame.width, 24, "side segment became too narrow to tap")
+                assertNotClipped(segment, in: app, fixture: "forceSetup")
+            }
+            // The rows must read in the approved order, and the settings
+            // icon must have left the card entirely — the #589 §2 overlap
+            // (icon over the readout's kg unit) is impossible when their
+            // frames are disjoint rows.
             XCTAssertLessThanOrEqual(
-                context.frame.minY, start.frame.minY + 8,
-                "the compact context action must read at the top of the ready/start card, not below it"
+                context.frame.maxY, arm.frame.minY + 0.5,
+                "the selector row must sit fully above the ready card"
+            )
+            XCTAssertFalse(
+                context.frame.intersects(arm.frame),
+                "the settings icon must never overlap the ready card/readout again (#589)"
             )
             XCTAssertLessThanOrEqual(
-                start.frame.maxY, freeHold.frame.minY,
-                "Free hold must not overlap or outrank the ready/start card"
+                finish.frame.maxY, arm.frame.minY + 0.5,
+                "the connection row must sit fully above the ready card"
             )
-            // Disconnect is demoted to a secondary/passive action (#537 #4):
-            // it must not be part of the no-scroll primary path. Round-1
-            // review finding 6: an identifier-only lookup lets this pass
-            // vacuously if the identifier ever stops resolving (watchOS has
-            // been observed collapsing descendant identifiers onto a
-            // container elsewhere in this same view tree) — match by
-            // identifier OR label, same predicate the matrix test already
-            // uses for this exact control, so a lost identifier still finds
-            // the button and the assertion means what it says.
+            // The chips carry the selection state the card gates on.
+            XCTAssertEqual(chip.value as? String, "Selected")
+            // The pre-SL-584 standalone disconnect control is gone — the
+            // finish flag is the one end-session control now. Match by
+            // identifier OR label so a renamed identifier cannot make this
+            // vacuous.
             let disconnect = app.buttons
                 .matching(
                     NSPredicate(
@@ -203,8 +607,8 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 )
                 .firstMatch
             XCTAssertFalse(
-                disconnect.exists && disconnect.isHittable && disconnect.frame.maxY <= freeHold.frame.maxY + 4,
-                "disconnect must not compete with the primary path for the initial viewport"
+                disconnect.exists,
+                "the separate disconnect control must stay unified into the finish flag"
             )
 
             Thread.sleep(forTimeInterval: 1)
@@ -218,7 +622,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
             }
         }
         guard let validatedPNGData else {
-            XCTFail("40mm setup screenshot never rendered the semantic-primary Start surface")
+            XCTFail("40mm setup screenshot never rendered the semantic-primary arm surface")
             throw ForceScreenshotCaptureError.emptyFrame
         }
         // Attach the exact validated PNG bytes; screenshot/image convenience
@@ -227,6 +631,39 @@ final class SendmeterWatchScreenshots: XCTestCase {
         capture.name = captureName
         capture.lifetime = .keepAlways
         add(capture)
+
+        // SL-585 (#591): tapping the SELECTED chip deselects — the card must
+        // switch live to the enabled free-hold primary (no refused state
+        // exists any more), the below-the-fold Free hold button must vanish
+        // (it would duplicate the primary), and re-selecting must restore
+        // the tagged flow exactly as shipped.
+        XCTAssertTrue(
+            waitForAccessibilityValue(chip, expected: "Selected"),
+            "the fixture's chip must start selected"
+        )
+        chip.tap()
+        XCTAssertTrue(
+            waitForAccessibilityValue(chip, expected: "Not selected"),
+            "tapping the selected chip must deselect it"
+        )
+        XCTAssertTrue(
+            app.staticTexts["Arm hands-free · Free hold"].waitForExistence(timeout: 5),
+            "deselecting must switch the primary to the free-hold arm"
+        )
+        XCTAssertTrue(arm.isEnabled, "the free-hold primary must be enabled with nothing selected")
+        XCTAssertFalse(
+            app.buttons["force-free-hold"].exists,
+            "the below-the-fold Free hold duplicate must be hidden while the primary IS free hold"
+        )
+        chip.tap()
+        XCTAssertTrue(
+            waitForAccessibilityValue(chip, expected: "Selected"),
+            "re-tapping must restore the tagged selection"
+        )
+        XCTAssertTrue(
+            app.staticTexts["Arm hands-free"].waitForExistence(timeout: 5),
+            "re-selecting must restore the tagged arm primary"
+        )
     }
 
     /// Keep the fixture matrix exercised without adding extra App Store
@@ -289,6 +726,37 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     waitForStableFrame(app.staticTexts["Force Gauge"], timeout: 5),
                     "Actions page must settle before returning to Status"
                 )
+                // SL-580 follow-up: the bar area is transparent chrome now —
+                // content is ALLOWED to pass underneath it (the old hard clip
+                // edge is gone). The intent the layout must keep is that the
+                // selector controls stay on top, legible and hittable, even
+                // with page content scrolled under them. Measured drag, not a
+                // blind momentum swipe (#588 review F10 — same calibration
+                // doctrine as `tapHomeAction`), so the Force card ends up
+                // deterministically under the bar for the retained evidence.
+                let windowFrame = app.windows.firstMatch.frame
+                dragChooser(
+                    app,
+                    viewport: windowFrame,
+                    points: min(windowFrame.height * 0.25, 50),
+                    contentDirection: -1
+                )
+                XCTAssertTrue(
+                    statusPage.isHittable,
+                    "page selector must stay hittable above scrolled content"
+                )
+                XCTAssertTrue(
+                    actionsPage.isHittable,
+                    "page selector must stay hittable above scrolled content"
+                )
+                // #588 review F3: retain the scrolled-under state — the
+                // per-button backdrops are the legibility mechanism for the
+                // transparent bar, and this is the frame that shows them
+                // doing that job over a bright card.
+                let scrolledUnder = XCTAttachment(screenshot: app.screenshot())
+                scrolledUnder.name = "home-bar-scrolled-under"
+                scrolledUnder.lifetime = .keepAlways
+                add(scrolledUnder)
                 statusPage.tap()
                 let returningCard = app.descendants(matching: .any)
                     .matching(identifier: "readiness-card").firstMatch
@@ -323,6 +791,20 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 // are still behind TabView's `.clipped()` boundary.
                 assertNotClipped(readinessCard, in: pager, fixture: item.fixture)
                 assertNotClipped(readinessRing, in: pager, fixture: item.fixture)
+                // #588 review F2: with the selector floating INSIDE the pager
+                // element, the pager-bounded check above can no longer fail
+                // for a card rendered under the buttons — the exact #578
+                // regression. Bound the at-rest card against the bar's own
+                // hit frame (2.5pt of designed clearance, no ring slack) and
+                // against the window, so a `selectorBarHeight` /
+                // per-page-inset drift cannot ship green.
+                let selectorBar = app.buttons.matching(identifier: "home-nav-status").firstMatch
+                XCTAssertTrue(selectorBar.waitForExistence(timeout: 5))
+                XCTAssertGreaterThanOrEqual(
+                    readinessCard.frame.minY, selectorBar.frame.maxY,
+                    "fixture \(item.fixture): at-rest status card must sit fully below the selector bar"
+                )
+                assertNotClipped(readinessCard, in: app, fixture: item.fixture)
                 // Empty/offline states render the full phone-sync guidance as
                 // visible content (the ring announces only "No data" to avoid
                 // duplicate VoiceOver copy), so they get the same load-bearing
@@ -383,8 +865,11 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
         let workoutStates: [(fixture: String, identifier: String)] = [
             ("workoutIdle", "Start Workout"),
-            ("workoutLive", "End"),
-            ("workoutRest", "End"),
+            // #580: End moved out of the toolbar into the compact icon-only
+            // finish action; the rest-pill selection/geometry matrix lives in
+            // `assertWorkoutLiveControls`, which also runs accessibility-large.
+            ("workoutLive", "finish-workout"),
+            ("workoutRest", "finish-workout"),
             ("workoutSaved", "watch-state-success"),
             ("workoutError", "watch-banner-danger"),
         ]
@@ -398,17 +883,14 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     .waitForExistence(timeout: 10),
                 "fixture \(item.fixture) should expose \(item.identifier)"
             )
-            if item.fixture == "workoutRest" {
-                let oneMinute = app.buttons["rest-target-60"]
-                let twoMinutes = app.buttons["rest-target-120"]
-                XCTAssertTrue(oneMinute.waitForExistence(timeout: 5))
-                XCTAssertTrue(twoMinutes.waitForExistence(timeout: 5))
-                assertFullyVisible(oneMinute, in: app, fixture: item.fixture)
-                assertFullyVisible(twoMinutes, in: app, fixture: item.fixture)
-                XCTAssertEqual(twoMinutes.value as? String, "Not selected")
-                twoMinutes.tap()
-                XCTAssertEqual(twoMinutes.value as? String, "Selected")
-                XCTAssertEqual(oneMinute.value as? String, "Not selected")
+            if item.fixture == "workoutLive" {
+                // The climbing state is the one `assertWorkoutLiveControls`
+                // does not pose: the in-row toggle must read as the boulder
+                // stop — a different scope (and glyph) than the finish flag.
+                let boulder = smallestButton(in: app, identifier: "workout-boulder-toggle")
+                XCTAssertTrue(boulder.waitForExistence(timeout: 5))
+                XCTAssertEqual(boulder.label, "Stop boulder")
+                assertFullyVisible(boulder, in: app, fixture: item.fixture)
             }
             app.terminate()
         }
@@ -417,7 +899,9 @@ final class SendmeterWatchScreenshots: XCTestCase {
             // Movement Starter remains cadence-eligible without a connected
             // Progressor, so idle exposes the Start card rather than Connect.
             ("forceIdle", "force-start-selected"),
-            ("forceConnecting", "Connecting…"),
+            // SL-584: the full-screen loading state is gone — connecting is
+            // presented by the page itself (pill + passive connecting card).
+            ("forceConnecting", "force-connecting-card"),
             ("forceConnected", "force-session-finish"),
             ("forceLive", "Stop & Save"),
             ("forceSaved", "watch-banner-success"),
@@ -439,10 +923,52 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 XCTAssertTrue(start.isEnabled, "cadence-only Start must be enabled with the fixture exercise selected")
                 XCTAssertTrue(start.isHittable, "cadence-only Start must be hittable while disconnected")
             }
+            if item.fixture == "forceConnecting" {
+                // SL-585 follow-up: this fixture's side is "" — the legacy /
+                // unspecified case ("both" behaves identically). The toggle
+                // must render with NEITHER segment selected, and nothing may
+                // rewrite the stored value on appear; only an explicit tap
+                // sets left/right.
+                for identifier in ["force-main-side-left", "force-main-side-right"] {
+                    let segment = app.buttons[identifier]
+                    XCTAssertTrue(segment.waitForExistence(timeout: 5))
+                    XCTAssertTrue(
+                        waitForAccessibilityValue(segment, expected: "Not selected"),
+                        "a legacy/unspecified side must render with no segment selected"
+                    )
+                }
+            }
             if item.fixture == "forceSaved" || item.fixture == "forceConnected" {
-                // SL-537: exercise/side now live behind the one compact
-                // top-right context action rather than as separate
-                // main-screen controls.
+                // SL-585 follow-up: side coverage lives on the MAIN page's
+                // L|R toggle now — the chooser's side list is gone (the
+                // watch offers only Left/Right; "both"/unspecified stay
+                // web-only). Both fixtures set a canonical lowercase side.
+                let fixtureSide = item.fixture == "forceConnected" ? "right" : "left"
+                let selectedSegment = app.buttons["force-main-side-\(fixtureSide)"]
+                let otherSegment = app.buttons[
+                    "force-main-side-\(fixtureSide == "right" ? "left" : "right")"
+                ]
+                XCTAssertTrue(selectedSegment.waitForExistence(timeout: 5))
+                XCTAssertTrue(
+                    waitForAccessibilityValue(selectedSegment, expected: "Selected"),
+                    "the main toggle must reflect the fixture's persisted side"
+                )
+                // Tapping the SELECTED segment is a no-op — clearing back to
+                // unspecified is deliberately not offered any more.
+                selectedSegment.tap()
+                XCTAssertTrue(
+                    waitForAccessibilityValue(selectedSegment, expected: "Selected"),
+                    "tapping the selected side segment must stay selected (no clear-to-unspecified)"
+                )
+                if item.fixture == "forceConnected" {
+                    otherSegment.tap()
+                    XCTAssertTrue(waitForAccessibilityValue(otherSegment, expected: "Selected"))
+                    XCTAssertTrue(waitForAccessibilityValue(selectedSegment, expected: "Not selected"))
+                    selectedSegment.tap()
+                    XCTAssertTrue(waitForAccessibilityValue(selectedSegment, expected: "Selected"))
+                    XCTAssertTrue(waitForAccessibilityValue(otherSegment, expected: "Not selected"))
+                }
+
                 let context = app.buttons["force-context-button"]
                 XCTAssertTrue(
                     context.waitForExistence(timeout: 5),
@@ -450,34 +976,15 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 )
                 assertFullyVisible(context, in: app, fixture: item.fixture)
                 context.tap()
-                // Both fixtures set tag "Crimp edge" and a canonical lowercase
-                // side (see `ScreenshotFixtures.force`). The chooser itself was never
-                // part of the no-scroll guarantee — only Force setup's
-                // primary path is — and Side plus the first exercise row
-                // don't both fit the 40mm viewport at once. Side is near the
-                // top, but the selected side row may be below the initial
-                // viewport; tapping lets XCUITest scroll it into view.
-                let sideOption = app.buttons[
-                    item.fixture == "forceConnected" ? "force-side-right" : "force-side-left"
-                ]
-                XCTAssertTrue(sideOption.waitForExistence(timeout: 5), "chooser should expose the Side control")
-                XCTAssertEqual(sideOption.value as? String, "Selected")
-                sideOption.tap()
-                XCTAssertEqual(sideOption.value as? String, "Selected")
-
-                if item.fixture == "forceConnected" {
-                    let leftOption = app.buttons["force-side-left"]
-                    XCTAssertTrue(leftOption.waitForExistence(timeout: 5))
-                    leftOption.tap()
-                    XCTAssertEqual(leftOption.value as? String, "Selected")
-                    XCTAssertEqual(sideOption.value as? String, "Not selected")
-                    sideOption.tap()
-                    XCTAssertEqual(sideOption.value as? String, "Selected")
-                    XCTAssertEqual(leftOption.value as? String, "Not selected")
+                // The chooser must NOT expose side rows any more — matched
+                // across all three old identifiers so a partial revert fails.
+                for gone in ["force-side-left", "force-side-right", "force-side-both", "force-side-unspecified"] {
+                    XCTAssertFalse(
+                        app.buttons[gone].exists,
+                        "the chooser's side list was removed (SL-585 follow-up) — \(gone) must not return"
+                    )
                 }
-
-                // Exercise rows are below the new four-row vertical Side
-                // list inside a LazyVStack, so they are not necessarily
+                // Exercise rows sit in a LazyVStack and are not necessarily
                 // materialized immediately after opening the chooser. Use
                 // the same bounded scroll-to-find pattern as the Suggested
                 // protocol coverage above before checking existence.
@@ -492,16 +999,21 @@ final class SendmeterWatchScreenshots: XCTestCase {
                     "tapping Back should return to Force setup"
                 )
                 if item.fixture == "forceConnected" {
-                    let readyContext = app.descendants(matching: .any)
-                        .matching(NSPredicate(
-                            format: "label CONTAINS %@ AND label CONTAINS %@",
-                            "Crimp edge",
-                            "Right"
-                        ))
-                        .firstMatch
+                    // SL-584: the card's context line is gone — the main
+                    // page's own selector row is where the chooser's picks
+                    // must land after Back: the exercise chip and the R
+                    // side segment both announce Selected.
+                    let mainChip = app.buttons["force-quick-tag-Crimp edge"]
+                    let mainRight = app.buttons["force-main-side-right"]
+                    XCTAssertTrue(mainChip.waitForExistence(timeout: 5))
                     XCTAssertTrue(
-                        readyContext.waitForExistence(timeout: 5),
-                        "ready context should reflect the selected Right side after returning from the chooser"
+                        waitForAccessibilityValue(mainChip, expected: "Selected"),
+                        "the main-page chip should reflect the chooser's exercise after returning"
+                    )
+                    XCTAssertTrue(mainRight.waitForExistence(timeout: 5))
+                    XCTAssertTrue(
+                        waitForAccessibilityValue(mainRight, expected: "Selected"),
+                        "the main-page side toggle should reflect the chooser's Right side after returning"
                     )
                 }
             }
@@ -513,9 +1025,31 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 )
                 assertFullyVisible(finish, in: app, fixture: item.fixture)
 
-                // Disconnect is demoted to a passive/secondary action (#537
-                // #4) — still reachable, but only after scrolling past the
-                // primary ready path.
+                // #588 review F6: the Force finish shares the Workout
+                // finish's glyph, so it must share the ask-first behavior —
+                // the same shared confirmation card, cancelled here so the
+                // fixture's session state is untouched.
+                finish.tap()
+                let forceConfirm = smallestButton(in: app, identifier: "force-finish-confirm")
+                let forceCancel = smallestButton(in: app, identifier: "force-finish-cancel")
+                XCTAssertTrue(forceConfirm.waitForExistence(timeout: 10))
+                XCTAssertTrue(forceCancel.waitForExistence(timeout: 10))
+                assertFullyVisible(forceConfirm, in: app, fixture: item.fixture)
+                assertFullyVisible(forceCancel, in: app, fixture: item.fixture)
+                forceCancel.tap()
+                XCTAssertTrue(
+                    waitForElementToDisappear(forceConfirm),
+                    "force finish confirmation must dismiss after Cancel"
+                )
+                XCTAssertTrue(
+                    finish.waitForExistence(timeout: 5),
+                    "force setup must return after cancelling the finish confirmation"
+                )
+
+                // SL-584: finish and disconnect are ONE control now. The old
+                // standalone disconnect must be gone everywhere — matched by
+                // identifier OR label so a renamed identifier cannot make
+                // this vacuous.
                 let disconnect = app.buttons
                     .matching(
                         NSPredicate(
@@ -525,14 +1059,22 @@ final class SendmeterWatchScreenshots: XCTestCase {
                         )
                     )
                     .firstMatch
-                for _ in 0..<6 where !disconnect.isHittable {
-                    app.swipeUp(velocity: .slow)
-                }
-                XCTAssertTrue(
-                    disconnect.waitForExistence(timeout: 5),
-                    "fixture \(item.fixture) should expose \(disconnect.identifier) after scrolling"
+                XCTAssertFalse(
+                    disconnect.exists,
+                    "the separate disconnect control must stay unified into the finish flag"
                 )
-                assertFullyVisible(disconnect, in: app, fixture: item.fixture)
+
+                // The unified control's confirm copy names both outcomes for
+                // a session in progress (fixture poses sessionCount 3).
+                finish.tap()
+                XCTAssertTrue(forceConfirm.waitForExistence(timeout: 10))
+                let unifiedTitle = app.staticTexts["Finish session?"]
+                XCTAssertTrue(
+                    unifiedTitle.waitForExistence(timeout: 5),
+                    "unified control must ask the finish question when a session exists"
+                )
+                forceCancel.tap()
+                XCTAssertTrue(waitForElementToDisappear(forceConfirm))
             }
             if item.fixture == "forceLive" {
                 let stopAndSave = app.buttons["force-stop-save"]
@@ -756,7 +1298,8 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
     private func launchFixture(
         _ fixture: String,
-        accessibilityLarge: Bool = false
+        accessibilityLarge: Bool = false,
+        extraArguments: [String] = []
     ) -> XCUIApplication {
         let app = XCUIApplication()
         setupSnapshot(app, waitForAnimations: false)
@@ -764,6 +1307,7 @@ final class SendmeterWatchScreenshots: XCTestCase {
         if accessibilityLarge {
             app.launchArguments.append("-sendmeter-accessibility-large")
         }
+        app.launchArguments.append(contentsOf: extraArguments)
         app.launch()
         return app
     }
@@ -779,8 +1323,12 @@ final class SendmeterWatchScreenshots: XCTestCase {
 
         let forceGauge = app.staticTexts["Force Gauge"]
         XCTAssertTrue(forceGauge.waitForExistence(timeout: 10))
+        // 6s, not the helper's default 3: with the pages underlapping the
+        // floating selector bar (SL-580 follow-up), the scroll view settles
+        // its top inset after the page transition and the first card's frame
+        // can keep moving past the old window.
         XCTAssertTrue(
-            waitForStableFrame(forceGauge),
+            waitForStableFrame(forceGauge, timeout: 6),
             "Actions page must settle before destination navigation"
         )
     }
@@ -794,9 +1342,39 @@ final class SendmeterWatchScreenshots: XCTestCase {
             // view. Bring its own hit target into the active window before
             // synthesizing a tap; otherwise watchOS can report the visible
             // descendant's stale pre-scroll frame and route the tap nowhere.
-            for _ in 0..<2 where !action.isHittable {
-                app.swipeUp(velocity: .slow)
-                Thread.sleep(forTimeInterval: 0.4)
+            // Measured drags (same calibration as `dragChooser`) instead of
+            // blind `swipeUp`s: a momentum swipe can overshoot and leave the
+            // card parked half outside the window, which is what used to
+            // make the hard hittability guard below look flaky. The guard
+            // itself stays hard — it is the #539 regression check for this
+            // exact control and must not be weakened (#582 review F2).
+            let viewport = app.windows.firstMatch.frame
+            for _ in 0..<8 {
+                let frame = action.frame
+                if action.isHittable, frame.minY >= viewport.minY, frame.maxY <= viewport.maxY {
+                    break
+                }
+                if frame.maxY > viewport.maxY {
+                    dragChooser(
+                        app,
+                        viewport: viewport,
+                        points: frame.maxY - viewport.maxY + 12,
+                        contentDirection: -1
+                    )
+                } else if frame.minY < viewport.minY {
+                    dragChooser(
+                        app,
+                        viewport: viewport,
+                        points: viewport.minY - frame.minY + 12,
+                        contentDirection: 1
+                    )
+                } else {
+                    // Fully inside yet not hittable: the scroll view is still
+                    // settling (or rubber-banding) — a small nudge forces a
+                    // fresh layout pass.
+                    dragChooser(app, viewport: viewport, points: 8, contentDirection: -1)
+                }
+                Thread.sleep(forTimeInterval: 0.3)
             }
             XCTAssertTrue(
                 waitForStableFrame(action, timeout: 5),
@@ -805,6 +1383,115 @@ final class SendmeterWatchScreenshots: XCTestCase {
         }
         XCTAssertTrue(action.isHittable, "Home action \(identifier) must be hittable before tapping")
         action.tap()
+    }
+
+    /// watchOS can expose a styled button through more than one accessibility
+    /// node carrying the same identifier (a layout wrapper plus the styled
+    /// label), and an identifier on a container has been observed swallowing
+    /// its descendants' (`ForceGaugeView`'s documented footgun). Selecting
+    /// the LARGEST match would let a huge container satisfy every `>= 44`
+    /// geometry check vacuously (#582 review F5) — pick the smallest match,
+    /// which biases every assertion toward failing, and flag duplicates so a
+    /// silently split node is a finding rather than a coin toss.
+    private func smallestButton(in app: XCUIApplication, identifier: String) -> XCUIElement {
+        let query = app.buttons.matching(identifier: identifier)
+        let matches = query.allElementsBoundByIndex
+        XCTAssertLessThanOrEqual(
+            matches.count, 1,
+            "expected one button for \(identifier), found \(matches.count) — geometry checks would be ambiguous"
+        )
+        return matches.min {
+            ($0.frame.width * $0.frame.height) < ($1.frame.width * $1.frame.height)
+        } ?? query.firstMatch
+    }
+
+    private func waitForAccessibilityValue(
+        _ element: XCUIElement,
+        expected: String,
+        timeout: TimeInterval = 3
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.exists, (element.value as? String) == expected {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return (element.value as? String) == expected
+    }
+
+    private func waitForElementToDisappear(
+        _ element: XCUIElement,
+        timeout: TimeInterval = 5
+    ) -> Bool {
+        let expectation = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == false"),
+            object: element
+        )
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
+    /// A rendered pixel elsewhere on a watch framebuffer is not proof that
+    /// the live Workout screen rendered its readouts. Pin the fixture's
+    /// semantic values too, so accessibility-large truncation (for example
+    /// `142` becoming `1…`) fails before a misleading capture is retained.
+    private func assertWorkoutReadouts(_ app: XCUIApplication, accessibilityLarge: Bool) {
+        for label in ["142", "46:33", "RESTING", "02:07", "12", "341 kcal", "1.4m"] {
+            let readout = app.staticTexts[label]
+            XCTAssertTrue(
+                readout.waitForExistence(timeout: 5),
+                "workout fixture readout \(label) must render completely"
+            )
+        }
+        // #582 review F3: the accessibility-large run must exercise a
+        // genuinely different render, or it can never fail differently from
+        // the normal run. The HR readout is the screen's Dynamic
+        // Type-scalable text (capped at .xxLarge, where the fixed 30pt row
+        // stops fitting), so under `-sendmeter-accessibility-large` it must
+        // render measurably taller than at the normal size — watchOS body
+        // is ~17-18.5pt tall at normal sizes and ~21-23pt at .xxLarge, so
+        // 20 sits between them. This fails if the whole screen is ever
+        // re-capped at .large, and also if width pressure quietly hands the
+        // growth back via `minimumScaleFactor` (how F3 originally hid).
+        if accessibilityLarge {
+            let heartRate = app.staticTexts["142"]
+            XCTAssertGreaterThanOrEqual(
+                heartRate.frame.height, 20,
+                "accessibility-large must scale the HR readout (got \(heartRate.frame.height)pt) — the Dynamic Type cap has collapsed to the normal size"
+            )
+        }
+    }
+
+    /// #580: four rest pills share one 40mm row, so a literal 44pt-wide
+    /// target per pill cannot exist (4 × 44 > the 162pt panel). The contract
+    /// is: full 44pt-tall hit slot, an equal ≥36pt-wide share of the row
+    /// (the real 40mm width is ~37.5pt — the floor sits just under it so a
+    /// genuine shrink fails, #582 review F6), hittable, and zero clipping
+    /// against the window and the live viewport.
+    private func assertRestPillVisible(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        viewport: XCUIElement,
+        fixture: String
+    ) {
+        XCTAssertTrue(element.isHittable, "fixture \(fixture) rest pill is not hittable")
+        XCTAssertGreaterThanOrEqual(element.frame.height, 44, "fixture \(fixture) rest pill lost its vertical 44pt target")
+        XCTAssertGreaterThanOrEqual(element.frame.width, 36, "fixture \(fixture) rest pill lost its width share of the row")
+        assertNotClipped(element, in: app, fixture: fixture)
+        assertNotClipped(element, in: viewport, fixture: fixture)
+    }
+
+    private func assertRestTargetSelection(
+        _ controls: [XCUIElement],
+        selectedIndex: Int
+    ) {
+        for (index, control) in controls.enumerated() {
+            let expected = index == selectedIndex ? "Selected" : "Not selected"
+            XCTAssertTrue(
+                waitForAccessibilityValue(control, expected: expected),
+                "rest target index \(index) should announce \(expected)"
+            )
+        }
     }
 
     private func homePagerViewport(in app: XCUIApplication) -> XCUIElement {
@@ -850,10 +1537,14 @@ final class SendmeterWatchScreenshots: XCTestCase {
         XCTAssertTrue(element.isHittable, "fixture \(fixture) control is not hittable")
         XCTAssertGreaterThanOrEqual(element.frame.height, 44, "fixture \(fixture) control lost its 44pt hit target")
         XCTAssertGreaterThanOrEqual(element.frame.width, 44, "fixture \(fixture) control lost its 44pt horizontal hit target")
+        // Always bound against the window too (#582 review F4): a viewport
+        // element that is itself the overflowing content (a SwiftUI stack
+        // reports its full size when it outgrows its proposal) moves WITH
+        // the overflow, so the viewport check alone can go vacuous exactly
+        // when the screen stops fitting.
+        assertNotClipped(element, in: app, fixture: fixture)
         if let viewport {
             assertNotClipped(element, in: viewport, fixture: fixture)
-        } else {
-            assertNotClipped(element, in: app, fixture: fixture)
         }
     }
 
@@ -924,7 +1615,123 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 primaryPixels += 1
             }
         }
-        return primaryPixels >= max(512, width * height / 100)
+        // SL-584: the primary surface is the hands-free arm CARD now, not the
+        // old solid `WatchPrimaryButtonStyle` Start fill — its indigo ink is
+        // the bright readout digits, the card's accent stroke/wash and the
+        // selected side segment, an order of magnitude fewer qualifying
+        // pixels than a filled button. Threshold sized to that reality while
+        // still rejecting a blank/AOD framebuffer outright.
+        return primaryPixels >= max(400, width * height / 300)
+    }
+
+    /// #580: the resting phase band is the rendered-pixel proof for a
+    /// retained workout capture. Accessibility can remain current after
+    /// watchOS has entered a blank Always-On framebuffer, so a black image
+    /// must not be accepted as visual evidence for the compact controls. The
+    /// band (`WorkoutPhasePalette`'s resting purple) must form a wide
+    /// contiguous surface below the clock, and the rest selector must
+    /// contribute cyan pixels (the 2m pill's `WatchDesignTokens.secondary`
+    /// text/stroke) so a stray blue pixel elsewhere cannot satisfy this.
+    private func hasWorkoutPhaseSurface(_ image: CGImage) -> Bool {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return false }
+
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = rgba.withUnsafeMutableBytes { rawBuffer -> Bool in
+            guard let baseAddress = rawBuffer.baseAddress,
+                  let context = CGContext(
+                      data: baseAddress,
+                      width: width,
+                      height: height,
+                      bitsPerComponent: 8,
+                      bytesPerRow: width * 4,
+                      space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else {
+                return false
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return false }
+
+        var phasePixels = 0
+        var cyanSelectorPixels = 0
+        var widestPhaseRow = 0
+        var substantialPhaseRows = 0
+        let clockRows = max(1, height / 5)
+        let bottomRows = min(height, height * 4 / 5)
+        for y in clockRows..<bottomRows {
+            var phaseRowPixels = 0
+            for x in 0..<width {
+                let offset = (y * width + x) * 4
+                let red = Int(rgba[offset])
+                let green = Int(rgba[offset + 1])
+                let blue = Int(rgba[offset + 2])
+                // The resting band is a broad blue/purple surface. Keep the
+                // threshold tolerant of the gradient and Always-On dimming,
+                // but require a contiguous band-sized row below.
+                if blue >= 55, blue >= red + 35, blue >= green + 12 {
+                    phasePixels += 1
+                    phaseRowPixels += 1
+                }
+                if green >= 70, blue >= 70, green >= red + 40, blue >= green - 10 {
+                    cyanSelectorPixels += 1
+                }
+            }
+            widestPhaseRow = max(widestPhaseRow, phaseRowPixels)
+            if phaseRowPixels >= width * 55 / 100 {
+                substantialPhaseRows += 1
+            }
+        }
+        return phasePixels >= max(64, width * height / 2_500)
+            && widestPhaseRow >= width * 55 / 100
+            && substantialPhaseRows >= max(6, height / 40)
+            && cyanSelectorPixels >= 24
+    }
+
+    /// #569: prove the retained icon fixture is a rendered app frame, not the
+    /// black/AOD framebuffer that can still expose a live accessibility tree.
+    /// The selected navigation control uses the shared cyan accent, so require
+    /// a bounded count of cyan pixels below the upper clock region. The lower
+    /// scan window also keeps system clock text from satisfying the assertion.
+    private func hasSelectedIconSurface(_ image: CGImage) -> Bool {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return false }
+
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let rendered = rgba.withUnsafeMutableBytes { rawBuffer -> Bool in
+            guard let baseAddress = rawBuffer.baseAddress,
+                  let context = CGContext(
+                      data: baseAddress,
+                      width: width,
+                      height: height,
+                      bitsPerComponent: 8,
+                      bytesPerRow: width * 4,
+                      space: CGColorSpaceCreateDeviceRGB(),
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else {
+                return false
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard rendered else { return false }
+
+        var cyanPixels = 0
+        let clockRows = max(1, height / 5)
+        for offset in stride(from: clockRows * width * 4, to: rgba.count, by: 4) {
+            let red = Int(rgba[offset])
+            let green = Int(rgba[offset + 1])
+            let blue = Int(rgba[offset + 2])
+            if green >= 45, blue >= 55,
+               blue >= green + 3, green >= red + 25 {
+                cyanPixels += 1
+            }
+        }
+        return cyanPixels >= max(64, width * height / 2_500)
     }
 
 }

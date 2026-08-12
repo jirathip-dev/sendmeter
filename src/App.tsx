@@ -72,7 +72,11 @@ export default function App() {
     <RealtimeVersionProvider userId={session.user.id}>
       <ToastProvider>
         <TindeqProvider>
-          <AuthedApp userId={session.user.id} onSignOut={signOut} />
+          <AuthedApp
+            userId={session.user.id}
+            userEmail={session.user.email ?? null}
+            onSignOut={signOut}
+          />
         </TindeqProvider>
       </ToastProvider>
     </RealtimeVersionProvider>
@@ -81,9 +85,11 @@ export default function App() {
 
 function AuthedApp({
   userId,
+  userEmail,
   onSignOut,
 }: {
   userId: string;
+  userEmail: string | null;
   onSignOut: SignOut;
 }) {
   const {
@@ -345,11 +351,11 @@ function AuthedApp({
 
   return (
     <div className={`app-shell${chromeHidden ? " chrome-hidden" : ""}`}>
-      {/* Floating account button — the whole header is just this circle;
+      {/* Floating settings button — the whole header is just this circle;
           branding and phase info live in the content (phase banner). */}
       <button
         className="account-fab"
-        aria-label="Account"
+        aria-label="Settings"
         onClick={() => setShowAccountSheet(true)}
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -511,6 +517,7 @@ function AuthedApp({
         <AccountSheet
           onClose={() => setShowAccountSheet(false)}
           onSignOut={onSignOut}
+          email={userEmail}
         />
       )}
 

@@ -315,6 +315,13 @@ enum WatchIconSymbol {
     static let disconnect = "xmark" // Progressor disconnect action
     static let refresh = "arrow.triangle.2.circlepath" // matches WatchVisualState.syncing
     static let history = "clock.arrow.circlepath" // matches WatchVisualState.cached
+    // Finishing an activity is a checkered flag — shared by the live
+    // Workout's finish control and Force's finish-session control so the
+    // concept reads identically on both screens. Deliberately NOT the
+    // in-row boulder stop glyph (stop.fill): those controls end different
+    // scopes (the whole workout vs. one boulder) and sharing a glyph would
+    // make them ambiguous (#580 scope 1).
+    static let finishWorkout = "flag.checkered"
     static let settings = "gearshape.fill" // not yet wired to a call site
     static let connection = "antenna.radiowaves.left.and.right" // not yet wired
     static let protocolPicker = "list.bullet.clipboard" // not yet wired (Force protocol chooser)
@@ -325,8 +332,8 @@ enum WatchIconSymbol {
 /// control on the watch (Home's Status/Actions switcher below, #537's Force
 /// setup entry points, future secondary actions) should be built from this
 /// rather than a one-off `Button` + `Image`, so the visible glyph size, the
-/// watchOS-minimum hit target, and the selected/unselected treatment stay
-/// identical everywhere instead of drifting per screen.
+/// watchOS-minimum hit target, and the selected/unselected/pressed/disabled
+/// treatment stay identical everywhere instead of drifting per screen.
 ///
 /// - `accessibilityLabel` is required: an icon with no announced name is not
 ///   accessible (#541's rule). `accessibilityHint` is optional extra context
@@ -347,6 +354,10 @@ enum WatchIconSymbol {
 ///   through `WatchPalette.accent(_:reducedLuminance:)` — the file's one
 ///   shared Always-On dimming conversion — like every other decorative
 ///   accent here.
+/// - Pressed and disabled rendering belongs to the primitive's button style,
+///   not to each caller. The disabled state is read from SwiftUI's
+///   `isEnabled` environment, so both `.disabled(true)` and the explicit
+///   `isDisabled` convenience below get the same muted treatment.
 struct WatchIconButton: View {
     let systemImage: String
     let accessibilityLabel: String
@@ -358,46 +369,21 @@ struct WatchIconButton: View {
     /// when they are not selected; navigation controls stay tertiary when
     /// inactive so the compact Home switcher does not become another pill.
     var usesTintWhenUnselected = false
+    var isDisabled = false
     let action: () -> Void
-    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
-
-    /// Painted circle diameter — deliberately smaller than the hit target so
-    /// a row of these reads as compact chrome rather than another full-size
-    /// button bar (the #539 complaint about the old full-width pill).
-    private static let visibleDiameter: CGFloat = 30
-
-    private var resolvedTint: Color {
-        WatchPalette.accent(tint, reducedLuminance: isLuminanceReduced)
-    }
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(
-                    isSelected
-                        ? WatchPalette.textPrimary
-                        : (usesTintWhenUnselected
-                            ? WatchPalette.foreground(tint)
-                            : WatchPalette.textTertiary)
-                )
-                .frame(width: Self.visibleDiameter, height: Self.visibleDiameter)
-                .background {
-                    Circle()
-                        .fill(isSelected ? resolvedTint.opacity(0.72) : Color.white.opacity(0.08))
-                        .overlay {
-                            Circle().stroke(Color.white.opacity(isSelected ? 0.24 : 0.1), lineWidth: 0.7)
-                        }
-                }
-                // Inside the button's label, not chained after `Button` —
-                // see the doc comment above (#541 round-1 review F2).
-                .frame(
-                    minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
-                    minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
-                )
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(
+            WatchIconButtonStyle(
+                isSelected: isSelected,
+                tint: tint,
+                usesTintWhenUnselected: usesTintWhenUnselected
+            )
+        )
+        .disabled(isDisabled)
         // No `.accessibilityElement(children: .ignore)` here: on a `Button`
         // (unlike the plain `Label` `WatchStateChip` uses) it left the SF
         // Symbol's own auto-generated name ("Chart Column", "Flash") as the
@@ -407,6 +393,121 @@ struct WatchIconButton: View {
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .modifier(WatchIconButtonHint(hint: accessibilityHint))
         .modifier(WatchIconButtonIdentifier(identifier: accessibilityIdentifier))
+    }
+}
+
+/// The style owns the entire interactive label, including the 44pt frame.
+/// Keeping this inside `ButtonStyle.makeBody` is the important part of the
+/// hit-target contract: a frame/content shape chained after `Button` only
+/// grows its layout box, not the region that receives the tap.
+private struct WatchIconButtonStyle: ButtonStyle {
+    let isSelected: Bool
+    let tint: PhaseRGB
+    let usesTintWhenUnselected: Bool
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+
+    func makeBody(configuration: Configuration) -> some View {
+        let resolvedTint = WatchPalette.accent(tint, reducedLuminance: isLuminanceReduced)
+        let pressed = configuration.isPressed
+        return configuration.label
+            .font(.system(size: WatchIconButtonVisuals.iconSize, weight: .bold))
+            .foregroundStyle(
+                WatchIconButtonVisuals.foreground(
+                    isSelected: isSelected,
+                    tint: tint,
+                    usesTintWhenUnselected: usesTintWhenUnselected
+                )
+            )
+            .frame(
+                width: WatchIconButtonVisuals.visibleDiameter,
+                height: WatchIconButtonVisuals.visibleDiameter
+            )
+            .background {
+                Circle()
+                    .fill(
+                        WatchIconButtonVisuals.fill(
+                            isSelected: isSelected,
+                            tint: resolvedTint,
+                            isPressed: pressed,
+                            isEnabled: isEnabled
+                        )
+                    )
+                    .overlay {
+                        Circle().stroke(
+                            WatchIconButtonVisuals.stroke(
+                                isSelected: isSelected,
+                                isPressed: pressed,
+                                isEnabled: isEnabled
+                            ),
+                            lineWidth: WatchIconButtonVisuals.strokeWidth(
+                                isPressed: pressed,
+                                isEnabled: isEnabled
+                            )
+                        )
+                    }
+            }
+            // Inside the button's label, not chained after `Button` — see
+            // the doc comment above (#569 / #539 review F2).
+            .frame(
+                minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
+                minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
+            )
+            .contentShape(Rectangle())
+            .opacity(
+                WatchIconButtonVisuals.opacity(isPressed: pressed, isEnabled: isEnabled)
+            )
+    }
+}
+
+/// Shared visual math for the live control and its deterministic preview/
+/// screenshot swatches. The swatches are not a second control; they make the
+/// pressed state (which a Canvas or fixture cannot hold with a real touch)
+/// inspectable while keeping the production button and the evidence in lockstep.
+private enum WatchIconButtonVisuals {
+    static let visibleDiameter: CGFloat = 30
+    static let iconSize: CGFloat = 14
+
+    static func foreground(
+        isSelected: Bool,
+        tint: PhaseRGB,
+        usesTintWhenUnselected: Bool
+    ) -> Color {
+        if isSelected {
+            return WatchPalette.textPrimary
+        }
+        return usesTintWhenUnselected ? WatchPalette.foreground(tint) : WatchPalette.textTertiary
+    }
+
+    static func fill(
+        isSelected: Bool,
+        tint: Color,
+        isPressed: Bool,
+        isEnabled: Bool
+    ) -> Color {
+        guard isEnabled else {
+            return Color.white.opacity(isSelected ? 0.08 : 0.04)
+        }
+        if isSelected {
+            return tint.opacity(isPressed ? 0.9 : 0.72)
+        }
+        return Color.white.opacity(isPressed ? 0.22 : 0.08)
+    }
+
+    static func stroke(isSelected: Bool, isPressed: Bool, isEnabled: Bool) -> Color {
+        guard isEnabled else { return Color.white.opacity(0.06) }
+        return Color.white.opacity(
+            isPressed ? (isSelected ? 0.42 : 0.24) : (isSelected ? 0.24 : 0.1)
+        )
+    }
+
+    static func strokeWidth(isPressed: Bool, isEnabled: Bool) -> CGFloat {
+        isEnabled ? (isPressed ? 1.1 : 0.7) : 0.6
+    }
+
+    static func opacity(isPressed: Bool, isEnabled: Bool) -> Double {
+        guard isEnabled else { return 0.38 }
+        return isPressed ? 0.84 : 1
     }
 }
 
@@ -438,10 +539,161 @@ private struct WatchIconButtonIdentifier: ViewModifier {
     }
 }
 
+extension View {
+    /// The watch's one compact finish/confirm affordance (SL-580 follow-up):
+    /// a small in-design card over a blocking scrim, replacing the
+    /// full-screen system `confirmationDialog` (too big on 40mm, and its red
+    /// destructive treatment read as alarming for safe, expected actions).
+    /// ONE implementation on purpose — the Workout finish and the Force
+    /// session finish share the same checkered-flag trigger glyph, so they
+    /// must also share the exact ask-first behavior; a second copy is how
+    /// the two would drift.
+    ///
+    /// Contract (mirrors what the system dialog provided):
+    /// - `onConfirm` is reachable only through the explicit confirm button —
+    ///   the compact destructive trigger can never complete on one tap.
+    /// - The scrim blocks every control underneath and tapping it cancels
+    ///   (always safe); the presenting content also leaves the accessibility
+    ///   tree, so VoiceOver focus cannot land on covered controls, and the
+    ///   card takes the escape gesture as the scrim-tap's VoiceOver
+    ///   equivalent.
+    /// - No animation on present/dismiss — nothing for Reduce Motion to
+    ///   reduce; the card chrome flows through `WatchCard`'s Always-On path.
+    func watchFinishConfirmation(
+        isPresented: Binding<Bool>,
+        title: String,
+        message: String,
+        confirmIdentifier: String,
+        confirmHint: String,
+        cancelIdentifier: String,
+        onConfirm: @escaping () -> Void
+    ) -> some View {
+        self
+            .accessibilityHidden(isPresented.wrappedValue)
+            .overlay {
+                if isPresented.wrappedValue {
+                    WatchFinishConfirmationCard(
+                        isPresented: isPresented,
+                        title: title,
+                        message: message,
+                        confirmIdentifier: confirmIdentifier,
+                        confirmHint: confirmHint,
+                        cancelIdentifier: cancelIdentifier,
+                        onConfirm: onConfirm
+                    )
+                }
+            }
+    }
+}
+
+private struct WatchFinishConfirmationCard: View {
+    @Binding var isPresented: Bool
+    let title: String
+    let message: String
+    let confirmIdentifier: String
+    let confirmHint: String
+    let cancelIdentifier: String
+    let onConfirm: () -> Void
+    /// The user's REAL size — read before the `.xxLarge` cap below, so the
+    /// accessibility layout branch keys off what the user actually chose.
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        ZStack {
+            // Deep enough that the screen behind reads as background in both
+            // full and reduced luminance; the card on top stays the focus.
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { isPresented = false }
+                .accessibilityHidden(true)
+            WatchCard(accent: WatchPalette.secondary) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title)
+                        .font(.system(.footnote, design: .rounded).weight(.bold))
+                        .foregroundStyle(WatchPalette.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // At accessibility sizes the supporting line is dropped
+                    // (the title carries the decision and the confirm hint
+                    // repeats the consequence) — its rows are what the
+                    // stacked full-width buttons below need to fit 40mm.
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Text(message)
+                            .font(.system(.caption2, design: .rounded))
+                            .foregroundStyle(WatchPalette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    actions
+                }
+            }
+            .padding(.horizontal, 6)
+            // VoiceOver treats the card as a modal so focus stays on the
+            // confirmation instead of the dimmed controls behind it; escape
+            // (two-finger scrub) is the scrim-tap's VoiceOver equivalent.
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { isPresented = false }
+        }
+        // Bounded like the live screen's readouts: the compact card plus two
+        // 44pt buttons must fit a 40mm viewport with no scroll fallback, so
+        // the visual scale stops at .xxLarge while the full VoiceOver labels
+        // and hints stay intact.
+        .dynamicTypeSize(.medium ... .xxLarge)
+    }
+
+    /// Side by side at normal sizes; STACKED full-width at accessibility
+    /// sizes (#588 review F1): in the row layout the two labels compete for
+    /// ~128pt of 40mm card width, and at accessibility scale the confirm
+    /// title compressed past `minimumScaleFactor` into a truncated "Fi…" on
+    /// the app's one irreversible confirmation. Stacking removes the
+    /// compression entirely — each button gets the full row — and the
+    /// screenshot suite asserts the stacked geometry at accessibility size.
+    @ViewBuilder
+    private var actions: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 6) {
+                confirmButton
+                cancelButton
+            }
+            .frame(maxWidth: .infinity)
+        } else {
+            HStack(spacing: 6) {
+                cancelButton
+                confirmButton
+            }
+        }
+    }
+
+    private var cancelButton: some View {
+        Button("Cancel") { isPresented = false }
+            .buttonStyle(WatchSecondaryButtonStyle(tint: WatchPalette.textSecondary))
+            // One line each in the tight side-by-side row on 40mm, scaling
+            // down a step instead of hyphenating when the width demands it.
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .accessibilityIdentifier(cancelIdentifier)
+            .accessibilityHint("Cancels without finishing")
+    }
+
+    private var confirmButton: some View {
+        Button("Finish") {
+            isPresented = false
+            onConfirm()
+        }
+        .buttonStyle(WatchPrimaryButtonStyle(tint: WatchPalette.secondary))
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .accessibilityIdentifier(confirmIdentifier)
+        .accessibilityHint(confirmHint)
+    }
+}
+
 /// Shared icon glyph for a compact `NavigationLink` label. `WatchIconButton`
-/// above owns the button hit-target/accessibility contract; this lighter glyph
-/// remains useful where a caller supplies its own link/button styling (for
-/// example Force's context chooser).
+/// above is the single interactive primitive for icon actions and navigation;
+/// this lighter glyph is only the label content for a caller-owned link (for
+/// example Force's context chooser). The containing link owns the required
+/// accessibility label/hint and the glyph is hidden from VoiceOver so it does
+/// not announce its SF Symbol name a second time.
 struct WatchIconGlyph: View {
     let systemImage: String
     var size: CGFloat = 15
@@ -453,8 +705,184 @@ struct WatchIconGlyph: View {
                 width: CGFloat(WatchDesignTokens.minimumHitTarget),
                 height: CGFloat(WatchDesignTokens.minimumHitTarget)
             )
+            .contentShape(Rectangle())
+            .accessibilityHidden(true)
     }
 }
+
+/// Deterministic gallery used by the screenshot target and the Canvas. It
+/// deliberately exercises the same `WatchIconButton` used by Home and Force;
+/// only the pressed swatch is static because a preview cannot hold a real
+/// touch. Fixture-only captions and section headers are intentionally omitted
+/// so the actual 44pt controls stay inside the smallest watch viewport; their
+/// labels, identifiers, and visible state styling keep the matrix deterministic.
+/// This is foundation coverage, not a production destination.
+struct WatchIconPrimitiveFixtureView: View {
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 2) {
+                LazyVGrid(
+                    // Three 44pt cells plus two 2pt gaps fit inside the
+                    // 40mm content width after the 4pt horizontal inset.
+                    columns: [
+                        GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible()),
+                    ],
+                    spacing: 2
+                ) {
+                    WatchIconButton(
+                        systemImage: "bell.fill",
+                        accessibilityLabel: "Normal icon action",
+                        accessibilityHint: "Runs the secondary action",
+                        accessibilityIdentifier: "icon-action-normal",
+                        action: {}
+                    )
+                    WatchIconButtonSwatch(
+                        systemImage: "bell.fill",
+                        accessibilityLabel: "Pressed icon action",
+                        accessibilityIdentifier: "icon-action-pressed",
+                        isPressed: true
+                    )
+                    WatchIconButton(
+                        systemImage: "bell.fill",
+                        accessibilityLabel: "Disabled icon action",
+                        accessibilityIdentifier: "icon-action-disabled",
+                        isDisabled: true,
+                        action: {}
+                    )
+                }
+
+                HStack(spacing: 2) {
+                    WatchIconButton(
+                        systemImage: WatchIconSymbol.status,
+                        accessibilityLabel: "Show status",
+                        accessibilityHint: "Displays today's readiness",
+                        accessibilityIdentifier: "icon-nav-unselected",
+                        action: {}
+                    )
+                    WatchIconButton(
+                        systemImage: WatchIconSymbol.actions,
+                        accessibilityLabel: "Show actions",
+                        accessibilityHint: "Displays Force and workout actions",
+                        accessibilityIdentifier: "icon-nav-selected",
+                        isSelected: true,
+                        tint: WatchDesignTokens.secondary,
+                        action: {}
+                    )
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+        }
+        .scrollIndicators(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("icon-primitives-viewport")
+        .watchCanvas()
+    }
+}
+
+/// Preview-only pressed-state evidence. `WatchIconButton` owns all interactive
+/// states; this view only calls the shared visual math so a held touch can be
+/// reviewed deterministically in Canvas and in the screenshot fixture.
+private struct WatchIconButtonSwatch: View {
+    let systemImage: String
+    let accessibilityLabel: String
+    let accessibilityIdentifier: String
+    var isPressed = false
+    var isSelected = false
+    var tint: PhaseRGB = WatchDesignTokens.primary
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+
+    var body: some View {
+        let resolvedTint = WatchPalette.accent(tint, reducedLuminance: isLuminanceReduced)
+        Image(systemName: systemImage)
+            .font(.system(size: WatchIconButtonVisuals.iconSize, weight: .bold))
+            .foregroundStyle(
+                WatchIconButtonVisuals.foreground(
+                    isSelected: isSelected,
+                    tint: tint,
+                    usesTintWhenUnselected: false
+                )
+            )
+            .frame(
+                width: WatchIconButtonVisuals.visibleDiameter,
+                height: WatchIconButtonVisuals.visibleDiameter
+            )
+            .background {
+                Circle()
+                    .fill(
+                        WatchIconButtonVisuals.fill(
+                            isSelected: isSelected,
+                            tint: resolvedTint,
+                            isPressed: isPressed,
+                            isEnabled: true
+                        )
+                    )
+                    .overlay {
+                        Circle().stroke(
+                            WatchIconButtonVisuals.stroke(
+                                isSelected: isSelected,
+                                isPressed: isPressed,
+                                isEnabled: true
+                            ),
+                            lineWidth: WatchIconButtonVisuals.strokeWidth(
+                                isPressed: isPressed,
+                                isEnabled: true
+                            )
+                        )
+                    }
+            }
+            .frame(
+                minWidth: CGFloat(WatchDesignTokens.minimumHitTarget),
+                minHeight: CGFloat(WatchDesignTokens.minimumHitTarget)
+            )
+            .contentShape(Rectangle())
+            .opacity(WatchIconButtonVisuals.opacity(isPressed: isPressed, isEnabled: true))
+            // Make the 44pt label content visible in the evidence without
+            // changing the production control's appearance.
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(WatchPalette.secondary.opacity(0.28), lineWidth: 0.7)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityIdentifier(accessibilityIdentifier)
+    }
+}
+
+#if DEBUG
+/// Pinned frames make the smallest and largest supported watch explicit in
+/// Canvas. The accessibility variants use the same fixture hierarchy as the
+/// normal previews, so Dynamic Type changes are visible rather than two
+/// unrelated mock layouts.
+private enum WatchIconPreviewScreen {
+    static let mm40 = CGSize(width: 162, height: 197)
+    static let mm49 = CGSize(width: 205, height: 251)
+}
+
+private func watchIconPreview(_ size: CGSize) -> some View {
+    WatchIconPrimitiveFixtureView()
+        .frame(width: size.width, height: size.height)
+        .clipped()
+}
+
+#Preview("Icon primitives · 40mm") {
+    watchIconPreview(WatchIconPreviewScreen.mm40)
+}
+
+#Preview("Icon primitives · 49mm") {
+    watchIconPreview(WatchIconPreviewScreen.mm49)
+}
+
+#Preview("Icon primitives · 40mm · accessibility") {
+    watchIconPreview(WatchIconPreviewScreen.mm40)
+        .environment(\.dynamicTypeSize, .accessibility3)
+}
+
+#Preview("Icon primitives · 49mm · accessibility") {
+    watchIconPreview(WatchIconPreviewScreen.mm49)
+        .environment(\.dynamicTypeSize, .accessibility3)
+}
+#endif
 
 struct WatchLoadingState: View {
     let title: String
