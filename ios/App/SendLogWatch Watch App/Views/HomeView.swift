@@ -100,27 +100,74 @@ struct HomeView: View {
     /// top-RIGHT — the icons take the top-LEFT region beside it), freeing
     /// that whole row for content. The strip height is measured from the
     /// live safe-area inset (GeometryReader below), never hardcoded: it
-    /// differs per case size (≈28pt on 40mm, ≈37pt on 49mm).
+    /// differs per case size (measured 32.5pt on 40mm, 44.5pt on 46mm,
+    /// 47.5pt on 49mm — the `systemClockCenterY` calibration table).
     ///
     /// Half of `WatchIconButtonVisuals.visibleDiameter` (30pt) — KEEP IN
     /// SYNC, same contract as `selectorButtonBackdrop`'s 30pt disc below.
-    /// Used to pin the discs fully on screen: the disc centers sit at
-    /// `max(strip × discCenterFraction, discRadius + 1)`, so even a shallow
-    /// strip cannot push visible ink past the physical top edge.
+    /// The disc centers sit at `systemClockCenterY(strip:)`, which never
+    /// returns less than `discRadius + 1` (16pt) — the visible ink stays
+    /// ≥1pt inside the physical top edge on the smallest case size (see
+    /// the floor's comment in `systemClockCenterY`).
     private static let discRadius: CGFloat = 15
-    /// Vertical center of the icon discs as a fraction of the strip height.
-    /// 0.5 would be the geometric center; biased slightly low so the discs
-    /// optically align with the system time's text band, which hugs the
-    /// strip's lower half (the upper part of the strip absorbs the curved
-    /// bezel). One tunable on purpose — adjust here after visual review.
-    private static let discCenterFraction: CGFloat = 0.55
-    /// Defensive floor for the measured strip; no real watch reports less,
-    /// but a zero inset must not put the icons on top of at-rest content.
-    private static let minimumStripHeight: CGFloat = 24
-    /// Breath between the strip's bottom edge and at-rest page content, so
-    /// the discs (which can reach ~1pt past the strip bottom on 40mm) never
-    /// touch the cards until the user scrolls.
+    /// Defensive floor for the measured strip, set to the measured 40mm
+    /// value — the smallest any real watch reports (32.5pt; the 46mm and
+    /// 49mm strips measure 44.5/47.5). If the inset ever reads 0 again
+    /// (the #597 failure mode), this floor keeps the WHOLE layout coherent
+    /// on the 40mm geometry — the disc calibration clamps to the 40mm
+    /// anchor, and the fade mask, the workout banner's top pad and the
+    /// at-rest content inset all degrade to the same device's numbers
+    /// instead of three different ones.
+    private static let minimumStripHeight: CGFloat = 32.5
+    /// Breath between the chrome's bottom edge (the strip, or the discs'
+    /// lower edge when a device's clock sits low in the strip) and at-rest
+    /// page content, so the discs never touch the cards until the user
+    /// scrolls.
     private static let contentBreath: CGFloat = 6
+
+    /// The system clock's optical center — the vertical target for the icon
+    /// discs — as a function of the runtime top safe-area inset (the strip).
+    /// Calibrated from 2x simulator captures on watchOS 26.5 (2026-08-12,
+    /// same pixel method as the #596 report):
+    ///
+    ///   case size (pt)      strip (safe-area top)   clock center
+    ///   40mm SE 3  162×197  32.5                     15.2
+    ///   46mm S11   208×248  44.5                     25.5
+    ///   49mm Ultra 211×257  47.5                     28.0
+    ///
+    /// The three points are collinear — 46mm interpolates to 25.4 vs the
+    /// measured 25.5 — so a linear interpolation between the 40mm and 49mm
+    /// anchors reproduces every measured size within a pixel, and the input
+    /// (the live strip) already varies per device. #597 instead applied a
+    /// device-invariant 0.55×strip to a fictional strip: the real one is
+    /// TALLER than the clock band, and the clock's center sits at 0.47
+    /// (40mm) / 0.59 (49mm) of it — no constant fraction exists, which is
+    /// why the discs rode the top bezel on Ultra while sitting ~1pt off the
+    /// physical edge on 40mm. Values clamp to the anchor range: a case size
+    /// outside it must not push the discs above the measured 40mm position
+    /// (which would cross the physical top edge) or below the 49mm one.
+    /// Re-measure this table if a watchOS update moves the system clock.
+    ///
+    /// The result additionally floors at `discRadius + 1` (16pt). This is a
+    /// CLEARANCE floor, not a mechanism: it binds only on the smallest case
+    /// size (the 40mm clock center is 15.2pt, and the 30pt disc against a
+    /// ~10.5pt clock band has sub-pixel headroom at the physical top edge —
+    /// 0.2pt at 2x is a single pixel row, invisible to the screenshot suite
+    /// because it reconstructs the disc rect from the hit frame's midY
+    /// rather than reading rendered ink). The 1pt clearance restores the
+    /// #597-era margin there at a cost of 0.8pt of alignment — inside the
+    /// ±2pt clock-center band — and never binds on 46/49mm. #597's floor
+    /// failed because it dominated EVERY device on a fictional input; this
+    /// one yields to the calibration on every device but the smallest.
+    private static func systemClockCenterY(strip: CGFloat) -> CGFloat {
+        let strip40mm: CGFloat = 32.5
+        let strip49mm: CGFloat = 47.5
+        let center40mm: CGFloat = 15.2
+        let center49mm: CGFloat = 28.0
+        let clamped = min(max(strip, strip40mm), strip49mm)
+        let fraction = (clamped - strip40mm) / (strip49mm - strip40mm)
+        return max(center40mm + (center49mm - center40mm) * fraction, Self.discRadius + 1)
+    }
 
     /// Per-button legibility backdrop (#588 review F3): a canvas-colored
     /// disc matching the primitive's 30pt visible circle. Over the dark
@@ -139,15 +186,16 @@ struct HomeView: View {
 
     /// The clock-level icon row (SL-586). Leading padding + tight spacing
     /// keep both visible discs well clear of the system time on a 162pt-wide
-    /// 40mm face: discs span x ≈ 13…89 while the rendered clock starts
-    /// ≈ 110+ — the screenshot suite asserts that margin explicitly. The
+    /// 40mm face: discs span x ≈ 15…77 while the rendered clock starts
+    /// ≈ 120 — the screenshot suite asserts that margin explicitly. The
     /// `.frame(height: strip)` centers the 44pt buttons on the strip's
     /// midline; the offset then pins the disc centers at
-    /// `max(strip × discCenterFraction, discRadius + 1)` — optically on the
-    /// clock's text band, but never letting visible ink cross the physical
-    /// top edge on a shallow strip.
+    /// `systemClockCenterY(strip:)` — the system clock's measured optical
+    /// center on this case size — never letting visible ink cross the
+    /// physical top edge (the calibration's clearance floor keeps the disc
+    /// top ≥1pt inside the edge on the smallest case size).
     private func selectorRow(strip: CGFloat) -> some View {
-        let discCenterY = max(strip * Self.discCenterFraction, Self.discRadius + 1)
+        let discCenterY = Self.systemClockCenterY(strip: strip)
         return HStack(spacing: 2) {
             WatchIconButton(
                 systemImage: WatchIconSymbol.status,
@@ -175,15 +223,26 @@ struct HomeView: View {
     }
 
     var body: some View {
-        // The root ignores the TOP safe area as well as the bottom one now
-        // (SL-586), so the pager runs under the system strip and the icons
-        // can sit inside it. The GeometryReader is what still knows where
-        // the strip ends: expanded to the physical screen, it reports the
-        // ignored inset via `safeAreaInsets.top`, which every piece of the
-        // new geometry (icon row, fade height, at-rest content inset)
+        // The root content ignores the TOP safe area as well as the bottom
+        // one now (SL-586), so the pager runs under the system strip and the
+        // icons can sit inside it. The GeometryReader is what still knows
+        // where the strip ends: applied to the CONTENT instead of to the
+        // reader (see below), `ignoresSafeArea` leaves the reader reporting
+        // the true safe-area top — the system strip — which every piece of
+        // the new geometry (icon row, fade height, at-rest content inset)
         // derives from instead of a hardcoded bar height.
         GeometryReader { geo in
             let strip = max(geo.safeAreaInsets.top, Self.minimumStripHeight)
+            // The real chrome is the clock-level discs: their lower edge is
+            // where the strip's paintable region actually ends for content.
+            // The at-rest inset and the fade mask follow the strip (which
+            // the clock band never exceeds — it sits in the strip's upper
+            // part), with the disc bottom as a belt-and-braces floor so a
+            // device whose clock sits low in the strip still can't overlap
+            // its own at-rest cards.
+            let discCenterY = Self.systemClockCenterY(strip: strip)
+            let discBottom = discCenterY + Self.discRadius
+            let contentTop = max(strip, discBottom) + Self.contentBreath
             VStack(spacing: 2) {
                 if workout.isRunning {
                     WatchStateBanner(
@@ -203,17 +262,34 @@ struct HomeView: View {
                     // watchOS and never received the TabView-level inset — at
                     // rest, the readiness/Force cards rendered straight under
                     // the selector circles (the fixture matrix caught it). The
-                    // safe-area padding gives each page's at-rest content a
-                    // clear top margin below the system strip while its
-                    // scrolled content still passes visibly underneath.
-                    // Deliberately constant even when the workout banner
-                    // pushes the pager below the strip: a pad shorter than
-                    // the fade mask would leave at-rest cards half-dissolved.
+                    // same hosting-root independence also keeps each page's
+                    // OWN container safe area (the true top strip, ~32.5pt on
+                    // 40mm) even though the outer stack ignores it — so each
+                    // page must ignore it itself. TOP only: the bottom inset
+                    // (the rounded-corner / Digital Crown exclusion) is
+                    // system-owned and the outer stack's bottom ignore is
+                    // what historically let the pager reach the framebuffer
+                    // bottom — the pages keep their own bottom inset so
+                    // at-rest content still clears the corner curve, which a
+                    // rect-bounded assertion could never catch. The safe-area
+                    // padding sits FIRST, inside the ignore: reversed (ignore
+                    // then pad), `ignoresSafeArea` eats the padding and the
+                    // at-rest cards land back under the discs (measured 0.5pt,
+                    // caught by the suite's card-below-discs assertion). The
+                    // padding then gives each page's at-rest content a clear
+                    // top margin below the discs (the real chrome, per the
+                    // SL-586 follow-up) while its scrolled content still
+                    // passes visibly underneath. Deliberately constant even
+                    // when the workout banner pushes the pager below the
+                    // strip: a pad shorter than the fade mask would leave
+                    // at-rest cards half-dissolved.
                     StatusView()
-                        .safeAreaPadding(.top, strip + Self.contentBreath)
+                        .safeAreaPadding(.top, contentTop)
+                        .ignoresSafeArea(.container, edges: .top)
                         .tag(WatchHomePage.status)
                     ActionsView()
-                        .safeAreaPadding(.top, strip + Self.contentBreath)
+                        .safeAreaPadding(.top, contentTop)
+                        .ignoresSafeArea(.container, edges: .top)
                         .tag(WatchHomePage.actions)
                 }
                 // The explicit selector (the clock-level icons below) is the
@@ -281,23 +357,34 @@ struct HomeView: View {
             // watchOS's to clip" (WorkoutLiveView's app-owned top row is the
             // surviving fix). This overlay is the topBarLeading *equivalent*
             // that keeps the fixture/production control path intact. The
-            // 44pt hit frames cannot fit inside a ~28pt strip, so they
-            // follow WorkoutLiveView's shorter-slot doctrine: the invisible
-            // overhang crosses only the physical top bezel and the pages'
-            // top breath — never another control or visible content.
+            // 44pt hit frames cannot fit inside the strip (32.5pt on 40mm),
+            // so they follow WorkoutLiveView's shorter-slot doctrine: the
+            // invisible overhang crosses only the physical top bezel and the
+            // pages' top breath — never another control or visible content.
             .overlay(alignment: .topLeading) {
                 selectorRow(strip: strip)
             }
+            // The safe-area insets are the rounded-corner / Digital Crown
+            // exclusion zones, not additional visual gutters for this
+            // full-screen pager. Bottom: keeping the inset on the root stack
+            // left the pager's clip edge ~19pt above the captured framebuffer on
+            // a 40mm watch, which cut the scored readiness card after its
+            // production sync line. Top (SL-586): the strip must be paintable so
+            // scrolled content dissolves under the clock and the icons can sit
+            // beside it.
+            //
+            // Applied to the CONTENT (inside the GeometryReader), not to the
+            // reader itself: the reader must keep reporting the true top safe
+            // area inset — the system strip where watchOS draws the clock —
+            // because every piece of the geometry above derives from it. Under
+            // the #597 stack (ignoresSafeArea outside the reader) the reader
+            // measured 0.0 on both 40mm and 49mm simulators, the 24pt floor
+            // supplied the whole strip, and the icons pinned at the 16pt
+            // defensive floor — which is why they rode the top bezel on the
+            // larger Ultra clock band (SL-586 follow-up). The measured strips
+            // are 32.5pt (40mm), 44.5pt (46mm) and 47.5pt (49mm).
+            .ignoresSafeArea(.container, edges: [.top, .bottom])
         }
-        // The safe-area insets are the rounded-corner / Digital Crown
-        // exclusion zones, not additional visual gutters for this
-        // full-screen pager. Bottom: keeping the inset on the root stack
-        // left the pager's clip edge ~19pt above the captured framebuffer on
-        // a 40mm watch, which cut the scored readiness card after its
-        // production sync line. Top (SL-586): the strip must be paintable so
-        // scrolled content dissolves under the clock and the icons can sit
-        // beside it.
-        .ignoresSafeArea(.container, edges: [.top, .bottom])
         // The home title duplicated the app identity while consuming the
         // exact vertical budget the 40mm status card needs. The system time
         // remains visible; pushed screens still provide their own titles.
