@@ -1572,6 +1572,29 @@ final class SendmeterWatchScreenshots: XCTestCase {
         )
     }
 
+    /// Measured system-clock optical centers (pt) by window height, from the
+    /// same watchOS 26.5 simulator captures (2x PNGs, 2026-08-12, same pixel
+    /// method as the #596 report) that calibrate `HomeView.systemClockCenterY`:
+    /// 40mm SE 3 (197pt) → 15.2, 46mm S11 (248pt) → 25.5, 49mm Ultra 3 (257pt)
+    /// → 28.0. The suite's destinations are the 40mm and 49mm anchors, so the
+    /// expected value is exact there; intermediate heights interpolate
+    /// piecewise-linearly so a future destination still gets a sane band
+    /// rather than a hardcoded one. KEEP IN SYNC with the HomeView table.
+    private static func expectedClockCenterY(windowHeight: CGFloat) -> CGFloat {
+        let anchors: [(height: CGFloat, center: CGFloat)] = [
+            (197, 15.2),
+            (248, 25.5),
+            (257, 28.0),
+        ]
+        if windowHeight <= anchors[0].height { return anchors[0].center }
+        if windowHeight >= anchors[2].height { return anchors[2].center }
+        for (lower, upper) in zip(anchors, anchors.dropFirst()) where windowHeight <= upper.height {
+            let fraction = (windowHeight - lower.height) / (upper.height - lower.height)
+            return lower.center + (upper.center - lower.center) * fraction
+        }
+        return anchors[2].center
+    }
+
     /// SL-586: the Home page-toggle icons sit at the system-time level — in
     /// the top strip's LEFT region, beside the clock. Their 44pt hit frames
     /// deliberately overhang the physical top edge (the shorter-slot
@@ -1617,13 +1640,19 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 disc.minY, bounds.minY,
                 "fixture \(fixture): home-nav-\(name) disc is clipped at the physical top"
             )
-            // Both supported case sizes put the strip midline well under
-            // this: disc center ≈15pt (40mm, ~28pt strip) / ≈20pt (49mm,
-            // ~37pt strip). Failing this bound means the icons fell back to
-            // a below-the-strip row — the exact regression SL-586 removes.
+            // SL-586 follow-up: the old `midY <= 26` bound was device-invariant
+            // and passed for a device-invariant bug — the #597 disc center sat
+            // at the 16pt defensive floor on every case size, which matched
+            // the 40mm clock (15.2) by accident and missed the Ultra's
+            // (28.0) by 12pt. The expected center is now the measured system
+            // clock's optical center for THIS window's height, with a ±2pt
+            // band: a regression back toward the top (the 16pt floor fails
+            // every non-40mm size) and a drift below the clock band (a
+            // strip-bottom placement fails by >15pt) both fail.
+            let expectedCenter = Self.expectedClockCenterY(windowHeight: bounds.height)
             XCTAssertLessThanOrEqual(
-                disc.midY, 26,
-                "fixture \(fixture): home-nav-\(name) disc must sit at clock level in the top strip (midY \(disc.midY))"
+                abs(disc.midY - expectedCenter), 2,
+                "fixture \(fixture): home-nav-\(name) disc must sit on the system clock's optical center (expected ≈\(String(format: "%.1f", expectedCenter))pt for a \(String(format: "%.0f", bounds.height))pt window, got \(String(format: "%.1f", disc.midY))pt)"
             )
             XCTAssertLessThanOrEqual(
                 disc.maxX + Self.homeNavClockMargin, clockReserveMinX,
