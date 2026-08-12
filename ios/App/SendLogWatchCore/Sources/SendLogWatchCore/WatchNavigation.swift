@@ -7,6 +7,10 @@ import Foundation
 public enum WatchDest: Hashable, Sendable {
     case force
     case workout
+    /// #599: the quarantined-upload diagnostics + manual retry surface.
+    /// Deliberately not a deep-link target (there is no `sendmeter://` host
+    /// for it) — it is reachable from Home's Actions page only.
+    case uploadDiagnostics
 }
 
 /// The complication/quick-launch deep link hosts (`sendmeter://<host>`).

@@ -435,22 +435,11 @@ nonisolated struct WorkoutSaveBundle: Codable {
     var enqueuedUserId: UUID?
 }
 
-/// Why a bundle was quarantined (#475 F3) — kept distinct because the two
-/// cases carry different confidence: one is a proven-permanent DB rejection,
-/// the other is a bet that a bundle failing this many times in a row is not
-/// coming back.
-nonisolated enum QuarantineReason: String, Codable {
-    /// `UploadErrorClassifier` positively identified the bundle as violating
-    /// the one check constraint this PR set out to catch — quarantined on
-    /// the very first attempt.
-    case schemaRejection
-    /// The bundle failed `QueueRetryPolicy.maxConsecutiveFailures` consecutive
-    /// drain passes without the classifier ever recognizing why. Not
-    /// provably permanent — but bounded, so an unrecognized permanent error
-    /// (a different check constraint, a persistently invalid account, …)
-    /// can't park the rest of the queue behind it forever either.
-    case stuckRetrying
-}
+/// Why a bundle was quarantined (#475 F3) — `QuarantineReason` now lives in
+/// SendLogWatchCore (UploadErrorPolicy.swift), where the per-case copy and
+/// retry decisions that differ between the two cases are unit-tested on
+/// Linux; the on-disk raw values are part of the quarantine record's wire
+/// shape and are pinned there by a decode-compat test.
 
 /// A bundle `OfflineQueue.drainPass` gave up retrying (#475) — either
 /// `uploadBundle` rejected it with a specific, permanent DB error (today:
@@ -463,10 +452,15 @@ nonisolated enum QuarantineReason: String, Codable {
 /// failed and why, for truthful reporting and for a possible future repair
 /// pass (#287 precedent).
 ///
-/// Never read back into a normal drain pass; only user sign-out may delete
-/// it (#273) — and today NOTHING does even that (the watch has no sign-out
-/// queue purge equivalent to the web's `discardQueueOnUserSignOut`), so a
-/// `.quarantine` file is effectively permanent on-device storage. Quarantine
+/// Never read back into a normal drain pass. Nothing may DELETE a
+/// `.quarantine` file outright (the data-loss rule, #273 — only user sign-out
+/// may do that) — but two paths may TRANSFORM a `.stuckRetrying` record back
+/// into a pending `<uuid>.json`, item preserved: the F12 backoff resurrection
+/// (`UploadQueueEngine.resurrectDueStuckRetries`) and, since #600, the
+/// user's manual "Retry stuck uploads" (`retryQuarantinedItems`). The watch
+/// has no sign-out queue purge equivalent to the web's
+/// `discardQueueOnUserSignOut`, so everything else is effectively permanent
+/// on-device storage. Quarantine
 /// is expected to be rare, but `bundle.workout.raw` is the 1Hz debug trace
 /// (hundreds of KB for a long workout when `keepRawTrace` is on), so this was
 /// unbounded growth in the pathological case, not a fixed-size record (#475

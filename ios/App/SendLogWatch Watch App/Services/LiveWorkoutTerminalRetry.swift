@@ -553,3 +553,10 @@ extension LiveWorkoutTerminalRetry: QueueDepthReporting {
     nonisolated var syncSlot: PendingSyncQueue { .liveWorkoutTerminal }
     func refreshReportedCounts() async { pendingCount() }
 }
+
+extension LiveWorkoutTerminalRetry {
+    /// This queue never quarantines anything — the diagnostics surface sums
+    /// across all four queues, so this slot contributes an empty list.
+    /// (`UploadQueueEngine` has no quarantine path for a single-row file.)
+    func quarantinedDiagnostics() async -> [QuarantineDiagnosticEntry] { [] }
+}

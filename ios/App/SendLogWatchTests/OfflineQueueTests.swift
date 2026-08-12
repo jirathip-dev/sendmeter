@@ -1014,8 +1014,191 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertFalse(try filesOnDisk().contains("\(bundle.workout.id.uuidString).quarantine"))
     }
 
-    // MARK: #472b review F21 — a dropped scheduler callback must not disarm the backoff forever
+    // MARK: #599 — the quarantine diagnostics surface
 
+    /// The diagnostics read must not materialize the item payload: a record
+    /// whose stored item would FAIL a full `QueueQuarantineRecord` decode
+    /// (this handcrafted "bundle" carries only the synthesized
+    /// `enqueuedUserId` key, nothing else) still lists every header field —
+    /// the probe never reaches into the item. This is the #599 acceptance
+    /// criterion for the header-only read, pinned the same way
+    /// `quarantinedCount`'s F2 probe is.
+    func testQuarantinedDiagnosticsReadHeaderFieldsWithoutDecodingThePayload() async throws {
+        let id = UUID()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let longError = String(repeating: "y", count: 300)
+        try FileManager.default.createDirectory(at: pendingDir, withIntermediateDirectories: true)
+        let formatter = ISO8601DateFormatter()
+        let json = """
+        {"bundle":{"enqueuedUserId":"\(testUserId.uuidString)"},
+         "reason":"stuckRetrying","stage":"session","httpStatus":400,
+         "postgrestCode":"PGRST205","errorMessage":"\(longError)",
+         "attemptCount":20,"quarantinedAt":"\(formatter.string(from: now))","payloadDropped":true}
+        """
+        let url = pendingDir
+            .appendingPathComponent(id.uuidString)
+            .appendingPathExtension("quarantine")
+        try Data(json.utf8).write(to: url, options: .atomic)
+
+        let queue = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir
+        )
+        let diagnostics = await queue.quarantinedDiagnostics()
+        XCTAssertEqual(diagnostics.count, 1)
+        guard case .record(let item) = diagnostics[0] else {
+            return XCTFail("expected a record entry, got \(diagnostics[0])")
+        }
+        XCTAssertEqual(item.id, id)
+        XCTAssertEqual(item.reason, .stuckRetrying)
+        XCTAssertEqual(item.stage, .session)
+        XCTAssertEqual(item.httpStatus, 400)
+        XCTAssertEqual(item.postgrestCode, "PGRST205")
+        XCTAssertEqual(item.errorMessage, QuarantineDiagnostics.truncatedErrorMessage(longError))
+        XCTAssertEqual(item.attemptCount, 20)
+        XCTAssertEqual(item.quarantinedAt, now)
+        XCTAssertEqual(item.payloadDropped, true)
+
+        // The header-only read is what served the fields above: the SAME file
+        // cannot decode as a full record.
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        XCTAssertNil(
+            try? decoder.decode(QueueQuarantineRecord<WorkoutSaveBundle>.self, from: Data(contentsOf: url)),
+            "the fixture must be undecodable as a full record, or this test proves nothing about the probe"
+        )
+        // And the count agrees — same probe, same file.
+        let counted = await queue.quarantinedCount()
+        XCTAssertEqual(counted, 1)
+    }
+
+    /// The real quarantine path (a poisoned bundle drained to
+    /// `.schemaRejection`) must surface the actual recorded fields — stage,
+    /// PostgREST code, message, the #481 strip — so the user can see exactly
+    /// what the phone's "will not retry" banner is about.
+    func testQuarantinedDiagnosticsReportTheRealQuarantineFields() async throws {
+        var poisoned = makeBundle(id: UUID(), attempts: [makePoisonedAttempt(workoutId: UUID())])
+        poisoned.workout.raw = [[0, 12.5, 0.4, 140]]
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(poisoned, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            poisoned.workout.id: StagedUploadError(stage: .climbAttempts, underlying: durationCheckViolation),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+        await queue.drain()
+
+        let diagnostics = await queue.quarantinedDiagnostics()
+        XCTAssertEqual(diagnostics.count, 1)
+        guard case .record(let item) = diagnostics[0] else {
+            return XCTFail("expected a record entry, got \(diagnostics[0])")
+        }
+        XCTAssertEqual(item.id, poisoned.workout.id)
+        XCTAssertEqual(item.reason, .schemaRejection)
+        XCTAssertEqual(item.stage, .climbAttempts)
+        XCTAssertNil(item.httpStatus, "a PostgrestError carries no HTTP status")
+        XCTAssertEqual(item.postgrestCode, "23514")
+        XCTAssertEqual(item.errorMessage, durationCheckViolation.message)
+        XCTAssertNil(item.attemptCount, "schema rejection quarantines on the first attempt")
+        XCTAssertEqual(item.payloadDropped, true, "workouts shed `raw` at quarantine time (#481)")
+    }
+
+    /// An unreadable `.quarantine` file must stay VISIBLE — listed as
+    /// unreadable with its file-derived id — and must stay on disk (#287),
+    /// never deleted by a read.
+    func testAnUnreadableQuarantineFileIsListedAsUnreadableAndRetained() async throws {
+        let id = UUID()
+        try FileManager.default.createDirectory(at: pendingDir, withIntermediateDirectories: true)
+        try Data("not a quarantine record".utf8).write(
+            to: pendingDir.appendingPathComponent("\(id.uuidString).quarantine"),
+            options: .atomic
+        )
+        let queue = OfflineQueue(
+            uploader: ScriptedUploader(failing: [:]),
+            clock: FixedClock(Date(timeIntervalSince1970: 1_800_000_000)),
+            baseDir: tempDir
+        )
+
+        let diagnostics = await queue.quarantinedDiagnostics()
+        XCTAssertEqual(diagnostics, [.unreadable(id: id)])
+        XCTAssertTrue(try filesOnDisk().contains("\(id.uuidString).quarantine"), "#287: retained, never deleted by the read")
+        let counted = await queue.quarantinedCount()
+        XCTAssertEqual(counted, 1, "still counted the same cautious way as before")
+
+        // An unreadable record can't be attributed to any account, so it is
+        // visible to whoever is signed in — same rule the count already
+        // applies ("retained and reported").
+        signIn(as: UUID())
+        let underOtherAccount = await queue.quarantinedDiagnostics()
+        XCTAssertEqual(underOtherAccount.count, 1)
+    }
+
+    /// The diagnostics list is account-scoped exactly like `quarantinedCount`
+    /// (#475 F4): Account A's stuck upload must not read as B's diagnostics.
+    func testQuarantinedDiagnosticsAreAccountScoped() async throws {
+        let poisoned = makeBundle(id: UUID(), attempts: [makePoisonedAttempt(workoutId: UUID())])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(poisoned, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            poisoned.workout.id: StagedUploadError(stage: .climbAttempts, underlying: durationCheckViolation),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+        await queue.drain()
+        let underA = await queue.quarantinedDiagnostics()
+        XCTAssertEqual(underA.count, 1)
+
+        signIn(as: UUID())
+        let underB = await queue.quarantinedDiagnostics()
+        XCTAssertEqual(
+            underB.count,
+            0,
+            "Account A's stuck upload must not read as Account B's diagnostics"
+        )
+        XCTAssertTrue(try filesOnDisk().contains("\(poisoned.workout.id.uuidString).quarantine"), "never deleted by the account switch")
+
+        signIn(as: testUserId)
+        let backUnderA = await queue.quarantinedDiagnostics()
+        XCTAssertEqual(backUnderA.count, 1, "signing back in restores visibility")
+    }
+
+    /// The diagnostics list is ordered oldest-first, matching the queues'
+    /// own drain order — the item stuck the longest is the one to read first.
+    func testQuarantinedDiagnosticsAreOrderedOldestFirst() async throws {
+        func quarantineAt(_ date: Date, id: UUID) async throws {
+            try FileManager.default.createDirectory(at: pendingDir, withIntermediateDirectories: true)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let record = QueueQuarantineRecord(
+                item: makeBundle(id: id),
+                reason: .stuckRetrying,
+                stage: nil,
+                httpStatus: nil,
+                postgrestCode: "P0001",
+                errorMessage: "raise_exception",
+                attemptCount: QueueRetryPolicy.maxConsecutiveFailures,
+                quarantinedAt: date,
+                payloadDropped: nil
+            )
+            let url = pendingDir
+                .appendingPathComponent(id.uuidString)
+                .appendingPathExtension("quarantine")
+            try encoder.encode(record).write(to: url, options: .atomic)
+        }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let older = UUID()
+        let newer = UUID()
+        try await quarantineAt(now, id: older)
+        try await quarantineAt(now.addingTimeInterval(3600), id: newer)
+
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+        let diagnostics = await queue.quarantinedDiagnostics()
+        XCTAssertEqual(diagnostics.count, 2)
+        guard case .record(let first) = diagnostics[0], case .record(let second) = diagnostics[1] else {
+            return XCTFail("expected two record entries")
+        }
+        XCTAssertEqual(first.id, older, "oldest first")
+        XCTAssertEqual(second.id, newer)
+    }
+
+    // MARK: #472b review F21 — a dropped scheduler callback must not disarm the backoff forever
     /// Exercises the REAL production `TaskDrainScheduler`, not a test
     /// double — the only test in this file that does, closing the "never
     /// exercised end-to-end" gap the review noted. An earlier version

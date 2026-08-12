@@ -113,13 +113,15 @@ nonisolated struct QueueQuarantineRecord<Item: Codable>: Codable {
 
 /// #491 review F2: the header-only projection of a `QueueQuarantineRecord`,
 /// for the two per-pass sweeps that must not materialize every quarantined
-/// recording's full sample array on a watch (`quarantinedCount` and the
-/// not-yet-due majority of `resurrectDueStuckRetries`). `enqueuedUserId` is
-/// the one item field the #475-F4 account scoping needs, and every
-/// `QueueUploadItem` encodes it under that same synthesized key, so the
-/// probe can reach into the legacy "bundle" object without knowing the item
-/// type. Decode failure is handled exactly like the full record's ("counted
-/// as the cautious default").
+/// recording's full sample array on a watch (`quarantinedCount`, the
+/// not-yet-due majority of `resurrectDueStuckRetries`) — and, since #599,
+/// for `quarantinedDiagnostics()`, which displays the record's header fields
+/// without ever decoding its item payload. `enqueuedUserId` is the one item
+/// field the #475-F4 account scoping needs, and every `QueueUploadItem`
+/// encodes it under that same synthesized key, so the probe can reach into
+/// the legacy "bundle" object without knowing the item type. Decode failure
+/// is handled exactly like the full record's ("counted as the cautious
+/// default").
 private nonisolated struct QueueQuarantineProbe: Decodable {
     struct ItemStamp: Decodable {
         var enqueuedUserId: UUID?
@@ -127,11 +129,17 @@ private nonisolated struct QueueQuarantineProbe: Decodable {
 
     var item: ItemStamp
     var reason: QuarantineReason
+    var stage: UploadStage?
+    var httpStatus: Int?
+    var postgrestCode: String?
+    var errorMessage: String?
+    var attemptCount: Int?
     var quarantinedAt: Date
+    var payloadDropped: Bool?
 
     enum CodingKeys: String, CodingKey {
         case item = "bundle"
-        case reason, quarantinedAt
+        case reason, stage, httpStatus, postgrestCode, errorMessage, attemptCount, quarantinedAt, payloadDropped
     }
 }
 
@@ -351,6 +359,67 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     func refreshReportedCounts() {
         _ = pendingCount()
         _ = quarantinedCount()
+    }
+
+    /// The #599 diagnostics read: every quarantined item's header fields for
+    /// display, oldest first. Same header-only probe as `quarantinedCount()`
+    /// — the item payload (a recording's sample array, a workout's raw
+    /// trace) is never decoded, because the only thing displayed is the
+    /// record's own header.
+    ///
+    /// Account-scoped the same way as the count (#475 F4): another account's
+    /// quarantined item is not this account's business and is left out. An
+    /// unreadable/undecodable `.quarantine` file is retained on disk, never
+    /// deleted (#287), and reported as `.unreadable` rather than silently
+    /// vanishing from the list (it is already counted by
+    /// `quarantinedCount()` the same way).
+    func quarantinedDiagnostics() -> [QuarantineDiagnosticEntry] {
+        let currentUserId = WatchSessionStore.shared.userId
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let files = ((try? FileManager.default.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == quarantineExtension }
+        var records: [QuarantineDiagnosticItem] = []
+        var unreadable: [UUID] = []
+        for file in files {
+            // The file name is `<queueFileId>.quarantine` (built in
+            // `quarantine(...)`), so the item's id survives even when the
+            // contents don't. A name outside that convention cannot be
+            // produced by this engine; the random fallback only guards a
+            // hand-edited file and is never persisted.
+            let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent) ?? UUID()
+            guard
+                let data = try? Data(contentsOf: file),
+                let probe = try? decoder.decode(QueueQuarantineProbe.self, from: data)
+            else {
+                // #287: retained on disk, never deleted — and still VISIBLE
+                // as unreadable rather than silently vanishing from the
+                // count.
+                unreadable.append(id)
+                continue
+            }
+            guard shouldDrain(itemUserId: probe.item.enqueuedUserId, currentUserId: currentUserId)
+                || currentUserId == nil
+            else { continue }
+            records.append(
+                QuarantineDiagnosticItem(
+                    id: id,
+                    reason: probe.reason,
+                    stage: probe.stage,
+                    httpStatus: probe.httpStatus,
+                    postgrestCode: probe.postgrestCode,
+                    errorMessage: probe.errorMessage.map { QuarantineDiagnostics.truncatedErrorMessage($0) },
+                    attemptCount: probe.attemptCount,
+                    quarantinedAt: probe.quarantinedAt,
+                    payloadDropped: probe.payloadDropped
+                )
+            )
+        }
+        // Oldest first, matching the queues' own drain order — the item that
+        // has been stuck the longest is the one to read first. Unreadable
+        // records (no date to sort by) come last.
+        records.sort { $0.quarantinedAt < $1.quarantinedAt }
+        return records.map(QuarantineDiagnosticEntry.record) + unreadable.map(QuarantineDiagnosticEntry.unreadable)
     }
 
     /// Persist the item and return as soon as it's on disk — the upload runs

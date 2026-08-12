@@ -93,6 +93,9 @@ actor PendingRecordingQueue {
     @discardableResult
     func quarantinedCount() async -> Int { await engine.quarantinedCount() }
 
+    /// #599: header-only diagnostics for the quarantine surface, oldest first.
+    func quarantinedDiagnostics() async -> [QuarantineDiagnosticEntry] { await engine.quarantinedDiagnostics() }
+
     func enqueue(_ pending: PendingTindeqRecording) async -> QueuePersistOutcome { await engine.enqueue(pending) }
 
     func drain() async { await engine.drain() }
