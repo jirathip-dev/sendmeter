@@ -510,6 +510,43 @@ private struct ActionsView: View {
                     .accessibilityHint("Opens climb workout")
                 }
 
+                // #599: the quarantine diagnostics surface, always reachable
+                // from Home — the incident this issue exists for happened
+                // because the watch showed NOTHING where the phone said
+                // "1 workout stuck", and there was no place to look. The
+                // entry carries no count: counts live in the diagnostics
+                // screen itself (fresh from disk + the cache, honest
+                // "not reported" state included), and a stale or missing
+                // number on this row would repeat the exact honest-state
+                // mistake the surface is meant to fix.
+                WatchCard {
+                    NavigationLink(value: WatchDest.uploadDiagnostics) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                                .font(.system(size: 18, weight: .bold))
+                                .foregroundStyle(WatchPalette.foreground(WatchDesignTokens.warning))
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Quarantined uploads")
+                                    .font(.system(.footnote, design: .rounded).weight(.bold))
+                                Text("Uploads the server has stopped accepting")
+                                    .font(.caption2)
+                                    .foregroundStyle(WatchPalette.textSecondary)
+                                    .lineLimit(2)
+                                    .minimumScaleFactor(0.75)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(WatchPalette.textTertiary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: CGFloat(WatchDesignTokens.minimumHitTarget))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("home-action-quarantine")
+                    .accessibilityHint("Shows uploads taken off the retry path")
+                }
+
                 // The "workout running" hint lives in HomeView now, above the
                 // pager (#476 review finding F4) — it needs to be visible on
                 // whichever page a status/force deep link lands on, not just here.
