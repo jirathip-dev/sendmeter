@@ -14,6 +14,25 @@ import type { LiveMirrorRejection } from "./liveMirrorTelemetry";
 /// gauge screen closed, the watch app died, or the phone went unreachable.
 export const STALE_MS = 8_000;
 
+/// How long the phone may accept nothing (its OWN clock since the last
+/// accepted beat — `lastAcceptedAtMs`) before the Force mirror stops claiming
+/// a working link. Beats land ~2 Hz, so ~6 missed beats ≈ 3s; phone-local so
+/// device clock skew cannot trip it (#614 review F8). The mirror is still
+/// within `STALE_MS` here, so the beat remains visible but is labelled paused.
+export const FORCE_DIRECT_QUIET_MS = 3_000;
+
+/// Honest transport state for the Force mirror (#614 review F7):
+/// `watch-direct` while the last accepted beat is fresh, `temporarily-
+/// unreachable` while it is quiet but still within `STALE_MS`,
+/// `stale` once it has aged out (the mirror hides), and `unknown` when
+/// nothing is known or the run has ended. Unknown must never be presented as
+/// healthy.
+export type ForceMirrorSyncState =
+  | "watch-direct"
+  | "temporarily-unreachable"
+  | "stale"
+  | "unknown";
+
 /// How far back the phone's own sparkline buffer reaches (SL-95).
 export const SPARK_WINDOW_MS = 45_000;
 
@@ -49,6 +68,10 @@ export interface LiveForceCursor {
 export interface LiveForceMirrorState {
   beat: LiveForce | null;
   cursor: LiveForceCursor;
+  /// Phone-local wall-clock ms when the last beat was ACCEPTED into this
+  /// cursor — quiet-state derivation compares against this (same clock),
+  /// never `beat.updatedAt` (a watch clock), #614 review F8.
+  lastAcceptedAtMs: number;
 }
 
 /// Empty cursor state for a newly authenticated account. The hook applies
@@ -58,6 +81,7 @@ export function emptyLiveForceMirrorState(): LiveForceMirrorState {
   return {
     beat: null,
     cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null },
+    lastAcceptedAtMs: 0,
   };
 }
 
@@ -175,6 +199,7 @@ export function mergeForceBeat(
         terminal: prev?.terminal ?? false,
         updatedAtMs: prev?.updatedAt ?? null,
       },
+      lastAcceptedAtMs: prev?.updatedAt ?? 0,
     },
     msg,
   );
@@ -182,10 +207,13 @@ export function mergeForceBeat(
 }
 
 /// Reducer used by the hook. It keeps a terminal cursor even when `beat` is
-/// null, so End/Disconnect dominates late live force data.
+/// null, so End/Disconnect dominates late live force data. `nowMs` (phone
+/// wall clock) stamps the state's `lastAcceptedAtMs` so quiet-state
+/// derivation is clock-skew-free (#614 F8).
 export function reduceForceBeat(
   previous: LiveForceMirrorState,
   msg: LiveForceMessage,
+  nowMs: number = Date.now(),
 ): LiveForceReduceResult {
   const updatedAtMs = msg.updated_at * 1000;
   const explicitRunId = normalizeRunId(msg.run_id);
@@ -222,7 +250,7 @@ export function reduceForceBeat(
   if (terminal) {
     return {
       accepted: true,
-      state: { beat: null, cursor: nextCursor },
+      state: { beat: null, cursor: nextCursor, lastAcceptedAtMs: nowMs },
     };
   }
 
@@ -253,7 +281,7 @@ export function reduceForceBeat(
   };
   return {
     accepted: true,
-    state: { beat: next, cursor: nextCursor },
+    state: { beat: next, cursor: nextCursor, lastAcceptedAtMs: nowMs },
   };
 }
 
@@ -276,6 +304,7 @@ export function admitLiveForceMessage(
   msg: LiveForceMessage,
   currentUserId: string,
   hasHadAccountTransition: boolean,
+  nowMs: number = Date.now(),
 ): LiveForceAdmissionResult {
   if (!acceptsPacketOwner(msg.account_user_id, currentUserId, hasHadAccountTransition)) {
     return {
@@ -285,11 +314,28 @@ export function admitLiveForceMessage(
       rejection: "ownerMismatch",
     };
   }
-  const reduced = reduceForceBeat(previous, msg);
+  const reduced = reduceForceBeat(previous, msg, nowMs);
   return { ...reduced, stampedAcceptance: msg.account_user_id !== undefined };
 }
 
 /// Whether the given beat is still within the staleness window.
 export function isFresh(beat: LiveForce, nowMs: number): boolean {
   return nowMs - beat.updatedAt <= STALE_MS;
+}
+
+/// Honest transport state for the Force mirror, derived from the cursor and
+/// the phone clock at render time (#614 review F7/F8). Quietness is measured
+/// from `lastAcceptedAtMs` — the phone's OWN clock — never `beat.updatedAt`
+/// (a watch clock), so device clock skew cannot trip it.
+export function deriveForceSyncState(
+  state: LiveForceMirrorState,
+  nowMs: number,
+): ForceMirrorSyncState {
+  const { beat, cursor, lastAcceptedAtMs } = state;
+  if (cursor.terminal || !cursor.runId) return "unknown";
+  const quietAgeMs = nowMs - lastAcceptedAtMs;
+  if (quietAgeMs > STALE_MS) return "stale";
+  if (quietAgeMs > FORCE_DIRECT_QUIET_MS) return "temporarily-unreachable";
+  // A non-terminal cursor with a live, fresh beat is a working direct link.
+  return beat ? "watch-direct" : "temporarily-unreachable";
 }

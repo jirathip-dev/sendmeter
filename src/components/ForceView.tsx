@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCancellableFetch } from "../hooks/useCancellableFetch";
-import { useLiveForce } from "../hooks/useLiveForce";
+import { useLiveForce, type ForceMirrorSyncState } from "../hooks/useLiveForce";
 import { interruptionNote, recoveredTagSide } from "../hooks/useTindeq";
 import { useTindeqSession } from "../hooks/useTindeqSession";
 import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
@@ -167,6 +167,16 @@ interface ForceViewProps {
 
 type ForceTimelineSegment = ProtocolSegment | ReverseActionSegment;
 
+/// #614 review F7: honest transport copy for the watch gauge mirror caption.
+/// The verdict comes from `deriveForceSyncState` in `liveForceMirror.ts` —
+/// never a hardcoded string — so a quiet link reads as paused, not healthy.
+const FORCE_SYNC_COPY: Record<ForceMirrorSyncState, string> = {
+  "watch-direct": "watch link",
+  "temporarily-unreachable": "watch link paused",
+  stale: "watch link stale",
+  unknown: "watch link unknown",
+};
+
 export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const toast = useToast();
   const [setupGuideOpen, setSetupGuideOpen] = useState(false);
@@ -288,8 +298,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [adaptiveStaticState, setAdaptiveStaticState] = useState<AdaptiveStaticState | null>(null);
   const handsFreeArmInFlightRef = useRef(false);
   // Watch gauge mirror (SL-87) — non-null while the watch's Progressor
-  // screen is connected/measuring and the phone is WC-reachable.
-  const liveForce = useLiveForce(userId);
+  // screen is connected/measuring and the phone is WC-reachable. The second
+  // element is the honest direct / paused / stale / unknown transport verdict
+  // (#614 review F7) — a mirror that goes quiet must say so instead of
+  // silently unmounting.
+  const [liveForce, forceSyncState] = useLiveForce(userId);
   // The just-auto-saved recording, shown as a confirmation so the user can
   // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
   // prompt — a rep now saves the moment you stop, using the tag set beforehand.
@@ -2116,7 +2129,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
                 textTransform: "none",
               }}
             >
-              watch link
+              {FORCE_SYNC_COPY[forceSyncState]}
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
@@ -2169,6 +2182,38 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           {/* SL-95: recent-samples sparkline, accumulated client-side from
               each beat's small trailing window (see useLiveForce). */}
           <LiveForceSparkline samples={liveForce.spark} />
+        </div>
+      )}
+
+      {/* #614 review F7: a mirror that has gone quiet unmounts the live card —
+          that silence is the reported symptom. Say why instead of showing
+          nothing: only rendered when the mirror is known to be mid-run but
+          paused or stale (never for a cleanly-ended run or a never-seen one). */}
+      {!liveForce && (forceSyncState === "temporarily-unreachable" || forceSyncState === "stale") && (
+        <div
+          className="card surface-force"
+          style={{
+            marginBottom: 10,
+            border: "1px solid color-mix(in srgb, var(--warning) 45%, transparent)",
+          }}
+        >
+          <div className="label-eyebrow" style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <span
+              aria-hidden="true"
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "var(--warning)",
+              }}
+            />
+            Watch gauge mirror
+          </div>
+          <div style={{ fontSize: "var(--t-sm)", color: "var(--ink-muted)", lineHeight: 1.5 }}>
+            {forceSyncState === "stale"
+              ? "The watch link has gone quiet — the last reading was a while ago. Check the watch."
+              : "Watch link paused — showing the last reading. Waiting for the next beat."}
+          </div>
         </div>
       )}
 

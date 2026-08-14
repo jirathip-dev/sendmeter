@@ -145,6 +145,7 @@ describe("preferFresher", () => {
       row: null,
       hrLog: { id: "", pts: [] },
       source: "server-fallback" as const,
+      lastAcceptedAtMs: 0,
     };
     const next = row({ sequence: 1, hr: 125 });
     const result = reduceLiveWorkout(initial, next, "watch-direct");
@@ -410,10 +411,13 @@ describe("deriveLiveWorkoutSyncState", () => {
     overrides: Partial<LiveWorkout> = {},
     source: "watch-direct" | "server-fallback" = "watch-direct",
   ) {
+    // nowMs = t0Ms pins `lastAcceptedAtMs` deterministically; the quiet-state
+    // derivation must use THAT (the phone's receipt clock), not row.updatedAt.
     return reduceLiveWorkout(
       emptyLiveWorkoutMirrorState(),
       row({ sequence: 1, updatedAt: T0, ...overrides }),
       source,
+      t0Ms,
     ).state;
   }
 
@@ -430,16 +434,26 @@ describe("deriveLiveWorkoutSyncState", () => {
     );
   });
 
-  it("reports temporarily-unreachable once the row outlives one heartbeat cadence", () => {
+  it("reports temporarily-unreachable once the phone has accepted nothing for one cadence", () => {
     const s = state({}, "watch-direct");
     expect(deriveLiveWorkoutSyncState(s, t0Ms + DIRECT_QUIET_MS + 1)).toBe(
       "temporarily-unreachable",
     );
   });
 
-  it("reports unknown once the row is past the stale cutoff", () => {
+  it("reports unknown once the phone has accepted nothing past the stale cutoff", () => {
     const s = state({}, "watch-direct");
     expect(deriveLiveWorkoutSyncState(s, t0Ms + STALE_MS + 1)).toBe("unknown");
+  });
+
+  it("bases quiet-state on phone-local receipt time, not the watch clock (#614 review F8)", () => {
+    // The row's updatedAt says 1s ago (fresh by the WATCH clock), but the
+    // phone accepted it DIRECT_QUIET_MS ago — a watch clock running ahead
+    // must not make a silent link read as healthy.
+    const s = state({ updatedAt: T2 }, "watch-direct");
+    expect(deriveLiveWorkoutSyncState(s, t0Ms + DIRECT_QUIET_MS + 1)).toBe(
+      "temporarily-unreachable",
+    );
   });
 });
 
@@ -454,6 +468,14 @@ describe("rejectionForWorkout", () => {
     const newer = row({ runId: "new-run", startedAt: T1, updatedAt: T1 });
     const older = row({ runId: "old-run", startedAt: T0, updatedAt: T0 });
     expect(rejectionForWorkout(newer, older)).toBe("staleRun");
+  });
+
+  it("classifies an older run arriving after a terminal row as staleRun, not afterTerminal (#614 review F11)", () => {
+    // `acceptsLiveWorkout` checks run freshness BEFORE terminal dominance, so
+    // the classifier must too: this late packet belongs to an older run.
+    const terminalNewRun = row({ runId: "new-run", sequence: 9, terminal: true, startedAt: T1, updatedAt: T2 });
+    const lateOldRun = row({ runId: "old-run", sequence: 2, startedAt: T0, updatedAt: T1 });
+    expect(rejectionForWorkout(terminalNewRun, lateOldRun)).toBe("staleRun");
   });
 
   it("classifies duplicate and out-of-order sequences", () => {

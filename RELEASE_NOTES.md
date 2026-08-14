@@ -16,6 +16,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Apple Watch Force now says when the watch link is paused or stale instead of silently hiding the live reading, and the mirror diagnostics split the direct link's delay into its watch→phone and phone→app segments.
 - The Watch workout card now says honestly when the wrist link has paused and the phone is showing the last update instead of a live mirror, and a failed direct link retries once instead of silently waiting out the next heartbeat.
 - Settings → Troubleshooting now shows Watch mirror diagnostics: whether live Workout and Force updates are arriving over the direct watch link or the server, their average and p95 latency separately, rejection reasons, and recent transitions — useful when reporting a slow mirror.
 - Training phases now make it clear you're in control: the phases sheet says "Current block" instead of "Active" and states blocks are managed by you, with the ACWR band and typical duration labeled as guidance rather than rules.

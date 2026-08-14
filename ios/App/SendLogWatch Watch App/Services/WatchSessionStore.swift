@@ -60,6 +60,12 @@ nonisolated final class WatchSessionStore: @unchecked Sendable {
 
     var userId: UUID? { current?.userId }
 
+    /// #614 F6: whether the paired phone acknowledges workout beats over WC.
+    /// False when nothing is relayed, or when the phone build predates the
+    /// `ack_capable` stamp — the watch then keeps its original fire-and-forget
+    /// behavior instead of counting a delivered-but-unacked send as a failure.
+    var ackCapable: Bool { current?.ackCapable ?? false }
+
     func store(_ session: RelayedSession) {
         lock.lock()
         cached = session

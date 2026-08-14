@@ -57,7 +57,13 @@ public enum SessionRelay {
                 accessToken: accessToken,
                 userId: claims.userId,
                 expiresAt: expiresAt,
-                relayId: context["relayId"] as? String
+                relayId: context["relayId"] as? String,
+                // #614 F6: newer phone builds acknowledge workout beats over
+                // WatchConnectivity; older ones do not. The watch must not
+                // count a delivered-but-unacked send as a failure, so it only
+                // engages the acknowledged/retry contract when the phone
+                // proves it can reply. Absent key on an old phone = false.
+                ackCapable: (context["ack_capable"] as? Bool) ?? false
             )
             // A payload that has already expired by the time it is read is
             // the normal case for `receivedApplicationContext`, which iOS
@@ -133,12 +139,42 @@ public struct RelayedSession: Equatable, Codable, Sendable {
     /// displayed — it exists so two relays of the *same* Supabase session are
     /// distinguishable payloads.
     public let relayId: String?
+    /// #614 F6: whether the paired phone acknowledges workout beats over
+    /// WatchConnectivity (newer phone builds reply `[:]` to `liveWorkout`;
+    /// older ones do not, and the watch must not count a delivered-but-
+    /// unacked send as a failure — see `SessionRelay.decode`).
+    ///
+    /// Decoded with `decodeIfPresent` defaulting to `false` so a session
+    /// persisted by a pre-#614 watch build (no key in the JSON) still loads;
+    /// a hard `Bool` would throw on that older payload and silently log the
+    /// user out at launch.
+    public let ackCapable: Bool
 
-    public init(accessToken: String, userId: UUID, expiresAt: TimeInterval, relayId: String? = nil) {
+    public init(
+        accessToken: String,
+        userId: UUID,
+        expiresAt: TimeInterval,
+        relayId: String? = nil,
+        ackCapable: Bool = false
+    ) {
         self.accessToken = accessToken
         self.userId = userId
         self.expiresAt = expiresAt
         self.relayId = relayId
+        self.ackCapable = ackCapable
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case accessToken, userId, expiresAt, relayId, ackCapable
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        accessToken = try container.decode(String.self, forKey: .accessToken)
+        userId = try container.decode(UUID.self, forKey: .userId)
+        expiresAt = try container.decode(TimeInterval.self, forKey: .expiresAt)
+        relayId = try container.decodeIfPresent(String.self, forKey: .relayId)
+        ackCapable = try container.decodeIfPresent(Bool.self, forKey: .ackCapable) ?? false
     }
 }
 

@@ -92,15 +92,26 @@ function mirrorLatency(ms: number | null): string {
   return ms === null ? "–" : `${Math.round(ms)}ms`;
 }
 
-/// One path's summary line: transports stay separate so direct and fallback
-/// delay are never averaged together.
+/// One path's summary line (#614 review F2). `watch→screen` is the TOTAL
+/// watch-capture → this screen latency, computed identically for the direct
+/// and server paths (both span the watch's clock to the phone's), so the two
+/// transports are directly comparable. The direct path additionally breaks
+/// that total into its segments: `watch→phone` (the WC wire, cross-device
+/// clocks) and `phone→app` (the plugin → WebView hop, phone-local).
 function mirrorPathLine(path: LiveMirrorPath, stats: LiveMirrorPathStats): string {
-  const wire = stats.wire.n > 0 ? ` · watch→phone ${mirrorLatency(stats.wire.avg)} avg` : "";
-  return (
-    `${MIRROR_PATH_LABELS[path]}: ${stats.accepted} ok / ${stats.rejected} rejected` +
-    ` · ${mirrorLatency(stats.latency.avg)} avg · p95 ${mirrorLatency(stats.latency.p95)}` +
-    wire
-  );
+  const segments: string[] = [`${MIRROR_PATH_LABELS[path]}: ${stats.accepted} ok / ${stats.rejected} rejected`];
+  if (stats.latency.n > 0) {
+    segments.push(
+      `watch→screen ${mirrorLatency(stats.latency.avg)} avg · p95 ${mirrorLatency(stats.latency.p95)}`,
+    );
+  }
+  if (path === "watch-direct") {
+    const wire = stats.wire.n > 0 ? `watch→phone ${mirrorLatency(stats.wire.avg)} avg` : null;
+    const bridge = stats.bridge.n > 0 ? `phone→app ${mirrorLatency(stats.bridge.avg)} avg` : null;
+    const breakdown = [wire, bridge].filter((s): s is string => s !== null);
+    if (breakdown.length > 0) segments.push(breakdown.join(" · "));
+  }
+  return segments.join(" · ");
 }
 
 function MirrorKindDiagnostics({
@@ -145,7 +156,9 @@ function MirrorKindDiagnostics({
               {new Date(t.atMs).toLocaleTimeString()} · {MIRROR_PATH_LABELS[t.path]} ·{" "}
               {t.event ?? "–"} · {t.accepted ? "✓" : "✗"}
               {t.rejection ? ` (${MIRROR_REJECTION_LABELS[t.rejection]})` : ""} ·{" "}
-              {mirrorLatency(t.latencyMs ?? null)}
+              {t.ageMs !== undefined
+                ? `age ${Math.round(t.ageMs / 1000)}s`
+                : mirrorLatency(t.latencyMs ?? null)}
             </div>
           ))}
         </div>
@@ -706,6 +719,14 @@ export default function AccountSheet({ onClose, onSignOut, email }: Props) {
                       Ring full — {mirrorDiagnostics.dropped} older trace(s) dropped.
                     </div>
                   )}
+                  {/* #614 review F2: totals and the watch→phone segment span
+                      the watch's and the phone's own clocks — a small negative
+                      value just means the watch clock runs ahead. The phone→app
+                      segment is the same phone clock end to end. */}
+                  <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6 }}>
+                    watch→screen and watch→phone span the watch's and phone's
+                    own clocks; phone→app is phone-local.
+                  </div>
                 </div>
               </details>
             </div>

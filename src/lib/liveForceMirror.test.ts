@@ -3,12 +3,14 @@ import type { LiveForceMessage } from "sendlog-auth-bridge";
 import {
   STALE_MS,
   SPARK_WINDOW_MS,
+  FORCE_DIRECT_QUIET_MS,
   isFresh,
   emptyLiveForceMirrorState,
   mergeForceBeat,
   reduceForceBeat,
   rejectionForForce,
   admitLiveForceMessage,
+  deriveForceSyncState,
   type LiveForce,
 } from "./liveForceMirror";
 
@@ -193,6 +195,7 @@ describe("reduceForceBeat", () => {
       {
         beat: first,
         cursor: { runId: "force-run-1", sequence: 1, terminal: false, updatedAtMs: 100_000 },
+        lastAcceptedAtMs: 0,
       },
       msg({ sequence: 2, status: "idle", event: "end", terminal: true, updated_at: 101 }),
     );
@@ -205,7 +208,7 @@ describe("reduceForceBeat", () => {
 
   it("rotates a legacy force identity only on a fresh connected transition", () => {
     const initial = reduceForceBeat(
-      { beat: null, cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null } },
+      { beat: null, cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null }, lastAcceptedAtMs: 0 },
       { ...msg({ run_id: undefined, sequence: undefined, status: "connected", updated_at: 100 }) },
     );
     const terminal = reduceForceBeat(initial.state, {
@@ -224,7 +227,7 @@ describe("reduceForceBeat", () => {
 
   it("normalizes UUID casing on the force cursor", () => {
     const first = reduceForceBeat(
-      { beat: null, cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null } },
+      { beat: null, cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null }, lastAcceptedAtMs: 0 },
       msg({ run_id: "ABCDEFAB-ABCD-4ABC-8ABC-ABCDEFABCDEF", sequence: 1 }),
     );
     const next = reduceForceBeat(first.state, msg({
@@ -241,6 +244,7 @@ describe("reduceForceBeat", () => {
       {
         beat: null,
         cursor: { runId: null, sequence: null, terminal: false, updatedAtMs: null },
+        lastAcceptedAtMs: 0,
       },
       msg({ sequence: 8, updated_at: 100, spark: [[0, 10]] }),
     );
@@ -318,5 +322,52 @@ describe("admitLiveForceMessage rejection", () => {
     const dup = admitLiveForceMessage(first.state, msg({ sequence: 3, account_user_id: "user-1" }), "user-1", false);
     expect(dup.accepted).toBe(false);
     expect(dup.rejection).toBe("duplicate");
+  });
+});
+
+describe("deriveForceSyncState", () => {
+  function acceptedState(updatedAtSec: number, nowMs: number) {
+    return reduceForceBeat(
+      emptyLiveForceMirrorState(),
+      msg({ sequence: 1, updated_at: updatedAtSec }),
+      nowMs,
+    ).state;
+  }
+
+  it("unknown when nothing was ever seen or the run ended", () => {
+    expect(deriveForceSyncState(emptyLiveForceMirrorState(), Date.now())).toBe("unknown");
+    const terminal = reduceForceBeat(
+      acceptedState(1_000, 1_000_000),
+      msg({ sequence: 2, status: "idle", event: "end", terminal: true, updated_at: 1_001 }),
+      1_000_001,
+    ).state;
+    expect(deriveForceSyncState(terminal, 1_000_002)).toBe("unknown");
+  });
+
+  it("watch-direct while the phone keeps accepting beats", () => {
+    const s = acceptedState(100, 1_000_000);
+    expect(deriveForceSyncState(s, 1_000_000 + 500)).toBe("watch-direct");
+  });
+
+  it("temporarily-unreachable once the phone has accepted nothing for the quiet window", () => {
+    const s = acceptedState(100, 1_000_000);
+    expect(deriveForceSyncState(s, 1_000_000 + FORCE_DIRECT_QUIET_MS + 1)).toBe(
+      "temporarily-unreachable",
+    );
+  });
+
+  it("stale once the phone has accepted nothing past STALE_MS (#614 review F7)", () => {
+    const s = acceptedState(100, 1_000_000);
+    expect(deriveForceSyncState(s, 1_000_000 + STALE_MS + 1)).toBe("stale");
+  });
+
+  it("bases quiet-state on phone-local receipt time, not the watch clock (#614 review F8)", () => {
+    // The beat's updatedAt says 100ms ago (fresh by the WATCH clock), but the
+    // phone accepted it FORCE_DIRECT_QUIET_MS ago — a watch clock running
+    // ahead must not make a silent link read as healthy.
+    const s = acceptedState(1_000_000, 1_000_000);
+    expect(deriveForceSyncState(s, 1_000_000 + FORCE_DIRECT_QUIET_MS + 1)).toBe(
+      "temporarily-unreachable",
+    );
   });
 });

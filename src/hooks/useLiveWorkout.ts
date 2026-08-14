@@ -131,14 +131,22 @@ export function useLiveWorkout(
     const effectUserId = userId;
     let cancelled = false;
 
-    function ingest(next: LiveWorkout, source: LiveWorkoutSource) {
+    function ingest(next: LiveWorkout, source: LiveWorkoutSource, isInitial = false) {
       if (cancelled || activeUserIdRef.current !== effectUserId) return;
-      const reduced = reduceLiveWorkout(mirrorRef.current, next, source);
+      const nowMs = Date.now();
+      const reduced = reduceLiveWorkout(mirrorRef.current, next, source, nowMs);
+      const rowAgeMs = nowMs - new Date(next.updatedAt).getTime();
       traceFor(source, {
         event: next.event,
         accepted: reduced.accepted,
         rejection: reduced.rejection,
-        latencyMs: Date.now() - new Date(next.updatedAt).getTime(),
+        // #614 review F1: the initial fetch's row age is DATA age, not a
+        // transport latency (a row left 'live' by #472 can be minutes old) —
+        // record it as ageMs so it never pollutes the latency p95. Realtime
+        // arrivals record the server-path total (watch capture → render),
+        // the same span as the direct total.
+        ageMs: isInitial ? rowAgeMs : undefined,
+        latencyMs: isInitial ? undefined : rowAgeMs,
       });
       if (!reduced.accepted) return;
       mirrorRef.current = reduced.state;
@@ -152,7 +160,7 @@ export function useLiveWorkout(
     fetchLiveWorkout()
       .then((next) => {
         if (cancelled || !next) return;
-        ingest(next, "server-fallback");
+        ingest(next, "server-fallback", true);
       })
       .catch(() => {});
 
@@ -196,24 +204,29 @@ export function useLiveWorkout(
               msg,
               activeUserIdRef.current,
               hasHadAccountTransitionRef.current,
+              Date.now(),
             );
             // #614: record the observation whether or not it was accepted —
-            // a rejected packet is exactly the trace a diagnosis needs. The
-            // two latency boundaries are reported separately: wireMs is the
-            // watch-capture → native-plugin segment (cross-device clocks),
-            // latencyMs is the plugin → WebView segment (same phone clock).
+            // a rejected packet is exactly the trace a diagnosis needs.
+            // latencyMs is the TOTAL watch-capture → WebView span (the same
+            // span the server path reports, so the two are comparable); wireMs
+            // and bridgeMs break the direct path into its cross-device and
+            // phone-local segments. `received_at` absent (older plugin) → no
+            // segment breakdown, still a total. A missing `event` (legacy
+            // watch) reads as telemetry so it is throttled like one (#614 F14).
+            const nowMs = Date.now();
             traceFor("watch-direct", {
-              event: msg.event,
+              event: msg.event ?? "telemetry",
               accepted: admission.accepted,
               rejection: admission.rejection,
               latencyMs:
-                msg.received_at !== undefined
-                  ? Date.now() - msg.received_at * 1000
-                  : undefined,
+                msg.updated_at !== undefined ? nowMs - msg.updated_at * 1000 : undefined,
               wireMs:
                 msg.received_at !== undefined && msg.updated_at !== undefined
                   ? msg.received_at * 1000 - msg.updated_at * 1000
                   : undefined,
+              bridgeMs:
+                msg.received_at !== undefined ? nowMs - msg.received_at * 1000 : undefined,
             });
             if (!admission.accepted) return;
             // #530 round-2 review R2-F1: a genuinely STAMPED (not
@@ -247,16 +260,17 @@ export function useLiveWorkout(
       });
       // #614: a live row that has aged out of STALE_MS hides (see
       // `visibleLiveWorkout`) — record that once per run so the telemetry
-      // names the silence rather than just stopping.
+      // names the silence rather than just stopping. The age is DATA age
+      // (ageMs), never a latency sample (#614 review F1).
       const m = mirrorRef.current;
       if (m.row && m.row.status === "live" && !m.row.terminal) {
-        const age = atMs - new Date(m.row.updatedAt).getTime();
+        const age = atMs - m.lastAcceptedAtMs;
         if (age > STALE_MS && staleRecordedRunRef.current !== m.row.runId) {
           staleRecordedRunRef.current = m.row.runId;
           traceFor(m.source, {
             accepted: false,
             rejection: "stale",
-            latencyMs: age,
+            ageMs: age,
           });
         }
       }

@@ -276,6 +276,16 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
             "event": "signedIn",
             "accessToken": accessToken,
             "expiresAt": expiresAt,
+            // #614 F6: this phone acknowledges watch workout beats over
+            // WatchConnectivity (`didReceiveMessage(_:replyHandler:)` replies
+            // `[:]`). The watch only engages its acknowledged-send/retry
+            // contract when it has seen this stamp — an older phone build
+            // omits it, and the watch then keeps the old fire-and-forget
+            // behavior instead of counting a delivered-but-unacked send as a
+            // failure. No capability negotiation is needed because the
+            // stamp's ABSENCE is the negotiation: it proves nothing about
+            // this phone build, so the watch falls back.
+            "ack_capable": true,
             // Temporary #368 compatibility for pre-#270 watches, whose
             // decoder required this key. This fixed literal never came from
             // Supabase and therefore cannot rotate/revoke a session family.

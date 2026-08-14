@@ -19,6 +19,7 @@ import {
 } from "../lib/healthSync";
 import { setMonitoringUser } from "../lib/monitoring";
 import { recordAuthenticatedAccountForLiveMirror } from "../lib/liveMirrorOwnership";
+import { resetLiveMirrorDiagnostics } from "../lib/liveMirrorTelemetry";
 
 // Keep the local seeded-account implementation out of every production graph.
 // Vite folds this compile-time branch before Rollup creates chunks, so the
@@ -49,7 +50,21 @@ export function useAuth() {
     // Kick off HealthKit auth + background delivery once, after the first
     // session is known (no-op on web / until a session exists).
     let healthStarted = false;
+    // #614 review F13: the telemetry ring is process-global. Clear it when
+    // the account changes or the user signs out, so the troubleshooting sheet
+    // never shows the previous account's mirror timeline. Tracked against the
+    // last-seen user id because `onSession` fires on every foreground.
+    let mirrorDiagnosticsUserId: string | null = null;
     function onSession(s: Session | null) {
+      if (s) {
+        if (s.user.id !== mirrorDiagnosticsUserId) {
+          mirrorDiagnosticsUserId = s.user.id;
+          resetLiveMirrorDiagnostics();
+        }
+      } else if (mirrorDiagnosticsUserId !== null) {
+        mirrorDiagnosticsUserId = null;
+        resetLiveMirrorDiagnostics();
+      }
       relaySessionToWatch(s);
       relayHealthSession(s);
       // #227: the auth uuid is the ONLY identity attached to an error report —
