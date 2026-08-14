@@ -66,7 +66,10 @@ type RecordingRow = {
   completion_status?: string | null;
 };
 
-function toRecording(r: RecordingRow): TindeqRecordingMeta {
+/// Convert a DB row (server fetch or a realtime postgres_changes payload's
+/// `new`/`old`) into the app's recording meta. Exported (#613) so the
+/// ForceView realtime path and the fetch path share one parser.
+export function toRecording(r: RecordingRow): TindeqRecordingMeta {
   return {
     id: r.id,
     recordedAt: r.recorded_at,

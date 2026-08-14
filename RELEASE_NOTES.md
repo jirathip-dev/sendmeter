@@ -16,6 +16,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Force: finishing a gauge session (Finish or a disconnect) now logs it instantly — the RPE prediction reads your saved force curves from the device instead of waiting up to 4 seconds for a network fetch — and each rep you pull is saved on the device first, so it appears in the session right away and syncs to your account in the background rather than holding up the screen.
 - Apple Watch Force now says when the watch link is paused or stale during a hold instead of silently hiding the live reading — while a normal rest between reps stays quiet, so the warning never fires on the healthy link between attempts — and the mirror diagnostics split the direct link's delay into its watch→phone and phone→app segments.
 - The Watch workout card now says honestly when the wrist link has paused and the phone is showing the last update instead of a live mirror, and a failed direct link retries once instead of silently waiting out the next heartbeat.
 - Settings → Troubleshooting now shows Watch mirror diagnostics: whether live Workout and Force updates are arriving over the direct watch link or the server, their average and p95 latency separately, rejection reasons, and recent transitions — useful when reporting a slow mirror.

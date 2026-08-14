@@ -3,7 +3,11 @@ import { useCancellableFetch } from "../hooks/useCancellableFetch";
 import { useLiveForce, type ForceMirrorSyncState } from "../hooks/useLiveForce";
 import { interruptionNote, recoveredTagSide } from "../hooks/useTindeq";
 import { useTindeqSession } from "../hooks/useTindeqSession";
-import { useRealtimeVersion } from "../hooks/useRealtimeVersion";
+import {
+  useRealtimeRecordingEvents,
+  useRealtimeRecordingOverflowed,
+  useRealtimeVersion,
+} from "../hooks/useRealtimeVersion";
 import { useToast } from "../hooks/useToast";
 import { useWakeLock } from "../hooks/useWakeLock";
 import {
@@ -15,8 +19,8 @@ import {
   fetchTagCurves,
   insertRecording,
   saveTagCurve,
+  type TagCurve,
 } from "../lib/repo";
-import { predictSessionRpe } from "../lib/rpeDepletion";
 import {
   computeForceCurve,
   CURVE_PERIODS,
@@ -35,9 +39,7 @@ import { nextLockedCapabilityFit } from "../lib/capabilityFitLock";
 import {
   curveCandidateRecordings,
   effortPeakKg,
-  isDepletionEffortRecording,
   isMeasuredRecording,
-  recordingCapacityModality,
 } from "../lib/zoneHistory";
 import type { ProtocolSegment } from "../lib/protocol";
 import {
@@ -58,9 +60,26 @@ import {
   startTindeqLiveActivity,
   updateTindeqLivePeak,
 } from "../lib/liveActivity";
-import { endGaugeSession } from "../lib/gaugeSessionEnd";
+import {
+  createRepSettlement,
+  endGaugeSession,
+  predictGaugeSessionRpe,
+} from "../lib/gaugeSessionEnd";
+import { captureForceLatency } from "../lib/monitoring";
 import { reportPersistFailure } from "../lib/lostRecordings";
-import { persistRecordingDurable } from "../lib/recordingQueue";
+import {
+  persistRecordingDurable,
+  removeQueuedRecording,
+} from "../lib/recordingQueue";
+import {
+  pendingRecordingMeta,
+  saveRecordingDurableFirst,
+} from "../lib/recordingSave";
+import {
+  applyRecordingRealtimeEvents,
+  recordingEventsAllApplied,
+  recordingListsEqual,
+} from "../lib/realtimeRecordingApply";
 import {
   armedHandsFreeForce,
   handsFreeForceAtInactiveStatus,
@@ -199,26 +218,82 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     [],
   );
   const [retryingUnqueued, setRetryingUnqueued] = useState(false);
-  // #269: async, and free to be — unlike useTindeq's unmount cleanup this
-  // caller stays mounted for the whole write, so it uses the IndexedDB main
-  // queue rather than the synchronous emergency lane.
-  async function queueFailedRecording(rec: NewTindeqRecording & { id: string }) {
-    const isNewOutage = !outageRef.current;
-    outageRef.current = true;
-    const result = await persistRecordingDurable(rec, userId);
-    reportPersistFailure("save-failed", result, rec.samples.length);
-    if (!result.persisted) {
-      // Always banner (one row per lost rep) but keep the toast on the same
-      // once-per-outage gate as the queued case, so a guided protocol whose
-      // every rep fails doesn't stack a toast per rep.
-      setUnqueued((list) => appendUniqueById(list, rec));
-      if (isNewOutage) {
-        toast("Storage full — this recording is not saved anywhere", "error");
-      }
-      return false;
-    }
-    if (isNewOutage) toast("Couldn't save — recording queued, will sync automatically", "error");
-    return true;
+  // #613: how many per-rep durable saves are still settling, so a Finish tap
+  // or a disconnect can wait for the final rep before ending the session (see
+  // RepSettlement / gaugeSessionEnd.ts). `begin` is called before the save's
+  // first await; `finish` the moment the rep is durable + locally published —
+  // the network insert never blocks the session end.
+  const repSettlementRef = useRef(createRepSettlement());
+
+  /// #613: publish a durable-but-unconfirmed rep as a local pending row — the
+  /// capture shows up (session count, curves, the list) the moment the
+  /// IndexedDB write lands, before the network insert returns. The recordings
+  /// ref is kept in sync by the effect on `recordings`, and the settlement's
+  /// `waitForIdle` resolves AFTER the commit, so a session end in flight reads
+  /// the pending row via that ref with no render round-trip of its own.
+  function publishPendingRecording(rec: NewTindeqRecording & { id: string }) {
+    const meta = pendingRecordingMeta(rec);
+    setRecordings((list) => appendUniqueById(list, meta));
+  }
+
+  /// #613: replace a pending row with the server-confirmed row, by id, and
+  /// clear the rep's queue entry — the durable-first save wrote it BEFORE the
+  /// insert, so a confirmed row must not stay in the "waiting to upload"
+  /// backlog (see removeQueuedRecording in recordingQueue.ts). Awaited, so an
+  /// Undo tapped right after this save lands cannot let the dequeued rep drain
+  /// back into the list.
+  async function reconcileSavedRecording(saved: TindeqRecordingMeta) {
+    setRecordings((list) => list.map((r) => (r.id === saved.id ? saved : r)));
+    setJustSaved(saved);
+    outageRef.current = false;
+    await removeQueuedRecording(saved.id, userId);
+  }
+
+  /// #613: THE durable-first save — the rep is persisted to the offline queue
+  /// BEFORE the network insert, and a local pending row is published the
+  /// moment that write lands. Every await-capable save path (guided per-rep
+  /// holds, free holds, adaptive, reverse-action sets, manual and cadence)
+  /// funnels through this; the policy it enforces lives in recordingSave.ts.
+  ///
+  /// #106/#264 semantics preserved: an insert that fails against a DURABLE rep
+  /// keeps it visibly pending and drains through the idempotent queue (one
+  /// once-per-outage toast), while a rep no store would take is reported
+  /// through the #264 loss path — the honest "not saved" banner, never called
+  /// "queued".
+  async function saveRecording(rec: NewTindeqRecording & { id: string }) {
+    return saveRecordingDurableFirst({
+      rec,
+      persist: (r) => persistRecordingDurable(r, userId),
+      insert: insertRecording,
+      isPublished: (id) => recordingsRef.current.some((r) => r.id === id),
+      publishPending: publishPendingRecording,
+      reconcileSaved: reconcileSavedRecording,
+      onNotPersisted: (r, result) => {
+        reportPersistFailure("save-failed", result, r.samples.length);
+        // Always banner (one row per lost rep) but keep the toast on the same
+        // once-per-outage gate as the queued case, so a guided protocol whose
+        // every rep fails doesn't stack a toast per rep.
+        setUnqueued((list) => appendUniqueById(list, r));
+        const isNewOutage = !outageRef.current;
+        outageRef.current = true;
+        if (isNewOutage) {
+          toast("Storage full — this recording is not saved anywhere", "error");
+        }
+      },
+      onInsertFailure: (error) => {
+        setListError(
+          error instanceof Error ? error.message : "Failed to save recording",
+        );
+        const isNewOutage = !outageRef.current;
+        outageRef.current = true;
+        // The rep is durable and visibly pending; the idempotent queue drains
+        // it. One toast per outage, not per rep.
+        if (isNewOutage) {
+          toast("Couldn't save — recording queued, will sync automatically", "error");
+        }
+      },
+      settlement: repSettlementRef.current,
+    });
   }
 
   /// Retry everything in the banner: the server first (the outage may be
@@ -439,6 +514,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   const [curveComputedFor, setCurveComputedFor] = useState<string | null>(null);
   const [curveError, setCurveError] = useState<string | null>(null);
   const realtimeVersion = useRealtimeVersion();
+  // #613: bounded queue of live `tindeq_recordings` realtime events + whether
+  // it ever overflowed — see useRealtimeRecordingEvents/useRealtimeVersion.ts.
+  const recordingEvents = useRealtimeRecordingEvents();
+  const recordingEventsOverflowed = useRealtimeRecordingOverflowed();
+  // #613: the last successfully fetched tag-curve registry, read SYNCHRONOUSLY
+  // by predictGroupRpe at session end — never a fresh `fetchTagCurves()` on the
+  // Finish/disconnect path. Seeded in the background on mount and updated
+  // whenever the curve effect banks a fresh fit; a stale-or-empty registry
+  // simply falls back (predictGaugeSessionRpe's own semantics).
+  const tagCurvesRef = useRef<TagCurve[]>([]);
 
   // Every tag ever used with its rep count, most frequent first (SL-82).
   const tagCounts = (() => {
@@ -464,43 +549,34 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     : 0;
 
   /// Predict this session's RPE from W' depletion (#280), the same model the
-  /// watch runs: every rep against ITS OWN tag's fitted curve, read back from
-  /// the registry the curve effect below keeps up to date. Any failure — a
-  /// dead network, a tag that's never been fitted — falls back rather than
-  /// blocking the log; the caller banks the result unconfirmed either way.
-  /// Bounded to 4s (#295): ending a session now logs immediately, so this
-  /// can no longer sit waiting on a stalled fetch the way the old RPE-prompt
-  /// flow could (that prompt was already open; nothing here is).
+  /// watch runs: every rep against ITS OWN tag's fitted curve. #613: the
+  /// curves come from a cached registry (`tagCurvesRef`), NOT a fresh network
+  /// call — the old path started `fetchTagCurves()` here and could stall the
+  /// Finish/disconnect path for up to 4s. A tag with no cached curve falls
+  /// back immediately, and the caller banks the result unconfirmed either
+  /// way. Synchronous by design: the session end must never wait on the
+  /// network to log.
   ///
-  /// The recordings snapshot is taken AFTER the curve fetch resolves, not
-  /// before — on an involuntary disconnect the final rep's save
-  /// (insertRecording → setRecordings) can still be in flight, and this
-  /// wait is the only grace period it gets. Snapshotting early can miss it,
-  /// so the prediction, note and duration below all read the same
-  /// as-late-as-possible list.
+  /// The recordings snapshot reads `recordingsRef` at call time — the latest
+  /// list, including any rep whose durable save is still settling (the caller
+  /// waits for that settlement before invoking this) — so prediction, note and
+  /// duration all read the same as-late-as-possible list.
+  ///
+  /// The registry is kept current while the view is active: seeded in the
+  /// background on mount (below) and updated synchronously whenever the curve
+  /// effect banks a fresh fit (`saveTagCurve`).
   async function predictGroupRpe(groupId: string) {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const curves = await Promise.race([
-      fetchTagCurves().catch(() => [] as Awaited<ReturnType<typeof fetchTagCurves>>),
-      new Promise<Awaited<ReturnType<typeof fetchTagCurves>>>((resolve) => {
-        timeoutId = setTimeout(() => resolve([]), 4000);
-      }),
-    ]).finally(() => clearTimeout(timeoutId));
     const recs = recordingsRef.current.filter(
       (r) => r.groupId === groupId && isMeasuredRecording(r),
     );
-    const byTagModality = new Map(
-      curves.map((curve) => [`${curve.name}|${curve.modality}`, curve]),
-    );
-    const predicted = predictSessionRpe(
-      recs.map((r) => ({
-        peakKg: r.peakKg!,
-        durationS: r.durationMs / 1000,
-        cf: byTagModality.get(`${r.tag}|${recordingCapacityModality(r)}`)?.cf ?? null,
-        wPrime: byTagModality.get(`${r.tag}|${recordingCapacityModality(r)}`)?.wPrime ?? null,
-        isEffort: isDepletionEffortRecording(r),
-      })),
-    );
+    // Session-end event path, not render: this is the no-network cached
+    // prediction replacing the 4s `fetchTagCurves()` race, and the timing
+    // proves it.
+    // eslint-disable-next-line react-hooks/purity
+    const t0 = performance.now();
+    const predicted = predictGaugeSessionRpe(recs, tagCurvesRef.current);
+    // eslint-disable-next-line react-hooks/purity -- same non-render path
+    captureForceLatency("session.predict", performance.now() - t0);
     return { predicted, recs };
   }
 
@@ -522,16 +598,29 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       1,
       // `endSession` only runs from event/effect paths; this is elapsed wall
       // time, not a render-time value.
+      // eslint-disable-next-line react-hooks/purity -- event/effect path, not render
       Math.round((Date.now() - activeSession.startedAt) / 60000),
     );
     clearSession();
+    // Event/effect path, not render: the only network hop left in the
+    // end-session path is the session insert; the settlement wait and
+    // prediction are local.
+    // eslint-disable-next-line react-hooks/purity
+    const insertStart = performance.now();
     const ok = await endGaugeSession({
       groupId,
       wallClockMin,
       claimed: endedGroupsRef.current,
       predictGroupRpe,
       onLogSession,
+      // #613: wait for any in-flight rep save to become durable + published
+      // before the prediction/duration snapshot — the final rep of a
+      // disconnect must be counted. Bounded by local persistence, never the
+      // network (see RepSettlement).
+      settlement: repSettlementRef.current,
     });
+    // eslint-disable-next-line react-hooks/purity -- same event/effect path
+    captureForceLatency("session.insert", performance.now() - insertStart);
     if (ok === null) return; // lost the race — another call already logged this group
     toast(
       ok ? "Gauge session logged to history" : "Couldn't log gauge session",
@@ -539,11 +628,51 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     );
   }
 
+  // #613: live `tindeq_recordings` changes (our own writes AND other devices')
+  // are applied here directly from the realtime payload — by id — instead of
+  // refetching the whole list. Runs on every queue change and is idempotent,
+  // so the bounded queue is simply re-walked (only the fresh tail is re-applied).
+  const appliedRecordingEventsRef = useRef(0);
   useEffect(() => {
+    if (recordingEvents.length === 0) return;
+    if (appliedRecordingEventsRef.current > recordingEvents.length) {
+      // The bounded queue was trimmed (overflow) — re-walk what's left.
+      appliedRecordingEventsRef.current = 0;
+    }
+    const fresh = recordingEvents.slice(appliedRecordingEventsRef.current);
+    if (fresh.length === 0) return;
+    setRecordings((list) => applyRecordingRealtimeEvents(list, fresh));
+    appliedRecordingEventsRef.current = recordingEvents.length;
+  }, [recordingEvents]);
+
+  useEffect(() => {
+    // #613: skip the whole-list refetch when this bump's recording events were
+    // already applied above — a recording write (our own rep saves included)
+    // must not trigger a coarse refetch. Fall back to the fetch when the queue
+    // is empty (mount), an event couldn't be applied (a row we never loaded,
+    // or one that failed to parse), or the queue overflowed.
+    const allApplied = recordingEventsAllApplied(
+      recordingEvents,
+      recordingsRef.current,
+    );
+    if (recordingEvents.length > 0 && allApplied && !recordingEventsOverflowed) {
+      return;
+    }
     let cancelled = false;
+    // Effect body, not render: the timing runs only when this background
+    // reconciliation fetch actually fires (the refetch guard may skip it).
+    // eslint-disable-next-line react-hooks/purity
+    const refetchStart = performance.now();
     fetchRecordings()
       .then((list) => {
         if (cancelled) return;
+        captureForceLatency("realtime.refetch", performance.now() - refetchStart);
+        // Idempotent: a reconciliation that changed nothing (a redundant
+        // bump for another table, or our own echo) must not churn the list —
+        // the curve key is derived from `recordings.length`. Deep-compares
+        // EVERY meta field, so a real cross-device edit on an already-present
+        // id still lands (see recordingListsEqual).
+        if (recordingListsEqual(list, recordingsRef.current)) return;
         setRecordings(list);
         // Default the tag input to the most-recorded exercise so the input
         // matches what the charts below already show (they fall back to it).
@@ -564,7 +693,25 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     return () => {
       cancelled = true;
     };
-  }, [realtimeVersion]);
+    // realtimeVersion is the reconciliation signal; recordingEvents/
+    // recordingEventsOverflowed determine whether THIS bump is skippable.
+  }, [realtimeVersion, recordingEvents, recordingEventsOverflowed]);
+
+  // #613: seed the tag-curve registry once, in the background — never on the
+  // session-end critical path. The watch reads the same rows to predict RPE,
+  // so this stays the source of truth; a failed fetch leaves the previous
+  // registry (or an empty one → immediate fallback at predict time).
+  useEffect(() => {
+    let cancelled = false;
+    fetchTagCurves()
+      .then((curves) => {
+        if (!cancelled) tagCurvesRef.current = curves;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Save one hold segment of a guided protocol as its OWN recording — sliced
   // from the live sample buffer, with the segment's hand (L/R when
@@ -657,23 +804,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       })(),
       samples: slice,
     };
-    try {
-      const saved = await insertRecording(rec);
-      outageRef.current = false;
-      setRecordings((list) => [saved, ...list]);
-      setJustSaved(saved);
-    } catch (e) {
-      // Insert failed (dead auth session, dropped connection, …) — queue the
-      // slice for retry instead of dropping it (#106). Unlike the "nothing
-      // captured" branch above, KEEP the segment claimed: retrying now
-      // happens via the queue drain, not the live autosave effect, so
-      // un-claiming would let that effect re-walk this same index once more
-      // time has passed and insert the FULL segment — landing both the
-      // queued partial and the live full rep as two rows for one hold (the
-      // exact double-count hazard CLAUDE.md warns about for guided protocols).
-      setListError(e instanceof Error ? e.message : "Failed to save recording");
-      await queueFailedRecording(rec);
-    }
+    // #613: durable-first — the slice is persisted locally and published as a
+    // pending row before the network insert, so the rep shows up immediately
+    // and a failed insert stays visibly pending (drained by the idempotent
+    // queue). Unlike the "nothing captured" branch above, the segment stays
+    // claimed on any outcome: retrying happens via the queue drain, not the
+    // live autosave effect, so un-claiming would let that effect re-walk this
+    // same index once more time has passed and insert the FULL segment —
+    // landing both the queued partial and the live full rep as two rows for
+    // one hold (the exact double-count hazard CLAUDE.md warns about for guided
+    // protocols).
+    await saveRecording(rec);
   }
 
   function buildAdaptiveRecording(
@@ -750,15 +891,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       savedSegsRef.current.delete(hold.segmentIndex);
       return;
     }
-    try {
-      const saved = await insertRecording(rec);
-      outageRef.current = false;
-      setRecordings((list) => [saved, ...list]);
-      setJustSaved(saved);
-    } catch (error) {
-      setListError(error instanceof Error ? error.message : "Failed to save recording");
-      await queueFailedRecording(rec);
-    }
+    await saveRecording(rec);
   }
 
   function buildAdaptiveStaticSalvage(
@@ -841,13 +974,7 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       key,
       reverseSetClaimsRef.current,
       rec,
-      async (input) => {
-        const saved = await insertRecording(input);
-        outageRef.current = false;
-        setRecordings((list) => [saved, ...list]);
-        setJustSaved(saved);
-      },
-      queueFailedRecording,
+      saveRecording,
     );
     if (outcome === "lost") {
       setListError("Failed to save resisted-movement set");
@@ -1012,16 +1139,11 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       zone: null,
       samples: summary.samples,
     };
+    // #613: durable-first save (see saveHoldSlice). The `finally` below still
+    // owns `setSaving(false)` regardless of outcome.
     try {
-      const saved = await insertRecording(rec);
-      outageRef.current = false;
-      setRecordings((list) => [saved, ...list]);
-      setJustSaved(saved);
+      await saveRecording(rec);
       // keep tag and side — set once, tweak side between reps
-    } catch (e) {
-      // Queue instead of dropping (#106) — see saveHoldSlice above.
-      setListError(e instanceof Error ? e.message : "Failed to save recording");
-      await queueFailedRecording(rec);
     } finally {
       setSaving(false);
     }
@@ -1264,6 +1386,21 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         // none, and the prediction falls back); nothing here may block or
         // disturb the curve UI.
         if (effectiveTag !== null && chartSide === null && m?.cf != null && m.wPrime != null) {
+          // #613: bank the fit in the LOCAL registry too (synchronously), so a
+          // session ending moments after this fit resolves predicts from it
+          // without any network call — the 4s fetch at Finish is gone.
+          tagCurvesRef.current = [
+            ...tagCurvesRef.current.filter(
+              (c) =>
+                !(c.name === effectiveTag && c.modality === capacityModality),
+            ),
+            {
+              name: effectiveTag,
+              modality: capacityModality,
+              cf: m.cf,
+              wPrime: m.wPrime,
+            },
+          ];
           void saveTagCurve({
             name: effectiveTag,
             modality: capacityModality,
@@ -2788,16 +2925,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               actualDurationMs,
               samples: [],
             };
-            try {
-              const saved = await insertRecording(rec);
-              outageRef.current = false;
-              setRecordings((list) => [saved, ...list]);
-              return true;
-            } catch {
-              const durable = await queueFailedRecording(rec);
-              if (!durable) attemptClaims.delete(attemptKey);
-              return durable;
+            const saveOutcome = await saveRecording(rec);
+            if (saveOutcome === "not-persisted") {
+              // Total persistence failure — the rep exists only in this
+              // closure. Release the claim so a later attempt can retry.
+              attemptClaims.delete(attemptKey);
+              return false;
             }
+            return true;
           }}
           onFinish={async (rpe, completedMs) => {
             const groupId = manualGroupRef.current;
@@ -2834,14 +2969,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         <CadenceOnlyReverseActionFullscreen
           run={cadenceRun}
           onRecording={async (rec) => {
-            try {
-              const saved = await insertRecording(rec);
-              outageRef.current = false;
-              setRecordings((list) => appendUniqueById(list, saved));
-              return true;
-            } catch {
-              return await queueFailedRecording(rec);
-            }
+            const outcome = await saveRecording(rec);
+            return outcome !== "not-persisted";
           }}
           onFinish={async (rpe, outcome, elapsedMs) => {
             // Stable sessionId was persisted before the runtime opened. A
