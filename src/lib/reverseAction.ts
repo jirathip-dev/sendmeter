@@ -6,6 +6,7 @@ import type {
   ReverseActionToleranceMode,
   TindeqSample,
 } from "../types";
+import type { RecordingSaveOutcome } from "./recordingSave";
 
 export interface ReverseActionPrescription {
   reps: number;
@@ -454,29 +455,29 @@ export function reverseActionSetKey(runId: string, set: number): string {
 
 export type ReverseActionPersistOutcome =
   | "saved"
-  | "queued"
   | "already_claimed"
   | "lost";
 
 /// Exactly-once persistence seam used by every full/partial set stop cause.
-/// The claim is made synchronously before the first await. A durable queued
-/// write keeps the claim; only total persistence failure releases it for retry.
+/// The claim is made synchronously before the first await. #613: `save` is the
+/// durable-first save (see recordingSave.ts) — it persists locally, publishes
+/// the pending row, inserts, and only reports "not-persisted" when NO durable
+/// store would take the rep. A durable write (queued or confirmed) keeps the
+/// claim; only total persistence failure releases it for retry.
 export async function persistReverseActionSetOnce(
   key: string,
   claims: Set<string>,
   input: NewTindeqRecording & { id: string },
-  persist: (recording: NewTindeqRecording & { id: string }) => Promise<void>,
-  queue: (recording: NewTindeqRecording & { id: string }) => Promise<boolean>,
+  save: (
+    recording: NewTindeqRecording & { id: string },
+  ) => Promise<RecordingSaveOutcome>,
 ): Promise<ReverseActionPersistOutcome> {
   if (claims.has(key)) return "already_claimed";
   claims.add(key);
-  try {
-    await persist(input);
-    return "saved";
-  } catch {
-    const durable = await queue(input);
-    if (durable) return "queued";
+  const outcome = await save(input);
+  if (outcome === "not-persisted") {
     claims.delete(key);
     return "lost";
   }
+  return "saved";
 }
