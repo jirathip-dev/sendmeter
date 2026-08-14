@@ -12,6 +12,10 @@ import {
   emptyLiveWorkoutMirrorState,
   reduceLiveWorkout,
   visibleLiveWorkout,
+  deriveLiveWorkoutSyncState,
+  rejectionForWorkout,
+  admitLiveWorkoutMessage,
+  DIRECT_QUIET_MS,
   type HrLog,
 } from "./liveWorkoutMirror";
 
@@ -396,5 +400,109 @@ describe("visibleLiveWorkout", () => {
     const pts = [{ t: Date.parse(T0), hr: 100 }];
     const [, series] = visibleLiveWorkout(r, { id: "w1", pts }, Date.parse(T0));
     expect(series).toBe(pts);
+  });
+});
+
+describe("deriveLiveWorkoutSyncState", () => {
+  const t0Ms = Date.parse(T0);
+
+  function state(
+    overrides: Partial<LiveWorkout> = {},
+    source: "watch-direct" | "server-fallback" = "watch-direct",
+  ) {
+    return reduceLiveWorkout(
+      emptyLiveWorkoutMirrorState(),
+      row({ sequence: 1, updatedAt: T0, ...overrides }),
+      source,
+    ).state;
+  }
+
+  it("unknown with no live row, an ended row, or a terminal row", () => {
+    expect(deriveLiveWorkoutSyncState(emptyLiveWorkoutMirrorState(), t0Ms)).toBe("unknown");
+    expect(deriveLiveWorkoutSyncState(state({ status: "ended" }), t0Ms)).toBe("unknown");
+    expect(deriveLiveWorkoutSyncState(state({ terminal: true }), t0Ms)).toBe("unknown");
+  });
+
+  it("names the last accepted transport while the row is fresh", () => {
+    expect(deriveLiveWorkoutSyncState(state({}, "watch-direct"), t0Ms + 100)).toBe("watch-direct");
+    expect(deriveLiveWorkoutSyncState(state({}, "server-fallback"), t0Ms + 100)).toBe(
+      "server-fallback",
+    );
+  });
+
+  it("reports temporarily-unreachable once the row outlives one heartbeat cadence", () => {
+    const s = state({}, "watch-direct");
+    expect(deriveLiveWorkoutSyncState(s, t0Ms + DIRECT_QUIET_MS + 1)).toBe(
+      "temporarily-unreachable",
+    );
+  });
+
+  it("reports unknown once the row is past the stale cutoff", () => {
+    const s = state({}, "watch-direct");
+    expect(deriveLiveWorkoutSyncState(s, t0Ms + STALE_MS + 1)).toBe("unknown");
+  });
+});
+
+describe("rejectionForWorkout", () => {
+  it("classifies a late live packet after a terminal row", () => {
+    const terminal = row({ sequence: 2, terminal: true, updatedAt: T1 });
+    const late = row({ sequence: 3, updatedAt: T2 });
+    expect(rejectionForWorkout(terminal, late)).toBe("afterTerminal");
+  });
+
+  it("classifies an older run as staleRun", () => {
+    const newer = row({ runId: "new-run", startedAt: T1, updatedAt: T1 });
+    const older = row({ runId: "old-run", startedAt: T0, updatedAt: T0 });
+    expect(rejectionForWorkout(newer, older)).toBe("staleRun");
+  });
+
+  it("classifies duplicate and out-of-order sequences", () => {
+    const prev = row({ sequence: 5 });
+    expect(rejectionForWorkout(prev, row({ sequence: 5 }))).toBe("duplicate");
+    expect(rejectionForWorkout(prev, row({ sequence: 4 }))).toBe("outOfOrder");
+  });
+
+  it("falls back to notFresh for mixed-version packets", () => {
+    const prev = row({ sequence: null });
+    expect(rejectionForWorkout(prev, row({ sequence: null }))).toBe("notFresh");
+  });
+});
+
+describe("admitLiveWorkoutMessage rejection", () => {
+  function wcMsg(overrides: Partial<LiveWorkoutMessage> = {}): LiveWorkoutMessage {
+    return {
+      status: "live",
+      started_at: Date.parse(T0) / 1000,
+      updated_at: Date.parse(T1) / 1000,
+      run_id: "w1",
+      sequence: 1,
+      event: "telemetry",
+      account_user_id: "user-1",
+      ...overrides,
+    };
+  }
+
+  it("names ownerMismatch for a rejected owner", () => {
+    const result = admitLiveWorkoutMessage(
+      emptyLiveWorkoutMirrorState(),
+      wcMsg({ account_user_id: "user-2" }),
+      "user-1",
+      false,
+    );
+    expect(result.accepted).toBe(false);
+    expect(result.rejection).toBe("ownerMismatch");
+  });
+
+  it("names the sequence rejection reason for an accepted-owner packet", () => {
+    const first = admitLiveWorkoutMessage(
+      emptyLiveWorkoutMirrorState(),
+      wcMsg({ sequence: 3 }),
+      "user-1",
+      false,
+    );
+    expect(first.accepted).toBe(true);
+    const dup = admitLiveWorkoutMessage(first.state, wcMsg({ sequence: 3 }), "user-1", false);
+    expect(dup.accepted).toBe(false);
+    expect(dup.rejection).toBe("duplicate");
   });
 });

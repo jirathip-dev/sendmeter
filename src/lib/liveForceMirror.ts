@@ -7,6 +7,7 @@ import type {
   LiveMirrorEvent,
 } from "sendlog-auth-bridge";
 import { acceptsPacketOwner } from "./liveMirrorOwnership";
+import type { LiveMirrorRejection } from "./liveMirrorTelemetry";
 
 /// How long the beat may go quiet before the mirror hides. The watch beats
 /// ~2 Hz while measuring and on every status change; 8s of silence means the
@@ -63,6 +64,24 @@ export function emptyLiveForceMirrorState(): LiveForceMirrorState {
 export interface LiveForceReduceResult {
   state: LiveForceMirrorState;
   accepted: boolean;
+  /// Why a packet was rejected, present only when `accepted` is false.
+  rejection?: LiveMirrorRejection;
+}
+
+/// Classifies a rejected force packet. Deliberately mirrors the guards in
+/// `accepts` in order: run identity first, then terminal dominance, then
+/// sequence ordering.
+export function rejectionForForce(
+  cursor: LiveForceCursor,
+  runId: string,
+  sequence: number | null,
+): LiveMirrorRejection {
+  if (cursor.runId !== null && cursor.runId !== runId) return "staleRun";
+  if (cursor.terminal) return "afterTerminal";
+  if (sequence !== null && cursor.sequence !== null) {
+    return sequence < cursor.sequence ? "outOfOrder" : "duplicate";
+  }
+  return "notFresh";
 }
 
 const EVENTS: ReadonlySet<string> = new Set([
@@ -187,7 +206,11 @@ export function reduceForceBeat(
   const sequence = safeSequence(msg.sequence);
   const terminal = isTerminal(msg);
   if (!accepts(previous.cursor, runId, sequence, terminal, updatedAtMs)) {
-    return { state: previous, accepted: false };
+    return {
+      state: previous,
+      accepted: false,
+      rejection: rejectionForForce(previous.cursor, runId, sequence),
+    };
   }
 
   const nextCursor: LiveForceCursor = {
@@ -255,7 +278,12 @@ export function admitLiveForceMessage(
   hasHadAccountTransition: boolean,
 ): LiveForceAdmissionResult {
   if (!acceptsPacketOwner(msg.account_user_id, currentUserId, hasHadAccountTransition)) {
-    return { state: previous, accepted: false, stampedAcceptance: false };
+    return {
+      state: previous,
+      accepted: false,
+      stampedAcceptance: false,
+      rejection: "ownerMismatch",
+    };
   }
   const reduced = reduceForceBeat(previous, msg);
   return { ...reduced, stampedAcceptance: msg.account_user_id !== undefined };

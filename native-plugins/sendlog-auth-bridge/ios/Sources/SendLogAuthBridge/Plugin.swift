@@ -556,7 +556,17 @@ extension SendLogAuthBridge: WCSessionDelegate {
             // WebView's LiveWorkoutMessage / LiveForceMessage types describe.
             var payload = WatchBuildReport.stripped(message)
             payload.removeValue(forKey: "kind")
+            // #614: stamp the phone-side receipt boundary so the WebView can
+            // split the watch-capture→plugin latency (wireMs) from the
+            // plugin→WebView latency (latencyMs) instead of averaging them.
+            payload["received_at"] = Date().timeIntervalSince1970
             notifyListeners(kind, data: payload as [String: Any])
+            // #614: acknowledge the acknowledged-send contract the watch uses
+            // for workout beats — the watch passes a `replyHandler` so a
+            // failed/unreachable direct send can be retried once instead of
+            // silently falling back to the ~5s Supabase heartbeat. The reply
+            // is deliberately empty (there is no per-beat payload to return).
+            replyHandler?([:])
         case "requestSession":
             // The WebView (useAuth) listens and re-relays the current session.
             notifyListeners("sessionRequested", data: [:])

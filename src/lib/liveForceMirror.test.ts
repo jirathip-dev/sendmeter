@@ -7,6 +7,8 @@ import {
   emptyLiveForceMirrorState,
   mergeForceBeat,
   reduceForceBeat,
+  rejectionForForce,
+  admitLiveForceMessage,
   type LiveForce,
 } from "./liveForceMirror";
 
@@ -270,5 +272,51 @@ describe("reduceForceBeat", () => {
     );
     expect(accountB.accepted).toBe(true);
     expect(accountB.state.cursor.runId).toBe("account-b-run");
+  });
+});
+
+describe("rejectionForForce", () => {
+  it("classifies an old run, post-terminal, duplicate and out-of-order packets", () => {
+    const cursor = {
+      runId: "force-run-1",
+      sequence: 5,
+      terminal: false,
+      updatedAtMs: 1_000_000,
+    };
+    expect(rejectionForForce(cursor, "force-run-2", 1)).toBe("staleRun");
+    expect(rejectionForForce({ ...cursor, terminal: true }, "force-run-1", 6)).toBe(
+      "afterTerminal",
+    );
+    expect(rejectionForForce(cursor, "force-run-1", 5)).toBe("duplicate");
+    expect(rejectionForForce(cursor, "force-run-1", 4)).toBe("outOfOrder");
+    expect(rejectionForForce({ ...cursor, sequence: null }, "force-run-1", null)).toBe(
+      "notFresh",
+    );
+  });
+});
+
+describe("admitLiveForceMessage rejection", () => {
+  it("names ownerMismatch for a rejected owner", () => {
+    const result = admitLiveForceMessage(
+      emptyLiveForceMirrorState(),
+      msg({ account_user_id: "user-2" }),
+      "user-1",
+      false,
+    );
+    expect(result.accepted).toBe(false);
+    expect(result.rejection).toBe("ownerMismatch");
+  });
+
+  it("names the sequence rejection reason for an accepted-owner packet", () => {
+    const first = admitLiveForceMessage(
+      emptyLiveForceMirrorState(),
+      msg({ sequence: 3, account_user_id: "user-1" }),
+      "user-1",
+      false,
+    );
+    expect(first.accepted).toBe(true);
+    const dup = admitLiveForceMessage(first.state, msg({ sequence: 3, account_user_id: "user-1" }), "user-1", false);
+    expect(dup.accepted).toBe(false);
+    expect(dup.rejection).toBe("duplicate");
   });
 });

@@ -17,6 +17,13 @@ import {
   type WatchStatusPresentation,
 } from "../lib/watchBuild";
 import { useWatchInfo } from "../hooks/useWatchInfo";
+import {
+  snapshotLiveMirrorDiagnostics,
+  type LiveMirrorKindDiagnostics,
+  type LiveMirrorPath,
+  type LiveMirrorPathStats,
+  type LiveMirrorRejection,
+} from "../lib/liveMirrorTelemetry";
 import type { QueueRemainderChoice, SignOut, SignOutPhase } from "../lib/signOut";
 import {
   addPasskey,
@@ -63,6 +70,89 @@ const NULL_SESSION_LABELS: Record<NullSessionReason, string> = {
   "user-signed-out": "Signed out (by you)",
   "storage-wiped": "App storage wiped",
 };
+
+// #614: mirror telemetry copy. Paths and rejections are the whole message —
+// the ring deliberately never carries force/HR values.
+const MIRROR_PATH_LABELS: Record<LiveMirrorPath, string> = {
+  "watch-direct": "direct",
+  "server-fallback": "server",
+};
+
+const MIRROR_REJECTION_LABELS: Record<LiveMirrorRejection, string> = {
+  duplicate: "dup",
+  outOfOrder: "reorder",
+  staleRun: "old run",
+  afterTerminal: "post-end",
+  ownerMismatch: "owner",
+  notFresh: "not fresh",
+  stale: "stale",
+};
+
+function mirrorLatency(ms: number | null): string {
+  return ms === null ? "–" : `${Math.round(ms)}ms`;
+}
+
+/// One path's summary line: transports stay separate so direct and fallback
+/// delay are never averaged together.
+function mirrorPathLine(path: LiveMirrorPath, stats: LiveMirrorPathStats): string {
+  const wire = stats.wire.n > 0 ? ` · watch→phone ${mirrorLatency(stats.wire.avg)} avg` : "";
+  return (
+    `${MIRROR_PATH_LABELS[path]}: ${stats.accepted} ok / ${stats.rejected} rejected` +
+    ` · ${mirrorLatency(stats.latency.avg)} avg · p95 ${mirrorLatency(stats.latency.p95)}` +
+    wire
+  );
+}
+
+function MirrorKindDiagnostics({
+  label,
+  diag,
+}: {
+  label: string;
+  diag: LiveMirrorKindDiagnostics;
+}) {
+  const rejectionSummary = Object.entries(diag.rejections) as [LiveMirrorRejection, number][];
+  const recent = diag.traces.slice(-4).reverse();
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontWeight: 600, fontSize: "var(--t-xs)", color: "var(--ink)" }}>
+        {label}
+      </div>
+      {diag.traces.length === 0 ? (
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
+          No live mirror activity this session.
+        </div>
+      ) : (
+        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", lineHeight: 1.6 }}>
+          {(Object.entries(diag.byPath) as [LiveMirrorPath, LiveMirrorPathStats][]).map(
+            ([path, stats]) => (
+              <div key={path}>{mirrorPathLine(path, stats)}</div>
+            ),
+          )}
+          {rejectionSummary.length > 0 && (
+            <div>
+              rejected:{" "}
+              {rejectionSummary
+                .map(([reason, count]) => `${MIRROR_REJECTION_LABELS[reason]} ×${count}`)
+                .join(", ")}
+            </div>
+          )}
+        </div>
+      )}
+      {recent.length > 0 && (
+        <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", lineHeight: 1.7, marginTop: 4 }}>
+          {recent.map((t, i) => (
+            <div key={i}>
+              {new Date(t.atMs).toLocaleTimeString()} · {MIRROR_PATH_LABELS[t.path]} ·{" "}
+              {t.event ?? "–"} · {t.accepted ? "✓" : "✗"}
+              {t.rejection ? ` (${MIRROR_REJECTION_LABELS[t.rejection]})` : ""} ·{" "}
+              {mirrorLatency(t.latencyMs ?? null)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /// Where the diagnostics ring is being kept. Worth showing: "nothing
 /// recorded" means something very different on a ring that only ever lived in
@@ -154,6 +244,10 @@ export default function AccountSheet({ onClose, onSignOut, email }: Props) {
   // interval; a relaunch remounts this sheet fresh anyway.
   const [authEvents] = useState(() => getAuthDiagnosticEvents());
   const [diagStatus] = useState(() => getAuthDiagnosticsStatus());
+  // #614: read once at mount, same convention as the auth events above. The
+  // ring is in-memory (see liveMirrorTelemetry.ts), so a sheet open during an
+  // incident shows exactly what the live session has observed so far.
+  const [mirrorDiagnostics] = useState(() => snapshotLiveMirrorDiagnostics());
   // App version + build (#202): a recorded event is only attributable if the
   // build that produced it can be read off the same screen. Native-only —
   // `loadBuildTag` resolves to null on web.
@@ -593,6 +687,24 @@ export default function AccountSheet({ onClose, onSignOut, email }: Props) {
                         ) : null}
                       </div>
                     ))
+                  )}
+                </div>
+              </details>
+
+              {/* #614: the live Workout/Force mirror's transport and latency,
+                  read from the bounded in-memory telemetry ring. Opens as a
+                  second entry under Troubleshooting so a report of "the
+                  mirror is slow" can name the active path and split direct
+                  vs server delay on the spot. */}
+              <details className="troubleshooting-details">
+                <summary>Watch mirror diagnostics</summary>
+                <div className="troubleshooting-body">
+                  <MirrorKindDiagnostics label="Workout mirror" diag={mirrorDiagnostics.workout} />
+                  <MirrorKindDiagnostics label="Force mirror" diag={mirrorDiagnostics.force} />
+                  {mirrorDiagnostics.dropped > 0 && (
+                    <div style={{ fontSize: "var(--t-2xs)", color: "var(--ink-faint)", marginTop: 6 }}>
+                      Ring full — {mirrorDiagnostics.dropped} older trace(s) dropped.
+                    </div>
                   )}
                 </div>
               </details>

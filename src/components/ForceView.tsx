@@ -2107,6 +2107,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
                 {liveForce.side ? ` · ${liveForce.side}` : ""}
               </span>
             )}
+            <span
+              style={{
+                marginLeft: "auto",
+                fontSize: "var(--t-2xs)",
+                color: "var(--ink-faint)",
+                fontWeight: 400,
+                textTransform: "none",
+              }}
+            >
+              watch link
+            </span>
           </div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
             <div>

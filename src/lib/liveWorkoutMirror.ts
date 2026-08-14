@@ -8,10 +8,31 @@ import type {
 } from "sendlog-auth-bridge";
 import type { LiveWorkout } from "../types";
 import { acceptsPacketOwner } from "./liveMirrorOwnership";
+import type { LiveMirrorRejection } from "./liveMirrorTelemetry";
 
 /// How long a heartbeat may go quiet before the workout is presumed dead
 /// (watch upserts every ~5s; 30s of silence = app killed / walked away).
 export const STALE_MS = 30_000;
+
+/// How long the row may go quiet (by its own `updatedAt`) before the phone
+/// stops claiming a working link. Beyond this the card must say the link is
+/// paused even if the last accepted message came over WC — the mirror is
+/// showing the last update, not a live one. ~2 workout heartbeat intervals,
+/// large enough that cross-device clock skew (watch/phone/DB wall clocks) and
+/// a single dropped heartbeat can't trip it.
+export const DIRECT_QUIET_MS = 10_000;
+
+/// Honest transport state for the live workout card (#614). `watch-direct`
+/// and `server-fallback` name the transport of the last accepted message;
+/// `temporarily-unreachable` means the visible row is older than one
+/// heartbeat cadence — neither path has delivered anything fresh — and
+/// `unknown` covers "no live row / ended / nothing known yet". Unknown must
+/// never be presented as healthy.
+export type LiveWorkoutSyncState =
+  | "watch-direct"
+  | "server-fallback"
+  | "temporarily-unreachable"
+  | "unknown";
 
 /// Placeholder workout id for a WC beat that arrives before the initial
 /// `fetchLiveWorkout()` resolves. The real run id is adopted as soon as a
@@ -41,6 +62,25 @@ export function emptyLiveWorkoutMirrorState(): LiveWorkoutMirrorState {
 export interface LiveWorkoutReduceResult {
   state: LiveWorkoutMirrorState;
   accepted: boolean;
+  /// Why a packet was rejected, present only when `accepted` is false.
+  /// Telemetry records this so a diagnosis can name the failure instead of a
+  /// bare "not applied".
+  rejection?: LiveMirrorRejection;
+}
+
+/// Classifies a rejected workout packet. Deliberately mirrors the guards in
+/// `acceptsLiveWorkout` in order: terminal dominance first, then run
+/// freshness, then sequence ordering.
+export function rejectionForWorkout(
+  previous: LiveWorkout | null,
+  incoming: LiveWorkout,
+): LiveMirrorRejection {
+  if (previous?.terminal) return "afterTerminal";
+  if (previous && !isFreshRun(previous, incoming)) return "staleRun";
+  if (previous && previous.sequence !== null && incoming.sequence !== null) {
+    return incoming.sequence < previous.sequence ? "outOfOrder" : "duplicate";
+  }
+  return "notFresh";
 }
 
 const EVENTS: ReadonlySet<string> = new Set([
@@ -250,7 +290,11 @@ export function reduceLiveWorkout(
   source: LiveWorkoutSource,
 ): LiveWorkoutReduceResult {
   if (!acceptsLiveWorkout(previous.row, incoming)) {
-    return { state: previous, accepted: false };
+    return {
+      state: previous,
+      accepted: false,
+      rejection: rejectionForWorkout(previous.row, incoming),
+    };
   }
   return {
     accepted: true,
@@ -268,9 +312,7 @@ export interface LiveWorkoutAdmissionResult extends LiveWorkoutReduceResult {
   /// was accepted. Callers should durably clear the transition marker via
   /// `recordStampedPacketAccepted` in `liveMirrorOwnership.ts`.
   stampedAcceptance: boolean;
-}
-
-/// The FULL WatchConnectivity packet admission pipeline for one incoming
+}/// The FULL WatchConnectivity packet admission pipeline for one incoming
 /// message, in one call: the account-ownership guard (#530), then
 /// `messageToLive`, then `reduceLiveWorkout` — a rejected owner never
 /// reaches the reducer at all. Round-2 review R2-F6: this is the ONLY
@@ -286,7 +328,12 @@ export function admitLiveWorkoutMessage(
   hasHadAccountTransition: boolean,
 ): LiveWorkoutAdmissionResult {
   if (!acceptsPacketOwner(msg.account_user_id, currentUserId, hasHadAccountTransition)) {
-    return { state: previous, accepted: false, stampedAcceptance: false };
+    return {
+      state: previous,
+      accepted: false,
+      stampedAcceptance: false,
+      rejection: "ownerMismatch",
+    };
   }
   const incoming = messageToLive(msg, previous.row);
   const reduced = reduceLiveWorkout(previous, incoming, "watch-direct");
@@ -303,4 +350,22 @@ export function visibleLiveWorkout(
   if (!row || row.status !== "live" || row.terminal) return [null, []];
   if (nowMs - new Date(row.updatedAt).getTime() > STALE_MS) return [null, []];
   return [row, hrLog.id === row.runId ? hrLog.pts : []];
+}
+
+/// Honest transport state for the currently-visible row, derived from the
+/// mirror cursor and the phone clock at render time (#614). `row.updatedAt`
+/// is the last accepted message's watch/DB wall clock, so row age is the one
+/// signal that says "the last update is old even though a path was once
+/// healthy" — neither the direct nor the server path has delivered anything
+/// fresh for `DIRECT_QUIET_MS`, so the card must not claim a working link.
+export function deriveLiveWorkoutSyncState(
+  state: LiveWorkoutMirrorState,
+  nowMs: number,
+): LiveWorkoutSyncState {
+  const row = state.row;
+  if (!row || row.status !== "live" || row.terminal) return "unknown";
+  const ageMs = nowMs - new Date(row.updatedAt).getTime();
+  if (ageMs > STALE_MS) return "unknown";
+  if (ageMs > DIRECT_QUIET_MS) return "temporarily-unreachable";
+  return state.source;
 }
