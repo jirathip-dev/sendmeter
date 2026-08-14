@@ -53,7 +53,9 @@ export interface SaveRecordingInput {
   /// typically writes a ref here so a session end in flight sees the capture.
   publishPending: (rec: NewTindeqRecording & { id: string }) => void;
   /// Reconcile the published row with the server-confirmed row, by id.
-  reconcileSaved: (saved: TindeqRecordingMeta) => void;
+  /// May be async (a caller that also dequeues the rep's durable entry); the
+  /// save resolves only after this settles.
+  reconcileSaved: (saved: TindeqRecordingMeta) => void | Promise<void>;
   /// The durable persist was refused — report through the #264 path and show
   /// the honest "not saved" banner. Never phrase this as queued.
   onNotPersisted: (
@@ -80,20 +82,28 @@ export async function saveRecordingDurableFirst(
   // races this save must wait for it (see RepSettlement).
   input.settlement?.begin();
 
-  const persistT0 = performance.now();
-  const result = await input.persist(rec);
-  captureForceLatency("rep.persist", performance.now() - persistT0);
+  // The settlement must settle on EVERY path through the durable+publish
+  // section — including a throw from `persist`, which would otherwise leave
+  // inFlight stuck at 1 and `endGaugeSession`'s waitForIdle() wedged forever
+  // (a permanently un-loggable session — the #295 defect class). The network
+  // insert is deliberately OUTSIDE this scope: it may lag the session, so it
+  // must not hold the settlement open.
+  try {
+    const persistT0 = performance.now();
+    const result = await input.persist(rec);
+    captureForceLatency("rep.persist", performance.now() - persistT0);
 
-  if (!result.persisted) {
-    input.onNotPersisted(rec, result);
+    if (!result.persisted) {
+      input.onNotPersisted(rec, result);
+      return "not-persisted";
+    }
+
+    // Durable + published: the capture is safe on-device now, so a session end
+    // may snapshot it. The network insert below is allowed to lag the session.
+    input.publishPending(rec);
+  } finally {
     input.settlement?.finish();
-    return "not-persisted";
   }
-
-  // Durable + published: the capture is safe on-device now, so a session end
-  // may snapshot it. The network insert is allowed to lag behind the session.
-  input.publishPending(rec);
-  input.settlement?.finish();
 
   try {
     // Mark the realtime-echo measurement just before the network insert, so
@@ -104,7 +114,7 @@ export async function saveRecordingDurableFirst(
     const saved = await input.insert(rec);
     captureForceLatency("rep.insert", performance.now() - insertT0);
     clearRealtimeInsertMark();
-    input.reconcileSaved(saved);
+    await input.reconcileSaved(saved);
     return "saved";
   } catch (error) {
     clearRealtimeInsertMark();

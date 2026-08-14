@@ -78,6 +78,7 @@ import {
 import {
   applyRecordingRealtimeEvents,
   recordingEventsAllApplied,
+  recordingListsEqual,
 } from "../lib/realtimeRecordingApply";
 import {
   armedHandsFreeForce,
@@ -238,12 +239,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   /// #613: replace a pending row with the server-confirmed row, by id, and
   /// clear the rep's queue entry — the durable-first save wrote it BEFORE the
   /// insert, so a confirmed row must not stay in the "waiting to upload"
-  /// backlog (see removeQueuedRecording in recordingQueue.ts).
-  function reconcileSavedRecording(saved: TindeqRecordingMeta) {
+  /// backlog (see removeQueuedRecording in recordingQueue.ts). Awaited, so an
+  /// Undo tapped right after this save lands cannot let the dequeued rep drain
+  /// back into the list.
+  async function reconcileSavedRecording(saved: TindeqRecordingMeta) {
     setRecordings((list) => list.map((r) => (r.id === saved.id ? saved : r)));
     setJustSaved(saved);
     outageRef.current = false;
-    void removeQueuedRecording(saved.id, userId);
+    await removeQueuedRecording(saved.id, userId);
   }
 
   /// #613: THE durable-first save — the rep is persisted to the offline queue
@@ -666,22 +669,10 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         captureForceLatency("realtime.refetch", performance.now() - refetchStart);
         // Idempotent: a reconciliation that changed nothing (a redundant
         // bump for another table, or our own echo) must not churn the list —
-        // the curve key is derived from `recordings.length`. Compare by id AND
-        // content, so a real cross-device edit on an already-present id still
-        // lands.
-        const unchanged =
-          list.length === recordingsRef.current.length &&
-          list.every(
-            (r, i) =>
-              r.id === recordingsRef.current[i]?.id &&
-              r.peakKg === recordingsRef.current[i]?.peakKg &&
-              r.avgKg === recordingsRef.current[i]?.avgKg &&
-              r.tag === recordingsRef.current[i]?.tag &&
-              r.side === recordingsRef.current[i]?.side &&
-              r.note === recordingsRef.current[i]?.note &&
-              r.groupId === recordingsRef.current[i]?.groupId,
-          );
-        if (unchanged) return;
+        // the curve key is derived from `recordings.length`. Deep-compares
+        // EVERY meta field, so a real cross-device edit on an already-present
+        // id still lands (see recordingListsEqual).
+        if (recordingListsEqual(list, recordingsRef.current)) return;
         setRecordings(list);
         // Default the tag input to the most-recorded exercise so the input
         // matches what the charts below already show (they fall back to it).

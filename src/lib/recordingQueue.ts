@@ -512,16 +512,16 @@ export async function clearRecordingQueue(
 /// `userId` (plus unattributed legacy entries — the same "mine" rule as
 /// `pendingRecordingsCount`).
 ///
-/// Two callers, both about a single rep the user actually recorded, and
-/// neither is the #273 sign-out path (that one stays exclusively
-/// `clearRecordingQueue` via `discardQueueOnUserSignOut`):
+/// One caller, about a single rep the user actually recorded, and NOT the
+/// #273 sign-out path (that one stays exclusively `clearRecordingQueue` via
+/// `discardQueueOnUserSignOut`):
 ///
 ///   * the durable-first save path writes the entry BEFORE the network insert
 ///     (`recordingSave.ts`), so a successful insert must dequeue it — an entry
 ///     left behind would be re-attempted (harmless 23505) but, worse, counted
-///     in the ambient "waiting to upload" backlog forever;
-///   * Undo of a just-saved rep (ForceView) dequeues the same entry, so the
-///     rep the user discarded cannot drain back into the list later.
+///     in the ambient "waiting to upload" backlog forever. ForceView's
+///     `reconcileSavedRecording` awaits this dequeue, so an Undo tapped
+///     afterwards cannot let the discarded rep drain back into the list.
 ///
 /// Best-effort: a store that refuses the delete contributes nothing to the
 /// return, and a lane write that fails is left for the next drain. Idempotent:

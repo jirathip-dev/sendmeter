@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   applyRecordingRealtimeEvents,
   recordingEventsAllApplied,
+  recordingListsEqual,
   type RealtimeRecordingRowEvent,
 } from "./realtimeRecordingApply";
 import type { TindeqRecordingMeta } from "../types";
@@ -190,5 +191,44 @@ describe("recordingEventsAllApplied (#613 — the refetch guard)", () => {
         [meta("r1")],
       ),
     ).toBe(false);
+  });
+});
+
+describe("recordingListsEqual (#613 — deep refetch idempotence)", () => {
+  it("true for identical lists", () => {
+    expect(recordingListsEqual([meta("a"), meta("b")], [meta("a"), meta("b")])).toBe(true);
+  });
+
+  it("false when a field the OLD compare skipped changes — durationMs", () => {
+    expect(
+      recordingListsEqual([meta("a", { durationMs: 5000 })], [meta("a", { durationMs: 9000 })]),
+    ).toBe(false);
+  });
+
+  it("false when zone, recordedAt or sampleCount changes", () => {
+    expect(recordingListsEqual([meta("a", { zone: "strength" })], [meta("a", { zone: "power" })])).toBe(false);
+    expect(
+      recordingListsEqual(
+        [meta("a", { recordedAt: "2026-07-29T10:00:00.000Z" })],
+        [meta("a", { recordedAt: "2026-07-29T11:00:00.000Z" })],
+      ),
+    ).toBe(false);
+    expect(recordingListsEqual([meta("a", { sampleCount: 100 })], [meta("a", { sampleCount: 42 })])).toBe(false);
+  });
+
+  it("false when a nested field (setMetrics) changes", () => {
+    const a = meta("a");
+    a.setMetrics = { meanKg: 20, coefficientVariationPct: 3, inTargetPct: 50, timeUnderTensionMs: 5000, driftPct: 2, cadenceAdherencePct: 100 };
+    const b = { ...a, setMetrics: { ...a.setMetrics!, meanKg: 25 } };
+    expect(recordingListsEqual([a], [b as TindeqRecordingMeta])).toBe(false);
+  });
+
+  it("treats null and undefined as equal (the DB stores null; builders may read either)", () => {
+    expect(recordingListsEqual([meta("a", { zone: null })], [meta("a", { zone: undefined as never })])).toBe(true);
+  });
+
+  it("false for different lengths or different positions", () => {
+    expect(recordingListsEqual([meta("a")], [meta("a"), meta("b")])).toBe(false);
+    expect(recordingListsEqual([meta("a"), meta("b")], [meta("b"), meta("a")])).toBe(false);
   });
 });

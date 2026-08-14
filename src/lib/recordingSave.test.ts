@@ -165,6 +165,21 @@ describe("saveRecordingDurableFirst (#613 — durable before the network)", () =
     await expect(saveRecordingDurableFirst(input)).resolves.toBe("not-persisted");
     await expect(settlement.waitForIdle()).resolves.toBeUndefined();
   });
+
+  it("a THROWING persist still settles the settlement — the session end can never wedge", async () => {
+    const { input, onNotPersisted } = handlers({
+      persist: vi.fn(async (): Promise<PersistResult> => {
+        throw new Error("storage exploded");
+      }),
+    });
+    const settlement = createRepSettlement();
+    input.settlement = settlement;
+    // The unexpected throw propagates (it is not the #264 loss path), but the
+    // settlement MUST settle so endGaugeSession's waitForIdle() resolves.
+    await expect(saveRecordingDurableFirst(input)).rejects.toThrow("storage exploded");
+    await expect(settlement.waitForIdle()).resolves.toBeUndefined();
+    expect(onNotPersisted).not.toHaveBeenCalled();
+  });
 });
 
 describe("pendingRecordingMeta (#613)", () => {

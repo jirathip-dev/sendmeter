@@ -80,6 +80,48 @@ export function applyRecordingRealtimeEvents(
   return next;
 }
 
+/// Deep-equality for one recording meta, with null and undefined treated as
+/// equal — the DB stores null and `toRecording`/`pendingRecordingMeta` can
+/// read the same absence as either, so "no value" must not count as a change.
+/// Objects are compared key-order-independently and array/object fields
+/// (`cadenceMarkers`, `setMetrics`) recursively, so a real cross-device edit
+/// on ANY field — not just the scalar ones — reads as a change.
+function recordingMetaEqual(a: TindeqRecordingMeta, b: TindeqRecordingMeta): boolean {
+  return deepEqual(a, b);
+}
+
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return a == null && b == null;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => deepEqual(v, b[i]));
+  }
+  if (typeof a === "object" && typeof b === "object") {
+    const ak = Object.keys(a as object).sort();
+    const bk = Object.keys(b as object).sort();
+    if (ak.length !== bk.length || ak.some((k, i) => k !== bk[i])) return false;
+    const ar = a as Record<string, unknown>;
+    const br = b as Record<string, unknown>;
+    return ak.every((k) => deepEqual(ar[k], br[k]));
+  }
+  return false;
+}
+
+/// Are two recordings lists the same content, position for position? The
+/// ForceView refetch guard uses this to skip a whole-list refetch that changed
+/// nothing — comparing every field, so an edit to any field (e.g. a
+/// duration_ms or zone change that arrived via a dropped realtime event) is
+/// still applied rather than discarded as "unchanged".
+export function recordingListsEqual(
+  a: readonly TindeqRecordingMeta[],
+  b: readonly TindeqRecordingMeta[],
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every((r, i) => recordingMetaEqual(r, b[i]!))
+  );
+}
+
 /// Has every event in the queue already landed in `list`? The ForceView fetch
 /// guard uses this to skip the whole-list refetch when the bump was its own (or
 /// any) recording write the apply path already handled — a recording write must

@@ -27,6 +27,21 @@ const MAX_RECORDING_EVENTS = 128;
 
 /// #613: narrow a postgres_changes payload down to what the apply path reads,
 /// so RealtimeVersionProvider never leaks raw payload shapes into consumers.
+///
+/// The full row is stripped to the columns `toRecording` (repo/tindeq.ts, the
+/// `RECORDING_COLS` contract) actually maps, plus `deleted_at` (the soft-delete
+/// check in realtimeRecordingApply). Everything else — notably `samples` (the
+/// jsonb sample stream, tens of KB per rep), `user_id`, `created_at`,
+/// `updated_at` — is dropped BEFORE enqueueing, because the bounded queue (up
+/// to 128 events) lives in app-root context state for the whole session and
+/// nothing in the apply path ever reads them.
+const STRIPPED_ROW_COLUMNS = new Set([
+  "samples",
+  "user_id",
+  "created_at",
+  "updated_at",
+]);
+
 function toRealtimeRecordingEvent(payload: {
   eventType: string;
   new: unknown;
@@ -36,6 +51,14 @@ function toRealtimeRecordingEvent(payload: {
     v && typeof v === "object" && !Array.isArray(v)
       ? (v as Record<string, unknown>)
       : null;
+  const strip = (v: Record<string, unknown> | null) => {
+    if (!v) return null;
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) {
+      if (!STRIPPED_ROW_COLUMNS.has(k)) out[k] = val;
+    }
+    return out;
+  };
   // Preserve the real event type — the apply path distinguishes a soft-delete
   // UPDATE (deleted_at set) from an INSERT by `eventType === "UPDATE"`.
   const eventType =
@@ -46,9 +69,11 @@ function toRealtimeRecordingEvent(payload: {
         : "INSERT";
   return {
     eventType,
-    row: payload.eventType === "DELETE" ? null : asRecord(payload.new),
+    row: payload.eventType === "DELETE" ? null : strip(asRecord(payload.new)),
     oldRow:
-      payload.eventType === "INSERT" ? null : asRecord(payload.old ?? payload.new),
+      payload.eventType === "INSERT"
+        ? null
+        : strip(asRecord(payload.old ?? payload.new)),
   };
 }
 
