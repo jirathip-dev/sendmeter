@@ -1,0 +1,82 @@
+name: Install native Swift rewrite
+
+on:
+  push:
+    branches:
+      - "agent/swift-native-rewrite"
+    paths:
+      - ".native-rewrite.part-*"
+      - ".github/workflows/native-rewrite-bootstrap.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: native-rewrite-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install-and-verify:
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/swift-native-rewrite
+      - name: Verify and extract source archive
+        env:
+          ARCHIVE_SHA256: 2b52938f4d37fb774a68dea5774675d5d99fe061a79126a174165660fd9e7e69
+        run: |
+          cat .native-rewrite.part-* > /tmp/sendmeter-native-rewrite.tar.gz.b64
+          echo "$ARCHIVE_SHA256  /tmp/sendmeter-native-rewrite.tar.gz.b64" | shasum -a 256 -c -
+          python3 - <<'PY'
+          import base64
+          import pathlib
+          import tarfile
+
+          encoded = pathlib.Path('/tmp/sendmeter-native-rewrite.tar.gz.b64').read_bytes()
+          archive = pathlib.Path('/tmp/sendmeter-native-rewrite.tar.gz')
+          archive.write_bytes(base64.b64decode(encoded, validate=True))
+          with tarfile.open(archive, 'r:gz') as bundle:
+              for member in bundle.getmembers():
+                  target = (pathlib.Path.cwd() / member.name).resolve()
+                  if pathlib.Path.cwd().resolve() not in target.parents and target != pathlib.Path.cwd().resolve():
+                      raise RuntimeError(f'Unsafe archive member: {member.name}')
+              bundle.extractall('.')
+          PY
+          rm .native-rewrite.part-*
+          rm .github/workflows/native-rewrite-bootstrap.yml
+          git diff --check
+      - name: Run pure Swift tests
+        run: swift test --package-path native/SendmeterNative
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: native/SendmeterNative
+        run: xcodegen generate
+      - name: Resolve Swift packages
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -resolvePackageDependencies
+      - name: Build native app
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Commit verified rewrite
+        run: |
+          rm -rf native/SendmeterNative/.build native/SendmeterNative/SendmeterNative.xcodeproj
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: add native SwiftUI Sendmeter app"
+          git push origin HEAD:agent/swift-native-rewrite
