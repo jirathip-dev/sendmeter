@@ -819,6 +819,37 @@ describe("useAuth's launch sequence (issue #202 review, round 2)", () => {
     expect(stored[0]).toMatchObject({ count: 2, build: "1.4.1 (58)" });
   });
 
+  it("records a watch-pull null as its own ring incident, not a bump on the get-session entry's count (issue #612 review F5)", async () => {
+    resetAuthDiagnosticsForTest();
+    const store = createMemoryStore("preferences");
+    const web = fakeStorage();
+    const client = {
+      auth: { getSession: async () => ({ data: { session: null }, error: null }) },
+    };
+    await initAuthDiagnostics({ store, web, build: "1.4.1 (58)" });
+
+    // A foreground/mount null — the default observer.
+    await getSessionWithDiagnostics(client, HOSTED_URL, web);
+    // The watch's `requestSession` pull answered with a null — the SAME
+    // getSession(), but a distinct observer, so it must not collapse into
+    // the entry above (that would hide that the WATCH was the one asking
+    // when the session was already gone).
+    await getSessionWithDiagnostics(client, HOSTED_URL, web, "watch-pull");
+
+    const stored = loadAuthEvents(store);
+    expect(stored).toHaveLength(2);
+    expect(stored[0]).toMatchObject({
+      reason: "storage-missing",
+      source: "get-session",
+      build: "1.4.1 (58)",
+    });
+    expect(stored[1]).toMatchObject({
+      reason: "storage-missing",
+      source: "watch-pull",
+      build: "1.4.1 (58)",
+    });
+  });
+
   it("resolves the build tag itself, so no caller can reopen the window by awaiting it first", async () => {
     resetAuthDiagnosticsForTest();
     setBuildTagForTest("9.9.9 (99)");

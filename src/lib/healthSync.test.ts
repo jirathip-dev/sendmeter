@@ -764,3 +764,163 @@ describe("readiness replay sync timestamp (#535)", () => {
     expect(localStorage.getItem("sendmeter:health-synced-at:user-a")).toBe("42");
   });
 });
+
+/// #612 round 2: `syncHealthNow` gains an account-scoped, freshness-bounded
+/// single-flight so overlapping foreground syncs can't double the native
+/// work or the "Health data synced" toast. All interleavings are pinned with
+/// deferred native calls and the relay's injected monotonic clock.
+describe("syncHealthNow foreground single-flight (#612 round 2)", () => {
+  const session = (userId: string): Session =>
+    ({ user: { id: userId }, access_token: `token-${userId}` }) as unknown as Session;
+
+  /// `runForegroundSync` awaits `fetchTodayHealthSignature` before it reaches
+  /// the native call, so assertions on `syncNow` call counts need a flush
+  /// past that microtask.
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  afterEach(() => {
+    vi.resetModules();
+    vi.doUnmock("@capacitor/core");
+    vi.doUnmock("sendlog-health");
+    vi.doUnmock("./repo/health");
+    localStorage.clear();
+  });
+
+  /// Mocks the native shell + plugin + the health-row signature fetch; the
+  /// readiness-listener methods are stubbed because `relayHealthSession`
+  /// (the only way to set the module's active account) wires them too.
+  function mockNativeSync(syncNowImpl: () => Promise<void>) {
+    const syncNow = vi.fn(syncNowImpl);
+    vi.doMock("@capacitor/core", () => ({
+      Capacitor: {
+        isNativePlatform: () => true,
+        isPluginAvailable: vi.fn().mockReturnValue(true),
+      },
+    }));
+    vi.doMock("sendlog-health", () => ({
+      SendLogHealth: {
+        syncNow,
+        setSession: vi.fn().mockResolvedValue(undefined),
+        clearSession: vi.fn().mockResolvedValue(undefined),
+        addListener: vi.fn().mockResolvedValue({ remove: vi.fn() }),
+        getLatestReadiness: vi.fn().mockResolvedValue(null),
+      },
+    }));
+    vi.doMock("./repo/health", () => ({
+      fetchTodayHealthSignature: vi.fn().mockResolvedValue(undefined),
+    }));
+    return { syncNow };
+  }
+
+  it("coalesces concurrent same-account foreground calls into a single native sync", async () => {
+    let resolveSync!: () => void;
+    const pending = new Promise<void>((r) => {
+      resolveSync = r;
+    });
+    const { syncNow } = mockNativeSync(() => pending);
+
+    const { syncHealthNow, relayHealthSession } = await import("./healthSync");
+    relayHealthSession(session("user-a"));
+
+    const first = syncHealthNow();
+    const second = syncHealthNow();
+    await flush();
+    expect(syncNow).toHaveBeenCalledTimes(1);
+
+    resolveSync();
+    await Promise.all([first, second]);
+    expect(syncNow).toHaveBeenCalledTimes(1);
+  });
+
+  it("records exactly one foreground health-synced event for a coalesced pair", async () => {
+    mockNativeSync(() => Promise.resolve());
+    const { syncHealthNow, relayHealthSession } = await import("./healthSync");
+    relayHealthSession(session("user-a"));
+    const syncedHandler = vi.fn();
+    window.addEventListener("sendmeter:health-synced", syncedHandler);
+    try {
+      await Promise.all([syncHealthNow(), syncHealthNow()]);
+      expect(syncedHandler).toHaveBeenCalledTimes(1);
+      expect(syncedHandler.mock.calls[0]![0].detail).toMatchObject({
+        source: "foreground",
+        changed: false,
+      });
+    } finally {
+      window.removeEventListener("sendmeter:health-synced", syncedHandler);
+    }
+  });
+
+  it("a failed native sync clears the flight so a later call retries", async () => {
+    const { syncNow } = mockNativeSync(() => Promise.resolve());
+    syncNow.mockRejectedValueOnce(new Error("HealthKit denied"));
+    const { syncHealthNow, relayHealthSession } = await import("./healthSync");
+    relayHealthSession(session("user-a"));
+
+    await syncHealthNow();
+    expect(syncNow).toHaveBeenCalledTimes(1);
+
+    await syncHealthNow();
+    expect(syncNow).toHaveBeenCalledTimes(2);
+  });
+
+  it("a call for a different account never joins the previous account's in-flight sync", async () => {
+    let resolveA!: () => void;
+    const pendingA = new Promise<void>((r) => {
+      resolveA = r;
+    });
+    const { syncNow } = mockNativeSync(() => Promise.resolve());
+    syncNow.mockReturnValueOnce(pendingA);
+
+    const { syncHealthNow, relayHealthSession } = await import("./healthSync");
+    relayHealthSession(session("user-a"));
+    const a = syncHealthNow(); // flight for user-a, native pending
+    await flush();
+    relayHealthSession(session("user-b")); // account switches
+    const b = syncHealthNow(); // must NOT join user-a's flight
+    await flush();
+
+    expect(syncNow).toHaveBeenCalledTimes(2);
+
+    resolveA();
+    await Promise.all([a, b]);
+  });
+
+  it("a call beyond the coalescing window starts its own sync — a resumed foreground is never joined to a pre-background flight", async () => {
+    let resolveFirst!: () => void;
+    const firstPending = new Promise<void>((r) => {
+      resolveFirst = r;
+    });
+    const { syncNow } = mockNativeSync(() => Promise.resolve());
+    syncNow.mockReturnValueOnce(firstPending);
+
+    const {
+      syncHealthNow,
+      relayHealthSession,
+      FOREGROUND_SYNC_COALESCE_MS,
+    } = await import("./healthSync");
+    // Imported through the SAME fresh module registry healthSync uses (the
+    // afterEach's `vi.resetModules()` discards any module-level state, so a
+    // static top-level import would target a different clock instance).
+    const { setForegroundRelayClockForTest } = await import("./foregroundRelay");
+    relayHealthSession(session("user-a"));
+
+    setForegroundRelayClockForTest(() => 1_000_000);
+    try {
+      const a = syncHealthNow(); // flight starts at 1_000_000; native pending
+      await flush();
+      expect(syncNow).toHaveBeenCalledTimes(1);
+
+      setForegroundRelayClockForTest(
+        () => 1_000_000 + FOREGROUND_SYNC_COALESCE_MS,
+      );
+      const b = syncHealthNow(); // window elapsed → fresh sync, not a join
+      await flush();
+      expect(syncNow).toHaveBeenCalledTimes(2);
+
+      resolveFirst();
+      await Promise.all([a, b]);
+    } finally {
+      setForegroundRelayClockForTest(() => performance.now());
+    }
+  });
+});

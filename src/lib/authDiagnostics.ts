@@ -41,7 +41,13 @@ export type StoredSessionProbe = "present" | "absent" | "unavailable";
 /// auto-refresh tick failing and auth-js tearing the session down itself —
 /// left no trace at all. Carrying the origin makes "we asked and got null"
 /// distinguishable from "auth-js signed us out".
-export type AuthEventSource = "get-session" | "auth-state-change" | "init";
+///
+/// `watch-pull` (#612) is the phone answering the watch's `requestSession`
+/// with a null session — the same getSession() as `get-session`, but a
+/// distinct observer, so it records as its own ring incident instead of
+/// collapsing into the foreground/mount entry's count (which would hide that
+/// the WATCH was the one asking when the session was already gone).
+export type AuthEventSource = "get-session" | "auth-state-change" | "init" | "watch-pull";
 
 export interface NullSessionEvent {
   reason: NullSessionReason;
@@ -782,10 +788,16 @@ interface SessionClient {
 /// The `storage` argument is the WEBVIEW's localStorage (where supabase-js
 /// keeps the session), NOT the ring store — on native those are deliberately
 /// different places.
+///
+/// `source` overrides the observer stamped on a null-session record. The
+/// default `"get-session"` covers the mount and foreground reads; the watch's
+/// `requestSession` answer passes `"watch-pull"` so its nulls are a distinct
+/// ring incident rather than a bump on the foreground entry's count (#612).
 export async function getSessionWithDiagnostics(
   client: SessionClient,
   url: string,
   storage: AuthStorage | null = webStorage(),
+  source: AuthEventSource = "get-session",
 ): Promise<{ session: Session | null; reason: NullSessionReason | null }> {
   const stored = probeStoredSession(storage, url);
   const { data, error } = await client.auth.getSession();
@@ -801,7 +813,7 @@ export async function getSessionWithDiagnostics(
       reason,
       ring,
       () => at,
-      currentMeta("get-session", undefined, ring, status.build),
+      currentMeta(source, undefined, ring, status.build),
     );
   });
   return { session: null, reason };
