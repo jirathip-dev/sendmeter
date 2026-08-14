@@ -24,6 +24,10 @@ struct QuarantineDiagnosticsView: View {
     @State private var quarantinedTotal: Int?
     @State private var quarantinedStuckTotal: Int?
     @State private var entries: [QuarantineDiagnosticEntry] = []
+    /// #606: the quarantine-exit breadcrumb ring, newest first for display —
+    /// the "recent history" of records that LEFT quarantine (manually or by
+    /// the automatic resurrection), so a resolved incident stays diagnosable.
+    @State private var breadcrumbs: [QuarantineBreadcrumbEntry] = []
     @State private var isLoading = true
     /// #600: the manual retry's in-flight/result state — set by the retry
     /// action, cleared by the next load.
@@ -38,6 +42,8 @@ struct QuarantineDiagnosticsView: View {
         ScrollView {
             VStack(spacing: 8) {
                 summaryCard
+
+                historyCard
 
                 if retryableCount > 0 {
                     retryCard
@@ -86,10 +92,15 @@ struct QuarantineDiagnosticsView: View {
         async let sessions = PendingSessionQueue.shared.quarantinedDiagnostics()
         async let recordings = PendingRecordingQueue.shared.quarantinedDiagnostics()
         async let terminal = LiveWorkoutTerminalRetry.shared.quarantinedDiagnostics()
+        async let exitWorkouts = OfflineQueue.shared.quarantineExitHistory()
+        async let exitSessions = PendingSessionQueue.shared.quarantineExitHistory()
+        async let exitRecordings = PendingRecordingQueue.shared.quarantineExitHistory()
         let merged = await (workouts, sessions, recordings, terminal)
+        let exits = await (exitWorkouts + exitSessions + exitRecordings)
         quarantinedTotal = caches.quarantinedTotal
         quarantinedStuckTotal = caches.quarantinedStuckTotal
         entries = [merged.0, merged.1, merged.2, merged.3].flatMap { $0 }
+        breadcrumbs = exits.sorted { $0.exitedAt > $1.exitedAt }
         isLoading = false
     }
 
@@ -127,6 +138,47 @@ struct QuarantineDiagnosticsView: View {
         // were never candidates and must not read as "attempted and refused".
         let kept = retryableCount
         retrySummary = QuarantineRetryPolicy.resultSummary(restored: restored, kept: kept)
+    }
+
+    // MARK: - Recent history (#606)
+
+    /// Records that LEFT quarantine (manual retry or the automatic weekly
+    /// resurrection) — kept even after the upload succeeds, because a
+    /// RESOLVED incident is the one that most needs explaining afterwards.
+    /// Hidden entirely when empty: an empty ring is not a state to read
+    /// anything from (the same quiet-when-empty rule as the queue depth
+    /// lines), and this card is about the past, not the present.
+    @ViewBuilder
+    private var historyCard: some View {
+        if !breadcrumbs.isEmpty {
+            WatchCard(accent: WatchPalette.secondary) {
+                VStack(alignment: .leading, spacing: 4) {
+                    WatchEyebrow(text: "Recent history")
+                    Text("\(breadcrumbs.count) upload\(breadcrumbs.count == 1 ? "" : "s") left quarantine")
+                        .font(.system(.footnote, design: .rounded).weight(.bold))
+                    Text("Most recent: \(historyLine(breadcrumbs[0]))")
+                        .font(.caption2)
+                        .foregroundStyle(WatchPalette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(breadcrumbs.dropFirst(), id: \.id) { entry in
+                        Text(historyLine(entry))
+                            .font(.caption2)
+                            .foregroundStyle(WatchPalette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    /// One breadcrumb's line: the factual failure summary (stage / HTTP /
+    /// code — `QuarantineBreadcrumbs.failureSummary`) plus when it exited,
+    /// e.g. "stage session, HTTP 403 · 12 Aug 20:22". A failure that reached
+    /// no server has no summary; the date alone still anchors it.
+    private func historyLine(_ entry: QuarantineBreadcrumbEntry) -> String {
+        let summary = QuarantineBreadcrumbs.failureSummary(for: entry)
+        let date = dateText(entry.exitedAt)
+        return summary.isEmpty ? date : "\(summary) · \(date)"
     }
 
     // MARK: - Retry card (#600)
@@ -296,7 +348,7 @@ struct QuarantineDiagnosticsView: View {
             if let attemptCount = item.attemptCount {
                 fieldLine("Attempts", "\(attemptCount)")
             }
-            fieldLine("Quarantined", quarantinedAtText(item.quarantinedAt))
+            fieldLine("Quarantined", dateText(item.quarantinedAt))
             if item.payloadDropped == true {
                 fieldLine("Note", QuarantineCopy.payloadDroppedNote)
             }
@@ -319,7 +371,7 @@ struct QuarantineDiagnosticsView: View {
         }
     }
 
-    private func quarantinedAtText(_ date: Date) -> String {
+    private func dateText(_ date: Date) -> String {
         // Display-only formatting: still Gregorian + POSIX so a Buddhist-
         // calendar region shows an AD date (CLAUDE.md's date rule), but local
         // time — this is for the user's own eyes, not storage.

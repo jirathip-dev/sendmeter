@@ -1606,6 +1606,143 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(uploaded[0].workout.id, stuck.workout.id)
     }
 
+    // MARK: #606 — quarantine-exit breadcrumbs
+
+    /// The named acceptance criterion: the manual retry writes a header-only
+    /// breadcrumb — and the breadcrumb SURVIVES the restored item's
+    /// successful upload, because it exists to explain a failure that has
+    /// since cleared (#606 ask 5: deleting it on success defeats the entire
+    /// purpose).
+    func testManualRetryWritesABreadcrumbThatSurvivesTheSuccessfulUpload() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+
+        let uploader = ScriptedUploader(failing: [:])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        let restored = await queue.retryQuarantinedItems()
+        XCTAssertEqual(restored, 1)
+
+        let uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(stuck.workout.id), "the restored item uploads within the same call")
+        XCTAssertFalse(try filesOnDisk().contains("\(stuck.workout.id.uuidString).quarantine"))
+
+        // The header fields that would otherwise have been destroyed with
+        // the quarantine file — the reason #606 exists.
+        let history = await queue.quarantineExitHistory()
+        XCTAssertEqual(history.count, 1)
+        let entry = history[0]
+        XCTAssertEqual(entry.id, stuck.workout.id)
+        XCTAssertEqual(entry.reason, .stuckRetrying)
+        XCTAssertEqual(entry.stage, .session)
+        XCTAssertEqual(entry.httpStatus, 400)
+        XCTAssertEqual(entry.postgrestCode, "PGRST205")
+        XCTAssertEqual(entry.errorMessage, "fixture failure")
+        XCTAssertEqual(entry.attemptCount, QueueRetryPolicy.maxConsecutiveFailures)
+        XCTAssertEqual(entry.quarantinedAt, now)
+        XCTAssertEqual(entry.exitedAt, now)
+    }
+
+    /// The automatic F12 resurrection writes the same breadcrumb — the ask
+    /// covers BOTH exit paths, not just the manual button, because the
+    /// unattended weekly retry is exactly the path whose outcome nobody is
+    /// watching.
+    func testAutomaticResurrectionWritesABreadcrumb() async throws {
+        let stuck = makeBundle(id: UUID())
+        let quarantinedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: quarantinedAt)
+
+        let uploader = ScriptedUploader(failing: [:])
+        let queue = OfflineQueue(
+            uploader: uploader,
+            clock: FixedClock(quarantinedAt.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS + 1)),
+            baseDir: tempDir
+        )
+        await queue.drain()
+
+        let uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(stuck.workout.id), "the due record is resurrected and lands in the same pass")
+
+        let history = await queue.quarantineExitHistory()
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history[0].id, stuck.workout.id)
+        XCTAssertEqual(history[0].reason, .stuckRetrying)
+        XCTAssertEqual(history[0].quarantinedAt, quarantinedAt)
+        XCTAssertEqual(
+            history[0].exitedAt,
+            quarantinedAt.addingTimeInterval(QueueRetryPolicy.stuckRetryBackoffS + 1),
+            "exitedAt is the resurrection pass's clock, not the original quarantine time"
+        )
+    }
+
+    /// The breadcrumb is a file, not a memory — a fresh queue over the same
+    /// directory (the watch relaunch) reads the same ring back.
+    func testBreadcrumbSurvivesARelaunch() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+        _ = await queue.retryQuarantinedItems()
+        XCTAssertEqual(await queue.quarantineExitHistory().count, 1)
+
+        let relaunched = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+        XCTAssertEqual(await relaunched.quarantineExitHistory().count, 1)
+    }
+
+    /// #606's note decides this: the breadcrumb is diagnostics, not queued
+    /// data — the CLAUDE.md #273 "only sign-out deletes queued data" rule
+    /// does not apply, and a sign-out must NOT clear it (nothing here is a
+    /// queued item).
+    func testSignOutDoesNotClearTheBreadcrumb() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+        _ = await queue.retryQuarantinedItems()
+        XCTAssertEqual(await queue.quarantineExitHistory().count, 1)
+
+        WatchSessionStore.shared.clear() // sign out
+
+        XCTAssertEqual(
+            await queue.quarantineExitHistory().count,
+            1,
+            "a sign-out must not erase the record of why an upload failed"
+        )
+    }
+
+    /// The breadcrumb is device-local and account-agnostic — switching
+    /// accounts keeps it readable (it explains the DEVICE's upload history,
+    /// like the auth-events ring, not one account's queue).
+    func testAccountSwitchKeepsTheBreadcrumbLocal() async throws {
+        let stuck = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeStuckQuarantine(stuck, at: now)
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+        _ = await queue.retryQuarantinedItems()
+
+        signIn(as: UUID())
+        XCTAssertEqual(await queue.quarantineExitHistory().count, 1)
+    }
+
+    /// A record that never leaves quarantine leaves no breadcrumb: the
+    /// manual retry restores nothing for `.schemaRejection` (proven
+    /// permanent), and the F12 resurrection never touches it either — the
+    /// breadcrumb is written on EXIT, so staying quarantined is silent.
+    func testARecordThatStaysQuarantinedLeavesNoBreadcrumb() async throws {
+        let permanent = makeBundle(id: UUID(), attempts: [makePoisonedAttempt(workoutId: UUID())])
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeSchemaRejection(permanent, at: now)
+        let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
+
+        _ = await queue.retryQuarantinedItems()
+        XCTAssertEqual(await queue.quarantineExitHistory().count, 0)
+
+        await queue.drain()
+        XCTAssertEqual(await queue.quarantineExitHistory().count, 0, "resurrection also skips schema rejections")
+        XCTAssertTrue(try filesOnDisk().contains("\(permanent.workout.id.uuidString).quarantine"))
+    }
+
     // MARK: #472b review F21 — a dropped scheduler callback must not disarm the backoff forever
     /// Exercises the REAL production `TaskDrainScheduler`, not a test
     /// double — the only test in this file that does, closing the "never
