@@ -6,7 +6,7 @@ import {
   admitLiveForceMessage,
   deriveForceSyncState,
   emptyLiveForceMirrorState,
-  isFresh,
+  isBeatVisible,
   type ForceMirrorSyncState,
   type LiveForce,
   type LiveForceMirrorState,
@@ -34,6 +34,10 @@ export type { ForceMirrorSyncState } from "../lib/liveForceMirror";
 export function useLiveForce(userId: string): [LiveForce | null, ForceMirrorSyncState] {
   const [beat, setBeat] = useState<LiveForce | null>(null);
   const [syncState, setSyncState] = useState<ForceMirrorSyncState>("unknown");
+  // #614 round-2 N3: phone-local receipt time of the last accepted beat, kept
+  // in state (not read off the ref at render) so the visibility gate below is
+  // skew-free — the watch's `updatedAt` would hide a just-accepted card.
+  const [lastAcceptedAtMs, setLastAcceptedAtMs] = useState(0);
   const mirrorRef = useRef<LiveForceMirrorState>(emptyLiveForceMirrorState());
   const activeUserIdRef = useRef(userId);
   const [renderedUserId, setRenderedUserId] = useState(userId);
@@ -61,6 +65,7 @@ export function useLiveForce(userId: string): [LiveForce | null, ForceMirrorSync
   if (accountTransition) {
     setRenderedUserId(userId);
     setBeat(null);
+    setLastAcceptedAtMs(0);
     setSyncState("unknown");
   }
 
@@ -150,18 +155,21 @@ export function useLiveForce(userId: string): [LiveForce | null, ForceMirrorSync
         // run. Mutate the ref and publish the accepted snapshot together.
         mirrorRef.current = admission.state;
         setBeat(admission.state.beat);
+        setLastAcceptedAtMs(admission.state.lastAcceptedAtMs);
         setSyncState(deriveForceSyncState(mirrorRef.current, Date.now()));
       }),
     );
     const interval = setInterval(() => {
       const atMs = Date.now();
       setNow(atMs);
-      // #614: a mirror whose last accepted beat aged out of STALE_MS hides
-      // (see `isFresh`) — record that once per run so the telemetry names
-      // the silence. The age is DATA age (ageMs), never a latency sample.
+      // #614: a mirror whose last accepted MEASURING beat aged out of
+      // STALE_MS hides (see `isBeatVisible`) — record that once per run so
+      // the telemetry names the silence. A `connected` last beat is a normal
+      // inter-rep rest and must not be recorded as stale (#614 round-2 N1).
+      // The age is DATA age (ageMs), never a latency sample.
       const m = mirrorRef.current;
       const age = atMs - m.lastAcceptedAtMs;
-      if (m.beat && !m.beat.terminal && age > STALE_MS && staleRecordedRunRef.current !== m.beat.runId) {
+      if (m.beat && !m.beat.terminal && m.beat.status === "measuring" && age > STALE_MS && staleRecordedRunRef.current !== m.beat.runId) {
         staleRecordedRunRef.current = m.beat.runId;
         recordLiveMirrorTrace({
           kind: "force",
@@ -186,8 +194,12 @@ export function useLiveForce(userId: string): [LiveForce | null, ForceMirrorSync
     };
   }, [userId]);
 
+  // #614 round-2 N3: the visibility gate is the PHONE's own receipt clock —
+  // the watch's `updatedAt` under skew would hide a beat accepted moments
+  // ago, silently reverting to the "card gone, no explanation" symptom.
   const visibleBeat = accountTransition ? null : beat;
-  if (!visibleBeat) return [null, syncState];
-  if (!isFresh(visibleBeat, now)) return [null, syncState];
+  if (!isBeatVisible(visibleBeat, accountTransition ? 0 : lastAcceptedAtMs, now)) {
+    return [null, syncState];
+  }
   return [visibleBeat, syncState];
 }

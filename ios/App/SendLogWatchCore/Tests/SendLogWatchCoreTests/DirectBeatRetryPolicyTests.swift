@@ -92,4 +92,19 @@ final class DirectBeatRetryPolicyTests: XCTestCase {
             )
         )
     }
+
+    // #614 round-2 N2: a terminal retry must still fire when the live sync
+    // actor is already gone — end() tears it down fast when markEnded() 401s
+    // (the #472 scenario), which is exactly when the durable fallback also
+    // failed and the direct terminal beat is the last hope. Non-terminal
+    // retries need the actor (nothing meaningful to re-send after teardown).
+    func testOnlyTerminalMayRetryWithoutTheLiveSyncActor() {
+        XCTAssertTrue(DirectBeatRetryPolicy.mayRetryWithoutLiveSync(event: .end))
+        for event in [LiveMirrorEvent.start, .phase, .count, .telemetry] {
+            XCTAssertFalse(
+                DirectBeatRetryPolicy.mayRetryWithoutLiveSync(event: event),
+                "\(event) must not re-send after the run's live sync actor is gone"
+            )
+        }
+    }
 }

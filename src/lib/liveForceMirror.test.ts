@@ -11,6 +11,7 @@ import {
   rejectionForForce,
   admitLiveForceMessage,
   deriveForceSyncState,
+  isBeatVisible,
   type LiveForce,
 } from "./liveForceMirror";
 
@@ -369,5 +370,114 @@ describe("deriveForceSyncState", () => {
     expect(deriveForceSyncState(s, 1_000_000 + FORCE_DIRECT_QUIET_MS + 1)).toBe(
       "temporarily-unreachable",
     );
+  });
+
+  // #614 round-2 N1: the ~2 Hz cadence only exists while measuring. Between
+  // reps the watch is `connected` and sends no periodic beats, so long silence
+  // there is a normal rest and must stay healthy/non-alarming.
+  it("a connected inter-rep rest of 60-180s stays healthy, never alarming", () => {
+    const connected = reduceForceBeat(
+      emptyLiveForceMirrorState(),
+      msg({ sequence: 1, status: "connected", updated_at: 100 }),
+      1_000_000,
+    ).state;
+    for (const silence of [60_000, 120_000, 180_000]) {
+      expect(deriveForceSyncState(connected, 1_000_000 + silence)).toBe("watch-direct");
+    }
+  });
+
+  it("a measuring last beat still warns after mid-hold silence (#614 round-2 N1)", () => {
+    // Same silence windows as the connected case — the alarm must NOT have
+    // been disabled wholesale, only gated on the measuring status.
+    const measuring = reduceForceBeat(
+      emptyLiveForceMirrorState(),
+      msg({ sequence: 1, status: "measuring", updated_at: 100 }),
+      1_000_000,
+    ).state;
+    expect(deriveForceSyncState(measuring, 1_000_000 + FORCE_DIRECT_QUIET_MS + 1)).toBe(
+      "temporarily-unreachable",
+    );
+    expect(deriveForceSyncState(measuring, 1_000_000 + STALE_MS + 1)).toBe("stale");
+  });
+});
+
+describe("isBeatVisible (#614 round-2 N3)", () => {
+  function beat(overrides: Partial<LiveForce> = {}): LiveForce {
+    return {
+      runId: "force-run-1",
+      sequence: 1,
+      event: "telemetry",
+      terminal: false,
+      status: "measuring",
+      kg: 20,
+      peakKg: 25,
+      elapsedMs: 1000,
+      sessionCount: 1,
+      tag: "MVC",
+      side: "left",
+      updatedAt: 1_000_000,
+      spark: [],
+      ...overrides,
+    };
+  }
+
+  it("is judged by the phone's receipt clock, not the watch's updatedAt", () => {
+    // The beat's own timestamp says it is ancient (watch clock lagging), yet
+    // the phone accepted it moments ago — it must render.
+    expect(
+      isBeatVisible(beat({ updatedAt: 1_000_000 - 60_000 }), 1_000_000, 1_000_000 + 500),
+    ).toBe(true);
+    // And a watch clock AHEAD must not hide it either.
+    expect(
+      isBeatVisible(beat({ updatedAt: 1_000_000 + 60_000 }), 1_000_000, 1_000_000 + 500),
+    ).toBe(true);
+  });
+
+  it("hides once the phone has accepted nothing for STALE_MS", () => {
+    expect(isBeatVisible(beat(), 1_000_000, 1_000_000 + STALE_MS)).toBe(true);
+    expect(isBeatVisible(beat(), 1_000_000, 1_000_000 + STALE_MS + 1)).toBe(false);
+  });
+
+  it("hides a null or terminal beat", () => {
+    expect(isBeatVisible(null, 1_000_000, 1_000_000)).toBe(false);
+    expect(isBeatVisible(beat({ terminal: true }), 1_000_000, 1_000_000)).toBe(false);
+  });
+});
+
+describe("#614 round-2 N4 — lastAcceptedAtMs is always the phone clock", () => {
+  it("reduceForceBeat writes the nowMs it is given, ignoring the incoming state's seed", () => {
+    // A hostile/legacy seed (a watch-clock ms value) must be discarded.
+    const seeded = {
+      beat: null,
+      cursor: { runId: "force-run-1", sequence: 1, terminal: false, updatedAtMs: 5_000 },
+      lastAcceptedAtMs: 4_999_999,
+    };
+    const result = reduceForceBeat(seeded, msg({ sequence: 2 }), 1_234_567);
+    expect(result.accepted).toBe(true);
+    expect(result.state.lastAcceptedAtMs).toBe(1_234_567);
+  });
+
+  it("mergeForceBeat seeds phone-local, never a watch clock", () => {
+    // mergeForceBeat returns the beat, not the state, so the observable
+    // contract is that a `prev` with an ancient watch-clock timestamp still
+    // merges without the seed being able to leak anywhere.
+    const prev = {
+      runId: "force-run-1",
+      sequence: 1,
+      event: "telemetry" as const,
+      terminal: false,
+      status: "connected" as const,
+      kg: 10,
+      peakKg: 10,
+      elapsedMs: 0,
+      sessionCount: 1,
+      tag: "",
+      side: "",
+      updatedAt: 123_456, // an entirely different (watch) clock era
+      spark: [],
+    };
+    const merged = mergeForceBeat(prev, msg({ sequence: 2, status: "connected", updated_at: 2_000 }));
+    expect(merged?.runId).toBe("force-run-1");
+    expect(merged?.updatedAt).toBe(2_000_000);
   });
 });

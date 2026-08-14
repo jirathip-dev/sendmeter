@@ -53,4 +53,17 @@ public enum DirectBeatRetryPolicy {
         }
         return event.isDiscrete && !retryInFlight && consecutiveFailures < maxConsecutiveRetries
     }
+
+    /// Whether a scheduled retry may still fire when the run's live sync actor
+    /// is already gone (`liveSync == nil`). A TERMINAL re-send is safe and
+    /// required then: `end()` tears `liveSync` down fast when `markEnded()`
+    /// fails quickly (the #472 expired-token 401) — exactly when the durable
+    /// fallback also failed, so the direct terminal beat is the last hope.
+    /// Run identity (the retry closure's runId guard) still prevents a stale
+    /// terminal beat from acting on a newer run, and phone-side terminal
+    /// dominance keeps it from resurrecting the ended run. A non-terminal
+    /// retry has nothing meaningful to re-send after teardown.
+    public static func mayRetryWithoutLiveSync(event: LiveMirrorEvent) -> Bool {
+        event.isTerminal
+    }
 }

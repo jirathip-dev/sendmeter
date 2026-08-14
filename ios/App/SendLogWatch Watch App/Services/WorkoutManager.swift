@@ -642,14 +642,16 @@ final class WorkoutManager: NSObject {
                 // cap); errorHandler = a dropped/disconnected send, which
                 // schedules the bounded retry for a discrete transition.
                 // Both handlers hop to main because the bookkeeping below is
-                // main-only.
+                // main-only. `started` rides the failure path so a retry
+                // re-sends the run's REAL start time, never a freshly-read
+                // `Date()` after `end()` cleared `startDate`.
                 session.sendMessage(
                     stamped,
                     replyHandler: { [weak self] _ in
                         DispatchQueue.main.async { self?.directSendSucceeded(runId: runId) }
                     },
                     errorHandler: { [weak self] _ in
-                        DispatchQueue.main.async { self?.directSendFailed(runId: runId, event: beat.event) }
+                        DispatchQueue.main.async { self?.directSendFailed(runId: runId, event: beat.event, started: started) }
                     }
                 )
             } else {
@@ -661,7 +663,7 @@ final class WorkoutManager: NSObject {
             // back, instead of silently parking until the next heartbeat.
             // (An old phone gets no failure counting at all, matching its
             // pre-#614 behavior.)
-            directSendFailed(runId: runId, event: beat.event)
+            directSendFailed(runId: runId, event: beat.event, started: started)
         }
     }
 
@@ -678,14 +680,16 @@ final class WorkoutManager: NSObject {
     /// re-send of the current snapshot shortly. Run-guarded: a failure
     /// callback that arrives after a new run began must not act for the old
     /// run, and the retry must not fire once the run it belonged to is gone
-    /// (a new run has a new `liveMirrorSequence.runId`).
+    /// (a new run has a new `liveMirrorSequence.runId`). `started` is the
+    /// failed beat's run start, carried through so a late re-send never
+    /// stamps a wrong started-at.
     ///
     /// #614 review F5: a TERMINAL failure pre-empts a pending non-terminal
     /// retry (bumping `directRetryToken` invalidates its closure) and bypasses
     /// the consecutive-failure cap via its own budget — the End beat is the
     /// one with no later heartbeat to recover it, so it must never be starved
     /// by a `count` retry that grabbed the single slot first.
-    private func directSendFailed(runId: UUID, event: LiveMirrorEvent) {
+    private func directSendFailed(runId: UUID, event: LiveMirrorEvent, started: Date) {
         guard liveMirrorSequence.runId == runId else { return }
         directSendFailures += 1
         directSendConsecutiveFailures += 1
@@ -701,6 +705,7 @@ final class WorkoutManager: NSObject {
         let token = directRetryToken
         let runIdAtSchedule = runId
         let retryEvent = event
+        let retryStarted = started
         DispatchQueue.main.asyncAfter(deadline: .now() + DirectBeatRetryPolicy.retryDelayS) {
             [weak self] in
             guard let self else { return }
@@ -709,7 +714,7 @@ final class WorkoutManager: NSObject {
             guard self.directRetryToken == token else { return }
             self.directRetryInFlight = false
             guard self.liveMirrorSequence.runId == runIdAtSchedule else { return }
-            self.retryDirectBeat(event: retryEvent)
+            self.retryDirectBeat(event: retryEvent, started: retryStarted)
         }
     }
 
@@ -717,16 +722,22 @@ final class WorkoutManager: NSObject {
     /// original beat already went to Supabase). Allocates a fresh monotonic
     /// sequence — a phone that saw the failed beat's sequence still accepts
     /// this one, and terminal dominance on the phone rejects it if the run
-    /// already ended there. Direct-only: avoids a duplicate Supabase write,
-    /// and the durable row remains the fallback for the terminal case.
-    private func retryDirectBeat(event: LiveMirrorEvent) {
-        // Still a live run (the sync actor outlives the direct path — if
-        // `end()` has already torn down `liveSync`, the durable row already
-        // carries the terminal state and nothing further is needed).
-        guard liveSync != nil else { return }
+    /// already ended there. Direct-only: avoids a duplicate Supabase write.
+    ///
+    /// #614 round-2 N2: a TERMINAL retry fires even when `liveSync` is
+    /// already gone — `end()` tears it down fast when `markEnded()` 401s
+    /// (the #472 scenario), which is exactly when the durable fallback also
+    /// failed and the direct terminal beat is the last hope. The retry
+    /// closure's runId guard still prevents it acting on a newer run, and the
+    /// phone's terminal dominance keeps it from resurrecting the ended run.
+    private func retryDirectBeat(event: LiveMirrorEvent, started: Date) {
+        if !DirectBeatRetryPolicy.mayRetryWithoutLiveSync(event: event) {
+            // A non-terminal retry needs the live sync actor — once end() has
+            // torn it down there is no live state worth re-sending.
+            guard liveSync != nil else { return }
+        }
         guard let beat = liveMirrorSequence.nextIfAvailable(event: event) else { return }
         let terminal = beat.terminal
-        let started = startDate ?? Date()
         sendDirectBeat(
             beat: beat, terminal: terminal, started: started,
             hr: terminal ? nil : heartRate,

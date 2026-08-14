@@ -189,6 +189,7 @@ function mergedSpark(
 export function mergeForceBeat(
   prev: LiveForce | null,
   msg: LiveForceMessage,
+  nowMs: number = Date.now(),
 ): LiveForce | null {
   const result = reduceForceBeat(
     {
@@ -199,9 +200,14 @@ export function mergeForceBeat(
         terminal: prev?.terminal ?? false,
         updatedAtMs: prev?.updatedAt ?? null,
       },
-      lastAcceptedAtMs: prev?.updatedAt ?? 0,
+      // #614 round-2 N4: the seed is the phone's OWN clock, never the
+      // watch-clock `prev.updatedAt` — `reduceForceBeat` overwrites this
+      // field with the `nowMs` it is given anyway, so the seed must at least
+      // stay in the right clock domain.
+      lastAcceptedAtMs: nowMs,
     },
     msg,
+    nowMs,
   );
   return result.accepted ? result.state.beat : prev;
 }
@@ -318,24 +324,50 @@ export function admitLiveForceMessage(
   return { ...reduced, stampedAcceptance: msg.account_user_id !== undefined };
 }
 
-/// Whether the given beat is still within the staleness window.
+/// Whether the given beat is still within the staleness window, measured
+/// against the beat's OWN (watch-clock) `updatedAt`. See `isBeatVisible` for
+/// the phone-local gate the hook actually renders with.
 export function isFresh(beat: LiveForce, nowMs: number): boolean {
   return nowMs - beat.updatedAt <= STALE_MS;
+}
+
+/// Whether the last accepted beat should render (#614 round-2 N3). Measured
+/// by the PHONE's own receipt clock (`lastAcceptedAtMs`), never the watch's
+/// `updatedAt` — under clock skew the watch timestamp would hide a beat the
+/// phone accepted milliseconds ago, silently reverting to the original
+/// "card gone, no explanation" symptom. A `connected` last beat (the normal
+/// inter-rep rest) renders while its receipt is fresh — it just never
+/// escalates to an alarm (see `deriveForceSyncState`).
+export function isBeatVisible(
+  beat: LiveForce | null,
+  lastAcceptedAtMs: number,
+  nowMs: number,
+): boolean {
+  return beat !== null && !beat.terminal && nowMs - lastAcceptedAtMs <= STALE_MS;
 }
 
 /// Honest transport state for the Force mirror, derived from the cursor and
 /// the phone clock at render time (#614 review F7/F8). Quietness is measured
 /// from `lastAcceptedAtMs` — the phone's OWN clock — never `beat.updatedAt`
 /// (a watch clock), so device clock skew cannot trip it.
+///
+/// #614 round-2 N1: the quiet/stale alarm is gated on the last accepted
+/// beat's `status === "measuring"`. The ~2 Hz cadence only exists while
+/// measuring; between reps the watch is `connected` and sends NO periodic
+/// beats, so 60–180 s of silence there is a normal rest, not a stall, and
+/// must stay healthy/non-alarming. A mid-hold stall (the #148 symptom this
+/// state exists to name) still escalates.
 export function deriveForceSyncState(
   state: LiveForceMirrorState,
   nowMs: number,
 ): ForceMirrorSyncState {
   const { beat, cursor, lastAcceptedAtMs } = state;
   if (cursor.terminal || !cursor.runId) return "unknown";
+  if (!beat) return "unknown";
+  // A connected inter-rep rest never alarms, no matter how long it lasts.
+  if (beat.status !== "measuring") return "watch-direct";
   const quietAgeMs = nowMs - lastAcceptedAtMs;
   if (quietAgeMs > STALE_MS) return "stale";
   if (quietAgeMs > FORCE_DIRECT_QUIET_MS) return "temporarily-unreachable";
-  // A non-terminal cursor with a live, fresh beat is a working direct link.
-  return beat ? "watch-direct" : "temporarily-unreachable";
+  return "watch-direct";
 }

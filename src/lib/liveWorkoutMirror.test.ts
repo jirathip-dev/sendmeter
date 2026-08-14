@@ -402,6 +402,48 @@ describe("visibleLiveWorkout", () => {
     const [, series] = visibleLiveWorkout(r, { id: "w1", pts }, Date.parse(T0));
     expect(series).toBe(pts);
   });
+
+  // #614 round-2 N3: the visibility gate is the phone's OWN receipt clock —
+  // the watch/DB `updatedAt` under skew would hide a just-accepted card.
+  it("judges receipt freshness by the phone clock, not the row's updatedAt", () => {
+    const t0Ms = Date.parse(T0);
+    // Watch clock lagging: the row's updatedAt is ancient, but the phone
+    // accepted it moments ago — a just-accepted card must render.
+    const behind = row({ updatedAt: T0, sequence: 2 });
+    const [visible1] = visibleLiveWorkout(behind, { id: "w1", pts: [] }, t0Ms + 500, t0Ms + 500);
+    expect(visible1).toBe(behind);
+    // Watch clock ahead: same result.
+    const ahead = row({ updatedAt: T2, sequence: 2 });
+    const [visible2] = visibleLiveWorkout(ahead, { id: "w1", pts: [] }, t0Ms + 500, t0Ms + 500);
+    expect(visible2).toBe(ahead);
+  });
+
+  it("hides when the phone has accepted nothing for STALE_MS even if the row's clock looks fresh", () => {
+    const t0Ms = Date.parse(T0);
+    // row.updatedAt is in the FUTURE (watch clock ahead), so the data-age
+    // gate passes — only the phone-local receipt gate can hide this.
+    const r = row({ updatedAt: T2, sequence: 2 });
+    const [visible] = visibleLiveWorkout(
+      r,
+      { id: "w1", pts: [] },
+      t0Ms + STALE_MS + 1,
+      t0Ms,
+    );
+    expect(visible).toBeNull();
+  });
+
+  it("keeps server-only data-age honesty: an old row just fetched is not a live mirror", () => {
+    const t0Ms = Date.parse(T0);
+    // The classic #472 phantom: a row left `live`, accepted at mount with a
+    // fresh receipt clock but data minutes old — must still hide.
+    const [visible] = visibleLiveWorkout(
+      row({ updatedAt: T0, sequence: 2 }),
+      { id: "w1", pts: [] },
+      t0Ms + STALE_MS + 1,
+      t0Ms + STALE_MS + 1,
+    );
+    expect(visible).toBeNull();
+  });
 });
 
 describe("deriveLiveWorkoutSyncState", () => {

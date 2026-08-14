@@ -356,12 +356,22 @@ export function admitLiveWorkoutMessage(
 
 /// The hook's final visible state: hides an ended/missing/stale row and only
 /// surfaces the HR series when it belongs to the currently-visible run.
+///
+/// #614 round-2 N3: freshness is judged by TWO clocks on purpose.
+/// `lastAcceptedAtMs` (phone-local, defaults to `nowMs` for callers without
+/// a receipt stamp) decides "has the phone accepted anything recently" —
+/// comparing that to the watch's `updatedAt` would hide a just-accepted card
+/// under clock skew. `row.updatedAt` (the watch/DB clock) still gates DATA
+/// age so a server-only stale row (e.g. a #472 row left `live`, just fetched
+/// at mount) is not presented as a live mirror.
 export function visibleLiveWorkout(
   row: LiveWorkout | null,
   hrLog: HrLog,
   nowMs: number,
+  lastAcceptedAtMs: number = nowMs,
 ): [LiveWorkout | null, LiveHrPoint[]] {
   if (!row || row.status !== "live" || row.terminal) return [null, []];
+  if (nowMs - lastAcceptedAtMs > STALE_MS) return [null, []];
   if (nowMs - new Date(row.updatedAt).getTime() > STALE_MS) return [null, []];
   return [row, hrLog.id === row.runId ? hrLog.pts : []];
 }

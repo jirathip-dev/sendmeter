@@ -64,6 +64,17 @@ nonisolated final class WatchSessionStore: @unchecked Sendable {
     /// False when nothing is relayed, or when the phone build predates the
     /// `ack_capable` stamp — the watch then keeps its original fire-and-forget
     /// behavior instead of counting a delivered-but-unacked send as a failure.
+    ///
+    /// #614 round-2 N5 (deliberate, self-healing): adopted ONLY from a
+    /// relayed `signedIn` context, so a watch holding a still-valid token
+    /// relayed by a pre-#614 phone keeps this false — the whole
+    /// retry/failure-counting feature is inert — until the phone relays again
+    /// (an auth event or foreground, in practice minutes). That is the
+    /// conservative direction on purpose: absence of the stamp never assumes
+    /// an ack the phone may not give, and every foreground re-relays, so it
+    /// self-heals. Verify the adoption timing on a fresh device install: the
+    /// first run after installing the new phone build can legitimately show
+    /// none of the new retry behavior yet.
     var ackCapable: Bool { current?.ackCapable ?? false }
 
     func store(_ session: RelayedSession) {

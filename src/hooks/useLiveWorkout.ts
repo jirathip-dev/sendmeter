@@ -67,6 +67,10 @@ export function useLiveWorkout(
   const [row, setRow] = useState<LiveWorkout | null>(null);
   const [hrLog, setHrLog] = useState<HrLog>({ id: "", pts: [] });
   const [now, setNow] = useState(() => Date.now());
+  // #614 round-2 N3: phone-local receipt time of the last accepted row, kept
+  // in state (not read off the ref at render) so the visibility gate below is
+  // skew-free — the watch/DB `updatedAt` would hide a just-accepted card.
+  const [lastAcceptedAtMs, setLastAcceptedAtMs] = useState(0);
   // #614: honest transport state for the visible row. Kept in state (not read
   // off the ref at render — the compiler lint forbids that) and recomputed
   // wherever the ref advances or the clock ticks.
@@ -102,6 +106,7 @@ export function useLiveWorkout(
     setRenderedUserId(userId);
     setRow(null);
     setHrLog({ id: "", pts: [] });
+    setLastAcceptedAtMs(0);
     setSyncState("unknown");
   }
 
@@ -152,6 +157,7 @@ export function useLiveWorkout(
       mirrorRef.current = reduced.state;
       setRow(reduced.state.row);
       setHrLog(reduced.state.hrLog);
+      setLastAcceptedAtMs(reduced.state.lastAcceptedAtMs);
       // #614: the row just advanced — reflect its transport immediately
       // rather than waiting up to 5s for the clock tick.
       setSyncState(deriveLiveWorkoutSyncState(mirrorRef.current, Date.now()));
@@ -242,6 +248,7 @@ export function useLiveWorkout(
             mirrorRef.current = admission.state;
             setRow(admission.state.row);
             setHrLog(admission.state.hrLog);
+            setLastAcceptedAtMs(admission.state.lastAcceptedAtMs);
             setSyncState(deriveLiveWorkoutSyncState(mirrorRef.current, Date.now()));
           }),
         )
@@ -287,6 +294,7 @@ export function useLiveWorkout(
     accountTransition ? null : row,
     accountTransition ? { id: "", pts: [] } : hrLog,
     now,
+    accountTransition ? 0 : lastAcceptedAtMs,
   );
   return [visible, series, syncState];
 }
