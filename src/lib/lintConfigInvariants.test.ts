@@ -16,10 +16,17 @@ const eslintConfig = readFileSync(join(REPO, "eslint.config.js"), "utf8");
 
 describe("eslint global ignores (#612 review F8)", () => {
   it("ignores **/.build so local SwiftPM builds cannot fail whole-repo lint", () => {
-    expect(eslintConfig).toContain("**/.build");
-    // The ignore must be a GLOBAL ignore (the whole-config option), not a
-    // rule-scoped pattern — lint output from a stray `.build` dir is exactly
-    // what the global ignore is for.
+    // Assert against the DECLARATION's array literal, never incidental text:
+    // the explanatory comment above `globalIgnores` mentions `.build`, so a
+    // `toContain("**/.build")` over the whole file could be satisfied by the
+    // comment alone — the standing rule from nativeAuthInvariants.test.ts
+    // (incidental text may TRIP a check, but must never SATISFY one) (review
+    // N5). The regex captures only what sits inside the globalIgnores call.
+    const ignoreList =
+      eslintConfig.match(/globalIgnores\(\[([\s\S]*?)\]\)/)?.[1] ?? "";
+    expect(ignoreList).toContain("'**/.build'");
+    // And pin the whole tuple so removing or reordering any ignore is a loud
+    // change (a fifth ignore trips this deliberately).
     expect(eslintConfig).toMatch(
       /globalIgnores\(\[\s*'dist',\s*'ios',\s*'\.claude',\s*'\*\*\/\.build'\s*\]\)/,
     );

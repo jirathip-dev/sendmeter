@@ -1,19 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   FOREGROUND_RELAY_DEDUPE_MS,
+  foregroundRelayNow,
+  setForegroundRelayClockForTest,
   shouldStartForegroundRelay,
 } from "./foregroundRelay";
 
-/// #612 review F1/F2: the dedupe is a PURE time policy, so every
+/// #612 review F1/F2/N1: the dedupe is a PURE time policy, so every
 /// interleaving the in-flight guard mishandled is pinned here with explicit
 /// clocks — no timers, no renderer. `useAuth` is reduced to recording
 /// `lastStartedAt` and consulting this predicate (see useAuth.test.tsx for
 /// the hook-level integration cases).
 
 describe("shouldStartForegroundRelay (#612)", () => {
-  it("starts the first pass of the launch — no previous start", () => {
-    // `lastStartedAt` is 0 before any pass; real epoch times are ≫ window.
-    expect(shouldStartForegroundRelay(1_000_000, 0)).toBe(true);
+  it("starts the first pass of the launch — the null sentinel, whatever the clock reads", () => {
+    // `lastStartedAt` is `null` before any pass. The sentinel must not depend
+    // on the clock value: `performance.now()` is only a few hundred ms after
+    // page load, so a `0` sentinel would wrongly suppress the first pass
+    // (review N1).
+    expect(shouldStartForegroundRelay(50, null)).toBe(true);
+    expect(shouldStartForegroundRelay(1_000_000, null)).toBe(true);
   });
 
   it("suppresses a second pass within the window, even long after the first read resolved", () => {
@@ -47,7 +53,21 @@ describe("shouldStartForegroundRelay (#612)", () => {
     expect(shouldStartForegroundRelay(1_001_000, 1_000_000)).toBe(true);
   });
 
-  it("never starts a pass on a clock that went backwards (skew)", () => {
+  it("never starts a pass on a clock that went backwards (skew guard)", () => {
+    // A monotonic caller cannot produce this, but the predicate still guards
+    // it so a buggy clock can't reopen the window.
     expect(shouldStartForegroundRelay(1_000_000, 1_000_500)).toBe(false);
+  });
+});
+
+describe("the monotonic foreground clock (review N1)", () => {
+  it("defaults to performance.now() and is replaceable through the test seam", () => {
+    expect(typeof foregroundRelayNow()).toBe("number");
+    setForegroundRelayClockForTest(() => 42);
+    try {
+      expect(foregroundRelayNow()).toBe(42);
+    } finally {
+      setForegroundRelayClockForTest(() => performance.now());
+    }
   });
 });

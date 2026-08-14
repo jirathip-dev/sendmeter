@@ -23,6 +23,7 @@ import { resetLiveMirrorDiagnostics } from "../lib/liveMirrorTelemetry";
 import { browserForegroundSignals } from "../lib/foregroundSignals";
 import {
   shouldStartForegroundRelay,
+  foregroundRelayNow,
   FOREGROUND_RELAY_DEDUPE_MS,
 } from "../lib/foregroundRelay";
 
@@ -192,14 +193,15 @@ export function useAuth() {
       // driving the relay from `visibilitychange` alone could miss a return
       // only `appStateChange` reports. A single foreground can fire BOTH, so
       // the pass is deduped on a short start-to-start window — see
-      // foregroundRelay.ts. The window is measured from when a pass STARTS,
-      // so a fast storage read that resolves before the second signal lands
-      // does not reopen it (the in-flight guard's failure, #612 review F1),
-      // and it is bounded, so a hung read can't latch the relay off for the
-      // rest of the launch (F2).
-      let lastForegroundRelayAt = 0;
+      // foregroundRelay.ts. The window is measured from when a pass STARTS on
+      // a MONOTONIC clock (`foregroundRelayNow()`), so a fast storage read
+      // that resolves before the second signal lands does not reopen it (the
+      // in-flight guard's failure, #612 review F1), a hung read can't latch
+      // the relay off (F2), and a backward wall-clock correction can't
+      // suppress relays (N1). `null` is the no-pass-yet sentinel.
+      let lastForegroundRelayAt: number | null = null;
       const onVisible = () => {
-        const now = Date.now();
+        const now = foregroundRelayNow();
         if (!shouldStartForegroundRelay(now, lastForegroundRelayAt, FOREGROUND_RELAY_DEDUPE_MS)) return;
         lastForegroundRelayAt = now;
         // getSession() auto-refreshes a merely-expired session; a null result

@@ -3,7 +3,26 @@ import { act, createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Session } from "@supabase/supabase-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FOREGROUND_RELAY_DEDUPE_MS } from "../lib/foregroundRelay";
+import { FOREGROUND_RELAY_DEDUPE_MS, setForegroundRelayClockForTest } from "../lib/foregroundRelay";
+
+/// #612 review N2: the dedupe window tests must not depend on the real wall
+/// clock staying inside the window across `act` flushes (a load-related flake
+/// class this repo documents). Drive the relay's monotonic clock through its
+/// test seam instead; `advance` moves it by a fixed amount.
+async function withRelayClock(
+  initialMs: number,
+  run: (advance: (ms: number) => void) => Promise<void>,
+): Promise<void> {
+  let now = initialMs;
+  setForegroundRelayClockForTest(() => now);
+  try {
+    await run((ms: number) => {
+      now += ms;
+    });
+  } finally {
+    setForegroundRelayClockForTest(() => performance.now());
+  }
+}
 
 const mocks = vi.hoisted(() => ({
   getSessionWithDiagnostics: vi.fn(),
@@ -219,10 +238,12 @@ describe("useAuth local auto-login", () => {
     const foregroundCb = mocks.subscribeForeground.mock.calls[0]![0];
     expect(foregroundCb).toBeTypeOf("function");
 
-    await act(async () => {
-      foregroundCb();
-      await Promise.resolve();
-      await Promise.resolve();
+    await withRelayClock(1_000_000, async () => {
+      await act(async () => {
+        foregroundCb();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
     });
 
     expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledOnce();
@@ -240,8 +261,10 @@ describe("useAuth local auto-login", () => {
     mocks.getSessionWithDiagnostics.mockImplementation(() => new Promise(() => {}));
 
     const foregroundCb = mocks.subscribeForeground.mock.calls[0]![0];
-    foregroundCb();
-    foregroundCb();
+    await withRelayClock(1_000_000, async () => {
+      foregroundCb();
+      foregroundCb();
+    });
 
     expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledTimes(1);
   });
@@ -259,21 +282,23 @@ describe("useAuth local auto-login", () => {
     mocks.relaySessionToWatch.mockClear();
 
     const foregroundCb = mocks.subscribeForeground.mock.calls[0]![0];
-    foregroundCb(); // pass #1 starts (real clock)
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve(); // pass #1 resolves before the second signal
-    });
-    expect(mocks.relaySessionToWatch).toHaveBeenCalledTimes(1);
+    await withRelayClock(1_000_000, async () => {
+      foregroundCb(); // pass #1 starts at t=1_000_000
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve(); // pass #1 resolves before the second signal
+      });
+      expect(mocks.relaySessionToWatch).toHaveBeenCalledTimes(1);
 
-    foregroundCb(); // second signal, same foreground, well within the window
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+      foregroundCb(); // second signal, same tick — still within the window
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
 
-    expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledTimes(1);
-    expect(mocks.relaySessionToWatch).toHaveBeenCalledTimes(1);
+      expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledTimes(1);
+      expect(mocks.relaySessionToWatch).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("#612 (review F2) — a signal after the window starts a new pass even while the prior read never settles", async () => {
@@ -282,19 +307,15 @@ describe("useAuth local auto-login", () => {
     mocks.getSessionWithDiagnostics.mockClear();
     mocks.getSessionWithDiagnostics.mockImplementation(() => new Promise(() => {}));
 
-    let now = 5_000_000;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
-    try {
-      const foregroundCb = mocks.subscribeForeground.mock.calls[0]![0];
+    const foregroundCb = mocks.subscribeForeground.mock.calls[0]![0];
+    await withRelayClock(5_000_000, async (advance) => {
       foregroundCb(); // pass #1 starts; its read hangs forever
       expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledTimes(1);
 
-      now += FOREGROUND_RELAY_DEDUPE_MS; // window elapses, read still pending
+      advance(FOREGROUND_RELAY_DEDUPE_MS); // window elapses, read still pending
       foregroundCb();
       expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledTimes(2);
-    } finally {
-      nowSpy.mockRestore();
-    }
+    });
   });
 
   it("#612 — a rejected foreground read is swallowed and does not block a later pass after the window", async () => {
@@ -302,34 +323,33 @@ describe("useAuth local auto-login", () => {
     await renderHook();
     mocks.getSessionWithDiagnostics.mockClear();
 
-    let now = 6_000_000;
-    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
     const unhandled = vi.fn();
     const onRejection = (e: PromiseRejectionEvent) => unhandled(e.reason);
     process.once("unhandledRejection", onRejection);
     try {
       const foregroundCb = mocks.subscribeForeground.mock.calls[0]![0];
-      mocks.getSessionWithDiagnostics.mockRejectedValueOnce(new Error("boom"));
-      foregroundCb();
-      await act(async () => {
-        // A full tick, so a missed rejection would have fired by now.
-        await new Promise((r) => setTimeout(r, 0));
-      });
-      expect(unhandled).not.toHaveBeenCalled();
+      await withRelayClock(6_000_000, async (advance) => {
+        mocks.getSessionWithDiagnostics.mockRejectedValueOnce(new Error("boom"));
+        foregroundCb();
+        await act(async () => {
+          // A full tick, so a missed rejection would have fired by now.
+          await new Promise((r) => setTimeout(r, 0));
+        });
+        expect(unhandled).not.toHaveBeenCalled();
 
-      now += FOREGROUND_RELAY_DEDUPE_MS;
-      mocks.getSessionWithDiagnostics.mockResolvedValue({ session: cachedSession });
-      mocks.relaySessionToWatch.mockClear();
-      foregroundCb();
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
+        advance(FOREGROUND_RELAY_DEDUPE_MS);
+        mocks.getSessionWithDiagnostics.mockResolvedValue({ session: cachedSession });
+        mocks.relaySessionToWatch.mockClear();
+        foregroundCb();
+        await act(async () => {
+          await Promise.resolve();
+          await Promise.resolve();
+        });
+        expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledTimes(2);
+        expect(mocks.relaySessionToWatch).toHaveBeenCalledWith(cachedSession);
       });
-      expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledTimes(2);
-      expect(mocks.relaySessionToWatch).toHaveBeenCalledWith(cachedSession);
     } finally {
       process.off("unhandledRejection", onRejection);
-      nowSpy.mockRestore();
     }
   });
 
@@ -343,10 +363,12 @@ describe("useAuth local auto-login", () => {
       root.unmount();
       await Promise.resolve();
     });
-    foregroundCb();
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
+    await withRelayClock(1_000_000, async () => {
+      foregroundCb();
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
     });
 
     expect(mocks.relaySessionToWatch).not.toHaveBeenCalled();
