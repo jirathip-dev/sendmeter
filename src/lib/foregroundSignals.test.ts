@@ -146,6 +146,15 @@ describe("subscribeForegroundSignals (#612)", () => {
     expect(remove).toHaveBeenCalledTimes(1);
   });
 
+  /// Node emits `unhandledRejection` only after the microtask queue drains,
+  /// at end of tick — asserting after `await Promise.resolve()` would run
+  /// before Node could possibly emit, whether or not the rejection was
+  /// handled. Awaiting a macrotask makes the assertion meaningful (#612
+  /// review F3).
+  function flushMacrotask(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   it("swallows a rejected native registration on unsubscribe — no unhandled rejection", async () => {
     const native = fakeNative(true);
     native.setRejects();
@@ -155,8 +164,28 @@ describe("subscribeForegroundSignals (#612)", () => {
     process.once("unhandledRejection", onRejection);
     try {
       unsub();
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushMacrotask();
+      await flushMacrotask();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+
+  it("#612 review F4 — swallows a rejected registration even when NEVER unsubscribed", async () => {
+    // useAuth holds this subscription for the whole app lifetime, so the
+    // rejection handler must be attached at registration, not only on
+    // teardown. Register and never unsubscribe, then give Node a full tick
+    // to emit if it is going to.
+    const native = fakeNative(true);
+    native.setRejects();
+    subscribeForegroundSignals(fakeDoc("visible"), native, vi.fn());
+    const unhandled = vi.fn();
+    const onRejection = (e: PromiseRejectionEvent) => unhandled(e.reason);
+    process.once("unhandledRejection", onRejection);
+    try {
+      await flushMacrotask();
+      await flushMacrotask();
       expect(unhandled).not.toHaveBeenCalled();
     } finally {
       process.off("unhandledRejection", onRejection);

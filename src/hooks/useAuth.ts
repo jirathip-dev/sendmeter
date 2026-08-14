@@ -21,6 +21,10 @@ import { setMonitoringUser } from "../lib/monitoring";
 import { recordAuthenticatedAccountForLiveMirror } from "../lib/liveMirrorOwnership";
 import { resetLiveMirrorDiagnostics } from "../lib/liveMirrorTelemetry";
 import { browserForegroundSignals } from "../lib/foregroundSignals";
+import {
+  shouldStartForegroundRelay,
+  FOREGROUND_RELAY_DEDUPE_MS,
+} from "../lib/foregroundRelay";
 
 // Keep the local seeded-account implementation out of every production graph.
 // Vite folds this compile-time branch before Rollup creates chunks, so the
@@ -183,21 +187,21 @@ export function useAuth() {
       //
       // #612: the foreground wiring is the shared `subscribeForegroundSignals`
       // (visibilitychange on every platform, plus the native `appStateChange`),
-      // the same definition the queue drain runs on. Relying on
-      // `visibilitychange` alone left a stale-bearer-relay window on native:
-      // a locked-screen/backgrounded resume can resume the WKWebView without
-      // re-firing it, and the watch/health then keep a dead bearer until the
-      // auth-js auto-refresh tick fires (~30s). A single foreground can fire
-      // BOTH signals, so the in-flight guard coalesces them into one pass —
-      // a doubled `getSession()` would otherwise also double the relay and the
-      // "Health data synced" toast (App.tsx reads `changed` from the event).
-      let foregroundRelayInFlight = false;
+      // the same definition the queue drain runs on. The two signals arrive on
+      // different delivery paths and aren't guaranteed to fire together;
+      // driving the relay from `visibilitychange` alone could miss a return
+      // only `appStateChange` reports. A single foreground can fire BOTH, so
+      // the pass is deduped on a short start-to-start window — see
+      // foregroundRelay.ts. The window is measured from when a pass STARTS,
+      // so a fast storage read that resolves before the second signal lands
+      // does not reopen it (the in-flight guard's failure, #612 review F1),
+      // and it is bounded, so a hung read can't latch the relay off for the
+      // rest of the launch (F2).
+      let lastForegroundRelayAt = 0;
       const onVisible = () => {
-        // A read already in flight from the first signal of this foreground
-        // covers this one: it started after that signal, so it reflects the
-        // resumed state, and its resolution relays once for both.
-        if (foregroundRelayInFlight) return;
-        foregroundRelayInFlight = true;
+        const now = Date.now();
+        if (!shouldStartForegroundRelay(now, lastForegroundRelayAt, FOREGROUND_RELAY_DEDUPE_MS)) return;
+        lastForegroundRelayAt = now;
         // getSession() auto-refreshes a merely-expired session; a null result
         // means the stored session is gone/revoked (refresh-token rotation can
         // revoke the family across instances). Reflect that so the UI drops to
@@ -208,7 +212,6 @@ export function useAuth() {
         // staying silent.
         void getSessionWithDiagnostics(supabase, SUPABASE_URL).then(
           ({ session }) => {
-            foregroundRelayInFlight = false;
             if (!aliveRef.current) return;
             setSession(session);
             onSession(session);
@@ -218,11 +221,9 @@ export function useAuth() {
             if (session) void syncHealthNow();
           },
           () => {
-            // `getSessionWithDiagnostics` is written never to throw, but if
-            // this ever rejects the guard must still release — a stuck flag
-            // would silently disable the foreground relay for the rest of the
-            // launch, the exact self-disable a dedupe guard must not cause.
-            foregroundRelayInFlight = false;
+            // Settlement-agnostic: the dedupe window is time-bounded, so a
+            // later signal after the window is accepted regardless of how this
+            // pass ends. The handler exists so a rejection is never unhandled.
           },
         );
       };
@@ -237,7 +238,9 @@ export function useAuth() {
       // `getSession()`, so a pull answered with a null session (revoked /
       // network / storage wiped) is classified and recorded on the phone too —
       // that path was the one null-session moment still blind to the ring the
-      // mount and foreground paths record.
+      // mount and foreground paths record. It passes `source: "watch-pull"` so
+      // that record is its own ring incident rather than a bump on the
+      // foreground entry's count (#612 review F5).
       //
       // `guaranteed: true` queues it with transferUserInfo as well as setting
       // the application context (#266): answering a pull while our token is still
@@ -249,14 +252,21 @@ export function useAuth() {
       // below only removes a handle that resolved while the effect was alive,
       // so one native listener always has one removal path.
       const watchRequest = onWatchSessionRequest(() => {
-        void getSessionWithDiagnostics(supabase, SUPABASE_URL).then(({ session }) => {
-          // A readiness request may have reached the native phone while the
-          // WebView was briefly stale too. Relay the same fresh access token to
-          // both native consumers before the health manager retries; neither
-          // side ever receives a refresh token.
-          relayHealthSession(session);
-          relaySessionToWatch(session, { guaranteed: true });
-        });
+        void getSessionWithDiagnostics(supabase, SUPABASE_URL, undefined, "watch-pull").then(
+          ({ session }) => {
+            // A readiness request may have reached the native phone while the
+            // WebView was briefly stale too. Relay the same fresh access token to
+            // both native consumers before the health manager retries; neither
+            // side ever receives a refresh token.
+            relayHealthSession(session);
+            relaySessionToWatch(session, { guaranteed: true });
+          },
+          () => {
+            // A rejection here must not surface as an unhandled rejection —
+            // the watch's own poll and the phone's next foreground retry on
+            // their own; there is nothing further to relay from a failed read.
+          },
+        );
       });
       void watchRequest.then((handle) => {
         if (!handle) return;
