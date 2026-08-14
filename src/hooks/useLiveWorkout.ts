@@ -1,12 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { SendLogAuthBridge } from "sendlog-auth-bridge";
+import type { LiveMirrorEvent } from "sendlog-auth-bridge";
 import { supabase } from "../lib/supabase";
 import { fetchLiveWorkout } from "../lib/repo";
 import type { LiveWorkout } from "../types";
 import { subscribePluginListener } from "./pluginListener";
 import {
+  STALE_MS,
   admitLiveWorkoutMessage,
+  deriveLiveWorkoutSyncState,
   emptyLiveWorkoutMirrorState,
   reduceLiveWorkout,
   rowToLive,
@@ -15,20 +18,35 @@ import {
   type LiveHrPoint,
   type LiveWorkoutMirrorState,
   type LiveWorkoutSource,
+  type LiveWorkoutSyncState,
 } from "../lib/liveWorkoutMirror";
 import {
   hasAccountChangedSincePersisted,
   recordStampedPacketAccepted,
 } from "../lib/liveMirrorOwnership";
+import {
+  recordLiveMirrorTrace,
+  type LiveMirrorTraceInput,
+} from "../lib/liveMirrorTelemetry";
 
 export type { LiveHrPoint };
-
-export type LiveWorkoutSyncState = "watch-direct" | "server-fallback";
+export type { LiveWorkoutSyncState } from "../lib/liveWorkoutMirror";
 
 export interface LiveWorkoutMirrorResult {
   row: LiveWorkout | null;
   hrLog: LiveHrPoint[];
   syncState: LiveWorkoutSyncState;
+}
+
+function traceFor(
+  source: LiveWorkoutSource,
+  input: Omit<LiveMirrorTraceInput, "kind" | "path"> & { event?: LiveMirrorEvent },
+): void {
+  recordLiveMirrorTrace({
+    kind: "workout",
+    path: source,
+    ...input,
+  });
 }
 
 /// The user's in-progress watch workout, mirrored live (SL-41): one initial
@@ -39,17 +57,31 @@ export interface LiveWorkoutMirrorResult {
 /// The two transports reduce through one ref-owned state machine (#521): the
 /// WatchConnectivity beat is immediate, while Supabase remains the durable
 /// fallback. Duplicate/out-of-order packets and late live packets after End
-/// never reach React state.
+/// never reach React state. #614: every accepted/rejected packet is recorded
+/// into a bounded, privacy-safe telemetry ring (path + latency + reason — no
+/// values) and the rendered transport state is derived from the mirror cursor
+/// plus the phone clock, so a quiet link reads as paused instead of healthy.
 export function useLiveWorkout(
   userId: string,
 ): [LiveWorkout | null, LiveHrPoint[], LiveWorkoutSyncState] {
   const [row, setRow] = useState<LiveWorkout | null>(null);
   const [hrLog, setHrLog] = useState<HrLog>({ id: "", pts: [] });
-  const [syncState, setSyncState] = useState<LiveWorkoutSyncState>("server-fallback");
   const [now, setNow] = useState(() => Date.now());
+  // #614 round-2 N3: phone-local receipt time of the last accepted row, kept
+  // in state (not read off the ref at render) so the visibility gate below is
+  // skew-free — the watch/DB `updatedAt` would hide a just-accepted card.
+  const [lastAcceptedAtMs, setLastAcceptedAtMs] = useState(0);
+  // #614: honest transport state for the visible row. Kept in state (not read
+  // off the ref at render — the compiler lint forbids that) and recomputed
+  // wherever the ref advances or the clock ticks.
+  const [syncState, setSyncState] = useState<LiveWorkoutSyncState>("unknown");
   const mirrorRef = useRef<LiveWorkoutMirrorState>(emptyLiveWorkoutMirrorState());
   const activeUserIdRef = useRef(userId);
   const [renderedUserId, setRenderedUserId] = useState(userId);
+  // #614: record a "stale" trace exactly once per run when the row ages out
+  // of STALE_MS — the ring otherwise only sees packets, and a mirror that
+  // went silent is the one diagnosis worth naming explicitly.
+  const staleRecordedRunRef = useRef("");
   // A prop change renders once before passive effect cleanup. Hide the old
   // account immediately, then reset the ref/state in a layout effect before
   // the browser can paint or a new listener can publish data.
@@ -74,7 +106,8 @@ export function useLiveWorkout(
     setRenderedUserId(userId);
     setRow(null);
     setHrLog({ id: "", pts: [] });
-    setSyncState("server-fallback");
+    setLastAcceptedAtMs(0);
+    setSyncState("unknown");
   }
 
   useLayoutEffect(() => {
@@ -103,20 +136,37 @@ export function useLiveWorkout(
     const effectUserId = userId;
     let cancelled = false;
 
-    function ingest(next: LiveWorkout, source: LiveWorkoutSource) {
+    function ingest(next: LiveWorkout, source: LiveWorkoutSource, isInitial = false) {
       if (cancelled || activeUserIdRef.current !== effectUserId) return;
-      const reduced = reduceLiveWorkout(mirrorRef.current, next, source);
+      const nowMs = Date.now();
+      const reduced = reduceLiveWorkout(mirrorRef.current, next, source, nowMs);
+      const rowAgeMs = nowMs - new Date(next.updatedAt).getTime();
+      traceFor(source, {
+        event: next.event,
+        accepted: reduced.accepted,
+        rejection: reduced.rejection,
+        // #614 review F1: the initial fetch's row age is DATA age, not a
+        // transport latency (a row left 'live' by #472 can be minutes old) —
+        // record it as ageMs so it never pollutes the latency p95. Realtime
+        // arrivals record the server-path total (watch capture → render),
+        // the same span as the direct total.
+        ageMs: isInitial ? rowAgeMs : undefined,
+        latencyMs: isInitial ? undefined : rowAgeMs,
+      });
       if (!reduced.accepted) return;
       mirrorRef.current = reduced.state;
       setRow(reduced.state.row);
       setHrLog(reduced.state.hrLog);
-      setSyncState(reduced.state.source);
+      setLastAcceptedAtMs(reduced.state.lastAcceptedAtMs);
+      // #614: the row just advanced — reflect its transport immediately
+      // rather than waiting up to 5s for the clock tick.
+      setSyncState(deriveLiveWorkoutSyncState(mirrorRef.current, Date.now()));
     }
 
     fetchLiveWorkout()
       .then((next) => {
         if (cancelled || !next) return;
-        ingest(next, "server-fallback");
+        ingest(next, "server-fallback", true);
       })
       .catch(() => {});
 
@@ -160,7 +210,30 @@ export function useLiveWorkout(
               msg,
               activeUserIdRef.current,
               hasHadAccountTransitionRef.current,
+              Date.now(),
             );
+            // #614: record the observation whether or not it was accepted —
+            // a rejected packet is exactly the trace a diagnosis needs.
+            // latencyMs is the TOTAL watch-capture → WebView span (the same
+            // span the server path reports, so the two are comparable); wireMs
+            // and bridgeMs break the direct path into its cross-device and
+            // phone-local segments. `received_at` absent (older plugin) → no
+            // segment breakdown, still a total. A missing `event` (legacy
+            // watch) reads as telemetry so it is throttled like one (#614 F14).
+            const nowMs = Date.now();
+            traceFor("watch-direct", {
+              event: msg.event ?? "telemetry",
+              accepted: admission.accepted,
+              rejection: admission.rejection,
+              latencyMs:
+                msg.updated_at !== undefined ? nowMs - msg.updated_at * 1000 : undefined,
+              wireMs:
+                msg.received_at !== undefined && msg.updated_at !== undefined
+                  ? msg.received_at * 1000 - msg.updated_at * 1000
+                  : undefined,
+              bridgeMs:
+                msg.received_at !== undefined ? nowMs - msg.received_at * 1000 : undefined,
+            });
             if (!admission.accepted) return;
             // #530 round-2 review R2-F1: a genuinely STAMPED (not
             // legacy-absent) acceptance is positive evidence this watch has
@@ -175,12 +248,40 @@ export function useLiveWorkout(
             mirrorRef.current = admission.state;
             setRow(admission.state.row);
             setHrLog(admission.state.hrLog);
-            setSyncState(admission.state.source);
+            setLastAcceptedAtMs(admission.state.lastAcceptedAtMs);
+            setSyncState(deriveLiveWorkoutSyncState(mirrorRef.current, Date.now()));
           }),
         )
       : null;
 
-    const interval = setInterval(() => setNow(Date.now()), 5_000);
+    const interval = setInterval(() => {
+      const atMs = Date.now();
+      setNow(atMs);
+      // #614: age-based honesty — a row that went quiet flips to
+      // `temporarily-unreachable` (then hides) on this tick without waiting
+      // for the next packet. Functional update so an unchanged state doesn't
+      // trigger a redundant render.
+      setSyncState((prev) => {
+        const next = deriveLiveWorkoutSyncState(mirrorRef.current, atMs);
+        return next === prev ? prev : next;
+      });
+      // #614: a live row that has aged out of STALE_MS hides (see
+      // `visibleLiveWorkout`) — record that once per run so the telemetry
+      // names the silence rather than just stopping. The age is DATA age
+      // (ageMs), never a latency sample (#614 review F1).
+      const m = mirrorRef.current;
+      if (m.row && m.row.status === "live" && !m.row.terminal) {
+        const age = atMs - m.lastAcceptedAtMs;
+        if (age > STALE_MS && staleRecordedRunRef.current !== m.row.runId) {
+          staleRecordedRunRef.current = m.row.runId;
+          traceFor(m.source, {
+            accepted: false,
+            rejection: "stale",
+            ageMs: age,
+          });
+        }
+      }
+    }, 5_000);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -193,10 +294,7 @@ export function useLiveWorkout(
     accountTransition ? null : row,
     accountTransition ? { id: "", pts: [] } : hrLog,
     now,
+    accountTransition ? 0 : lastAcceptedAtMs,
   );
-  return [
-    visible,
-    series,
-    accountTransition ? "server-fallback" : syncState,
-  ];
+  return [visible, series, syncState];
 }

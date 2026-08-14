@@ -16,6 +16,9 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Improved
 
+- Apple Watch Force now says when the watch link is paused or stale during a hold instead of silently hiding the live reading — while a normal rest between reps stays quiet, so the warning never fires on the healthy link between attempts — and the mirror diagnostics split the direct link's delay into its watch→phone and phone→app segments.
+- The Watch workout card now says honestly when the wrist link has paused and the phone is showing the last update instead of a live mirror, and a failed direct link retries once instead of silently waiting out the next heartbeat.
+- Settings → Troubleshooting now shows Watch mirror diagnostics: whether live Workout and Force updates are arriving over the direct watch link or the server, their average and p95 latency separately, rejection reasons, and recent transitions — useful when reporting a slow mirror.
 - Training phases now make it clear you're in control: the phases sheet says "Current block" instead of "Active" and states blocks are managed by you, with the ACWR band and typical duration labeled as guidance rather than rules.
 - Apple Watch Force always has a one-tap start now: with no exercise selected the main card is a free-hold start (hands-free by default, untagged) instead of a "Pick an exercise" dead end — tap a chip to switch to the tagged flow, tap it again to go back to free hold. The empty exercise list no longer shows cut-off text on 40mm watches.
 - Apple Watch Force's side selection is now just the Left/Right toggle on the main page — the settings screen's separate side list is gone. "Both" and unspecified sides can still be set from the phone/web app; existing recordings with those values are unaffected, and a stored one shows as neither segment selected until you tap L or R.

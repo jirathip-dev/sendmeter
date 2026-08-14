@@ -67,6 +67,24 @@ final class WorkoutSavePathResetTests: XCTestCase {
         XCTAssertFalse(manager.ending)
     }
 
+    /// #614 review F9: `directSendFailures` is the ONE non-transient field of
+    /// the direct-mirror send path that must reset on an accepted start — a
+    /// previous run's failures must never bleed into the next workout's
+    /// end-of-workout breadcrumb (or the retry-cap reasoning built on it).
+    /// The counter is injected with a non-zero value so the reset line is
+    /// actually exercised, not just "starts at zero".
+    func testStartClearsDirectSendFailuresFromAPreviousWorkout() async {
+        let manager = makeAuthorizationFailingWorkoutManager()
+        manager.directSendFailures = 7
+
+        await manager.start()
+
+        XCTAssertEqual(
+            manager.directSendFailures, 0,
+            "start() must reset the previous run's direct-send failure count"
+        )
+    }
+
     /// Review finding F1, scenario B: a `.lost` `failedBundle` used to make
     /// `start()` unreachable from the UI forever (no navigation cleared it
     /// any more, post-hoist). The fix is at the view layer (Start is always

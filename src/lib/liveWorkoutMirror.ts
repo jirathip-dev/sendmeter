@@ -8,10 +8,31 @@ import type {
 } from "sendlog-auth-bridge";
 import type { LiveWorkout } from "../types";
 import { acceptsPacketOwner } from "./liveMirrorOwnership";
+import type { LiveMirrorRejection } from "./liveMirrorTelemetry";
 
 /// How long a heartbeat may go quiet before the workout is presumed dead
 /// (watch upserts every ~5s; 30s of silence = app killed / walked away).
 export const STALE_MS = 30_000;
+
+/// How long the row may go quiet (by the phone's own clock since the last
+/// ACCEPTED packet — see `lastAcceptedAtMs`) before the phone stops claiming a
+/// working link. Beyond this the card must say the link is paused even if the
+/// last accepted message came over WC — the mirror is showing the last update,
+/// not a live one. ~2 workout heartbeat intervals. Phone-local, so device
+/// clock skew cannot trip it (#614 review F8).
+export const DIRECT_QUIET_MS = 10_000;
+
+/// Honest transport state for the live workout card (#614). `watch-direct`
+/// and `server-fallback` name the transport of the last accepted message;
+/// `temporarily-unreachable` means the phone has not accepted anything for
+/// `DIRECT_QUIET_MS` — neither path has delivered anything fresh — and
+/// `unknown` covers "no live row / ended / nothing known yet". Unknown must
+/// never be presented as healthy.
+export type LiveWorkoutSyncState =
+  | "watch-direct"
+  | "server-fallback"
+  | "temporarily-unreachable"
+  | "unknown";
 
 /// Placeholder workout id for a WC beat that arrives before the initial
 /// `fetchLiveWorkout()` resolves. The real run id is adopted as soon as a
@@ -24,6 +45,12 @@ export interface LiveWorkoutMirrorState {
   row: LiveWorkout | null;
   hrLog: HrLog;
   source: LiveWorkoutSource;
+  /// Phone-local wall-clock ms when the last packet was ACCEPTED into this
+  /// cursor. Quiet-state derivation compares against this (same clock), never
+  /// against `row.updatedAt` (a watch/DB clock) — #614 review F8: comparing a
+  /// phone clock to a device clock makes a watch lagging >10s read
+  /// "temporarily unreachable" forever.
+  lastAcceptedAtMs: number;
 }
 
 /// Empty cursor state for a newly authenticated account. Hooks reset this
@@ -35,12 +62,33 @@ export function emptyLiveWorkoutMirrorState(): LiveWorkoutMirrorState {
     row: null,
     hrLog: { id: "", pts: [] },
     source: "server-fallback",
+    lastAcceptedAtMs: 0,
   };
 }
 
 export interface LiveWorkoutReduceResult {
   state: LiveWorkoutMirrorState;
   accepted: boolean;
+  /// Why a packet was rejected, present only when `accepted` is false.
+  /// Telemetry records this so a diagnosis can name the failure instead of a
+  /// bare "not applied".
+  rejection?: LiveMirrorRejection;
+}
+
+/// Classifies a rejected workout packet. Deliberately mirrors the guards in
+/// `acceptsLiveWorkout` IN ORDER — run freshness before terminal dominance
+/// (#614 review F11) — so a packet from an older run arriving after a
+/// terminal row reads as `staleRun`, not `afterTerminal`.
+export function rejectionForWorkout(
+  previous: LiveWorkout | null,
+  incoming: LiveWorkout,
+): LiveMirrorRejection {
+  if (previous && !isFreshRun(previous, incoming)) return "staleRun";
+  if (previous?.terminal) return "afterTerminal";
+  if (previous && previous.sequence !== null && incoming.sequence !== null) {
+    return incoming.sequence < previous.sequence ? "outOfOrder" : "duplicate";
+  }
+  return "notFresh";
 }
 
 const EVENTS: ReadonlySet<string> = new Set([
@@ -243,14 +291,20 @@ export function appendHrPoint(prev: HrLog, next: LiveWorkout): HrLog {
 
 /// Reducer used by the hook. It updates the ref-owned current state before
 /// React is notified, so an async WC/realtime callback cannot make a decision
-/// from a stale render closure.
+/// from a stale render closure. `nowMs` (phone wall clock) stamps the state's
+/// `lastAcceptedAtMs` so quiet-state derivation is clock-skew-free (#614 F8).
 export function reduceLiveWorkout(
   previous: LiveWorkoutMirrorState,
   incoming: LiveWorkout,
   source: LiveWorkoutSource,
+  nowMs: number = Date.now(),
 ): LiveWorkoutReduceResult {
   if (!acceptsLiveWorkout(previous.row, incoming)) {
-    return { state: previous, accepted: false };
+    return {
+      state: previous,
+      accepted: false,
+      rejection: rejectionForWorkout(previous.row, incoming),
+    };
   }
   return {
     accepted: true,
@@ -258,6 +312,7 @@ export function reduceLiveWorkout(
       row: incoming,
       hrLog: appendHrPoint(previous.hrLog, incoming),
       source,
+      lastAcceptedAtMs: nowMs,
     },
   };
 }
@@ -284,23 +339,59 @@ export function admitLiveWorkoutMessage(
   msg: LiveWorkoutMessage,
   currentUserId: string,
   hasHadAccountTransition: boolean,
+  nowMs: number = Date.now(),
 ): LiveWorkoutAdmissionResult {
   if (!acceptsPacketOwner(msg.account_user_id, currentUserId, hasHadAccountTransition)) {
-    return { state: previous, accepted: false, stampedAcceptance: false };
+    return {
+      state: previous,
+      accepted: false,
+      stampedAcceptance: false,
+      rejection: "ownerMismatch",
+    };
   }
   const incoming = messageToLive(msg, previous.row);
-  const reduced = reduceLiveWorkout(previous, incoming, "watch-direct");
+  const reduced = reduceLiveWorkout(previous, incoming, "watch-direct", nowMs);
   return { ...reduced, stampedAcceptance: msg.account_user_id !== undefined };
 }
 
 /// The hook's final visible state: hides an ended/missing/stale row and only
 /// surfaces the HR series when it belongs to the currently-visible run.
+///
+/// #614 round-2 N3: freshness is judged by TWO clocks on purpose.
+/// `lastAcceptedAtMs` (phone-local, defaults to `nowMs` for callers without
+/// a receipt stamp) decides "has the phone accepted anything recently" —
+/// comparing that to the watch's `updatedAt` would hide a just-accepted card
+/// under clock skew. `row.updatedAt` (the watch/DB clock) still gates DATA
+/// age so a server-only stale row (e.g. a #472 row left `live`, just fetched
+/// at mount) is not presented as a live mirror.
 export function visibleLiveWorkout(
   row: LiveWorkout | null,
   hrLog: HrLog,
   nowMs: number,
+  lastAcceptedAtMs: number = nowMs,
 ): [LiveWorkout | null, LiveHrPoint[]] {
   if (!row || row.status !== "live" || row.terminal) return [null, []];
+  if (nowMs - lastAcceptedAtMs > STALE_MS) return [null, []];
   if (nowMs - new Date(row.updatedAt).getTime() > STALE_MS) return [null, []];
   return [row, hrLog.id === row.runId ? hrLog.pts : []];
+}
+
+/// Honest transport state for the currently-visible row, derived from the
+/// mirror cursor and the phone clock at render time (#614). Quietness is
+/// measured from `lastAcceptedAtMs` — the phone's OWN clock when it last
+/// accepted a packet — NOT from `row.updatedAt` (a watch/DB clock): a phone
+/// clock compared to a device clock is exactly the skew that would read a
+/// healthy direct link as paused forever (#614 review F8). If neither path
+/// has delivered anything fresh for `DIRECT_QUIET_MS`, the card must not
+/// claim a working link.
+export function deriveLiveWorkoutSyncState(
+  state: LiveWorkoutMirrorState,
+  nowMs: number,
+): LiveWorkoutSyncState {
+  const row = state.row;
+  if (!row || row.status !== "live" || row.terminal) return "unknown";
+  const quietAgeMs = nowMs - state.lastAcceptedAtMs;
+  if (quietAgeMs > STALE_MS) return "unknown";
+  if (quietAgeMs > DIRECT_QUIET_MS) return "temporarily-unreachable";
+  return state.source;
 }

@@ -12,6 +12,10 @@ import {
   emptyLiveWorkoutMirrorState,
   reduceLiveWorkout,
   visibleLiveWorkout,
+  deriveLiveWorkoutSyncState,
+  rejectionForWorkout,
+  admitLiveWorkoutMessage,
+  DIRECT_QUIET_MS,
   type HrLog,
 } from "./liveWorkoutMirror";
 
@@ -141,6 +145,7 @@ describe("preferFresher", () => {
       row: null,
       hrLog: { id: "", pts: [] },
       source: "server-fallback" as const,
+      lastAcceptedAtMs: 0,
     };
     const next = row({ sequence: 1, hr: 125 });
     const result = reduceLiveWorkout(initial, next, "watch-direct");
@@ -396,5 +401,172 @@ describe("visibleLiveWorkout", () => {
     const pts = [{ t: Date.parse(T0), hr: 100 }];
     const [, series] = visibleLiveWorkout(r, { id: "w1", pts }, Date.parse(T0));
     expect(series).toBe(pts);
+  });
+
+  // #614 round-2 N3: the visibility gate is the phone's OWN receipt clock —
+  // the watch/DB `updatedAt` under skew would hide a just-accepted card.
+  it("judges receipt freshness by the phone clock, not the row's updatedAt", () => {
+    const t0Ms = Date.parse(T0);
+    // Watch clock lagging: the row's updatedAt is ancient, but the phone
+    // accepted it moments ago — a just-accepted card must render.
+    const behind = row({ updatedAt: T0, sequence: 2 });
+    const [visible1] = visibleLiveWorkout(behind, { id: "w1", pts: [] }, t0Ms + 500, t0Ms + 500);
+    expect(visible1).toBe(behind);
+    // Watch clock ahead: same result.
+    const ahead = row({ updatedAt: T2, sequence: 2 });
+    const [visible2] = visibleLiveWorkout(ahead, { id: "w1", pts: [] }, t0Ms + 500, t0Ms + 500);
+    expect(visible2).toBe(ahead);
+  });
+
+  it("hides when the phone has accepted nothing for STALE_MS even if the row's clock looks fresh", () => {
+    const t0Ms = Date.parse(T0);
+    // row.updatedAt is in the FUTURE (watch clock ahead), so the data-age
+    // gate passes — only the phone-local receipt gate can hide this.
+    const r = row({ updatedAt: T2, sequence: 2 });
+    const [visible] = visibleLiveWorkout(
+      r,
+      { id: "w1", pts: [] },
+      t0Ms + STALE_MS + 1,
+      t0Ms,
+    );
+    expect(visible).toBeNull();
+  });
+
+  it("keeps server-only data-age honesty: an old row just fetched is not a live mirror", () => {
+    const t0Ms = Date.parse(T0);
+    // The classic #472 phantom: a row left `live`, accepted at mount with a
+    // fresh receipt clock but data minutes old — must still hide.
+    const [visible] = visibleLiveWorkout(
+      row({ updatedAt: T0, sequence: 2 }),
+      { id: "w1", pts: [] },
+      t0Ms + STALE_MS + 1,
+      t0Ms + STALE_MS + 1,
+    );
+    expect(visible).toBeNull();
+  });
+});
+
+describe("deriveLiveWorkoutSyncState", () => {
+  const t0Ms = Date.parse(T0);
+
+  function state(
+    overrides: Partial<LiveWorkout> = {},
+    source: "watch-direct" | "server-fallback" = "watch-direct",
+  ) {
+    // nowMs = t0Ms pins `lastAcceptedAtMs` deterministically; the quiet-state
+    // derivation must use THAT (the phone's receipt clock), not row.updatedAt.
+    return reduceLiveWorkout(
+      emptyLiveWorkoutMirrorState(),
+      row({ sequence: 1, updatedAt: T0, ...overrides }),
+      source,
+      t0Ms,
+    ).state;
+  }
+
+  it("unknown with no live row, an ended row, or a terminal row", () => {
+    expect(deriveLiveWorkoutSyncState(emptyLiveWorkoutMirrorState(), t0Ms)).toBe("unknown");
+    expect(deriveLiveWorkoutSyncState(state({ status: "ended" }), t0Ms)).toBe("unknown");
+    expect(deriveLiveWorkoutSyncState(state({ terminal: true }), t0Ms)).toBe("unknown");
+  });
+
+  it("names the last accepted transport while the row is fresh", () => {
+    expect(deriveLiveWorkoutSyncState(state({}, "watch-direct"), t0Ms + 100)).toBe("watch-direct");
+    expect(deriveLiveWorkoutSyncState(state({}, "server-fallback"), t0Ms + 100)).toBe(
+      "server-fallback",
+    );
+  });
+
+  it("reports temporarily-unreachable once the phone has accepted nothing for one cadence", () => {
+    const s = state({}, "watch-direct");
+    expect(deriveLiveWorkoutSyncState(s, t0Ms + DIRECT_QUIET_MS + 1)).toBe(
+      "temporarily-unreachable",
+    );
+  });
+
+  it("reports unknown once the phone has accepted nothing past the stale cutoff", () => {
+    const s = state({}, "watch-direct");
+    expect(deriveLiveWorkoutSyncState(s, t0Ms + STALE_MS + 1)).toBe("unknown");
+  });
+
+  it("bases quiet-state on phone-local receipt time, not the watch clock (#614 review F8)", () => {
+    // The row's updatedAt says 1s ago (fresh by the WATCH clock), but the
+    // phone accepted it DIRECT_QUIET_MS ago — a watch clock running ahead
+    // must not make a silent link read as healthy.
+    const s = state({ updatedAt: T2 }, "watch-direct");
+    expect(deriveLiveWorkoutSyncState(s, t0Ms + DIRECT_QUIET_MS + 1)).toBe(
+      "temporarily-unreachable",
+    );
+  });
+});
+
+describe("rejectionForWorkout", () => {
+  it("classifies a late live packet after a terminal row", () => {
+    const terminal = row({ sequence: 2, terminal: true, updatedAt: T1 });
+    const late = row({ sequence: 3, updatedAt: T2 });
+    expect(rejectionForWorkout(terminal, late)).toBe("afterTerminal");
+  });
+
+  it("classifies an older run as staleRun", () => {
+    const newer = row({ runId: "new-run", startedAt: T1, updatedAt: T1 });
+    const older = row({ runId: "old-run", startedAt: T0, updatedAt: T0 });
+    expect(rejectionForWorkout(newer, older)).toBe("staleRun");
+  });
+
+  it("classifies an older run arriving after a terminal row as staleRun, not afterTerminal (#614 review F11)", () => {
+    // `acceptsLiveWorkout` checks run freshness BEFORE terminal dominance, so
+    // the classifier must too: this late packet belongs to an older run.
+    const terminalNewRun = row({ runId: "new-run", sequence: 9, terminal: true, startedAt: T1, updatedAt: T2 });
+    const lateOldRun = row({ runId: "old-run", sequence: 2, startedAt: T0, updatedAt: T1 });
+    expect(rejectionForWorkout(terminalNewRun, lateOldRun)).toBe("staleRun");
+  });
+
+  it("classifies duplicate and out-of-order sequences", () => {
+    const prev = row({ sequence: 5 });
+    expect(rejectionForWorkout(prev, row({ sequence: 5 }))).toBe("duplicate");
+    expect(rejectionForWorkout(prev, row({ sequence: 4 }))).toBe("outOfOrder");
+  });
+
+  it("falls back to notFresh for mixed-version packets", () => {
+    const prev = row({ sequence: null });
+    expect(rejectionForWorkout(prev, row({ sequence: null }))).toBe("notFresh");
+  });
+});
+
+describe("admitLiveWorkoutMessage rejection", () => {
+  function wcMsg(overrides: Partial<LiveWorkoutMessage> = {}): LiveWorkoutMessage {
+    return {
+      status: "live",
+      started_at: Date.parse(T0) / 1000,
+      updated_at: Date.parse(T1) / 1000,
+      run_id: "w1",
+      sequence: 1,
+      event: "telemetry",
+      account_user_id: "user-1",
+      ...overrides,
+    };
+  }
+
+  it("names ownerMismatch for a rejected owner", () => {
+    const result = admitLiveWorkoutMessage(
+      emptyLiveWorkoutMirrorState(),
+      wcMsg({ account_user_id: "user-2" }),
+      "user-1",
+      false,
+    );
+    expect(result.accepted).toBe(false);
+    expect(result.rejection).toBe("ownerMismatch");
+  });
+
+  it("names the sequence rejection reason for an accepted-owner packet", () => {
+    const first = admitLiveWorkoutMessage(
+      emptyLiveWorkoutMirrorState(),
+      wcMsg({ sequence: 3 }),
+      "user-1",
+      false,
+    );
+    expect(first.accepted).toBe(true);
+    const dup = admitLiveWorkoutMessage(first.state, wcMsg({ sequence: 3 }), "user-1", false);
+    expect(dup.accepted).toBe(false);
+    expect(dup.rejection).toBe("duplicate");
   });
 });

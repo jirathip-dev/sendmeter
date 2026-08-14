@@ -276,6 +276,16 @@ public class SendLogAuthBridge: CAPPlugin, CAPBridgedPlugin {
             "event": "signedIn",
             "accessToken": accessToken,
             "expiresAt": expiresAt,
+            // #614 F6: this phone acknowledges watch workout beats over
+            // WatchConnectivity (`didReceiveMessage(_:replyHandler:)` replies
+            // `[:]`). The watch only engages its acknowledged-send/retry
+            // contract when it has seen this stamp — an older phone build
+            // omits it, and the watch then keeps the old fire-and-forget
+            // behavior instead of counting a delivered-but-unacked send as a
+            // failure. No capability negotiation is needed because the
+            // stamp's ABSENCE is the negotiation: it proves nothing about
+            // this phone build, so the watch falls back.
+            "ack_capable": true,
             // Temporary #368 compatibility for pre-#270 watches, whose
             // decoder required this key. This fixed literal never came from
             // Supabase and therefore cannot rotate/revoke a session family.
@@ -556,7 +566,17 @@ extension SendLogAuthBridge: WCSessionDelegate {
             // WebView's LiveWorkoutMessage / LiveForceMessage types describe.
             var payload = WatchBuildReport.stripped(message)
             payload.removeValue(forKey: "kind")
+            // #614: stamp the phone-side receipt boundary so the WebView can
+            // split the watch-capture→plugin latency (wireMs) from the
+            // plugin→WebView latency (latencyMs) instead of averaging them.
+            payload["received_at"] = Date().timeIntervalSince1970
             notifyListeners(kind, data: payload as [String: Any])
+            // #614: acknowledge the acknowledged-send contract the watch uses
+            // for workout beats — the watch passes a `replyHandler` so a
+            // failed/unreachable direct send can be retried once instead of
+            // silently falling back to the ~5s Supabase heartbeat. The reply
+            // is deliberately empty (there is no per-beat payload to return).
+            replyHandler?([:])
         case "requestSession":
             // The WebView (useAuth) listens and re-relays the current session.
             notifyListeners("sessionRequested", data: [:])

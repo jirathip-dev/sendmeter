@@ -151,6 +151,30 @@ final class WorkoutManager: NSObject {
     /// and sequence. Allocation happens synchronously on the manager's state
     /// owner before either transport task can suspend.
     private var liveMirrorSequence = LiveMirrorSequence(runId: UUID())
+    /// #614: direct-send failure bookkeeping for the CURRENT run. Only ever
+    /// touched on the main thread — the WC reply/error handlers hop to main,
+    /// and every `pushBeat` caller is main — matching the existing
+    /// unsynchronized `liveMirrorSequence` access. A success (the phone's
+    /// ack) resets `consecutiveFailures` so a healthy stretch never eats
+    /// into the retry cap; `retryInFlight` dedupes non-terminal re-sends to
+    /// one pending at a time.
+    private var directSendConsecutiveFailures = 0
+    private var directRetryInFlight = false
+    /// #614 review F5: supersedes a pending retry when a terminal failure
+    /// pre-empts it. Every scheduled closure captures the token at schedule
+    /// time and bails when the live token has moved on, so an End failure
+    /// cancels a pending `count`/`phase` retry in favour of its own.
+    private var directRetryToken = 0
+    /// #614 review F5: terminal (End) re-sends this run — a separate budget
+    /// from `directSendConsecutiveFailures` (see `DirectBeatRetryPolicy`).
+    private var directSendTerminalRetries = 0
+    /// Total direct-send failures this run (send error OR unreachable skip
+    /// on an ack-capable phone), reset at `start()`. Surfaced via the
+    /// end-of-workout Console breadcrumb. `internal` on purpose (review F9):
+    /// `WorkoutSavePathResetTests` injects a non-zero value and pins that
+    /// `start()` actually clears it — production only writes it from
+    /// `directSendFailed` (and reads it at `end()`).
+    var directSendFailures = 0
     private var liveSync: LiveWorkoutSync?
     private var fusionTick = 0
     /// Sample-timestamped, monotonic HR — see `HeartRateTimeline`'s doc
@@ -392,6 +416,11 @@ final class WorkoutManager: NSObject {
         fusionTick = 0
         workoutId = UUID()
         liveMirrorSequence = LiveMirrorSequence(runId: workoutId)
+        directSendFailures = 0
+        directSendConsecutiveFailures = 0
+        directRetryInFlight = false
+        directRetryToken = 0
+        directSendTerminalRetries = 0
         // #477: a previous workout's partial-flush bookkeeping must not
         // carry into this one — a leftover `partialFlushSuspended = true`
         // would silently disable durable flushing for the entire next
@@ -539,39 +568,187 @@ final class WorkoutManager: NSObject {
             )
         }
         // Bluetooth-fast path: same shape as the live_workouts row (dates as
-        // epoch seconds). Fire-and-forget; the phone plugin forwards it to
-        // the WebView, which keeps whichever source is newest.
+        // epoch seconds). Acknowledged (#614): the phone replies `[:]` on
+        // receipt, and a failed/unreachable discrete transition gets one
+        // short automatic re-send instead of silently waiting out the ~5s
+        // heartbeat. The Supabase path above remains the durable fallback.
+        sendDirectBeat(
+            beat: beat, terminal: terminal, started: started,
+            hr: hr, count: count, kcal: kcal, gain: gain,
+            climbing: climbing, cs: cs, rs: rs, rt: rt
+        )
+    }
+
+    /// Builds and sends one direct WatchConnectivity workout beat. Kept out
+    /// of `pushBeat` (and shared with `retryDirectBeat`) so a retry can
+    /// re-send the CURRENT snapshot with a fresh monotonic sequence without
+    /// re-touching the Supabase path.
+    private func sendDirectBeat(
+        beat: LiveMirrorBeat,
+        terminal: Bool,
+        started: Date,
+        hr: Double?,
+        count: Int,
+        kcal: Double?,
+        gain: Double,
+        climbing: Bool,
+        cs: Date?,
+        rs: Date?,
+        rt: Int?
+    ) {
         let session = WCSession.default
-        if session.activationState == .activated, session.isReachable {
-            var msg: [String: Any] = [
-                "kind": "liveWorkout",
-                "status": terminal ? "ended" : "live",
-                "started_at": started.timeIntervalSince1970,
-                "attempt_count": terminal ? 0 : count,
-                "climbing": climbing,
-                "elevation_gain_m": gain,
-                "updated_at": Date().timeIntervalSince1970,
-            ]
-            msg.merge(beat.wireFields) { _, new in new }
-            if let rt { msg["rest_target_s"] = rt }
-            // #477 review F1: omitting the key here (rather than sending
-            // NSNull()) is deliberately left as-is — `messageToLive` on the
-            // phone reads `msg.hr ?? null` in JS, where an absent key is
-            // already `undefined`, and `undefined ?? null` is `null`. This
-            // wire format already has no analog of the LiveWorkoutUpsert bug
-            // above. NSNull() is not documented as a valid WCSession
-            // property-list value and risks an invalid-argument crash on
-            // send — not worth it to make two already-correct paths look
-            // more symmetric.
-            if let hr { msg["hr"] = hr }
-            msg["active_kcal"] = kcal
-            if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
-            if let rs { msg["rest_started_at"] = rs.timeIntervalSince1970 }
-            // #530: this run's immutable owner (#529), never re-read from
-            // `userIdProvider()` here — see `ownerUserId`'s doc comment.
-            msg = LiveMirrorOwnership.stamped(msg, ownerUserId: ownerUserId)
-            session.sendMessage(WatchBuild.stamp(msg), replyHandler: nil, errorHandler: nil)
+        guard session.activationState == .activated else { return }
+        var msg: [String: Any] = [
+            "kind": "liveWorkout",
+            "status": terminal ? "ended" : "live",
+            "started_at": started.timeIntervalSince1970,
+            "attempt_count": terminal ? 0 : count,
+            "climbing": climbing,
+            "elevation_gain_m": gain,
+            "updated_at": Date().timeIntervalSince1970,
+        ]
+        msg.merge(beat.wireFields) { _, new in new }
+        if let rt { msg["rest_target_s"] = rt }
+        // #477 review F1: omitting the key here (rather than sending
+        // NSNull()) is deliberately left as-is — `messageToLive` on the
+        // phone reads `msg.hr ?? null` in JS, where an absent key is
+        // already `undefined`, and `undefined ?? null` is `null`. This
+        // wire format already has no analog of the LiveWorkoutUpsert bug
+        // above. NSNull() is not documented as a valid WCSession
+        // property-list value and risks an invalid-argument crash on
+        // send — not worth it to make two already-correct paths look
+        // more symmetric.
+        if let hr { msg["hr"] = hr }
+        msg["active_kcal"] = kcal
+        if let cs { msg["climbing_since"] = cs.timeIntervalSince1970 }
+        if let rs { msg["rest_started_at"] = rs.timeIntervalSince1970 }
+        // #530: this run's immutable owner (#529), never re-read from
+        // `userIdProvider()` here — see `ownerUserId`'s doc comment.
+        msg = LiveMirrorOwnership.stamped(msg, ownerUserId: ownerUserId)
+        let stamped = WatchBuild.stamp(msg)
+        let runId = beat.runId
+        // #614 review F6: the acknowledged-send contract is two-sided — the
+        // phone only replies `[:]` on builds that carry the `ack_capable`
+        // relay stamp. An OLD phone build never replies, so an ack'd send
+        // would time out, be counted as a failure on a message that was
+        // actually delivered, and trigger duplicate re-sends. Keep the exact
+        // pre-#614 fire-and-forget behavior for a phone we have not proven
+        // ack-capable.
+        let ackCapable = WatchSessionStore.shared.ackCapable
+        if session.isReachable {
+            if ackCapable {
+                // #614: replyHandler = the phone's ack (resets the failure
+                // backoff so a healthy stretch never eats into the retry
+                // cap); errorHandler = a dropped/disconnected send, which
+                // schedules the bounded retry for a discrete transition.
+                // Both handlers hop to main because the bookkeeping below is
+                // main-only. `started` rides the failure path so a retry
+                // re-sends the run's REAL start time, never a freshly-read
+                // `Date()` after `end()` cleared `startDate`.
+                session.sendMessage(
+                    stamped,
+                    replyHandler: { [weak self] _ in
+                        DispatchQueue.main.async { self?.directSendSucceeded(runId: runId) }
+                    },
+                    errorHandler: { [weak self] _ in
+                        DispatchQueue.main.async { self?.directSendFailed(runId: runId, event: beat.event, started: started) }
+                    }
+                )
+            } else {
+                session.sendMessage(stamped, replyHandler: nil, errorHandler: nil)
+            }
+        } else if ackCapable {
+            // Not reachable right now — treat as a failed direct send so the
+            // discrete transition still gets its one retry once the link is
+            // back, instead of silently parking until the next heartbeat.
+            // (An old phone gets no failure counting at all, matching its
+            // pre-#614 behavior.)
+            directSendFailed(runId: runId, event: beat.event, started: started)
         }
+    }
+
+    /// The phone acknowledged the direct beat. `WCSession` may report the
+    /// same send's success after a failure callback raced in — harmless:
+    /// resetting the counter is idempotent.
+    private func directSendSucceeded(runId: UUID) {
+        guard liveMirrorSequence.runId == runId else { return }
+        directSendConsecutiveFailures = 0
+    }
+
+    /// A direct send failed (or was skipped as unreachable on an ack-capable
+    /// phone). Counts the failure and, under the retry policy, schedules ONE
+    /// re-send of the current snapshot shortly. Run-guarded: a failure
+    /// callback that arrives after a new run began must not act for the old
+    /// run, and the retry must not fire once the run it belonged to is gone
+    /// (a new run has a new `liveMirrorSequence.runId`). `started` is the
+    /// failed beat's run start, carried through so a late re-send never
+    /// stamps a wrong started-at.
+    ///
+    /// #614 review F5: a TERMINAL failure pre-empts a pending non-terminal
+    /// retry (bumping `directRetryToken` invalidates its closure) and bypasses
+    /// the consecutive-failure cap via its own budget — the End beat is the
+    /// one with no later heartbeat to recover it, so it must never be starved
+    /// by a `count` retry that grabbed the single slot first.
+    private func directSendFailed(runId: UUID, event: LiveMirrorEvent, started: Date) {
+        guard liveMirrorSequence.runId == runId else { return }
+        directSendFailures += 1
+        directSendConsecutiveFailures += 1
+        guard DirectBeatRetryPolicy.shouldRetry(
+            event: event,
+            consecutiveFailures: directSendConsecutiveFailures,
+            retryInFlight: directRetryInFlight,
+            endRetries: directSendTerminalRetries
+        ) else { return }
+        if event.isTerminal { directSendTerminalRetries += 1 }
+        directRetryToken &+= 1
+        directRetryInFlight = true
+        let token = directRetryToken
+        let runIdAtSchedule = runId
+        let retryEvent = event
+        let retryStarted = started
+        DispatchQueue.main.asyncAfter(deadline: .now() + DirectBeatRetryPolicy.retryDelayS) {
+            [weak self] in
+            guard let self else { return }
+            // A later (higher-priority) failure superseded this retry — e.g.
+            // End pre-empting a pending count retry. It owns the slot now.
+            guard self.directRetryToken == token else { return }
+            self.directRetryInFlight = false
+            guard self.liveMirrorSequence.runId == runIdAtSchedule else { return }
+            self.retryDirectBeat(event: retryEvent, started: retryStarted)
+        }
+    }
+
+    /// Re-send the CURRENT workout state over WatchConnectivity only (the
+    /// original beat already went to Supabase). Allocates a fresh monotonic
+    /// sequence — a phone that saw the failed beat's sequence still accepts
+    /// this one, and terminal dominance on the phone rejects it if the run
+    /// already ended there. Direct-only: avoids a duplicate Supabase write.
+    ///
+    /// #614 round-2 N2: a TERMINAL retry fires even when `liveSync` is
+    /// already gone — `end()` tears it down fast when `markEnded()` 401s
+    /// (the #472 scenario), which is exactly when the durable fallback also
+    /// failed and the direct terminal beat is the last hope. The retry
+    /// closure's runId guard still prevents it acting on a newer run, and the
+    /// phone's terminal dominance keeps it from resurrecting the ended run.
+    private func retryDirectBeat(event: LiveMirrorEvent, started: Date) {
+        if !DirectBeatRetryPolicy.mayRetryWithoutLiveSync(event: event) {
+            // A non-terminal retry needs the live sync actor — once end() has
+            // torn it down there is no live state worth re-sending.
+            guard liveSync != nil else { return }
+        }
+        guard let beat = liveMirrorSequence.nextIfAvailable(event: event) else { return }
+        let terminal = beat.terminal
+        sendDirectBeat(
+            beat: beat, terminal: terminal, started: started,
+            hr: terminal ? nil : heartRate,
+            count: liveAttempts,
+            kcal: terminal ? nil : activeKcal,
+            gain: terminal ? 0 : detector.totalElevationGainM,
+            climbing: terminal ? false : detector.snapshot.isClimbing,
+            cs: terminal ? nil : climbingSince,
+            rs: terminal ? nil : restStartedAt,
+            rt: terminal ? nil : restTargetS
+        )
     }
 
     // MARK: Rest alarm (#476 F5: hoisted out of WorkoutLiveView)
@@ -692,6 +869,14 @@ final class WorkoutManager: NSObject {
         let missingDateIntervalCount = hrMissingDateIntervalCount
         if missingDateIntervalCount > 0 {
             Self.log.warning("HR quantity delivered with no mostRecentQuantityDateInterval() \(missingDateIntervalCount) time(s) this workout — readings discarded, not trusted (#477/#481)")
+        }
+        // #614 review F9: the direct WC mirror failures are now observably
+        // surfaced (this breadcrumb), and only ever counted on a phone that
+        // participates in the acknowledged-send contract (F6) — an old phone
+        // build would otherwise make this count lie about link health.
+        let directSendFailures = directSendFailures
+        if directSendFailures > 0 {
+            Self.log.warning("\(directSendFailures) direct WC mirror send(s) failed this workout (#614)")
         }
         let avgHR = builder.statistics(for: HKQuantityType(.heartRate))?
             .averageQuantity()?

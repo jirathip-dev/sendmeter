@@ -72,6 +72,36 @@ final class SessionRelayDecodeTests: XCTestCase {
         XCTAssertEqual(session.userId, userA)
         XCTAssertEqual(session.expiresAt, 2_000)
         XCTAssertEqual(session.relayId, "relay-1")
+        // #614 F6: no ack_capable key means an older phone — the watch must
+        // keep its pre-ack behavior rather than assume the phone replies.
+        XCTAssertFalse(session.ackCapable)
+    }
+
+    func testAckCapableIsAdoptedFromTheRelayedContext() {
+        guard case let .signedIn(session) = SessionRelay.decode(
+            signedIn(["ack_capable": true]), now: 1_000
+        ) else { return XCTFail("expected signedIn") }
+        XCTAssertTrue(session.ackCapable)
+        // A non-Boolean value is not a capability claim.
+        guard case let .signedIn(notCapable) = SessionRelay.decode(
+            signedIn(["ack_capable": "yes"]), now: 1_000
+        ) else { return XCTFail("expected signedIn") }
+        XCTAssertFalse(notCapable.ackCapable)
+    }
+
+    func testASessionPersistedBeforeAckCapableStillLoads() {
+        // #614 F6: a watch build that persisted RelayedSession before the
+        // ackCapable field must still decode it — a hard Bool field would
+        // throw, flatten to nil and log the user out at launch.
+        let pre614Data = try! JSONSerialization.data(withJSONObject: [
+            "accessToken": jwt(),
+            "userId": userA.uuidString,
+            "expiresAt": 2_000.0,
+            "relayId": "relay-1"
+        ])
+        let decoded = try! JSONDecoder().decode(RelayedSession.self, from: pre614Data)
+        XCTAssertEqual(decoded.userId, userA)
+        XCTAssertFalse(decoded.ackCapable)
     }
 
     // ------------------------------------------------------------------
@@ -124,7 +154,9 @@ final class SessionRelayDecodeTests: XCTestCase {
         let keys = Set(
             (try! JSONSerialization.jsonObject(with: encoded) as! [String: Any]).keys
         )
-        XCTAssertEqual(keys, ["accessToken", "userId", "expiresAt", "relayId"])
+        // ackCapable (#614) is a legitimate wire/persisted capability flag —
+        // the invariant is that a refresh token is NOT among the fields.
+        XCTAssertEqual(keys, ["accessToken", "userId", "expiresAt", "relayId", "ackCapable"])
         XCTAssertFalse(
             String(data: encoded, encoding: .utf8)!.contains("rt-should-vanish")
         )

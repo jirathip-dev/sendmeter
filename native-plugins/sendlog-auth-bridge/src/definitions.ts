@@ -50,6 +50,11 @@ export interface LiveWorkoutMessage extends LiveMirrorMetadata {
   rest_started_at?: number;
   rest_target_s?: number;
   updated_at: number;
+  /// Epoch SECONDS of the phone-side native plugin receipt (#614) — stamped
+  /// on the forwarded payload so the WebView can measure the watch-capture →
+  /// plugin → WebView latency boundaries separately. Absent on a plugin build
+  /// that predates the stamp; treat absent as "latency unknown".
+  received_at?: number;
 }
 
 /// Watch→phone live force-gauge beat (SL-87), ~2 Hz while measuring plus one
@@ -64,6 +69,9 @@ export interface LiveForceMessage extends LiveMirrorMetadata {
   tag?: string;
   side?: string;
   updated_at: number;
+  /// Epoch SECONDS of the phone-side native plugin receipt (#614) — same
+  /// purpose and absence semantics as `LiveWorkoutMessage.received_at`.
+  received_at?: number;
   /// SL-95: a downsampled trailing ~3s window of `[t_ms, kg]` pairs, `t_ms`
   /// relative to this hold's start (same clock as `elapsed_ms`) — only
   /// present (non-empty) while `status === "measuring"`. The phone re-anchors
