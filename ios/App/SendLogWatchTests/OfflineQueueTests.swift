@@ -303,9 +303,10 @@ final class OfflineQueueTests: XCTestCase {
     /// 401/403 must NOT be quarantined (the taxonomy's conservative
     /// default): a retryable/ambiguous failure stops the pass exactly like
     /// the pre-#475 behavior, so a real outage doesn't burn through the
-    /// rest of the queue out of order. 403 (unlike 429/5xx/408 — see F17,
-    /// below) is a real, SERVER-evaluated ambiguous rejection, so it still
-    /// advances the per-item retry ledger.
+    /// rest of the queue out of order. Uses 409 (a real, SERVER-evaluated
+    /// ambiguous rejection that still advances the per-item retry ledger) —
+    /// 403 no longer fits the fixture: since #605 it routes to
+    /// `.needsAuthRelay` (see the #605 tests below).
     func testRetryableErrorStopsThePassWithoutQuarantiningAnything() async throws {
         let transient = makeBundle(id: UUID())
         let behindIt = makeBundle(id: UUID())
@@ -317,7 +318,7 @@ final class OfflineQueueTests: XCTestCase {
             transient.workout.id: StagedUploadError(
                 stage: .session,
                 underlying: HTTPError(data: Data(), response: HTTPURLResponse(
-                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                    url: URL(string: "https://example.com")!, statusCode: 409, httpVersion: nil, headerFields: nil
                 )!)
             ),
         ])
@@ -329,7 +330,7 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertFalse(uploaded.contains(behindIt.workout.id), "a retryable failure must still stop the pass, not skip ahead")
 
         let remaining = try filesOnDisk()
-        XCTAssertTrue(remaining.contains("\(transient.workout.id.uuidString).json"), "403 must stay pending, not be quarantined")
+        XCTAssertTrue(remaining.contains("\(transient.workout.id.uuidString).json"), "409 must stay pending, not be quarantined")
         XCTAssertFalse(remaining.contains("\(transient.workout.id.uuidString).quarantine"))
         // The retry ledger records the one failed attempt, well short of
         // the F3 threshold.
@@ -460,11 +461,13 @@ final class OfflineQueueTests: XCTestCase {
 
     /// A success clears any accumulated retry-failure count — a bundle
     /// that struggled for a few passes and then landed must not carry a
-    /// stale ledger toward some future, unrelated failure streak. Uses 403
+    /// stale ledger toward some future, unrelated failure streak. Uses 409
     /// (a real, SERVER-evaluated ambiguous rejection), not 500 — after F17,
     /// a 500 is transient and never writes a ledger entry in the first
     /// place, which would make this test's setup assert something false
-    /// before even reaching what it's meant to check.
+    /// before even reaching what it's meant to check. (403 is likewise
+    /// unusable since #605 — it never writes the ledger, it requests a
+    /// relay instead.)
     func testASuccessfulUploadClearsAPreviousRetryLedger() async throws {
         let bundle = makeBundle(id: UUID())
         let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -474,7 +477,7 @@ final class OfflineQueueTests: XCTestCase {
             bundle.workout.id: StagedUploadError(
                 stage: .session,
                 underlying: HTTPError(data: Data(), response: HTTPURLResponse(
-                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                    url: URL(string: "https://example.com")!, statusCode: 409, httpVersion: nil, headerFields: nil
                 )!)
             ),
         ])
@@ -768,6 +771,158 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertEqual(requestCount, 0)
     }
 
+    // MARK: #605 — a 403 asks for a relay, and only that
+
+    /// The #605 acceptance criterion: a 403 drain requests a fresh relay
+    /// (exactly once — the production path throttles on
+    /// `SessionRelay.shouldRequestRelay`/`lastRequestAt`, which
+    /// `RelayRequestThrottleTests` pins) and leaves the retry ledger
+    /// untouched. Before this fix, a 403 advanced the ledger and a
+    /// sustained 403 window burned the item's whole F3 budget — the
+    /// signature that twice quarantined a healthy workout.
+    func testA403DrainRequestsARelayAndLeavesTheLedgerUntouched() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(
+                stage: .session,
+                underlying: HTTPError(data: Data(), response: HTTPURLResponse(
+                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                )!)
+            ),
+        ])
+        let relay = RecordingSessionRelay()
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, sessionRelay: relay)
+
+        await queue.drain()
+
+        let requestCount = await relay.requestCount
+        XCTAssertEqual(requestCount, 1, "a 403 must ask the phone for a fresh relay, like 401")
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(bundle.workout.id.uuidString).json"), "403 must stay pending, not be quarantined")
+        XCTAssertFalse(remaining.contains("\(bundle.workout.id.uuidString).quarantine"))
+        XCTAssertFalse(remaining.contains("\(bundle.workout.id.uuidString).retry"), "a 403 is not yet a counted server verdict — the ledger must stay untouched")
+        XCTAssertTrue(remaining.contains("\(bundle.workout.id.uuidString).stall403"), "the relay-budget counter must survive relaunch, like the ledger")
+        let quarantined = await queue.quarantinedCount()
+        let pending = await queue.pendingCount()
+        XCTAssertEqual(quarantined, 0)
+        XCTAssertEqual(pending, 1)
+    }
+
+    /// The stale-auth explanation has a budget: a 403 item may spend
+    /// `max403RelayPasses` passes asking for relays with the ledger
+    /// untouched, and then the ledger is still untouched — no `.retry`
+    /// file, no quarantine, even after the whole budget.
+    func test403sWithinTheRelayBudgetNeverAdvanceTheLedgerOrQuarantine() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(
+                stage: .session,
+                underlying: HTTPError(data: Data(), response: HTTPURLResponse(
+                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                )!)
+            ),
+        ])
+        let relay = RecordingSessionRelay()
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, sessionRelay: relay)
+
+        for _ in 0..<QueueRetryPolicy.max403RelayPasses {
+            await queue.drain()
+        }
+
+        let requestCount = await relay.requestCount
+        XCTAssertEqual(requestCount, QueueRetryPolicy.max403RelayPasses, "each budgeted 403 pass asks exactly once")
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(bundle.workout.id.uuidString).json"))
+        XCTAssertFalse(remaining.contains("\(bundle.workout.id.uuidString).retry"), "the ledger must not advance while the relay budget is unspent")
+        XCTAssertFalse(remaining.contains("\(bundle.workout.id.uuidString).quarantine"))
+        let quarantined = await queue.quarantinedCount()
+        XCTAssertEqual(quarantined, 0)
+    }
+
+    /// The permanent-403 answer to #605's F3 counter-argument: once the
+    /// relay budget is exhausted, the 403 is counted like any other
+    /// unrecognized server verdict, and the F3 threshold quarantines it
+    /// `.stuckRetrying` — a truly permanent 403 (an RLS denial, a
+    /// permanently-invalid account) can never park the queue behind it
+    /// forever. Relay asks stop once the budget is spent.
+    func testAPermanent403QuarantinesAsStuckRetryingAfterTheRelayBudgetIsExhausted() async throws {
+        let stuck = makeBundle(id: UUID())
+        let behindIt = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(stuck, createdAt: now)
+        try writeFile(behindIt, createdAt: now.addingTimeInterval(1))
+        let uploader = ScriptedUploader(failing: [
+            stuck.workout.id: StagedUploadError(
+                stage: .session,
+                underlying: HTTPError(data: Data(), response: HTTPURLResponse(
+                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                )!)
+            ),
+        ])
+        let relay = RecordingSessionRelay()
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir, sessionRelay: relay)
+
+        // Relay budget (asks, no count) + F3 ledger budget (counts) — the
+        // combined bound from `QueueRetryPolicy.max403RelayPasses`.
+        for _ in 0..<(QueueRetryPolicy.max403RelayPasses + QueueRetryPolicy.maxConsecutiveFailures) {
+            await queue.drain()
+        }
+
+        let requestCount = await relay.requestCount
+        XCTAssertEqual(requestCount, QueueRetryPolicy.max403RelayPasses, "relay asks must stop once the budget is exhausted")
+        let remaining = try filesOnDisk()
+        XCTAssertTrue(remaining.contains("\(stuck.workout.id.uuidString).quarantine"), "a permanent 403 must quarantine, not stall forever")
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).json"))
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).retry"), "the retry ledger is folded into the quarantine record, not left behind")
+        XCTAssertFalse(remaining.contains("\(stuck.workout.id.uuidString).stall403"), "the stall counter is cleared with the item")
+        let uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(behindIt.workout.id), "the healthy item is freed the SAME pass the stuck one is quarantined")
+
+        let data = try Data(contentsOf: pendingDir.appendingPathComponent("\(stuck.workout.id.uuidString).quarantine"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let record = try decoder.decode(QuarantinedUpload.self, from: data)
+        XCTAssertEqual(record.reason, .stuckRetrying)
+        XCTAssertEqual(record.attemptCount, QueueRetryPolicy.maxConsecutiveFailures)
+    }
+
+    /// A 403 that clears (a relay refresh lands, the server heals) uploads
+    /// normally, and the success wipes the stall counter — a bundle must
+    /// not carry a half-spent stale-auth budget into a future, unrelated
+    /// episode.
+    func testA403ThatResolvesAfterARelayUploadsAndClearsItsStallCounter() async throws {
+        let bundle = makeBundle(id: UUID())
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        try writeFile(bundle, createdAt: now)
+        let uploader = ScriptedUploader(failing: [
+            bundle.workout.id: StagedUploadError(
+                stage: .session,
+                underlying: HTTPError(data: Data(), response: HTTPURLResponse(
+                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                )!)
+            ),
+        ])
+        let queue = OfflineQueue(uploader: uploader, clock: FixedClock(now), baseDir: tempDir)
+
+        await queue.drain()
+        await queue.drain()
+        XCTAssertTrue(try filesOnDisk().contains("\(bundle.workout.id.uuidString).stall403"))
+
+        await uploader.stopFailing()
+        await queue.drain()
+
+        let remaining = try filesOnDisk()
+        XCTAssertFalse(remaining.contains("\(bundle.workout.id.uuidString).json"), "the item uploads once the 403 clears")
+        XCTAssertFalse(remaining.contains("\(bundle.workout.id.uuidString).stall403"), "a successful upload must clear the stale-auth counter")
+        XCTAssertFalse(remaining.contains("\(bundle.workout.id.uuidString).retry"))
+        let uploaded = await uploader.uploadedIds
+        XCTAssertTrue(uploaded.contains(bundle.workout.id))
+    }
+
     // MARK: #472b — bounded backoff retry with no foreground event
 
     /// The named acceptance criterion: a failed drain must retry later with
@@ -784,12 +939,13 @@ final class OfflineQueueTests: XCTestCase {
         // First attempt fails on a transient, ambiguous rejection (still
         // ledger-eligible, unlike #475 F11/F17's excluded cases — irrelevant
         // to what's under test here, which is purely "does a retry get
-        // scheduled and fire").
+        // scheduled and fire"). 409 stands in for 403, which since #605
+        // stalls the pass for a relay instead of counting.
         let uploader = ScriptedUploader(failing: [
             bundle.workout.id: StagedUploadError(
                 stage: .session,
                 underlying: HTTPError(data: Data(), response: HTTPURLResponse(
-                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                    url: URL(string: "https://example.com")!, statusCode: 409, httpVersion: nil, headerFields: nil
                 )!)
             ),
         ])
@@ -1293,14 +1449,16 @@ final class OfflineQueueTests: XCTestCase {
         let stuck = makeBundle(id: UUID())
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         try writeStuckQuarantine(stuck, at: now)
-        // A real, SERVER-evaluated ambiguous rejection (403) — unlike a
-        // transport failure (which per F11 never writes a ledger), a 403
+        // A real, SERVER-evaluated ambiguous rejection (409) — unlike a
+        // transport failure (which per F11 never writes a ledger), a 409
         // proves the restored item is back on the ordinary retry pipeline.
+        // (403 no longer fits: since #605 it requests a relay and leaves
+        // the ledger untouched.)
         let uploader = ScriptedUploader(failing: [
             stuck.workout.id: StagedUploadError(
                 stage: .session,
                 underlying: HTTPError(data: Data(), response: HTTPURLResponse(
-                    url: URL(string: "https://example.com")!, statusCode: 403, httpVersion: nil, headerFields: nil
+                    url: URL(string: "https://example.com")!, statusCode: 409, httpVersion: nil, headerFields: nil
                 )!)
             ),
         ])

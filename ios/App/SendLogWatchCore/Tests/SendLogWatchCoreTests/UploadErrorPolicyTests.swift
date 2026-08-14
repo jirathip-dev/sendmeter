@@ -10,6 +10,11 @@ import SendLogWatchCore
 /// claimed) — these now pin the redesigned taxonomy: quarantine requires
 /// SQLSTATE 23514 + stage `.climbAttempts` + the bundle itself still
 /// carrying a non-positive-duration attempt, never a message-string match.
+/// Issue #605 then re-classified 403: with the drain loop already matching
+/// the item's owner to the stored account, a 403 is usually a verdict
+/// about the credential, so it routes to `.needsAuthRelay` (bounded by
+/// `QueueRetryPolicy.max403RelayPasses` — see `QueueRetryPolicyTests`
+/// below for the permanent-403 answer); 409 stays `.retry`.
 final class UploadErrorClassifierTests: XCTestCase {
     private func classify(
         httpStatus: Int? = nil,
@@ -53,11 +58,21 @@ final class UploadErrorClassifierTests: XCTestCase {
         XCTAssertEqual(classify(httpStatus: 429), .retry)
     }
 
-    func test403And409AreAmbiguousSoTheyRetry() {
-        // 403 can be stale auth or a real RLS denial; 409 can be an
-        // ordering conflict rather than poison. Neither is safe to
-        // quarantine on status code alone.
-        XCTAssertEqual(classify(httpStatus: 403), .retry)
+    /// #605: a 403 is usually a verdict about the credential, not the
+    /// bundle — `shouldDrain` has already matched the item's owner to the
+    /// stored account by the time a 403 can happen, so the remaining ways
+    /// to earn one are credential-side (stale relay, `WatchSessionStore`'s
+    /// `userId` drifting from the bearer token, …). It routes to
+    /// `.needsAuthRelay` so the drain loop requests a fresh relay instead
+    /// of spending the item's F3 budget on it.
+    func test403NeedsAuthRelay() {
+        XCTAssertEqual(classify(httpStatus: 403), .needsAuthRelay)
+    }
+
+    func test409RemainsAmbiguousSoItRetries() {
+        // 409 can be an ordering conflict rather than poison — and unlike
+        // 403 it is not credential-side, so it stays on the ordinary
+        // `.retry` path.
         XCTAssertEqual(classify(httpStatus: 409), .retry)
     }
 
@@ -196,6 +211,59 @@ final class QueueRetryPolicyTests: XCTestCase {
             previousConsecutiveFailures: QueueRetryPolicy.maxConsecutiveFailures + 50
         )
         if case .stuck = decision {} else { XCTFail("expected .stuck, got \(decision)") }
+    }
+
+    // MARK: #605 — the 403 stale-auth relay budget
+
+    /// The first 403 pass on an item is treated as stale auth — it gets a
+    /// fresh-relay ask, not a ledger count.
+    func testTheFirst403PassIsTreatedAsStaleAuth() {
+        XCTAssertTrue(QueueRetryPolicy.shouldTreat403AsStaleAuth(consecutive403Passes: 1))
+    }
+
+    /// The budgeted number of passes is still stale-auth: the full budget
+    /// is spendable before any 403 counts as a verdict.
+    func testTheBudgetedNumberOf403PassesIsStillStaleAuth() {
+        XCTAssertTrue(QueueRetryPolicy.shouldTreat403AsStaleAuth(
+            consecutive403Passes: QueueRetryPolicy.max403RelayPasses
+        ))
+    }
+
+    /// Past the budget, a 403 is no longer the auth explanation — it is a
+    /// genuine server verdict and must count toward the F3 ledger.
+    func testAPassBeyondTheRelayBudgetIsNoLongerStaleAuth() {
+        XCTAssertFalse(QueueRetryPolicy.shouldTreat403AsStaleAuth(
+            consecutive403Passes: QueueRetryPolicy.max403RelayPasses + 1
+        ))
+    }
+
+    /// The permanent-403 bound, stated as a guarantee: simulate a
+    /// permanent-403 item through the whole decision pipeline — the first
+    /// `max403RelayPasses` passes are stale-auth (relay ask, no count);
+    /// every pass after that counts toward the F3 ledger, and the
+    /// `maxConsecutiveFailures`-th counted pass is the `.stuck` one. So a
+    /// truly permanent 403 can never stall the queue forever: it is
+    /// quarantined `.stuckRetrying` after at most
+    /// `max403RelayPasses + maxConsecutiveFailures` rejected passes — the
+    /// #475 F3 backstop reached later for 403, never weakened.
+    func testAPermanent403QuarantinesWithinTheCombinedBound() {
+        var counted = 0
+        var staleAuthPasses = 0
+        var stuckAtTotalPass = -1
+        for pass in 1...(QueueRetryPolicy.max403RelayPasses + QueueRetryPolicy.maxConsecutiveFailures) {
+            if QueueRetryPolicy.shouldTreat403AsStaleAuth(consecutive403Passes: pass) {
+                staleAuthPasses += 1
+            } else {
+                if case .stuck = QueueRetryPolicy.afterFailedAttempt(previousConsecutiveFailures: counted) {
+                    stuckAtTotalPass = pass
+                    break
+                }
+                counted += 1
+            }
+        }
+        XCTAssertEqual(staleAuthPasses, QueueRetryPolicy.max403RelayPasses)
+        XCTAssertEqual(counted, QueueRetryPolicy.maxConsecutiveFailures - 1)
+        XCTAssertEqual(stuckAtTotalPass, QueueRetryPolicy.max403RelayPasses + QueueRetryPolicy.maxConsecutiveFailures)
     }
 
     // MARK: #475 F12 — the stuck-retrying backoff

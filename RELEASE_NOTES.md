@@ -59,6 +59,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Watch: an upload the server answers with "forbidden" (HTTP 403 — usually the watch's sign-in has gone stale, not a problem with the workout itself) no longer spends the upload's retry budget: the watch asks the iPhone for a fresh sign-in instead, and only if the same 403 keeps coming back after several refreshes is the upload counted toward being set aside.
 - iPhone: reopening the app now reacts to both foreground signals — the WebView's visibility change and the native app's own active transition — before re-sharing the current sign-in with the paired Apple Watch and the Health sync, and each reopen triggers a single re-share and a single health sync. When the Apple Watch asks the phone for a fresh sign-in while the iPhone's session is already gone, the reason is now recorded separately in Settings → Sign-in diagnostics under its own entry.
 - Watch: if a Climb Workout fails to start partway through, the watch now ends and discards the partially-started session instead of leaving it running in the background.
 - iPhone: reopening the app no longer shows readiness as "Synced just now" for an older watch-triggered result that actually completed hours earlier; the synced-time marker is also now kept separate per signed-in account.
