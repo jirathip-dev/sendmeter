@@ -160,8 +160,14 @@ struct QuarantineDiagnosticsView: View {
                         .font(.caption2)
                         .foregroundStyle(WatchPalette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    ForEach(breadcrumbs.dropFirst(), id: \.id) { entry in
-                        Text(historyLine(entry))
+                    // Index identity, not the entry's id: the SAME item can
+                    // legitimately exit quarantine more than once within the
+                    // ring (a weekly F12 resurrection, a retry→re-quarantine
+                    // cycle), so `id: \.id` would violate ForEach's
+                    // unique-IDs precondition. Same pattern as the entry
+                    // cards below.
+                    ForEach(breadcrumbs.dropFirst().indices, id: \.self) { index in
+                        Text(historyLine(breadcrumbs[index]))
                             .font(.caption2)
                             .foregroundStyle(WatchPalette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
