@@ -249,6 +249,13 @@ final class WorkoutManager: NSObject {
     var partialUploader: (ClimbWorkoutPartialUpsert) async -> Void = { partial in
         try? await Repo.flushPartialWorkout(partial)
     }
+    /// #615: the settle gate between an in-flight partial flush and the final
+    /// bundle upload — `stopRecording()` registers the partial task here and
+    /// the queue's upload waits on it, so End no longer blocks on the
+    /// network. Injectable so the app-target tests can assert the hold and
+    /// the blocking without touching the production singleton.
+    @ObservationIgnored
+    var partialSettleGate: WorkoutPartialSettleGate = .shared
     /// #481 review F8: extracted out of `phaseWarmer`'s default closure so
     /// the CONDITION — the thing that can regress (inverted, deleted by a
     /// well-meaning "no test-awareness in production code" tidy-up) — is
@@ -324,7 +331,7 @@ final class WorkoutManager: NSObject {
     // `testRootViewReadsWorkoutManagerFromEnvironmentNotState`
     // (`WorkoutOwnershipTests.swift`) — a NEW view needs its own such pin, or
     // its own `deinit` guard, not a free pass from this comment. `end()` (and
-    // `stopRecordingAndAwaitInFlightPartial()`) is the one real invalidation
+    // `stopRecording()`) is the one real invalidation
     // path for every view that follows the rule, and it already runs on
     // MainActor.
 
@@ -432,6 +439,14 @@ final class WorkoutManager: NSObject {
         partialFlushTask = nil
         partialFlushSuspended = false
         partialFlushEpoch &+= 1
+        // #615 review F3: deliberately NOT clearing the settle gate here —
+        // the previous run's held partial-flush task may still be in flight
+        // (a single request, up to ~60s), and `hold(nil)` would let that
+        // run's final-bundle drain (delayed behind another in-flight upload)
+        // race ahead of its own partial, reopening #477's partial-overwrites-
+        // final. A stale held task settles itself — bounded by the request
+        // timeout — so leaving it is strictly safer; the next
+        // `stopRecording()` re-holds with this run's own partial.
 
         do {
             try await requestAuthorization()
@@ -823,19 +838,27 @@ final class WorkoutManager: NSObject {
 
         guard let session, let builder, let startDate else { return nil }
 
-        // #477 review F2: stop the workout FIRST, and only then await the
-        // in-flight partial — extracted into its own method (not inlined
+        // #477 review F2: stop the workout FIRST, and only then do the local
+        // HealthKit finalization — extracted into its own method (not inlined
         // here) specifically so this ordering is independently testable.
         // Constructing a real HKWorkoutSession/HKLiveWorkoutBuilder is
         // impossible off-device, so `end()` itself can never be driven past
-        // the guard above in this test host; `stopRecordingAndAwaitInFlightPartial()`
-        // needs neither, so SendLogWatchTests calls it directly. See its doc
-        // comment for why the ordering matters: a Timer on the main run loop
-        // is NOT paused by a suspended MainActor async function, so awaiting
-        // first (the original #477 fix) kept the workout fully live —
+        // the guard above in this test host; `stopRecording()` needs neither,
+        // so SendLogWatchTests calls it directly. See its doc comment for why
+        // the ordering matters: a Timer on the main run loop is NOT paused by
+        // a suspended MainActor async function, so awaiting first (the
+        // original #477 fix's mistake) kept the workout fully live —
         // rawTrace growing, elapsed advancing, detector ticking, the phone
         // mirror still told "live" — for as long as the partial upload took.
-        let endDate = await stopRecordingAndAwaitInFlightPartial()
+        //
+        // #615: `stopRecording()` no longer awaits the in-flight partial at
+        // all — it registers the partial on `partialSettleGate`, and the
+        // queue's final upload waits there instead. The End tap → durable
+        // queue commit → phone notification path is now pure local work plus
+        // HealthKit finalization; the #477 ordering guarantee (a late partial
+        // must never overwrite the final row) is preserved on the upload
+        // path, where the race actually lives.
+        let endDate = await stopRecording()
 
         session.end()
         do {
@@ -888,11 +911,13 @@ final class WorkoutManager: NSObject {
             .sumQuantity()?
             .doubleValue(for: .kilocalorie())
 
-        // Mark the live row ended — this runs before the confirm screen, so it
-        // covers both Save and Discard (no separate Discard hook needed).
-        await liveSync?.markEnded()
-        liveSync = nil
-
+        // The live row's terminal upsert is NOT awaited here any more
+        // (#615): the terminal direct beat already closed the phone mirror
+        // at `stopRecording()`, and the durable Supabase fallback runs after
+        // the save bundle is committed (see `save`), with its own durable
+        // retry handoff (`LiveWorkoutTerminalRetry`, #531) on failure.
+        // `liveSync` stays alive until `save` tears it down, so nothing
+        // re-derives or re-creates it.
         self.session = nil
         self.builder = nil
         self.startDate = nil
@@ -931,53 +956,55 @@ final class WorkoutManager: NSObject {
         )
     }
 
-    /// Stops everything that would otherwise keep recording, THEN awaits
-    /// whatever partial flush is already in flight. Order matters (#477
-    /// review F2): a `Timer` on the main run loop is not paused by a
-    /// suspended MainActor `async` function — the main thread just returns
-    /// to the run loop while this is parked, so if the await ran first,
-    /// `fusionTimer` would keep firing, `rawTrace` would keep growing,
-    /// `detector.ingest` would keep running, and `pushBeat()` would keep
-    /// telling the phone the workout is "live", all for as long as the
-    /// partial upload takes. Tearing down first closes that regardless of
-    /// how long the await takes.
+    /// Stops everything that would otherwise keep recording, emits the
+    /// terminal direct-mirror beat, and stamps the end date — WITHOUT waiting
+    /// on the network. Order matters (#477 review F2): a `Timer` on the main
+    /// run loop is not paused by a suspended MainActor `async` function — the
+    /// main thread just returns to the run loop while this is parked, so if
+    /// an await ran first, `fusionTimer` would keep firing, `rawTrace` would
+    /// keep growing, `detector.ingest` would keep running, and `pushBeat()`
+    /// would keep telling the phone the workout is "live", all for as long as
+    /// the partial upload takes. Tearing down first closes that regardless of
+    /// how long anything after takes.
+    ///
+    /// #615: the in-flight partial flush is handed to `partialSettleGate`
+    /// (synchronously, before this returns) instead of being awaited here —
+    /// the queue's upload of the final bundle waits on that gate, which
+    /// preserves #477's invariant (a partial that lands after the final row
+    /// would overwrite it with provisional data) without parking the End tap
+    /// behind a network call that can take up to 60s. The terminal
+    /// `live_workouts` upsert moved off this path too — it runs after the
+    /// durable queue commit in `save`, with the #531 durable retry handoff
+    /// for failures.
     ///
     /// Not `private`: `end()` can only reach this after a guard that needs a
     /// real `HKWorkoutSession`/`HKLiveWorkoutBuilder`, which this test host
     /// cannot construct (no HealthKit entitlement) — so `end()` itself can
     /// never be driven past that guard here. This method needs neither;
     /// SendLogWatchTests calls it directly to prove the ordering.
-    func stopRecordingAndAwaitInFlightPartial() async -> Date {
+    func stopRecording() async -> Date {
         fusionTimer?.invalidate()
         fusionTimer = nil
         cancelRestAlarm() // no more rest to alarm for once the workout is ending
         altimeter.stopRelativeAltitudeUpdates()
         motion.stopDeviceMotionUpdates()
         // Close the phone's WC mirror immediately. The same terminal beat is
-        // queued into the actor-backed Supabase path; the actor waits behind
-        // any in-flight telemetry so the durable row cannot be reopened.
+        // queued into the actor-backed Supabase path; the actor drains it in
+        // the background (and hands a failure to `LiveWorkoutTerminalRetry`),
+        // so the durable server-side row cannot be reopened by telemetry.
         pushBeat(event: .end)
-        // Stamped now — before the network wait below, not after it, so a
-        // slow partial can no longer inflate the saved duration.
+        // Stamped now — before any network wait, not after it, so a slow
+        // partial can no longer inflate the saved duration.
         let endDate = Date()
 
-        // #477: cancelling a detached Task after its request is already on
-        // the wire can't stop the server committing it, so this must AWAIT,
-        // not cancel. Deliberately UNBOUNDED: supabase-swift does not retry
-        // POSTs (`PostgrestBuilder.retryableMethods` excludes `.post`) and
-        // times a single request out at 60s on its own
-        // (`HTTPRequest`'s per-request timeout) — that third-party default
-        // is the real bound on how long this can park, not something this
-        // function imposes. A shorter, self-imposed timeout here would
-        // reopen the exact bug #477 closes: an abandoned-but-still-in-flight
-        // partial could still land on the server after the final row this
-        // method's caller is about to write, with nothing left holding it
-        // back. The workout itself is already fully torn down above by the
-        // time this suspends, so the only user-visible cost of the 60s is
-        // the End button staying disabled that long, not stale/growing data.
-        if let partialFlushTask {
-            _ = await partialFlushTask.value
-        }
+        // #615: register the in-flight partial (if any) on the settle gate.
+        // #477's "must AWAIT, not cancel" reasoning still stands — a
+        // cancelled detached Task can't stop the server committing a request
+        // already on the wire — but the wait now happens on the upload path
+        // (the queue's final-row upload cannot start until the partial has
+        // settled), not on the End path. A nil partial (none in flight)
+        // settles immediately.
+        partialSettleGate.hold(partialFlushTask)
         partialFlushTask = nil
         return endDate
     }
@@ -1031,11 +1058,34 @@ final class WorkoutManager: NSObject {
     @MainActor
     private func save(_ bundle: WorkoutSaveBundle) async {
         let outcome = await OfflineQueue.shared.enqueue(bundle)
+
+        // The terminal `live_workouts` teardown runs whatever the outcome —
+        // the mirror must end even when the save bundle couldn't be
+        // persisted. Fired as a background task (#615): the terminal direct
+        // beat already closed the phone's WC mirror at `stopRecording()`;
+        // the actor's failure handoff to `LiveWorkoutTerminalRetry` (#531)
+        // is durable and runs inside the task. `liveSync` is deliberately
+        // captured before niling, so the task keeps the actor alive.
+        let liveSyncToEnd = liveSync
+        liveSync = nil
+        if let liveSyncToEnd {
+            Task { await liveSyncToEnd.markEnded() }
+        }
+
         guard outcome != .lost else {
             failedBundle = bundle
             ending = false
             WKInterfaceDevice.current().play(.failure)
             return
+        }
+
+        // #615: durable-before-notify — only now that the bundle is on disk
+        // (or uploaded directly) does the phone hear about the completed
+        // workout, so its pending row always has a durable bundle behind it
+        // to reconcile with. Pure policy in Core (`WorkoutCompletedNotify`),
+        // pinned on Linux CI.
+        if WorkoutCompletedNotify.shouldNotify(after: outcome) {
+            notifyWorkoutCompleted(bundle)
         }
 
         // Re-review R1: only clear THIS bundle's failure. `failedBundle` can
@@ -1074,6 +1124,45 @@ final class WorkoutManager: NSObject {
         WKInterfaceDevice.current().play(.success)
         try? await Task.sleep(for: .seconds(1.6))
         justSaved = false
+    }
+
+    /// #615: tell the phone a workout completed, AFTER its save bundle is
+    /// durably queued. Only safe canonical summary fields + the stable ids
+    /// ride the wire (`WorkoutCompletedReport`) — no raw trace, no health
+    /// values — stamped with this run's immutable owner (#529) and the build/
+    /// queue-depth report keys. Best-effort: the phone renders a PENDING
+    /// session and realtime/server data reconciles it by session id, so a
+    /// lost notification costs latency, never data. `transferUserInfo`
+    /// delivers even when the phone app is backgrounded (the plugin stores
+    /// it for the WebView to drain); `sendMessage` is the live path. The
+    /// phone's ACK contract (#614) is deliberately not engaged — this is a
+    /// one-shot notification, not a beat with a retry budget.
+    private func notifyWorkoutCompleted(_ bundle: WorkoutSaveBundle) {
+        let session = WCSession.default
+        guard session.activationState == .activated else { return }
+        let summary = WorkoutCompletedReport.Summary(
+            sessionId: bundle.session.id,
+            workoutId: bundle.workout.id,
+            startedAt: bundle.workout.startedAt,
+            endedAt: bundle.workout.endedAt,
+            attemptCount: bundle.attempts.count,
+            durationMin: bundle.session.durationMin,
+            rpe: bundle.session.rpe,
+            phase: bundle.session.phase,
+            type: bundle.session.type,
+            typeLabel: bundle.session.typeLabel,
+            note: bundle.session.note,
+            rpeConfirmed: bundle.session.rpeConfirmed
+        )
+        var message = WorkoutCompletedReport.payload(summary: summary)
+        // #529: the run's immutable owner, never the currently-relayed
+        // account — same stamp as the live beats and the row itself.
+        message = LiveMirrorOwnership.stamped(message, ownerUserId: bundle.enqueuedUserId)
+        message = WatchBuild.stamp(message)
+        session.transferUserInfo(message)
+        if session.isReachable {
+            session.sendMessage(message, replyHandler: nil, errorHandler: nil)
+        }
     }
 
     // MARK: Sensors

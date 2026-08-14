@@ -637,6 +637,36 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      create_phone_workout: {
+        Args: {
+          p_session_id: string
+          p_workout_id: string
+          p_date: string
+          p_type: string
+          p_type_label: string
+          p_duration_min: number
+          p_rpe: number
+          p_note: string
+          p_phase: string
+          p_started_at: string
+          p_ended_at: string
+          p_attempts?: unknown
+        }
+        Returns: {
+          id: string
+          date: string
+          type: string
+          type_label: string
+          duration_min: number
+          rpe: number
+          rpe_confirmed: boolean
+          load: number
+          note: string
+          phase: string
+          group_id: string | null
+          workout_source: string | null
+        }[]
+      }
       delete_account: { Args: never; Returns: undefined }
       link_tindeq_recordings_to_session: {
         Args: { p_recording_ids: string[]; p_session_id: string }

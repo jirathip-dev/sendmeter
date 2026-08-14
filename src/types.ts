@@ -64,6 +64,16 @@ export interface Session {
   // (drives the AUTO/PHONE badge + workout-detail expansion). The edit UI
   // never touches it, so editing `type` can't erase the auto-tracked marker.
   workoutSource: WorkoutSource | null;
+  /// #615: local-only optimistic row — the completed workout was saved to
+  /// the device (or the phone heard about a watch save), but the server row
+  /// hasn't reconciled yet. Never returned by fetchSessions (server rows
+  /// have no such marker); only set on rows minted by pendingWorkouts.ts.
+  /// Render as a "syncing" state; delete/edit treat it as not-yet-durable.
+  pending?: boolean;
+  /// #615: the account that owns a `pending` row (stamped at registration).
+  /// A fetch/notification for a different account must never merge or keep
+  /// this row in view. Absent on server rows.
+  accountUserId?: string;
 }
 
 /// Editable subset of a session (SL-43). Date and phase stay fixed — moving

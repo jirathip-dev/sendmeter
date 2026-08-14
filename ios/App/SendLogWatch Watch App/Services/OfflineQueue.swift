@@ -40,7 +40,18 @@ actor OfflineQueue {
             // The pre-#491 name, so existing installs keep their recorded
             // timestamp (see the engine's `lastSyncFileName` doc).
             lastSyncFileName: "last-successful-sync.json",
-            upload: { try await uploader.upload($0) },
+            // #615: every final bundle upload (drain AND the direct-upload
+            // fallback in `enqueue`) waits for the current run's in-flight
+            // partial flush to settle first — the partial upsert merge-writes
+            // over the same climb_workouts id, so one landing after the final
+            // row would overwrite it with provisional data (#477). The wait
+            // lives HERE (not in WorkoutManager.end) so the End tap → durable
+            // queue commit → phone notification path is never parked behind
+            // the network; the gate is held by `stopRecording()`.
+            upload: {
+                await WorkoutPartialSettleGate.shared.waitForCurrent()
+                return try await uploader.upload($0)
+            },
             classify: { UploadFailureMapping.classify($0, bundle: $1) },
             clock: clock,
             baseDir: baseDir ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0],

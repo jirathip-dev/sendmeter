@@ -67,6 +67,24 @@ export async function fetchSessions(): Promise<Session[]> {
   return data.map(toSession);
 }
 
+/// #615 F5: fetch specific session rows by id — the drain-triggered
+/// reconcile for watch completions whose realtime INSERT was missed while
+/// the WebView was suspended. RLS scopes the query to the current account,
+/// so a row that doesn't exist (or belongs to another account) is simply
+/// absent from the result.
+export async function fetchSessionsByIds(ids: string[]): Promise<Session[]> {
+  if (ids.length === 0) return [];
+  const data = unwrap(
+    await supabase
+      .from("sessions")
+      .select(SESSION_COLS)
+      .is("deleted_at", null)
+      .in("id", ids)
+      .overrideTypes<SessionRow[], { merge: false }>(),
+  );
+  return data.map(toSession);
+}
+
 export async function fetchDeletedSessions(): Promise<DeletedSession[]> {
   const data = unwrap(
     await supabase
