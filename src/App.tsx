@@ -11,6 +11,7 @@ import {
 } from "./lib/metrics";
 import { useAuth } from "./hooks/useAuth";
 import { useTrainingData } from "./hooks/useTrainingData";
+import { useWatchWorkoutCompletions } from "./hooks/useWatchWorkoutCompletions";
 import type { LogFormState, Session, ViewId } from "./types";
 import Dashboard from "./components/Dashboard";
 import EditSessionSheet from "./components/EditSessionSheet";
@@ -106,7 +107,15 @@ function AuthedApp({
     removeSession,
     setPhase,
     reload,
+    addPendingSession,
+    reconcilePendingWorkout,
+    rollbackPendingWorkout,
   } = useTrainingData(userId);
+
+  // #615: the watch's `workoutCompleted` notification — a watch workout whose
+  // save bundle is durably queued renders on the phone as PENDING immediately
+  // (supabase stays authoritative; realtime/server data reconciles by id).
+  useWatchWorkoutCompletions(userId, addPendingSession);
 
   const toast = useToast();
   const bumpRealtime = useRealtimeBump();
@@ -424,6 +433,9 @@ function AuthedApp({
                 currentPhase={currentPhase}
                 sessions={sessions}
                 onLog={openLog}
+                onPhoneWorkoutPending={addPendingSession}
+                onPhoneWorkoutReconciled={reconcilePendingWorkout}
+                onPhoneWorkoutRollback={rollbackPendingWorkout}
               />
             )}
             {view === "tindeq" && (

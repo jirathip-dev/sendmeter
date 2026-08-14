@@ -81,6 +81,32 @@ export interface LiveForceMessage extends LiveMirrorMetadata {
   spark?: [number, number][];
 }
 
+/// Watch→phone completed-workout notification (#615): the watch's End path
+/// sends this AFTER its save bundle is durably queued on the watch, so the
+/// phone can render the completed workout as PENDING immediately instead of
+/// waiting for the upload to land. Only safe canonical summary fields +
+/// stable ids ride the wire — no raw trace, no health values. Supabase
+/// remains authoritative: the phone never inserts a session from this
+/// payload — it creates a pending row that realtime/server data reconciles
+/// by `session_id`, exactly once.
+export interface WorkoutCompletedMessage extends LiveMirrorMetadata {
+  session_id: string;
+  workout_id: string;
+  /// Epoch SECONDS, same clock as the live-workout beat.
+  started_at?: number;
+  ended_at?: number;
+  attempt_count?: number;
+  duration_min?: number;
+  rpe?: number;
+  phase?: string;
+  type?: string;
+  type_label?: string;
+  note?: string;
+  rpe_confirmed?: boolean;
+  /// Epoch SECONDS of the phone-side native plugin receipt (#614 convention).
+  received_at?: number;
+}
+
 /// Verdict on the paired watch's build vs the phone's (#228). Computed in
 /// Swift (`WatchBuildReport.status` in SendLogWatchCore) so the comparison is
 /// unit-tested on Linux CI rather than living in a view. The three
@@ -251,4 +277,20 @@ export interface SendLogAuthBridgePlugin {
     eventName: "watchInfoChanged",
     listener: () => void,
   ): Promise<PluginListenerHandle>;
+
+  /// A watch workout completed and is durably queued on the watch (#615).
+  /// Native only; never fires on web. The payload carries the stable session
+  /// id — register a PENDING session and let server data reconcile it.
+  addListener(
+    eventName: "workoutCompleted",
+    listener: (msg: WorkoutCompletedMessage) => void,
+  ): Promise<PluginListenerHandle>;
+
+  /// Drains the plugin's bounded store of `workoutCompleted` notifications —
+  /// notifications that arrived while the WebView was suspended are replayed
+  /// here (oldest first, cleared on read) so a foregrounded app still renders
+  /// them as pending instead of losing the event. Idempotent by session id.
+  getPendingWorkoutCompletions(): Promise<{
+    completions: WorkoutCompletedMessage[];
+  }>;
 }

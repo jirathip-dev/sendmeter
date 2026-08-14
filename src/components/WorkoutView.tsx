@@ -7,6 +7,10 @@ import { useToast } from "../hooks/useToast";
 import { insertPhoneWorkout, updateSession } from "../lib/repo";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
 import {
+  pendingSessionFromPhoneWorkout,
+  type PendingWorkout,
+} from "../lib/pendingWorkouts";
+import {
   phoneWorkoutBlockedReason,
   routineBlockedReason,
 } from "../lib/workoutGuard";
@@ -32,12 +36,26 @@ interface Props {
   sessions: Session[];
   /// Opens the manual Log Session sheet (moved here from Home).
   onLog: () => void;
+  /// #615: optimistic completed-workout plumbing (from useTrainingData) —
+  /// the completed session shows in History the moment End is tapped, then
+  /// reconciles by stable id when the atomic save RPC lands.
+  onPhoneWorkoutPending: (pending: PendingWorkout) => void;
+  onPhoneWorkoutReconciled: (saved: Session) => void;
+  onPhoneWorkoutRollback: (id: string) => void;
 }
 
 /// The Workout tab: start/track a workout (live watch mirror or phone
 /// full-screen timer) and manually log a session. Past workouts live in
 /// History.
-export default function WorkoutView({ userId, currentPhase, sessions, onLog }: Props) {
+export default function WorkoutView({
+  userId,
+  currentPhase,
+  sessions,
+  onLog,
+  onPhoneWorkoutPending,
+  onPhoneWorkoutReconciled,
+  onPhoneWorkoutRollback,
+}: Props) {
   const bumpRealtime = useRealtimeBump();
   const toast = useToast();
   const [live, , liveSyncState] = useLiveWorkout(userId);
@@ -66,19 +84,42 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
   // Stopping a workout SAVES it immediately — no RPE/type confirm form (that
   // was friction). It banks a default RPE + the last-used type; the success
   // toast offers "Set RPE" to tweak either. Runs once per confirming state.
+  // #615: the completed session is added to History as a PENDING row the
+  // moment the save starts (synchronous, before any await — the End tap to
+  // visible-in-History latency is one render), then reconciled by the stable
+  // session id when the atomic RPC returns. No global realtime refetch is
+  // needed for the local transition; the realtime echo of the RPC's insert
+  // reconciles any OTHER device's view.
   const autoSaveInFlightRef = useRef(false);
 
   async function autoSaveWorkout() {
     if (phone.phase !== "confirming") return;
-    const { startedAt, endedAt, attempts } = phone;
+    const { startedAt, endedAt, attempts, sessionId, workoutId } = phone;
     const n = attempts.length;
     const typeId = localStorage.getItem(LAST_TYPE_KEY) || "gym";
     const typeInfo =
       SESSION_TYPES.find((t) => t.id === typeId) ??
       SESSION_TYPES.find((t) => t.id === "gym")!;
     setError(null);
+    const pending = pendingSessionFromPhoneWorkout({
+      sessionId,
+      startedAt,
+      endedAt,
+      attempts,
+      type: typeInfo.id,
+      typeLabel: typeInfo.label,
+      rpe: DEFAULT_RPE,
+      phase: currentPhase,
+      accountUserId: userId,
+    });
+    // Optimistic: History shows the completed workout immediately. The
+    // state transition (reset) still waits for the durable RPC — the toast
+    // and the card's "Saving…" state are honest about the server commit.
+    onPhoneWorkoutPending(pending);
     try {
       const saved = await insertPhoneWorkout({
+        sessionId,
+        workoutId,
         startedAt,
         endedAt,
         attempts,
@@ -87,15 +128,21 @@ export default function WorkoutView({ userId, currentPhase, sessions, onLog }: P
         rpe: DEFAULT_RPE,
         phase: currentPhase,
       });
+      // Reconcile by id — the pending row becomes the canonical row. The
+      // RPC's own realtime echo bumps the version, but this direct update
+      // is what makes the local transition immediate; the bump is harmless
+      // (the refetch merge is id-identical).
+      onPhoneWorkoutReconciled(saved);
       dispatch({ type: "reset" });
-      // Silent refetch (NOT reload(), which flips the global spinner + unmounts
-      // this view mid-save). The insert also publishes realtime; belt-and-braces.
-      bumpRealtime();
       toast(`Workout saved · ${n} boulder${n === 1 ? "" : "s"}`, "success", {
         label: "Set RPE",
         onClick: () => setEditingSession(saved),
       });
     } catch (e) {
+      // Roll back the pending row — nothing durable exists for it. The
+      // confirming state stays persisted (with the SAME stable ids), so a
+      // retry — including after a process restart — replays idempotently.
+      onPhoneWorkoutRollback(sessionId);
       captureHandledOperationalFailure("workout.insert", e, {
         automatic: true,
       });

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { supabase } from "../lib/supabase";
 import { noteRealtimeRecordingReceipt } from "../lib/forceLatency";
 import type { RealtimeRecordingRowEvent } from "../lib/realtimeRecordingApply";
+import type { RealtimeSessionRowEvent } from "../lib/sessionRealtimeApply";
 import {
   RealtimeBumpContext,
   RealtimeVersionContext,
@@ -25,16 +26,22 @@ const WATCHED_TABLES = [
 /// session (safe degradation, never silent loss).
 const MAX_RECORDING_EVENTS = 128;
 
+/// Bounded queue of `sessions` realtime events (#615). A workout's write
+/// burst is a handful of rows; the cap exists so a pathological flood can
+/// never grow app-root context state without bound. Overflow flips
+/// `sessionEventsOverflowed`, which forces the training-data refetch guard
+/// back to a full reconciliation (the `version` bump also always fires).
+const MAX_SESSION_EVENTS = 32;
+
 /// #613: narrow a postgres_changes payload down to what the apply path reads,
 /// so RealtimeVersionProvider never leaks raw payload shapes into consumers.
 ///
-/// The full row is stripped to the columns `toRecording` (repo/tindeq.ts, the
-/// `RECORDING_COLS` contract) actually maps, plus `deleted_at` (the soft-delete
-/// check in realtimeRecordingApply). Everything else — notably `samples` (the
-/// jsonb sample stream, tens of KB per rep), `user_id`, `created_at`,
-/// `updated_at` — is dropped BEFORE enqueueing, because the bounded queue (up
-/// to 128 events) lives in app-root context state for the whole session and
-/// nothing in the apply path ever reads them.
+/// The full row is stripped to the columns the apply path actually maps,
+/// plus `deleted_at` (the soft-delete check). Everything else — notably
+/// `samples` (the jsonb sample stream, tens of KB per rep), `user_id`,
+/// `created_at`, `updated_at` — is dropped BEFORE enqueueing, because the
+/// bounded queues (up to 128 / 32 events) live in app-root context state
+/// for the whole session and nothing in the apply paths ever reads them.
 const STRIPPED_ROW_COLUMNS = new Set([
   "samples",
   "user_id",
@@ -42,11 +49,11 @@ const STRIPPED_ROW_COLUMNS = new Set([
   "updated_at",
 ]);
 
-function toRealtimeRecordingEvent(payload: {
+function toRealtimeRowEvent(payload: {
   eventType: string;
   new: unknown;
   old: unknown;
-}): RealtimeRecordingRowEvent {
+}): RealtimeRecordingRowEvent & RealtimeSessionRowEvent {
   const asRecord = (v: unknown): Record<string, unknown> | null =>
     v && typeof v === "object" && !Array.isArray(v)
       ? (v as Record<string, unknown>)
@@ -98,6 +105,8 @@ export default function RealtimeVersionProvider({
     version: 0,
     recordingEvents: [],
     recordingEventsOverflowed: false,
+    sessionEvents: [],
+    sessionEventsOverflowed: false,
   });
   const bump = useCallback(
     () => setState((s) => ({ ...s, version: s.version + 1 })),
@@ -115,17 +124,48 @@ export default function RealtimeVersionProvider({
             // #613: time the echo of our own writes (forceLatency.ts).
             noteRealtimeRecordingReceipt();
             setState((s) => {
-              const event = toRealtimeRecordingEvent(payload);
+              const event = toRealtimeRowEvent(payload);
               const next = [...s.recordingEvents, event];
               const overflowed =
                 s.recordingEventsOverflowed ||
                 next.length > MAX_RECORDING_EVENTS;
               return {
+                ...s,
                 version: s.version + 1,
                 recordingEvents: overflowed
                   ? next.slice(-MAX_RECORDING_EVENTS)
                   : next,
                 recordingEventsOverflowed: overflowed,
+              };
+            });
+          },
+        );
+        continue;
+      }
+      if (table === "sessions") {
+        // #615: sessions events ride along as a bounded queue (same shape as
+        // the recording-events optimization) so useTrainingData can reconcile
+        // a pending workout by id directly from the payload instead of
+        // waiting on the coarse refetch. The generic `version` bump still
+        // fires for the table like any other — the payload is an
+        // optimization, not the only signal.
+        channel.on(
+          "postgres_changes",
+          { event: "*", schema: "public", table, filter: `user_id=eq.${userId}` },
+          (payload) => {
+            setState((s) => {
+              const event = toRealtimeRowEvent(payload);
+              const next = [...s.sessionEvents, event];
+              const overflowed =
+                s.sessionEventsOverflowed ||
+                next.length > MAX_SESSION_EVENTS;
+              return {
+                ...s,
+                version: s.version + 1,
+                sessionEvents: overflowed
+                  ? next.slice(-MAX_SESSION_EVENTS)
+                  : next,
+                sessionEventsOverflowed: overflowed,
               };
             });
           },
