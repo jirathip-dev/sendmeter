@@ -77,6 +77,18 @@ export function pendingSessionFromPhoneWorkout(input: {
   };
 }
 
+/// Swift `UUID.uuidString` rides the wire UPPERCASE while Postgres
+/// canonicalizes uuid text to lowercase — the same mismatch the live-mirror
+/// run ids had (#535). Every reconcile compares session ids with strict
+/// string equality, so the pending row must carry the server's case;
+/// normalized here, at the single source of watch pending rows. Empty/
+/// whitespace normalizes to null (an absent id) like `normalizeRunId`.
+function normalizeSessionId(value: string | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.toLowerCase() : null;
+}
+
 /// Build the pending row for a WATCH workout from the `workoutCompleted`
 /// notification. Returns null when the payload lacks the fields a real
 /// message always carries (schema drift — skip rather than render garbage).
@@ -97,7 +109,7 @@ export function pendingSessionFromWatchMessage(
   },
   accountUserId: string,
 ): PendingWorkout | null {
-  const sessionId = msg.session_id;
+  const sessionId = normalizeSessionId(msg.session_id);
   const startedAt = msg.started_at;
   const duration = msg.duration_min;
   const rpe = msg.rpe;
@@ -105,6 +117,11 @@ export function pendingSessionFromWatchMessage(
   const n = msg.attempt_count ?? 0;
   return {
     id: sessionId,
+    // Deliberate: the phone-local calendar. The server row stores the watch-
+    // local date (paired devices share a timezone, so these agree); a
+    // cross-midnight workout in different zones sorts under a different date
+    // than the canonical row until reconcile — cosmetic, and the reconcile
+    // replaces the whole row with the server's truth (F6).
     date: dateStr(new Date(startedAt * 1000)),
     type: msg.type ?? "auto",
     typeLabel: msg.type_label ?? "Auto-tracked",
@@ -146,14 +163,21 @@ export function mergeFetchedSessions(
 
 /// Idempotent registration of a pending row: a duplicate notification (watch
 /// re-send, a stored payload drained twice) replaces by id instead of
-/// appending. The row is sorted into place like any other.
+/// appending. A row that has ALREADY reconciled to canonical is never
+/// downgraded back to pending — a replayed notification (the plugin stores
+/// every delivered payload and the next foreground drain replays it) must
+/// not re-mark a row the realtime INSERT already reconciled, or it would sit
+/// "syncing" with a hidden edit button and a delete that silently drops
+/// locally while the server row survives.
 export function upsertPendingSession(
   list: Session[],
   pending: PendingWorkout,
 ): Session[] {
-  const present = list.some((s) => s.id === pending.id);
+  const existing = list.find((s) => s.id === pending.id);
+  if (!existing) return sortPendingSessions([...list, pending]);
+  if (!existing.pending) return list;
   return sortPendingSessions(
-    present ? list.map((s) => (s.id === pending.id ? pending : s)) : [...list, pending],
+    list.map((s) => (s.id === pending.id ? pending : s)),
   );
 }
 
@@ -185,6 +209,20 @@ export function dropPendingForAccount(
   accountUserId: string,
 ): Session[] {
   return list.filter((s) => !s.pending || s.accountUserId === accountUserId);
+}
+
+/// #615 F4: a phone save's RPC resolves after a network await, during which
+/// the account can switch. Both resolve paths (reconcile on success, rollback
+/// on failure) must no-op when the account moved on — the row committed (or
+/// failed) against the save-start account's session, and inserting it into
+/// the NEW account's History is a cross-account leak the next refetch would
+/// only clean up by luck. The one decision both closures call after their
+/// await, with the account ref-read at resolve time.
+export function accountUnchangedSinceSave(
+  saveStartedAccount: string,
+  currentAccount: string,
+): boolean {
+  return saveStartedAccount === currentAccount;
 }
 
 export function dateStr(d: Date): string {

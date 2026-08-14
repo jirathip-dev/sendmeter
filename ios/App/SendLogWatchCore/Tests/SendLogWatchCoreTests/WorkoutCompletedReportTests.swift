@@ -22,8 +22,11 @@ final class WorkoutCompletedReportTests: XCTestCase {
     func testPayloadCarriesOnlyCanonicalSummaryAndStableIds() {
         let payload = WorkoutCompletedReport.payload(summary: summary())
         XCTAssertEqual(payload["kind"] as? String, "workoutCompleted")
+        // Swift UUID.uuidString is UPPERCASE while Postgres canonicalizes
+        // uuid text to lowercase — the phone lowercases session_id at the
+        // pending-row source (pendingSessionFromWatchMessage) before any
+        // reconcile comparison (#615 F1), so these ids compare equal there.
         XCTAssertEqual(payload["session_id"] as? String, "11111111-2222-3333-4444-555555555555")
-        // Swift UUID.uuidString is UPPERCASE — the phone normalizes before comparing (#535).
         XCTAssertEqual(payload["workout_id"] as? String, "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
         XCTAssertEqual(payload["started_at"] as? Double, 1_752_000_000)
         XCTAssertEqual(payload["ended_at"] as? Double, 1_752_002_100)

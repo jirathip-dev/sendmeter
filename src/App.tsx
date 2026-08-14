@@ -110,12 +110,17 @@ function AuthedApp({
     addPendingSession,
     reconcilePendingWorkout,
     rollbackPendingWorkout,
+    reconcilePendingByIds,
   } = useTrainingData(userId);
 
   // #615: the watch's `workoutCompleted` notification — a watch workout whose
   // save bundle is durably queued renders on the phone as PENDING immediately
-  // (supabase stays authoritative; realtime/server data reconciles by id).
-  useWatchWorkoutCompletions(userId, addPendingSession);
+  // (supabase stays authoritative; realtime/server data reconciles by id). A
+  // stored notification drained on foreground (the WebView was suspended, so
+  // its realtime INSERT was missed) also triggers a by-id reconcile (#615
+  // F5) — otherwise the row would sit "syncing" forever despite the server
+  // row existing.
+  useWatchWorkoutCompletions(userId, addPendingSession, reconcilePendingByIds);
 
   const toast = useToast();
   const bumpRealtime = useRealtimeBump();

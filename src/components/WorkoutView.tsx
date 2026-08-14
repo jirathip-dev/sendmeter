@@ -7,6 +7,7 @@ import { useToast } from "../hooks/useToast";
 import { insertPhoneWorkout, updateSession } from "../lib/repo";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
 import {
+  accountUnchangedSinceSave,
   pendingSessionFromPhoneWorkout,
   type PendingWorkout,
 } from "../lib/pendingWorkouts";
@@ -91,6 +92,14 @@ export default function WorkoutView({
   // needed for the local transition; the realtime echo of the RPC's insert
   // reconciles any OTHER device's view.
   const autoSaveInFlightRef = useRef(false);
+  // #615 F4: the account this render belongs to, in a ref — `autoSaveWorkout`'s
+  // resolve path runs after a network await, so it must compare the account
+  // it started the save under against the CURRENT one: a switch mid-flight
+  // must not land the old account's row in the new account's History.
+  const userIdRef = useRef(userId);
+  useEffect(() => {
+    userIdRef.current = userId;
+  }, [userId]);
 
   async function autoSaveWorkout() {
     if (phone.phase !== "confirming") return;
@@ -115,6 +124,10 @@ export default function WorkoutView({
     // Optimistic: History shows the completed workout immediately. The
     // state transition (reset) still waits for the durable RPC — the toast
     // and the card's "Saving…" state are honest about the server commit.
+    // #615 F4: the save-start account stamp, captured before the first
+    // await — the guard below compares against the CURRENT account when the
+    // RPC resolves.
+    const saveAccountUserId = userIdRef.current;
     onPhoneWorkoutPending(pending);
     try {
       const saved = await insertPhoneWorkout({
@@ -128,6 +141,15 @@ export default function WorkoutView({
         rpe: DEFAULT_RPE,
         phase: currentPhase,
       });
+      if (!accountUnchangedSinceSave(saveAccountUserId, userIdRef.current)) {
+        // #615 F4: the account switched while the save was in flight — the
+        // row committed to the OLD account's data (the RPC ran under the old
+        // session's token). The pending row was already dropped by the
+        // userId-change effect; resetting is still owed so a restart can't
+        // re-save this workout into the new account.
+        dispatch({ type: "reset" });
+        return;
+      }
       // Reconcile by id — the pending row becomes the canonical row. The
       // RPC's own realtime echo bumps the version, but this direct update
       // is what makes the local transition immediate; the bump is harmless
@@ -139,6 +161,12 @@ export default function WorkoutView({
         onClick: () => setEditingSession(saved),
       });
     } catch (e) {
+      if (!accountUnchangedSinceSave(saveAccountUserId, userIdRef.current)) {
+        // #615 F4: the account switched while the save was in flight — the
+        // rollback belongs to the OLD account's pending row, which the
+        // userId-change effect already dropped.
+        return;
+      }
       // Roll back the pending row — nothing durable exists for it. The
       // confirming state stays persisted (with the SAME stable ids), so a
       // retry — including after a process restart — replays idempotently.

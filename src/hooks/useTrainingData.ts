@@ -12,6 +12,7 @@ import type { UserSettings } from "../lib/repo/settings";
 import { supabase } from "../lib/supabase";
 import { captureHandledOperationalFailure } from "../lib/monitoring";
 import {
+  dropPendingForAccount,
   mergeFetchedSessions,
   reconcilePendingSession,
   rollbackPendingSession,
@@ -297,6 +298,11 @@ export function useTrainingData(userId: string) {
   // #615: cursor into the bounded session-events queue (see the apply effect
   // below) — same pattern as ForceView's recording-events cursor (#613).
   const appliedSessionEventsRef = useRef(0);
+  // #615 F5: a SEPARATE generation guard for the drain-triggered by-id
+  // reconcile — it must not share runFetch's guard, or the narrower
+  // reconcile starting mid-refetch would invalidate the full fetch (its
+  // whole-list + settings result discarded) under the shared guard's rule.
+  const pendingReconcileGuardRef = useRef(createGenerationGuard());
   // Only the first current load for this hook instance is "initial". A later
   // realtime refetch failure is user-visible but not the launch failure #382
   // asks us to monitor; the monitoring entry point also dedupes across hook
@@ -305,6 +311,15 @@ export function useTrainingData(userId: string) {
 
   useEffect(() => {
     userIdRef.current = userId;
+    // #615 F4: an account switch must not carry the old account's pending
+    // (optimistic) workout rows into the new account's view — without this
+    // they survive until the refetch's merge drops them (and indefinitely if
+    // that refetch fails), rendering the old account's data under the new
+    // account. Written via an async callback per the set-state-in-effect
+    // rule; the functional update applies to whatever list is current.
+    void (async () => {
+      setSessions((list) => dropPendingForAccount(list, userId));
+    })();
   }, [userId]);
 
   useEffect(() => {
@@ -419,6 +434,35 @@ export function useTrainingData(userId: string) {
   /// The save failed and nothing durable exists — remove the pending row.
   const rollbackPendingWorkout = useCallback((id: string) => {
     setSessions((list) => rollbackPendingSession(list, id));
+  }, []);
+
+  /// #615 F5: a watch completion drained after the WebView was suspended had
+  /// its realtime INSERT missed — the pending row registers but nothing
+  /// would ever reconcile it (the refetch guard only runs on a version
+  /// bump). Fetch the drained ids from the server and reconcile what exists:
+  /// a pending placeholder is replaced by its canonical row, a row already
+  /// canonical re-fetched is unchanged. Fenced by its own generation guard
+  /// (see `pendingReconcileGuardRef`), and the account is re-checked at
+  /// resolve time — same #615 F4 rule as the phone save: a switch mid-flight
+  /// must not land the old account's rows in the new account's list.
+  const reconcilePendingByIds = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const generation = pendingReconcileGuardRef.current.start();
+    const accountAtStart = userIdRef.current;
+    try {
+      const found = await repo.fetchSessionsByIds(ids);
+      if (!pendingReconcileGuardRef.current.isCurrent(generation)) return;
+      if (userIdRef.current !== accountAtStart) return;
+      if (found.length === 0) return;
+      setSessions((list) => {
+        let next = list;
+        for (const s of found) next = reconcilePendingSession(next, s);
+        return next;
+      });
+    } catch {
+      // Best-effort: the pending row stays; a later realtime event, refetch
+      // or foreground drain retries the reconcile.
+    }
   }, []);
 
   async function addSession(form: LogFormState): Promise<Session | undefined> {
@@ -570,5 +614,6 @@ export function useTrainingData(userId: string) {
     addPendingSession,
     reconcilePendingWorkout,
     rollbackPendingWorkout,
+    reconcilePendingByIds,
   };
 }

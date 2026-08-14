@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { Session } from "../types";
+import { applySessionRealtimeEvents } from "./sessionRealtimeApply";
 import {
+  accountUnchangedSinceSave,
   dropPendingForAccount,
   mergeFetchedSessions,
   pendingSessionFromPhoneWorkout,
@@ -80,9 +82,80 @@ describe("upsertPendingSession (exactly-once under notification replay)", () => 
     expect(twice.filter((s) => s.id === "s")).toHaveLength(1);
   });
 
-  it("replaces by id when already present (canonical or pending)", () => {
-    const replaced = upsertPendingSession([canonical("s")], pending("s"));
+  it("replaces by id when the present row is still pending (replay)", () => {
+    const replaced = upsertPendingSession([pending("s")], pending("s"));
+    expect(replaced.filter((s) => s.id === "s")).toHaveLength(1);
     expect(replaced.find((s) => s.id === "s")?.pending).toBe(true);
+  });
+
+  it("never downgrades a canonical row back to pending (replay-after-reconcile is a no-op)", () => {
+    // The plugin stores every delivered notification and the next foreground
+    // drain replays it — by then the realtime INSERT may have already
+    // reconciled the row. The replay must not re-mark it "syncing".
+    const canonicalRow = canonical("s");
+    const replayed = upsertPendingSession([canonicalRow], pending("s"));
+    expect(replayed).toEqual([canonicalRow]);
+  });
+});
+
+describe("watch completion overlap with server data (#615 F1/F2)", () => {
+  function watchRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: "8e28b94e-9d1c-4f2a-8c5d-3b7e0a1f6d9c",
+      date: "2026-08-14",
+      type: "auto",
+      type_label: "Auto-tracked",
+      duration_min: 35,
+      rpe: 6.5,
+      rpe_confirmed: true,
+      load: 228,
+      note: "4 boulders",
+      phase: "strength",
+      group_id: null,
+      workout_source: "watch",
+      ...overrides,
+    };
+  }
+
+  it("an UPPERCASE watch notification + the lowercase server row converge to exactly one canonical row, in either order", () => {
+    const pending = pendingSessionFromWatchMessage(
+      {
+        session_id: "8E28B94E-9D1C-4F2A-8C5D-3B7E0A1F6D9C",
+        workout_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        started_at: 1_752_000_000,
+        duration_min: 35,
+        rpe: 6.5,
+        phase: "strength",
+        type: "auto",
+        type_label: "Auto-tracked",
+      },
+      ACCOUNT,
+    )!;
+    expect(pending.id).toBe("8e28b94e-9d1c-4f2a-8c5d-3b7e0a1f6d9c");
+    const serverEvent = {
+      eventType: "INSERT" as const,
+      row: watchRow(),
+      oldRow: null,
+    };
+
+    // Realtime first, notification (replay) second: the replay must not
+    // downgrade the reconciled row.
+    const realtimeFirst = upsertPendingSession(
+      applySessionRealtimeEvents([pending], [serverEvent]),
+      pending,
+    );
+    expect(realtimeFirst).toHaveLength(1);
+    expect(realtimeFirst[0]!.pending).toBeUndefined();
+
+    // Notification first, realtime second: the apply path replaces the
+    // pending placeholder by id.
+    const notifyFirst = applySessionRealtimeEvents(
+      upsertPendingSession([], pending),
+      [serverEvent],
+    );
+    expect(notifyFirst).toHaveLength(1);
+    expect(notifyFirst[0]!.pending).toBeUndefined();
+    expect(notifyFirst[0]!.id).toBe("8e28b94e-9d1c-4f2a-8c5d-3b7e0a1f6d9c");
   });
 });
 
@@ -112,6 +185,19 @@ describe("dropPendingForAccount", () => {
       ACCOUNT,
     );
     expect(out.map((s) => s.id).sort()).toEqual(["a", "b"]);
+  });
+
+  it("account change during an in-flight save RPC must no-op the resolve path", () => {
+    // Save starts under A: the pending row registers, stamped A.
+    const registered = upsertPendingSession([], pending("s"));
+    // The account switches to B while the RPC is in flight: the userId-change
+    // effect drops A's pending rows so they can't render under B.
+    expect(dropPendingForAccount(registered, "user-b")).toEqual([]);
+    // The RPC resolves: the guard reads false, so the reconcile (and
+    // rollback) closures no-op — reconcilePendingSession would otherwise
+    // insert A's canonical row into B's History.
+    expect(accountUnchangedSinceSave(ACCOUNT, "user-b")).toBe(false);
+    expect(accountUnchangedSinceSave(ACCOUNT, ACCOUNT)).toBe(true);
   });
 });
 
@@ -188,6 +274,24 @@ describe("pendingSessionFromWatchMessage", () => {
     );
     expect(p).not.toBeNull();
     expect(p!.rpeConfirmed).toBe(true);
+  });
+
+  it("lowercases a Swift-style UPPERCASE session id so it matches the Postgres row", () => {
+    // Swift UUID.uuidString rides the wire UPPERCASE; the sessions.id column
+    // canonicalizes to lowercase. Every reconcile compares by strict string
+    // equality, so the pending row must carry the server's case or it never
+    // converges (a permanent SYNCING duplicate in History).
+    const p = pendingSessionFromWatchMessage(
+      {
+        session_id: "8E28B94E-9D1C-4F2A-8C5D-3B7E0A1F6D9C",
+        started_at: 1_752_000_000,
+        duration_min: 35,
+        rpe: 6.5,
+      },
+      ACCOUNT,
+    );
+    expect(p).not.toBeNull();
+    expect(p!.id).toBe("8e28b94e-9d1c-4f2a-8c5d-3b7e0a1f6d9c");
   });
 
   it("returns null on a payload missing required fields (schema drift)", () => {

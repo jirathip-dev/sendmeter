@@ -34,6 +34,13 @@ const IS_NATIVE = Capacitor.isNativePlatform();
 export function useWatchWorkoutCompletions(
   userId: string,
   onCompleted: (pending: PendingWorkout) => void,
+  /// #615 F5: called with the ids of the completions a DRAIN produced (a
+  /// stored notification replayed on mount/foreground — its realtime INSERT
+  /// was missed while the WebView was suspended, so the pending row would
+  /// otherwise never reconcile). The receiver fetches them by id and
+  /// reconciles; live deliveries skip this because their INSERT is expected
+  /// on the realtime channel.
+  onDrained?: (ids: string[]) => void,
 ): void {
   // The account the CURRENT render belongs to — the listener closure below
   // must read the account at packet time, not the one captured at mount
@@ -49,11 +56,14 @@ export function useWatchWorkoutCompletions(
     if (!IS_NATIVE) return;
     let cancelled = false;
 
-    const accept = (msg: WorkoutCompletedMessage) => {
-      if (cancelled || activeUserIdRef.current !== effectUserId) return;
+    // The pending row when the packet was accepted (and registered), null
+    // otherwise — the drain uses it to know which ids may now need a
+    // server-side reconcile.
+    const accept = (msg: WorkoutCompletedMessage): PendingWorkout | null => {
+      if (cancelled || activeUserIdRef.current !== effectUserId) return null;
       const activeUserId = activeUserIdRef.current;
       if (!acceptsPacketOwner(msg.account_user_id, activeUserId, hasHadAccountTransitionRef.current)) {
-        return;
+        return null;
       }
       if (msg.account_user_id !== undefined) {
         // A genuinely STAMPED acceptance is positive evidence this watch has
@@ -63,6 +73,7 @@ export function useWatchWorkoutCompletions(
       }
       const pending = pendingSessionFromWatchMessage(msg, activeUserId);
       if (pending) onCompleted(pending);
+      return pending;
     };
 
     // #485 F7: remove the handle whenever its registration resolves, even if
@@ -76,7 +87,16 @@ export function useWatchWorkoutCompletions(
       try {
         const { completions } = await SendLogAuthBridge.getPendingWorkoutCompletions();
         if (cancelled) return;
-        for (const msg of completions) accept(msg);
+        const drainedIds: string[] = [];
+        for (const msg of completions) {
+          const pending = accept(msg);
+          if (pending) drainedIds.push(pending.id);
+        }
+        // #615 F5: a completion that waited out a suspension had its
+        // realtime INSERT missed — register the pending row AND reconcile
+        // against the server by id, or it would sit "syncing" until an
+        // unrelated event refetched.
+        if (drainedIds.length > 0) onDrained?.(drainedIds);
       } catch {
         // Plugin older than this build — nothing to drain.
       }
@@ -94,5 +114,5 @@ export function useWatchWorkoutCompletions(
       void appSub?.then((h) => h.remove()).catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, onCompleted]);
+  }, [userId, onCompleted, onDrained]);
 }

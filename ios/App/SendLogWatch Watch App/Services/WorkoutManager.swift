@@ -439,10 +439,14 @@ final class WorkoutManager: NSObject {
         partialFlushTask = nil
         partialFlushSuspended = false
         partialFlushEpoch &+= 1
-        // #615: clear the settle gate left by the previous run — its held
-        // task (if any) has long settled or gone; a stale hold must not
-        // block this run's uploads behind a dead wait.
-        partialSettleGate.hold(nil)
+        // #615 review F3: deliberately NOT clearing the settle gate here —
+        // the previous run's held partial-flush task may still be in flight
+        // (a single request, up to ~60s), and `hold(nil)` would let that
+        // run's final-bundle drain (delayed behind another in-flight upload)
+        // race ahead of its own partial, reopening #477's partial-overwrites-
+        // final. A stale held task settles itself — bounded by the request
+        // timeout — so leaving it is strictly safer; the next
+        // `stopRecording()` re-holds with this run's own partial.
 
         do {
             try await requestAuthorization()

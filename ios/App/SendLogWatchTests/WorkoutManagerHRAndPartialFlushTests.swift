@@ -431,6 +431,57 @@ final class WorkoutManagerPartialFlushOrderingTests: XCTestCase {
         _ = await endDate
     }
 
+    /// #615 review F3: `start()` used to clear the settle gate with
+    /// `hold(nil)`, reopening #477 — a previous run's in-flight partial
+    /// (held at `stopRecording()`, a single request up to ~60s) could still
+    /// be on the wire, and clearing the gate let that run's final-bundle
+    /// drain proceed past it, so the partial's merge-upsert could clobber
+    /// the final row with provisional data. An ACCEPTED start() must leave
+    /// an unsettled gate alone: a waiter on the previous bundle's upload
+    /// path must still block until the partial settles. The held task
+    /// settles itself (bounded by the request timeout), so leaving it is
+    /// strictly safer than replacing it with nil.
+    @MainActor
+    func testAnAcceptedStartLeavesAnUnsettledSettleGateIntact() async {
+        let manager = makeAuthorizationFailingWorkoutManager()
+        // Per-manager gate, not the production singleton — the shared gate
+        // must never be held by a test.
+        let gate = WorkoutPartialSettleGate()
+        manager.partialSettleGate = gate
+        await manager.start() // accepted (auth fails later) — the reset block runs
+        manager.startDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        // Workout N's in-flight partial flush — blocked on a test gate.
+        let uploadGate = Gate()
+        manager.partialUploader = { _ in await uploadGate.wait() }
+        manager.flushPartial()
+
+        // The End path registers the partial on the settle gate, then the
+        // workout N+1 start happens while it is still in flight.
+        _ = await manager.stopRecording()
+        await manager.start()
+        manager.startDate = Date(timeIntervalSince1970: 1_700_001_000)
+
+        // Workout N's bundle drain reaches the gate AFTER the new start — it
+        // must still wait for N's partial (#477's invariant), not sail
+        // through a gate the start cleared.
+        let order = OrderLog()
+        let waiter = Task {
+            await gate.waitForCurrent()
+            await order.append("upload-proceeded")
+        }
+        try? await Task.sleep(for: .milliseconds(100))
+        let eventsBeforeRelease = await order.snapshot()
+        XCTAssertEqual(
+            eventsBeforeRelease, [],
+            "the previous bundle's upload must stay blocked after a new start()"
+        )
+        await uploadGate.release()
+        _ = await waiter.value
+        let events = await order.snapshot()
+        XCTAssertEqual(events, ["upload-proceeded"])
+    }
+
     /// #477 finding 5: a skipped flush (one requested while another is
     /// in-flight) must COALESCE — run once more afterward with the LATEST
     /// snapshot — rather than being dropped (the #470 lost-window failure)
