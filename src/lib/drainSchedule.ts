@@ -1,3 +1,5 @@
+import { subscribeForegroundSignals } from "./foregroundSignals";
+
 // #484 F2: WHEN the recording queue gets a chance to drain.
 //
 // `drainPendingRecordingsQueue` (recordingQueue.ts) is the DRAIN ITSELF —
@@ -199,20 +201,14 @@ export function browserDrainHandles(
 ): DrainScheduleHandles {
   return {
     onForeground(cb) {
-      const onVisible = () => {
-        if (doc.visibilityState === "visible") cb();
-      };
-      doc.addEventListener("visibilitychange", onVisible);
-      let nativeSub: Promise<{ remove(): void }> | null = null;
-      if (native.isNativePlatform()) {
-        nativeSub = native.addListener("appStateChange", ({ isActive }) => {
-          if (isActive) cb();
-        });
-      }
-      return () => {
-        doc.removeEventListener("visibilitychange", onVisible);
-        if (nativeSub) void nativeSub.then((h) => h.remove());
-      };
+      // #612: the foreground definition is shared with useAuth's auth
+      // re-relay (see foregroundSignals.ts) — the drain must run on the
+      // same foreground signals the auth relay runs on, and the shared
+      // primitive also covers a native `addListener` that resolves after
+      // unsubscribe. Behavior is otherwise identical to the previous inline
+      // implementation (visibilitychange to visible, appStateChange on
+      // native), pinned by drainSchedule.test.ts.
+      return subscribeForegroundSignals(doc, native, cb);
     },
     onOnline(cb) {
       win.addEventListener("online", cb);

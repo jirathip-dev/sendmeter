@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   startHealthBackgroundSync: vi.fn(),
   syncHealthNow: vi.fn(),
   setMonitoringUser: vi.fn(),
+  subscribeForeground: vi.fn<(cb: () => void) => () => void>(() => () => {}),
 }));
 
 vi.mock("../lib/supabase", () => ({
@@ -54,6 +55,12 @@ vi.mock("../lib/healthSync", () => ({
 
 vi.mock("../lib/monitoring", () => ({
   setMonitoringUser: mocks.setMonitoringUser,
+}));
+
+vi.mock("../lib/foregroundSignals", () => ({
+  browserForegroundSignals: () => ({
+    subscribe: mocks.subscribeForeground,
+  }),
 }));
 
 import { useAuth } from "./useAuth";
@@ -199,5 +206,80 @@ describe("useAuth local auto-login", () => {
     expect(firstHandle.remove).toHaveBeenCalledOnce();
     expect(secondHandle.remove).toHaveBeenCalledOnce();
     expect(mocks.unsubscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("#612 — re-relays the current session and syncs health on a foreground signal", async () => {
+    mocks.getSessionWithDiagnostics.mockResolvedValue({ session: cachedSession });
+    await renderHook();
+    mocks.getSessionWithDiagnostics.mockClear();
+    mocks.relaySessionToWatch.mockClear();
+    mocks.syncHealthNow.mockClear();
+
+    const foregroundCb = mocks.subscribeForeground.mock.calls[0]![0];
+    expect(foregroundCb).toBeTypeOf("function");
+
+    await act(async () => {
+      foregroundCb();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledOnce();
+    expect(mocks.relaySessionToWatch).toHaveBeenCalledWith(cachedSession);
+    expect(mocks.relayHealthSession).toHaveBeenCalledWith(cachedSession);
+    expect(mocks.syncHealthNow).toHaveBeenCalledOnce();
+  });
+
+  it("#612 — a doubled foreground signal (visibilitychange + appStateChange both firing) coalesces into ONE relay pass", async () => {
+    mocks.getSessionWithDiagnostics.mockResolvedValue({ session: cachedSession });
+    await renderHook();
+    // From here on the foreground read never resolves, so if the second
+    // signal were not coalesced it would show up as a second call.
+    mocks.getSessionWithDiagnostics.mockClear();
+    mocks.getSessionWithDiagnostics.mockImplementation(
+      () => new Promise(() => {}),
+    );
+
+    const foregroundCb = mocks.subscribeForeground.mock.calls[0]![0];
+    foregroundCb();
+    foregroundCb();
+
+    expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledTimes(1);
+  });
+
+  it("#612 — answering a watch sessionRequest goes through the classified getSession and relays with guaranteed delivery", async () => {
+    mocks.getSessionWithDiagnostics.mockResolvedValue({ session: cachedSession });
+    await renderHook();
+    const handler = mocks.onWatchSessionRequest.mock.calls[0]?.[0] as () => void;
+    mocks.getSessionWithDiagnostics.mockClear();
+
+    await act(async () => {
+      handler();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.getSessionWithDiagnostics).toHaveBeenCalledOnce();
+    expect(mocks.relaySessionToWatch).toHaveBeenCalledWith(cachedSession, {
+      guaranteed: true,
+    });
+    expect(mocks.relayHealthSession).toHaveBeenCalledWith(cachedSession);
+  });
+
+  it("#612 — a watch sessionRequest answered with a null session relays the clear to both native consumers", async () => {
+    mocks.getSessionWithDiagnostics.mockResolvedValue({ session: null });
+    await renderHook();
+    const handler = mocks.onWatchSessionRequest.mock.calls[0]?.[0] as () => void;
+
+    await act(async () => {
+      handler();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.relaySessionToWatch).toHaveBeenCalledWith(null, {
+      guaranteed: true,
+    });
+    expect(mocks.relayHealthSession).toHaveBeenCalledWith(null);
   });
 });

@@ -20,6 +20,7 @@ import {
 import { setMonitoringUser } from "../lib/monitoring";
 import { recordAuthenticatedAccountForLiveMirror } from "../lib/liveMirrorOwnership";
 import { resetLiveMirrorDiagnostics } from "../lib/liveMirrorTelemetry";
+import { browserForegroundSignals } from "../lib/foregroundSignals";
 
 // Keep the local seeded-account implementation out of every production graph.
 // Vite folds this compile-time branch before Rollup creates chunks, so the
@@ -179,8 +180,24 @@ export function useAuth() {
       // plugin whenever the app returns to the foreground. Those clients don't
       // own the refresh cycle, so this keeps them supplied with a current token
       // right when the user is likely to act (e.g. save a recording on the watch).
+      //
+      // #612: the foreground wiring is the shared `subscribeForegroundSignals`
+      // (visibilitychange on every platform, plus the native `appStateChange`),
+      // the same definition the queue drain runs on. Relying on
+      // `visibilitychange` alone left a stale-bearer-relay window on native:
+      // a locked-screen/backgrounded resume can resume the WKWebView without
+      // re-firing it, and the watch/health then keep a dead bearer until the
+      // auth-js auto-refresh tick fires (~30s). A single foreground can fire
+      // BOTH signals, so the in-flight guard coalesces them into one pass —
+      // a doubled `getSession()` would otherwise also double the relay and the
+      // "Health data synced" toast (App.tsx reads `changed` from the event).
+      let foregroundRelayInFlight = false;
       const onVisible = () => {
-        if (document.visibilityState !== "visible") return;
+        // A read already in flight from the first signal of this foreground
+        // covers this one: it started after that signal, so it reflects the
+        // resumed state, and its resolution relays once for both.
+        if (foregroundRelayInFlight) return;
+        foregroundRelayInFlight = true;
         // getSession() auto-refreshes a merely-expired session; a null result
         // means the stored session is gone/revoked (refresh-token rotation can
         // revoke the family across instances). Reflect that so the UI drops to
@@ -189,23 +206,38 @@ export function useAuth() {
         // would catch it. getSessionWithDiagnostics classifies + records *why*
         // (network vs. revoked vs. never stored — issue #194) instead of this
         // staying silent.
-        void getSessionWithDiagnostics(supabase, SUPABASE_URL).then(({ session }) => {
-          if (!aliveRef.current) return;
-          setSession(session);
-          onSession(session);
-          // Pick up anything HealthKit collected while backgrounded (e.g. a
-          // wearable sync) right when the user is looking at the readiness
-          // card — no-op on web / until a session exists.
-          if (session) void syncHealthNow();
-        });
+        void getSessionWithDiagnostics(supabase, SUPABASE_URL).then(
+          ({ session }) => {
+            foregroundRelayInFlight = false;
+            if (!aliveRef.current) return;
+            setSession(session);
+            onSession(session);
+            // Pick up anything HealthKit collected while backgrounded (e.g. a
+            // wearable sync) right when the user is looking at the readiness
+            // card — no-op on web / until a session exists.
+            if (session) void syncHealthNow();
+          },
+          () => {
+            // `getSessionWithDiagnostics` is written never to throw, but if
+            // this ever rejects the guard must still release — a stuck flag
+            // would silently disable the foreground relay for the rest of the
+            // launch, the exact self-disable a dedupe guard must not cause.
+            foregroundRelayInFlight = false;
+          },
+        );
       };
-      document.addEventListener("visibilitychange", onVisible);
-      removeVisibilityListener = () =>
-        document.removeEventListener("visibilitychange", onVisible);
+      const unsubscribeForeground = browserForegroundSignals().subscribe(onVisible);
+      removeVisibilityListener = unsubscribeForeground;
 
       // The watch, waiting on an expired access token, can ask us to re-relay
       // (native only). getSession() returns a phone-refreshed token — the watch
       // consumes it and signs back in with no manual login and no refresh token.
+      //
+      // #612: this goes through `getSessionWithDiagnostics`, not a bare
+      // `getSession()`, so a pull answered with a null session (revoked /
+      // network / storage wiped) is classified and recorded on the phone too —
+      // that path was the one null-session moment still blind to the ring the
+      // mount and foreground paths record.
       //
       // `guaranteed: true` queues it with transferUserInfo as well as setting
       // the application context (#266): answering a pull while our token is still
@@ -217,13 +249,13 @@ export function useAuth() {
       // below only removes a handle that resolved while the effect was alive,
       // so one native listener always has one removal path.
       const watchRequest = onWatchSessionRequest(() => {
-        void supabase.auth.getSession().then(({ data }) => {
+        void getSessionWithDiagnostics(supabase, SUPABASE_URL).then(({ session }) => {
           // A readiness request may have reached the native phone while the
           // WebView was briefly stale too. Relay the same fresh access token to
           // both native consumers before the health manager retries; neither
           // side ever receives a refresh token.
-          relayHealthSession(data.session);
-          relaySessionToWatch(data.session, { guaranteed: true });
+          relayHealthSession(session);
+          relaySessionToWatch(session, { guaranteed: true });
         });
       });
       void watchRequest.then((handle) => {

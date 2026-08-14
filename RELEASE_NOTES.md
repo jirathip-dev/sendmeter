@@ -56,6 +56,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- iPhone: reopening the app now reliably hands the paired Apple Watch and the Health sync a fresh sign-in right away — including after the screen was locked or the app returned from the background — instead of sometimes waiting up to half a minute for the auto-refresh, and one app reopen no longer can show the "Health data synced" notice twice. Signing out on the watch while the iPhone session is still good, and the watch asking for a fresh sign-in, also leave a clear on-phone record of why when they can't be answered.
 - Watch: if a Climb Workout fails to start partway through, the watch now ends and discards the partially-started session instead of leaving it running in the background.
 - iPhone: reopening the app no longer shows readiness as "Synced just now" for an older watch-triggered result that actually completed hours earlier; the synced-time marker is also now kept separate per signed-in account.
 - iPhone: an outright-failed registration for watch-triggered readiness refreshes (for example, on an app version missing the needed native support) no longer disables that notification for the rest of the app session; a registration that fails silently without an error is a separate, still-open gap.
