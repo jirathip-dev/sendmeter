@@ -508,6 +508,57 @@ export async function clearRecordingQueue(
   return removed.size;
 }
 
+/// #613: remove ONE queued recording by id, from BOTH stores, scoped to
+/// `userId` (plus unattributed legacy entries — the same "mine" rule as
+/// `pendingRecordingsCount`).
+///
+/// Two callers, both about a single rep the user actually recorded, and
+/// neither is the #273 sign-out path (that one stays exclusively
+/// `clearRecordingQueue` via `discardQueueOnUserSignOut`):
+///
+///   * the durable-first save path writes the entry BEFORE the network insert
+///     (`recordingSave.ts`), so a successful insert must dequeue it — an entry
+///     left behind would be re-attempted (harmless 23505) but, worse, counted
+///     in the ambient "waiting to upload" backlog forever;
+///   * Undo of a just-saved rep (ForceView) dequeues the same entry, so the
+///     rep the user discarded cannot drain back into the list later.
+///
+/// Best-effort: a store that refuses the delete contributes nothing to the
+/// return, and a lane write that fails is left for the next drain. Idempotent:
+/// removing an id that isn't queued anywhere returns false with no error.
+export async function removeQueuedRecording(
+  id: string,
+  userId: string,
+  loadDb: RecordingDbLoader = openRecordingDb,
+  storage: QueueStorage | null = defaultStorage(),
+): Promise<boolean> {
+  const mine = (p: PendingRecording) => p.userId === null || p.userId === userId;
+  let removed = false;
+  const db = await loadDb().catch(() => null);
+  if (db) {
+    // `delete` is by id, so confirm the entry is this user's BEFORE deleting —
+    // a uuid collision is practically impossible, but the "mine" rule is the
+    // whole point of #484 F3 and costs nothing here.
+    const mineById = await db
+      .getAllForUser(userId)
+      .then((rows) => rows.some((p) => p.id === id))
+      .catch(() => false);
+    if (mineById) {
+      removed = await db.delete([id]).then(
+        () => true,
+        () => false,
+      );
+    }
+  }
+  const lane = loadQueue(storage);
+  const next = lane.filter((p) => !(p.id === id && mine(p)));
+  if (next.length !== lane.length) {
+    if (saveQueue(next, storage)) removed = true;
+  }
+  if (removed) notifyPendingUploadsChanged();
+  return removed;
+}
+
 /// #484: the one way a `rejection.stuck` entry is attempted again outside of
 /// the app-version-change window that produced it — the "explicit user
 /// action" leg of the policy block above `drainQueue`. Clears `rejection`

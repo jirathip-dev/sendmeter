@@ -297,6 +297,43 @@ export function captureDataLoss(
   );
 }
 
+/// Closed set of force-persistence latency stages (#613). Each member is a
+/// constant chosen by the code, never anything derived from user data, and the
+/// captured value is always a plain millisecond duration — nothing else rides
+/// along. A message built from these goes through `beforeSend`'s scrub like
+/// every other event; the closed set is the first line of defense.
+const FORCE_LATENCY_STAGES = new Set([
+  "rep.persist",
+  "rep.insert",
+  "session.predict",
+  "session.insert",
+  "realtime.recv",
+  "realtime.refetch",
+]);
+
+/// Throttle: at most one event per stage per window. The per-rep stages fire on
+/// every rep of a guided protocol — dozens of events in minutes — and the
+/// point is to confirm the end-to-end latency shape (is the Finish path
+/// network-free now?), not to count reps. One sample per stage per minute keeps
+/// the volume bounded while still catching a regression within ~a minute.
+const FORCE_LATENCY_INTERVAL_MS = 60_000;
+const lastForceLatencyAt: Partial<Record<string, number>> = {};
+
+/// #613: report the duration of one force-persistence stage. Inert without a
+/// build-time DSN (like everything in this module) and gated on a closed stage
+/// set, so a typo'd stage is dropped rather than sent.
+export function captureForceLatency(stage: string, ms: number): void {
+  if (!started || !FORCE_LATENCY_STAGES.has(stage)) return;
+  const now = Date.now();
+  const last = lastForceLatencyAt[stage];
+  if (last !== undefined && now - last < FORCE_LATENCY_INTERVAL_MS) return;
+  lastForceLatencyAt[stage] = now;
+  Sentry.captureMessage(
+    `force-latency: ${stage}=${Math.round(Math.max(0, ms))}ms`,
+    "info",
+  );
+}
+
 const HANDLED_OPERATIONS = {
   "training-data.load": { dedupeForLaunch: true },
   "session.insert": { dedupeForLaunch: false },
