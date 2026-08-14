@@ -165,6 +165,13 @@ error monitoring only.
 
 ## Review notes (paste into "Notes" for the reviewer)
 
+**→ The full answer now lives in `docs/app-review-notes.md`.** App Review
+rejected a submission for missing this information (2026-08), and asked for all
+seven items — functionality, tested devices, audience, setup instructions,
+external services, regional differences, regulated-industry status — to be in
+the Notes field for *every* future submission. Paste that document, not the
+short blurb below, which is kept only as the source of the privacy wording.
+
 > Sign in with the demo account below (email + password on the login screen —
 > tap "Sign in with password instead" if the magic-link form shows).
 > The Tindeq tab connects to a physical Tindeq Progressor strain gauge over
