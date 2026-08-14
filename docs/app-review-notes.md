@@ -71,8 +71,9 @@ fully usable if every one is declined.
 
 - **Apple Health (read)** — on the iPhone, to compute the daily readiness score
   from HRV, resting heart rate, respiratory rate, sleep and body weight. The
-  iPhone only reads; it never writes to Health. Requested the first time the
-  user enables health sync from the Account screen.
+  iPhone only reads; it never writes to Health. Requested automatically the
+  first time the user signs in on the iPhone — the prompt appears immediately
+  after sign-in, not behind a settings toggle.
 - **Apple Health (read/write)** — on the Apple Watch only, to record the
   climbing workout as a Health workout and to read live heart rate during it.
 - **Bluetooth** — to connect to the user's own Tindeq Progressor force gauge.
@@ -190,29 +191,35 @@ Location, or delete and reinstall) so the prompts actually appear on camera.
    address, and show it succeeding. (If magic-link email is inconvenient on
    camera, show the sign-up screen and state that the demo account will be used
    instead.)
-3. **Login**: sign in with the demo account email + password. Also briefly show
-   the Sign in with Apple and passkey buttons on the login screen.
+3. **Login, and the Health permission prompt**: sign in with the demo account
+   email + password. Also briefly show the Sign in with Apple and passkey
+   buttons on the login screen. **The HealthKit permission sheet appears on its
+   own immediately after the first successful sign-in** — it is requested
+   automatically, not from a settings toggle, so keep recording through the
+   sign-in and grant it on camera. Note it fires on whichever sign-in comes
+   first on that install: if you completed the registration in step 2, expect
+   it there instead. iOS shows it only once per install, so if you miss it the
+   only way to get it back on camera is to delete and reinstall the app.
 4. **Home tab**: readiness score, phase banner, ACWR and load charts. Tap into a
-   detail sheet to show the explanation.
-5. **Health permission prompt**: Account → enable health sync → show the
-   HealthKit permission sheet and grant it → return to Home and show the score.
-6. **Location permission prompt**: open the Send Conditions card → show the
+   detail sheet to show the explanation, and show the readiness score now
+   populated from the Health data just granted.
+5. **Location permission prompt**: open the Send Conditions card → show the
    location prompt → grant → show the weather reading.
-7. **Workout tab**: start a session, show the timer / routine runner, log an
+6. **Workout tab**: start a session, show the timer / routine runner, log an
    attempt, then save the session.
-8. **Force tab**: tap Connect → show the **Bluetooth permission prompt** →
+7. **Force tab**: tap Connect → show the **Bluetooth permission prompt** →
    connect to the Tindeq Progressor and record one pull, showing the live force
    curve and the saved recording. (Do this with the real device if you have it —
    this is the feature reviewers most often cannot evaluate, and showing it
    working is the point of the recording.)
-9. **Apple Watch companion**: show the watch app on the wrist — a tracked
+8. **Apple Watch companion**: show the watch app on the wrist — a tracked
    session, heart rate, and the force gauge screen. Point the camera at the
    watch or use watch screen mirroring.
-10. **History tab**: show the timeline of sessions and recordings, open one, and
-    edit it.
-11. **Account deletion**: Account → Danger zone → **Delete account** → confirm →
+9. **History tab**: show the timeline of sessions and recordings, open one, and
+   edit it.
+10. **Account deletion**: Account → Danger zone → **Delete account** → confirm →
     show that the app returns to the logged-out login screen. Do this last, on a
     throwaway account, not on the demo account you submitted.
-12. Explicitly state on camera (or in a caption) that the app has **no in-app
+11. Explicitly state on camera (or in a caption) that the app has **no in-app
     purchases, no subscriptions, no paid content, and no user-to-user content**,
     so there is nothing to demonstrate for those items.
