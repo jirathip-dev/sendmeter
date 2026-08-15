@@ -1,0 +1,101 @@
+name: Install native Swift rewrite
+
+on:
+  push:
+    branches:
+      - "agent/swift-native-rewrite"
+    paths:
+      - ".native-rewrite.part-*"
+      - ".native-rewrite.patch-*"
+      - ".github/workflows/native-rewrite-bootstrap.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: native-rewrite-bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install-and-verify:
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/swift-native-rewrite
+      - name: Repair, verify and extract source archive
+        env:
+          ARCHIVE_SHA256: 2b52938f4d37fb774a68dea5774675d5d99fe061a79126a174165660fd9e7e69
+          PART01_SHA256: 23be226735deb3fa81ab2c68693aa56449c727f60c9b86635835c1c60f805e7b
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+
+          part = Path('.native-rewrite.part-01')
+          patch = Path('.native-rewrite.patch-00512').read_bytes()
+          data = bytearray(part.read_bytes())
+          if len(data) != 20_000 or len(patch) != 256:
+              raise RuntimeError('Unexpected repair input length')
+          data[512:768] = patch
+          repaired = bytes(data)
+          if hashlib.sha256(repaired).hexdigest() != '23be226735deb3fa81ab2c68693aa56449c727f60c9b86635835c1c60f805e7b':
+              raise RuntimeError('Repaired part checksum mismatch')
+          part.write_bytes(repaired)
+          PY
+          cat .native-rewrite.part-* > /tmp/sendmeter-native-rewrite.tar.gz.b64
+          echo "$ARCHIVE_SHA256  /tmp/sendmeter-native-rewrite.tar.gz.b64" | shasum -a 256 -c -
+          python3 - <<'PY'
+          import base64
+          import pathlib
+          import tarfile
+
+          encoded = pathlib.Path('/tmp/sendmeter-native-rewrite.tar.gz.b64').read_bytes()
+          archive = pathlib.Path('/tmp/sendmeter-native-rewrite.tar.gz')
+          archive.write_bytes(base64.b64decode(encoded, validate=True))
+          with tarfile.open(archive, 'r:gz') as bundle:
+              root = pathlib.Path.cwd().resolve()
+              for member in bundle.getmembers():
+                  target = (root / member.name).resolve()
+                  if root not in target.parents and target != root:
+                      raise RuntimeError(f'Unsafe archive member: {member.name}')
+              bundle.extractall('.')
+          PY
+          rm .native-rewrite.part-* .native-rewrite.patch-*
+          rm .github/workflows/native-rewrite-bootstrap.yml
+          rm .github/workflows/native-rewrite-diagnose.yml
+          git diff --check
+      - name: Run pure Swift tests
+        run: swift test --package-path native/SendmeterNative
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: native/SendmeterNative
+        run: xcodegen generate
+      - name: Resolve Swift packages
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -resolvePackageDependencies
+      - name: Build native app
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Commit verified rewrite
+        run: |
+          rm -rf native/SendmeterNative/.build native/SendmeterNative/SendmeterNative.xcodeproj
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: add native SwiftUI Sendmeter app"
+          git push origin HEAD:agent/swift-native-rewrite

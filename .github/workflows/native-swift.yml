@@ -1,0 +1,66 @@
+name: Native Swift
+
+on:
+  pull_request:
+    paths:
+      - "native/SendmeterNative/**"
+      - "ios/App/SendLogWatchCore/**"
+      - "native-plugins/sendlog-health-core/**"
+      - ".github/workflows/native-swift.yml"
+  push:
+    branches:
+      - staging
+      - main
+      - "agent/swift-native-rewrite"
+    paths:
+      - "native/SendmeterNative/**"
+      - "ios/App/SendLogWatchCore/**"
+      - "native-plugins/sendlog-health-core/**"
+      - ".github/workflows/native-swift.yml"
+
+concurrency:
+  group: native-swift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests:
+    name: Core tests
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Run pure Swift tests
+        run: swift test --package-path native/SendmeterNative
+
+  ios-build:
+    name: iOS Simulator build
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: native/SendmeterNative
+        run: xcodegen generate
+      - name: Resolve Swift packages
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -resolvePackageDependencies
+      - name: Build native app
+        working-directory: native/SendmeterNative
+        run: |
+          xcodebuild \
+            -project SendmeterNative.xcodeproj \
+            -scheme SendmeterNative \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
