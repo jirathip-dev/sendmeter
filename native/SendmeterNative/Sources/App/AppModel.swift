@@ -1666,6 +1666,13 @@ public final class AppModel: ObservableObject {
         handsFree.handleDisconnected()
         keepAwakeRelease?()
         keepAwakeRelease = nil
+        // The mirror must not survive an account change even without an
+        // intervening .signedOut (deep-link sign-in as another user) — a
+        // stale row would render the previous account's attempt count/HR for
+        // up to the 30s staleness window (#final review finding 1).
+        liveWorkoutMirror = .empty
+        liveMirrorTicker?.cancel()
+        liveMirrorTicker = nil
     }
 
     private func perform(_ operation: @escaping () async throws -> Void) async {
