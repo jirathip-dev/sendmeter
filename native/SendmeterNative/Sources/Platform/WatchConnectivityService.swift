@@ -67,6 +67,7 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     @Published public private(set) var watchBuild: String?
     @Published public private(set) var pendingSyncCount: Int?
     @Published public private(set) var quarantinedSyncCount: Int?
+    @Published public private(set) var quarantinedStuckSyncCount: Int?
     @Published public private(set) var liveWorkout: LiveWorkout?
     @Published public private(set) var liveForce: WatchLiveForce?
     @Published public private(set) var pendingCompletions: [WatchWorkoutCompletion] = []
@@ -188,6 +189,10 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
                 replyHandler?([:])
             }
         case "queueStatus":
+            // The whole payload is the build/queue telemetry, which
+            // `recordWatchMetadata` already captured from the raw message;
+            // the watch sends with no reply handler, so an empty ack is the
+            // full response.
             replyHandler?([:])
         default:
             replyHandler?([:])
@@ -195,10 +200,14 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     }
 
     private func recordWatchMetadata(_ message: [String: Any]) {
-        if let version = message["watch_version"] as? String { watchVersion = version }
-        if let build = message["watch_build"] as? String { watchBuild = build }
-        if let count = number(message["pending_sync"]).map(Int.init) { pendingSyncCount = count }
-        if let count = number(message["quarantined_sync"]).map(Int.init) { quarantinedSyncCount = count }
+        let metadata = WatchMetadata.parse(message)
+        if let version = metadata.version { watchVersion = version }
+        if let build = metadata.build { watchBuild = build }
+        if let pendingSync = metadata.pendingSync { pendingSyncCount = pendingSync }
+        if let quarantinedSync = metadata.quarantinedSync { quarantinedSyncCount = quarantinedSync }
+        if let quarantinedStuckSync = metadata.quarantinedStuckSync {
+            quarantinedStuckSyncCount = quarantinedStuckSync
+        }
     }
 
     private func parseLiveWorkout(_ message: [String: Any]) -> LiveWorkout? {
