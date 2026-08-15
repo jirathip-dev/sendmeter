@@ -22,6 +22,15 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     @Published public private(set) var lowBattery = false
     @Published public private(set) var visibleSamples: [TindeqSample] = []
     @Published public private(set) var completedSummary: ForceSummary?
+    /// True while the hands-free arming loop owns the weight stream (the
+    /// Progressor only publishes force after the start command, so arming
+    /// keeps the stream live BEFORE the recording begins). The pre-start
+    /// samples drive the hands-free trigger and must never be saved.
+    @Published public private(set) var handsFreeArmed = false
+
+    /// Every parsed weight sample, recording or not — the hands-free arming
+    /// loop's feed. Set once by AppModel; never mutated by callers.
+    public var onWeightSample: ((TindeqWireSample) -> Void)?
 
     public var interruptedRecording: ForceSummary? { interruptedSummary }
     public var hasUnsavedRecording: Bool { completedSummary != nil || interruptedSummary != nil }
@@ -54,6 +63,7 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
     public func disconnect() {
         connectRequested = false
         isRecording = false
+        handsFreeArmed = false
         if let peripheral {
             central.cancelPeripheralConnection(peripheral)
         } else {
@@ -98,6 +108,54 @@ public final class TindeqBluetooth: NSObject, ObservableObject {
         isRecording = false
         status = .connected
         return summary
+    }
+
+    /// Start the weight stream WITHOUT recording — the hands-free arming
+    /// loop watches the load through `onWeightSample` and only promotes the
+    /// stream to a recording via `beginArmedRecording()` once the pull is
+    /// real (mirrors the web's `arm()` / `beginArmedRecording()` in
+    /// `src/hooks/useTindeq.ts`).
+    public func armHandsFree() throws {
+        guard status == .connected,
+              let peripheral,
+              let controlCharacteristic
+        else { throw BluetoothError.notReady }
+        guard !hasUnsavedRecording else { throw BluetoothError.unsavedRecording }
+        guard !handsFreeArmed, !isRecording else { return }
+        accumulator.reset()
+        currentKilograms = 0
+        peakKilograms = 0
+        averageKilograms = 0
+        elapsedMilliseconds = 0
+        visibleSamples = []
+        handsFreeArmed = true
+        peripheral.writeValue(
+            Data([TindeqProtocolConstants.Command.startWeight.rawValue]),
+            for: controlCharacteristic,
+            type: .withResponse
+        )
+    }
+
+    /// Promote an already-streaming armed sensor to a real recording without
+    /// a second BLE command. The pre-start samples are discarded
+    /// synchronously, before the recording claims ownership, so no arming
+    /// load can leak into the saved force curve or a disconnect salvage.
+    public func beginArmedRecording() -> Bool {
+        guard handsFreeArmed else { return false }
+        accumulator.reset()
+        handsFreeArmed = false
+        isRecording = true
+        status = .measuring
+        return true
+    }
+
+    /// Stop the hands-free stream and return to plain connected. Safe when
+    /// nothing was armed.
+    public func disarmHandsFree() {
+        guard handsFreeArmed || isRecording else { return }
+        handsFreeArmed = false
+        isRecording = false
+        try? write(.stop)
     }
 
     public func tare() throws {
@@ -233,6 +291,7 @@ extension TindeqBluetooth: CBCentralManagerDelegate {
                 interruptedSummary = accumulator.summary()
             }
             isRecording = false
+            handsFreeArmed = false
             let message = error?.localizedDescription ?? "Progressor disconnected"
             resetConnection(status: .interrupted(message))
         }
@@ -297,7 +356,20 @@ extension TindeqBluetooth: CBPeripheralDelegate {
             guard error == nil, let data = characteristic.value else { return }
             switch TindeqFrameParser.parse(data) {
             case let .weight(samples):
-                guard isRecording else { return }
+                // The hands-free arming loop watches the stream whether or
+                // not a recording is owned; pre-start samples are consumed by
+                // the controller and never accumulated.
+                if handsFreeArmed || isRecording {
+                    for sample in samples {
+                        onWeightSample?(sample)
+                    }
+                }
+                guard isRecording else {
+                    if handsFreeArmed, let last = samples.last {
+                        currentKilograms = last.kilograms
+                    }
+                    return
+                }
                 _ = accumulator.append(samples)
                 updatePublishedValues()
                 if elapsedMilliseconds >= Double(ForceSessionAccumulator.maximumRecordingMilliseconds) {
