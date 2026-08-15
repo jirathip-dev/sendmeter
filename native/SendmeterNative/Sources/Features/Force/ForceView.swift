@@ -1,0 +1,1249 @@
+import SendmeterCore
+import SwiftUI
+
+private struct GuidedProtocolLaunch: Identifiable {
+    let preset: TindeqPreset
+    let targetPlan: ForceTargetPlan
+    var id: UUID { preset.id }
+}
+
+struct ForceView: View {
+    @EnvironmentObject private var model: AppModel
+    @AppStorage("sendmeter.native.force.tag") private var tag = ""
+    @AppStorage("sendmeter.native.force.side") private var sideValue = ""
+    @AppStorage("sendmeter.native.force.zone") private var zoneValue = ""
+    @State private var selectedPresetID: UUID?
+    @State private var editingPreset: TindeqPreset?
+    @State private var creatingPreset = false
+    @State private var runningProtocol: GuidedProtocolLaunch?
+    @State private var selectedTargetPlan = ForceTargetPlan.empty
+    @State private var resolvingTargets = false
+    @State private var savingSummary = false
+
+    private var side: TindeqSide {
+        get { TindeqSide(rawValue: sideValue) ?? .unspecified }
+        nonmutating set { sideValue = newValue.rawValue }
+    }
+
+    private var zone: RecordedZone? {
+        get { RecordedZone(rawValue: zoneValue) }
+        nonmutating set { zoneValue = newValue?.rawValue ?? "" }
+    }
+
+    private var selectedPreset: TindeqPreset? {
+        guard let selectedPresetID else { return nil }
+        return model.presets.first(where: { $0.id == selectedPresetID })
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    ForceDeviceCard(
+                        device: model.tindeq,
+                        targetBand: selectedTargetPlan.band(forSet: 1, side: side),
+                        resolvingTarget: resolvingTargets,
+                        savingSummary: savingSummary,
+                        start: startMeasurement,
+                        stopAndSave: stopAndSave,
+                        saveCompleted: saveCompleted,
+                        saveRecovered: saveRecovered,
+                        discardCompleted: { model.tindeq.clearCompletedRecording() },
+                        discardRecovered: { model.tindeq.clearInterruptedRecording() }
+                    )
+
+                    ForceMetadataCard(
+                        tag: $tag,
+                        side: Binding(get: { side }, set: { side = $0 }),
+                        zone: Binding(get: { zone }, set: { zone = $0 }),
+                        presetID: $selectedPresetID,
+                        presets: model.presets
+                    )
+
+                    if let live = model.watch.liveForce,
+                       live.accountUserID == nil || live.accountUserID == model.currentUserID {
+                        WatchForceMirrorCard(force: live)
+                    }
+
+                    ForceProtocolLibraryCard(
+                        presets: model.presets,
+                        run: { preset in
+                            launch(preset)
+                        },
+                        edit: { editingPreset = $0 },
+                        create: { creatingPreset = true },
+                        delete: { preset in Task { await model.deletePreset(preset) } }
+                    )
+
+                    RecentForceCard(recordings: Array(model.recordings.prefix(8)))
+                }
+                .padding()
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+            .navigationTitle("Force")
+            .refreshable { await model.refreshAll(showSpinner: false) }
+            .task(id: targetResolutionKey) {
+                await resolveSelectedTarget()
+            }
+            .sheet(item: $editingPreset) { preset in
+                ForcePresetEditor(preset: preset, isNew: false)
+            }
+            .sheet(isPresented: $creatingPreset) {
+                ForcePresetEditor(preset: Self.defaultPreset(), isNew: true)
+            }
+            .fullScreenCover(item: $runningProtocol) { launch in
+                GuidedForceProtocolView(
+                    preset: launch.preset,
+                    targetPlan: launch.targetPlan,
+                    tag: tag,
+                    startingSide: side == .right ? .right : .left,
+                    fallbackSide: side,
+                    zone: zone
+                )
+            }
+        }
+    }
+
+    private func startMeasurement() {
+        guard !model.tindeq.hasUnsavedRecording else {
+            model.errorMessage = "Save or discard the previous pull before starting another."
+            return
+        }
+        do {
+            try model.tindeq.startMeasuring()
+        } catch {
+            model.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func stopAndSave() {
+        guard let summary = model.tindeq.stopMeasuring() else {
+            model.errorMessage = "No force samples were received."
+            return
+        }
+        save(summary, recovered: false)
+    }
+
+    private func saveCompleted() {
+        guard let summary = model.tindeq.completedSummary else { return }
+        save(summary, recovered: false)
+    }
+
+    private func saveRecovered() {
+        guard let summary = model.tindeq.interruptedRecording else { return }
+        save(summary, recovered: true)
+    }
+
+    private func save(_ summary: ForceSummary, recovered: Bool) {
+        savingSummary = true
+        let savedTag = recovered && !tag.isEmpty ? "\(tag) · Recovered" : tag
+        Task {
+            let enqueued = await model.saveForceSummary(
+                summary,
+                tag: savedTag,
+                side: side,
+                zone: zone,
+                preset: selectedPreset,
+                targetBand: selectedTargetPlan.band(forSet: 1, side: side)
+            )
+            if enqueued {
+                model.tindeq.clearCompletedRecording()
+                if recovered { model.tindeq.clearInterruptedRecording() }
+            }
+            savingSummary = false
+        }
+    }
+
+
+    private var targetResolutionKey: String {
+        let recordingFingerprint = model.recordings.prefix(24).map {
+            "\($0.id.uuidString):\($0.sampleCount):\($0.recordedAt.timeIntervalSince1970)"
+        }.joined(separator: "|")
+        return "\(selectedPresetID?.uuidString ?? "free")|\(tag)|\(side.rawValue)|\(recordingFingerprint)"
+    }
+
+    @MainActor
+    private func resolveSelectedTarget() async {
+        guard let preset = selectedPreset else {
+            selectedTargetPlan = .empty
+            resolvingTargets = false
+            return
+        }
+        resolvingTargets = true
+        let startSide: TindeqSide = side == .right ? .right : .left
+        selectedTargetPlan = await model.resolveForceTargetPlan(
+            preset: preset,
+            tag: tag,
+            startingSide: startSide,
+            fallbackSide: side
+        )
+        resolvingTargets = false
+    }
+
+    private func launch(_ preset: TindeqPreset) {
+        guard !model.tindeq.hasUnsavedRecording else {
+            model.errorMessage = "Save or discard the previous pull before starting a guided protocol."
+            return
+        }
+        guard model.tindeq.status == .connected else {
+            model.errorMessage = "Connect the Progressor before starting a guided protocol."
+            return
+        }
+        selectedPresetID = preset.id
+        resolvingTargets = true
+        Task {
+            let startSide: TindeqSide = side == .right ? .right : .left
+            let plan = await model.resolveForceTargetPlan(
+                preset: preset,
+                tag: tag,
+                startingSide: startSide,
+                fallbackSide: side
+            )
+            selectedTargetPlan = plan
+            resolvingTargets = false
+            runningProtocol = GuidedProtocolLaunch(preset: preset, targetPlan: plan)
+        }
+    }
+
+    private static func defaultPreset() -> TindeqPreset {
+        TindeqPreset(
+            name: "Max Hangs",
+            holdSeconds: 10,
+            repetitions: 3,
+            sets: 3,
+            restBetweenRepetitionsSeconds: 120,
+            restBetweenSetsSeconds: 180,
+            prepareSeconds: 5
+        )
+    }
+}
+
+private struct ForceDeviceCard: View {
+    @ObservedObject var device: TindeqBluetooth
+    let targetBand: ForceTargetBand?
+    let resolvingTarget: Bool
+    let savingSummary: Bool
+    let start: () -> Void
+    let stopAndSave: () -> Void
+    let saveCompleted: () -> Void
+    let saveRecovered: () -> Void
+    let discardCompleted: () -> Void
+    let discardRecovered: () -> Void
+    @State private var showingDiscardConfirmation = false
+    @State private var discardIsRecovered = false
+
+    private var targetRange: ClosedRange<Double>? { targetBand?.range }
+
+    var body: some View {
+        SurfaceCard {
+            VStack(spacing: 16) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 5) {
+                        SectionLabel("Progressor", systemImage: "dot.radiowaves.left.and.right")
+                        Text(statusLabel)
+                            .font(.headline)
+                    }
+                    Spacer()
+                    StatusPill(statusPill.text, color: statusPill.color)
+                }
+
+                if device.status == .measuring || !device.visibleSamples.isEmpty {
+                    HStack(alignment: .firstTextBaseline) {
+                        MetricValue(
+                            device.currentKilograms.formatted(.number.precision(.fractionLength(1))),
+                            unit: "kg",
+                            color: inTarget ? SendmeterStyle.optimal : .primary
+                        )
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 5) {
+                            Text("Peak \(device.peakKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                            Text("Average \(device.averageKilograms.formatted(.number.precision(.fractionLength(1)))) kg")
+                            Text((device.elapsedMilliseconds / 1_000).formatted(.number.precision(.fractionLength(1))) + " s")
+                        }
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                    ForceTraceChart(
+                        samples: device.visibleSamples,
+                        targetRange: targetRange,
+                        target: targetBand?.kilograms
+                    )
+                    .frame(height: 190)
+                    .accessibilityLabel("Live force trace")
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "waveform.path.ecg")
+                            .font(.system(size: 46, weight: .semibold))
+                            .foregroundStyle(SendmeterStyle.primary)
+                        Text("Ready to measure")
+                            .font(.title3.bold())
+                        Text("Connect a Tindeq Progressor, tare it, then start a pull.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 170)
+                }
+
+                if resolvingTarget {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Resolving the protocol target from this exercise's force history…")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if device.lowBattery {
+                    Label("Progressor battery is low", systemImage: "battery.25percent")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(SendmeterStyle.alert)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                controls
+
+                if device.interruptedRecording != nil {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Unsaved pull recovered after disconnect", systemImage: "externaldrive.badge.exclamationmark")
+                            .font(.subheadline.weight(.semibold))
+                        HStack {
+                            Button("Save Recovered Pull", action: saveRecovered)
+                                .buttonStyle(.borderedProminent)
+                                .disabled(savingSummary)
+                            Button("Discard", role: .destructive) {
+                                discardIsRecovered = true
+                                showingDiscardConfirmation = true
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(savingSummary)
+                        }
+                    }
+                    .padding(12)
+                    .background(SendmeterStyle.caution.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                } else if device.completedSummary != nil, device.status != .measuring {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Completed pull is ready for a durable save", systemImage: "checkmark.circle")
+                            .font(.subheadline.weight(.semibold))
+                        HStack {
+                            Button("Save Completed Pull", action: saveCompleted)
+                                .buttonStyle(.borderedProminent)
+                                .disabled(savingSummary)
+                            Button("Discard", role: .destructive) {
+                                discardIsRecovered = false
+                                showingDiscardConfirmation = true
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(savingSummary)
+                        }
+                    }
+                    .padding(12)
+                    .background(SendmeterStyle.optimal.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        }
+        .alert("Discard unsaved pull?", isPresented: $showingDiscardConfirmation) {
+            Button("Discard", role: .destructive) {
+                if discardIsRecovered { discardRecovered() }
+                else { discardCompleted() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This pull has not been placed in the durable on-device queue and cannot be recovered after it is discarded.")
+        }
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+        switch device.status {
+        case .unavailable:
+            Label("Bluetooth is not available for this app.", systemImage: "bluetooth.slash")
+                .foregroundStyle(.secondary)
+        case .idle, .interrupted:
+            Button {
+                device.connect()
+            } label: {
+                Label("Connect Progressor", systemImage: "antenna.radiowaves.left.and.right")
+            }
+            .buttonStyle(PrimaryActionButtonStyle())
+        case .scanning, .connecting:
+            HStack {
+                ProgressView()
+                Text(device.status == .scanning ? "Searching for Progressor…" : "Connecting…")
+                Spacer()
+                Button("Cancel") { device.disconnect() }
+            }
+        case .connected:
+            VStack(spacing: 10) {
+                Button(action: start) {
+                    Label("Start Pull", systemImage: "play.fill")
+                }
+                .buttonStyle(PrimaryActionButtonStyle())
+                .disabled(device.hasUnsavedRecording)
+                if device.hasUnsavedRecording {
+                    Text("Save or discard the previous pull before starting another.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HStack {
+                    Button {
+                        do { try device.tare() } catch { }
+                    } label: {
+                        Label("Tare", systemImage: "scalemass")
+                    }
+                    .buttonStyle(.bordered)
+                    Button {
+                        do { try device.refreshBattery() } catch { }
+                    } label: {
+                        Label("Battery", systemImage: "battery.100percent")
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
+                    Button("Disconnect", role: .destructive) { device.disconnect() }
+                        .buttonStyle(.borderless)
+                }
+            }
+        case .measuring:
+            Button(action: stopAndSave) {
+                HStack {
+                    if savingSummary { ProgressView().tint(.white) }
+                    Label("Stop & Save", systemImage: "stop.fill")
+                }
+            }
+            .buttonStyle(PrimaryActionButtonStyle())
+            .disabled(savingSummary)
+        }
+    }
+
+    private var statusLabel: String {
+        switch device.status {
+        case .unavailable: return "Unavailable"
+        case .idle: return "Not connected"
+        case .scanning: return "Searching"
+        case .connecting: return "Connecting"
+        case .connected: return "Connected"
+        case .measuring: return "Measuring"
+        case let .interrupted(message): return message
+        }
+    }
+
+    private var statusPill: (text: String, color: Color) {
+        switch device.status {
+        case .connected: return ("Ready", SendmeterStyle.optimal)
+        case .measuring: return ("Live", SendmeterStyle.primary)
+        case .scanning, .connecting: return ("Working", SendmeterStyle.caution)
+        case .interrupted: return ("Interrupted", SendmeterStyle.alert)
+        case .unavailable: return ("Unavailable", SendmeterStyle.alert)
+        case .idle: return ("Offline", .secondary)
+        }
+    }
+
+    private var inTarget: Bool {
+        guard let targetRange else { return false }
+        return targetRange.contains(device.currentKilograms)
+    }
+}
+
+private struct ForceMetadataCard: View {
+    @Binding var tag: String
+    @Binding var side: TindeqSide
+    @Binding var zone: RecordedZone?
+    @Binding var presetID: UUID?
+    let presets: [TindeqPreset]
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 14) {
+                SectionLabel("Recording context", systemImage: "tag")
+                TextField("Exercise or grip, e.g. 20 mm half crimp", text: $tag)
+                    .textInputAutocapitalization(.sentences)
+                    .padding(11)
+                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                HStack {
+                    Picker("Side", selection: $side) {
+                        ForEach(TindeqSide.allCases) { side in
+                            Text(side.label).tag(side)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    Spacer()
+                    Picker("Zone", selection: $zone) {
+                        Text("Not set").tag(Optional<RecordedZone>.none)
+                        ForEach(RecordedZone.allCases, id: \.self) { zone in
+                            Text(zone.rawValue.capitalized).tag(Optional(zone))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                Picker("Guided target", selection: $presetID) {
+                    Text("Free pull").tag(Optional<UUID>.none)
+                    ForEach(presets) { preset in
+                        Text(preset.name).tag(Optional(preset.id))
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+        }
+    }
+}
+
+struct ForceTraceChart: View {
+    let samples: [TindeqSample]
+    let targetRange: ClosedRange<Double>?
+    let target: Double?
+
+    var body: some View {
+        Canvas { context, size in
+            let maxSample = samples.map(\.kilograms).max() ?? 0
+            let maxValue = max(10, max(maxSample, targetRange?.upperBound ?? 0)) * 1.15
+            let firstTime = samples.first?.milliseconds ?? 0
+            let lastTime = max(firstTime + 1, samples.last?.milliseconds ?? firstTime + 1)
+
+            func y(_ kilograms: Double) -> CGFloat {
+                size.height - CGFloat(max(0, kilograms) / maxValue) * size.height
+            }
+            func x(_ milliseconds: Double) -> CGFloat {
+                CGFloat((milliseconds - firstTime) / (lastTime - firstTime)) * size.width
+            }
+
+            for index in 1..<4 {
+                var grid = Path()
+                let lineY = size.height * CGFloat(index) / 4
+                grid.move(to: CGPoint(x: 0, y: lineY))
+                grid.addLine(to: CGPoint(x: size.width, y: lineY))
+                context.stroke(grid, with: .color(.secondary.opacity(0.22)), lineWidth: 1)
+            }
+
+            if let targetRange {
+                let upperY = y(targetRange.upperBound)
+                let lowerY = y(targetRange.lowerBound)
+                context.fill(
+                    Path(CGRect(x: 0, y: upperY, width: size.width, height: max(1, lowerY - upperY))),
+                    with: .color(SendmeterStyle.optimal.opacity(0.12))
+                )
+            }
+            if let target {
+                var targetPath = Path()
+                targetPath.move(to: CGPoint(x: 0, y: y(target)))
+                targetPath.addLine(to: CGPoint(x: size.width, y: y(target)))
+                context.stroke(
+                    targetPath,
+                    with: .color(SendmeterStyle.optimal.opacity(0.8)),
+                    style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])
+                )
+            }
+
+            guard samples.count > 1 else { return }
+            var trace = Path()
+            for (index, sample) in samples.enumerated() {
+                let point = CGPoint(x: x(sample.milliseconds), y: y(sample.kilograms))
+                if index == 0 { trace.move(to: point) } else { trace.addLine(to: point) }
+            }
+            context.stroke(
+                trace,
+                with: .color(SendmeterStyle.primary),
+                style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
+            )
+        }
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct WatchForceMirrorCard: View {
+    let force: WatchLiveForce
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Apple Watch Force", systemImage: "applewatch")
+                        .font(.headline)
+                    Spacer()
+                    StatusPill(force.status.capitalized, color: force.status == "measuring" ? SendmeterStyle.primary : SendmeterStyle.optimal)
+                }
+                HStack(alignment: .firstTextBaseline) {
+                    MetricValue(
+                        (force.kilograms ?? 0).formatted(.number.precision(.fractionLength(1))),
+                        unit: "kg"
+                    )
+                    Spacer()
+                    VStack(alignment: .trailing) {
+                        Text("Peak \((force.peakKilograms ?? 0).formatted(.number.precision(.fractionLength(1)))) kg")
+                        if let tag = force.tag, !tag.isEmpty { Text(tag) }
+                        if force.side != .unspecified { Text(force.side.label) }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                if !force.spark.isEmpty {
+                    ForceTraceChart(samples: force.spark, targetRange: nil, target: nil)
+                        .frame(height: 100)
+                }
+                Text("Direct WatchConnectivity · updated \(force.updatedAt, style: .relative) ago")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct ForceProtocolLibraryCard: View {
+    let presets: [TindeqPreset]
+    let run: (TindeqPreset) -> Void
+    let edit: (TindeqPreset) -> Void
+    let create: () -> Void
+    let delete: (TindeqPreset) -> Void
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    SectionLabel("Guided protocols", systemImage: "list.bullet.rectangle.portrait")
+                    Spacer()
+                    Button(action: create) { Label("New", systemImage: "plus") }
+                        .labelStyle(.iconOnly)
+                }
+                if presets.isEmpty {
+                    Text("Create repeaters, max hangs, capacity holds, or reverse-action cadence protocols.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button("Create Protocol", action: create)
+                        .buttonStyle(.bordered)
+                } else {
+                    ForEach(presets) { preset in
+                        HStack(spacing: 12) {
+                            Button { run(preset) } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(preset.name).font(.headline)
+                                    Text(protocolSummary(preset))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            Menu {
+                                Button { run(preset) } label: { Label("Run", systemImage: "play.fill") }
+                                Button { edit(preset) } label: { Label("Edit", systemImage: "pencil") }
+                                Button(role: .destructive) { delete(preset) } label: { Label("Delete", systemImage: "trash") }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                                    .font(.title3)
+                            }
+                        }
+                        if preset.id != presets.last?.id { Divider() }
+                    }
+                }
+            }
+        }
+    }
+
+    private func protocolSummary(_ preset: TindeqPreset) -> String {
+        if preset.protocolMode == .reverseAction {
+            return "\(preset.sets) sets · \(preset.repetitions) reps · \(preset.cadenceOutSeconds.formatted())/\(preset.cadenceReturnSeconds.formatted()) s cadence"
+        }
+        return "\(preset.sets) × \(preset.repetitions) · \(preset.holdSeconds)s hold · \(preset.restBetweenRepetitionsSeconds)s rest"
+    }
+}
+
+private struct RecentForceCard: View {
+    let recordings: [TindeqRecording]
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                SectionLabel("Recent recordings", systemImage: "clock")
+                if recordings.isEmpty {
+                    Text("Completed pulls will appear here after their durable local save is queued.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(recordings) { recording in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(recording.tag.isEmpty ? "Untitled pull" : recording.tag)
+                                    .font(.headline)
+                                Text(recording.recordedAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text((recording.peakKilograms ?? 0).formatted(.number.precision(.fractionLength(1))) + " kg")
+                                .font(.headline.monospacedDigit())
+                        }
+                        if recording.id != recordings.last?.id { Divider() }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private enum ForceTargetMode: String, CaseIterable, Identifiable {
+    case none
+    case fixed
+    case percentagePR
+    case percentageCF
+    case curve
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .none: return "None"
+        case .fixed: return "Fixed kg"
+        case .percentagePR: return "% of PR"
+        case .percentageCF: return "% of CF"
+        case .curve: return "Auto curve"
+        }
+    }
+}
+
+private struct ForcePresetEditor: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: TindeqPreset
+    @State private var targetMode: ForceTargetMode
+    @State private var varyHolds: Bool
+    @State private var isSaving = false
+    let isNew: Bool
+
+    init(preset: TindeqPreset, isNew: Bool) {
+        self._draft = State(initialValue: preset)
+        let mode: ForceTargetMode
+        if preset.targetFromCurve {
+            mode = .curve
+        } else if preset.targetPercentage != nil {
+            mode = preset.percentageBasis == .criticalForce ? .percentageCF : .percentagePR
+        } else if preset.targetKilograms != nil {
+            mode = .fixed
+        } else {
+            mode = .none
+        }
+        self._targetMode = State(initialValue: mode)
+        self._varyHolds = State(initialValue: preset.holdSecondsBySet != nil)
+        self.isNew = isNew
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Protocol") {
+                    TextField("Name", text: $draft.name)
+                    Picker("Mode", selection: $draft.protocolMode) {
+                        Text("Hold").tag(ForceProtocolMode.hold)
+                        Text("Reverse Action").tag(ForceProtocolMode.reverseAction)
+                    }
+                    Stepper("Sets: \(draft.sets)", value: $draft.sets, in: 1...20)
+                    Stepper("Repetitions: \(draft.repetitions)", value: $draft.repetitions, in: 1...50)
+                    if draft.protocolMode == .hold {
+                        Stepper("Base hold: \(draft.holdSeconds) s", value: $draft.holdSeconds, in: 1...600)
+                        Toggle("Vary hold by set", isOn: $varyHolds)
+                        if varyHolds {
+                            ForEach(1...max(1, draft.sets), id: \.self) { setNumber in
+                                HStack {
+                                    Text("Set \(setNumber)")
+                                    Spacer()
+                                    TextField(
+                                        "seconds",
+                                        value: holdBinding(setNumber: setNumber),
+                                        format: .number
+                                    )
+                                    .keyboardType(.numberPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 80)
+                                    Text("s").foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        Stepper(
+                            "Rest between reps: \(draft.restBetweenRepetitionsSeconds) s",
+                            value: $draft.restBetweenRepetitionsSeconds,
+                            in: 0...900,
+                            step: 5
+                        )
+                    } else {
+                        HStack {
+                            Text("Pull out")
+                            Spacer()
+                            TextField("seconds", value: $draft.cadenceOutSeconds, format: .number)
+                                .multilineTextAlignment(.trailing)
+                                .keyboardType(.decimalPad)
+                                .frame(width: 80)
+                            Text("s").foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Text("Return")
+                            Spacer()
+                            TextField("seconds", value: $draft.cadenceReturnSeconds, format: .number)
+                                .multilineTextAlignment(.trailing)
+                                .keyboardType(.decimalPad)
+                                .frame(width: 80)
+                            Text("s").foregroundStyle(.secondary)
+                        }
+                    }
+                    Stepper(
+                        "Rest between sets: \(draft.restBetweenSetsSeconds) s",
+                        value: $draft.restBetweenSetsSeconds,
+                        in: 0...1_800,
+                        step: 5
+                    )
+                    Stepper("Prepare: \(draft.prepareSeconds) s", value: $draft.prepareSeconds, in: 0...60)
+                    Toggle("Alternate sides", isOn: $draft.alternateSides)
+                }
+
+                Section("Target") {
+                    Picker("Target mode", selection: $targetMode) {
+                        ForEach(ForceTargetMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+
+                    switch targetMode {
+                    case .none:
+                        Text("No target band will be shown.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .fixed:
+                        kilogramsField
+                    case .percentagePR, .percentageCF:
+                        HStack {
+                            Text(targetMode == .percentageCF ? "Percent of CF" : "Percent of PR")
+                            Spacer()
+                            TextField(
+                                "percent",
+                                value: Binding(
+                                    get: { draft.targetPercentage ?? 80 },
+                                    set: { draft.targetPercentage = min(150, max(1, $0)) }
+                                ),
+                                format: .number
+                            )
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                            Text("%").foregroundStyle(.secondary)
+                        }
+                        if draft.sets > 1 {
+                            HStack {
+                                Text("Increase each set")
+                                Spacer()
+                                TextField("step", value: $draft.percentageStep, format: .number)
+                                    .keyboardType(.numbersAndPunctuation)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 80)
+                                Text("%").foregroundStyle(.secondary)
+                            }
+                        }
+                        Text(targetMode == .percentageCF
+                             ? "Uses this exercise and side's critical-force estimate."
+                             : "Uses this exercise and side's best recorded peak.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .curve:
+                        Text("Each set resolves against the exercise's Hill force-duration curve at that set's prescribed work duration.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if targetMode != .none {
+                        Picker("Tolerance", selection: $draft.toleranceMode) {
+                            Text("Percent").tag("percent")
+                            Text("Kilograms").tag("kg")
+                        }
+                        HStack {
+                            Text("Tolerance value")
+                            Spacer()
+                            TextField("value", value: $draft.toleranceValue, format: .number)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 90)
+                            Text(draft.toleranceMode == "kg" ? "kg" : "%")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Section("Coaching") {
+                    TextField("Setup note", text: $draft.setupNote, axis: .vertical)
+                    Toggle("Counts as capacity evidence", isOn: $draft.capacityEvidence)
+                }
+            }
+            .navigationTitle(isNew ? "New Protocol" : "Edit Protocol")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        save()
+                    } label: {
+                        if isSaving { ProgressView() } else { Text("Save") }
+                    }
+                    .disabled(!isValid || isSaving)
+                }
+            }
+            .onChange(of: draft.sets) { _ in
+                normalizeHoldOverrides()
+            }
+            .onChange(of: varyHolds) { enabled in
+                if enabled { normalizeHoldOverrides() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var kilogramsField: some View {
+        HStack {
+            Text("Target")
+            Spacer()
+            TextField(
+                "kg",
+                value: Binding(
+                    get: { draft.targetKilograms ?? 0 },
+                    set: { draft.targetKilograms = max(0, $0) }
+                ),
+                format: .number
+            )
+            .keyboardType(.decimalPad)
+            .multilineTextAlignment(.trailing)
+            .frame(width: 90)
+            Text("kg").foregroundStyle(.secondary)
+        }
+    }
+
+    private var isValid: Bool {
+        !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && draft.sets > 0
+            && draft.repetitions > 0
+            && (draft.protocolMode == .hold
+                || (draft.cadenceOutSeconds >= 0.25 && draft.cadenceReturnSeconds >= 0.25))
+            && (targetMode != .fixed || (draft.targetKilograms ?? 0) > 0)
+            && ((targetMode != .percentagePR && targetMode != .percentageCF)
+                || (draft.targetPercentage ?? 0) > 0)
+    }
+
+    private func holdBinding(setNumber: Int) -> Binding<Int> {
+        Binding(
+            get: {
+                guard let values = draft.holdSecondsBySet,
+                      values.indices.contains(setNumber - 1)
+                else { return draft.holdSeconds }
+                return values[setNumber - 1]
+            },
+            set: { value in
+                normalizeHoldOverrides()
+                draft.holdSecondsBySet?[setNumber - 1] = min(600, max(1, value))
+            }
+        )
+    }
+
+    private func normalizeHoldOverrides() {
+        guard varyHolds else { return }
+        var values = draft.holdSecondsBySet ?? []
+        if values.count < draft.sets {
+            values.append(contentsOf: Array(repeating: draft.holdSeconds, count: draft.sets - values.count))
+        } else if values.count > draft.sets {
+            values = Array(values.prefix(draft.sets))
+        }
+        draft.holdSecondsBySet = values.map { min(600, max(1, $0)) }
+    }
+
+    private func save() {
+        isSaving = true
+        if varyHolds {
+            normalizeHoldOverrides()
+        } else {
+            draft.holdSecondsBySet = nil
+        }
+        switch targetMode {
+        case .none:
+            draft.targetKilograms = nil
+            draft.targetPercentage = nil
+            draft.targetFromCurve = false
+        case .fixed:
+            draft.targetKilograms = max(0.1, draft.targetKilograms ?? 0.1)
+            draft.targetPercentage = nil
+            draft.targetFromCurve = false
+        case .percentagePR:
+            draft.targetKilograms = nil
+            draft.targetPercentage = min(150, max(1, draft.targetPercentage ?? 80))
+            draft.percentageBasis = .personalRecord
+            draft.targetFromCurve = false
+        case .percentageCF:
+            draft.targetKilograms = nil
+            draft.targetPercentage = min(150, max(1, draft.targetPercentage ?? 80))
+            draft.percentageBasis = .criticalForce
+            draft.targetFromCurve = false
+        case .curve:
+            draft.targetKilograms = nil
+            draft.targetPercentage = nil
+            draft.targetFromCurve = true
+        }
+        draft.cadenceOutSeconds = max(0.25, draft.cadenceOutSeconds)
+        draft.cadenceReturnSeconds = max(0.25, draft.cadenceReturnSeconds)
+        draft.toleranceValue = max(0, draft.toleranceValue)
+        draft.setupNote = String(draft.setupNote.prefix(500))
+        Task {
+            await model.savePreset(draft, isNew: isNew)
+            isSaving = false
+            dismiss()
+        }
+    }
+}
+
+private struct GuidedForceProtocolView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var run: ForceProtocolRun
+    @State private var observedStageID: UUID?
+    @State private var isAdvancing = false
+    @State private var savedCount = 0
+    @State private var interrupted = false
+    @State private var claimedStageIDs = Set<UUID>()
+
+    let preset: TindeqPreset
+    let targetPlan: ForceTargetPlan
+    let tag: String
+    let startingSide: TindeqSide
+    let fallbackSide: TindeqSide
+    let zone: RecordedZone?
+
+    init(
+        preset: TindeqPreset,
+        targetPlan: ForceTargetPlan,
+        tag: String,
+        startingSide: TindeqSide,
+        fallbackSide: TindeqSide,
+        zone: RecordedZone?
+    ) {
+        self.preset = preset
+        self.targetPlan = targetPlan
+        self.tag = tag
+        self.startingSide = startingSide
+        self.fallbackSide = fallbackSide
+        self.zone = zone
+        self._run = State(initialValue: ForceProtocolRun(preset: preset, startingSide: startingSide))
+    }
+
+    var body: some View {
+        NavigationStack {
+            TimelineView(.periodic(from: .now, by: 0.2)) { context in
+                VStack(spacing: 22) {
+                    Spacer(minLength: 12)
+                    VStack(spacing: 7) {
+                        Text(run.currentStage.label)
+                            .font(.largeTitle.bold())
+                        if run.currentStage.side != .unspecified {
+                            StatusPill(run.currentStage.side.label, color: SendmeterStyle.primary)
+                        }
+                        Text("Set \(run.currentStage.setNumber) · Rep \(run.currentStage.repetitionNumber)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if run.currentStage.kind == .work {
+                        MetricValue(
+                            model.tindeq.currentKilograms.formatted(.number.precision(.fractionLength(1))),
+                            unit: "kg",
+                            color: protocolInTarget ? SendmeterStyle.optimal : .primary
+                        )
+                        ForceTraceChart(
+                            samples: model.tindeq.visibleSamples,
+                            targetRange: currentTargetBand?.range,
+                            target: currentTargetBand?.kilograms
+                        )
+                        .frame(height: 220)
+                    } else {
+                        Image(systemName: stageSymbol)
+                            .font(.system(size: 56, weight: .semibold))
+                            .foregroundStyle(stageColor)
+                    }
+
+                    Text(Int(ceil(run.remainingSeconds(at: context.date))), format: .number)
+                        .font(.system(size: 72, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    Text("seconds remaining")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ProgressView(
+                        value: run.currentStage.durationSeconds == 0
+                            ? 1
+                            : min(1, run.elapsedSeconds(at: context.date) / run.currentStage.durationSeconds)
+                    )
+                    .tint(stageColor)
+
+                    Text("\(savedCount) pull\(savedCount == 1 ? "" : "s") durably queued")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if run.isComplete || interrupted {
+                        Button("Finish") { dismiss() }
+                            .buttonStyle(PrimaryActionButtonStyle())
+                    } else {
+                        Button("Skip Stage") {
+                            Task { await skipCurrentStage(at: context.date) }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isAdvancing)
+                    }
+                    Spacer(minLength: 12)
+                }
+                .padding()
+                .task(id: Int(context.date.timeIntervalSince1970 * 5)) {
+                    await tick(at: context.date)
+                }
+            }
+            .navigationTitle(preset.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(!run.isComplete && !interrupted)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .destructive) {
+                        Task { await cancelAndPreserve() }
+                    }
+                }
+            }
+            .onAppear {
+                run.start()
+            }
+        }
+    }
+
+    private var stageSymbol: String {
+        switch run.currentStage.kind {
+        case .prepare: return "hourglass"
+        case .switchSide: return "arrow.left.arrow.right"
+        case .restBetweenRepetitions, .restBetweenSets: return "pause.fill"
+        case .complete: return "checkmark.circle.fill"
+        case .work: return "waveform.path.ecg"
+        }
+    }
+
+    private var stageColor: Color {
+        switch run.currentStage.kind {
+        case .work: return SendmeterStyle.primary
+        case .complete: return SendmeterStyle.optimal
+        case .prepare, .switchSide: return SendmeterStyle.caution
+        case .restBetweenRepetitions, .restBetweenSets: return SendmeterStyle.optimal
+        }
+    }
+
+    private var currentStageSide: TindeqSide {
+        run.currentStage.side == .unspecified ? fallbackSide : run.currentStage.side
+    }
+
+    private var currentTargetBand: ForceTargetBand? {
+        targetPlan.band(forSet: run.currentStage.setNumber, side: currentStageSide)
+    }
+
+    private var protocolInTarget: Bool {
+        currentTargetBand?.range.contains(model.tindeq.currentKilograms) ?? false
+    }
+
+    @MainActor
+    private func tick(at date: Date) async {
+        guard !run.isComplete, !interrupted, !isAdvancing else { return }
+
+        if case .interrupted = model.tindeq.status {
+            interrupted = true
+            if let summary = model.tindeq.interruptedRecording {
+                let enqueued = await preserve(summary, stage: run.currentStage, partial: true)
+                if enqueued { model.tindeq.clearInterruptedRecording() }
+            }
+            return
+        }
+
+        if observedStageID != run.currentStage.id {
+            observedStageID = run.currentStage.id
+            if run.currentStage.kind == .work {
+                do {
+                    try model.tindeq.startMeasuring()
+                } catch {
+                    model.errorMessage = error.localizedDescription
+                    interrupted = true
+                    return
+                }
+            }
+        }
+
+        guard run.remainingSeconds(at: date) <= 0 else { return }
+        await advanceCurrentStage(at: date)
+    }
+
+    @MainActor
+    private func advanceCurrentStage(at date: Date) async {
+        guard !isAdvancing else { return }
+        isAdvancing = true
+        let stage = run.currentStage
+        if stage.kind == .work, let summary = model.tindeq.stopMeasuring() {
+            let enqueued = await preserve(summary, stage: stage, partial: false)
+            guard enqueued else {
+                isAdvancing = false
+                interrupted = true
+                return
+            }
+            model.tindeq.clearCompletedRecording()
+        }
+        run.advance(at: date)
+        observedStageID = nil
+        isAdvancing = false
+    }
+
+    @MainActor
+    private func skipCurrentStage(at date: Date) async {
+        await advanceCurrentStage(at: date)
+    }
+
+    @MainActor
+    private func cancelAndPreserve() async {
+        let stage = run.currentStage
+        if stage.kind == .work, let summary = model.tindeq.stopMeasuring() {
+            let enqueued = await preserve(summary, stage: stage, partial: true)
+            if enqueued {
+                model.tindeq.clearCompletedRecording()
+            } else {
+                interrupted = true
+                return
+            }
+        }
+        dismiss()
+    }
+
+    @MainActor
+    private func preserve(
+        _ summary: ForceSummary,
+        stage: ForceProtocolStage,
+        partial: Bool
+    ) async -> Bool {
+        guard claimedStageIDs.insert(stage.id).inserted else { return true }
+        let side = stage.side == .unspecified ? fallbackSide : stage.side
+        let savedTag: String
+        if partial {
+            savedTag = tag.isEmpty ? "\(preset.name) · Partial" : "\(tag) · Partial"
+        } else {
+            savedTag = tag.isEmpty ? preset.name : tag
+        }
+        let enqueued = await model.saveForceSummary(
+            summary,
+            tag: savedTag,
+            side: side,
+            zone: zone,
+            preset: preset,
+            targetBand: targetPlan.band(forSet: stage.setNumber, side: side),
+            protocolRunID: run.runID,
+            setNumber: stage.setNumber,
+            repetitionNumber: stage.repetitionNumber,
+            partial: partial
+        )
+        if enqueued {
+            savedCount += 1
+        } else {
+            claimedStageIDs.remove(stage.id)
+        }
+        return enqueued
+    }
+}
