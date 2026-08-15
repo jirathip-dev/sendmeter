@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { today } from "../dates";
 
 /// #615: `insertPhoneWorkout` used to perform three separate,
 /// non-transactional requests (`sessions` insert, `climb_workouts` insert,
@@ -36,9 +37,26 @@ vi.mock("../supabase", () => ({
 
 const { insertPhoneWorkout } = await import("./workouts");
 
+/// The fixture date is pinned to `today()` (the same helper
+/// `insertPhoneWorkout` uses for `p_date`), not a literal: a hardcoded date
+/// goes stale the day after it is written and the whole suite starts
+/// failing on CI's clock (#615 follow-up). Computed once at module scope so
+/// the row and the expected RPC args can't disagree with each other.
+const FIXTURE_DATE = today();
+
+/// The workout's timestamps share the fixture day (they are passed through
+/// verbatim, so they could stay literal — deriving them from the date keeps
+/// the fixture one coherent day instead of two).
+const FIXTURE_TIMES = {
+  start: `${FIXTURE_DATE}T10:00:00.000Z`,
+  end: `${FIXTURE_DATE}T10:45:30.000Z`,
+  attempt1: `${FIXTURE_DATE}T10:05:00.000Z`,
+  attempt2: `${FIXTURE_DATE}T10:20:00.000Z`,
+};
+
 const CANONICAL_ROW = {
   id: "session-1",
-  date: "2026-08-14",
+  date: FIXTURE_DATE,
   type: "gym",
   type_label: "Gym",
   duration_min: 45,
@@ -63,11 +81,11 @@ describe("insertPhoneWorkout (#615)", () => {
     const saved = await insertPhoneWorkout({
       sessionId: "session-1",
       workoutId: "workout-1",
-      startedAt: "2026-08-14T10:00:00.000Z",
-      endedAt: "2026-08-14T10:45:30.000Z",
+      startedAt: FIXTURE_TIMES.start,
+      endedAt: FIXTURE_TIMES.end,
       attempts: [
-        { startedAt: "2026-08-14T10:05:00.000Z", durationS: 90 },
-        { startedAt: "2026-08-14T10:20:00.000Z", durationS: 75 },
+        { startedAt: FIXTURE_TIMES.attempt1, durationS: 90 },
+        { startedAt: FIXTURE_TIMES.attempt2, durationS: 75 },
       ],
       type: "gym",
       typeLabel: "Gym",
@@ -78,18 +96,18 @@ describe("insertPhoneWorkout (#615)", () => {
     expect(rpc).toHaveBeenCalledWith("create_phone_workout", {
       p_session_id: "session-1",
       p_workout_id: "workout-1",
-      p_date: "2026-08-14",
+      p_date: FIXTURE_DATE,
       p_type: "gym",
       p_type_label: "Gym",
       p_duration_min: 46, // Math.round(45.5) from the 45m30s span, clamped 1..600
       p_rpe: 6,
       p_note: "2 boulders",
       p_phase: "capacity",
-      p_started_at: "2026-08-14T10:00:00.000Z",
-      p_ended_at: "2026-08-14T10:45:30.000Z",
+      p_started_at: FIXTURE_TIMES.start,
+      p_ended_at: FIXTURE_TIMES.end,
       p_attempts: [
-        { started_at: "2026-08-14T10:05:00.000Z", duration_s: 90 },
-        { started_at: "2026-08-14T10:20:00.000Z", duration_s: 75 },
+        { started_at: FIXTURE_TIMES.attempt1, duration_s: 90 },
+        { started_at: FIXTURE_TIMES.attempt2, duration_s: 75 },
       ],
     });
     // The canonical row returned by the RPC is what callers reconcile with.
@@ -109,8 +127,8 @@ describe("insertPhoneWorkout (#615)", () => {
       insertPhoneWorkout({
         sessionId: "session-1",
         workoutId: "workout-1",
-        startedAt: "2026-08-14T10:00:00.000Z",
-        endedAt: "2026-08-14T10:45:30.000Z",
+        startedAt: FIXTURE_TIMES.start,
+        endedAt: FIXTURE_TIMES.end,
         attempts: [],
         type: "gym",
         typeLabel: "Gym",

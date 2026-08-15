@@ -13,6 +13,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Apple Watch Force sessions can now arm hands-free for free holds: pulling starts and releasing saves automatically; between reps it waits for the gauge to unload, with a 10-minute idle safety cutoff.
 - Apple Watch now shows quarantined uploads — items the server has stopped accepting — with the failing stage, HTTP status, PostgREST code, a trimmed error message, the attempt count and the quarantine time, plus what happens next for each kind (permanently rejected vs. retrying automatically). Home's action page links to this list.
 - Apple Watch: uploads stuck in the set-aside state can now be retried by hand — a "Retry stuck uploads" action moves the retryable ones straight back to the upload queue and tries them immediately, instead of waiting out the automatic week-long backoff. Permanently rejected items are shown but never offered as a retry.
+- Apple Watch: when a stuck upload leaves the set-aside state — retried by hand or by the automatic weekly retry — the watch keeps a small record of why it was set aside (failing stage, HTTP status, error code and when), shown under Recent history in Quarantined uploads, so a sync problem that has since cleared stays diagnosable.
 
 ### Improved
 
@@ -59,6 +60,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- Watch: an upload the server answers with "forbidden" (HTTP 403 — usually the watch's sign-in has gone stale, not a problem with the workout itself) no longer spends the upload's retry budget: the watch asks the iPhone for a fresh sign-in instead, and only if the same 403 keeps coming back after several refreshes is the upload counted toward being set aside.
 - iPhone: reopening the app now reacts to both foreground signals — the WebView's visibility change and the native app's own active transition — before re-sharing the current sign-in with the paired Apple Watch and the Health sync, and each reopen triggers a single re-share and a single health sync. When the Apple Watch asks the phone for a fresh sign-in while the iPhone's session is already gone, the reason is now recorded separately in Settings → Sign-in diagnostics under its own entry.
 - Watch: if a Climb Workout fails to start partway through, the watch now ends and discards the partially-started session instead of leaving it running in the background.
 - iPhone: reopening the app no longer shows readiness as "Synced just now" for an older watch-triggered result that actually completed hours earlier; the synced-time marker is also now kept separate per signed-in account.
