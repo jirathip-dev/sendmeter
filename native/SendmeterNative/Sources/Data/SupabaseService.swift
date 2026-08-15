@@ -1,7 +1,7 @@
 import AuthenticationServices
 @_spi(Experimental) import Auth
 import Foundation
-import enum SendmeterCore.LocalDateSupport
+import SendmeterCore
 import Supabase
 import UIKit
 
@@ -40,12 +40,12 @@ public final class AuthService {
     }
 
     @discardableResult
-    public func signIn(email: String, password: String) async throws -> Session {
+    public func signIn(email: String, password: String) async throws -> Auth.Session {
         try await client.auth.signIn(email: email, password: password)
     }
 
     @discardableResult
-    public func signUp(email: String, password: String) async throws -> Session? {
+    public func signUp(email: String, password: String) async throws -> Auth.Session? {
         try await client.auth.signUp(email: email, password: password).session
     }
 

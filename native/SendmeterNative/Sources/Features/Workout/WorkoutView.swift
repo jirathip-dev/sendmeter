@@ -12,7 +12,7 @@ struct WorkoutView: View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    if let live = model.watch.liveWorkout, !live.terminal {
+                    if let live = model.liveWorkout {
                         WatchWorkoutMirrorCard(workout: live)
                     }
                     if engine == nil {
@@ -190,6 +190,7 @@ private struct ActiveWorkoutCard: View {
 }
 
 private struct WatchWorkoutMirrorCard: View {
+    @EnvironmentObject private var model: AppModel
     let workout: LiveWorkout
 
     var body: some View {
@@ -206,10 +207,19 @@ private struct WatchWorkoutMirrorCard: View {
                     value("Heart rate", workout.heartRate.map { "\(Int($0)) bpm" } ?? "—")
                     value("Energy", workout.activeKilocalories.map { "\(Int($0)) kcal" } ?? "—")
                 }
-                Text("Direct WatchConnectivity mirror · updated \(workout.updatedAt, style: .relative) ago")
+                Text("\(transportLabel) · updated \(workout.updatedAt, style: .relative) ago")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var transportLabel: String {
+        switch model.liveWorkoutSyncState {
+        case .watchDirect: return "Direct WatchConnectivity mirror"
+        case .serverFallback: return "Server mirror"
+        case .temporarilyUnreachable: return "Link paused"
+        case .unknown: return "Mirror"
         }
     }
 
@@ -286,13 +296,13 @@ private struct RoutineRunnerSheet: View {
                     if let detail = run.currentStage.detail {
                         Text(detail).foregroundStyle(.secondary)
                     }
-                    Text(Int(ceil(run.remainingSeconds(at: context.date))), format: .number)
+                    Text("\(run.remainingSeconds(at: context.date))")
                         .font(.system(size: 80, weight: .bold, design: .rounded))
                         .monospacedDigit()
                     ProgressView(
                         value: run.currentStage.durationSeconds == 0
-                            ? 1
-                            : min(1, run.elapsedSeconds(at: context.date) / Double(run.currentStage.durationSeconds))
+                            ? 1.0
+                            : min(1.0, Double(run.elapsedSeconds(at: context.date)) / Double(run.currentStage.durationSeconds))
                     )
                     .tint(run.currentStage.kind == .rest ? SendmeterStyle.optimal : SendmeterStyle.primary)
 

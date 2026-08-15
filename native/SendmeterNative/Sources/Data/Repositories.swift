@@ -7,6 +7,64 @@ private let sessionColumns = "id,date,type,type_label,duration_min,rpe,rpe_confi
 private let recordingColumns = "id,recorded_at,duration_ms,peak_kg,avg_kg,sample_count,note,tag,side,group_id,protocol_run_id,set_no,zone,source,external_load_kg,outcome,planned_duration_ms,actual_duration_ms,rep_no,protocol_mode,target_kg,target_low_kg,target_high_kg,cadence_out_s,cadence_return_s,cadence_markers,set_metrics,setup_note,capacity_evidence,completed_reps,completion_status"
 private let presetColumns = "id,name,hold_s,holds_s,reps,sets,rest_reps_s,rest_sets_s,target_kg,target_pct,pct_basis,pct_step,target_curve,alternate_sides,protocol_mode,cadence_out_s,cadence_return_s,tolerance_mode,tolerance_value,prepare_s,setup_note,capacity_evidence"
 
+private struct LiveWorkoutRow: Decodable {
+    let workoutID: UUID
+    let runID: UUID?
+    let userID: UUID?
+    let sequence: Int?
+    let event: String?
+    let terminal: Bool?
+    let status: String
+    let startedAt: Date
+    let heartRate: Double?
+    let attemptCount: Int?
+    let activeKilocalories: Double?
+    let elevationGainMeters: Double?
+    let climbing: Bool?
+    let climbingSince: Date?
+    let restStartedAt: Date?
+    let restTargetSeconds: Int?
+    let updatedAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case status, event, terminal, climbing, sequence
+        case workoutID = "workout_id"
+        case runID = "run_id"
+        case userID = "user_id"
+        case startedAt = "started_at"
+        case heartRate = "hr"
+        case attemptCount = "attempt_count"
+        case activeKilocalories = "active_kcal"
+        case elevationGainMeters = "elevation_gain_m"
+        case climbingSince = "climbing_since"
+        case restStartedAt = "rest_started_at"
+        case restTargetSeconds = "rest_target_s"
+        case updatedAt = "updated_at"
+    }
+
+    var model: LiveWorkout {
+        LiveWorkout(
+            workoutID: workoutID,
+            runID: runID ?? workoutID,
+            sequence: sequence,
+            event: event ?? "telemetry",
+            terminal: terminal ?? (status == "ended"),
+            status: status,
+            startedAt: startedAt,
+            heartRate: heartRate,
+            attemptCount: attemptCount ?? 0,
+            activeKilocalories: activeKilocalories,
+            elevationGainMeters: elevationGainMeters,
+            climbing: climbing ?? false,
+            climbingSince: climbingSince,
+            restStartedAt: restStartedAt,
+            restTargetSeconds: restTargetSeconds,
+            updatedAt: updatedAt,
+            userID: userID
+        )
+    }
+}
+
 private struct SessionRow: Decodable {
     let id: UUID
     let date: String
@@ -1288,6 +1346,26 @@ public final class SendmeterRepository: @unchecked Sendable {
             ]
         )
         return rows.map(\.model)
+    }
+
+    /// The current `live_workouts` row (one per user). The realtime channel
+    /// delivers rows as the watch upserts them; this is the authoritative
+    /// initial fetch / foreground reconciliation, fed into the same mirror
+    /// cursor as `server-fallback` (#626).
+    public func fetchLiveWorkout() async throws -> LiveWorkout? {
+        let rows: [LiveWorkoutRow] = try await transport.request(
+            path: "rest/v1/live_workouts",
+            method: .get,
+            queryItems: [
+                URLQueryItem(
+                    name: "select",
+                    value: "workout_id,run_id,user_id,sequence,event,terminal,status,started_at,hr,attempt_count,active_kcal,elevation_gain_m,climbing,climbing_since,rest_started_at,rest_target_s,updated_at"
+                ),
+                URLQueryItem(name: "order", value: "updated_at.desc"),
+                URLQueryItem(name: "limit", value: "1")
+            ]
+        )
+        return rows.first?.model
     }
 
     public func insertPhoneWorkout(_ draft: WorkoutDraft, timeZone: TimeZone = .current) async throws -> Session {
