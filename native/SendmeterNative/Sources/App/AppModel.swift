@@ -68,6 +68,7 @@ public final class AppModel: ObservableObject {
     private var pendingRecordings: [UUID: TindeqRecording] = [:]
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
+    private var recomputeGate = ReadinessRecomputeGate()
 
     public init(
         auth: AuthService = AuthService(),
@@ -101,6 +102,21 @@ public final class AppModel: ObservableObject {
         }
         watch.onWorkoutCompletion = { [weak self] completion in
             await self?.acceptWatchCompletion(completion)
+        }
+        // A background HealthKit observer fire and foreground sync share the
+        // same single-flight recompute path (see computeAndPublishReadiness).
+        health.onBackgroundUpdate = { [weak self] in
+            await self?.handleHealthBackgroundUpdate()
+        }
+
+        // Observer queries are per-process: a cold launch — including a
+        // HealthKit background wake that relaunches the app — must
+        // re-register before delivery can fire. Guarded by the same
+        // health-authorized flag as becameActive's sync.
+        if UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") {
+            Task { [weak self] in
+                await self?.health.ensureBackgroundObserversRegistered()
+            }
         }
 
         tindeq.objectWillChange
@@ -186,6 +202,7 @@ public final class AppModel: ObservableObject {
         await drainQueue()
         await refreshAll(showSpinner: false)
         if UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") {
+            await health.ensureBackgroundObserversRegistered()
             await syncHealth(requestAuthorization: false)
         }
     }
@@ -674,12 +691,40 @@ public final class AppModel: ObservableObject {
                 try await health.requestAuthorization()
                 UserDefaults.standard.set(true, forKey: "sendmeter.native.health-authorized")
             }
-            let metric = try await health.computeTodayMetric(acwr: self.acwr.ratio)
-            try await repository.upsertHealthMetric(metric, userID: userID)
-            self.healthMetrics.removeAll { $0.date == metric.date }
-            self.healthMetrics.insert(metric, at: 0)
-            self.watch.publishReadiness(metric)
+            try await self.computeAndPublishReadiness(userID: userID)
             self.toastMessage = "Apple Health synced."
+        }
+    }
+
+    /// A background HealthKit observer fire. Same path as foreground sync:
+    /// recompute via RecoveryEngine, upsert `health_metrics`, relay to the
+    /// watch. Single-flight with `syncHealth` — a fire during a foreground
+    /// sync coalesces into at most one follow-up instead of double-computing.
+    private func handleHealthBackgroundUpdate() async {
+        guard let userID = currentUserID else { return }
+        await perform {
+            try await self.computeAndPublishReadiness(userID: userID)
+        }
+    }
+
+    /// The one recompute path, owned by `ReadinessRecomputeGate`: exactly one
+    /// pass runs at a time and a concurrent trigger (foreground or
+    /// background) coalesces into at most one follow-up. The gate is entered
+    /// before the first await so two fires cannot both start a compute.
+    private func computeAndPublishReadiness(userID: UUID) async throws {
+        guard recomputeGate.request() == .start else { return }
+        do {
+            while true {
+                let metric = try await health.computeTodayMetric(acwr: acwr.ratio)
+                try await repository.upsertHealthMetric(metric, userID: userID)
+                healthMetrics.removeAll { $0.date == metric.date }
+                healthMetrics.insert(metric, at: 0)
+                watch.publishReadiness(metric)
+                guard recomputeGate.complete() == .rerun else { return }
+            }
+        } catch {
+            recomputeGate.cancel()
+            throw error
         }
     }
 

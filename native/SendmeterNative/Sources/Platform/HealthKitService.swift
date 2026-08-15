@@ -9,8 +9,17 @@ public final class HealthKitService: ObservableObject {
     @Published public private(set) var isSyncing = false
     @Published public private(set) var lastError: String?
 
+    /// Fired on the main actor when a background HealthKit observer query
+    /// detects new data for one of the four observed types. Wired by
+    /// `AppModel` to the same recompute path as foreground sync so a
+    /// background wake recomputes readiness, upserts `health_metrics` and
+    /// relays the result to the watch (parity with the shipped plugin, #629).
+    public var onBackgroundUpdate: (@MainActor () async -> Void)?
+
     private let store: HKHealthStore
     private let calendar: Calendar
+    private var observersRegistered = false
+    private var backgroundSetupRegistered = false
 
     public init(
         store: HKHealthStore = HKHealthStore(),
@@ -41,7 +50,19 @@ public final class HealthKitService: ObservableObject {
         if let hrv = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN) {
             authorizationStatus = store.authorizationStatus(for: hrv)
         }
+        await ensureBackgroundObserversRegistered()
+    }
+
+    /// Idempotent per-process registration of background delivery + observer
+    /// queries for the four types in `HealthObserverTypes.observedIdentifiers`.
+    /// Observer queries live only for the current process, so a cold launch —
+    /// including a HealthKit background wake that relaunches the app — must
+    /// re-register; `AppModel` calls this from launch and on foreground.
+    public func ensureBackgroundObserversRegistered() async {
+        guard isAvailable, !backgroundSetupRegistered else { return }
+        backgroundSetupRegistered = true
         await enableBackgroundDelivery()
+        registerBackgroundObservers()
     }
 
     public func computeTodayMetric(acwr: Double?) async throws -> HealthMetric {
@@ -148,26 +169,48 @@ public final class HealthKitService: ObservableObject {
         return types
     }
 
+    /// One observer query per delivered type, so HealthKit can wake the app
+    /// for each of the four independently (the shipped plugin observes only
+    /// HRV; observing the full delivered set means a mid-day sleep-stage or
+    /// resting-HR write lands too). A fired query funnels into
+    /// `onBackgroundUpdate`, which `AppModel` routes through the same
+    /// single-flight recompute path as foreground sync.
+    private func registerBackgroundObservers() {
+        guard !observersRegistered, isAvailable else { return }
+        observersRegistered = true
+        for identifier in HealthObserverTypes.observedIdentifiers {
+            guard let type = Self.objectType(for: identifier) else { continue }
+            let query = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] _, completion, _ in
+                Task { @MainActor in
+                    await self?.onBackgroundUpdate?()
+                    completion()
+                }
+            }
+            store.execute(query)
+        }
+    }
+
     private func enableBackgroundDelivery() async {
-        for identifier in [
-            HKQuantityTypeIdentifier.heartRateVariabilitySDNN,
-            .restingHeartRate,
-            .respiratoryRate
-        ] {
-            guard let type = HKObjectType.quantityType(forIdentifier: identifier) else { continue }
+        for identifier in HealthObserverTypes.observedIdentifiers {
+            guard let type = Self.objectType(for: identifier) else { continue }
             await withCheckedContinuation { continuation in
                 store.enableBackgroundDelivery(for: type, frequency: .daily) { _, _ in
                     continuation.resume()
                 }
             }
         }
-        if let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
-            await withCheckedContinuation { continuation in
-                store.enableBackgroundDelivery(for: sleep, frequency: .daily) { _, _ in
-                    continuation.resume()
-                }
-            }
+    }
+
+    private static func objectType(for identifier: String) -> HKObjectType? {
+        if let quantity = HKQuantityTypeIdentifier(rawValue: identifier),
+           let type = HKObjectType.quantityType(forIdentifier: quantity) {
+            return type
         }
+        if let category = HKCategoryTypeIdentifier(rawValue: identifier),
+           let type = HKObjectType.categoryType(forIdentifier: category) {
+            return type
+        }
+        return nil
     }
 
     private func dailyAverages(
