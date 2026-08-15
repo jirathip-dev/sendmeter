@@ -13,10 +13,11 @@ import Supabase
 /// silently to WatchConnectivity + foreground refetch, and the supabase-swift
 /// client auto-reconnects and rejoins channels when connectivity returns.
 ///
-/// Concurrency: `subscribe` re-validates its captured generation after every
-/// await and before committing channels, so a join that outlived a newer
-/// subscribe request or an unsubscribe can never commit — or tear down — a
-/// subscription it no longer owns (#626 review).
+/// Concurrency: `subscribe` captures a generation AFTER its own entry
+/// teardown (which deliberately does not bump it — see `subscribe`) and
+/// re-validates it after every await and before committing channels, so a
+/// join that outlived a newer subscribe request or an unsubscribe can never
+/// commit — or tear down — a subscription it no longer owns (#626 review).
 @MainActor
 public final class RealtimeService: ObservableObject {
     @Published public private(set) var connectionStatus: RealtimeClientStatus?
@@ -47,10 +48,15 @@ public final class RealtimeService: ObservableObject {
     /// subscribe or an unsubscribe happens while the joins are in flight.
     public func subscribe(userID: UUID) async {
         guard subscribedUserID != userID else { return }
+        // Teardown FIRST, without bumping the generation: this request's own
+        // teardown must not invalidate itself (#626 review — the previous
+        // version bumped here AND inside unsubscribe(), so the guard below
+        // always failed and realtime never ran). The generation is captured
+        // AFTER the teardown, so only a NEWER subscribe or an unsubscribe
+        // can invalidate the joins that follow.
+        await removeAllChannels()
         generation += 1
         let requestGeneration = generation
-        await unsubscribe()
-        guard generation == requestGeneration else { return }
 
         let realtime = client.realtimeV2
         startStatusObservation(realtime)
@@ -99,18 +105,26 @@ public final class RealtimeService: ObservableObject {
             subscriptions = [workoutSubscription] + dataSubscriptions
             subscribedUserID = userID
         } catch {
-            guard generation == requestGeneration else {
-                await abandon(workoutChannel, dataChannel)
-                return
-            }
-            // Still current: nothing else owns these channels (this request
-            // unsubscribed at entry), so a full teardown is safe.
-            await unsubscribe()
+            // Never leave a partially-joined channel behind: this request's
+            // channels stay untracked until BOTH joins commit, so a full
+            // unsubscribe() here would leak the joined workoutChannel (it
+            // keeps firing callbacks and survives sign-out). Remove the
+            // instances this request created, identity-checked so a newer
+            // request's reused instances survive (#626 review).
+            await abandon(workoutChannel, dataChannel)
         }
     }
 
     public func unsubscribe() async {
+        // Cancels any in-flight subscribe: its next checkpoint sees the
+        // bumped generation and abandons its own channels.
         generation += 1
+        await removeAllChannels()
+    }
+
+    /// Removes the tracked channels without touching the generation — used
+    /// by subscribe's own entry teardown, which must not invalidate itself.
+    private func removeAllChannels() async {
         for channel in channels {
             await client.removeChannel(channel)
         }
