@@ -134,6 +134,14 @@ struct SettingsView: View {
                     Text("\(quarantined)").monospacedDigit()
                 }
             }
+            if let stuck = model.watch.quarantinedStuckSyncCount, stuck > 0 {
+                HStack {
+                    Label("Stuck — retrying", systemImage: "arrow.clockwise")
+                        .foregroundStyle(SendmeterStyle.alert)
+                    Spacer()
+                    Text("\(stuck)").monospacedDigit()
+                }
+            }
             Text("The phone relays access tokens only. Refresh tokens remain owned by the phone and are never copied to the Watch.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
