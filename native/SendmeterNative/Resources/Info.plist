@@ -35,6 +35,8 @@
     <false/>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSSupportsLiveActivities</key>
+    <true/>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Connects to your Tindeq Progressor force gauge.</string>
     <key>NSHealthShareUsageDescription</key>
