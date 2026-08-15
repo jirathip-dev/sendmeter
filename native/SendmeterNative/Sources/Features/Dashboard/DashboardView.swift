@@ -234,11 +234,26 @@ private struct RecentSessionsCard: View {
                         .font(.caption.weight(.semibold))
                 }
                 if model.recentSessions.isEmpty {
-                    ContentUnavailableView(
-                        "No sessions yet",
-                        systemImage: "figure.climbing",
-                        description: Text("Log your first training session or start a workout.")
-                    )
+                    if #available(iOS 17, *) {
+                        ContentUnavailableView(
+                            "No sessions yet",
+                            systemImage: "figure.climbing",
+                            description: Text("Log your first training session or start a workout.")
+                        )
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "figure.climbing")
+                                .font(.system(size: 40))
+                                .foregroundStyle(.secondary)
+                            Text("No sessions yet").font(.headline)
+                            Text("Log your first training session or start a workout.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                    }
                 } else {
                     ForEach(model.recentSessions) { session in
                         SessionSummaryRow(session: session)

@@ -38,9 +38,9 @@ public struct WatchWorkoutCompletion: Codable, Equatable, Sendable, Identifiable
     public let rpeConfirmed: Bool
     public let receivedAt: Date
 
-    public func pendingSession() -> Session {
+    public func pendingSession() -> SendmeterCore.Session {
         let date = LocalDateSupport.string(from: endedAt ?? receivedAt)
-        return Session(
+        return SendmeterCore.Session(
             id: sessionID,
             date: date,
             type: type,
@@ -67,12 +67,15 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     @Published public private(set) var watchBuild: String?
     @Published public private(set) var pendingSyncCount: Int?
     @Published public private(set) var quarantinedSyncCount: Int?
-    @Published public private(set) var liveWorkout: LiveWorkout?
     @Published public private(set) var liveForce: WatchLiveForce?
     @Published public private(set) var pendingCompletions: [WatchWorkoutCompletion] = []
 
     public var onSessionRequested: (() async -> Void)?
     public var onWorkoutCompletion: ((WatchWorkoutCompletion) async -> Void)?
+    /// Mirror producer (#626): the raw `liveWorkout` beat. AppModel owns the
+    /// mirror cursor and reduces WC beats through the same run/sequence state
+    /// machine as realtime rows, so the service stays a dumb transport.
+    public var onLiveWorkoutMessage: (([String: Any]) -> Void)?
 
     private let session: WCSession?
     private var outgoingContext: [String: Any] = [:]
@@ -92,7 +95,7 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
         refreshPairingState()
     }
 
-    public func relaySession(_ authSession: Session?, guaranteed: Bool = false) {
+    public func relaySession(_ authSession: Auth.Session?, guaranteed: Bool = false) {
         if let authSession {
             outgoingContext.merge([
                 "event": "signedIn",
@@ -166,7 +169,7 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
                 replyHandler?([:])
             }
         case "liveWorkout":
-            liveWorkout = parseLiveWorkout(message)
+            onLiveWorkoutMessage?(message)
             replyHandler?([:])
         case "liveForce":
             liveForce = parseLiveForce(message)
@@ -199,31 +202,6 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
         if let build = message["watch_build"] as? String { watchBuild = build }
         if let count = number(message["pending_sync"]).map(Int.init) { pendingSyncCount = count }
         if let count = number(message["quarantined_sync"]).map(Int.init) { quarantinedSyncCount = count }
-    }
-
-    private func parseLiveWorkout(_ message: [String: Any]) -> LiveWorkout? {
-        guard let status = message["status"] as? String,
-              let updated = number(message["updated_at"]) else { return nil }
-        let runID = uuid(message["run_id"]) ?? UUID()
-        return LiveWorkout(
-            workoutID: uuid(message["workout_id"]) ?? runID,
-            runID: runID,
-            sequence: number(message["sequence"]).map(Int.init),
-            event: message["event"] as? String ?? "telemetry",
-            terminal: bool(message["terminal"]) ?? status == "ended",
-            status: status,
-            startedAt: number(message["started_at"]).map(Date.init(timeIntervalSince1970:))
-                ?? Date(timeIntervalSince1970: updated),
-            heartRate: number(message["hr"]),
-            attemptCount: number(message["attempt_count"]).map(Int.init) ?? 0,
-            activeKilocalories: number(message["active_kcal"]),
-            elevationGainMeters: number(message["elevation_gain_m"]),
-            climbing: bool(message["climbing"]) ?? false,
-            climbingSince: number(message["climbing_since"]).map(Date.init(timeIntervalSince1970:)),
-            restStartedAt: number(message["rest_started_at"]).map(Date.init(timeIntervalSince1970:)),
-            restTargetSeconds: number(message["rest_target_s"]).map(Int.init),
-            updatedAt: Date(timeIntervalSince1970: updated)
-        )
     }
 
     private func parseLiveForce(_ message: [String: Any]) -> WatchLiveForce? {

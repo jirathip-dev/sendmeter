@@ -1,3 +1,4 @@
+import SendmeterCore
 import SwiftUI
 
 public enum SendmeterStyle {

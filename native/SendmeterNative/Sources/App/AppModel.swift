@@ -4,7 +4,7 @@ import Foundation
 import SendmeterCore
 import SwiftUI
 
-typealias AuthSession = Auth.Session
+public typealias AuthSession = Auth.Session
 
 public enum AppBootState: Equatable {
     case loading
@@ -48,6 +48,8 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var presets: [TindeqPreset] = []
     @Published public private(set) var routines: [RoutinePreset] = []
     @Published public private(set) var workouts: [WorkoutListItem] = []
+    @Published public private(set) var liveWorkout: LiveWorkout?
+    @Published public private(set) var liveWorkoutSyncState: LiveWorkoutSyncState = .unknown
     @Published public private(set) var isRefreshing = false
     @Published public private(set) var queuedWriteCount = 0
     @Published public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
@@ -61,6 +63,7 @@ public final class AppModel: ObservableObject {
     public let tindeq: TindeqBluetooth
     public let health: HealthKitService
     public let watch: WatchConnectivityService
+    public let realtime: RealtimeService
 
     private let queue: DurableQueue<PendingWrite>?
     private var authObservationTask: Task<Void, Never>?
@@ -69,18 +72,25 @@ public final class AppModel: ObservableObject {
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
 
+    /// Live workout mirror cursor (two producers: WC beat + realtime row,
+    /// one merge discipline — see LiveWorkoutMirror).
+    private var liveWorkoutMirror = LiveWorkoutMirrorState.empty
+    private var liveMirrorTicker: Task<Void, Never>?
+
     public init(
-        auth: AuthService = AuthService(),
+        auth: AuthService? = nil,
         repository: SendmeterRepository = SendmeterRepository(),
-        tindeq: TindeqBluetooth = TindeqBluetooth(),
-        health: HealthKitService = HealthKitService(),
-        watch: WatchConnectivityService = WatchConnectivityService()
+        tindeq: TindeqBluetooth? = nil,
+        health: HealthKitService? = nil,
+        watch: WatchConnectivityService? = nil,
+        realtime: RealtimeService? = nil
     ) {
-        self.auth = auth
+        self.auth = auth ?? AuthService()
         self.repository = repository
-        self.tindeq = tindeq
-        self.health = health
-        self.watch = watch
+        self.tindeq = tindeq ?? TindeqBluetooth()
+        self.health = health ?? HealthKitService()
+        self.watch = watch ?? WatchConnectivityService()
+        self.realtime = realtime ?? RealtimeService()
 
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
@@ -96,11 +106,22 @@ public final class AppModel: ObservableObject {
             self.queue = nil
         }
 
+        let watch = self.watch
+        let realtime = self.realtime
+        let tindeq = self.tindeq
+        let auth = self.auth
+
         watch.onSessionRequested = { [weak self] in
             await self?.relayValidSessionToWatch(guaranteed: true)
         }
         watch.onWorkoutCompletion = { [weak self] completion in
             await self?.acceptWatchCompletion(completion)
+        }
+        watch.onLiveWorkoutMessage = { [weak self] message in
+            self?.acceptLiveWorkoutMessage(message)
+        }
+        realtime.onLiveWorkoutRow = { [weak self] record in
+            self?.acceptLiveWorkoutRow(record)
         }
 
         tindeq.objectWillChange
@@ -120,6 +141,7 @@ public final class AppModel: ObservableObject {
 
     deinit {
         authObservationTask?.cancel()
+        liveMirrorTicker?.cancel()
     }
 
     public var currentUserID: UUID? { authSession?.user.id }
@@ -133,51 +155,51 @@ public final class AppModel: ObservableObject {
     // MARK: Auth
 
     public func signIn(email: String, password: String) async {
-        await perform { _ = try await auth.signIn(email: email, password: password) }
+        await perform { _ = try await self.auth.signIn(email: email, password: password) }
     }
 
     public func signUp(email: String, password: String) async {
         await perform {
-            let session = try await auth.signUp(email: email, password: password)
+            let session = try await self.auth.signUp(email: email, password: password)
             if session == nil { self.toastMessage = "Check your email to confirm your account." }
         }
     }
 
     public func sendMagicLink(email: String) async {
         await perform {
-            try await auth.sendMagicLink(email: email)
+            try await self.auth.sendMagicLink(email: email)
             self.toastMessage = "Magic link sent."
         }
     }
 
     public func signInWithPasskey() async {
-        await perform { try await auth.signInWithPasskey() }
+        await perform { try await self.auth.signInWithPasskey() }
     }
 
     public func registerPasskey() async {
         await perform {
-            try await auth.registerPasskey()
+            try await self.auth.registerPasskey()
             self.toastMessage = "Passkey registered."
         }
     }
 
     public func signOut() async {
         await perform {
-            try await auth.signOut()
+            try await self.auth.signOut()
             self.watch.relaySession(nil)
         }
     }
 
     public func updatePassword(_ password: String) async {
         await perform {
-            try await auth.updatePassword(password)
+            try await self.auth.updatePassword(password)
             self.passwordRecovery = false
             self.toastMessage = "Password updated."
         }
     }
 
     public func handleDeepLink(_ url: URL) async {
-        await perform { try await auth.handleDeepLink(url) }
+        await perform { try await self.auth.handleDeepLink(url) }
     }
 
     public func becameActive() async {
@@ -185,6 +207,10 @@ public final class AppModel: ObservableObject {
         await relayValidSessionToWatch(guaranteed: false)
         await drainQueue()
         await refreshAll(showSpinner: false)
+        // Foreground reconciliation for the live mirror: a dropped realtime
+        // socket degrades to this refetch (the row is the authoritative
+        // server state), and the mirror cursor rejects anything older.
+        await refreshLiveWorkoutRow()
         if UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") {
             await syncHealth(requestAuthorization: false)
         }
@@ -196,6 +222,7 @@ public final class AppModel: ObservableObject {
             guard let session else {
                 authSession = nil
                 bootState = .signedOut
+                await tearDownRealtime()
                 return
             }
             let changedUser = authSession?.user.id != session.user.id
@@ -208,6 +235,17 @@ public final class AppModel: ObservableObject {
                 didBootstrapUserID = session.user.id
                 await acceptStoredWatchCompletions()
                 await drainQueue()
+                // Realtime is best-effort and must never block the auth event
+                // loop (a degraded socket can take up to its join timeout to
+                // fail). The id guard drops a stale subscribe that outlived a
+                // sign-out or user switch.
+                let realtimeUserID = session.user.id
+                Task { [weak self] in
+                    guard let self, self.didBootstrapUserID == realtimeUserID else { return }
+                    await self.realtime.subscribe(userID: realtimeUserID)
+                }
+                await refreshLiveWorkoutRow()
+                restartLiveMirrorTickerIfNeeded()
             }
         case .passwordRecovery:
             authSession = session
@@ -219,6 +257,7 @@ public final class AppModel: ObservableObject {
             didBootstrapUserID = nil
             clearLoadedData()
             bootState = .signedOut
+            await tearDownRealtime()
         }
     }
 
@@ -307,7 +346,7 @@ public final class AppModel: ObservableObject {
 
     public func updateSession(_ session: SendmeterCore.Session) async {
         await perform {
-            let saved = try await repository.updateSession(session)
+            let saved = try await self.repository.updateSession(session)
             self.replaceSession(saved)
             self.toastMessage = "Session updated."
         }
@@ -315,7 +354,7 @@ public final class AppModel: ObservableObject {
 
     public func deleteSession(_ session: SendmeterCore.Session) async {
         await perform {
-            try await repository.softDeleteSession(id: session.id)
+            try await self.repository.softDeleteSession(id: session.id)
             self.sessions.removeAll { $0.id == session.id }
             self.toastMessage = "Session moved to Trash."
         }
@@ -323,7 +362,7 @@ public final class AppModel: ObservableObject {
 
     public func restoreSession(_ session: SendmeterCore.Session) async {
         await perform {
-            try await repository.restoreSession(id: session.id)
+            try await self.repository.restoreSession(id: session.id)
             self.deletedSessions.removeAll { $0.id == session.id }
             await self.refreshAll(showSpinner: false)
         }
@@ -331,7 +370,7 @@ public final class AppModel: ObservableObject {
 
     public func purgeSession(_ session: SendmeterCore.Session) async {
         await perform {
-            try await repository.purgeSession(id: session.id)
+            try await self.repository.purgeSession(id: session.id)
             self.deletedSessions.removeAll { $0.id == session.id }
         }
     }
@@ -341,7 +380,7 @@ public final class AppModel: ObservableObject {
     public func switchPhase(to phase: PhaseID) async {
         guard let userID = currentUserID else { return }
         await perform {
-            let result = try await repository.switchPhase(
+            let result = try await self.repository.switchPhase(
                 to: phase,
                 currentPeriods: self.phasePeriods,
                 today: LocalDateSupport.string(from: Date()),
@@ -580,7 +619,7 @@ public final class AppModel: ObservableObject {
 
     public func updateRecording(_ recording: TindeqRecording) async {
         await perform {
-            let saved = try await repository.updateRecordingMeta(
+            let saved = try await self.repository.updateRecordingMeta(
                 id: recording.id,
                 tag: recording.tag,
                 side: recording.side,
@@ -592,14 +631,14 @@ public final class AppModel: ObservableObject {
 
     public func deleteRecording(_ recording: TindeqRecording) async {
         await perform {
-            try await repository.softDeleteRecording(id: recording.id)
+            try await self.repository.softDeleteRecording(id: recording.id)
             self.recordings.removeAll { $0.id == recording.id }
         }
     }
 
     public func restoreRecording(_ recording: TindeqRecording) async {
         await perform {
-            try await repository.restoreRecording(id: recording.id)
+            try await self.repository.restoreRecording(id: recording.id)
             self.deletedRecordings.removeAll { $0.id == recording.id }
             await self.refreshAll(showSpinner: false)
         }
@@ -607,7 +646,7 @@ public final class AppModel: ObservableObject {
 
     public func purgeRecording(_ recording: TindeqRecording) async {
         await perform {
-            try await repository.purgeRecording(id: recording.id)
+            try await self.repository.purgeRecording(id: recording.id)
             self.deletedRecordings.removeAll { $0.id == recording.id }
         }
     }
@@ -616,7 +655,7 @@ public final class AppModel: ObservableObject {
         let unlinked = recordings.filter { $0.groupID == nil }
         guard !unlinked.isEmpty else { return }
         await perform {
-            try await repository.linkRecordingsToSession(
+            try await self.repository.linkRecordingsToSession(
                 sessionID: session.id,
                 recordingIDs: unlinked.map(\.id)
             )
@@ -632,8 +671,8 @@ public final class AppModel: ObservableObject {
     public func savePreset(_ preset: TindeqPreset, isNew: Bool) async {
         await perform {
             let saved = try await (isNew
-                ? repository.insertPreset(preset)
-                : repository.updatePreset(preset))
+                ? self.repository.insertPreset(preset)
+                : self.repository.updatePreset(preset))
             self.presets.removeAll { $0.id == saved.id }
             self.presets.insert(saved, at: 0)
         }
@@ -641,7 +680,7 @@ public final class AppModel: ObservableObject {
 
     public func deletePreset(_ preset: TindeqPreset) async {
         await perform {
-            try await repository.deletePreset(id: preset.id)
+            try await self.repository.deletePreset(id: preset.id)
             self.presets.removeAll { $0.id == preset.id }
         }
     }
@@ -651,8 +690,8 @@ public final class AppModel: ObservableObject {
     public func saveRoutine(_ routine: RoutinePreset, isNew: Bool) async {
         await perform {
             let saved = try await (isNew
-                ? repository.insertRoutine(routine)
-                : repository.updateRoutine(routine))
+                ? self.repository.insertRoutine(routine)
+                : self.repository.updateRoutine(routine))
             self.routines.removeAll { $0.id == saved.id }
             self.routines.insert(saved, at: 0)
         }
@@ -660,7 +699,7 @@ public final class AppModel: ObservableObject {
 
     public func deleteRoutine(_ routine: RoutinePreset) async {
         await perform {
-            try await repository.deleteRoutine(id: routine.id)
+            try await self.repository.deleteRoutine(id: routine.id)
             self.routines.removeAll { $0.id == routine.id }
         }
     }
@@ -671,11 +710,11 @@ public final class AppModel: ObservableObject {
         guard let userID = currentUserID else { return }
         await perform {
             if requestAuthorization {
-                try await health.requestAuthorization()
+                try await self.health.requestAuthorization()
                 UserDefaults.standard.set(true, forKey: "sendmeter.native.health-authorized")
             }
-            let metric = try await health.computeTodayMetric(acwr: self.acwr.ratio)
-            try await repository.upsertHealthMetric(metric, userID: userID)
+            let metric = try await self.health.computeTodayMetric(acwr: self.acwr.ratio)
+            try await self.repository.upsertHealthMetric(metric, userID: userID)
             self.healthMetrics.removeAll { $0.date == metric.date }
             self.healthMetrics.insert(metric, at: 0)
             self.watch.publishReadiness(metric)
@@ -686,9 +725,9 @@ public final class AppModel: ObservableObject {
     public func deleteAccount() async {
         guard let userID = currentUserID else { return }
         await perform {
-            try await repository.deleteAccount()
+            try await self.repository.deleteAccount()
             try await self.queue?.discardAll(accountUserID: userID, reason: "account-deleted")
-            try await auth.signOut()
+            try await self.auth.signOut()
         }
     }
 
@@ -805,6 +844,96 @@ public final class AppModel: ObservableObject {
             // Keep the visible pending item rather than treating network delay
             // as a failed workout.
         }
+    }
+
+    // MARK: Live workout mirror (#626)
+
+    /// WC beat → mirror cursor (fast path). The parse lives in Core
+    /// (`liveWorkoutFromWCMessage`), so the transport stays dumb and the
+    /// merge discipline is unit-tested.
+    private func acceptLiveWorkoutMessage(_ message: [String: Any]) {
+        guard authSession != nil else { return }
+        let nowMs = Date().timeIntervalSince1970 * 1_000
+        guard let incoming = liveWorkoutFromWCMessage(
+            message: message,
+            previous: liveWorkoutMirror.row
+        ) else { return }
+        acceptLiveWorkout(incoming, source: .watchDirect, nowMs: nowMs)
+    }
+
+    /// Realtime row → mirror cursor (fallback/authoritative reconciliation).
+    private func acceptLiveWorkoutRow(_ record: [String: Any]) {
+        guard authSession != nil else { return }
+        let nowMs = Date().timeIntervalSince1970 * 1_000
+        guard let incoming = liveWorkoutFromRow(record: record) else { return }
+        acceptLiveWorkout(incoming, source: .serverFallback, nowMs: nowMs)
+    }
+
+    private func acceptLiveWorkout(
+        _ incoming: LiveWorkout,
+        source: LiveWorkoutMirrorSource,
+        nowMs: TimeInterval
+    ) {
+        let result = reduceLiveWorkoutMirror(
+            state: liveWorkoutMirror,
+            incoming: incoming,
+            source: source,
+            nowMs: nowMs
+        )
+        guard result.accepted else { return }
+        liveWorkoutMirror = result.state
+        publishLiveMirror(atMs: nowMs)
+        restartLiveMirrorTickerIfNeeded()
+    }
+
+    private func publishLiveMirror(atMs: TimeInterval) {
+        liveWorkout = visibleLiveWorkoutRow(liveWorkoutMirror, nowMs: atMs)
+        liveWorkoutSyncState = SendmeterCore.liveWorkoutSyncState(for: liveWorkoutMirror, nowMs: atMs)
+    }
+
+    /// Authoritative initial/foreground row fetch, fed into the mirror as
+    /// `server-fallback`. A dropped realtime connection degrades to WC beats
+    /// + this refetch; the run/sequence cursor rejects anything older.
+    private func refreshLiveWorkoutRow() async {
+        guard let userID = currentUserID else { return }
+        do {
+            if let row = try await repository.fetchLiveWorkout() {
+                acceptLiveWorkout(
+                    row,
+                    source: .serverFallback,
+                    nowMs: Date().timeIntervalSince1970 * 1_000
+                )
+            }
+        } catch {
+            // Silent degradation: the mirror keeps whatever it last accepted.
+        }
+    }
+
+    /// Local staleness tick (5s, same cadence as the web's hook): re-derives
+    /// the visible row and honest sync state without any network.
+    private func restartLiveMirrorTickerIfNeeded() {
+        guard authSession != nil else {
+            liveMirrorTicker?.cancel()
+            liveMirrorTicker = nil
+            return
+        }
+        guard liveMirrorTicker == nil else { return }
+        liveMirrorTicker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, !Task.isCancelled, self.authSession != nil else { return }
+                self.publishLiveMirror(atMs: Date().timeIntervalSince1970 * 1_000)
+            }
+        }
+    }
+
+    private func tearDownRealtime() async {
+        liveMirrorTicker?.cancel()
+        liveMirrorTicker = nil
+        liveWorkoutMirror = .empty
+        liveWorkout = nil
+        liveWorkoutSyncState = .unknown
+        await realtime.unsubscribe()
     }
 
     // MARK: Helpers
