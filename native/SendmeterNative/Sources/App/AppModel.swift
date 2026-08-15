@@ -109,6 +109,9 @@ public final class AppModel: ObservableObject {
     public let health: HealthKitService
     public let watch: WatchConnectivityService
     public let realtime: RealtimeService
+    /// #631: Send Conditions (SL-69) — Open-Meteo current weather + local
+    /// climate, fetched + cached by the platform service.
+    public let weather: WeatherService
     /// #628: hands-free arming loop (load-triggered start/stop/save).
     public let handsFree: HandsFreeForceController
     /// #628: lock-screen Live Activity mirror of the guided protocol.
@@ -147,7 +150,8 @@ public final class AppModel: ObservableObject {
         tindeq: TindeqBluetooth? = nil,
         health: HealthKitService? = nil,
         watch: WatchConnectivityService? = nil,
-        realtime: RealtimeService? = nil
+        realtime: RealtimeService? = nil,
+        weather: WeatherService? = nil
     ) {
         // The services' initializers are MainActor-isolated; default-argument
         // expressions are nonisolated, so they must be constructed here in
@@ -158,6 +162,7 @@ public final class AppModel: ObservableObject {
         self.health = health ?? HealthKitService()
         self.watch = watch ?? WatchConnectivityService()
         self.realtime = realtime ?? RealtimeService()
+        self.weather = weather ?? WeatherService()
         self.handsFree = HandsFreeForceController()
         self.guidedActivity = GuidedProtocolActivityManager()
         self.gaugeSessionSaveGate = GaugeSessionSaveGate()
@@ -185,6 +190,7 @@ public final class AppModel: ObservableObject {
         let realtime = self.realtime
         let tindeq = self.tindeq
         let auth = self.auth
+        let weather = self.weather
 
         watch.onSessionRequested = { [weak self] in
             await self?.relayValidSessionToWatch(guaranteed: true)
@@ -235,6 +241,9 @@ public final class AppModel: ObservableObject {
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &nestedCancellables)
         watch.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &nestedCancellables)
+        weather.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &nestedCancellables)
         // #627/#628: a disconnect ends the gauge session (auto-log) — unless
@@ -392,6 +401,14 @@ public final class AppModel: ObservableObject {
         await relayValidSessionToWatch(guaranteed: false)
         await drainQueue()
         await refreshAll(showSpinner: false)
+        // #631: keep Send Conditions honest on foreground (cached value
+        // stays on failure — the service never fabricates). Only the silent
+        // refresh path runs here: a COLD first check stays user-initiated
+        // (the card's Check tap), so the location prompt is never fired
+        // without a tap — web parity.
+        if weather.conditions != nil {
+            _ = await weather.refresh()
+        }
         // Foreground reconciliation for the live mirror: a dropped realtime
         // socket degrades to this refetch (the row is the authoritative
         // server state), and the mirror cursor rejects anything older.
@@ -1732,6 +1749,10 @@ public final class AppModel: ObservableObject {
         liveWorkoutMirror = .empty
         liveMirrorTicker?.cancel()
         liveMirrorTicker = nil
+        // #631: Send Conditions are location-bound, not account-bound, but
+        // they are also not signed-in data — drop them with the session so
+        // the next user's dashboard starts clean.
+        weather.resetForAccountChange()
     }
 
     private func perform(_ operation: @escaping () async throws -> Void) async {
