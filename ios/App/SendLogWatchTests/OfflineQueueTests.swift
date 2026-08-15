@@ -1684,10 +1684,12 @@ final class OfflineQueueTests: XCTestCase {
         try writeStuckQuarantine(stuck, at: now)
         let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
         _ = await queue.retryQuarantinedItems()
-        XCTAssertEqual(await queue.quarantineExitHistory().count, 1)
+        let history = await queue.quarantineExitHistory()
+        XCTAssertEqual(history.count, 1)
 
         let relaunched = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
-        XCTAssertEqual(await relaunched.quarantineExitHistory().count, 1)
+        let relaunchedHistory = await relaunched.quarantineExitHistory()
+        XCTAssertEqual(relaunchedHistory.count, 1)
     }
 
     /// #606's note decides this: the breadcrumb is diagnostics, not queued
@@ -1700,12 +1702,14 @@ final class OfflineQueueTests: XCTestCase {
         try writeStuckQuarantine(stuck, at: now)
         let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
         _ = await queue.retryQuarantinedItems()
-        XCTAssertEqual(await queue.quarantineExitHistory().count, 1)
+        let historyBeforeSignOut = await queue.quarantineExitHistory()
+        XCTAssertEqual(historyBeforeSignOut.count, 1)
 
         WatchSessionStore.shared.clear() // sign out
 
+        let historyAfterSignOut = await queue.quarantineExitHistory()
         XCTAssertEqual(
-            await queue.quarantineExitHistory().count,
+            historyAfterSignOut.count,
             1,
             "a sign-out must not erase the record of why an upload failed"
         )
@@ -1722,7 +1726,8 @@ final class OfflineQueueTests: XCTestCase {
         _ = await queue.retryQuarantinedItems()
 
         signIn(as: UUID())
-        XCTAssertEqual(await queue.quarantineExitHistory().count, 1)
+        let history = await queue.quarantineExitHistory()
+        XCTAssertEqual(history.count, 1)
     }
 
     /// A record that never leaves quarantine leaves no breadcrumb: the
@@ -1736,10 +1741,12 @@ final class OfflineQueueTests: XCTestCase {
         let queue = OfflineQueue(uploader: ScriptedUploader(failing: [:]), clock: FixedClock(now), baseDir: tempDir)
 
         _ = await queue.retryQuarantinedItems()
-        XCTAssertEqual(await queue.quarantineExitHistory().count, 0)
+        let historyAfterRetry = await queue.quarantineExitHistory()
+        XCTAssertEqual(historyAfterRetry.count, 0)
 
         await queue.drain()
-        XCTAssertEqual(await queue.quarantineExitHistory().count, 0, "resurrection also skips schema rejections")
+        let historyAfterDrain = await queue.quarantineExitHistory()
+        XCTAssertEqual(historyAfterDrain.count, 0, "resurrection also skips schema rejections")
         XCTAssertTrue(try filesOnDisk().contains("\(permanent.workout.id.uuidString).quarantine"))
     }
 
