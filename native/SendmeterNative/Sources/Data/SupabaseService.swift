@@ -1,6 +1,7 @@
 import AuthenticationServices
 @_spi(Experimental) import Auth
 import Foundation
+import enum SendmeterCore.LocalDateSupport
 import Supabase
 import UIKit
 
