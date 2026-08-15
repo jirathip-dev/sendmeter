@@ -1,0 +1,97 @@
+# Native TestFlight — dispatch-only, cost-gated exactly like testflight.yml
+# (#150). Builds the experimental native SwiftUI app (native/SendmeterNative)
+# and uploads it to TestFlight under com.jirathip.sendlog.native — a SEPARATE
+# app record from the shipped com.jirathip.sendlog (one bundle ID = one app
+# slot on TestFlight, so the native build can never replace the Capacitor
+# app's builds — #637).
+#
+# macOS runner minutes are the repo's dominant CI cost and native TestFlight
+# builds are an on-demand soak, not a per-merge release, so there is no push
+# trigger and no [testflight]-style subject gate: workflow_dispatch only.
+# Secrets come from the existing `testflight` GitHub environment (ASC API key
+# + the exported Distribution cert p12) — the job must declare it to read
+# them, and the name must match exactly or GitHub silently creates an empty
+# environment.
+#
+# Ref gate (cheap Ubuntu job, mirrors testflight.yml's gate shape): the
+# shipped lane demands main because only main carries the migration-verified
+# schema; the native lane demands the ref actually contains the native
+# target, because it does NOT exist on main yet (it lives on staging and
+# native/* branches). A workflow_dispatch on a branch without
+# native/SendmeterNative/project.yml fails the gate before any macOS runner
+# is spent.
+name: Native TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner label"
+        default: blacksmith-6vcpu-macos-26
+        type: string
+
+# The native app has its own build-number train (com.jirathip.sendlog.native,
+# latest + 1), so it cannot race the shipped `beta` lane's numbers — but two
+# parallel native runs would race each other's: queue, never cancel.
+concurrency:
+  group: native-testflight
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.decision.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: decision
+        run: |
+          if [ ! -f native/SendmeterNative/project.yml ]; then
+            echo "native/SendmeterNative does not exist on $GITHUB_REF — native TestFlight builds need the native target (staging or a native/* branch)" >&2
+            echo "build=false" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "build=true" >>"$GITHUB_OUTPUT"
+
+  native-beta:
+    needs: gate
+    if: needs.gate.outputs.build == 'true'
+    runs-on: ${{ inputs.runner || 'blacksmith-6vcpu-macos-26' }}
+    environment: testflight
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Matches the .mise.toml pin and testflight.yml. bundler-cache runs
+      # bundle install against the committed Gemfile.lock.
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "4.0.5"
+          bundler-cache: true
+
+      # The native target is pure Swift — no node, no npm ci, no cap sync.
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Write ASC API key
+        run: printf '%s' "$ASC_KEY_P8" | base64 -d > fastlane/asc_api_key.p8
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+
+      # Record the image's Xcode; pin via DEVELOPER_DIR once the Blacksmith
+      # image inventory is known.
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Build and upload native app to TestFlight
+        run: LANG=en_US.UTF-8 bundle exec fastlane native_beta
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_PATH: fastlane/asc_api_key.p8
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
