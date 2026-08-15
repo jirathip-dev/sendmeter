@@ -76,6 +76,9 @@ public final class AppModel: ObservableObject {
     /// one merge discipline — see LiveWorkoutMirror).
     private var liveWorkoutMirror = LiveWorkoutMirrorState.empty
     private var liveMirrorTicker: Task<Void, Never>?
+    /// Realtime list reconciliation: pending slices + the scheduled flush.
+    private let reconcileCoalescer = RealtimeRefreshCoalescer()
+    private var reconcileFlushTask: Task<Void, Never>?
 
     public init(
         auth: AuthService? = nil,
@@ -123,6 +126,9 @@ public final class AppModel: ObservableObject {
         realtime.onLiveWorkoutRow = { [weak self] record in
             self?.acceptLiveWorkoutRow(record)
         }
+        realtime.onListEvent = { [weak self] table in
+            self?.acceptRealtimeListEvent(table)
+        }
 
         tindeq.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
@@ -142,6 +148,7 @@ public final class AppModel: ObservableObject {
     deinit {
         authObservationTask?.cancel()
         liveMirrorTicker?.cancel()
+        reconcileFlushTask?.cancel()
     }
 
     public var currentUserID: UUID? { authSession?.user.id }
@@ -927,12 +934,83 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Realtime list reconciliation (#626)
+
+    /// A watched table changed on the server: map it to its data slice and
+    /// schedule a coalesced targeted refresh (trailing-edge debounce, ~400ms).
+    /// Never a full refetch and never a second polling loop.
+    private func acceptRealtimeListEvent(_ table: RealtimeTable) {
+        guard authSession != nil else { return }
+        // Unknown tables never reach here (RealtimeTable is the allow-list);
+        // `reconcileSlice(for:)` maps each watched table to its data slice.
+        reconcileCoalescer.record(
+            reconcileSlice(for: table),
+            atMs: Date().timeIntervalSince1970 * 1_000
+        )
+        scheduleReconcileFlush()
+    }
+
+    private func scheduleReconcileFlush() {
+        guard reconcileFlushTask == nil else { return }
+        reconcileFlushTask = Task { [weak self] in
+            guard let self else { return }
+            await self.waitForReconcileWindow()
+            await self.flushRealtimeRefreshes()
+        }
+    }
+
+    private func waitForReconcileWindow() async {
+        while !Task.isCancelled {
+            let atMs = Date().timeIntervalSince1970 * 1_000
+            let remainingMs = reconcileCoalescer.remainingMs(atMs: atMs)
+            if remainingMs <= 0 { return }
+            try? await Task.sleep(nanoseconds: UInt64(remainingMs * 1_000_000))
+        }
+    }
+
+    private func flushRealtimeRefreshes() async {
+        reconcileFlushTask = nil
+        let atMs = Date().timeIntervalSince1970 * 1_000
+        if let slices = reconcileCoalescer.takeReadySlices(atMs: atMs), !slices.isEmpty {
+            await refreshReconcileSlices(slices)
+        }
+        // The window may have re-opened while we were fetching (a burst kept
+        // extending) — chain another flush instead of dropping the tail.
+        if reconcileCoalescer.isWaiting {
+            scheduleReconcileFlush()
+        }
+    }
+
+    private func refreshReconcileSlices(_ slices: Set<ReconcileSlice>) async {
+        guard let userID = currentUserID else { return }
+        do {
+            if slices.contains(.sessions) {
+                mergeSessions(remote: try await repository.fetchSessions(accountUserID: userID))
+            }
+            if slices.contains(.recordings) {
+                mergeRecordings(remote: try await repository.fetchRecordings())
+            }
+            if slices.contains(.workouts) {
+                workouts = try await repository.fetchWorkouts()
+            }
+            if slices.contains(.health) {
+                healthMetrics = try await repository.fetchHealthMetrics()
+            }
+        } catch {
+            // Silent degradation, same as the web: a failed reconcile leaves
+            // the list stale until the next event or pull-to-refresh.
+        }
+    }
+
     private func tearDownRealtime() async {
         liveMirrorTicker?.cancel()
         liveMirrorTicker = nil
         liveWorkoutMirror = .empty
         liveWorkout = nil
         liveWorkoutSyncState = .unknown
+        reconcileFlushTask?.cancel()
+        reconcileFlushTask = nil
+        reconcileCoalescer.reset()
         await realtime.unsubscribe()
     }
 
