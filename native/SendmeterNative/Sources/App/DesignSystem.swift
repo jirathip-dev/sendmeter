@@ -22,6 +22,18 @@ public enum SendmeterStyle {
         case .execution: return execution
         }
     }
+
+    /// Training-quality hues for the History zone badge (#630): cool → warm
+    /// as the zone moves from endurance to power — the same mapping as the
+    /// web's `QUALITY_COLORS` (success / info / warning / danger).
+    public static func zoneColor(_ zone: ZoneQuality) -> Color {
+        switch zone {
+        case .power: return alert
+        case .strength: return caution
+        case .powerEndurance: return execution
+        case .endurance: return optimal
+        }
+    }
 }
 
 public extension Color {
