@@ -75,7 +75,8 @@ struct ForceView: View {
                         side: Binding(get: { side }, set: { side = $0 }),
                         zone: Binding(get: { zone }, set: { zone = $0 }),
                         presetID: $selectedPresetID,
-                        presets: model.presets
+                        presets: model.presets,
+                        knownTags: model.visibleTagNames
                     )
 
                     if let live = model.watch.liveForce,
@@ -584,6 +585,10 @@ private struct ForceMetadataCard: View {
     @Binding var zone: RecordedZone?
     @Binding var presetID: UUID?
     let presets: [TindeqPreset]
+    /// #631: pickable exercise names — distinct recording tags minus hidden
+    /// (SL-92). Hidden tags' recordings still exist, they just leave the
+    /// default pickers.
+    let knownTags: [String]
 
     var body: some View {
         SurfaceCard {
@@ -593,6 +598,15 @@ private struct ForceMetadataCard: View {
                     .textInputAutocapitalization(.sentences)
                     .padding(11)
                     .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                if !knownTags.isEmpty {
+                    Picker("Known exercises", selection: $tag) {
+                        Text("Type your own").tag("")
+                        ForEach(knownTags, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
                 HStack {
                     Picker("Side", selection: $side) {
                         ForEach(TindeqSide.allCases) { side in

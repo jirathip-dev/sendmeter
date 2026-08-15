@@ -86,6 +86,9 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var workouts: [WorkoutListItem] = []
     @Published public private(set) var liveWorkout: LiveWorkout?
     @Published public private(set) var liveWorkoutSyncState: LiveWorkoutSyncState = .unknown
+    /// #631: the per-user tag registry (SL-92) — rename/hide metadata. Tags
+    /// themselves stay denormalized on recordings.
+    @Published public private(set) var tagMetadata: [TagMetadata] = []
     @Published public private(set) var isRefreshing = false
     @Published public private(set) var queuedWriteCount = 0
     @Published public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
@@ -281,6 +284,50 @@ public final class AppModel: ObservableObject {
     public var weeklyLoads: [WeeklyLoad] { TrainingMetrics.weeklyLoads(sessions: sessions) }
     public var recentSessions: [SendmeterCore.Session] { Array(sessions.prefix(8)) }
 
+    // MARK: Tag registry (#631)
+
+    /// The exercise-manager rows: distinct recording tags with rep counts,
+    /// hidden flags from the registry.
+    public var tagEntries: [TagEntry] {
+        TagCatalog.entries(recordings: recordings, metadata: tagMetadata)
+    }
+
+    /// Names hidden from the Force-tab picker (and the History force list).
+    public var hiddenTagNames: Set<String> {
+        TagCatalog.hiddenNames(tagMetadata)
+    }
+
+    /// The pickable exercise names: distinct recording tags minus hidden.
+    public var visibleTagNames: [String] {
+        TagCatalog.visibleNames(tagEntries)
+    }
+
+    public func setTagHidden(name: String, hidden: Bool) async {
+        await perform {
+            try await self.repository.setTagHidden(name: name, hidden: hidden)
+            if let index = self.tagMetadata.firstIndex(where: { $0.name == name }) {
+                self.tagMetadata[index] = TagMetadata(name: name, hidden: hidden)
+            } else {
+                self.tagMetadata.append(TagMetadata(name: name, hidden: hidden))
+            }
+            self.toastMessage = hidden ? "Hid “\(name)”" : "Showing “\(name)”"
+        }
+    }
+
+    /// Rename a tag EVERYWHERE — the DB repoints every recording carrying
+    /// the old name; the recording list is refetched after (its tags are
+    /// the source of truth for counts).
+    public func renameTag(oldName: String, newName: String) async {
+        let merged = tagEntries.contains { $0.name == newName.trimmingCharacters(in: .whitespacesAndNewlines) }
+        await perform {
+            try await self.repository.renameTag(oldName: oldName, newName: newName)
+            self.toastMessage = merged
+                ? "Merged into “\(newName.trimmingCharacters(in: .whitespacesAndNewlines))”"
+                : "Renamed to “\(newName.trimmingCharacters(in: .whitespacesAndNewlines))”"
+            await self.refreshAll(showSpinner: false)
+        }
+    }
+
     // MARK: Auth
 
     public func signIn(email: String, password: String) async {
@@ -425,6 +472,7 @@ public final class AppModel: ObservableObject {
             async let remotePresets = repository.fetchPresets()
             async let remoteRoutines = repository.fetchRoutinePresets()
             async let remoteWorkouts = repository.fetchWorkouts()
+            async let remoteTags = repository.fetchTagMetadata()
 
             let fetchedSessions = try await remoteSessions
             let fetchedRecordings = try await remoteRecordings
@@ -434,6 +482,7 @@ public final class AppModel: ObservableObject {
             presets = try await remotePresets
             routines = try await remoteRoutines
             workouts = try await remoteWorkouts
+            tagMetadata = try await remoteTags
             await restorePendingWrites(
                 userID: userID,
                 remoteSessionIDs: Set(fetchedSessions.map(\.id)),
@@ -1664,6 +1713,7 @@ public final class AppModel: ObservableObject {
         presets = []
         routines = []
         workouts = []
+        tagMetadata = []
         pendingSessions = [:]
         pendingRecordings = [:]
         queuedWriteCount = 0
