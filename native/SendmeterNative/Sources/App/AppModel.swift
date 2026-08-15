@@ -191,7 +191,7 @@ public final class AppModel: ObservableObject {
         }
         // A background HealthKit observer fire and foreground sync share the
         // same single-flight recompute path (see computeAndPublishReadiness).
-        health.onBackgroundUpdate = { [weak self] in
+        self.health.onBackgroundUpdate = { [weak self] in
             await self?.handleHealthBackgroundUpdate()
         }
 

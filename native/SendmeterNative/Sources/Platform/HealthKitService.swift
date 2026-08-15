@@ -201,13 +201,11 @@ public final class HealthKitService: ObservableObject {
         }
     }
 
-    private static func objectType(for identifier: String) -> HKObjectType? {
-        if let quantity = HKQuantityTypeIdentifier(rawValue: identifier),
-           let type = HKObjectType.quantityType(forIdentifier: quantity) {
+    private static func objectType(for identifier: String) -> HKSampleType? {
+        if let type = HKObjectType.quantityType(forIdentifier: HKQuantityTypeIdentifier(rawValue: identifier)) {
             return type
         }
-        if let category = HKCategoryTypeIdentifier(rawValue: identifier),
-           let type = HKObjectType.categoryType(forIdentifier: category) {
+        if let type = HKObjectType.categoryType(forIdentifier: HKCategoryTypeIdentifier(rawValue: identifier)) {
             return type
         }
         return nil
