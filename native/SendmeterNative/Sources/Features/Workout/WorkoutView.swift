@@ -286,13 +286,13 @@ private struct RoutineRunnerSheet: View {
                     if let detail = run.currentStage.detail {
                         Text(detail).foregroundStyle(.secondary)
                     }
-                    Text(Int(ceil(run.remainingSeconds(at: context.date))), format: .number)
+                    Text(Int(ceil(Double(run.remainingSeconds(at: context.date)))), format: .number)
                         .font(.system(size: 80, weight: .bold, design: .rounded))
                         .monospacedDigit()
                     ProgressView(
                         value: run.currentStage.durationSeconds == 0
-                            ? 1
-                            : min(1, run.elapsedSeconds(at: context.date) / Double(run.currentStage.durationSeconds))
+                            ? 1.0
+                            : min(1.0, Double(run.elapsedSeconds(at: context.date)) / Double(run.currentStage.durationSeconds))
                     )
                     .tint(run.currentStage.kind == .rest ? SendmeterStyle.optimal : SendmeterStyle.primary)
 

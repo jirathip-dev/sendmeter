@@ -38,9 +38,9 @@ public struct WatchWorkoutCompletion: Codable, Equatable, Sendable, Identifiable
     public let rpeConfirmed: Bool
     public let receivedAt: Date
 
-    public func pendingSession() -> Session {
+    public func pendingSession() -> SendmeterCore.Session {
         let date = LocalDateSupport.string(from: endedAt ?? receivedAt)
-        return Session(
+        return SendmeterCore.Session(
             id: sessionID,
             date: date,
             type: type,
@@ -92,7 +92,7 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
         refreshPairingState()
     }
 
-    public func relaySession(_ authSession: Session?, guaranteed: Bool = false) {
+    public func relaySession(_ authSession: Auth.Session?, guaranteed: Bool = false) {
         if let authSession {
             outgoingContext.merge([
                 "event": "signedIn",
@@ -210,7 +210,7 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
             runID: runID,
             sequence: number(message["sequence"]).map(Int.init),
             event: message["event"] as? String ?? "telemetry",
-            terminal: bool(message["terminal"]) ?? status == "ended",
+            terminal: bool(message["terminal"]) ?? (status == "ended"),
             status: status,
             startedAt: number(message["started_at"]).map(Date.init(timeIntervalSince1970:))
                 ?? Date(timeIntervalSince1970: updated),

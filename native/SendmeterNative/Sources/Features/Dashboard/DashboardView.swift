@@ -234,11 +234,20 @@ private struct RecentSessionsCard: View {
                         .font(.caption.weight(.semibold))
                 }
                 if model.recentSessions.isEmpty {
-                    ContentUnavailableView(
-                        "No sessions yet",
-                        systemImage: "figure.climbing",
-                        description: Text("Log your first training session or start a workout.")
-                    )
+                    // `ContentUnavailableView` is iOS 17+; the app's floor is
+                    // 16.2, so the empty state is built from primitives.
+                    VStack(spacing: 10) {
+                        Image(systemName: "figure.climbing")
+                            .font(.system(size: 40, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text("No sessions yet")
+                            .font(.headline)
+                        Text("Log your first training session or start a workout.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
                     ForEach(model.recentSessions) { session in
                         SessionSummaryRow(session: session)
