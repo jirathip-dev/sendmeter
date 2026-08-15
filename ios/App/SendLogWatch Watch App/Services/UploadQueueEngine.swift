@@ -221,6 +221,14 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
     /// reclaimed only under actual disk pressure (`writeWithEviction`'s
     /// last resort), when the alternative is losing a brand-new rep.
     private let stripsPayloadOnQuarantine: Bool
+    /// #606: the bounded ring of records that have LEFT quarantine (manual
+    /// retry or the F12 resurrection) — the header-only breadcrumb that
+    /// survives the restore, so a resolved incident stays diagnosable. One
+    /// file per queue at `baseDir` root
+    /// (`quarantine-exit-history-<directoryName>.json`), deliberately
+    /// OUTSIDE `pendingDir` so no extension-filtered sweep can ever mistake
+    /// it for a queued item (the same rule that governs `lastSyncURL`).
+    private let breadcrumbStore: QuarantineBreadcrumbStore
 
     private var drainState = CoalescingDrain()
     /// #472b: consecutive drain PASSES that stopped early (a `.retry` or
@@ -263,6 +271,10 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
         self.evictsOldestOnRefusedWrite = evictsOldestOnRefusedWrite
         self.evictionReporter = evictionReporter
         self.stripsPayloadOnQuarantine = stripsPayloadOnQuarantine
+        self.breadcrumbStore = QuarantineBreadcrumbStore(
+            fileURL: baseDir
+                .appendingPathComponent("quarantine-exit-history-\(directoryName).json")
+        )
     }
 
     private var pendingDir: URL {
@@ -499,6 +511,7 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
             // The write committed; only now may the quarantine record go.
             try? fileIO.removeItem(at: file)
             clearPerItemLedgers(for: record.item) // a fresh budget, same as F12's resurrection
+            recordQuarantineExit(record) // #606 — the record's header outlives the restore
             restored += 1
         }
         // #600: republish + tell the phone — even a zero-restore outcome is
@@ -1088,10 +1101,41 @@ actor UploadQueueEngine<Item: QueueUploadItem> {
             do {
                 try fileIO.write(itemData, to: pendingURL)
                 try? fileIO.removeItem(at: file)
+                recordQuarantineExit(record) // #606 — same breadcrumb as the manual retry
             } catch {
                 // Left quarantined; eligible again next time isStuckRetryDue is checked.
             }
         }
+    }
+
+    /// #606: one header-only breadcrumb when a record durably leaves
+    /// quarantine — written on BOTH exit paths (the manual retry and the
+    /// F12 resurrection). The item payload is never touched; the breadcrumb
+    /// is the record's header plus when it exited, and it is retained
+    /// across the upload's success on purpose: it exists to explain a
+    /// failure that has since cleared.
+    private func recordQuarantineExit(_ record: QueueQuarantineRecord<Item>) {
+        breadcrumbStore.record(
+            QuarantineBreadcrumbEntry(
+                id: record.item.queueFileId,
+                reason: record.reason,
+                stage: record.stage,
+                httpStatus: record.httpStatus,
+                postgrestCode: record.postgrestCode,
+                errorMessage: record.errorMessage,
+                attemptCount: record.attemptCount,
+                quarantinedAt: record.quarantinedAt,
+                exitedAt: clock.now()
+            )
+        )
+    }
+
+    /// #606: this queue's quarantine-exit ring, oldest first — for the
+    /// diagnostics surface's recent history. Diagnostics, not user data:
+    /// never cleared by a successful upload, an account switch or a
+    /// sign-out, only ever bounded by the ring's own capacity.
+    func quarantineExitHistory() -> [QuarantineBreadcrumbEntry] {
+        breadcrumbStore.history()
     }
 
     // MARK: #475 F3 — per-item retry ledger
