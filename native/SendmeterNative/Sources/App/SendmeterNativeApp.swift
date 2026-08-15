@@ -13,6 +13,10 @@ struct SendmeterNativeApp: App {
                     Task { await model.handleDeepLink(url) }
                 }
                 .onChange(of: scenePhase) { phase in
+                    // #628: backgrounding clears the keep-awake hold (the
+                    // screen must not be pinned while the app can't show
+                    // anything); foreground re-derives it from the transport.
+                    model.scenePhaseChanged(phase)
                     guard phase == .active else { return }
                     Task { await model.becameActive() }
                 }

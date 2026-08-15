@@ -12,6 +12,9 @@ struct ForceView: View {
     @AppStorage("sendmeter.native.force.tag") private var tag = ""
     @AppStorage("sendmeter.native.force.side") private var sideValue = ""
     @AppStorage("sendmeter.native.force.zone") private var zoneValue = ""
+    /// #628: the persisted hands-free toggle — the web's
+    /// `sendmeter:gauge-hands-free` AppStorage equivalent.
+    @AppStorage("sendmeter.native.force.hands-free") private var handsFreeEnabled = false
     @State private var selectedPresetID: UUID?
     @State private var editingPreset: TindeqPreset?
     @State private var creatingPreset = false
@@ -35,17 +38,32 @@ struct ForceView: View {
         return model.presets.first(where: { $0.id == selectedPresetID })
     }
 
+    /// #627: the active gauge session's recording count (for the Finish pill
+    /// on the device card).
+    private var gaugeSessionCount: Int {
+        guard model.gaugeSessionTracker.isActive else { return 0 }
+        let groupID = model.gaugeSessionTracker.active?.groupID
+        return model.recordings.filter { $0.groupID == groupID }.count
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     ForceDeviceCard(
                         device: model.tindeq,
+                        handsFreeEnabled: $handsFreeEnabled,
+                        handsFreeArmed: model.handsFree.isArmed,
+                        handsFreeMeasuring: model.handsFree.isMeasuring,
                         targetBand: selectedTargetPlan.band(forSet: 1, side: side),
                         resolvingTarget: resolvingTargets,
                         savingSummary: savingSummary,
+                        gaugeSessionCount: gaugeSessionCount,
                         start: startMeasurement,
+                        armHandsFree: armHandsFree,
                         stopAndSave: stopAndSave,
+                        cancelArm: { model.handsFree.cancelArm() },
+                        finishSession: { Task { await model.endGaugeSession() } },
                         saveCompleted: saveCompleted,
                         saveRecovered: saveRecovered,
                         discardCompleted: { model.tindeq.clearCompletedRecording() },
@@ -85,6 +103,17 @@ struct ForceView: View {
             .task(id: targetResolutionKey) {
                 await resolveSelectedTarget()
             }
+            // #628: the hands-free save path snapshots the recording context
+            // (tag/side/zone/preset/target) at arm time.
+            .onChange(of: tag) { _ in publishFreePullContext() }
+            .onChange(of: side) { _ in publishFreePullContext() }
+            .onChange(of: zone) { _ in publishFreePullContext() }
+            .onChange(of: selectedPresetID) { _ in publishFreePullContext() }
+            .onChange(of: selectedTargetPlan) { _ in publishFreePullContext() }
+            .onChange(of: handsFreeEnabled) { enabled in
+                if !enabled { model.handsFree.disarm() }
+                model.updateKeepAwake()
+            }
             .sheet(item: $editingPreset) { preset in
                 ForcePresetEditor(preset: preset, isNew: false)
             }
@@ -98,7 +127,8 @@ struct ForceView: View {
                     tag: tag,
                     startingSide: side == .right ? .right : .left,
                     fallbackSide: side,
-                    zone: zone
+                    zone: zone,
+                    handsFreeEnabled: handsFreeEnabled
                 )
             }
         }
@@ -116,12 +146,49 @@ struct ForceView: View {
         }
     }
 
+    /// #628: with the hands-free toggle on, Start arms the load-triggered
+    /// loop instead of recording immediately.
+    private func armHandsFree() {
+        guard !model.tindeq.hasUnsavedRecording else {
+            model.errorMessage = "Save or discard the previous pull before starting another."
+            return
+        }
+        guard model.tindeq.status == .connected else {
+            model.errorMessage = "Connect the Progressor before arming hands-free."
+            return
+        }
+        publishFreePullContext()
+        model.handsFree.arm()
+    }
+
     private func stopAndSave() {
+        // A manual Stop & Save while the hands-free loop owns the rep must go
+        // through the loop (its claim + re-arm bookkeeping), not the direct
+        // path — otherwise the machine still thinks it is recording.
+        if model.handsFree.isMeasuring {
+            model.handsFree.stopManually()
+            return
+        }
+        // Defensive: an armed-but-not-measuring stream has no rep to save.
+        if model.handsFree.isArmed {
+            model.handsFree.cancelArm()
+            return
+        }
         guard let summary = model.tindeq.stopMeasuring() else {
             model.errorMessage = "No force samples were received."
             return
         }
         save(summary, recovered: false)
+    }
+
+    private func publishFreePullContext() {
+        model.freePullContext = FreePullContext(
+            tag: tag,
+            side: side,
+            zone: zone,
+            preset: selectedPreset,
+            targetBand: selectedTargetPlan.band(forSet: 1, side: side)
+        )
     }
 
     private func saveCompleted() {
@@ -220,11 +287,20 @@ struct ForceView: View {
 
 private struct ForceDeviceCard: View {
     @ObservedObject var device: TindeqBluetooth
+    @Binding var handsFreeEnabled: Bool
+    /// #628: the hands-free loop's state, mirrored from AppModel (the loop
+    /// re-renders through the device's published sample/status changes).
+    let handsFreeArmed: Bool
+    let handsFreeMeasuring: Bool
     let targetBand: ForceTargetBand?
     let resolvingTarget: Bool
     let savingSummary: Bool
+    let gaugeSessionCount: Int
     let start: () -> Void
+    let armHandsFree: () -> Void
     let stopAndSave: () -> Void
+    let cancelArm: () -> Void
+    let finishSession: () -> Void
     let saveCompleted: () -> Void
     let saveRecovered: () -> Void
     let discardCompleted: () -> Void
@@ -247,7 +323,7 @@ private struct ForceDeviceCard: View {
                     StatusPill(statusPill.text, color: statusPill.color)
                 }
 
-                if device.status == .measuring || !device.visibleSamples.isEmpty {
+                if device.status == .measuring || device.handsFreeArmed || !device.visibleSamples.isEmpty {
                     HStack(alignment: .firstTextBaseline) {
                         MetricValue(
                             device.currentKilograms.formatted(.number.precision(.fractionLength(1))),
@@ -303,6 +379,20 @@ private struct ForceDeviceCard: View {
                 }
 
                 controls
+
+                if gaugeSessionCount > 0, device.status == .connected {
+                    HStack {
+                        Label("Gauge session · \(gaugeSessionCount) recording\(gaugeSessionCount == 1 ? "" : "s")", systemImage: "waveform.path.ecg")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Finish", action: finishSession)
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(SendmeterStyle.primary.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                }
 
                 if device.interruptedRecording != nil {
                     VStack(alignment: .leading, spacing: 10) {
@@ -376,11 +466,42 @@ private struct ForceDeviceCard: View {
             }
         case .connected:
             VStack(spacing: 10) {
-                Button(action: start) {
-                    Label("Start Pull", systemImage: "play.fill")
+                if handsFreeMeasuring {
+                    VStack(spacing: 8) {
+                        Label(
+                            "Measuring — release to save",
+                            systemImage: "record.circle.fill"
+                        )
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(SendmeterStyle.primary)
+                        Button(action: stopAndSave) {
+                            Label("Stop & Save", systemImage: "stop.fill")
+                        }
+                        .buttonStyle(PrimaryActionButtonStyle())
+                    }
+                } else if handsFreeArmed {
+                    VStack(spacing: 8) {
+                        Label("Armed — pull to measure", systemImage: "scope")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(SendmeterStyle.primary)
+                        Button("Cancel", role: .destructive) {
+                            cancelArm()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                } else if handsFreeEnabled {
+                    Button(action: armHandsFree) {
+                        Label("Arm Hands-free", systemImage: "scope")
+                    }
+                    .buttonStyle(PrimaryActionButtonStyle())
+                    .disabled(device.hasUnsavedRecording)
+                } else {
+                    Button(action: start) {
+                        Label("Start Pull", systemImage: "play.fill")
+                    }
+                    .buttonStyle(PrimaryActionButtonStyle())
+                    .disabled(device.hasUnsavedRecording)
                 }
-                .buttonStyle(PrimaryActionButtonStyle())
-                .disabled(device.hasUnsavedRecording)
                 if device.hasUnsavedRecording {
                     Text("Save or discard the previous pull before starting another.")
                         .font(.caption)
@@ -404,6 +525,17 @@ private struct ForceDeviceCard: View {
                     Button("Disconnect", role: .destructive) { device.disconnect() }
                         .buttonStyle(.borderless)
                 }
+
+                Toggle(isOn: $handsFreeEnabled) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hands-free")
+                            .font(.subheadline.weight(.medium))
+                        Text("Measurement starts when you pull and saves when you release.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
             }
         case .measuring:
             Button(action: stopAndSave) {
@@ -1010,6 +1142,9 @@ private struct GuidedForceProtocolView: View {
     let startingSide: TindeqSide
     let fallbackSide: TindeqSide
     let zone: RecordedZone?
+    /// #628: snapshot of the hands-free toggle at launch — mid-run changes
+    /// apply to the next run, never to the segments already walking.
+    let handsFreeEnabled: Bool
 
     init(
         preset: TindeqPreset,
@@ -1017,7 +1152,8 @@ private struct GuidedForceProtocolView: View {
         tag: String,
         startingSide: TindeqSide,
         fallbackSide: TindeqSide,
-        zone: RecordedZone?
+        zone: RecordedZone?,
+        handsFreeEnabled: Bool = false
     ) {
         self.preset = preset
         self.targetPlan = targetPlan
@@ -1025,6 +1161,7 @@ private struct GuidedForceProtocolView: View {
         self.startingSide = startingSide
         self.fallbackSide = fallbackSide
         self.zone = zone
+        self.handsFreeEnabled = handsFreeEnabled
         self._run = State(initialValue: ForceProtocolRun(preset: preset, startingSide: startingSide))
     }
 
@@ -1081,8 +1218,12 @@ private struct GuidedForceProtocolView: View {
                         .foregroundStyle(.secondary)
 
                     if run.isComplete || interrupted {
-                        Button("Finish") { dismiss() }
-                            .buttonStyle(PrimaryActionButtonStyle())
+                        Button("Finish") {
+                            Task { await model.endGaugeSession() }
+                            model.guidedActivity.end(immediate: true)
+                            dismiss()
+                        }
+                        .buttonStyle(PrimaryActionButtonStyle())
                     } else {
                         Button("Skip Stage") {
                             Task { await skipCurrentStage(at: context.date) }
@@ -1109,6 +1250,25 @@ private struct GuidedForceProtocolView: View {
             }
             .onAppear {
                 run.start()
+                // #628: hands-free arming + the lock-screen mirror own the
+                // run while this view is up; the device card's automatic
+                // stop/save loop must not intercept a stage's release.
+                if handsFreeEnabled {
+                    model.handsFree.stopPolicy = .callerOwned
+                }
+                model.setGuidedProtocolActive(true)
+                model.guidedActivity.start(
+                    run: run,
+                    preset: preset,
+                    targetPlan: targetPlan,
+                    fallbackSide: fallbackSide
+                )
+            }
+            .onDisappear {
+                model.setGuidedProtocolActive(false)
+                model.handsFree.stopPolicy = .automatic
+                model.handsFree.disarm()
+                model.guidedActivity.end(immediate: true)
             }
         }
     }
@@ -1150,24 +1310,39 @@ private struct GuidedForceProtocolView: View {
 
         if case .interrupted = model.tindeq.status {
             interrupted = true
+            model.handsFree.disarm()
+            model.guidedActivity.end(immediate: true)
             if let summary = model.tindeq.interruptedRecording {
                 let enqueued = await preserve(summary, stage: run.currentStage, partial: true)
                 if enqueued { model.tindeq.clearInterruptedRecording() }
             }
+            // The run owns the session end on disconnect: preserve the final
+            // rep first, THEN end the session, so the partial rep joins THIS
+            // group instead of a fresh one minted by a racing end.
+            await model.endGaugeSession()
             return
         }
 
         if observedStageID != run.currentStage.id {
             observedStageID = run.currentStage.id
+            // #628: hands-free arming gates the START of a work stage on the
+            // load actually being applied; the stage timer still owns every
+            // stop/save, so save-per-hold stays intact.
             if run.currentStage.kind == .work {
-                do {
-                    try model.tindeq.startMeasuring()
-                } catch {
-                    model.errorMessage = error.localizedDescription
-                    interrupted = true
-                    return
+                if handsFreeEnabled {
+                    model.handsFree.arm()
+                } else {
+                    do {
+                        try model.tindeq.startMeasuring()
+                    } catch {
+                        model.errorMessage = error.localizedDescription
+                        interrupted = true
+                        model.guidedActivity.end(immediate: true)
+                        return
+                    }
                 }
             }
+            model.guidedActivity.refresh()
         }
 
         guard run.remainingSeconds(at: date) <= 0 else { return }
@@ -1180,16 +1355,23 @@ private struct GuidedForceProtocolView: View {
         isAdvancing = true
         let stage = run.currentStage
         if stage.kind == .work, let summary = model.tindeq.stopMeasuring() {
+            model.guidedActivity.updatePeak(summary.peakKilograms)
             let enqueued = await preserve(summary, stage: stage, partial: false)
             guard enqueued else {
                 isAdvancing = false
                 interrupted = true
+                model.guidedActivity.end(immediate: true)
                 return
             }
             model.tindeq.clearCompletedRecording()
         }
         run.advance(at: date)
         observedStageID = nil
+        // #628: disarm the stage's arming so rest/switch stages cannot start
+        // a phantom recording on leftover load; the next work stage re-arms.
+        if stage.kind == .work {
+            model.handsFree.disarm()
+        }
         isAdvancing = false
     }
 
@@ -1207,9 +1389,12 @@ private struct GuidedForceProtocolView: View {
                 model.tindeq.clearCompletedRecording()
             } else {
                 interrupted = true
+                model.guidedActivity.end(immediate: true)
                 return
             }
         }
+        model.handsFree.disarm()
+        model.guidedActivity.end(immediate: true)
         dismiss()
     }
 
