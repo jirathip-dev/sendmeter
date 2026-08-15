@@ -1,3 +1,5 @@
+import AuthenticationServices
+import SendmeterCore
 import SwiftUI
 
 struct LoginView: View {
@@ -6,6 +8,11 @@ struct LoginView: View {
     @State private var password = ""
     @State private var mode: Mode = .signIn
     @State private var isWorking = false
+    /// #631: the RAW nonce of the in-flight Apple request — the button's
+    /// `onRequest` hashes it for Apple, `onCompletion` hands the raw value
+    /// to Supabase (see `AppleAuthNonce`).
+    @State private var pendingAppleNonce = ""
+    @State private var appleSigningIn = false
 
     private enum Mode: String, CaseIterable, Identifiable {
         case signIn = "Sign In"
@@ -78,6 +85,45 @@ struct LoginView: View {
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }
                             .buttonStyle(.bordered)
+
+                            // #631: native Sign in with Apple — same
+                            // nonce contract as the web: the identity
+                            // token carries the SHA-256 hash, Supabase
+                            // re-hashes the raw nonce and compares.
+                            SignInWithAppleButton(.signIn) { request in
+                                let flow = AppleAuthNonce.flow(generator: UUIDAppleNonceGenerator())
+                                pendingAppleNonce = flow.raw
+                                request.nonce = flow.hashed
+                                request.requestedScopes = [.fullName, .email]
+                            } onCompletion: { result in
+                                switch result {
+                                case let .success(authorization):
+                                    guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                                          let token = credential.identityToken,
+                                          let tokenString = String(data: token, encoding: .utf8)
+                                    else {
+                                        model.errorMessage = "Sign in with Apple didn't return an identity token."
+                                        return
+                                    }
+                                    Task {
+                                        appleSigningIn = true
+                                        await model.signInWithApple(
+                                            idToken: tokenString,
+                                            rawNonce: pendingAppleNonce
+                                        )
+                                        appleSigningIn = false
+                                    }
+                                case let .failure(error):
+                                    // Cancellation is expected — stay quiet.
+                                    if (error as NSError).code != ASAuthorizationError.canceled.rawValue {
+                                        model.errorMessage = error.localizedDescription
+                                    }
+                                }
+                            }
+                            .signInWithAppleButtonStyle(.black)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .disabled(isWorking || appleSigningIn)
 
                             Button("Email me a magic link") {
                                 Task { await model.sendMagicLink(email: email) }

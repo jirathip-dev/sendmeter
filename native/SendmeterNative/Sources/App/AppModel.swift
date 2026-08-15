@@ -305,6 +305,15 @@ public final class AppModel: ObservableObject {
         await perform { try await self.auth.signInWithPasskey() }
     }
 
+    /// Sign in with Apple (#631): exchange the identity token (whose nonce
+    /// claim is the SHA-256 hash of `rawNonce`) for a Supabase session. The
+    /// hash/raw pairing is produced by `AppleAuthNonce.flow` at the button.
+    public func signInWithApple(idToken: String, rawNonce: String) async {
+        await perform {
+            try await self.auth.signInWithApple(idToken: idToken, rawNonce: rawNonce)
+        }
+    }
+
     public func registerPasskey() async {
         await perform {
             try await self.auth.registerPasskey()
