@@ -172,7 +172,8 @@ public func liveWorkoutFromWCMessage(
         climbingSince: epochSeconds(message["climbing_since"]).map(Date.init(timeIntervalSince1970:)),
         restStartedAt: epochSeconds(message["rest_started_at"]).map(Date.init(timeIntervalSince1970:)),
         restTargetSeconds: int(message["rest_target_s"]),
-        updatedAt: Date(timeIntervalSince1970: updated)
+        updatedAt: Date(timeIntervalSince1970: updated),
+        userID: uuid(message["account_user_id"])
     )
 }
 
@@ -202,8 +203,23 @@ public func liveWorkoutFromRow(record: [String: Any]) -> LiveWorkout? {
         climbingSince: isoDate(record["climbing_since"]),
         restStartedAt: isoDate(record["rest_started_at"]),
         restTargetSeconds: int(record["rest_target_s"]),
-        updatedAt: updatedAt
+        updatedAt: updatedAt,
+        userID: uuid(record["user_id"])
     )
+}
+
+/// The ownership decision behind AppModel's mirror admission guards (#626
+/// review): a packet stamped with a DIFFERENT account is always rejected;
+/// an un-stamped packet (pre-#530 watch build) is trusted only when the
+/// caller says so — the native mirror resets to `.empty` on every account
+/// change, so trusting an un-stamped beat is safe exactly then.
+public func liveWorkoutOwnedBy(
+    _ workout: LiveWorkout,
+    userID: UUID,
+    trustsUnstamped: Bool
+) -> Bool {
+    guard let owner = workout.userID else { return trustsUnstamped }
+    return owner == userID
 }
 
 /// Stable legacy run identity for pre-#521 WC payloads, derived from the

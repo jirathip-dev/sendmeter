@@ -12,6 +12,11 @@ import Supabase
 /// `handleAuthEvent` seam. Realtime is best-effort: a dropped socket degrades
 /// silently to WatchConnectivity + foreground refetch, and the supabase-swift
 /// client auto-reconnects and rejoins channels when connectivity returns.
+///
+/// Concurrency: `subscribe` re-validates its captured generation after every
+/// await and before committing channels, so a join that outlived a newer
+/// subscribe request or an unsubscribe can never commit — or tear down — a
+/// subscription it no longer owns (#626 review).
 @MainActor
 public final class RealtimeService: ObservableObject {
     @Published public private(set) var connectionStatus: RealtimeClientStatus?
@@ -26,16 +31,26 @@ public final class RealtimeService: ObservableObject {
     private var channels: [RealtimeChannelV2] = []
     private var subscriptions: [RealtimeSubscription] = []
     private var statusTask: Task<Void, Never>?
+    /// Bumped by every subscribe request and every unsubscribe. An in-flight
+    /// subscribe compares its captured generation against this before each
+    /// commit point; a mismatch means the request is stale and must abandon
+    /// its partial work without touching newer state.
+    private var generation = 0
 
     public init(client: SupabaseClient = SupabaseEnvironment.client) {
         self.client = client
     }
 
     /// Subscribes to this user's channels. Idempotent per user; re-subscribing
-    /// for a different user tears the old channels down first.
+    /// for a different user tears the old channels down first. The request is
+    /// abandoned (after cleaning up only its own channels) if a newer
+    /// subscribe or an unsubscribe happens while the joins are in flight.
     public func subscribe(userID: UUID) async {
         guard subscribedUserID != userID else { return }
+        generation += 1
+        let requestGeneration = generation
         await unsubscribe()
+        guard generation == requestGeneration else { return }
 
         let realtime = client.realtimeV2
         startStatusObservation(realtime)
@@ -71,18 +86,31 @@ public final class RealtimeService: ObservableObject {
 
         do {
             try await workoutChannel.subscribeWithError()
+            guard generation == requestGeneration else {
+                await abandon(workoutChannel)
+                return
+            }
             try await dataChannel.subscribeWithError()
+            guard generation == requestGeneration else {
+                await abandon(workoutChannel, dataChannel)
+                return
+            }
             channels = [workoutChannel, dataChannel]
             subscriptions = [workoutSubscription] + dataSubscriptions
             subscribedUserID = userID
         } catch {
-            // Realtime is best-effort by design: WC + pull-to-refresh are the
-            // durable paths, and a failed join must not surface to the user.
+            guard generation == requestGeneration else {
+                await abandon(workoutChannel, dataChannel)
+                return
+            }
+            // Still current: nothing else owns these channels (this request
+            // unsubscribed at entry), so a full teardown is safe.
             await unsubscribe()
         }
     }
 
     public func unsubscribe() async {
+        generation += 1
         for channel in channels {
             await client.removeChannel(channel)
         }
@@ -96,6 +124,18 @@ public final class RealtimeService: ObservableObject {
         statusTask = Task { [weak self] in
             for await status in realtime.statusChange {
                 await MainActor.run { self?.connectionStatus = status }
+            }
+        }
+    }
+
+    /// Removes channels this request created, but only the ones the realtime
+    /// client still maps to THIS instance — a newer request may have reused
+    /// the same topic instance, and tearing that down would kill the healthy
+    /// subscription (#626 review).
+    private func abandon(_ channelsToRemove: RealtimeChannelV2...) async {
+        for channel in channelsToRemove {
+            if client.channels.contains(where: { $0 === channel }) {
+                await client.removeChannel(channel)
             }
         }
     }

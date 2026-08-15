@@ -242,15 +242,14 @@ public final class AppModel: ObservableObject {
                 didBootstrapUserID = session.user.id
                 await acceptStoredWatchCompletions()
                 await drainQueue()
-                // Realtime is best-effort and must never block the auth event
-                // loop (a degraded socket can take up to its join timeout to
-                // fail). The id guard drops a stale subscribe that outlived a
-                // sign-out or user switch.
-                let realtimeUserID = session.user.id
-                Task { [weak self] in
-                    guard let self, self.didBootstrapUserID == realtimeUserID else { return }
-                    await self.realtime.subscribe(userID: realtimeUserID)
-                }
+                // The subscribe is AWAITED on purpose (#626 review): this
+                // serializes it with auth events, so a sign-out / user switch
+                // can never overlap an in-flight join — the stale-channel
+                // takeover race is structurally impossible. Realtime is still
+                // best-effort: a degraded socket can delay the auth loop by
+                // up to its join timeout (~10s, once at bootstrap) and a
+                // failed join is silent.
+                await realtime.subscribe(userID: session.user.id)
                 await refreshLiveWorkoutRow()
                 restartLiveMirrorTickerIfNeeded()
             }
@@ -859,20 +858,29 @@ public final class AppModel: ObservableObject {
     /// (`liveWorkoutFromWCMessage`), so the transport stays dumb and the
     /// merge discipline is unit-tested.
     private func acceptLiveWorkoutMessage(_ message: [String: Any]) {
-        guard authSession != nil else { return }
+        guard let userID = currentUserID else { return }
         let nowMs = Date().timeIntervalSince1970 * 1_000
         guard let incoming = liveWorkoutFromWCMessage(
             message: message,
             previous: liveWorkoutMirror.row
         ) else { return }
+        // #530-style ownership: a beat stamped with another account is
+        // rejected; an un-stamped beat (pre-#530 watch build) is trusted —
+        // the mirror resets to .empty on every account change, so there is
+        // no stale cross-account state for it to pollute (#626 review).
+        guard liveWorkoutOwnedBy(incoming, userID: userID, trustsUnstamped: true) else { return }
         acceptLiveWorkout(incoming, source: .watchDirect, nowMs: nowMs)
     }
 
     /// Realtime row → mirror cursor (fallback/authoritative reconciliation).
+    /// Rows always carry `user_id`; a row owned by any other account is
+    /// dropped before it can reduce into the mirror (#626 review).
     private func acceptLiveWorkoutRow(_ record: [String: Any]) {
-        guard authSession != nil else { return }
+        guard let userID = currentUserID else { return }
         let nowMs = Date().timeIntervalSince1970 * 1_000
-        guard let incoming = liveWorkoutFromRow(record: record) else { return }
+        guard let incoming = liveWorkoutFromRow(record: record),
+              liveWorkoutOwnedBy(incoming, userID: userID, trustsUnstamped: false)
+        else { return }
         acceptLiveWorkout(incoming, source: .serverFallback, nowMs: nowMs)
     }
 
@@ -901,10 +909,13 @@ public final class AppModel: ObservableObject {
     /// Authoritative initial/foreground row fetch, fed into the mirror as
     /// `server-fallback`. A dropped realtime connection degrades to WC beats
     /// + this refetch; the run/sequence cursor rejects anything older.
+    /// Ownership is double-checked here even though RLS already scopes the
+    /// query to the session user (#626 review).
     private func refreshLiveWorkoutRow() async {
         guard let userID = currentUserID else { return }
         do {
-            if let row = try await repository.fetchLiveWorkout() {
+            if let row = try await repository.fetchLiveWorkout(),
+               liveWorkoutOwnedBy(row, userID: userID, trustsUnstamped: false) {
                 acceptLiveWorkout(
                     row,
                     source: .serverFallback,

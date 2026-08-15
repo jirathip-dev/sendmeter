@@ -882,6 +882,11 @@ public struct LiveWorkout: Codable, Equatable, Sendable, Identifiable {
     public var id: UUID { workoutID }
     public let workoutID: UUID
     public let runID: UUID
+    /// The account that owns this snapshot, when the transport carried one
+    /// (realtime rows always do; WC beats only since #530). AppModel rejects
+    /// a packet whose owner is a different account — the mirror cursor alone
+    /// cannot tell whose run it is (#626 review).
+    public let userID: UUID?
     public let sequence: Int?
     public let event: String
     public let terminal: Bool
@@ -913,7 +918,8 @@ public struct LiveWorkout: Codable, Equatable, Sendable, Identifiable {
         climbingSince: Date?,
         restStartedAt: Date?,
         restTargetSeconds: Int?,
-        updatedAt: Date
+        updatedAt: Date,
+        userID: UUID? = nil
     ) {
         self.workoutID = workoutID
         self.runID = runID
@@ -931,5 +937,6 @@ public struct LiveWorkout: Codable, Equatable, Sendable, Identifiable {
         self.restStartedAt = restStartedAt
         self.restTargetSeconds = restTargetSeconds
         self.updatedAt = updatedAt
+        self.userID = userID
     }
 }

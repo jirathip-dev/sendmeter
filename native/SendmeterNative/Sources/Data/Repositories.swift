@@ -10,6 +10,7 @@ private let presetColumns = "id,name,hold_s,holds_s,reps,sets,rest_reps_s,rest_s
 private struct LiveWorkoutRow: Decodable {
     let workoutID: UUID
     let runID: UUID?
+    let userID: UUID?
     let sequence: Int?
     let event: String?
     let terminal: Bool?
@@ -29,6 +30,7 @@ private struct LiveWorkoutRow: Decodable {
         case status, event, terminal, climbing, sequence
         case workoutID = "workout_id"
         case runID = "run_id"
+        case userID = "user_id"
         case startedAt = "started_at"
         case heartRate = "hr"
         case attemptCount = "attempt_count"
@@ -57,7 +59,8 @@ private struct LiveWorkoutRow: Decodable {
             climbingSince: climbingSince,
             restStartedAt: restStartedAt,
             restTargetSeconds: restTargetSeconds,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            userID: userID
         )
     }
 }
@@ -1356,7 +1359,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             queryItems: [
                 URLQueryItem(
                     name: "select",
-                    value: "workout_id,run_id,sequence,event,terminal,status,started_at,hr,attempt_count,active_kcal,elevation_gain_m,climbing,climbing_since,rest_started_at,rest_target_s,updated_at"
+                    value: "workout_id,run_id,user_id,sequence,event,terminal,status,started_at,hr,attempt_count,active_kcal,elevation_gain_m,climbing,climbing_since,rest_started_at,rest_target_s,updated_at"
                 ),
                 URLQueryItem(name: "order", value: "updated_at.desc"),
                 URLQueryItem(name: "limit", value: "1")

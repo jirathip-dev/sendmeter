@@ -12,7 +12,8 @@ final class LiveWorkoutMirrorTests: XCTestCase {
         terminal: Any? = nil,
         runIDValue: Any? = nil,
         event: Any? = nil,
-        sequence: Any? = nil
+        sequence: Any? = nil,
+        ownerUserID: UUID? = nil
     ) -> [String: Any] {
         var record: [String: Any] = [
             "workout_id": workoutID.uuidString,
@@ -32,6 +33,7 @@ final class LiveWorkoutMirrorTests: XCTestCase {
         if let runIDValue { record["run_id"] = runIDValue }
         if let event { record["event"] = event }
         if let sequence { record["sequence"] = sequence }
+        if let ownerUserID { record["user_id"] = ownerUserID.uuidString }
         return record
     }
 
@@ -41,7 +43,8 @@ final class LiveWorkoutMirrorTests: XCTestCase {
         terminal: Bool = false,
         status: String = "live",
         startedAt: Date? = nil,
-        updatedAt: Date? = nil
+        updatedAt: Date? = nil,
+        userID: UUID? = nil
     ) -> LiveWorkout {
         LiveWorkout(
             workoutID: workoutID,
@@ -59,7 +62,8 @@ final class LiveWorkoutMirrorTests: XCTestCase {
             climbingSince: nil,
             restStartedAt: nil,
             restTargetSeconds: 180,
-            updatedAt: updatedAt ?? self.updatedAt
+            updatedAt: updatedAt ?? self.updatedAt,
+            userID: userID
         )
     }
 
@@ -124,6 +128,34 @@ final class LiveWorkoutMirrorTests: XCTestCase {
         XCTAssertNotNil(liveWorkoutFromRow(record: row(runIDValue: runID.uuidString.lowercased())))
     }
 
+    func testRowDecodeSurfacesOwnerUserID() throws {
+        let owner = UUID()
+        let workout = try XCTUnwrap(liveWorkoutFromRow(record: row(ownerUserID: owner)))
+        XCTAssertEqual(workout.userID, owner)
+    }
+
+    func testRowDecodeWithoutUserIDIsUnstamped() throws {
+        let workout = try XCTUnwrap(liveWorkoutFromRow(record: row()))
+        XCTAssertNil(workout.userID)
+    }
+
+    // MARK: Ownership (#626 review)
+
+    func testOwnedByRejectsOtherAccount() {
+        let owner = UUID()
+        let other = UUID()
+        let workout = liveWorkout(userID: owner)
+        XCTAssertTrue(liveWorkoutOwnedBy(workout, userID: owner, trustsUnstamped: true))
+        XCTAssertFalse(liveWorkoutOwnedBy(workout, userID: other, trustsUnstamped: true))
+        XCTAssertFalse(liveWorkoutOwnedBy(workout, userID: other, trustsUnstamped: false))
+    }
+
+    func testOwnedByTrustsUnstampedOnlyWhenAllowed() {
+        let workout = liveWorkout(userID: nil)
+        XCTAssertTrue(liveWorkoutOwnedBy(workout, userID: UUID(), trustsUnstamped: true))
+        XCTAssertFalse(liveWorkoutOwnedBy(workout, userID: UUID(), trustsUnstamped: false))
+    }
+
     // MARK: WC message decoding
 
     func testWCMessageDecodesStampedBeat() throws {
@@ -176,6 +208,21 @@ final class LiveWorkoutMirrorTests: XCTestCase {
             message: ["updated_at": updatedAt.timeIntervalSince1970],
             previous: nil
         ))
+    }
+
+    func testWCMessageSurfacesOwnerUserID() throws {
+        let owner = UUID()
+        var message: [String: Any] = [
+            "status": "live",
+            "run_id": runID.uuidString,
+            "started_at": startedAt.timeIntervalSince1970,
+            "updated_at": updatedAt.timeIntervalSince1970
+        ]
+        let unstamped = try XCTUnwrap(liveWorkoutFromWCMessage(message: message, previous: nil))
+        XCTAssertNil(unstamped.userID)
+        message["account_user_id"] = owner.uuidString
+        let stamped = try XCTUnwrap(liveWorkoutFromWCMessage(message: message, previous: nil))
+        XCTAssertEqual(stamped.userID, owner)
     }
 
     // MARK: Merge discipline (web parity)
