@@ -248,6 +248,19 @@ private struct SessionEditorSheet: View {
                             .monospacedDigit()
                             .frame(width: 34)
                     }
+                    // #627: a W'-depletion prediction is banked
+                    // `rpe_confirmed = false` — nobody reviewed it. It stays
+                    // fully editable; saving here is the review (the repo
+                    // always writes `rpe_confirmed: true` on edit, matching
+                    // the web).
+                    if !draft.rpeConfirmed {
+                        Label(
+                            "Predicted from W′ depletion — adjust the slider to confirm",
+                            systemImage: "wand.and.stars"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
                     TextField("Notes", text: $draft.note, axis: .vertical)
                 }
                 Section("Training Block") {

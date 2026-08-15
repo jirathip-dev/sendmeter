@@ -4,7 +4,7 @@ import Foundation
 import SendmeterCore
 import SwiftUI
 
-typealias AuthSession = Auth.Session
+public typealias AuthSession = Auth.Session
 
 public enum AppBootState: Equatable {
     case loading
@@ -29,6 +29,42 @@ private enum PendingWrite: Codable, Sendable {
 private struct SessionQueuePayload: Codable, Sendable {
     let id: UUID
     let draft: SessionDraft
+    /// False for a #627 W'-depletion prediction (or its fallback) that
+    /// nobody reviewed — #114's column. Optional so pre-existing queue
+    /// entries (which predate the field) decode as the human-confirmed
+    /// default.
+    let rpeConfirmed: Bool?
+    /// Links the session back to its gauge-session recordings.
+    let groupID: UUID?
+}
+
+/// The free-pull recording context the hands-free loop snapshots when a rep
+/// stops: tag/side/zone/preset resolved on the Force tab at arm time.
+public struct FreePullContext: Sendable, Equatable {
+    public var tag: String
+    public var side: TindeqSide
+    public var zone: RecordedZone?
+    public var preset: TindeqPreset?
+    public var targetBand: ForceTargetBand?
+
+    public init(
+        tag: String = "",
+        side: TindeqSide = .unspecified,
+        zone: RecordedZone? = nil,
+        preset: TindeqPreset? = nil,
+        targetBand: ForceTargetBand? = nil
+    ) {
+        self.tag = tag
+        self.side = side
+        self.zone = zone
+        self.preset = preset
+        self.targetBand = targetBand
+    }
+}
+
+private struct TagCurveKey: Hashable {
+    let tag: String
+    let modality: String
 }
 
 @MainActor
@@ -55,12 +91,29 @@ public final class AppModel: ObservableObject {
     @Published public var toastMessage: String?
     @Published public var passwordRecovery = false
     @Published public var selectedTab: AppTab = .dashboard
+    /// #627: the fitted per-tag curves the gauge-session RPE prediction reads.
+    @Published public private(set) var tagCurves: [TagForceCurve] = []
+    /// True while a guided protocol runs: the run owns its session end (its
+    /// interrupted path preserves the final rep and THEN ends the session),
+    /// so the generic disconnect trigger defers to it.
+    @Published public private(set) var guidedProtocolActive = false
 
     public let auth: AuthService
     public let repository: SendmeterRepository
     public let tindeq: TindeqBluetooth
     public let health: HealthKitService
     public let watch: WatchConnectivityService
+    /// #628: hands-free arming loop (load-triggered start/stop/save).
+    public let handsFree: HandsFreeForceController
+    /// #628: lock-screen Live Activity mirror of the guided protocol.
+    public let guidedActivity: GuidedProtocolActivityManager
+    /// #627: in-flight rep saves the session-end snapshot waits for.
+    public let gaugeSessionSaveGate: GaugeSessionSaveGate
+    /// #628: refcounted screen keep-awake while connected/armed/measuring.
+    public let keepAwake: KeepAwakeCoordinator
+
+    public private(set) var gaugeSessionTracker = GaugeSessionTracker()
+    public var freePullContext = FreePullContext()
 
     private let queue: DurableQueue<PendingWrite>?
     private var authObservationTask: Task<Void, Never>?
@@ -68,19 +121,34 @@ public final class AppModel: ObservableObject {
     private var pendingRecordings: [UUID: TindeqRecording] = [:]
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
+    private var tagCurveCache: [TagCurveKey: TagForceCurve] = [:]
+    private var keepAwakeRelease: (() -> Void)?
+    private var pendingWarmKeys: Set<TagCurveKey> = []
+    private var warmTask: Task<Void, Never>?
 
     public init(
-        auth: AuthService = AuthService(),
-        repository: SendmeterRepository = SendmeterRepository(),
-        tindeq: TindeqBluetooth = TindeqBluetooth(),
-        health: HealthKitService = HealthKitService(),
-        watch: WatchConnectivityService = WatchConnectivityService()
+        authService: AuthService? = nil,
+        repositoryService: SendmeterRepository? = nil,
+        tindeqService: TindeqBluetooth? = nil,
+        healthService: HealthKitService? = nil,
+        watchService: WatchConnectivityService? = nil
     ) {
-        self.auth = auth
-        self.repository = repository
-        self.tindeq = tindeq
-        self.health = health
-        self.watch = watch
+        // The services' initializers are MainActor-isolated; default-argument
+        // expressions are nonisolated, so they must be constructed here in
+        // the (MainActor) body instead of in the parameter list.
+        self.auth = authService ?? AuthService()
+        self.repository = repositoryService ?? SendmeterRepository()
+        self.tindeq = tindeqService ?? TindeqBluetooth()
+        self.health = healthService ?? HealthKitService()
+        self.watch = watchService ?? WatchConnectivityService()
+        self.handsFree = HandsFreeForceController()
+        self.guidedActivity = GuidedProtocolActivityManager()
+        self.gaugeSessionSaveGate = GaugeSessionSaveGate()
+        self.keepAwake = KeepAwakeCoordinator { active in
+            await MainActor.run {
+                UIApplication.shared.isIdleTimerDisabled = active
+            }
+        }
 
         let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
@@ -103,11 +171,49 @@ public final class AppModel: ObservableObject {
             await self?.acceptWatchCompletion(completion)
         }
 
+        // Hands-free arming loop wiring: the controller stays pure (Core);
+        // the device + save hooks are AppModel's.
+        handsFree.onArmStream = { [weak self] in self?.armHandsFreeStream() }
+        handsFree.onDisarmStream = { [weak self] in self?.tindeq.disarmHandsFree() }
+        handsFree.onBeginRecording = { [weak self] in _ = self?.tindeq.beginArmedRecording() }
+        handsFree.onStopAndSave = { [weak self] in self?.completeHandsFreeRep() }
+        handsFree.onAutoReArm = { [weak self] in self?.armHandsFreeStream() }
+        tindeq.onWeightSample = { [weak self] sample in
+            self?.handsFree.feed(
+                atMs: Date().timeIntervalSince1970 * 1_000,
+                kg: sample.kilograms
+            )
+        }
+
         tindeq.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &nestedCancellables)
         watch.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &nestedCancellables)
+        // #627/#628: a disconnect ends the gauge session (auto-log) — unless
+        // a guided protocol is running, whose interrupted path preserves the
+        // final rep and then ends the session itself (so the last rep can
+        // never be orphaned into a fresh group by a racing end). The
+        // keep-awake hold follows the transport + arming state.
+        tindeq.$status
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                guard let self else { return }
+                if case .interrupted = status {
+                    self.handsFree.handleDisconnected()
+                    if !self.guidedProtocolActive {
+                        Task { @MainActor in await self.endGaugeSession() }
+                    }
+                }
+                self.updateKeepAwake()
+            }
+            .store(in: &nestedCancellables)
+        tindeq.$handsFreeArmed
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.updateKeepAwake()
+            }
             .store(in: &nestedCancellables)
 
         authObservationTask = Task { [weak self] in
@@ -133,51 +239,51 @@ public final class AppModel: ObservableObject {
     // MARK: Auth
 
     public func signIn(email: String, password: String) async {
-        await perform { _ = try await auth.signIn(email: email, password: password) }
+        await perform { _ = try await self.auth.signIn(email: email, password: password) }
     }
 
     public func signUp(email: String, password: String) async {
         await perform {
-            let session = try await auth.signUp(email: email, password: password)
+            let session = try await self.auth.signUp(email: email, password: password)
             if session == nil { self.toastMessage = "Check your email to confirm your account." }
         }
     }
 
     public func sendMagicLink(email: String) async {
         await perform {
-            try await auth.sendMagicLink(email: email)
+            try await self.auth.sendMagicLink(email: email)
             self.toastMessage = "Magic link sent."
         }
     }
 
     public func signInWithPasskey() async {
-        await perform { try await auth.signInWithPasskey() }
+        await perform { try await self.auth.signInWithPasskey() }
     }
 
     public func registerPasskey() async {
         await perform {
-            try await auth.registerPasskey()
+            try await self.auth.registerPasskey()
             self.toastMessage = "Passkey registered."
         }
     }
 
     public func signOut() async {
         await perform {
-            try await auth.signOut()
+            try await self.auth.signOut()
             self.watch.relaySession(nil)
         }
     }
 
     public func updatePassword(_ password: String) async {
         await perform {
-            try await auth.updatePassword(password)
+            try await self.auth.updatePassword(password)
             self.passwordRecovery = false
             self.toastMessage = "Password updated."
         }
     }
 
     public func handleDeepLink(_ url: URL) async {
-        await perform { try await auth.handleDeepLink(url) }
+        await perform { try await self.auth.handleDeepLink(url) }
     }
 
     public func becameActive() async {
@@ -224,7 +330,7 @@ public final class AppModel: ObservableObject {
 
     private func relayValidSessionToWatch(guaranteed: Bool) async {
         do {
-            let valid = try await auth.client.auth.session
+            let valid = try await self.auth.client.auth.session
             authSession = valid
             watch.relaySession(valid, guaranteed: guaranteed)
         } catch {
@@ -265,8 +371,28 @@ public final class AppModel: ObservableObject {
             mergeSessions(remote: fetchedSessions)
             mergeRecordings(remote: fetchedRecordings)
             await refreshQueueCount()
+            warmTagCurvesIfMissing()
         } catch {
             surface(error)
+        }
+    }
+
+    /// #627: warm the per-tag curve cache in the background for every tag
+    /// currently in the recordings (bounded by the pick window inside
+    /// `ForceCurveEngine.pickCurveRecordings`), so the gauge-session end
+    /// reads cached curves instead of fetching.
+    public func warmTagCurvesIfMissing() {
+        var keys = Set<TagCurveKey>()
+        for recording in recordings where !recording.tag.isEmpty {
+            keys.insert(
+                TagCurveKey(
+                    tag: recording.tag,
+                    modality: GaugeSessionRPE.modality(of: recording)
+                )
+            )
+        }
+        for key in keys where tagCurveCache[key] == nil {
+            warmTagCurveIfMissing(tag: key.tag, modality: key.modality)
         }
     }
 
@@ -294,20 +420,53 @@ public final class AppModel: ObservableObject {
         )
         pendingSessions[id] = pending
         mergeSessions(remote: sessions.filter { !$0.pending })
-        let item = DurableQueueItem(
-            id: id,
-            accountUserID: userID,
-            payload: PendingWrite.session(SessionQueuePayload(id: id, draft: draft))
-        )
-        if !(await enqueueAndUpload(item)) {
+        let enqueued = await enqueueSession(draft: draft, id: id)
+        if !enqueued {
             pendingSessions.removeValue(forKey: id)
             mergeSessions(remote: sessions.filter { !$0.pending })
         }
     }
 
+    /// Enqueue a session into the durable queue (and kick off its upload),
+    /// showing the optimistic pending row while it lands. `rpeConfirmed`
+    /// defaults to `true` (a human entered the number); the #627 gauge-session
+    /// path passes `false` — a W'-depletion prediction nobody reviewed —
+    /// plus the recordings' group id to link them back.
+    @discardableResult
+    private func enqueueSession(
+        draft: SessionDraft,
+        id: UUID,
+        rpeConfirmed: Bool? = nil,
+        groupID: UUID? = nil
+    ) async -> Bool {
+        guard let userID = currentUserID else { return false }
+        let pending = pendingSession(
+            id: id,
+            draft: draft,
+            accountUserID: userID,
+            rpeConfirmed: rpeConfirmed,
+            groupID: groupID
+        )
+        pendingSessions[id] = pending
+        mergeSessions(remote: sessions.filter { !$0.pending })
+        let item = DurableQueueItem(
+            id: id,
+            accountUserID: userID,
+            payload: PendingWrite.session(
+                SessionQueuePayload(
+                    id: id,
+                    draft: draft,
+                    rpeConfirmed: rpeConfirmed,
+                    groupID: groupID
+                )
+            )
+        )
+        return await enqueueAndUpload(item)
+    }
+
     public func updateSession(_ session: SendmeterCore.Session) async {
         await perform {
-            let saved = try await repository.updateSession(session)
+            let saved = try await self.repository.updateSession(session)
             self.replaceSession(saved)
             self.toastMessage = "Session updated."
         }
@@ -315,7 +474,7 @@ public final class AppModel: ObservableObject {
 
     public func deleteSession(_ session: SendmeterCore.Session) async {
         await perform {
-            try await repository.softDeleteSession(id: session.id)
+            try await self.repository.softDeleteSession(id: session.id)
             self.sessions.removeAll { $0.id == session.id }
             self.toastMessage = "Session moved to Trash."
         }
@@ -323,7 +482,7 @@ public final class AppModel: ObservableObject {
 
     public func restoreSession(_ session: SendmeterCore.Session) async {
         await perform {
-            try await repository.restoreSession(id: session.id)
+            try await self.repository.restoreSession(id: session.id)
             self.deletedSessions.removeAll { $0.id == session.id }
             await self.refreshAll(showSpinner: false)
         }
@@ -331,7 +490,7 @@ public final class AppModel: ObservableObject {
 
     public func purgeSession(_ session: SendmeterCore.Session) async {
         await perform {
-            try await repository.purgeSession(id: session.id)
+            try await self.repository.purgeSession(id: session.id)
             self.deletedSessions.removeAll { $0.id == session.id }
         }
     }
@@ -341,7 +500,7 @@ public final class AppModel: ObservableObject {
     public func switchPhase(to phase: PhaseID) async {
         guard let userID = currentUserID else { return }
         await perform {
-            let result = try await repository.switchPhase(
+            let result = try await self.repository.switchPhase(
                 to: phase,
                 currentPeriods: self.phasePeriods,
                 today: LocalDateSupport.string(from: Date()),
@@ -422,6 +581,21 @@ public final class AppModel: ObservableObject {
     ) async -> Bool {
         guard let userID = currentUserID else { return false }
 
+        // The session-end snapshot must count this rep, so the gate is
+        // claimed synchronously — before the first await below (#613's
+        // RepSettlement contract).
+        await gaugeSessionSaveGate.begin()
+        defer {
+            Task { await gaugeSessionSaveGate.finish() }
+        }
+
+        // #627: the gauge session is minted lazily on the FIRST save; every
+        // recording taken during it shares its group id, exactly like the
+        // web's `ensureSession` (SL-58).
+        let groupID = gaugeSessionTracker.ensureSession(
+            now: Date()
+        ).groupID
+
         let resolvedSet = max(1, setNumber ?? 1)
         let resolvedTargetBand = targetBand ?? preset.flatMap {
             ForceCurveEngine.targetBand(
@@ -488,7 +662,7 @@ public final class AppModel: ObservableObject {
             note: "",
             tag: String(tag.prefix(120)),
             side: side,
-            groupID: nil,
+            groupID: groupID,
             protocolRunID: protocolRunID,
             setNumber: setNumber,
             zone: zone,
@@ -522,7 +696,262 @@ public final class AppModel: ObservableObject {
             pendingRecordings.removeValue(forKey: recording.id)
             mergeRecordings(remote: recordings.filter { pendingRecordings[$0.id] == nil })
         }
+        // #627: warm the tag's fitted curve in the background so the
+        // session-end prediction reads a cached curve instead of fetching.
+        let savedModality = recording.protocolMode == .reverseAction ? "reverse_action" : "static"
+        warmTagCurveIfMissing(tag: recording.tag, modality: savedModality)
         return enqueued
+    }
+
+    // MARK: Gauge session (#627)
+
+    /// End the active gauge session and auto-log it immediately at the
+    /// W'-depletion predicted RPE (#627) — no confirm step, mirroring the
+    /// web's `endGaugeSession` (#295) and the watch's `logSessionNow()`
+    /// (#280). Called on Finish and on disconnect; the end CLAIM is
+    /// synchronous (`endActive()` clears before the first await), so a
+    /// Finish tap racing a disconnect effect logs exactly once. The
+    /// prediction reads the recorded group's reps against the cached
+    /// per-tag curves — never a fresh fetch — so a missing curve falls back
+    /// instead of stalling the log.
+    public func endGaugeSession() async {
+        // #613: wait for any in-flight rep save to become durable + locally
+        // published BEFORE claiming the end — a disconnect's interrupted
+        // save lands after the status change (the guided view's tick
+        // preserves the partial rep), and a late rep must join THIS group,
+        // not mint a new one. Bounded by local persistence, never the
+        // network. The claim after the wait still precedes any await of the
+        // insert, so concurrent end paths still log exactly once.
+        await gaugeSessionSaveGate.waitForIdle()
+        guard let ended = gaugeSessionTracker.endActive() else { return }
+
+        let groupRecordings = recordings.filter { $0.groupID == ended.groupID }
+        let prediction = GaugeSessionRPE.predict(
+            recordings: groupRecordings,
+            curves: cachedCurves(for: groupRecordings)
+        )
+        let durationMinutes = GaugeSessionDuration.spanMinutes(recordings: groupRecordings)
+            ?? GaugeSessionDuration.clamp(
+                minutes: Date().timeIntervalSince(ended.startedAt) / 60
+            )
+        let draft = SessionDraft(
+            date: LocalDateSupport.string(from: ended.startedAt),
+            type: "tindeq",
+            typeLabel: "Tindeq",
+            durationMinutes: durationMinutes,
+            rpe: prediction.rpe,
+            note: GaugeSessionNote.build(recordings: groupRecordings),
+            phase: settings.currentPhase
+        )
+        let ok = await enqueueSession(
+            draft: draft,
+            id: UUID(),
+            rpeConfirmed: false,
+            groupID: ended.groupID
+        )
+        toastMessage = ok
+            ? "Gauge session logged to history"
+            : "Couldn't log gauge session"
+    }
+
+    /// #628: a guided protocol's run owns the disconnect-triggered session
+    /// end (its interrupted path preserves the final rep first); the generic
+    /// disconnect trigger defers while this is set.
+    public func setGuidedProtocolActive(_ active: Bool) {
+        guidedProtocolActive = active
+    }
+
+    /// The keep-awake hold follows the transport + arming state (#628): the
+    /// screen stays awake while connected (a short auto-lock must never cut
+    /// a hold or protocol), armed, or measuring — the web's `useWakeLock`
+    /// rule — and the last release restores the idle timer.
+    public func scenePhaseChanged(_ phase: ScenePhase) {
+        if phase == .active {
+            updateKeepAwake()
+        } else {
+            keepAwakeRelease?()
+            keepAwakeRelease = nil
+        }
+    }
+
+    /// Re-derive the keep-awake hold from the transport + arming state.
+    /// Public so views can re-assert after local-only changes (the hands-free
+    /// toggle) that don't flow through a published property.
+    public func updateKeepAwake() {
+        let active = tindeq.status == .connected
+            || tindeq.status == .measuring
+            || tindeq.handsFreeArmed
+        if active, keepAwakeRelease == nil {
+            keepAwakeRelease = keepAwake.acquire()
+        } else if !active, let release = keepAwakeRelease {
+            release()
+            keepAwakeRelease = nil
+        }
+    }
+
+    // MARK: Hands-free force (#628)
+
+    private func armHandsFreeStream() {
+        do {
+            try tindeq.armHandsFree()
+        } catch {
+            handsFree.handleDisconnected()
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// The claimed hands-free stop: stop the device, save the rep against
+    /// the free-pull context snapshot, trim the low-force release tail, and
+    /// re-arm only once the save is DURABLE (so a failed save can never
+    /// re-arm a stream that still owes a rep). The `.stopping` phase is the
+    /// controller's claim; re-arm is the controller's `rearmAfterSave()`.
+    private func completeHandsFreeRep() {
+        guard let summary = tindeq.stopMeasuring() else {
+            handsFree.disarm()
+            return
+        }
+        let context = freePullContext
+        let trimEndMilliseconds = handsFree.consumeTrimEndMilliseconds()
+        Task {
+            let trimmed = trimSummary(summary, endMilliseconds: trimEndMilliseconds)
+            let enqueued = await saveForceSummary(
+                trimmed,
+                tag: context.tag,
+                side: context.side,
+                zone: context.zone,
+                preset: context.preset,
+                targetBand: context.targetBand
+            )
+            if enqueued {
+                tindeq.clearCompletedRecording()
+                handsFree.rearmAfterSave()
+            } else {
+                handsFree.disarm()
+                errorMessage = "Hands-free pull couldn't be saved."
+            }
+        }
+    }
+
+    /// #503's trim contract: a release-triggered stop ends the rep at the
+    /// proven release point on the recording clock; a manual tap (nil trim)
+    /// keeps the whole buffer.
+    private func trimSummary(_ summary: ForceSummary, endMilliseconds: Double?) -> ForceSummary {
+        guard let endMilliseconds else { return summary }
+        let trimmedSamples = summary.samples.filter { $0.milliseconds <= endMilliseconds }
+        guard !trimmedSamples.isEmpty else { return summary }
+        let peak = trimmedSamples.map(\.kilograms).max() ?? summary.peakKilograms
+        let average = trimmedSamples.reduce(0) { $0 + $1.kilograms } / Double(trimmedSamples.count)
+        let duration = max(1, Int(endMilliseconds.rounded()))
+        return ForceSummary(
+            durationMilliseconds: duration,
+            peakKilograms: peak,
+            averageKilograms: average,
+            samples: trimmedSamples
+        )
+    }
+
+    // MARK: Tag curves (#627)
+
+    /// The prediction's synchronous cache read — never a fetch, so ending a
+    /// session cannot stall (the web's #613 rule).
+    private func cachedCurves(for recordings: [TindeqRecording]) -> [TagForceCurve] {
+        var seen = Set<TagCurveKey>()
+        return recordings.compactMap { recording in
+            let key = TagCurveKey(
+                tag: recording.tag,
+                modality: GaugeSessionRPE.modality(of: recording)
+            )
+            guard !recording.tag.isEmpty, !seen.contains(key) else { return nil }
+            seen.insert(key)
+            return tagCurveCache[key]
+        }
+    }
+
+    /// Background-warm the tag's fitted curve (mirrors the web's cached
+    /// `fetchTagCurves()` registry): computed from the native recordings via
+    /// ForceCurveEngine, cached per tag+modality. Requests are queued and
+    /// drained by ONE background task, so a burst (refreshAll warming every
+    /// tag at once) warms them all instead of cancelling down to the last.
+    public func warmTagCurveIfMissing(tag: String, modality: String) {
+        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty, !modality.isEmpty else { return }
+        let key = TagCurveKey(tag: tag, modality: modality)
+        guard tagCurveCache[key] == nil else { return }
+        pendingWarmKeys.insert(key)
+        guard warmTask == nil else { return }
+        warmTask = Task { [weak self] in
+            await self?.drainWarmQueue()
+        }
+    }
+
+    private func drainWarmQueue() async {
+        warmTask = nil
+        while !Task.isCancelled {
+            let keys = Array(pendingWarmKeys)
+            pendingWarmKeys = []
+            guard !keys.isEmpty else { return }
+            for key in keys {
+                guard !Task.isCancelled else { return }
+                let normalized = key.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if let curve = await computeTagCurve(
+                    tag: key.tag,
+                    modality: key.modality,
+                    normalizedTag: normalized
+                ) {
+                    tagCurveCache[key] = curve
+                    publishTagCurves()
+                }
+            }
+        }
+    }
+
+    private func publishTagCurves() {
+        tagCurves = tagCurveCache.values.sorted {
+            $0.tag < $1.tag || ($0.tag == $1.tag && $0.modality < $1.modality)
+        }
+    }
+
+    private func computeTagCurve(
+        tag: String,
+        modality: String,
+        normalizedTag: String
+    ) async -> TagForceCurve? {
+        let byTag = recordings.filter {
+            $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedTag
+                && !pendingRecordings.keys.contains($0.id)
+                && modalityFilter($0, modality: modality)
+        }
+        guard !byTag.isEmpty else { return nil }
+        let candidates = ForceCurveEngine.pickCurveRecordings(byTag)
+        guard !candidates.isEmpty else { return nil }
+        let sampleSets = await withTaskGroup(of: [TindeqSample]?.self) { group in
+            for candidate in candidates {
+                group.addTask {
+                    let samples = try? await self.repository.fetchRecordingSamples(id: candidate.id)
+                    return (samples?.isEmpty == false) ? samples : nil
+                }
+            }
+            var values: [[TindeqSample]] = []
+            for await result in group {
+                if let result { values.append(result) }
+            }
+            return values
+        }
+        guard !sampleSets.isEmpty else { return nil }
+        let references = await Task.detached(priority: .utility) {
+            ForceCurveEngine.references(metadata: byTag, sampleSets: sampleSets)
+        }.value
+        guard let cf = references.criticalForceKilograms,
+              let wPrime = references.impulseAboveCriticalForceKilogramSeconds
+        else { return nil }
+        return TagForceCurve(tag: tag, modality: modality, cf: cf, wPrime: wPrime)
+    }
+
+    private func modalityFilter(_ recording: TindeqRecording, modality: String) -> Bool {
+        if modality == "reverse_action" {
+            return recording.protocolMode == .reverseAction && recording.capacityEvidence == true
+        }
+        return recording.protocolMode != .reverseAction
     }
 
     private func forceReferences(
@@ -580,7 +1009,7 @@ public final class AppModel: ObservableObject {
 
     public func updateRecording(_ recording: TindeqRecording) async {
         await perform {
-            let saved = try await repository.updateRecordingMeta(
+            let saved = try await self.repository.updateRecordingMeta(
                 id: recording.id,
                 tag: recording.tag,
                 side: recording.side,
@@ -592,14 +1021,14 @@ public final class AppModel: ObservableObject {
 
     public func deleteRecording(_ recording: TindeqRecording) async {
         await perform {
-            try await repository.softDeleteRecording(id: recording.id)
+            try await self.repository.softDeleteRecording(id: recording.id)
             self.recordings.removeAll { $0.id == recording.id }
         }
     }
 
     public func restoreRecording(_ recording: TindeqRecording) async {
         await perform {
-            try await repository.restoreRecording(id: recording.id)
+            try await self.repository.restoreRecording(id: recording.id)
             self.deletedRecordings.removeAll { $0.id == recording.id }
             await self.refreshAll(showSpinner: false)
         }
@@ -607,7 +1036,7 @@ public final class AppModel: ObservableObject {
 
     public func purgeRecording(_ recording: TindeqRecording) async {
         await perform {
-            try await repository.purgeRecording(id: recording.id)
+            try await self.repository.purgeRecording(id: recording.id)
             self.deletedRecordings.removeAll { $0.id == recording.id }
         }
     }
@@ -616,7 +1045,7 @@ public final class AppModel: ObservableObject {
         let unlinked = recordings.filter { $0.groupID == nil }
         guard !unlinked.isEmpty else { return }
         await perform {
-            try await repository.linkRecordingsToSession(
+            try await self.repository.linkRecordingsToSession(
                 sessionID: session.id,
                 recordingIDs: unlinked.map(\.id)
             )
@@ -632,8 +1061,8 @@ public final class AppModel: ObservableObject {
     public func savePreset(_ preset: TindeqPreset, isNew: Bool) async {
         await perform {
             let saved = try await (isNew
-                ? repository.insertPreset(preset)
-                : repository.updatePreset(preset))
+                ? self.repository.insertPreset(preset)
+                : self.repository.updatePreset(preset))
             self.presets.removeAll { $0.id == saved.id }
             self.presets.insert(saved, at: 0)
         }
@@ -641,7 +1070,7 @@ public final class AppModel: ObservableObject {
 
     public func deletePreset(_ preset: TindeqPreset) async {
         await perform {
-            try await repository.deletePreset(id: preset.id)
+            try await self.repository.deletePreset(id: preset.id)
             self.presets.removeAll { $0.id == preset.id }
         }
     }
@@ -651,8 +1080,8 @@ public final class AppModel: ObservableObject {
     public func saveRoutine(_ routine: RoutinePreset, isNew: Bool) async {
         await perform {
             let saved = try await (isNew
-                ? repository.insertRoutine(routine)
-                : repository.updateRoutine(routine))
+                ? self.repository.insertRoutine(routine)
+                : self.repository.updateRoutine(routine))
             self.routines.removeAll { $0.id == saved.id }
             self.routines.insert(saved, at: 0)
         }
@@ -660,7 +1089,7 @@ public final class AppModel: ObservableObject {
 
     public func deleteRoutine(_ routine: RoutinePreset) async {
         await perform {
-            try await repository.deleteRoutine(id: routine.id)
+            try await self.repository.deleteRoutine(id: routine.id)
             self.routines.removeAll { $0.id == routine.id }
         }
     }
@@ -671,11 +1100,11 @@ public final class AppModel: ObservableObject {
         guard let userID = currentUserID else { return }
         await perform {
             if requestAuthorization {
-                try await health.requestAuthorization()
+                try await self.health.requestAuthorization()
                 UserDefaults.standard.set(true, forKey: "sendmeter.native.health-authorized")
             }
-            let metric = try await health.computeTodayMetric(acwr: self.acwr.ratio)
-            try await repository.upsertHealthMetric(metric, userID: userID)
+            let metric = try await self.health.computeTodayMetric(acwr: self.acwr.ratio)
+            try await self.repository.upsertHealthMetric(metric, userID: userID)
             self.healthMetrics.removeAll { $0.date == metric.date }
             self.healthMetrics.insert(metric, at: 0)
             self.watch.publishReadiness(metric)
@@ -686,9 +1115,9 @@ public final class AppModel: ObservableObject {
     public func deleteAccount() async {
         guard let userID = currentUserID else { return }
         await perform {
-            try await repository.deleteAccount()
+            try await self.repository.deleteAccount()
             try await self.queue?.discardAll(accountUserID: userID, reason: "account-deleted")
-            try await auth.signOut()
+            try await self.auth.signOut()
         }
     }
 
@@ -740,15 +1169,20 @@ public final class AppModel: ObservableObject {
         do {
             switch item.payload {
             case let .session(payload):
-                let saved = try await repository.insertSession(payload.draft, id: payload.id)
+                let saved = try await self.repository.insertSession(
+                    payload.draft,
+                    id: payload.id,
+                    rpeConfirmed: payload.rpeConfirmed,
+                    groupID: payload.groupID
+                )
                 pendingSessions.removeValue(forKey: payload.id)
                 replaceSession(saved)
             case let .recording(recording):
-                let saved = try await repository.insertRecording(recording)
+                let saved = try await self.repository.insertRecording(recording)
                 pendingRecordings.removeValue(forKey: recording.id)
                 replaceRecording(saved)
             case let .workout(draft):
-                let saved = try await repository.insertPhoneWorkout(draft)
+                let saved = try await self.repository.insertPhoneWorkout(draft)
                 pendingSessions.removeValue(forKey: draft.sessionID)
                 replaceSession(saved)
             }
@@ -798,7 +1232,7 @@ public final class AppModel: ObservableObject {
         pendingSessions[pending.id] = pending
         mergeSessions(remote: sessions.filter { !$0.pending })
         do {
-            let refreshed = try await repository.fetchSessions(accountUserID: userID)
+            let refreshed = try await self.repository.fetchSessions(accountUserID: userID)
             mergeSessions(remote: refreshed)
         } catch {
             // The watch queue is the durable source until its upload lands.
@@ -823,7 +1257,9 @@ public final class AppModel: ObservableObject {
                 pendingSessions[payload.id] = pendingSession(
                     id: payload.id,
                     draft: payload.draft,
-                    accountUserID: userID
+                    accountUserID: userID,
+                    rpeConfirmed: payload.rpeConfirmed,
+                    groupID: payload.groupID
                 )
             case let .workout(draft):
                 guard !remoteSessionIDs.contains(draft.sessionID) else { continue }
@@ -838,7 +1274,9 @@ public final class AppModel: ObservableObject {
     private func pendingSession(
         id: UUID,
         draft: SessionDraft,
-        accountUserID: UUID
+        accountUserID: UUID,
+        rpeConfirmed: Bool? = nil,
+        groupID: UUID? = nil
     ) -> SendmeterCore.Session {
         SendmeterCore.Session(
             id: id,
@@ -847,8 +1285,10 @@ public final class AppModel: ObservableObject {
             typeLabel: draft.typeLabel,
             durationMinutes: draft.durationMinutes,
             rpe: draft.rpe,
+            rpeConfirmed: rpeConfirmed ?? true,
             note: draft.note,
             phase: draft.phase,
+            groupID: groupID,
             pending: true,
             accountUserID: accountUserID
         )
@@ -956,6 +1396,13 @@ public final class AppModel: ObservableObject {
         pendingRecordings = [:]
         queuedWriteCount = 0
         queueBreadcrumbs = []
+        gaugeSessionTracker.reset()
+        guidedProtocolActive = false
+        tagCurveCache = [:]
+        tagCurves = []
+        handsFree.handleDisconnected()
+        keepAwakeRelease?()
+        keepAwakeRelease = nil
     }
 
     private func perform(_ operation: @escaping () async throws -> Void) async {
