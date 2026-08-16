@@ -639,6 +639,7 @@ struct ForceTraceChart: View {
     let samples: [TindeqSample]
     let targetRange: ClosedRange<Double>?
     let target: Double?
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Canvas { context, size in
@@ -646,6 +647,8 @@ struct ForceTraceChart: View {
             let maxValue = max(10, max(maxSample, targetRange?.upperBound ?? 0)) * 1.15
             let firstTime = samples.first?.milliseconds ?? 0
             let lastTime = max(firstTime + 1, samples.last?.milliseconds ?? firstTime + 1)
+            let gridColor = ChartToken.grid.color(scheme)
+            let optimalColor = ChartToken.optimal.color(scheme)
 
             func y(_ kilograms: Double) -> CGFloat {
                 size.height - CGFloat(max(0, kilograms) / maxValue) * size.height
@@ -659,7 +662,7 @@ struct ForceTraceChart: View {
                 let lineY = size.height * CGFloat(index) / 4
                 grid.move(to: CGPoint(x: 0, y: lineY))
                 grid.addLine(to: CGPoint(x: size.width, y: lineY))
-                context.stroke(grid, with: .color(.secondary.opacity(0.22)), lineWidth: 1)
+                context.stroke(grid, with: .color(gridColor), lineWidth: 1)
             }
 
             if let targetRange {
@@ -667,7 +670,7 @@ struct ForceTraceChart: View {
                 let lowerY = y(targetRange.lowerBound)
                 context.fill(
                     Path(CGRect(x: 0, y: upperY, width: size.width, height: max(1, lowerY - upperY))),
-                    with: .color(SendmeterStyle.optimal.opacity(0.12))
+                    with: .color(optimalColor.opacity(ChartToken.optimal.bandOpacity(scheme)))
                 )
             }
             if let target {
@@ -676,7 +679,7 @@ struct ForceTraceChart: View {
                 targetPath.addLine(to: CGPoint(x: size.width, y: y(target)))
                 context.stroke(
                     targetPath,
-                    with: .color(SendmeterStyle.optimal.opacity(0.8)),
+                    with: .color(optimalColor.opacity(0.8)),
                     style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])
                 )
             }
@@ -689,7 +692,7 @@ struct ForceTraceChart: View {
             }
             context.stroke(
                 trace,
-                with: .color(SendmeterStyle.primary),
+                with: .color(ChartToken.force.color(scheme)),
                 style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round)
             )
         }
