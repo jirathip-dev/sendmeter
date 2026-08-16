@@ -3,12 +3,16 @@ import SwiftUI
 @main
 struct SendmeterNativeApp: App {
     @StateObject private var model = AppModel()
+    // #631: the theme choice is read in init — before the first frame —
+    // so a saved appearance never flashes the default scheme.
+    @StateObject private var theme = AppThemeController()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(model)
+                .environmentObject(theme)
                 .onOpenURL { url in
                     Task { await model.handleDeepLink(url) }
                 }
@@ -26,6 +30,8 @@ struct SendmeterNativeApp: App {
 
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var theme: AppThemeController
+    @Environment(\.colorScheme) private var systemScheme
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -65,6 +71,7 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: model.errorMessage)
         .animation(.easeInOut(duration: 0.2), value: model.toastMessage)
+        .preferredColorScheme(theme.resolvedScheme(prefersDark: systemScheme == .dark))
     }
 }
 

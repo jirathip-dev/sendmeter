@@ -12,7 +12,10 @@ struct DashboardView: View {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     TodayDecisionCard()
-                    PhaseCard(showPhases: $showPhases)
+                    HStack(alignment: .top, spacing: 16) {
+                        PhaseCard(showPhases: $showPhases)
+                        SendConditionsCard()
+                    }
                     LoadCard()
                     RecentSessionsCard()
                 }
@@ -368,6 +371,104 @@ private struct LogSessionSheet: View {
                 let definition = SessionTypeCatalog.definition(for: newValue)
                 duration = definition.defaultDurationMinutes
                 rpe = definition.defaultRPE
+            }
+        }
+    }
+}
+
+/// "Send conditions" (SL-69, #631): temperature + humidity → a climbing
+/// friction score, fetched from Open-Meteo for the device's location. The
+/// first check is user-initiated (so the location prompt is a tap away, web
+/// parity); once a reading exists it silently refreshes on appear/foreground
+/// and a failed refresh keeps the last reading — never a fabricated score.
+private struct SendConditionsCard: View {
+    @EnvironmentObject private var model: AppModel
+
+    /// Percentile-first framing (SL-91): a hot-climate day that's good FOR
+    /// HERE reads green even when the absolute score is low.
+    private func label(for conditions: SendConditions) -> SendConditionsLabel {
+        if let percentile = conditions.percentile {
+            return SendConditionsScore.percentileLabel(percentile)
+        }
+        return conditions.label
+    }
+
+    private func color(for conditions: SendConditions) -> Color {
+        if let percentile = conditions.percentile {
+            if percentile >= 75 { return SendmeterStyle.optimal }
+            if percentile >= 40 { return SendmeterStyle.caution }
+            return SendmeterStyle.alert
+        }
+        if conditions.score >= 55 { return SendmeterStyle.optimal }
+        if conditions.score >= 35 { return SendmeterStyle.caution }
+        return SendmeterStyle.alert
+    }
+
+    var body: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    SectionLabel("Send Conditions", systemImage: "cloud.sun")
+                    Spacer()
+                    if model.weather.isFetching {
+                        ProgressView()
+                    }
+                }
+
+                if let conditions = model.weather.conditions {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            Text("\(conditions.score)")
+                                .font(.system(size: 30, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(color(for: conditions))
+                            VStack(alignment: .leading, spacing: 2) {
+                                StatusPill(label(for: conditions).rawValue, color: color(for: conditions))
+                                Text("\(Int(conditions.tempC.rounded()))°C · \(Int(conditions.humidity.rounded()))%")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        if let percentile = conditions.percentile {
+                            Text("\(SendConditionsScore.percentileDetail(percentile)) of the last \(conditions.daysTotal ?? 0) days at this hour")
+                                .font(.caption)
+                                .foregroundStyle(color(for: conditions))
+                        }
+                        Text("Updated \(conditions.fetchedAt.formatted(date: .omitted, time: .shortened))")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                } else if model.weather.failed {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Unavailable")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        Text("Enable location and check your connection.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Try Again") {
+                            Task { _ = await model.weather.refresh() }
+                        }
+                        .font(.subheadline.weight(.semibold))
+                    }
+                } else {
+                    Button {
+                        Task { _ = await model.weather.refresh() }
+                    } label: {
+                        Text("Check")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    Text("Temperature + humidity at your location.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .task {
+            // Silent refresh when a reading already exists; a cold first run
+            // waits for the Check tap so the location prompt is user-initiated.
+            if model.weather.conditions != nil {
+                _ = await model.weather.refresh()
             }
         }
     }

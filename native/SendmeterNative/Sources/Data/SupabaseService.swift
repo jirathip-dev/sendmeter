@@ -68,6 +68,20 @@ public final class AuthService {
         )
     }
 
+    /// Exchange an Apple identity token for a Supabase session (#631). The
+    /// RAW nonce is passed — Supabase re-hashes it and compares against the
+    /// (already-hashed) nonce Apple echoed into the token, mirroring the
+    /// web's `src/lib/appleAuth.ts` exchange.
+    public func signInWithApple(idToken: String, rawNonce: String) async throws {
+        _ = try await client.auth.signInWithIdToken(
+            credentials: OpenIDConnectCredentials(
+                provider: .apple,
+                idToken: idToken,
+                nonce: rawNonce
+            )
+        )
+    }
+
     public func handleDeepLink(_ url: URL) async throws {
         _ = try await client.auth.session(from: url)
     }

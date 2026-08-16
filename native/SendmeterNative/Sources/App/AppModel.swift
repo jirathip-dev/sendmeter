@@ -86,6 +86,9 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var workouts: [WorkoutListItem] = []
     @Published public private(set) var liveWorkout: LiveWorkout?
     @Published public private(set) var liveWorkoutSyncState: LiveWorkoutSyncState = .unknown
+    /// #631: the per-user tag registry (SL-92) — rename/hide metadata. Tags
+    /// themselves stay denormalized on recordings.
+    @Published public private(set) var tagMetadata: [TagMetadata] = []
     @Published public private(set) var isRefreshing = false
     @Published public private(set) var queuedWriteCount = 0
     @Published public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
@@ -117,6 +120,9 @@ public final class AppModel: ObservableObject {
     public let health: HealthKitService
     public let watch: WatchConnectivityService
     public let realtime: RealtimeService
+    /// #631: Send Conditions (SL-69) — Open-Meteo current weather + local
+    /// climate, fetched + cached by the platform service.
+    public let weather: WeatherService
     /// #628: hands-free arming loop (load-triggered start/stop/save).
     public let handsFree: HandsFreeForceController
     /// #628: lock-screen Live Activity mirror of the guided protocol.
@@ -155,7 +161,8 @@ public final class AppModel: ObservableObject {
         tindeq: TindeqBluetooth? = nil,
         health: HealthKitService? = nil,
         watch: WatchConnectivityService? = nil,
-        realtime: RealtimeService? = nil
+        realtime: RealtimeService? = nil,
+        weather: WeatherService? = nil
     ) {
         // The services' initializers are MainActor-isolated; default-argument
         // expressions are nonisolated, so they must be constructed here in
@@ -166,6 +173,7 @@ public final class AppModel: ObservableObject {
         self.health = health ?? HealthKitService()
         self.watch = watch ?? WatchConnectivityService()
         self.realtime = realtime ?? RealtimeService()
+        self.weather = weather ?? WeatherService()
         self.handsFree = HandsFreeForceController()
         self.guidedActivity = GuidedProtocolActivityManager()
         self.gaugeSessionSaveGate = GaugeSessionSaveGate()
@@ -193,6 +201,7 @@ public final class AppModel: ObservableObject {
         let realtime = self.realtime
         let tindeq = self.tindeq
         let auth = self.auth
+        let weather = self.weather
 
         watch.onSessionRequested = { [weak self] in
             await self?.relayValidSessionToWatch(guaranteed: true)
@@ -245,6 +254,9 @@ public final class AppModel: ObservableObject {
         watch.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &nestedCancellables)
+        weather.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &nestedCancellables)
         // #627/#628: a disconnect ends the gauge session (auto-log) — unless
         // a guided protocol is running, whose interrupted path preserves the
         // final rep and then ends the session itself (so the last rep can
@@ -292,6 +304,50 @@ public final class AppModel: ObservableObject {
     public var weeklyLoads: [WeeklyLoad] { TrainingMetrics.weeklyLoads(sessions: sessions) }
     public var recentSessions: [SendmeterCore.Session] { Array(sessions.prefix(8)) }
 
+    // MARK: Tag registry (#631)
+
+    /// The exercise-manager rows: distinct recording tags with rep counts,
+    /// hidden flags from the registry.
+    public var tagEntries: [TagEntry] {
+        TagCatalog.entries(recordings: recordings, metadata: tagMetadata)
+    }
+
+    /// Names hidden from the Force-tab picker (and the History force list).
+    public var hiddenTagNames: Set<String> {
+        TagCatalog.hiddenNames(tagMetadata)
+    }
+
+    /// The pickable exercise names: distinct recording tags minus hidden.
+    public var visibleTagNames: [String] {
+        TagCatalog.visibleNames(tagEntries)
+    }
+
+    public func setTagHidden(name: String, hidden: Bool) async {
+        await perform {
+            try await self.repository.setTagHidden(name: name, hidden: hidden)
+            if let index = self.tagMetadata.firstIndex(where: { $0.name == name }) {
+                self.tagMetadata[index] = TagMetadata(name: name, hidden: hidden)
+            } else {
+                self.tagMetadata.append(TagMetadata(name: name, hidden: hidden))
+            }
+            self.toastMessage = hidden ? "Hid “\(name)”" : "Showing “\(name)”"
+        }
+    }
+
+    /// Rename a tag EVERYWHERE — the DB repoints every recording carrying
+    /// the old name; the recording list is refetched after (its tags are
+    /// the source of truth for counts).
+    public func renameTag(oldName: String, newName: String) async {
+        let merged = tagEntries.contains { $0.name == newName.trimmingCharacters(in: .whitespacesAndNewlines) }
+        await perform {
+            try await self.repository.renameTag(oldName: oldName, newName: newName)
+            self.toastMessage = merged
+                ? "Merged into “\(newName.trimmingCharacters(in: .whitespacesAndNewlines))”"
+                : "Renamed to “\(newName.trimmingCharacters(in: .whitespacesAndNewlines))”"
+            await self.refreshAll(showSpinner: false)
+        }
+    }
+
     // MARK: Auth
 
     public func signIn(email: String, password: String) async {
@@ -314,6 +370,15 @@ public final class AppModel: ObservableObject {
 
     public func signInWithPasskey() async {
         await perform { try await self.auth.signInWithPasskey() }
+    }
+
+    /// Sign in with Apple (#631): exchange the identity token (whose nonce
+    /// claim is the SHA-256 hash of `rawNonce`) for a Supabase session. The
+    /// hash/raw pairing is produced by `AppleAuthNonce.flow` at the button.
+    public func signInWithApple(idToken: String, rawNonce: String) async {
+        await perform {
+            try await self.auth.signInWithApple(idToken: idToken, rawNonce: rawNonce)
+        }
     }
 
     public func registerPasskey() async {
@@ -392,6 +457,14 @@ public final class AppModel: ObservableObject {
         await relayValidSessionToWatch(guaranteed: false)
         await drainQueue()
         await refreshAll(showSpinner: false)
+        // #631: keep Send Conditions honest on foreground (cached value
+        // stays on failure — the service never fabricates). Only the silent
+        // refresh path runs here: a COLD first check stays user-initiated
+        // (the card's Check tap), so the location prompt is never fired
+        // without a tap — web parity.
+        if weather.conditions != nil {
+            _ = await weather.refresh()
+        }
         // Foreground reconciliation for the live mirror: a dropped realtime
         // socket degrades to this refetch (the row is the authoritative
         // server state), and the mirror cursor rejects anything older.
@@ -475,6 +548,7 @@ public final class AppModel: ObservableObject {
             async let remotePresets = repository.fetchPresets()
             async let remoteRoutines = repository.fetchRoutinePresets()
             async let remoteWorkouts = repository.fetchWorkouts()
+            async let remoteTags = repository.fetchTagMetadata()
 
             let fetchedSessions = try await remoteSessions
             let fetchedRecordings = try await remoteRecordings
@@ -484,6 +558,7 @@ public final class AppModel: ObservableObject {
             presets = try await remotePresets
             routines = try await remoteRoutines
             workouts = try await remoteWorkouts
+            tagMetadata = try await remoteTags
             await restorePendingWrites(
                 userID: userID,
                 remoteSessionIDs: Set(fetchedSessions.map(\.id)),
@@ -1828,6 +1903,7 @@ public final class AppModel: ObservableObject {
         presets = []
         routines = []
         workouts = []
+        tagMetadata = []
         pendingSessions = [:]
         pendingRecordings = [:]
         queuedWriteCount = 0
@@ -1846,6 +1922,10 @@ public final class AppModel: ObservableObject {
         liveWorkoutMirror = .empty
         liveMirrorTicker?.cancel()
         liveMirrorTicker = nil
+        // #631: Send Conditions are location-bound, not account-bound, but
+        // they are also not signed-in data — drop them with the session so
+        // the next user's dashboard starts clean.
+        weather.resetForAccountChange()
     }
 
     private func perform(_ operation: @escaping () async throws -> Void) async {

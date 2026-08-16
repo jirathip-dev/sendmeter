@@ -3,7 +3,9 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
+    @EnvironmentObject private var theme: AppThemeController
     @State private var showingBlocks = false
+    @State private var showingExercises = false
     @State private var showingDeleteAccount = false
     @State private var syncingHealth = false
     @State private var registeringPasskey = false
@@ -17,6 +19,7 @@ struct SettingsView: View {
                 healthSection
                 watchSection
                 queueSection
+                appearanceSection
                 appSection
                 destructiveSection
             }
@@ -26,6 +29,7 @@ struct SettingsView: View {
                 await model.refreshAll(showSpinner: false)
             }
             .sheet(isPresented: $showingBlocks) { PhasesView() }
+            .sheet(isPresented: $showingExercises) { TagManagerView() }
             .sheet(isPresented: $showingDeleteAccount) { DeleteAccountSheet() }
             .confirmationDialog(
                 signOutRemainderTitle,
@@ -99,6 +103,21 @@ struct SettingsView: View {
                     Spacer()
                     Text(model.currentPhase.name)
                         .foregroundStyle(SendmeterStyle.phaseColor(model.settings.currentPhase))
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+            // #631: the exercise tag registry (SL-92) — rename a tag across
+            // every recording, or hide it from the Force picker + History
+            // list, without deleting anything.
+            Button { showingExercises = true } label: {
+                HStack {
+                    Label("Exercises", systemImage: "tag")
+                    Spacer()
+                    Text("\(model.tagEntries.count)")
+                        .foregroundStyle(.secondary)
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
@@ -222,6 +241,23 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var appearanceSection: some View {
+        Section("Appearance") {
+            Picker("Theme", selection: Binding(
+                get: { theme.choice },
+                set: { theme.setChoice($0) }
+            )) {
+                ForEach(AppThemeChoice.allCases) { choice in
+                    Text(choice.displayName).tag(choice)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text("System follows the device appearance. The choice is applied on launch.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

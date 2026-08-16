@@ -62,8 +62,13 @@ struct HistoryView: View {
     }
 
     private var queryFilteredRecordings: [TindeqRecording] {
-        guard !query.isEmpty else { return model.recordings }
-        return model.recordings.filter {
+        // #631 (SL-92): hidden tags leave the default force list — their
+        // recordings still exist and remain reachable through search.
+        let base = query.isEmpty
+            ? model.recordings.filter { !model.hiddenTagNames.contains($0.tag) }
+            : model.recordings
+        guard !query.isEmpty else { return base }
+        return base.filter {
             $0.tag.localizedCaseInsensitiveContains(query)
                 || $0.note.localizedCaseInsensitiveContains(query)
                 || $0.side.label.localizedCaseInsensitiveContains(query)

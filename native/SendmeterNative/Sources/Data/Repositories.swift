@@ -803,6 +803,25 @@ private struct LinkRecordingsRPC: Encodable {
     }
 }
 
+private struct RenameTagRPC: Encodable {
+    let oldName: String
+    let newName: String
+    enum CodingKeys: String, CodingKey {
+        case oldName = "old_name"
+        case newName = "new_name"
+    }
+}
+
+private struct TagMetadataRow: Decodable {
+    let name: String
+    let hidden: Bool
+}
+
+private struct TagHiddenUpsert: Encodable {
+    let name: String
+    let hidden: Bool
+}
+
 /// What `link_tindeq_recordings_to_session` returns: the group id it stamped
 /// on the session + recordings, and the recomputed duration (nil for a
 /// non-tindeq session or a group without live recordings). #630's create-
@@ -1253,6 +1272,60 @@ public final class SendmeterRepository: @unchecked Sendable {
             body: body
         )
         return result.first
+    }
+
+    // MARK: Tag registry (SL-92, #631)
+
+    /// Every registry row for the signed-in user. A tag has a row here only
+    /// once it's hidden (or carries a curve — native computes curves
+    /// on-device and doesn't persist them) — visible tags are derived from
+    /// distinct recording tags (`TagCatalog.entries`).
+    public func fetchTagMetadata() async throws -> [TagMetadata] {
+        let rows: [TagMetadataRow] = try await transport.request(
+            path: "rest/v1/tindeq_tags",
+            method: .get,
+            queryItems: [
+                URLQueryItem(name: "select", value: "name,hidden"),
+                URLQueryItem(name: "order", value: "name.asc")
+            ]
+        )
+        return rows.map { TagMetadata(name: $0.name, hidden: $0.hidden) }
+    }
+
+    /// Hide/unhide a tag. Upserts the registry row (user_id defaults to
+    /// auth.uid() via RLS); the recordings are never touched.
+    public func setTagHidden(name: String, hidden: Bool) async throws {
+        let body = try await transport.encode(TagHiddenUpsert(name: name, hidden: hidden))
+        try await transport.requestVoid(
+            path: "rest/v1/tindeq_tags",
+            method: .post,
+            queryItems: [URLQueryItem(name: "on_conflict", value: "user_id,name")],
+            body: body,
+            prefer: "resolution=merge-duplicates,return=minimal"
+        )
+    }
+
+    /// Rename a tag EVERYWHERE — the DB function repoints every recording
+    /// carrying `oldName` to `newName` and clears the stale registry row,
+    /// atomically, scoped to the caller by `security invoker` RLS. If
+    /// `newName` already exists the two tags merge.
+    public func renameTag(oldName: String, newName: String) async throws {
+        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            throw PostgRESTError(
+                code: nil,
+                message: "Tag name can't be empty",
+                details: nil,
+                hint: nil,
+                statusCode: 422
+            )
+        }
+        let body = try await transport.encode(RenameTagRPC(oldName: oldName, newName: name))
+        try await transport.requestVoid(
+            path: "rest/v1/rpc/rename_tindeq_tag",
+            method: .post,
+            body: body
+        )
     }
 
     // MARK: Presets
