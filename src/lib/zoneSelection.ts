@@ -198,10 +198,12 @@ const RECORDED_ZONES: RecordedZone[] = [
 ];
 
 /// The color a hold's recorded zone should show as, across the four trainable
-/// hues plus distinct maintenance colors.
+/// hues plus distinct maintenance colors. A native-only recorded "capacity"
+/// zone (#657) shares endurance's hue — the bucket it counts toward.
 export function zoneColor(z: RecordedZone): string {
   if (z === "warmup") return "var(--primary)";
   if (z === "prehab") return "var(--ink-muted)";
+  if (z === "capacity") return QUALITY_COLORS.endurance;
   return QUALITY_COLORS[z];
 }
 
@@ -358,14 +360,15 @@ export function protocolQuality(p: TindeqPreset): RecordedZone | null {
 }
 
 /// The TRAINABLE zone a selection arms — so the recommended-zone chips
-/// highlight from `selected` alone. Null for a custom preset and both
-/// maintenance protocols; filtering them here also keeps the intensity dial
+/// highlight from `selected` alone. Null for a custom preset, both
+/// maintenance protocols, and the native-only recorded "capacity" value
+/// (#657 — never armable); filtering them here also keeps the intensity dial
 /// from modifying their fixed prescriptions.
 export function selectedQuality(
   sel: ZoneSelection | null,
 ): TrainingQuality | null {
   const q = sel ? protocolQuality(sel.protocol) : null;
-  return q && q !== "prehab" && q !== "warmup" ? q : null;
+  return q && q !== "prehab" && q !== "warmup" && q !== "capacity" ? q : null;
 }
 
 /// The quality a hold saved from this protocol was PERFORMED under (#259) —
