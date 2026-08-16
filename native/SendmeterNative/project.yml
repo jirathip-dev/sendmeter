@@ -46,7 +46,7 @@ targets:
         product: SendLogHealthCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog
+        PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native
         PRODUCT_NAME: Sendmeter
         INFOPLIST_FILE: Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: SendmeterNative.entitlements
