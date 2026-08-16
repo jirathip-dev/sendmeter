@@ -3,18 +3,56 @@ import SwiftUI
 
 struct HistoryView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var mode: HistoryMode = .sessions
+    @State private var mode: HistoryMode = .all
     @State private var query = ""
     @State private var editingSession: SendmeterCore.Session?
     @State private var showingTrash = false
+    /// #630: multi-select of loose recordings → one new session (web parity).
+    @State private var selectedIDs: Set<UUID> = []
+    @State private var creating = false
+    @State private var createError: String?
+    @State private var assignOpen = false
+    @State private var retryingUploads = false
+    /// Lazy paging (web pages 40/batch).
+    @State private var visibleCount = HistoryPaging.pageSize
+    /// Filter chips (web `historyFilters.ts`): a stale selection is coerced
+    /// to nil in `filterOptions` and committed back via `onChange`.
+    @State private var selectedType: String?
+    @State private var selectedTag: String?
 
     private enum HistoryMode: String, CaseIterable, Identifiable {
+        case all = "All"
         case sessions = "Sessions"
         case force = "Force"
         var id: String { rawValue }
     }
 
-    private var filteredSessions: [SendmeterCore.Session] {
+    // MARK: Derived data
+
+    private var recordingsByGroup: [UUID: [TindeqRecording]] {
+        var result: [UUID: [TindeqRecording]] = [:]
+        for recording in model.recordings {
+            guard let groupID = recording.groupID else { continue }
+            result[groupID, default: []].append(recording)
+        }
+        return result
+    }
+
+    private var looseRecordings: [TindeqRecording] {
+        HistoryTimeline.looseRecordings(model.recordings, in: model.sessions)
+    }
+
+    private var filterOptions: HistoryFilterOptions {
+        HistoryFilters.options(
+            sessions: model.sessions,
+            looseRecordings: looseRecordings,
+            groupedRecordings: model.recordings.filter { $0.groupID != nil },
+            selectedType: selectedType,
+            selectedTag: selectedTag
+        )
+    }
+
+    private var queryFilteredSessions: [SendmeterCore.Session] {
         guard !query.isEmpty else { return model.sessions }
         return model.sessions.filter {
             $0.typeLabel.localizedCaseInsensitiveContains(query)
@@ -23,7 +61,7 @@ struct HistoryView: View {
         }
     }
 
-    private var filteredRecordings: [TindeqRecording] {
+    private var queryFilteredRecordings: [TindeqRecording] {
         // #631 (SL-92): hidden tags leave the default force list — their
         // recordings still exist and remain reachable through search.
         let base = query.isEmpty
@@ -37,6 +75,54 @@ struct HistoryView: View {
         }
     }
 
+    private var filteredSessions: [SendmeterCore.Session] {
+        queryFilteredSessions.filter { session in
+            HistoryFilters.sessionMatches(
+                session,
+                groupRecordings: session.groupID.flatMap { recordingsByGroup[$0] } ?? [],
+                type: filterOptions.activeType,
+                tag: filterOptions.activeTag
+            )
+        }
+    }
+
+    private var filteredLooseRecordings: [TindeqRecording] {
+        HistoryTimeline.looseRecordings(queryFilteredRecordings, in: model.sessions).filter {
+            HistoryFilters.looseRecordingMatches($0, type: filterOptions.activeType, tag: filterOptions.activeTag)
+        }
+    }
+
+    /// Force mode shows every recording (grouped + loose), filtered.
+    private var filteredForceRecordings: [TindeqRecording] {
+        queryFilteredRecordings.filter {
+            HistoryFilters.looseRecordingMatches($0, type: filterOptions.activeType, tag: filterOptions.activeTag)
+        }
+    }
+
+    private var timelineItems: [HistoryTimelineItem] {
+        HistoryTimeline.combinedItems(sessions: filteredSessions, recordings: filteredLooseRecordings)
+    }
+
+    private var remainingCount: Int { timelineItems.count - visibleCount }
+
+    private var tindeqSessions: [SendmeterCore.Session] {
+        model.sessions.filter { $0.type == "tindeq" && $0.groupID != nil && !$0.pending }
+    }
+
+    private var sessionGroupIDs: Set<UUID> {
+        Set(model.sessions.compactMap(\.groupID))
+    }
+
+    private var searchPrompt: String {
+        switch mode {
+        case .all: return "Search history"
+        case .sessions: return "Search sessions"
+        case .force: return "Search force recordings"
+        }
+    }
+
+    // MARK: Body
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -48,22 +134,21 @@ struct HistoryView: View {
                 .pickerStyle(.segmented)
                 .padding()
 
-                if mode == .sessions {
-                    SessionHistoryList(
-                        sessions: filteredSessions,
-                        edit: { editingSession = $0 },
-                        delete: { session in Task { await model.deleteSession(session) } }
-                    )
-                } else {
-                    ForceHistoryList(
-                        recordings: filteredRecordings,
-                        delete: { recording in Task { await model.deleteRecording(recording) } }
-                    )
+                uploadBanner
+                filterChips
+
+                switch mode {
+                case .all:
+                    combinedList
+                case .sessions:
+                    sessionsList
+                case .force:
+                    forceList
                 }
             }
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("History")
-            .searchable(text: $query, prompt: mode == .sessions ? "Search sessions" : "Search force recordings")
+            .searchable(text: $query, prompt: searchPrompt)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showingTrash = true } label: {
@@ -78,66 +163,468 @@ struct HistoryView: View {
             .sheet(isPresented: $showingTrash) {
                 TrashView()
             }
+            .sheet(isPresented: $assignOpen) {
+                SelectionAssignSheet(recordings: selectedRecordings)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                selectionBar
+            }
+            .onChange(of: mode) { _ in
+                visibleCount = HistoryPaging.pageSize
+                selectedIDs = []
+                createError = nil
+            }
+            .onChange(of: filterOptions.activeType) { value in
+                if value == nil { selectedType = nil }
+                pruneSelectionToVisible()
+            }
+            .onChange(of: filterOptions.activeTag) { value in
+                if value == nil { selectedTag = nil }
+                pruneSelectionToVisible()
+            }
+            .onChange(of: query) { _ in
+                pruneSelectionToVisible()
+            }
         }
     }
-}
 
-private struct SessionHistoryList: View {
-    let sessions: [SendmeterCore.Session]
-    let edit: (SendmeterCore.Session) -> Void
-    let delete: (SendmeterCore.Session) -> Void
+    private var selectedRecordings: [TindeqRecording] {
+        filteredLooseRecordings.filter { selectedIDs.contains($0.id) }
+    }
 
-    var body: some View {
-        if sessions.isEmpty {
-            HistoryEmptyState(
-                title: "No sessions yet",
-                description: "Log a session or complete a workout to build your training history.",
-                symbol: "calendar.badge.plus"
-            )
+    private func toggleSelect(_ id: UUID) {
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
         } else {
-            List {
-                ForEach(groupedDates, id: \.0) { date, rows in
-                    Section(date) {
-                        ForEach(rows) { session in
-                            Button { edit(session) } label: {
-                                SessionHistoryRow(session: session)
+            selectedIDs.insert(id)
+        }
+    }
+
+    /// A filter/search change can hide a ticked recording without unticking
+    /// it — prune the selection to what still shows, so a bulk action never
+    /// silently includes a row the user can no longer see (web
+    /// `pruneSelectionToVisible`).
+    private func pruneSelectionToVisible() {
+        guard !selectedIDs.isEmpty else { return }
+        let pruned = HistoryFilters.pruneSelection(
+            selectedIDs,
+            toVisible: filteredLooseRecordings,
+            type: filterOptions.activeType,
+            tag: filterOptions.activeTag
+        )
+        if pruned != selectedIDs { selectedIDs = pruned }
+    }
+
+    private func createSessionFromSelection() async {
+        let selected = selectedRecordings
+        guard !selected.isEmpty else {
+            selectedIDs = []
+            return
+        }
+        createError = nil
+        let ok = await model.createSessionFromRecordings(selected)
+        creating = false
+        if ok {
+            selectedIDs = []
+        } else {
+            createError = "Couldn't create session — try again."
+        }
+    }
+
+    // MARK: Lists
+
+    private var combinedList: some View {
+        Group {
+            if timelineItems.isEmpty {
+                HistoryEmptyState(
+                    title: model.sessions.isEmpty && model.recordings.isEmpty
+                        ? "No history yet"
+                        : "No history matches these filters",
+                    description: "Log a session, complete a workout, or save a pull to build your training history.",
+                    symbol: "calendar.badge.plus"
+                )
+            } else {
+                List {
+                    ForEach(combinedSections, id: \.date) { section in
+                        Section(section.date) {
+                            ForEach(section.items) { item in
+                                row(for: item)
                             }
-                            .buttonStyle(.plain)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) { delete(session) } label: {
-                                    Label("Trash", systemImage: "trash")
-                                }
-                                Button { edit(session) } label: {
-                                    Label("Edit", systemImage: "pencil")
-                                }
-                                .tint(SendmeterStyle.primary)
+                        }
+                    }
+                    loadMoreRow
+                }
+                .listStyle(.insetGrouped)
+            }
+        }
+    }
+
+    private var sessionsList: some View {
+        Group {
+            if filteredSessions.isEmpty {
+                HistoryEmptyState(
+                    title: "No sessions yet",
+                    description: "Log a session or complete a workout to build your training history.",
+                    symbol: "calendar.badge.plus"
+                )
+            } else {
+                List {
+                    ForEach(sessionSections, id: \.date) { section in
+                        Section(section.date) {
+                            ForEach(section.items) { session in
+                                sessionRow(session)
+                            }
+                        }
+                    }
+                    if filteredSessions.count > visibleCount {
+                        Section {
+                            Button {
+                                visibleCount += HistoryPaging.pageSize
+                            } label: {
+                                loadMoreLabel(total: filteredSessions.count)
                             }
                         }
                     }
                 }
+                .listStyle(.insetGrouped)
             }
-            .listStyle(.insetGrouped)
         }
     }
 
-    private var groupedDates: [(String, [SendmeterCore.Session])] {
-        let grouped = Dictionary(grouping: sessions, by: \.date)
+    private var forceList: some View {
+        Group {
+            if filteredForceRecordings.isEmpty {
+                HistoryEmptyState(
+                    title: "No force recordings yet",
+                    description: "Connect a Progressor in Force and save a pull.",
+                    symbol: "waveform.path.ecg"
+                )
+            } else {
+                List {
+                    ForEach(Array(filteredForceRecordings.prefix(visibleCount))) { recording in
+                        recordingRow(recording)
+                    }
+                    if filteredForceRecordings.count > visibleCount {
+                        Section {
+                            Button {
+                                visibleCount += HistoryPaging.pageSize
+                            } label: {
+                                loadMoreLabel(total: filteredForceRecordings.count)
+                            }
+                        }
+                    }
+                }
+                .listStyle(.insetGrouped)
+            }
+        }
+    }
+
+    private var pagedItems: [HistoryTimelineItem] {
+        Array(timelineItems.prefix(visibleCount))
+    }
+
+    private var combinedSections: [(date: String, items: [HistoryTimelineItem])] {
+        groupedByDate(pagedItems.map { ($0.date, $0) })
+    }
+
+    private var sessionSections: [(date: String, items: [SendmeterCore.Session])] {
+        groupedByDate(Array(filteredSessions.prefix(visibleCount)).map { ($0.date, $0) })
+    }
+
+    private func groupedByDate<Item>(_ pairs: [(date: String, item: Item)]) -> [(date: String, items: [Item])] {
+        let grouped = Dictionary(grouping: pairs, by: \.date).mapValues { $0.map(\.item) }
         return grouped.keys.sorted(by: >).map { ($0, grouped[$0] ?? []) }
+    }
+
+    @ViewBuilder
+    private var loadMoreRow: some View {
+        if remainingCount > 0 {
+            Section {
+                Button {
+                    visibleCount += HistoryPaging.pageSize
+                } label: {
+                    loadMoreLabel(total: timelineItems.count)
+                }
+            }
+        }
+    }
+
+    private func loadMoreLabel(total: Int) -> some View {
+        Text(
+            "Load \(min(HistoryPaging.pageSize, total - visibleCount)) more · "
+                + "\(total - visibleCount) older"
+        )
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func row(for item: HistoryTimelineItem) -> some View {
+        switch item {
+        case let .session(session): sessionRow(session)
+        case let .recording(recording): recordingRow(recording)
+        }
+    }
+
+    // MARK: Rows
+
+    private func isExpandable(_ session: SendmeterCore.Session) -> Bool {
+        (session.type == "tindeq" && session.groupID != nil) || session.workoutSource != nil
+    }
+
+    private func zoneMix(for session: SendmeterCore.Session) -> [ZoneQuality: Double]? {
+        guard session.type == "tindeq", let groupID = session.groupID else { return nil }
+        return ZoneMix.zoneSets(recordingsByGroup[groupID] ?? [])
+    }
+
+    private func zone(for session: SendmeterCore.Session) -> ZoneQuality? {
+        guard let mix = zoneMix(for: session) else { return nil }
+        return ZoneMix.dominantZone(mix)
+    }
+
+    @ViewBuilder
+    private func sessionRow(_ session: SendmeterCore.Session) -> some View {
+        let row = HistorySessionRow(
+            session: session,
+            zone: zone(for: session),
+            zoneMix: zoneMix(for: session)
+        )
+        if isExpandable(session) {
+            NavigationLink {
+                SessionDetailView(session: session)
+            } label: {
+                row
+            }
+            .buttonStyle(.plain)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) { delete(session) } label: {
+                    Label("Trash", systemImage: "trash")
+                }
+                Button { editingSession = session } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+                .tint(SendmeterStyle.primary)
+            }
+        } else {
+            Button { editingSession = session } label: {
+                row
+            }
+            .buttonStyle(.plain)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) { delete(session) } label: {
+                    Label("Trash", systemImage: "trash")
+                }
+                Button { editingSession = session } label: {
+                    Label("Edit", systemImage: "pencil")
+                }
+                .tint(SendmeterStyle.primary)
+            }
+        }
+    }
+
+    private func delete(_ session: SendmeterCore.Session) {
+        Task { await model.deleteSession(session) }
+    }
+
+    private func delete(_ recording: TindeqRecording) {
+        Task { await model.deleteRecording(recording) }
+    }
+
+    @ViewBuilder
+    private func recordingRow(_ recording: TindeqRecording) -> some View {
+        let isLoose = recording.groupID == nil
+            || !sessionGroupIDs.contains(recording.groupID!)
+        NavigationLink {
+            ForceRecordingDetailView(recording: recording)
+        } label: {
+            HistoryRecordingRow(
+                recording: recording,
+                tickVisible: isLoose && mode != .sessions,
+                ticked: selectedIDs.contains(recording.id),
+                toggleTick: { toggleSelect(recording.id) }
+            )
+        }
+        .buttonStyle(.plain)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) { delete(recording) } label: {
+                Label("Trash", systemImage: "trash")
+            }
+        }
+    }
+
+    // MARK: Upload warning banner (#630-6)
+
+    private var uploadBanner: some View {
+        let phonePending = model.queuedWriteCount
+        let watchPending = model.watch.pendingSyncCount ?? 0
+        if phonePending > 0 || watchPending > 0 {
+            return AnyView(
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "externaldrive.badge.icloud")
+                        .foregroundStyle(SendmeterStyle.caution)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Uploads waiting")
+                            .font(.subheadline.weight(.semibold))
+                        Text(uploadMessage(phone: phonePending, watch: watchPending))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button {
+                        retryingUploads = true
+                        Task {
+                            await model.retryAllQueuedWrites()
+                            retryingUploads = false
+                        }
+                    } label: {
+                        if retryingUploads { ProgressView() } else { Text("Retry") }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(retryingUploads)
+                }
+                .padding(12)
+                .background(SendmeterStyle.caution.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal)
+                .padding(.bottom, 4)
+            )
+        }
+        return AnyView(EmptyView())
+    }
+
+    private func uploadMessage(phone: Int, watch: Int) -> String {
+        var parts: [String] = []
+        if phone > 0 { parts.append("\(phone) queued on this iPhone") }
+        if watch > 0 { parts.append("\(watch) on your watch") }
+        return parts.joined(separator: " · ") + ". Queued data is durable on device and retries automatically."
+    }
+
+    // MARK: Filter chips (#630-4)
+
+    @ViewBuilder
+    private var filterChips: some View {
+        if !filterOptions.types.isEmpty || !filterOptions.tags.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                if !filterOptions.types.isEmpty {
+                    chipRow(
+                        label: "Session type",
+                        allLabel: "All types",
+                        options: filterOptions.types.map { ($0.id, $0.label) },
+                        active: filterOptions.activeType,
+                        select: { selectedType = $0 }
+                    )
+                }
+                if !filterOptions.tags.isEmpty {
+                    chipRow(
+                        label: "Force tag",
+                        allLabel: "All tags",
+                        options: filterOptions.tags.map { ($0, $0) },
+                        active: filterOptions.activeTag,
+                        select: { selectedTag = $0 }
+                    )
+                }
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 4)
+        }
+    }
+
+    private func chipRow(
+        label: String,
+        allLabel: String,
+        options: [(String, String)],
+        active: String?,
+        select: @escaping (String?) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased())
+                .font(.caption2.weight(.semibold))
+                .tracking(1)
+                .foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    HistoryFilterChip(title: allLabel, isActive: active == nil) { select(nil) }
+                    ForEach(options, id: \.0) { option in
+                        HistoryFilterChip(title: option.1, isActive: active == option.0) {
+                            select(option.0)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Multi-select action bar (#630-2)
+
+    @ViewBuilder
+    private var selectionBar: some View {
+        if !selectedIDs.isEmpty {
+            VStack(spacing: 8) {
+                if let createError {
+                    Text(createError)
+                        .font(.caption)
+                        .foregroundStyle(SendmeterStyle.alert)
+                }
+                HStack(spacing: 12) {
+                    Button {
+                        creating = true
+                        Task { await createSessionFromSelection() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if creating { ProgressView().tint(.white) }
+                            Text(creating ? "Creating…" : "New session (\(selectedIDs.count))")
+                        }
+                    }
+                    .buttonStyle(PrimaryActionButtonStyle())
+                    .disabled(creating)
+                    if !tindeqSessions.isEmpty {
+                        Button { assignOpen = true } label: { Text("Assign…") }
+                            .buttonStyle(.bordered)
+                            .disabled(creating)
+                    }
+                    Button { selectedIDs = [] } label: { Text("Cancel") }
+                        .buttonStyle(.bordered)
+                        .disabled(creating)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.15), radius: 12, y: 6)
+            .padding(.horizontal)
+            .padding(.bottom, 4)
+        }
     }
 }
 
-private struct SessionHistoryRow: View {
+/// Lazy paging constants (web `PAGE_SIZE`).
+enum HistoryPaging {
+    static let pageSize = 40
+}
+
+private struct HistorySessionRow: View {
     let session: SendmeterCore.Session
+    let zone: ZoneQuality?
+    let zoneMix: [ZoneQuality: Double]?
 
     var body: some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 3)
-                .fill(SendmeterStyle.phaseColor(session.phase))
+                .fill(
+                    zone != nil
+                        ? SendmeterStyle.zoneColor(zone!)
+                        : SendmeterStyle.phaseColor(session.phase)
+                )
                 .frame(width: 5, height: 46)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
                     Text(session.typeLabel)
                         .font(.headline)
+                    if let zone {
+                        ZoneBadge(zone: zone, mix: zoneMix)
+                    }
                     if session.pending {
                         StatusPill("Pending", color: SendmeterStyle.caution)
                     }
@@ -161,40 +648,23 @@ private struct SessionHistoryRow: View {
     }
 }
 
-private struct ForceHistoryList: View {
-    let recordings: [TindeqRecording]
-    let delete: (TindeqRecording) -> Void
-
-    var body: some View {
-        if recordings.isEmpty {
-            HistoryEmptyState(
-                title: "No force recordings yet",
-                description: "Connect a Progressor in Force and save a pull.",
-                symbol: "waveform.path.ecg"
-            )
-        } else {
-            List(recordings) { recording in
-                NavigationLink {
-                    ForceRecordingDetailView(recording: recording)
-                } label: {
-                    ForceHistoryRow(recording: recording)
-                }
-                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                    Button(role: .destructive) { delete(recording) } label: {
-                        Label("Trash", systemImage: "trash")
-                    }
-                }
-            }
-            .listStyle(.insetGrouped)
-        }
-    }
-}
-
-private struct ForceHistoryRow: View {
+private struct HistoryRecordingRow: View {
     let recording: TindeqRecording
+    let tickVisible: Bool
+    let ticked: Bool
+    let toggleTick: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
+            if tickVisible {
+                Button(action: toggleTick) {
+                    Image(systemName: ticked ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(ticked ? SendmeterStyle.primary : .secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(ticked ? "Untick recording" : "Tick recording")
+            }
             Image(systemName: recording.protocolMode == .reverseAction ? "arrow.left.and.right.circle.fill" : "waveform.path.ecg")
                 .font(.title2)
                 .foregroundStyle(SendmeterStyle.primary)
@@ -219,7 +689,29 @@ private struct ForceHistoryRow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .accessibilityElement(children: .combine)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct HistoryFilterChip: View {
+    let title: String
+    let isActive: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .foregroundStyle(isActive ? Color.white : Color.secondary)
+                .background(
+                    isActive ? SendmeterStyle.primary : Color.secondary.opacity(0.1),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
 
@@ -300,7 +792,9 @@ private struct SessionEditorSheet: View {
     }
 }
 
-private struct ForceRecordingDetailView: View {
+/// Shared with `SessionDetailView`'s per-recording rows, so it stays
+/// internal (not `private`).
+struct ForceRecordingDetailView: View {
     @EnvironmentObject private var model: AppModel
     @State private var recording: TindeqRecording
     @State private var samples: [TindeqSample] = []
@@ -448,7 +942,7 @@ private struct ForceRecordingDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadSamples() }
         .sheet(isPresented: $showingLinkSheet) {
-            LinkRecordingSheet(recording: recording)
+            LinkRecordingSheet(recordings: [recording])
         }
     }
 
@@ -495,14 +989,14 @@ private struct ForceRecordingDetailView: View {
 private struct LinkRecordingSheet: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    let recording: TindeqRecording
+    let recordings: [TindeqRecording]
 
     var body: some View {
         NavigationStack {
             List(model.sessions.filter { !$0.pending }.prefix(100)) { session in
                 Button {
                     Task {
-                        await model.linkRecordings([recording], to: session)
+                        await model.linkRecordings(recordings, to: session)
                         dismiss()
                     }
                 } label: {
@@ -518,7 +1012,46 @@ private struct LinkRecordingSheet: View {
                 }
                 .buttonStyle(.plain)
             }
-            .navigationTitle("Link to Session")
+            .navigationTitle(recordings.count > 1 ? "Assign \(recordings.count) recordings" : "Link to Session")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// #630: the multi-select assign sheet — move ticked recordings into an
+/// existing Tindeq session, mirroring the web's Assign sheet.
+private struct SelectionAssignSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let recordings: [TindeqRecording]
+
+    var body: some View {
+        NavigationStack {
+            List(model.sessions.filter { $0.type == "tindeq" && $0.groupID != nil && !$0.pending }.prefix(100)) { session in
+                Button {
+                    Task {
+                        await model.linkRecordings(recordings, to: session)
+                        dismiss()
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(session.date) · \(session.durationMinutes)min · RPE \(session.rpe.formatted(.number.precision(.fractionLength(0...1))))")
+                            .font(.headline)
+                        if !session.note.isEmpty {
+                            Text(session.note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("Assign \(recordings.count) recording\(recordings.count == 1 ? "" : "s")")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

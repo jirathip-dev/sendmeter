@@ -822,6 +822,22 @@ private struct TagHiddenUpsert: Encodable {
     let hidden: Bool
 }
 
+/// What `link_tindeq_recordings_to_session` returns: the group id it stamped
+/// on the session + recordings, and the recomputed duration (nil for a
+/// non-tindeq session or a group without live recordings). #630's create-
+/// session flow reads both back so the optimistic local state matches the
+/// transaction's outcome instead of guessing (the old `session.id` stamp was
+/// wrong whenever the RPC minted a fresh group id).
+public struct LinkRecordingsResult: Decodable, Sendable {
+    public let groupID: UUID
+    public let durationMinutes: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case groupID = "group_id"
+        case durationMinutes = "duration_min"
+    }
+}
+
 private struct EmptyRPC: Encodable {}
 
 // MARK: - Repository
@@ -1236,16 +1252,26 @@ public final class SendmeterRepository: @unchecked Sendable {
         )
     }
 
-    public func linkRecordingsToSession(sessionID: UUID, recordingIDs: [UUID]) async throws {
-        guard !recordingIDs.isEmpty else { return }
+    /// #490: atomically mint the session's group id (if it has none), stamp
+    /// it onto the recordings, and (for tindeq sessions) recompute the
+    /// session's duration from the recordings' actual span — one DB
+    /// transaction, so a failure leaves nothing changed. Nil when handed an
+    /// empty id list (nothing to do); otherwise returns the RPC's stamped
+    /// group id + recomputed duration.
+    public func linkRecordingsToSession(
+        sessionID: UUID,
+        recordingIDs: [UUID]
+    ) async throws -> LinkRecordingsResult? {
+        guard !recordingIDs.isEmpty else { return nil }
         let body = try await transport.encode(
             LinkRecordingsRPC(sessionID: sessionID, recordingIDs: recordingIDs)
         )
-        try await transport.requestVoid(
+        let result: OneOrMany<LinkRecordingsResult> = try await transport.request(
             path: "rest/v1/rpc/link_tindeq_recordings_to_session",
             method: .post,
             body: body
         )
+        return result.first
     }
 
     // MARK: Tag registry (SL-92, #631)

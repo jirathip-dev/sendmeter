@@ -185,6 +185,50 @@ public struct RoutineRun: Codable, Equatable, Sendable {
         self.isPaused = false
     }
 
+    /// Restore a persisted run (RoutineRunStore) into the in-memory engine
+    /// (#633): derives the current stage from the persisted wall-clock
+    /// position (`elapsedS`, skipped credit included) and seeds the stage
+    /// clock so the countdown continues where the killed app left off. A
+    /// paused record stays paused with its frozen elapsed. A nil record is a
+    /// fresh run (equivalent to `init(preset:)`).
+    public init(preset: RoutinePreset, restoring run: PersistedRoutineRun?, at date: Date = Date()) {
+        self.presetID = preset.id
+        self.stages = RoutineEngine.stages(for: preset)
+        guard let run else {
+            self.currentIndex = 0
+            self.stageStartedAt = nil
+            self.pausedElapsedSeconds = 0
+            self.isPaused = false
+            return
+        }
+        let positionS = RoutineGate.elapsedS(run, nowMs: date.millisecondsSince1970)
+        let position = Self.stagePosition(positionS: positionS, stages: self.stages)
+        self.currentIndex = position.index
+        if run.isPaused {
+            self.stageStartedAt = nil
+            self.pausedElapsedSeconds = Int(position.intoStage)
+            self.isPaused = true
+        } else {
+            self.stageStartedAt = date.addingTimeInterval(-position.intoStage)
+            self.pausedElapsedSeconds = 0
+            self.isPaused = false
+        }
+    }
+
+    private static func stagePosition(
+        positionS: Double,
+        stages: [RoutineStage]
+    ) -> (index: Int, intoStage: Double) {
+        var start = 0.0
+        for (index, stage) in stages.enumerated() {
+            if positionS < start + Double(stage.durationSeconds) {
+                return (index, max(0, positionS - start))
+            }
+            start += Double(stage.durationSeconds)
+        }
+        return (stages.count - 1, max(0, positionS - start))
+    }
+
     public var currentStage: RoutineStage { stages[currentIndex] }
     public var isComplete: Bool { currentStage.kind == .complete }
 

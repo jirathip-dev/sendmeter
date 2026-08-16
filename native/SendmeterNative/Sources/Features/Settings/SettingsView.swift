@@ -31,7 +31,45 @@ struct SettingsView: View {
             .sheet(isPresented: $showingBlocks) { PhasesView() }
             .sheet(isPresented: $showingExercises) { TagManagerView() }
             .sheet(isPresented: $showingDeleteAccount) { DeleteAccountSheet() }
+            .confirmationDialog(
+                signOutRemainderTitle,
+                isPresented: signOutRemainderBinding,
+                titleVisibility: .visible
+            ) {
+                Button("Sign Out", role: .destructive) {
+                    model.resolveSignOutRemainder(.signOut)
+                }
+                Button("Stay Signed In", role: .cancel) {
+                    model.resolveSignOutRemainder(.cancel)
+                }
+            } message: {
+                Text(signOutRemainderMessage)
+            }
         }
+    }
+
+    /// #632: the remainder prompt from the web's SignOutPendingSheet (#273),
+    /// shown only when the pre-sign-out drain left queued writes behind — it
+    /// is never an unconditional confirm. "Sign Out" keeps the remainder on
+    /// device for this account's next sign-in; dismissing the dialog aborts
+    /// the sign-out entirely (the binding's setter resolves `.cancel`).
+    private var signOutRemainderBinding: Binding<Bool> {
+        Binding(
+            get: { model.signOutRemainderCount != nil },
+            set: { if !$0 { model.resolveSignOutRemainder(.cancel) } }
+        )
+    }
+
+    private var signOutRemainderTitle: String {
+        let count = model.signOutRemainderCount ?? 0
+        return "\(count) recording\(count == 1 ? "" : "s") not uploaded"
+    }
+
+    private var signOutRemainderMessage: String {
+        let count = model.signOutRemainderCount ?? 0
+        return count == 1
+            ? "It's still waiting to reach the server — usually that means no connection. Signing out keeps it on this device; it uploads the next time this account signs in."
+            : "They're still waiting to reach the server — usually that means no connection. Signing out keeps them on this device; they upload the next time this account signs in."
     }
 
     private var accountSection: some View {
@@ -241,6 +279,7 @@ struct SettingsView: View {
             } label: {
                 Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
             }
+            .disabled(model.isSigningOut)
             Button(role: .destructive) {
                 showingDeleteAccount = true
             } label: {

@@ -15,8 +15,6 @@ be promoted from parallel target to shipped.
   → xcodebuild → signed build → TestFlight upload via fastlane or gh actions)
   that Guy can actually ship from. Requires the repo's signing/distribution
   setup — check `fastlane/` and existing `ios-ci.yml` patterns first.
-- Also cleanup candidate: `native-rewrite-bootstrap.yml` + `native-rewrite-diagnose.yml`
-  are dead one-shot workflows (#638) — delete them.
 
 ### P2 (#633) — routine completion ≥60s gate (web parity)
 - Native routine completion currently logs regardless of elapsed time; web

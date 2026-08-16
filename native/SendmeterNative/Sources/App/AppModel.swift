@@ -102,6 +102,17 @@ public final class AppModel: ObservableObject {
     /// interrupted path preserves the final rep and THEN ends the session),
     /// so the generic disconnect trigger defers to it.
     @Published public private(set) var guidedProtocolActive = false
+    /// #632: true while a user-initiated sign-out is in flight (drain + any
+    /// remainder prompt + auth.signOut) — used to disable the Sign Out button
+    /// so a double-tap can't run two drains against one queue.
+    @Published public private(set) var isSigningOut = false
+    /// #632: non-nil while the sign-out remainder prompt is showing — the
+    /// count the user is deciding about, presented by SettingsView as a
+    /// confirmation dialog (Sign Out / Cancel) and resolved through
+    /// `resolveSignOutRemainder`. The prompt appears ONLY when the pre-sign-
+    /// out drain left something behind; a clean drain never asks.
+    @Published public private(set) var signOutRemainderCount: Int?
+    private var signOutRemainderContinuation: CheckedContinuation<SignOutRemainderChoice, Never>?
 
     public let auth: AuthService
     public let repository: SendmeterRepository
@@ -377,11 +388,56 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// #632: THE user-initiated sign-out, mirroring the web's `signOutUser`
+    /// (#273): drain the queue BEFORE `auth.signOut()` — the insert needs a
+    /// live token — bounded by the deadline, then ask once about any
+    /// remainder (Sign Out / Cancel), and only then sign out. A FORCED or
+    /// revoked sign-out never reaches this: `handleAuthEvent`'s `.signedOut`
+    /// case leaves the queue untouched, and `deleteAccount` keeps its own
+    /// discard-after-server-confirmation path.
     public func signOut() async {
+        guard !isSigningOut else { return }
+        isSigningOut = true
+        defer { isSigningOut = false }
         await perform {
-            try await self.auth.signOut()
+            guard let userID = self.currentUserID, let queue = self.queue else {
+                try await self.auth.signOut()
+                self.watch.relaySession(nil)
+                return
+            }
+            let result = await SignOutQueuePolicy.drainBeforeSignOut(
+                userId: userID,
+                drain: { await self.drainQueueForSignOut(accountUserID: $0) },
+                countRemaining: { await queue.count(for: $0) },
+                askAboutRemainder: { count in await self.askAboutSignOutRemainder(count: count) },
+                signOut: { try await self.auth.signOut() }
+            )
+            // #632 review: a cancel at the remainder prompt ("Stay Signed In")
+            // returns `outcome == nil` with no error — the session is still
+            // up, so NOTHING may follow this guard. In particular NOT the
+            // watch relay: relaying nil would tell the companion "signedOut"
+            // (it drops its bearer token and its queue uploads stall on
+            // "Waiting for iPhone" until the phone next foregrounds and
+            // re-relays) while the phone itself stays signed in.
+            guard result.outcome != nil else { return }
+            if let signOutError = result.signOutError { throw signOutError }
             self.watch.relaySession(nil)
         }
+    }
+
+    /// The sign-out drain: attempt EVERYTHING for the account, not just
+    /// backoff-due items — the token is about to die, so a backed-off entry
+    /// that never got tried would strand for the whole sign-out for no
+    /// reason. (Web parity: the web queue has no per-entry backoff, so its
+    /// pre-sign-out drain attempts everything.) Counts what actually
+    /// uploaded.
+    private func drainQueueForSignOut(accountUserID: UUID) async -> Int {
+        guard let queue else { return 0 }
+        var uploaded = 0
+        for item in await queue.items(for: accountUserID) {
+            if await upload(item) { uploaded += 1 }
+        }
+        return uploaded
     }
 
     public func updatePassword(_ password: String) async {
@@ -417,6 +473,9 @@ public final class AppModel: ObservableObject {
             await health.ensureBackgroundObserversRegistered()
             await syncHealth(requestAuthorization: false)
         }
+        // Last on purpose: the drain's "Saved" toasts above must not clobber
+        // the loss notice — the user hearing about the lost rep is the point.
+        surfaceLostRecordingNoticeIfAny()
     }
 
     private func handleAuthEvent(_ event: AuthChangeEvent, session: AuthSession?) async {
@@ -559,6 +618,9 @@ public final class AppModel: ObservableObject {
         mergeSessions(remote: sessions.filter { !$0.pending })
         let enqueued = await enqueueSession(draft: draft, id: id)
         if !enqueued {
+            // #632: the session is lost — see the notice write in
+            // `saveForceSummary`.
+            LostRecordingStore.note(reason: "session", in: .standard)
             pendingSessions.removeValue(forKey: id)
             mergeSessions(remote: sessions.filter { !$0.pending })
         }
@@ -662,6 +724,9 @@ public final class AppModel: ObservableObject {
             payload: PendingWrite.workout(draft)
         )
         if !(await enqueueAndUpload(item)) {
+            // #632: the workout draft is lost — see the notice write in
+            // `saveForceSummary`.
+            LostRecordingStore.note(reason: "workout", in: .standard)
             pendingSessions.removeValue(forKey: draft.sessionID)
             mergeSessions(remote: sessions.filter { !$0.pending })
         }
@@ -830,6 +895,11 @@ public final class AppModel: ObservableObject {
         )
         let enqueued = await enqueueAndUpload(item)
         if !enqueued {
+            // #632: the rep is lost — the only copy was the in-memory
+            // optimistic row being discarded below. The durable one-shot
+            // notice IS the out-loud reporting (no Sentry in this target);
+            // `surfaceLostRecordingNoticeIfAny` shows it on next foreground.
+            LostRecordingStore.note(reason: "recording", in: .standard)
             pendingRecordings.removeValue(forKey: recording.id)
             mergeRecordings(remote: recordings.filter { pendingRecordings[$0.id] == nil })
         }
@@ -1182,16 +1252,75 @@ public final class AppModel: ObservableObject {
         let unlinked = recordings.filter { $0.groupID == nil }
         guard !unlinked.isEmpty else { return }
         await perform {
-            try await self.repository.linkRecordingsToSession(
+            let result = try await self.repository.linkRecordingsToSession(
                 sessionID: session.id,
                 recordingIDs: unlinked.map(\.id)
             )
-            for recording in unlinked {
-                if let index = self.recordings.firstIndex(where: { $0.id == recording.id }) {
-                    self.recordings[index].groupID = session.id
+            if let result {
+                // #630: the RPC may have minted the session's group id on
+                // the spot (a manually logged session never had one) — stamp
+                // recordings AND the session with the returned id, not a
+                // guess, so the timeline groups them before the next refetch.
+                for recording in unlinked {
+                    if let index = self.recordings.firstIndex(where: { $0.id == recording.id }) {
+                        self.recordings[index].groupID = result.groupID
+                    }
+                }
+                if let index = self.sessions.firstIndex(where: { $0.id == session.id }),
+                   self.sessions[index].groupID != result.groupID {
+                    var updated = self.sessions[index]
+                    updated.groupID = result.groupID
+                    self.sessions[index] = updated
                 }
             }
             self.toastMessage = "Force recordings linked."
+        }
+    }
+
+    /// #630: group ticked loose recordings under a NEW Tindeq session,
+    /// mirroring the web's `HistoryView.createSessionFromSelection`: RPE 5
+    /// default, date from the first recording, note summarizing count + tags,
+    /// duration = the recordings' actual span (recomputed transactionally by
+    /// the link RPC anyway). Unlike the web — which PATCHes `group_id` onto
+    /// every recording and THEN inserts the session, so an insert failure
+    /// orphans the whole group — this inserts the session first and routes
+    /// the recordings through `link_tindeq_recordings_to_session`, whose
+    /// single transaction mints the group id and recomputes duration (#490):
+    /// no orphan window. Returns false (and surfaces the error) when the
+    /// selection or a write fails, so the view keeps the ticked rows.
+    public func createSessionFromRecordings(_ recordings: [TindeqRecording]) async -> Bool {
+        guard currentUserID != nil else { return false }
+        guard let plan = SelectionSessionPlanner.plan(
+            recordings: recordings,
+            phase: settings.currentPhase
+        ) else { return false }
+        do {
+            let sessionID = UUID()
+            let saved = try await repository.insertSession(plan.draft, id: sessionID)
+            let result = try await repository.linkRecordingsToSession(
+                sessionID: sessionID,
+                recordingIDs: plan.recordingIDs
+            )
+            if let result {
+                var updated = saved
+                updated.groupID = result.groupID
+                if let minutes = result.durationMinutes {
+                    updated.durationMinutes = minutes
+                }
+                replaceSession(updated)
+                for recordingID in plan.recordingIDs {
+                    if let index = recordings.firstIndex(where: { $0.id == recordingID }) {
+                        self.recordings[index].groupID = result.groupID
+                    }
+                }
+            } else {
+                replaceSession(saved)
+            }
+            toastMessage = "Session created from recordings"
+            return true
+        } catch {
+            surface(error)
+            return false
         }
     }
 
@@ -1286,6 +1415,46 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Lost-recording notice + sign-out remainder (#632)
+
+    /// Park the sign-out remainder decision: sets the count the dialog shows
+    /// and suspends until `resolveSignOutRemainder` resumes it. Called from
+    /// the drain-before-sign-out decision inside `SignOutQueuePolicy`, only
+    /// when the drain actually left something behind.
+    private func askAboutSignOutRemainder(count: Int) async -> SignOutRemainderChoice {
+        signOutRemainderCount = count
+        return await withCheckedContinuation { continuation in
+            signOutRemainderContinuation = continuation
+        }
+    }
+
+    /// The dialog's answer. `cancel` aborts the sign-out (session stays up,
+    /// queue untouched); `signOut` proceeds, keeping the remainder on device
+    /// for this account's next sign-in.
+    public func resolveSignOutRemainder(_ choice: SignOutRemainderChoice) {
+        guard signOutRemainderContinuation != nil else { return }
+        signOutRemainderCount = nil
+        signOutRemainderContinuation?.resume(returning: choice)
+        signOutRemainderContinuation = nil
+    }
+
+    /// #632: the other side of the queue — the durable one-shot notice parked
+    /// when a save could not be persisted at all (`LostRecordingStore.note`,
+    /// the #264 "out loud" half, native edition). The path that loses a rep
+    /// has no way to say so at that moment, so this is where the user finally
+    /// hears about it: on the next launch/foreground, mirroring the web's
+    /// `takeLostRecordingsNotice` effect in App.tsx. `take` clears the
+    /// record, so it shows exactly once.
+    private func surfaceLostRecordingNoticeIfAny() {
+        guard let notice = LostRecordingStore.take(in: .standard) else { return }
+        // #632 review: cause-free on purpose — the native failures that lose
+        // a rep are queue-unavailable or a refused persist write, not
+        // necessarily a full disk, so claiming a cause ("device storage was
+        // full", the web's copy) would be a guess.
+        let label = "\(notice.count) item\(notice.count == 1 ? "" : "s")"
+        toastMessage = "\(label) couldn't be saved"
+    }
+
     // MARK: Offline queue
 
     public func drainQueue() async {
@@ -1329,8 +1498,10 @@ public final class AppModel: ObservableObject {
         }
     }
 
-    private func upload(_ item: DurableQueueItem<PendingWrite>) async {
-        guard let queue, currentUserID == item.accountUserID else { return }
+    @discardableResult
+    private func upload(_ item: DurableQueueItem<PendingWrite>) async -> Bool {
+        guard let queue, currentUserID == item.accountUserID else { return false }
+        var uploaded = false
         do {
             switch item.payload {
             case let .session(payload):
@@ -1357,6 +1528,7 @@ public final class AppModel: ObservableObject {
                 reason: "uploaded"
             )
             toastMessage = "Saved"
+            uploaded = true
         } catch {
             do {
                 try await queue.markFailure(
@@ -1369,6 +1541,7 @@ public final class AppModel: ObservableObject {
             }
         }
         await refreshQueueCount()
+        return uploaded
     }
 
     private func refreshQueueCount() async {
