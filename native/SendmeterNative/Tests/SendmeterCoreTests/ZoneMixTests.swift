@@ -113,4 +113,118 @@ final class ZoneMixTests: XCTestCase {
         XCTAssertNil(ZoneMix.dominantZone([:]))
         XCTAssertNil(ZoneMix.dominantZone([.power: 0, .strength: 0]))
     }
+
+    // MARK: isEffortRecording / isRecoveredRecording / isCurveFitCandidate (#651)
+
+    func testIsEffortRecordingExcludesMaintenanceZones() {
+        // A warm-up hold (zone nil via duration inference here) — the
+        // 2×10 strength set is an effort, the warm-up is not.
+        let warmup = recording(id: "00000000-0000-0000-0000-0000000000A1", durationMs: 10_000)
+        let strength = recording(id: "00000000-0000-0000-0000-0000000000A2", durationMs: 20_000, zone: .strength)
+        // Duration-inferred warm-up-length hold is sub-1s? No — 10s is
+        // strength by duration. Build a genuine warm-up: recorded zone.
+        let warmupRecorded = recording(id: "00000000-0000-0000-0000-0000000000A3", durationMs: 10_000, zone: .warmup)
+        XCTAssertFalse(ZoneMix.isEffortRecording(warmupRecorded))
+        XCTAssertTrue(ZoneMix.isEffortRecording(strength))
+        XCTAssertTrue(ZoneMix.isEffortRecording(warmup)) // inferred, not recorded maintenance
+    }
+
+    func testIsRecoveredRecordingRequiresConjunction() {
+        // Salvage blob: zone nil + protocolRunID nil + matching note.
+        let blob = recording(id: "00000000-0000-0000-0000-0000000000B1", durationMs: 120_000)
+        let blobWithNote = TindeqRecording(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B1")!,
+            recordedAt: Date(timeIntervalSince1970: 0),
+            durationMilliseconds: 120_000,
+            peakKilograms: 25,
+            averageKilograms: 6,
+            sampleCount: 100,
+            note: "Recovered after sign-out",
+            tag: "Crimps",
+            side: .unspecified,
+            groupID: nil,
+            zone: nil
+        )
+        XCTAssertTrue(ZoneMix.isRecoveredRecording(blobWithNote))
+        // A zone keeps it out even with the note (recorded fact wins).
+        let zoned = TindeqRecording(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B2")!,
+            recordedAt: Date(timeIntervalSince1970: 0),
+            durationMilliseconds: 60_000,
+            peakKilograms: 25,
+            averageKilograms: 6,
+            sampleCount: 60,
+            note: "Recovered after sign-out",
+            tag: "Crimps",
+            side: .unspecified,
+            groupID: nil,
+            zone: .endurance
+        )
+        XCTAssertFalse(ZoneMix.isRecoveredRecording(zoned))
+        // A protocol-run blobs carries protocolRunID → not recovered.
+        let withRun = TindeqRecording(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B3")!,
+            recordedAt: Date(timeIntervalSince1970: 0),
+            durationMilliseconds: 120_000,
+            peakKilograms: 25,
+            averageKilograms: 6,
+            sampleCount: 100,
+            note: "Recovered after sign-out",
+            tag: "Crimps",
+            side: .unspecified,
+            groupID: nil,
+            protocolRunID: UUID(),
+            zone: nil
+        )
+        XCTAssertFalse(ZoneMix.isRecoveredRecording(withRun))
+        // A legit reconstruction (no matching note) still enters the fit.
+        let legit = TindeqRecording(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000000B4")!,
+            recordedAt: Date(timeIntervalSince1970: 0),
+            durationMilliseconds: 30_000,
+            peakKilograms: 30,
+            averageKilograms: 24,
+            sampleCount: 30,
+            note: "Interrupted session — resumed",
+            tag: "Crimps",
+            side: .unspecified,
+            groupID: nil,
+            protocolRunID: nil,
+            zone: nil
+        )
+        XCTAssertFalse(ZoneMix.isRecoveredRecording(legit))
+        XCTAssertTrue(ZoneMix.isCurveFitCandidate(legit))
+    }
+
+    func testCurveFitCandidateExcludesRecoveredBlobButPRKeepsItsPeak() {
+        // Warm-up hold (recorded) must NOT be a curve candidate.
+        let warmup = recording(id: "00000000-0000-0000-0000-0000000000C1", durationMs: 60_000, zone: .warmup)
+        XCTAssertFalse(ZoneMix.isCurveFitCandidate(warmup))
+
+        // Salvage blob: excluded from the fit (isCurveFitCandidate false)…
+        let blob = TindeqRecording(
+            id: UUID(uuidString: "00000000-0000-0000-0000-0000000000C2")!,
+            recordedAt: Date(timeIntervalSince1970: 0),
+            durationMilliseconds: 120_000,
+            peakKilograms: 28,
+            averageKilograms: 6,
+            sampleCount: 100,
+            note: "Recovered after connection loss",
+            tag: "Crimps",
+            side: .unspecified,
+            groupID: nil,
+            zone: nil
+        )
+        XCTAssertFalse(ZoneMix.isCurveFitCandidate(blob))
+        // …but a strength set with peak/avg present IS a candidate.
+        let strength = recording(id: "00000000-0000-0000-0000-0000000000C3", durationMs: 20_000, zone: .strength)
+        XCTAssertTrue(ZoneMix.isCurveFitCandidate(strength))
+
+        // PR/trend asymmetry (#486): a blob's peakKg still counts for PR —
+        // the same peak values the web's effortPeakKg keeps.
+        let prCandidates = [blob, strength]
+            .filter(ZoneMix.isEffortRecording)
+            .compactMap(\.peakKilograms)
+        XCTAssertEqual(prCandidates, [28, 20])
+    }
 }

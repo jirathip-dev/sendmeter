@@ -101,4 +101,43 @@ public enum ZoneMix {
         guard let max = zoneOrder.map({ sets[$0] ?? 0 }).max(), max > 0 else { return nil }
         return zoneOrder.first { (sets[$0] ?? 0) == max }
     }
+
+    /// Whether a recording counts as maximal-intent EFFORT evidence — the
+    /// web's `isEffortRecording` (`zoneHistory.ts`): NOT a maintenance zone.
+    /// `zone(for:)` returns nil for warmup/prehab by construction, so this is
+    /// simply `zone != nil`. Warm-up and Prehab are deliberately submaximal
+    /// maintenance work; neither can stand in for a maximal-intent
+    /// observation in the curve fit, PR, or trend (#651).
+    public static func isEffortRecording(_ recording: TindeqRecording) -> Bool {
+        zone(for: recording) != nil
+    }
+
+    /// The web's recovery/salvage-blob exclusion (#486, #651): a whole-buffer
+    /// blob whose `durationMs` is inflated by inter-rep rests and whose
+    /// `avgKg` is deflated — exactly the two fields `computeForceCurve`
+    /// consumes. The CONJUNCTION matters: zone == nil AND protocolRunID ==
+    /// nil AND a known salvage note. Note text alone gives false positives on
+    /// legitimate reconstructions. Mirrors `SALVAGE_BLOB_NOTES` +
+    /// `isRecoveredRecording` in `zoneHistory.ts`.
+    public static func isRecoveredRecording(_ recording: TindeqRecording) -> Bool {
+        guard recording.zone == nil,
+              recording.protocolRunID == nil
+        else { return false }
+        return recording.note == "Recovered after sign-out"
+            || recording.note == "Recovered after connection loss"
+    }
+
+    /// The web's `curveCandidateRecordings` filter for the curve FIT
+    /// (`zoneHistory.ts`): effort AND measured AND static-capacity AND not a
+    /// salvage blob, with a peak and average present. Deliberately does NOT
+    /// exclude recovery from PR/trend/asymmetry/balance — a blob's `peakKg`
+    /// is a max over samples and is unaffected by rest contamination (#486,
+    /// #651). Only the fit consumes this.
+    public static func isCurveFitCandidate(_ recording: TindeqRecording) -> Bool {
+        guard isEffortRecording(recording),
+              recording.peakKilograms != nil,
+              recording.averageKilograms != nil
+        else { return false }
+        return !isRecoveredRecording(recording)
+    }
 }
