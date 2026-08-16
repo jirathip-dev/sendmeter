@@ -518,7 +518,7 @@ platform :ios do
           }
         ]
       end
-      Spaceship::ConnectAPI::BundleIdCapability.create(create_args)
+      Spaceship::ConnectAPI::BundleIdCapability.create(**create_args)
       UI.message("Enabled #{label} on #{native_id}")
     end
 
