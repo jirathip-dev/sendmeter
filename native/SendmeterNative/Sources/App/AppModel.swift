@@ -1107,16 +1107,75 @@ public final class AppModel: ObservableObject {
         let unlinked = recordings.filter { $0.groupID == nil }
         guard !unlinked.isEmpty else { return }
         await perform {
-            try await self.repository.linkRecordingsToSession(
+            let result = try await self.repository.linkRecordingsToSession(
                 sessionID: session.id,
                 recordingIDs: unlinked.map(\.id)
             )
-            for recording in unlinked {
-                if let index = self.recordings.firstIndex(where: { $0.id == recording.id }) {
-                    self.recordings[index].groupID = session.id
+            if let result {
+                // #630: the RPC may have minted the session's group id on
+                // the spot (a manually logged session never had one) — stamp
+                // recordings AND the session with the returned id, not a
+                // guess, so the timeline groups them before the next refetch.
+                for recording in unlinked {
+                    if let index = self.recordings.firstIndex(where: { $0.id == recording.id }) {
+                        self.recordings[index].groupID = result.groupID
+                    }
+                }
+                if let index = self.sessions.firstIndex(where: { $0.id == session.id }),
+                   self.sessions[index].groupID != result.groupID {
+                    var updated = self.sessions[index]
+                    updated.groupID = result.groupID
+                    self.sessions[index] = updated
                 }
             }
             self.toastMessage = "Force recordings linked."
+        }
+    }
+
+    /// #630: group ticked loose recordings under a NEW Tindeq session,
+    /// mirroring the web's `HistoryView.createSessionFromSelection`: RPE 5
+    /// default, date from the first recording, note summarizing count + tags,
+    /// duration = the recordings' actual span (recomputed transactionally by
+    /// the link RPC anyway). Unlike the web — which PATCHes `group_id` onto
+    /// every recording and THEN inserts the session, so an insert failure
+    /// orphans the whole group — this inserts the session first and routes
+    /// the recordings through `link_tindeq_recordings_to_session`, whose
+    /// single transaction mints the group id and recomputes duration (#490):
+    /// no orphan window. Returns false (and surfaces the error) when the
+    /// selection or a write fails, so the view keeps the ticked rows.
+    public func createSessionFromRecordings(_ recordings: [TindeqRecording]) async -> Bool {
+        guard currentUserID != nil else { return false }
+        guard let plan = SelectionSessionPlanner.plan(
+            recordings: recordings,
+            phase: settings.currentPhase
+        ) else { return false }
+        do {
+            let sessionID = UUID()
+            let saved = try await repository.insertSession(plan.draft, id: sessionID)
+            let result = try await repository.linkRecordingsToSession(
+                sessionID: sessionID,
+                recordingIDs: plan.recordingIDs
+            )
+            if let result {
+                var updated = saved
+                updated.groupID = result.groupID
+                if let minutes = result.durationMinutes {
+                    updated.durationMinutes = minutes
+                }
+                replaceSession(updated)
+                for recordingID in plan.recordingIDs {
+                    if let index = recordings.firstIndex(where: { $0.id == recordingID }) {
+                        self.recordings[index].groupID = result.groupID
+                    }
+                }
+            } else {
+                replaceSession(saved)
+            }
+            toastMessage = "Session created from recordings"
+            return true
+        } catch {
+            surface(error)
+            return false
         }
     }
 

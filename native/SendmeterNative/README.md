@@ -22,7 +22,7 @@ in `docs/native-swift-rewrite.md`.
 - Direct CoreBluetooth Tindeq Progressor connection, tare, battery, disconnect recovery, and live SwiftUI Canvas trace
 - Free pulls, static guided protocols, alternating sides, Reverse Action cadence, per-set holds, fixed/%PR/%CF/Hill-curve targets, and complete protocol metadata
 - Account-scoped atomic on-device queue with stable IDs, retry backoff, and bounded diagnostic breadcrumbs
-- Session and force History, editing, linking, soft-delete Trash, restore, and confirmed permanent deletion
+- Combined session + force History timeline (#630): filter chips, loose-recording multi-select → new session, per-rep force charts, editing, linking, soft-delete Trash, restore, and confirmed permanent deletion
 - Training Block transitions with same-day undo semantics
 - Apple Health readiness through the repository's existing `SendLogHealthCore`
 - Direct WatchConnectivity mirroring, access-token-only relay, and pending workout reconciliation
