@@ -347,6 +347,14 @@ public final class AppModel: ObservableObject {
                 askAboutRemainder: { count in await self.askAboutSignOutRemainder(count: count) },
                 signOut: { try await self.auth.signOut() }
             )
+            // #632 review: a cancel at the remainder prompt ("Stay Signed In")
+            // returns `outcome == nil` with no error — the session is still
+            // up, so NOTHING may follow this guard. In particular NOT the
+            // watch relay: relaying nil would tell the companion "signedOut"
+            // (it drops its bearer token and its queue uploads stall on
+            // "Waiting for iPhone" until the phone next foregrounds and
+            // re-relays) while the phone itself stays signed in.
+            guard result.outcome != nil else { return }
             if let signOutError = result.signOutError { throw signOutError }
             self.watch.relaySession(nil)
         }
@@ -1305,8 +1313,12 @@ public final class AppModel: ObservableObject {
     /// record, so it shows exactly once.
     private func surfaceLostRecordingNoticeIfAny() {
         guard let notice = LostRecordingStore.take(in: .standard) else { return }
+        // #632 review: cause-free on purpose — the native failures that lose
+        // a rep are queue-unavailable or a refused persist write, not
+        // necessarily a full disk, so claiming a cause ("device storage was
+        // full", the web's copy) would be a guess.
         let label = "\(notice.count) item\(notice.count == 1 ? "" : "s")"
-        toastMessage = "\(label) couldn't be saved — device storage was full"
+        toastMessage = "\(label) couldn't be saved"
     }
 
     // MARK: Offline queue

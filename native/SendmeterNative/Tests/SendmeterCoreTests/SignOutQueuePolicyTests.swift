@@ -69,6 +69,31 @@ final class SignOutQueuePolicyTests: XCTestCase {
         XCTAssertNil(result.signOutError)
     }
 
+    /// #632 review: cancel must be a HARD STOP — `outcome == nil` is the
+    /// signal the AppModel wiring keys on (the "stay signed in" choice must
+    /// not even reach the watch relay, let alone `signOut`), so the queued
+    /// entries the prompt was about stay exactly where they were.
+    func testCancelLeavesQueuedEntriesInPlace() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestQueuePayload>(directoryURL: directory, filename: "queue.json")
+        try await queue.enqueue(DurableQueueItem(accountUserID: user, payload: TestQueuePayload(value: "a1")))
+        try await queue.enqueue(DurableQueueItem(accountUserID: user, payload: TestQueuePayload(value: "a2")))
+
+        let result = await SignOutQueuePolicy.drainBeforeSignOut(
+            userId: user,
+            drain: { _ in 0 },
+            countRemaining: { await queue.count(for: $0) },
+            askAboutRemainder: { _ in .cancel },
+            signOut: { XCTFail("signOut must not run after cancel") }
+        )
+        XCTAssertNil(result.outcome)
+        let stillQueued = await queue.count(for: user)
+        XCTAssertEqual(stillQueued, 2)
+    }
+
     func testEmptyQueueSkipsRemainderPrompt() async {
         let user = UUID()
         var asked = false
