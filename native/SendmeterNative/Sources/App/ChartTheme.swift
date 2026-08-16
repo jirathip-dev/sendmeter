@@ -133,9 +133,10 @@ public enum ChartToken: String, CaseIterable, Sendable {
 }
 
 /// Per-activity-type hues (`--chart-activity-*`, index.css) for the training-
-/// load activity mix and heatmaps. `auto` and `custom` are single-hue in the
-/// CSS — the same value in both modes — while every other activity brightens
-/// for dark mode.
+/// load activity mix and heatmaps. Every hue has a distinct dark-mode value
+/// (index.css `.dark` override block) — `auto` and `custom` included (#649
+/// review: the CSS resolves them via `--chart-activity-auto/custom` vars, so
+/// dark renders #77C8F5 / #A9A9B0, not the light values).
 public enum ChartActivityHue: String, CaseIterable, Sendable {
     case board
     case fingerboard
@@ -182,8 +183,8 @@ public enum ChartActivityHue: String, CaseIterable, Sendable {
         case .routine: return ("#A94D7D", "#E39AC3")
         case .campus: return ("#C96032", "#F0864C")
         case .tindeq: return ("#B96C2C", "#E8A24D")
-        case .auto: return ("#2A82C5", "#2A82C5")
-        case .custom: return ("#6E6E73", "#6E6E73")
+        case .auto: return ("#2A82C5", "#77C8F5")
+        case .custom: return ("#6E6E73", "#A9A9B0")
         }
     }
 }

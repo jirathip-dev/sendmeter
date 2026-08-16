@@ -35,8 +35,8 @@ final class ChartThemeTests: XCTestCase {
         .routine: ("#A94D7D", "#E39AC3"),
         .campus: ("#C96032", "#F0864C"),
         .tindeq: ("#B96C2C", "#E8A24D"),
-        .auto: ("#2A82C5", "#2A82C5"),
-        .custom: ("#6E6E73", "#6E6E73")
+        .auto: ("#2A82C5", "#77C8F5"),
+        .custom: ("#6E6E73", "#A9A9B0")
     ]
 
     // MARK: Semantic tokens
@@ -88,10 +88,8 @@ final class ChartThemeTests: XCTestCase {
         }
     }
 
-    func testAutoAndCustomAreSingleHue() {
-        XCTAssertEqual(ChartActivityHue.auto.lightHex, ChartActivityHue.auto.darkHex)
-        XCTAssertEqual(ChartActivityHue.custom.lightHex, ChartActivityHue.custom.darkHex)
-        for hue in ChartActivityHue.allCases where hue != .auto && hue != .custom {
+    func testEveryActivityHueDiffersBetweenSchemes() {
+        for hue in ChartActivityHue.allCases {
             XCTAssertNotEqual(hue.lightHex, hue.darkHex, "\(hue.rawValue) is expected to brighten in dark mode")
         }
     }
