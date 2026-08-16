@@ -8,6 +8,18 @@ require "xcodeproj"
 default_platform(:ios)
 
 APP_IDENTIFIER = "com.jirathip.sendlog".freeze
+# The native SwiftUI target ships to TestFlight under a DISTINCT bundle ID
+# (one bundle ID = one app slot on TestFlight; uploading the native build
+# under the shipped ID would REPLACE the Capacitor app's builds — #637).
+# The `.native` suffix means WCSession no longer pairs with the watch app
+# (the companion relationship is bundle-ID-prefix-based, so the watch app
+# com.jirathip.sendlog.watchkitapp only pairs with an iOS app whose ID is a
+# prefix of it); the mirror falls back to the realtime server path. This is
+# the accepted pre-promotion tradeoff — see docs/native-swift-rewrite.md.
+NATIVE_APP_IDENTIFIER = "com.jirathip.sendlog.native".freeze
+NATIVE_PROJECT_DIR = "native/SendmeterNative".freeze
+NATIVE_XCODEPROJ = "#{NATIVE_PROJECT_DIR}/SendmeterNative.xcodeproj".freeze
+NATIVE_SCHEME = "SendmeterNative".freeze
 XCODEPROJ = "ios/App/App.xcodeproj".freeze
 TEAM_ID = "9244PWFYD7".freeze
 SCREENSHOT_OUTPUT = File.expand_path("screenshots", __dir__).freeze
@@ -410,5 +422,184 @@ platform :ios do
 
     UI.success("Uploaded build #{build} to TestFlight. It appears under " \
                "Internal Testing once App Store Connect finishes processing.")
+  end
+
+  desc "Build the native SwiftUI app (#{NATIVE_APP_IDENTIFIER}) and ship a build to TestFlight"
+  lane :native_beta do
+    # Same headless API-key signing as `beta` — no Apple ID password / 2FA.
+    # Env contract (CI job uses the `testflight` GitHub environment):
+    #   ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH (p8 written to that path)
+    #   CI=true, IOS_DIST_CERT_P12 / IOS_DIST_CERT_PASSWORD on CI
+    api_key = app_store_connect_api_key(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      key_filepath: ENV.fetch("ASC_KEY_PATH")
+    )
+
+    # 1. Cert setup — identical discipline to `beta` (see its comments for the
+    #    full story): on CI import the team's single existing Distribution cert
+    #    from a secret into a temp keychain so nothing mints new signing assets;
+    #    locally fetch via the API key. `get_certificates` may only be used
+    #    outside CI or it mints a new cert every run (Apple caps these).
+    if ENV["CI"]
+      setup_ci
+      cert_path = File.expand_path("certs/dist.p12", __dir__)
+      FileUtils.mkdir_p(File.dirname(cert_path))
+      File.binwrite(cert_path, Base64.decode64(ENV.fetch("IOS_DIST_CERT_P12")))
+      import_certificate(
+        certificate_path: cert_path,
+        certificate_password: ENV.fetch("IOS_DIST_CERT_PASSWORD"),
+        keychain_name: "fastlane_tmp_keychain",
+        keychain_password: ""
+      )
+    else
+      get_certificates(
+        api_key: api_key,
+        output_path: "fastlane/certs"
+      )
+    end
+
+    # 2. Generate the Xcode project. Only project.yml is committed; the
+    #    .xcodeproj is generated fresh on every run (same as native-swift.yml).
+    UI.user_error!(
+      "xcodegen is not installed — run `brew install xcodegen` first"
+    ) unless system("which xcodegen >/dev/null 2>&1")
+    sh("cd ../#{NATIVE_PROJECT_DIR} && xcodegen generate")
+
+    # 3. Make sure the distribution material exists. All three steps are
+    #    idempotent, so every run is safe and the first run is fully
+    #    automated (no manual portal step — unlike the watch-widgets App
+    #    Group, the capabilities the entitlements need can be enabled via
+    #    the App Store Connect API).
+    #
+    #    a) The App ID. sigh does NOT create App IDs; the beta lane uses the
+    #       same Spaceship call for the widget extensions.
+    native_id = NATIVE_APP_IDENTIFIER
+    bundle_ids = Spaceship::ConnectAPI::BundleId.all(filter: { identifier: native_id })
+    if bundle_ids.any? { |b| b.identifier == native_id }
+      native_bundle_id = bundle_ids.find { |b| b.identifier == native_id }
+    else
+      native_bundle_id = Spaceship::ConnectAPI::BundleId.create(
+        name: "Sendmeter Native",
+        identifier: native_id,
+        platform: "IOS"
+      )
+      UI.message("Registered App ID #{native_id}")
+    end
+
+    #    b) The capabilities SendmeterNative.entitlements requires. A profile
+    #       generated without them fails at codesign ("profile doesn't
+    #       include the entitlement"), so enable them up front.
+    required_capabilities = {
+      "HEALTHKIT" => "HealthKit",
+      "APPLE_ID_AUTH" => "Sign in with Apple",
+      "ASSOCIATED_DOMAINS" => "Associated Domains",
+    }
+    have = Spaceship::ConnectAPI::BundleIdCapability
+      .all(bundle_id_id: native_bundle_id.id)
+      .map(&:capability_type)
+    required_capabilities.each do |type, label|
+      next if have.include?(type)
+      Spaceship::ConnectAPI::BundleIdCapability.create(
+        bundle_id_id: native_bundle_id.id,
+        capability_type: type
+      )
+      UI.message("Enabled #{label} on #{native_id}")
+    end
+
+    #    c) The App Store Connect app record. latest_testflight_build_number
+    #       and upload_to_testflight both fail on a missing app, so create it
+    #       (SKU must be unique within the team).
+    unless Spaceship::ConnectAPI::App.find(native_id)
+      Spaceship::ConnectAPI::App.create(
+        name: "Sendmeter Native",
+        bundle_id: native_id,
+        primary_locale: "en-US",
+        sku: "SENDMETER-NATIVE",
+        platforms: ["IOS"],
+        version_string: "1.0.0"
+      )
+      UI.message("Created App Store Connect app record for #{native_id}")
+    end
+
+    # 4. App Store distribution profile carrying the cert from step 1.
+    #    force: true regenerates it so it always pins the current cert —
+    #    same reason as the beta lane (the account's auto Team Store profile
+    #    referenced an older cert). sigh installs the profile locally, which
+    #    is what lets the archive resolve it by name in step 6.
+    get_provisioning_profile(
+      api_key: api_key,
+      app_identifier: native_id,
+      force: true,
+      output_path: "fastlane/certs"
+    )
+    native_profile = lane_context[SharedValues::SIGH_NAME]
+
+    # 5. Next build number = latest on TestFlight (of THIS app — the native
+    #    app has its own build-number train, so it can never race `beta`) + 1.
+    #    Applied at archive time via xcargs; NEVER hand-bump
+    #    CURRENT_PROJECT_VERSION in project.yml.
+    build = latest_testflight_build_number(
+      api_key: api_key,
+      app_identifier: native_id,
+      initial_build_number: 0
+    ) + 1
+
+    # 6. Pin the ARCHIVE to manual signing (#263 discipline, single target).
+    #    The beta lane edits the shipped pbxproj at runtime and restores it in
+    #    an ensure; here the project is generated by this lane and untracked,
+    #    so the edit needs no restore — the next run regenerates it. The
+    #    committed project.yml stays Automatic so local Xcode development
+    #    keeps working. The auth flags are deliberately export-only (gym
+    #    appends xcargs to BOTH invocations but export_xcargs to the export
+    #    only), so the archive has no authority to create signing assets.
+    native_project_abs = File.expand_path("../#{NATIVE_XCODEPROJ}", __dir__)
+    update_code_signing_settings(
+      path: native_project_abs,
+      use_automatic_signing: false,
+      targets: [NATIVE_SCHEME],
+      build_configurations: ["Release"],
+      team_id: TEAM_ID,
+      code_sign_identity: "Apple Distribution",
+      profile_name: native_profile
+    )
+    native_proj = Xcodeproj::Project.open(native_project_abs)
+    native_proj.root_object.attributes.fetch("TargetAttributes", {}).each_value do |attrs|
+      attrs["ProvisioningStyle"] = "Manual" if attrs.key?("ProvisioningStyle")
+    end
+    native_proj.save
+
+    key_abs = File.expand_path(File.basename(ENV.fetch("ASC_KEY_PATH")), __dir__)
+    export_auth_args = "-authenticationKeyID #{ENV.fetch('ASC_KEY_ID')} " \
+                       "-authenticationKeyIssuerID #{ENV.fetch('ASC_ISSUER_ID')} " \
+                       "-authenticationKeyPath #{key_abs} -allowProvisioningUpdates"
+
+    build_app(
+      project: NATIVE_XCODEPROJ,
+      scheme: NATIVE_SCHEME,
+      configuration: "Release",
+      export_method: "app-store",
+      xcargs: "CURRENT_PROJECT_VERSION=#{build}",
+      export_xcargs: export_auth_args,
+      export_options: {
+        signingStyle: "manual",
+        signingCertificate: "Apple Distribution",
+        provisioningProfiles: { native_id => native_profile }
+      }
+    )
+
+    # 7. Upload. Guy needs to be an internal tester of the NEW app record
+    #    ("Sendmeter Native", com.jirathip.sendlog.native) once in App Store
+    #    Connect — internal testers are per-app, so the shipped app's tester
+    #    list does not carry over.
+    upload_to_testflight(
+      api_key: api_key,
+      app_identifier: native_id,
+      skip_waiting_for_build_processing: true
+    )
+
+    UI.success("Uploaded native build #{build} to TestFlight under " \
+               "#{native_id}. It appears under Internal Testing once App " \
+               "Store Connect finishes processing.")
   end
 end

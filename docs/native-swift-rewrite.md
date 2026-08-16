@@ -60,3 +60,72 @@ realtime events, account switching, and TestFlight signing/entitlements.
 The branch adds only a new directory and workflow. Reverting the native commit
 removes the experimental target without altering the current app, database, or
 Watch target.
+
+## TestFlight distribution (#637)
+
+The native app gets its own CI distribution path so it can be installed on a
+real iPhone without touching the shipped app's release channel.
+
+**Bundle-ID decision: `com.jirathip.sendlog.native` — a distinct app, never
+the shipped ID.** Evidence:
+
+- TestFlight allows one app per bundle ID. Uploading the native build under
+  `com.jirathip.sendlog` would land it in the *shipped* app's slot — replacing
+  the Capacitor app's TestFlight builds, consuming its build-number train, and
+  pushing the current release candidate off testers' phones. The native target
+  is pre-promotion (the promotion gates above), and the project's core rule is
+  "keep the production target untouched", so the same-ID path is rejected.
+- The distinct ID does break one thing, deliberately: **the direct
+  WatchConnectivity mirror**. WCSession pairs an iOS app with the watch app
+  whose bundle ID derives from the iOS app's ID (Apple's own Watch
+  Connectivity sample: `com.YourCompany.ProductName` ↔
+  `com.YourCompany.ProductName.watchkitapp`). The watch app is
+  `com.jirathip.sendlog.watchkitapp`; `com.jirathip.sendlog.native` is not a
+  prefix of it, so the native phone app's `WCSession.isWatchAppInstalled` is
+  false and the low-latency mirror is inactive. The native app's
+  `LiveWorkoutMirror` already has a `server-fallback` (realtime) path, so the
+  app stays fully usable; watch-mirror validation is a promotion gate anyway
+  and happens when the native app takes over the real bundle ID. The watch
+  keeps working with the shipped app, unchanged.
+- Coexistence: both apps install side-by-side on one device (different bundle
+  IDs). One caveat: both declare the `com.jirathip.sendlog://` URL scheme
+  (static in `Resources/Info.plist`, which is not bundle-ID-derived), so with
+  both installed the scheme resolves to whichever app was installed last.
+  Supabase auth redirects and passkeys keep working — the scheme itself never
+  changes.
+
+**What ships it (dispatch-only workflow `native-testflight.yml` →
+`bundle exec fastlane native_beta`):**
+
+1. API key + cert setup — same CI-safe discipline as `beta` (`setup_ci` +
+   import `IOS_DIST_CERT_P12` into a temp keychain on CI; `get_certificates`
+   locally).
+2. `xcodegen generate` the project (only `project.yml` is committed).
+3. Idempotently create the App ID, enable the capabilities the entitlements
+   need (HealthKit, Sign in with Apple, Associated Domains — via the Connect
+   API, so there is **no manual portal step**), and create the ASC app record
+   (SKU `SENDMETER-NATIVE`).
+4. `get_provisioning_profile` (force) for the new App ID.
+5. Build number = latest TestFlight build of *this* app + 1 (its own train —
+   never races `beta`), injected via `CURRENT_PROJECT_VERSION` xcargs; never
+   hand-bump `project.yml`.
+6. Archive with manual signing pinned on the generated project (single
+   target, so no pbxproj-restore dance is needed — the project is regenerated
+   each run); the auth flags stay export-only, same as `beta`, so the archive
+   can never mint signing assets.
+7. `upload_to_testflight`.
+
+**One-time manual steps (first upload only):** add the tester (Guy) as an
+internal tester of the *new* "Sendmeter Native" app in App Store Connect —
+internal testers are per-app, so the shipped app's tester list does not carry
+over. Everything else (App ID, capabilities, app record, profile, build
+number) is automated by the lane.
+
+**Workflow:** `native-testflight.yml` is dispatch-only (macOS runner minutes
+are the dominant CI cost), uses the same `testflight` GitHub environment as
+the shipped lane (match the capitalisation exactly), the same
+`blacksmith-6vcpu-macos-26` runner input, a `native-testflight` concurrency
+group (queue, never cancel — parallel runs would race the same build number),
+and a cheap Ubuntu gate that refuses refs without
+`native/SendmeterNative/project.yml` (the native target is not on `main`
+yet). No node/npm steps — the native app is pure Swift.
