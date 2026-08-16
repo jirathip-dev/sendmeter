@@ -500,10 +500,25 @@ platform :ios do
       .map(&:capability_type)
     required_capabilities.each do |type, label|
       next if have.include?(type)
-      Spaceship::ConnectAPI::BundleIdCapability.create(
+      # Sign in with Apple is the one capability that requires a
+      # configuration choice: ASC rejects a bare create with
+      # "Please select at least one configuration for Sign in with Apple."
+      # Enable as the primary App ID (the app IS the primary consumer).
+      create_args = {
         bundle_id_id: native_bundle_id.id,
         capability_type: type
-      )
+      }
+      if type == "APPLE_ID_AUTH"
+        create_args[:settings] = [
+          {
+            key: "APP_ID",
+            options: [
+              { key: "PRIMARY_APP_ID", enabled: true }
+            ]
+          }
+        ]
+      end
+      Spaceship::ConnectAPI::BundleIdCapability.create(create_args)
       UI.message("Enabled #{label} on #{native_id}")
     end
 
