@@ -153,7 +153,7 @@ public enum ChartActivityHue: String, CaseIterable, Sendable {
     /// CSS hex in light mode (`--chart-activity-*`).
     public var lightHex: String { hexPair.0 }
 
-    /// CSS hex in dark mode; single-hue activities return their light value.
+    /// CSS hex in dark mode; every hue has a distinct dark value.
     public var darkHex: String { hexPair.1 }
 
     /// Hex for the given appearance mode.

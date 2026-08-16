@@ -23,8 +23,8 @@ final class ChartThemeTests: XCTestCase {
         .tooltipBorder: ("#D8D8DC", "#4A4A50")
     ]
 
-    /// The 11 activity hues, light → dark (`--chart-activity-*`). `auto` and
-    /// `custom` are single-hue in the CSS (same value in both modes).
+    /// The 11 activity hues, light → dark (`--chart-activity-*`); every hue
+    /// has a distinct dark value (index.css `.dark` override block).
     private let expectedActivityHexes: [ChartActivityHue: (light: String, dark: String)] = [
         .board: ("#2E96F0", "#4FB0FF"),
         .fingerboard: ("#7B83EB", "#9296EE"),
