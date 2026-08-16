@@ -509,11 +509,14 @@ platform :ios do
         capability_type: type
       }
       if type == "APPLE_ID_AUTH"
+        # Current ASC schema: SIWA consent setting is
+        # APPLE_ID_AUTH_APP_CONSENT → PRIMARY_APP_CONSENT (the legacy
+        # APP_ID → PRIMARY_APP_ID keys were removed from the API).
         create_args[:settings] = [
           {
-            key: "APP_ID",
+            key: "APPLE_ID_AUTH_APP_CONSENT",
             options: [
-              { key: "PRIMARY_APP_ID", enabled: true }
+              { key: "PRIMARY_APP_CONSENT", enabled: true }
             ]
           }
         ]
