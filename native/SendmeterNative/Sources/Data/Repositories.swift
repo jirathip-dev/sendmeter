@@ -755,6 +755,11 @@ private struct WorkoutListRow: Decodable {
     }
 }
 
+/// The lazy raw-trace fetch's row: `climb_workouts.raw` only (#645).
+private struct WorkoutRawRow: Decodable {
+    let raw: [[Double?]]?
+}
+
 private struct PhoneWorkoutAttemptRPC: Encodable {
     let startedAt: Date
     let durationSeconds: Int
@@ -1445,6 +1450,26 @@ public final class SendmeterRepository: @unchecked Sendable {
             ]
         )
         return rows.map(\.model)
+    }
+
+    /// The workout's 1 Hz HR trace (web `fetchWorkoutRaw`): `climb_workouts.raw`
+    /// is `[[t_s, alt_m, motion_rms, hr], ...]`, shaped into `{t, hr}` samples
+    /// by `WorkoutRawTrace.hrSeries`. Nil when the workout kept no trace
+    /// (older builds, phone workouts) — the HR chart just doesn't render.
+    /// `fetchWorkouts` deliberately never selects `raw`, so expanding a row
+    /// costs one lazy single-row fetch, mirroring `fetchRecordingSamples`.
+    public func fetchWorkoutRaw(id: UUID) async throws -> [WorkoutHrSample]? {
+        let rows: [WorkoutRawRow] = try await transport.request(
+            path: "rest/v1/climb_workouts",
+            method: .get,
+            queryItems: [
+                URLQueryItem(name: "select", value: "raw"),
+                URLQueryItem(name: "id", value: "eq.\(id.uuidString.lowercased())"),
+                URLQueryItem(name: "limit", value: "1")
+            ]
+        )
+        guard let row = rows.first, let raw = row.raw, !raw.isEmpty else { return nil }
+        return WorkoutRawTrace.hrSeries(raw)
     }
 
     /// The current `live_workouts` row (one per user). The realtime channel

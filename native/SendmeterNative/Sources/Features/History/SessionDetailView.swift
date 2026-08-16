@@ -4,16 +4,20 @@ import SwiftUI
 /// #630: the expanded detail for a session in the combined History timeline —
 /// the native counterpart of the web's `SessionRow` detail sheet. Tindeq
 /// sessions show their recordings (grouped by tag) with per-rep box plots +
-/// the zone-mix badge; workout sessions show a summary card. Workout sessions
-/// deliberately stop at the summary: the native model fetches `climb_workouts`
-/// without the 1 Hz `raw` trace, so there is no HR chart to draw — the
-/// summary is everything the model already holds.
+/// the zone-mix badge; workout sessions show the summary card plus an HR
+/// chart drawn from the 1 Hz `climb_workouts.raw` trace (#645), fetched
+/// lazily on expand — the list fetch (`fetchWorkouts`) deliberately never
+/// selects `raw`, exactly like the recording-samples pattern.
 struct SessionDetailView: View {
     @EnvironmentObject private var model: AppModel
     let session: SendmeterCore.Session
 
     @State private var boxStatsByID: [UUID: BoxStats] = [:]
     @State private var loadingSamples = false
+    /// #645: the lazily-fetched HR trace for this session's workout; nil
+    /// while not yet fetched or when the workout kept no trace.
+    @State private var hrTrace: [WorkoutHrSample]?
+    @State private var loadingHR = false
 
     private var isTindeq: Bool { session.type == "tindeq" && session.groupID != nil }
     private var isWorkout: Bool { session.workoutSource != nil }
@@ -55,6 +59,7 @@ struct SessionDetailView: View {
                     recordingsSection
                 } else if isWorkout {
                     workoutSummaryCard
+                    workoutHrSection
                 }
             }
             .padding()
@@ -62,7 +67,10 @@ struct SessionDetailView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(session.typeLabel)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await loadSamples() }
+        .task {
+            await loadSamples()
+            await loadHrTrace()
+        }
     }
 
     // MARK: Header
@@ -234,7 +242,44 @@ struct SessionDetailView: View {
         }
     }
 
+    // MARK: HR trace (#645)
+
+    /// The HR chart card, below the summary. The raw trace is fetched lazily
+    /// here (like `fetchRecordingSamples`), never on the list: the list fetch
+    /// stays cheap and the expanded row pays one single-row `select=raw`.
+    @ViewBuilder
+    private var workoutHrSection: some View {
+        if let workout {
+            if loadingHR {
+                SurfaceCard {
+                    ProgressView("Loading heart-rate trace…")
+                        .frame(maxWidth: .infinity, minHeight: 100)
+                }
+            } else if let trace = hrTrace {
+                SurfaceCard {
+                    WorkoutHrChartView(
+                        samples: trace,
+                        startedAt: workout.startedAt,
+                        endedAt: workout.endedAt,
+                        source: workout.source
+                    )
+                }
+            }
+        }
+    }
+
     // MARK: Samples
+
+    private func loadHrTrace() async {
+        guard isWorkout, let workout, !loadingHR, hrTrace == nil else { return }
+        loadingHR = true
+        defer { loadingHR = false }
+        do {
+            hrTrace = try await model.repository.fetchWorkoutRaw(id: workout.id)
+        } catch {
+            model.errorMessage = error.localizedDescription
+        }
+    }
 
     private func loadSamples() async {
         guard isTindeq, !loadingSamples, boxStatsByID.isEmpty else { return }
