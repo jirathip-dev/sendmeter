@@ -25,6 +25,11 @@ targets:
     deploymentTarget: "16.2"
     sources:
       - path: Sources/App
+        # #649: ChartTheme.swift is compiled into the SendmeterCore SwiftPM
+        # module (see Package.swift) so the chart palette is unit-tested by
+        # `swift test`; excluding it here keeps a single definition.
+        excludes:
+          - ChartTheme.swift
       - path: Sources/Data
       - path: Sources/Platform
       - path: Sources/Features

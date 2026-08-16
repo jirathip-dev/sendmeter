@@ -43,12 +43,13 @@ struct DashboardView: View {
 
 private struct TodayDecisionCard: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.colorScheme) private var scheme
 
-    private var readinessColor: Color {
+    private func readinessColor(_ scheme: ColorScheme) -> Color {
         guard let readiness = model.readiness?.readiness else { return .secondary }
-        if readiness < 40 { return SendmeterStyle.alert }
-        if readiness > 70 { return SendmeterStyle.optimal }
-        return SendmeterStyle.caution
+        if readiness < 40 { return ChartToken.alert.color(scheme) }
+        if readiness > 70 { return ChartToken.optimal.color(scheme) }
+        return ChartToken.caution.color(scheme)
     }
 
     private var recommendation: String {
@@ -67,19 +68,20 @@ private struct TodayDecisionCard: View {
                     SectionLabel("Today's decision", systemImage: "sparkles")
                     Spacer()
                     if let zone = model.readiness?.zone {
-                        StatusPill(zone.capitalized, color: readinessColor)
+                        StatusPill(zone.capitalized, color: readinessColor(scheme))
                     }
                 }
 
                 HStack(alignment: .center, spacing: 20) {
                     if let score = model.readiness?.readiness {
+                        let color = readinessColor(scheme)
                         ZStack {
                             Circle()
-                                .stroke(readinessColor.opacity(0.18), lineWidth: 10)
+                                .stroke(color.opacity(0.18), lineWidth: 10)
                             Circle()
                                 .trim(from: 0, to: CGFloat(score) / 100)
                                 .stroke(
-                                    readinessColor,
+                                    color,
                                     style: StrokeStyle(lineWidth: 10, lineCap: .round)
                                 )
                                 .rotationEffect(.degrees(-90))
@@ -160,6 +162,7 @@ private struct PhaseCard: View {
 
 private struct LoadCard: View {
     @EnvironmentObject private var model: AppModel
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         SurfaceCard {
@@ -169,7 +172,7 @@ private struct LoadCard: View {
                     Spacer()
                     StatusPill(
                         TrainingMetrics.acwrStatus(model.acwr.ratio).rawValue,
-                        color: statusColor
+                        color: statusColor(scheme)
                     )
                 }
                 HStack(spacing: 24) {
@@ -204,21 +207,26 @@ private struct LoadCard: View {
                         x: .value("Week", item.label),
                         y: .value("Load", item.total)
                     )
-                    .foregroundStyle(SendmeterStyle.primary.gradient)
+                    .foregroundStyle(ChartToken.load.areaGradient(scheme))
                     .cornerRadius(5)
                 }
                 .frame(height: 150)
-                .chartYAxis { AxisMarks(position: .leading) }
+                .chartYAxis {
+                    AxisMarks(position: .leading) {
+                        AxisGridLine().foregroundStyle(ChartToken.grid.color(scheme))
+                        AxisValueLabel().foregroundStyle(ChartToken.axis.color(scheme))
+                    }
+                }
             }
         }
     }
 
-    private var statusColor: Color {
+    private func statusColor(_ scheme: ColorScheme) -> Color {
         switch TrainingMetrics.acwrStatus(model.acwr.ratio) {
-        case .optimal: return SendmeterStyle.optimal
-        case .low, .underTraining: return SendmeterStyle.primary
-        case .caution: return SendmeterStyle.caution
-        case .danger: return SendmeterStyle.alert
+        case .optimal: return ChartToken.optimal.color(scheme)
+        case .low, .underTraining: return ChartToken.focus.color(scheme)
+        case .caution: return ChartToken.caution.color(scheme)
+        case .danger: return ChartToken.alert.color(scheme)
         case .noData: return .secondary
         }
     }

@@ -21,7 +21,14 @@ let package = Package(
         .target(
             name: "SendmeterCore",
             dependencies: ["SendLogWatchCore"],
-            path: "Sources/Core"
+            // #649: ChartTheme.swift lives at Sources/App/ChartTheme.swift
+            // (the issue's placement, next to DesignSystem.swift) but must be
+            // unit-testable via `swift test`, which only compiles this
+            // package — so it is compiled into SendmeterCore here. The
+            // XcodeGen app target EXCLUDES the same file (project.yml) so the
+            // app gets exactly one definition, via this module.
+            path: "Sources",
+            sources: ["Core", "App/ChartTheme.swift"]
         ),
         .testTarget(
             name: "SendmeterCoreTests",

@@ -267,16 +267,25 @@ struct RepBoxPlotEntry: Sendable {
 /// Per-rep vertical box plot for one tag group (#630) — the force
 /// distribution of every rep, side by side in chronological order, at a
 /// glance. Classic Tukey boxes: Q1–Q3 + median tick, whiskers clamped to the
-/// furthest in-fence point, outliers beyond. Side-colored (left = primary,
-/// right = optimal); the session-best rep's median tick is called out in the
-/// alert color. Port of the web's `RepBoxPlotChart` (minus hover/scrub).
+/// furthest in-fence point, outliers beyond. Side-colored (left = force,
+/// right = forceSecondary); the session-best rep's median tick is called out
+/// in the caution color. Port of the web's `RepBoxPlotChart` (minus
+/// hover/scrub) with ChartTheme tokens (#649) so light/dark both match the
+/// web palette.
 struct RepBoxPlotCanvas: View {
     let reps: [RepBoxPlotEntry]
     /// Index (into `reps`) of the session-best rep by peak kg; first rep wins
     /// a tie.
     let bestIndex: Int
+    @Environment(\.colorScheme) private var scheme
 
     private static let maxOutlierDots = 12
+
+    /// Left = force (indigo), right = forceSecondary (electric blue) — the
+    /// web's `sideColor` (`RepBoxPlotChart.tsx`).
+    private func sideColors(for side: TindeqSide) -> (stroke: ChartToken, fill: ChartToken) {
+        side == .left ? (.force, .focus) : (.forceSecondary, .health)
+    }
 
     var body: some View {
         Canvas { context, size in
@@ -288,6 +297,8 @@ struct RepBoxPlotCanvas: View {
             let bottomInset: CGFloat = 8
             let plotWidth = max(1, width - leftInset - rightInset)
             let plotHeight = max(1, height - topInset - bottomInset)
+            let gridColor = ChartToken.grid.color(scheme)
+            let axisColor = ChartToken.axis.color(scheme)
 
             var allValues: [Double] = []
             for rep in reps {
@@ -312,7 +323,7 @@ struct RepBoxPlotCanvas: View {
                 let gridY = topInset + plotHeight * CGFloat(index) / 4
                 grid.move(to: CGPoint(x: leftInset, y: gridY))
                 grid.addLine(to: CGPoint(x: width - rightInset, y: gridY))
-                context.stroke(grid, with: .color(.secondary.opacity(0.22)), lineWidth: 1)
+                context.stroke(grid, with: .color(gridColor), lineWidth: 1)
             }
 
             guard !reps.isEmpty else { return }
@@ -329,23 +340,24 @@ struct RepBoxPlotCanvas: View {
                     tick.addLine(to: CGPoint(x: centerX + boxWidth / 2, y: y(domainLow)))
                     context.stroke(
                         tick,
-                        with: .color(.secondary.opacity(0.5)),
+                        with: .color(axisColor.opacity(0.5)),
                         style: StrokeStyle(lineWidth: 1.5, dash: [2, 2])
                     )
                     continue
                 }
-                let color = rep.recording.side == .left ? SendmeterStyle.primary : SendmeterStyle.optimal
+                let (strokeToken, fillToken) = sideColors(for: rep.recording.side)
+                let strokeColor = strokeToken.color(scheme)
 
                 var whisker = Path()
                 whisker.move(to: CGPoint(x: centerX, y: y(stats.whiskerLow)))
                 whisker.addLine(to: CGPoint(x: centerX, y: y(stats.whiskerHigh)))
-                context.stroke(whisker, with: .color(.secondary.opacity(0.7)), lineWidth: 1)
+                context.stroke(whisker, with: .color(axisColor.opacity(0.7)), lineWidth: 1)
 
                 for value in [stats.whiskerLow, stats.whiskerHigh] {
                     var cap = Path()
                     cap.move(to: CGPoint(x: centerX - capWidth / 2, y: y(value)))
                     cap.addLine(to: CGPoint(x: centerX + capWidth / 2, y: y(value)))
-                    context.stroke(cap, with: .color(.secondary.opacity(0.7)), lineWidth: 1)
+                    context.stroke(cap, with: .color(axisColor.opacity(0.7)), lineWidth: 1)
                 }
 
                 let boxRect = CGRect(
@@ -355,15 +367,29 @@ struct RepBoxPlotCanvas: View {
                     height: max(0.5, y(stats.q1) - y(stats.q3))
                 )
                 let boxPath = Path(roundedRect: boxRect, cornerRadius: 2.5)
-                context.fill(boxPath, with: .color(color.opacity(0.22)))
-                context.stroke(boxPath, with: .color(color), lineWidth: 1)
+                // Glassy vertical fill — the web's focus-area / health-area
+                // gradients (`ChartDefs.tsx`).
+                context.fill(
+                    boxPath,
+                    with: .linearGradient(
+                        Gradient(stops: [
+                            .init(color: fillToken.color(scheme).opacity(fillToken.areaOpacity(scheme)), location: 0),
+                            .init(color: fillToken.color(scheme).opacity(fillToken.areaBottomOpacity), location: 1)
+                        ]),
+                        startPoint: CGPoint(x: boxRect.midX, y: boxRect.minY),
+                        endPoint: CGPoint(x: boxRect.midX, y: boxRect.maxY)
+                    )
+                )
+                context.stroke(boxPath, with: .color(strokeColor), lineWidth: 1)
 
                 var median = Path()
                 median.move(to: CGPoint(x: centerX - boxWidth / 2, y: y(stats.median)))
                 median.addLine(to: CGPoint(x: centerX + boxWidth / 2, y: y(stats.median)))
                 context.stroke(
                     median,
-                    with: .color(index == bestIndex ? SendmeterStyle.alert : color),
+                    // Session-best rep called out in the caution token (the
+                    // web uses `--warning` for the same tick).
+                    with: .color(index == bestIndex ? ChartToken.caution.color(scheme) : strokeColor),
                     style: StrokeStyle(lineWidth: 2, lineCap: .round)
                 )
 
@@ -371,7 +397,7 @@ struct RepBoxPlotCanvas: View {
                     let rect = CGRect(x: centerX - 1.5, y: y(value) - 1.5, width: 3, height: 3)
                     context.stroke(
                         Path(ellipseIn: rect),
-                        with: .color(.secondary.opacity(0.55)),
+                        with: .color(axisColor.opacity(0.55)),
                         lineWidth: 1
                     )
                 }
