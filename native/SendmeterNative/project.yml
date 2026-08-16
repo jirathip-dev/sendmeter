@@ -28,11 +28,17 @@ targets:
       - path: Sources/Data
       - path: Sources/Platform
       - path: Sources/Features
-    resources:
-      - path: Resources
-        excludes:
-          - Info.plist
-      - path: ../../ios/App/App/Assets.xcassets
+      # XcodeGen ignores the top-level `resources:` block for this spec shape
+      # (verified 2.45.4: it generates no PBXResourcesBuildPhase at all), so
+      # resources are declared as sources with an explicit buildPhase. The
+      # AppIcon set lives in this project (Resources/Assets.xcassets), not the
+      # Capacitor app's catalog — external ../ paths are dropped by XcodeGen.
+      - path: Resources/Info.plist
+        buildPhase: none
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: Resources/Assets.xcassets
+        buildPhase: resources
     dependencies:
       - package: Supabase
         product: Supabase
