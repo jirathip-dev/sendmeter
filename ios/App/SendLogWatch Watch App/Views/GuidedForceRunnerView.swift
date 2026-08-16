@@ -10,8 +10,17 @@ import SwiftUI
 /// `danger` since it is a destructive/abort control, not decorative.
 struct GuidedForceRunnerView: View {
     @Environment(GuidedForceRunner.self) private var runner
+    @Environment(TindeqManager.self) private var tindeq
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+
+    /// #611: the movement mode's live trace, refreshed at the same 10 Hz
+    /// cadence ForceGaugeView uses for its sparkline. `recentSamples()` is
+    /// windowed off the manager's last sample, so between sets the strip
+    /// keeps the last measured trace and a cadence-only run (no samples ever)
+    /// simply stays empty — never fabricated data.
+    @State private var sparkSamples: [(t: Double, kg: Double)] = []
+    private let sparkTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     /// Presentation-only override for the screenshot target (SL-538 round-2
     /// review finding 1). `display` reads the fixture when
@@ -52,6 +61,14 @@ struct GuidedForceRunnerView: View {
         .toolbar(.hidden, for: .navigationBar)
         .interactiveDismissDisabled(true)
         .watchCanvas()
+        .onReceive(sparkTimer) { _ in
+            // Ungated by `status == .measuring` on purpose: a movement run
+            // that starts cadence-only and connects mid-run must pick up the
+            // measured trace the moment samples land.
+            if display.isMovement {
+                sparkSamples = tindeq.recentSamples()
+            }
+        }
     }
 
     private var richLayout: some View {
@@ -92,6 +109,8 @@ struct GuidedForceRunnerView: View {
                         .contentTransition(reduceMotion ? .identity : .numericText())
                         .accessibilityLabel("Phase countdown")
                         .accessibilityValue("\(display.countdownText) seconds")
+
+                    movementSparkline(height: 20)
 
                     HStack(spacing: 3) {
                         compactWorkStatus
@@ -140,6 +159,8 @@ struct GuidedForceRunnerView: View {
                         .contentTransition(reduceMotion ? .identity : .numericText())
                         .accessibilityLabel("Phase countdown")
                         .accessibilityValue("\(display.countdownText) seconds")
+
+                    movementSparkline(height: 22)
 
                     HStack(spacing: 4) {
                         compactWorkStatus
@@ -284,6 +305,8 @@ struct GuidedForceRunnerView: View {
                     .foregroundStyle(WatchPalette.textTertiary)
                     .accessibilityHidden(true)
 
+                movementSparkline(height: 26)
+
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) {
                         setReadout
@@ -371,6 +394,19 @@ struct GuidedForceRunnerView: View {
         .accessibilityIdentifier("force-guided-stop")
     }
 
+    /// #611: the movement mode's live force strip, rendered only when a
+    /// reverse-action run has at least two measured samples — a cadence-only
+    /// run (or the prepare before the first pull) shows nothing, never a
+    /// fabricated trace. Decorative: hidden from accessibility.
+    @ViewBuilder
+    private func movementSparkline(height: CGFloat) -> some View {
+        if display.isMovement, sparkSamples.count >= 2 {
+            Sparkline(samples: sparkSamples)
+                .frame(height: height)
+                .accessibilityHidden(true)
+        }
+    }
+
     private func sideLabel(_ value: String) -> String {
         switch value {
         case "left": return "Left"
@@ -389,6 +425,9 @@ private struct GuidedRunDisplay {
     let progress: Double
     let isMeasured: Bool
     let isCadenceOnly: Bool
+    /// #611: reverse-action runs get the live sparkline strip; static holds
+    /// keep the display they already have.
+    let isMovement: Bool
     let protocolName: String?
     let currentSet: Int
     let totalSets: Int
@@ -405,6 +444,7 @@ private struct GuidedRunDisplay {
         progress = runner.progress
         isMeasured = runner.isMeasured
         isCadenceOnly = runner.isCadenceOnly
+        isMovement = runner.isMovement
         protocolName = runner.protocolValue?.name
         currentSet = runner.currentSet
         totalSets = runner.totalSets
@@ -422,6 +462,9 @@ private struct GuidedRunDisplay {
         progress = fixture.progress
         isMeasured = fixture.isMeasured
         isCadenceOnly = fixture.isCadenceOnly
+        // The screenshot fixture is a static-hold run ("Static PR Ladder");
+        // no movement trace is exercised on that surface.
+        isMovement = false
         protocolName = fixture.protocolName
         currentSet = fixture.currentSet
         totalSets = fixture.totalSets

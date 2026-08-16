@@ -28,6 +28,7 @@ import {
   reverseActionTargetBand,
   type ReverseActionSegment,
 } from "../lib/reverseAction";
+import { recentSparklineSamples } from "../lib/tindeqSparkline";
 import { disconnectNeedsConfirm, prepRemainingS, startsWithCountdown } from "../lib/forcePrepare";
 import { DEFAULT_HANDS_FREE_FORCE_CONFIG } from "../lib/handsFreeForce";
 import { adaptiveStaticHolds, type AdaptiveStaticState } from "../lib/adaptiveStaticProtocol";
@@ -45,6 +46,7 @@ import ForceGauge from "./ForceGauge";
 import PresetPlanChart from "./PresetPlanChart";
 import type { GaugeTarget } from "./ForceCurveCard";
 import ReverseActionWorkDisplay from "./ReverseActionWorkDisplay";
+import LiveForceSparkline from "./LiveForceSparkline";
 import ProtocolBadge from "./ProtocolBadge";
 import ConfirmDialog from "./ConfirmDialog";
 import { SheetLayerProvider } from "./Sheet";
@@ -656,6 +658,13 @@ export default function ForceFullscreen({
   const coachPresentation = COACH_PRESENTATION[displayedCoachZone];
   const reverseSegment =
     reverseWorking && pos ? (pos.seg as ReverseActionSegment) : null;
+  // #611: the movement UI's live trace — the same 10s sample window the
+  // ForceGauge chart below draws, shaped for the shared sparkline. Renders
+  // nothing until two samples exist, so a run with no sensor data never
+  // fabricates a trace.
+  const movementSpark = reverseWorking
+    ? recentSparklineSamples(tindeq.samplesRef.current)
+    : [];
 
   return createPortal(
     <SheetLayerProvider layer="fullscreen">
@@ -785,7 +794,8 @@ export default function ForceFullscreen({
             reps={protocol.reps}
             sets={protocol.sets}
             side={globalSide}
-          /></>
+          />
+          <LiveForceSparkline samples={movementSpark} ariaLabel="Live force trace" /></>
         )}
 
         {!reverseWorking && coachingActive && band && (

@@ -15,11 +15,19 @@ const PAD = { top: 4, right: 2, bottom: 2, left: 2 };
 const RUN_GAP_MS = 1_500;
 
 /// Live sparkline for the phone's "Live on watch" Force mirror (SL-95,
-/// follow-up to SL-87). Purely decorative/at-a-glance — no hover, no axes —
-/// unlike the fuller HR/recording charts it's styled after: `samples` is
-/// already the accumulated rolling buffer from useLiveForce (wall-clock
-/// `atMs`, oldest first).
-export default function LiveForceSparkline({ samples }: { samples: LiveForceSample[] }) {
+/// follow-up to SL-87) and the resisted-movement fullscreen (#611). Purely
+/// decorative/at-a-glance — no hover, no axes — unlike the fuller
+/// HR/recording charts it's styled after: `samples` is already the
+/// accumulated rolling buffer (wall-clock `atMs`, oldest first). Renders
+/// nothing until there are two samples, so a sensorless surface stays
+/// honest without fabricating a trace.
+export default function LiveForceSparkline({
+  samples,
+  ariaLabel = "Live force trace from watch",
+}: {
+  samples: LiveForceSample[];
+  ariaLabel?: string;
+}) {
   const chartId = useChartId("live-force");
   const hostRef = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(300);
@@ -67,7 +75,7 @@ export default function LiveForceSparkline({ samples }: { samples: LiveForceSamp
     <div ref={hostRef} style={{ width: "100%", marginTop: 10 }}>
       <svg
         role="img"
-        aria-label="Live force trace from watch"
+        aria-label={ariaLabel}
         viewBox={`0 0 ${W} ${H}`}
         style={{ width: "100%", height: H, display: "block" }}
       >
