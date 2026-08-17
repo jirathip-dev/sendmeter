@@ -128,6 +128,75 @@ describe("computeAcwr", () => {
   });
 });
 
+describe("ACWR window independence (#644 review F3)", () => {
+  /// The dead-constant-700 regression: a synthetic store with the SAME
+  /// constant 700 load on every day of the last 200 days. The true ACWR is
+  /// exactly 1.00 (what the web app shows), and it must read ~1.00 no matter
+  /// what `days` the caller passes. Before the fix, `days < 90` zero-filled
+  /// days 90..days inside the EWMA and reported 1.13@30, 1.55@14 ("Danger"),
+  /// 2.2@7 — a fabricated injury warning.
+  function constantLoadStore(): LoadSession[] {
+    const rows: { date: string; load: number }[] = [];
+    for (let i = 0; i < 200; i++) rows.push({ date: webDatesDaysAgo(i), load: 700 });
+    return rows;
+  }
+
+  function sessionsInWindow(
+    rows: { date: string; load: number }[],
+    from: string,
+    to: string,
+  ) {
+    return rows.filter((r) => r.date >= from && r.date <= to);
+  }
+
+  /// A minimal DataStore built from the constant-load rows: sessions are
+  /// window-filtered, health/phase are empty but still window-filtered so no
+  /// parameter goes unused.
+  function constantStore(rows: { date: string; load: number }[]) {
+    return {
+      async sessions(from: string, to: string) {
+        return sessionsInWindow(rows, from, to);
+      },
+      async healthMetrics(from: string, to: string) {
+        return rows
+          .filter((r) => r.date >= from && r.date <= to)
+          .map((r) => ({ date: r.date, readiness: 70, zone: "maintain" }));
+      },
+      async phasePeriods() {
+        return [];
+      },
+    };
+  }
+
+  it("get_acwr reports ~1.00 for every allowed days value", async () => {
+    // Drive the queries.ts layer (which decides how much history to fetch),
+    // not computeAcwr directly — the bug lived in the fetch window.
+    const { getAcwr } = await import("../src/queries.js");
+    const store = constantStore(constantLoadStore());
+    for (const days of [28, 45, 60, 90]) {
+      const out = await getAcwr({ days }, store as never);
+      expect(out.acwr, `days=${days}`).not.toBeNull();
+      expect(out.acwr!, `days=${days}`).toBeCloseTo(1.0, 1);
+      expect(out.status).toBe("Optimal");
+    }
+  });
+
+  it("analyze_training_load reports ~1.00 for every allowed days value", async () => {
+    const { analyzeTrainingLoad } = await import("../src/queries.js");
+    const store = constantStore(constantLoadStore());
+    for (const days of [7, 14, 30, 90]) {
+      const out = await analyzeTrainingLoad(
+        { weeks: 4, days },
+        store as never,
+      );
+      expect(out.acwr.acwr, `days=${days}`).not.toBeNull();
+      expect(out.acwr.acwr!, `days=${days}`).toBeCloseTo(1.0, 1);
+      expect(out.acwr.status, `days=${days}`).toBe("Optimal");
+      expect(out.notes, `days=${days}`).not.toContain("ACWR is in the danger zone");
+    }
+  });
+});
+
 describe("computeWeeklyLoads", () => {
   it("matches the web's 4-week buckets exactly (order and windows)", () => {
     const rng = mulberry32(1234);

@@ -1,47 +1,32 @@
 /// Session bootstrap for the MCP server. The server authenticates as THE
-/// USER — it never holds a service-role key. It either consumes a ready-made
-/// access token (env), or performs its own PKCE password sign-in against the
-/// Supabase project and persists the resulting session (access + refresh) in
-/// a 0600 file under ~/.sendmeter-mcp/session.json, refreshing it on later
-/// runs when it nears expiry.
+/// USER — it never holds a service-role key.
 ///
-/// The refresh token the server stores is minted by its OWN sign-in and is
-/// the only holder of that credential — it never imports the web app's or
-/// the watch's refresh token (those are single-use with reuse detection; a
-/// second holder presenting one the app has rotated revokes the whole
-/// session family).
+/// #644 review F6 — the server does NOT mint or persist a refresh token, and
+/// keeps no session file. Repo invariant (nativeAuthInvariants.test.ts): only
+/// supabase-js in the web app holds refresh tokens. This server signs in with
+/// `grant_type=password`, keeps the resulting ACCESS token in memory only,
+/// and when that token expires re-signs-in (env credentials, or an
+/// interactive prompt) or — with no credentials available — exits with a
+/// clear re-authentication instruction. No refresh token is ever stored on
+/// disk, on the wire, or in a long-lived holder.
+///
+/// The login path is deliberately "password sign-in", NOT "PKCE" (issue #644
+/// review F11): `grant_type=password` POSTs the credentials to
+/// `/auth/v1/token` — PKCE governs OAuth/magic-link redirect flows and the
+/// option is inert for a password grant.
 
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import * as readline from "node:readline";
 import { createClient } from "@supabase/supabase-js";
 import type { ServerConfig } from "./config.js";
-
-export interface StoredSession {
-  accessToken: string;
-  refreshToken: string;
-  /** Unix seconds (Supabase's `expires_at`). */
-  expiresAt: number;
-  email: string;
-}
-
-export interface ResolvedSession {
-  accessToken: string;
-  email: string | null;
-  origin: "env-token" | "session-file" | "login";
-}
+import { AuthRequiredError, type TokenProvider } from "./transport.js";
 
 export interface AuthResult {
   accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
   email: string;
 }
 
 export interface AuthClient {
   signInPassword(email: string, password: string): Promise<AuthResult>;
-  refresh(refreshToken: string): Promise<AuthResult>;
 }
 
 export function createAuthClient(
@@ -52,7 +37,6 @@ export function createAuthClient(
   const client = createClient(url, anonKey, {
     global: { fetch: fetchImpl },
     auth: {
-      flowType: "pkce",
       persistSession: false,
       autoRefreshToken: false,
       detectSessionInUrl: false,
@@ -65,136 +49,43 @@ export function createAuthClient(
       if (!data.session) throw new Error("sign-in failed: no session returned");
       return {
         accessToken: data.session.access_token,
-        refreshToken: data.session.refresh_token,
-        expiresAt: data.session.expires_at ?? 0,
-        email,
-      };
-    },
-    async refresh(refreshToken) {
-      const { data, error } = await client.auth.refreshSession({ refresh_token: refreshToken });
-      if (error) throw new Error(`session refresh failed: ${error.message}`);
-      if (!data.session) throw new Error("session refresh failed: no session returned");
-      return {
-        accessToken: data.session.access_token,
-        refreshToken: data.session.refresh_token,
-        expiresAt: data.session.expires_at ?? 0,
-        email: data.user?.email ?? "",
+        email: data.user?.email ?? email,
       };
     },
   };
 }
 
-export function defaultSessionFilePath(env: NodeJS.ProcessEnv = process.env): string {
-  if (env["SENDMETER_MCP_SESSION_FILE"]) return env["SENDMETER_MCP_SESSION_FILE"]!;
-  return path.join(os.homedir(), ".sendmeter-mcp", "session.json");
+export interface ResolvedSession {
+  accessToken: string;
+  email: string | null;
+  origin: "env-token" | "login";
 }
 
-export function loadStoredSession(file: string): StoredSession | null {
-  try {
-    const raw = fs.readFileSync(file, "utf8");
-    const parsed = JSON.parse(raw) as Partial<StoredSession>;
-    if (
-      typeof parsed.accessToken === "string" &&
-      typeof parsed.refreshToken === "string" &&
-      typeof parsed.expiresAt === "number" &&
-      typeof parsed.email === "string"
-    ) {
-      return parsed as StoredSession;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export function saveStoredSession(file: string, session: StoredSession): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(session), { mode: 0o600 });
-  fs.renameSync(tmp, file);
-  fs.chmodSync(file, 0o600);
-}
-
-export function clearStoredSession(file: string): void {
-  try {
-    fs.unlinkSync(file);
-  } catch {
-    // Absent file is fine — nothing to clear.
-  }
-}
-
-const EXPIRY_SKEW_S = 60;
-
-function sessionUsable(s: StoredSession): boolean {
-  return s.expiresAt === 0 || s.expiresAt > Math.floor(Date.now() / 1000) + EXPIRY_SKEW_S;
-}
-
-/// Resolve the credential the server will use. Order: env token → session
-/// file (refreshed when near expiry) → env email/password → interactive
-/// prompt (TTY only). Throws a descriptive error when nothing can be
-/// resolved.
+/// Resolve the credential the server will use. Order: env token → env
+/// email/password → interactive prompt (TTY only). Throws a descriptive
+/// error when nothing can be resolved.
 export async function resolveSession(opts: {
   config: ServerConfig;
   auth: AuthClient;
-  sessionFile?: string;
   prompt?: typeof promptHidden;
 }): Promise<ResolvedSession> {
   const { config } = opts;
-  const sessionFile = opts.sessionFile ?? defaultSessionFilePath();
 
   if (config.accessToken) {
     return { accessToken: config.accessToken, email: null, origin: "env-token" };
   }
 
-  const stored = loadStoredSession(sessionFile);
-  if (stored) {
-    if (sessionUsable(stored)) {
-      return { accessToken: stored.accessToken, email: stored.email, origin: "session-file" };
-    }
-    try {
-      const refreshed = await opts.auth.refresh(stored.refreshToken);
-      const next: StoredSession = {
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken,
-        expiresAt: refreshed.expiresAt,
-        email: refreshed.email || stored.email,
-      };
-      saveStoredSession(sessionFile, next);
-      return { accessToken: next.accessToken, email: next.email, origin: "session-file" };
-    } catch (err) {
-      // The stored refresh token was revoked or the network is down. Drop
-      // the dead credential so the next attempt starts clean, then fall
-      // through to a fresh login if credentials are available.
-      clearStoredSession(sessionFile);
-      const refreshError =
-        err instanceof Error ? err.message : "unknown error";
-      if (config.email && config.password) {
-        return loginAndPersist(opts.auth, sessionFile, config.email, config.password);
-      }
-      if (opts.prompt) {
-        const email = await opts.prompt("Sendmeter email: ", false);
-        const password = await opts.prompt("Sendmeter password: ", true);
-        if (email.trim()) {
-          return loginAndPersist(opts.auth, sessionFile, email.trim(), password);
-        }
-      }
-      throw new Error(
-        `stored session expired and could not be refreshed (${refreshError}). ` +
-          `Sign in again with SENDMETER_MCP_EMAIL/SENDMETER_MCP_PASSWORD or a fresh ` +
-          `SENDMETER_MCP_TOKEN.`,
-      );
-    }
-  }
-
   if (config.email && config.password) {
-    return loginAndPersist(opts.auth, sessionFile, config.email, config.password);
+    const result = await opts.auth.signInPassword(config.email, config.password);
+    return { accessToken: result.accessToken, email: result.email, origin: "login" };
   }
 
   if (opts.prompt) {
     const email = await opts.prompt("Sendmeter email: ", false);
     const password = await opts.prompt("Sendmeter password: ", true);
     if (email.trim()) {
-      return loginAndPersist(opts.auth, sessionFile, email.trim(), password);
+      const result = await opts.auth.signInPassword(email.trim(), password);
+      return { accessToken: result.accessToken, email: result.email, origin: "login" };
     }
   }
 
@@ -205,21 +96,64 @@ export async function resolveSession(opts: {
   );
 }
 
-async function loginAndPersist(
-  auth: AuthClient,
-  sessionFile: string,
-  email: string,
-  password: string,
-): Promise<ResolvedSession> {
-  const result = await auth.signInPassword(email, password);
-  const session: StoredSession = {
-    accessToken: result.accessToken,
-    refreshToken: result.refreshToken,
-    expiresAt: result.expiresAt,
-    email: result.email,
+/// Build a TokenProvider that re-signs-in with the configured credentials
+/// when the current access token is rejected (HTTP 401) — the compensating
+/// mechanism for "no refresh token on disk" (issue #644 review F5). The
+/// rotation runs at most once per call and is serialised, so two concurrent
+/// 401s share one login. With no credentials to re-sign-in with it throws
+/// AuthRequiredError, which the transport surfaces as a structured error.
+export function createTokenProvider(opts: {
+  auth: AuthClient;
+  email: string | null;
+  password: string | null;
+  prompt?: typeof promptHidden;
+  initial: string;
+  initialEmail: string | null;
+}): TokenProvider {
+  let token = opts.initial;
+  let email = opts.initialEmail;
+  let inFlight: Promise<void> | null = null;
+  return {
+    async get() {
+      return token;
+    },
+    async onUnauthorized() {
+      if (opts.email && opts.password) {
+        inFlight ??= opts.auth.signInPassword(opts.email, opts.password).then(
+          (r) => {
+            token = r.accessToken;
+            email = r.email;
+          },
+          (err) => {
+            throw new AuthRequiredError(
+              `access token expired and re-sign-in failed (${err instanceof Error ? err.message : String(err)}). ` +
+                `Set a fresh SENDMETER_MCP_TOKEN or correct SENDMETER_MCP_EMAIL/SENDMETER_MCP_PASSWORD.`,
+            );
+          },
+        );
+        try {
+          await inFlight;
+        } finally {
+          inFlight = null;
+        }
+        return;
+      }
+      if (opts.prompt) {
+        const promptedEmail = await opts.prompt("Sendmeter email: ", false);
+        const password = await opts.prompt("Sendmeter password: ", true);
+        if (promptedEmail.trim()) {
+          const r = await opts.auth.signInPassword(promptedEmail.trim(), password);
+          token = r.accessToken;
+          email = r.email;
+          return;
+        }
+      }
+      throw new AuthRequiredError(
+        `access token expired (${email ?? "token-authenticated user"}). ` +
+          `Set a fresh SENDMETER_MCP_TOKEN or SENDMETER_MCP_EMAIL/SENDMETER_MCP_PASSWORD and restart.`,
+      );
+    },
   };
-  saveStoredSession(sessionFile, session);
-  return { accessToken: result.accessToken, email: result.email, origin: "login" };
 }
 
 /// Minimal hidden-input prompt (no deps). Falls back to visible input if the

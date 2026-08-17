@@ -57,7 +57,9 @@ export const getAcwrSchema = z.object({
     .min(28)
     .max(365)
     .default(90)
-    .describe("Session-history lookback window in days (default 90; EWMA needs the full window)"),
+    .describe(
+      "Display lookback in days (default 90). The ratio itself always uses the full 90-day EWMA window, so this only affects presentation, never the math.",
+    ),
 });
 
 export const getTindeqSchema = z.object({
@@ -86,5 +88,7 @@ export const analyzeTrainingLoadSchema = z.object({
     .min(7)
     .max(365)
     .default(90)
-    .describe("Session-history lookback window in days for ACWR (default 90)"),
+    .describe(
+      "Recovery lookback in days for the readiness trend (default 90). The weekly buckets and ACWR always use the full windows they need (weeks*7 and 90 days respectively), so this only affects the recovery summary.",
+    ),
 });

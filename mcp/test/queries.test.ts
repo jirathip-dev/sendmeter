@@ -192,6 +192,42 @@ describe("get_acwr", () => {
     expect(out.status).toMatch(/^(No data|Under-training|Low|Optimal|Caution|Danger)$/);
     expect(store.calls).toContain("phasePeriods()");
   });
+
+  it("always fetches the full 90-day EWMA window, regardless of days (#644 F3)", async () => {
+    const store = new MockStore();
+    await getAcwr({ days: 28 }, store);
+    // The fetch must cover the full lookback even when the caller asks for a
+    // shorter display window.
+    const sessionsCall = store.calls.find((c) => c.startsWith("sessions("))!;
+    expect(sessionsCall).toContain(`sessions(${day(89)},`);
+  });
+});
+
+describe("analyze_training_load fetch window (#644 review F4)", () => {
+  it("fetches enough history for the requested weeks (weeks >= 13)", async () => {
+    const store = new MockStore();
+    await analyzeTrainingLoad({ weeks: 16, days: 90 }, store);
+    // 16 weeks × 7 days = 112 days of history — the fetch must cover it, or
+    // the oldest buckets are fabricated zero-load weeks.
+    const sessionsCall = store.calls.find((c) => c.startsWith("sessions("))!;
+    expect(sessionsCall).toContain(`sessions(${day(111)},`);
+  });
+
+  it("does not fabricate zero-load weeks or flip the trend for weeks >= 13", async () => {
+    // Dead-constant 700/day load for 200 days: every weekly bucket is 4900
+    // and the trend is flat at ANY weeks value.
+    const rows: { date: string; load: number }[] = [];
+    for (let i = 0; i < 200; i++) rows.push({ date: day(i), load: 700 });
+    const store = new MockStore();
+    store.sessionRows = rows as never;
+    for (const weeks of [4, 13, 16]) {
+      const out = await analyzeTrainingLoad({ weeks, days: 90 }, store);
+      const totals = out.weekly_load.map((w) => w.total_load);
+      expect(totals.length, `weeks=${weeks}`).toBe(weeks);
+      expect(totals.every((t) => t === 4900), `weeks=${weeks}: ${JSON.stringify(totals)}`).toBe(true);
+      expect(out.load_trend, `weeks=${weeks}`).toBe("flat");
+    }
+  });
 });
 
 describe("get_tindeq", () => {
@@ -247,6 +283,30 @@ describe("topPeaks", () => {
   it("returns nothing for a flat or empty series", () => {
     expect(topPeaks([], 5)).toEqual([]);
     expect(topPeaks([[0, 5], [100, 5], [200, 5]], 5)).toEqual([]);
+  });
+
+  it("keeps a second genuine peak of identical magnitude (#644 F14)", () => {
+    // Two separate reps landing on the same rounded kg must BOTH be reported.
+    expect(topPeaks([[0, 1], [100, 5], [200, 1], [300, 5], [400, 1]], 5)).toEqual([
+      { t_ms: 100, kg: 5 },
+      { t_ms: 300, kg: 5 },
+    ]);
+  });
+
+  it("keeps a peak at the final sample (#644 F14)", () => {
+    expect(topPeaks([[0, 1], [100, 3], [200, 9]], 5)).toEqual([{ t_ms: 200, kg: 9 }]);
+    expect(topPeaks([[0, 9], [100, 3], [200, 1]], 5)).toEqual([{ t_ms: 0, kg: 9 }]);
+  });
+
+  it("keeps separate same-magnitude reps, merging only adjacent plateau samples", () => {
+    // Three genuine reps all landing on the same rounded kg (100/300/500) are
+    // ALL kept — the old dedupe compared kg to the previous peak and dropped
+    // every one after the first.
+    expect(topPeaks([[0, 1], [100, 5], [200, 1], [300, 5], [400, 1], [500, 5], [600, 1]], 5)).toEqual([
+      { t_ms: 100, kg: 5 },
+      { t_ms: 300, kg: 5 },
+      { t_ms: 500, kg: 5 },
+    ]);
   });
 });
 

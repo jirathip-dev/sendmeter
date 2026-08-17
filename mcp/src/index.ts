@@ -4,16 +4,20 @@
 /// Default mode: resolve the user's Supabase session, build the read-only
 /// store, and serve the six tools over stdio (JSON-RPC) for any MCP client.
 ///   SENDMETER_MCP_TOKEN        — ready-made access token (never persisted)
-///   SENDMETER_MCP_EMAIL/PASSWORD — non-interactive PKCE sign-in
+///   SENDMETER_MCP_EMAIL/PASSWORD — non-interactive password sign-in
 ///   SENDMETER_MCP_URL/ANON_KEY — override the Supabase project (local stack)
-///   SENDMETER_MCP_SESSION_FILE — override the 0600 session-file location
 ///
 /// --dry-run: exercise every tool against an in-memory stub store — no
 /// network, no credentials. Proves wiring on machines without the stack.
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadConfig } from "./config.js";
-import { createAuthClient, promptHidden, resolveSession } from "./auth.js";
+import {
+  createAuthClient,
+  createTokenProvider,
+  promptHidden,
+  resolveSession,
+} from "./auth.js";
 import { createSupabaseStore } from "./transport.js";
 import { buildServer, TOOL_HANDLERS } from "./server.js";
 import { dryRunStore } from "./dryrun.js";
@@ -29,7 +33,7 @@ Usage:
 
 Session credentials (first run):
   SENDMETER_MCP_TOKEN       an access token from your Sendmeter session
-  SENDMETER_MCP_EMAIL/PASSWORD  sign in non-interactively (PKCE)
+  SENDMETER_MCP_EMAIL/PASSWORD  sign in non-interactively (password grant)
   or run interactively and enter them at the prompt.
 
 See mcp/README.md for full setup.
@@ -55,22 +59,22 @@ async function main(): Promise<void> {
 
   const config = loadConfig();
 
-  // Kick the session resolution off immediately but don't await it before
+  // The interactive login prompt reads the same stdin the MCP transport owns
+  // (issue #644 review F13), so it is only offered off the stdio path — here
+  // at first launch, not on every serve. An MCP client with no credentials
+  // configured sees the server exit with a clear instruction instead of a
+  // mid-handshake death.
+  const ttyPrompt: typeof promptHidden | undefined =
+    process.stdin.isTTY && process.stdout.isTTY ? promptHidden : undefined;
+
+  // Resolve the initial session immediately but don't await it before
   // connecting the transport — the client's initialize must be answered the
-  // moment it arrives, even while the PKCE login is still in flight. Tool
-  // calls block on this promise only when they need the store.
+  // moment it arrives, even while the login is still in flight. Tool calls
+  // block on this promise only when they need the store.
   const sessionPromise = resolveSession({
     config,
     auth: createAuthClient(config.supabaseUrl, config.supabaseAnonKey),
-    prompt: async (q, hidden) => {
-      try {
-        return await promptHidden(q, hidden);
-      } catch {
-        throw new Error(
-          "interactive sign-in unavailable in this shell — set SENDMETER_MCP_EMAIL/SENDMETER_MCP_PASSWORD",
-        );
-      }
-    },
+    prompt: ttyPrompt,
   });
   let storePromise: Promise<ReturnType<typeof createSupabaseStore>> | null = null;
   const getStore = () => {
@@ -78,7 +82,14 @@ async function main(): Promise<void> {
       createSupabaseStore({
         url: config.supabaseUrl,
         anonKey: config.supabaseAnonKey,
-        accessToken: session.accessToken,
+        tokenProvider: createTokenProvider({
+          auth: createAuthClient(config.supabaseUrl, config.supabaseAnonKey),
+          email: config.email,
+          password: config.password,
+          prompt: ttyPrompt,
+          initial: session.accessToken,
+          initialEmail: session.email,
+        }),
       }),
     );
     return storePromise;

@@ -6,10 +6,20 @@
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { buildServer, SERVER_NAME, SERVER_VERSION } from "../src/server.js";
 import type { DataStore } from "../src/transport.js";
 import { dryRunStore } from "../src/dryrun.js";
 import { day } from "./helpers.js";
+
+/// Extracts the text content of a CallToolResult (its `content` array is a
+/// discriminated union over text/image/audio/resource members).
+function resultText(result: unknown): string {
+  const content = (result as { content?: { type: string; text?: string }[] }).content;
+  const text = content?.find((c) => c.type === "text");
+  if (!text?.text) throw new Error("no text content in tool result");
+  return text.text;
+}
 
 /// Wraps an InMemoryTransport so every message the server sends can be
 /// inspected — used to read the serverInfo the server advertises on the
@@ -25,8 +35,8 @@ class RecordingTransport extends InMemoryTransport {
     };
     this.close = () => this.inner.close();
   }
-  override async send(message: Record<string, unknown>): Promise<void> {
-    this.messages.push(JSON.parse(JSON.stringify(message)));
+  override async send(message: JSONRPCMessage): Promise<void> {
+    this.messages.push(JSON.parse(JSON.stringify(message)) as Record<string, unknown>);
     return this.inner.send(message);
   }
 }
@@ -70,7 +80,7 @@ describe("sendmeter-mcp server", () => {
         arguments: { weeks: 4, days: 90 },
       });
       expect(result.isError).toBeFalsy();
-      const text = result.content[0]!.text;
+      const text = resultText(result);
       expect(text).toContain('"load_trend"');
       expect(text).toContain('"acwr"');
       expect(text).toContain('"recovery"');
@@ -90,7 +100,7 @@ describe("sendmeter-mcp server", () => {
         arguments: {},
       });
       expect(withDefaults.isError).toBeFalsy();
-      const parsed = JSON.parse(withDefaults.content[0]!.text) as { days: number };
+      const parsed = JSON.parse(resultText(withDefaults)) as { days: number };
       expect(parsed.days).toBe(14);
 
       const bad = await client.callTool({
@@ -98,7 +108,7 @@ describe("sendmeter-mcp server", () => {
         arguments: { from: "not-a-date", to: "2026-07-07" },
       });
       expect(bad.isError).toBe(true);
-      expect(bad.content[0]!.text).toContain("error");
+      expect(resultText(bad)).toContain("error");
 
       const inverted = await client.callTool({
         name: "get_health_metrics",
@@ -109,18 +119,18 @@ describe("sendmeter-mcp server", () => {
   });
 
   it("surfaces store failures as isError results, not crashes", async () => {
-    const failing: DataStore = {
+    const failing = {
       async healthMetrics() {
         throw new Error("permission denied for table health_metrics");
       },
-    } as DataStore;
+    } as unknown as DataStore;
     await withClient(failing, async (client) => {
       const result = await client.callTool({
         name: "get_health_metrics",
         arguments: { from: day(1), to: day(0) },
       });
       expect(result.isError).toBe(true);
-      expect(result.content[0]!.text).toContain("permission denied");
+      expect(resultText(result)).toContain("permission denied");
     });
   });
 

@@ -36,3 +36,40 @@ jobs:
       # absent — this step only proves the bundle compiles.
       - name: Build
         run: npm run build
+
+  # mcp/ is its own package (own lockfile, own vitest/tsconfig/eslint config)
+  # and is deliberately excluded from the root suite above — the root `npm ci`
+  # never installs its deps. Run the package's own gates here so the
+  # load-bearing read-only + no-refresh-token invariants actually execute in
+  # CI (issue #644 review F1/F6).
+  mcp:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+
+      - name: Install dependencies
+        working-directory: mcp
+        run: npm ci
+
+      # Lint is intentionally NOT run here: the root quality job's `eslint .`
+      # already covers mcp/ with the scoped node-globals config in
+      # eslint.config.js (mcp has no eslint dependency of its own; the mcp
+      # `npm run lint` script points at the root eslint for local use).
+
+      - name: Typecheck
+        working-directory: mcp
+        run: npm run typecheck
+
+      - name: Tests
+        working-directory: mcp
+        run: npm test
+
+      - name: Build
+        working-directory: mcp
+        run: npm run build

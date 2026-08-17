@@ -34,6 +34,11 @@ export interface ToolHandler {
   run: (args: unknown, store: DataStore) => Promise<unknown>;
 }
 
+/// Every tool on this server is read-only — that is the spec's headline
+/// property (#644). Advertised as a readOnlyHint so clients can auto-approve
+/// tool calls without a prompt (issue #644 review F8).
+const READ_ONLY_ANNOTATIONS = { readOnlyHint: true } as const;
+
 function tool<P extends z.ZodType, R>(
   name: string,
   description: string,
@@ -106,7 +111,12 @@ export function buildServer(getStore: () => Promise<DataStore>): McpServer {
   for (const h of TOOL_HANDLERS) {
     server.registerTool(
       h.name,
-      { title: h.name, description: h.description, inputSchema: h.inputSchema },
+      {
+        title: h.name,
+        description: h.description,
+        inputSchema: h.inputSchema,
+        annotations: READ_ONLY_ANNOTATIONS,
+      },
       async (args) => {
         try {
           const store = await getStore();

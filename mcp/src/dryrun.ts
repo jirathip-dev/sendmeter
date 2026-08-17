@@ -12,7 +12,7 @@ import type {
   SessionRow,
   WorkoutRow,
 } from "./transport.js";
-import { daysAgo } from "./dates.js";
+import { daysAgo, localDayRange } from "./dates.js";
 
 function isoDaysAgo(n: number, hour = 17): string {
   const d = new Date();
@@ -148,7 +148,9 @@ export function dryRunStore(): DataStore {
       return phases;
     },
     async workouts(from, to) {
-      return workouts.filter((w) => w.started_at >= from);
+      const start = localDayRange(from).start;
+      const end = localDayRange(to).end;
+      return workouts.filter((w) => w.started_at >= start && w.started_at < end);
     },
     async recordingsByGroup(groupId) {
       return recordings.filter((r) => r.group_id === groupId);

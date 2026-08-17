@@ -28,7 +28,7 @@ describe("eslint global ignores (#612 review F8)", () => {
     // And pin the whole tuple so removing or reordering any ignore is a loud
     // change (a fifth ignore trips this deliberately).
     expect(eslintConfig).toMatch(
-      /globalIgnores\(\[\s*'dist',\s*'ios',\s*'\.claude',\s*'\*\*\/\.build'\s*\]\)/,
+      /globalIgnores\(\[\s*'dist',\s*'ios',\s*'\.claude',\s*'\*\*\/\.build',\s*'mcp\/dist'\s*\]\)/,
     );
   });
 });

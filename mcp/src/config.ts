@@ -14,12 +14,11 @@ export interface ServerConfig {
   supabaseUrl: string;
   supabaseAnonKey: string;
   /// A ready-made user access token (Bearer). Highest-precedence credential;
-  /// never persisted, never refreshed.
+  /// held in memory only, never persisted, never refreshed (a 401 re-signs-in
+  /// via the email/password path, or surfaces an AuthRequiredError).
   accessToken: string | null;
   email: string | null;
   password: string | null;
-  /// Session-file path override (default: ~/.sendmeter-mcp/session.json).
-  sessionFile: string | null;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -29,6 +28,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     accessToken: env["SENDMETER_MCP_TOKEN"] ?? null,
     email: env["SENDMETER_MCP_EMAIL"] ?? null,
     password: env["SENDMETER_MCP_PASSWORD"] ?? null,
-    sessionFile: env["SENDMETER_MCP_SESSION_FILE"] ?? null,
   };
 }

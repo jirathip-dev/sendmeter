@@ -48,7 +48,11 @@ export default defineConfig({
   test: {
     // .claude holds agent worktrees (full repo copies) — without this,
     // `vitest run` picks up their test files too and double-counts the suite.
-    exclude: ["**/node_modules/**", "**/dist/**", ".claude/**"],
+    // mcp/ is a separate package (own lockfile + own vitest) — its tests
+    // need @modelcontextprotocol/sdk, which root `npm ci` never installs
+    // (root has no workspaces field), so root vitest must not collect them;
+    // the mcp job in .github/workflows/ci.yml runs the package's own gates.
+    exclude: ["**/node_modules/**", "**/dist/**", ".claude/**", "mcp/**"],
     // #489: a hang detector, NOT a performance budget. Vitest fails any test
     // whose wall-clock elapsed exceeds this — including a synchronous test,
     // checked when it returns — so the default 5s acted as an accidental

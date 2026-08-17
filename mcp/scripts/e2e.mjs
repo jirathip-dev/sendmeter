@@ -7,7 +7,7 @@
 ///   npm run build
 ///   MCP_URL=http://127.0.0.1:54321 MCP_ANON=<local anon key> \
 ///     MCP_EMAIL=dev@sendmeter.test MCP_PASSWORD=devpassword \
-///     MCP_SESSION_FILE=/tmp/mcp-session.json LABEL=login node scripts/e2e.mjs
+///     node scripts/e2e.mjs
 ///
 /// Hosted: MCP_URL/MCP_ANON default to the hosted project in the server, so
 /// only a credential (MCP_TOKEN, or MCP_EMAIL/MCP_PASSWORD) is required.
@@ -26,7 +26,6 @@ for (const [src, dst] of [
   ["MCP_TOKEN", "SENDMETER_MCP_TOKEN"],
   ["MCP_EMAIL", "SENDMETER_MCP_EMAIL"],
   ["MCP_PASSWORD", "SENDMETER_MCP_PASSWORD"],
-  ["MCP_SESSION_FILE", "SENDMETER_MCP_SESSION_FILE"],
 ]) {
   const v = process.env[src];
   if (v !== undefined && v !== "") env[dst] = v;

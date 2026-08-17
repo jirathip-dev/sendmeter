@@ -9,12 +9,23 @@ import {
   acwrStatusLabel,
   computeAcwr,
   computeWeeklyLoads,
-  ewmaLoadState,
+  EWMA_LOOKBACK_DAYS,
   type LoadSession,
 } from "./load.js";
 import { daysAgo, isDateString, today } from "./dates.js";
 
 const LOW_READINESS_THRESHOLD = 40; // mirrors src/lib/metrics.ts
+
+/// Max number of days a `from`/`to` range may span (issue #644 review F15).
+/// Beyond this PostgREST's default max_rows (1000) could silently truncate;
+/// we reject the range up front instead of returning a partial truth.
+const MAX_RANGE_DAYS = 365;
+
+/// The EWMA ratio is defined over a fixed EWMA_LOOKBACK_DAYS (90) daily
+/// series, regardless of the caller's `days` display window (issue #644
+/// review F3). The session fetch always covers the full lookback so a small
+/// `days` can never fabricate zero-load days inside the EWMA.
+const ACWR_FETCH_DAYS = EWMA_LOOKBACK_DAYS;
 
 const METRIC_COLUMNS = {
   hrv: ["hrv_sdnn_ms"],
@@ -31,6 +42,13 @@ function requireDates(from: string, to: string): void {
   }
   if (from > to) {
     throw new Error(`from (${from}) must be <= to (${to})`);
+  }
+  const spanDays = Math.round((Date.parse(to + "T12:00:00") - Date.parse(from + "T12:00:00")) / 86400000) + 1;
+  if (spanDays > MAX_RANGE_DAYS) {
+    throw new Error(
+      `range too wide: ${spanDays} days (max ${MAX_RANGE_DAYS}). ` +
+        `Narrow the range or page through it — PostgREST truncates at 1000 rows.`,
+    );
   }
 }
 
@@ -216,7 +234,10 @@ export async function getAcwr(
   store: DataStore,
 ): Promise<AcwrResult> {
   const asOf = today();
-  const from = daysAgo(args.days - 1);
+  // The ratio is defined by the full 90-day EWMA window, not the caller's
+  // display window — fetching anything shorter silently zero-fills days
+  // 90..days and inflates the ratio (#644 review F3).
+  const from = daysAgo(ACWR_FETCH_DAYS - 1);
   const sessions = (await store.sessions(from, asOf)).map(toLoadSession);
   const acwr = computeAcwr(sessions, asOf);
   const open = (await store.phasePeriods()).find((p) => p.ended_on === null);
@@ -319,18 +340,32 @@ async function derivePeaks(
 }
 
 /// Local maxima of a [[t_ms, kg], ...] series, best-first, ≤ maxPeaks. A
-/// plateau counts once (its first sample); a flat run is not a peak.
+/// plateau counts once (its first sample); a flat run (no rise/fall at all)
+/// is not a peak. A peak at the first or last sample is a genuine local
+/// maximum and is kept (issue #644 review F14 — the old scan skipped the
+/// endpoints and deduped by comparing kg to the previously-pushed entry,
+/// which silently dropped a second peak of identical magnitude and any peak
+/// at the final sample). Separate reps that happen to land on the same
+/// rounded kg are all reported.
 export function topPeaks(samples: [number, number][], maxPeaks: number): TindeqPeak[] {
+  if (samples.length < 3) return [];
   const peaks: TindeqPeak[] = [];
-  for (let i = 1; i < samples.length - 1; i++) {
-    const prev = samples[i - 1]![1];
-    const cur = samples[i]!;
-    const next = samples[i + 1]![1];
-    const isMax = cur[1] >= prev && cur[1] >= next;
-    const strictlyHigher = cur[1] > prev || cur[1] > next;
-    if (isMax && strictlyHigher && (peaks.length === 0 || cur[1] !== peaks[peaks.length - 1]!.kg)) {
-      peaks.push({ t_ms: cur[0], kg: cur[1] });
+  let i = 0;
+  while (i < samples.length) {
+    // Collapse the maximal run of equal samples starting at i into one
+    // plateau candidate: [start, end), all kg === samples[i][1].
+    let j = i;
+    while (j < samples.length && samples[j]![1] === samples[i]![1]) j++;
+    const left = i > 0 ? samples[i - 1]![1] : -Infinity;
+    const right = j < samples.length ? samples[j]![1] : -Infinity;
+    // A plateau is a peak when both sides are strictly lower — a flat run
+    // with no sides (the whole series) is not a peak, and neither is one
+    // edge of a longer same-value run (that's handled by collapsing).
+    const isPeak = (i === 0 || left < samples[i]![1]) && (j === samples.length || right < samples[i]![1]);
+    if (isPeak && (i > 0 || j < samples.length)) {
+      peaks.push({ t_ms: samples[i]![0], kg: samples[i]![1] });
     }
+    i = j;
   }
   peaks.sort((a, b) => b.kg - a.kg);
   return peaks.slice(0, maxPeaks);
@@ -369,7 +404,13 @@ export async function analyzeTrainingLoad(
   store: DataStore,
 ): Promise<TrainingLoadResult> {
   const asOf = today();
-  const rows = await store.sessions(daysAgo(args.days - 1), asOf);
+  // The oldest weekly bucket starts weeks*7 - 1 days back and the EWMA needs
+  // the full 90-day window, so the fetch must cover BOTH — never less than
+  // the buckets need, or weeks>=13 fabricates zero-load weeks and flips the
+  // trend (#644 review F4), and never less than the EWMA needs (#644 F3).
+  const lookbackDays = Math.max(args.weeks * 7, ACWR_FETCH_DAYS, args.days);
+  const from = daysAgo(lookbackDays - 1);
+  const rows = await store.sessions(from, asOf);
   const sessions = rows.map(toLoadSession);
   const weekly = computeWeeklyLoads(sessions, asOf, args.weeks);
 

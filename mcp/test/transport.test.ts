@@ -4,10 +4,11 @@
 /// `auth.uid()` scope rows to that user server-side — and (c) never carry a
 /// service-role key. Uses the REAL createSupabaseStore with a recorded fetch;
 /// no network. A second user is simulated by building a second store with a
-/// second token and asserting its requests carry that token.
+/// second token and asserting its requests carry that token. Also pins the
+/// 401 → re-authenticate → retry-once path (issue #644 review F5).
 
 import { describe, expect, it } from "vitest";
-import { createSupabaseStore } from "../src/transport.js";
+import { createSupabaseStore, type TokenProvider } from "../src/transport.js";
 
 interface RecordedRequest {
   method: string;
@@ -19,10 +20,11 @@ interface RecordedRequest {
 function recordingFetch(
   respondWith: unknown,
   onRequest?: (req: RecordedRequest) => void,
+  status = 200,
 ): typeof fetch {
   return async (input, init) => {
-    const url = typeof input === "string" ? input : input.url;
-    const method = init?.method ?? (typeof input === "string" ? "GET" : input.method);
+    const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+    const method = init?.method ?? (typeof input === "string" ? "GET" : input instanceof Request ? input.method : "GET");
     const record: RecordedRequest = {
       method,
       url,
@@ -30,17 +32,22 @@ function recordingFetch(
       apikey: null,
     };
     const headers = new Headers(init?.headers);
-    if (typeof input !== "string" && input.headers instanceof Headers) {
+    if (input instanceof Request && input.headers instanceof Headers) {
       input.headers.forEach((v, k) => headers.set(k, v));
     }
     record.authorization = headers.get("authorization");
     record.apikey = headers.get("apikey");
     onRequest?.(record);
-    return new Response(JSON.stringify(respondWith), {
-      status: 200,
+    const body = status >= 400 ? JSON.stringify({ message: "permission denied" }) : JSON.stringify(respondWith);
+    return new Response(body, {
+      status,
       headers: { "Content-Type": "application/json" },
     });
   };
+}
+
+function staticToken(token: string): TokenProvider {
+  return { get: async () => token, onUnauthorized: async () => {} };
 }
 
 const URL = "https://example.supabase.co";
@@ -52,7 +59,7 @@ describe("createSupabaseStore", () => {
     const store = createSupabaseStore({
       url: URL,
       anonKey: ANON_KEY,
-      accessToken: "user-token-A",
+      tokenProvider: staticToken("user-token-A"),
       fetch: recordingFetch([], (r) => requests.push(r)),
     });
 
@@ -78,11 +85,71 @@ describe("createSupabaseStore", () => {
     const store = createSupabaseStore({
       url: URL,
       anonKey: ANON_KEY,
-      accessToken: "user-token-B",
+      tokenProvider: staticToken("user-token-B"),
       fetch: recordingFetch([], (r) => requests.push(r)),
     });
     await store.sessions("2026-07-01", "2026-07-07");
     expect(requests[0]!.authorization).toBe("Bearer user-token-B");
+  });
+
+  it("re-authenticates and retries exactly once on a 401", async () => {
+    let authCalls = 0;
+    const provider: TokenProvider = {
+      get: async () => "at-initial",
+      onUnauthorized: async () => {
+        authCalls++;
+      },
+    };
+    const requests: RecordedRequest[] = [];
+    const store = createSupabaseStore({
+      url: URL,
+      anonKey: ANON_KEY,
+      tokenProvider: provider,
+      // The FIRST request 401s; the re-auth'd retry returns 200 rows.
+      fetch: (async (input) => {
+        const n = requests.length;
+        requests.push({ method: "GET", url: String(input), authorization: null, apikey: null });
+        if (n === 0) {
+          return new Response(JSON.stringify({ message: "JWT expired" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+      }) as typeof fetch,
+    });
+    const rows = await store.sessions("2026-07-01", "2026-07-07");
+    expect(rows).toEqual([]);
+    expect(authCalls).toBe(1);
+    expect(requests).toHaveLength(2);
+  });
+
+  it("a second 401 after re-auth surfaces as an AuthRequiredError", async () => {
+    const requests: RecordedRequest[] = [];
+    const store = createSupabaseStore({
+      url: URL,
+      anonKey: ANON_KEY,
+      tokenProvider: {
+        get: async () => "at",
+        onUnauthorized: async () => {},
+      },
+      fetch: recordingFetch([], (r) => requests.push(r), 401),
+    });
+    await expect(store.sessions("2026-07-01", "2026-07-07")).rejects.toThrow(
+      /token rejected \(HTTP 401\).*re-authenticate/,
+    );
+  });
+
+  it("surfaces PostgREST errors instead of swallowing them", async () => {
+    const store = createSupabaseStore({
+      url: URL,
+      anonKey: ANON_KEY,
+      tokenProvider: staticToken("t"),
+      fetch: recordingFetch([], undefined, 403),
+    });
+    await expect(store.healthMetrics("2026-07-01", "2026-07-02")).rejects.toThrow(
+      "health_metrics",
+    );
   });
 
   it("queries the right tables, columns and range filters", async () => {
@@ -90,7 +157,7 @@ describe("createSupabaseStore", () => {
     const store = createSupabaseStore({
       url: URL,
       anonKey: ANON_KEY,
-      accessToken: "t",
+      tokenProvider: staticToken("t"),
       fetch: recordingFetch([], (r) => requests.push(r)),
     });
     await store.healthMetrics("2026-07-01", "2026-07-07");
@@ -113,7 +180,7 @@ describe("createSupabaseStore", () => {
     const store = createSupabaseStore({
       url: URL,
       anonKey: ANON_KEY,
-      accessToken: "t",
+      tokenProvider: staticToken("t"),
       fetch: recordingFetch([
         { id: "r", recorded_at: "2026-07-01T17:00:00Z", duration_ms: 7000, peak_kg: 40, avg_kg: 38.6, sample_count: 71, note: "", tag: "Half crimp", side: "left", group_id: null, zone: null, source: "dynamometer" },
       ]),
@@ -123,21 +190,5 @@ describe("createSupabaseStore", () => {
     expect(recs[0]!.peak_kg).toBe(40);
     expect(recs[0]!.duration_ms).toBe(7000);
     expect(recs[0]!.side).toBe("left");
-  });
-
-  it("surfaces PostgREST errors instead of swallowing them", async () => {
-    const store = createSupabaseStore({
-      url: URL,
-      anonKey: ANON_KEY,
-      accessToken: "t",
-      fetch: async () =>
-        new Response(JSON.stringify({ message: "permission denied" }), {
-          status: 403,
-          headers: { "Content-Type": "application/json" },
-        }),
-    });
-    await expect(store.healthMetrics("2026-07-01", "2026-07-02")).rejects.toThrow(
-      "health_metrics",
-    );
   });
 });
