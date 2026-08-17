@@ -86,14 +86,16 @@ final class DateSupportTests: XCTestCase {
     }
 
     func testDaysAgoWalksBackThroughMonthBoundary() {
-        let reference = Date(timeIntervalSince1970: 1_750_000_000)
+        // 1785517200 = 2026-08-01 00:00 Bangkok — daysAgo(1) lands on
+        // 2026-07-31, crossing the July→August boundary.
+        let reference = Date(timeIntervalSince1970: 1_785_517_200)
         XCTAssertEqual(
-            LocalDateSupport.string(from: reference, timeZone: bangkok),
-            LocalDateSupport.daysAgo(0, from: reference, timeZone: bangkok)
+            LocalDateSupport.daysAgo(0, from: reference, timeZone: bangkok),
+            "2026-08-01"
         )
-        XCTAssertNotEqual(
+        XCTAssertEqual(
             LocalDateSupport.daysAgo(1, from: reference, timeZone: bangkok),
-            LocalDateSupport.daysAgo(0, from: reference, timeZone: bangkok)
+            "2026-07-31"
         )
     }
 

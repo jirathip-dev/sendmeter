@@ -40,10 +40,6 @@ struct ReadinessTrendCard: View {
     /// ~5 fps (review F2).
     @State private var snapshot = ReadinessSnapshot.empty
 
-    private var hasAnyScore: Bool {
-        snapshot.days.contains { $0.readiness != nil }
-    }
-
     /// Nearest scored/observed day to the scrubbed position, or nil.
     private var selected: ReadinessDay? {
         guard let selectedDate else { return nil }
@@ -142,7 +138,7 @@ struct ReadinessTrendCard: View {
                 .chartXSelection(value: $selectedDate)
                 .chartOverlay { proxy in
                     GeometryReader { geo in
-                        if let selectedDate, let selected {
+                        if selectedDate != nil, let selected {
                             let plotFrame = geo[proxy.plotAreaFrame]
                             // proxy.position is relative to the plot area;
                             // add the plot frame's origin to place the
@@ -211,6 +207,13 @@ struct ReadinessTrendCard: View {
             }
         }
         .chartYScale(domain: 0...100)
+        // Pin the x-domain to the full 14-day window so a scored-subrange
+        // collapse (trailing/leading wear gap) or a fully-gapped window still
+        // renders 14 dated slots — the web's fixed-flex-slot layout equivalent
+        // (review N2). Only the marks carry x values, so without this the
+        // automatic domain shrinks to the scored days and the gap becomes
+        // invisible instead of honest.
+        .chartXScale(domain: snapshot.dateDomain ?? Date()...Date())
         .chartYAxis {
             AxisMarks(position: .leading) {
                 AxisGridLine().foregroundStyle(ChartToken.grid.color(scheme))
@@ -304,13 +307,16 @@ struct ReadinessTrendCard: View {
     }
 
     /// Clamp the tooltip's vertical center so a tall tooltip doesn't clip past
-    /// the plot's top/bottom edge.
+    /// the plot's top/bottom edge. Top-anchored (`minCenter`) rather than
+    /// `plotFrame.midY` so the tooltip floats above the data it annotates
+    /// instead of covering the readiness line in the 30-70 band (review N3);
+    /// `minCenter` is only relaxed when the tooltip is too tall for the plot.
     private func clampedTooltipY(plotFrame: CGRect, tooltipHeight: CGFloat) -> CGFloat {
         let height = tooltipHeight > 0 ? tooltipHeight : 60
         let minCenter = plotFrame.minY + height / 2 + 4
         let maxCenter = plotFrame.maxY - height / 2 - 4
         if minCenter > maxCenter { return plotFrame.midY }
-        return min(max(minCenter, plotFrame.midY), maxCenter)
+        return minCenter
     }
 }
 
@@ -322,6 +328,18 @@ struct ReadinessSnapshot {
     let xAxisGregorian: Date.FormatStyle
 
     static let empty = ReadinessSnapshot(days: [], xAxisGregorian: Self.gregorianDateAxisStyle)
+
+    /// The chart's full 14-day x-domain, oldest → newest. `days` always has
+    /// exactly 14 entries whenever metrics exist, so this is the true window —
+    /// pinning it keeps Swift Charts from collapsing the domain to the scored
+    /// subrange (N2): with a trailing wear gap the plot would otherwise fill
+    /// the full card width ending days ago with no visual cue, and a fully
+    /// gapped window would draw nothing at all. Nil only when the window is
+    /// empty (no metrics), which the view gates before rendering the chart.
+    var dateDomain: ClosedRange<Date>? {
+        guard let first = days.first?.dateValue, let last = days.last?.dateValue else { return nil }
+        return first...last
+    }
 
     /// Gregorian-pinned `M/d` x-axis labels (review F10/I4: the style is used
     /// on the chart's *x* axis; the `xAxisGregorian` name says so). Everything
