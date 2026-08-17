@@ -115,9 +115,14 @@ public final class WatchConnectivityService: NSObject, ObservableObject {
     public func publishReadiness(_ metric: HealthMetric) {
         var result: [String: Any] = [
             "kind": "readinessResult",
-            "date": metric.date,
-            "computed_at": metric.computedAt.timeIntervalSince1970
+            "date": metric.date
         ]
+        // computed_at omitted when a kept score carries no fresh timestamp
+        // (#661) — the watch's ReadinessSnapshot.computedAt is optional and
+        // tolerates absence.
+        if let computedAt = metric.computedAt {
+            result["computed_at"] = computedAt.timeIntervalSince1970
+        }
         if let readiness = metric.readiness { result["readiness"] = readiness }
         if let zone = metric.zone { result["zone"] = zone }
         outgoingContext.merge(result) { _, new in new }

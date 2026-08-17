@@ -143,8 +143,10 @@ struct SettingsView: View {
                         StatusPill(zone.capitalized, color: readinessColor(zone))
                     }
                 }
-                LabeledContent("Last computed", value: metric.computedAt.formatted(date: .abbreviated, time: .shortened))
-                    .font(.caption)
+                if let computedAt = metric.computedAt {
+                    LabeledContent("Last computed", value: computedAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                }
             } else {
                 Text("Read HRV, resting heart rate, sleep, respiratory rate, and body mass to compute daily readiness on device.")
                     .font(.subheadline)

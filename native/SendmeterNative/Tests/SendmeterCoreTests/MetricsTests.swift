@@ -104,4 +104,41 @@ final class MetricsTests: XCTestCase {
             ).suggested
         )
     }
+
+    // MARK: ACWR ratio (#661 F2)
+
+    func testAcwrRatioMatchesComputeACWRForSameLoadSeries() throws {
+        // A 90-day series with the last 4 days at heavy load — enough for a
+        // chronic > 0 EWMA. The pure `acwrRatio` must produce the same ratio
+        // as `computeACWR` fed an equivalent session list (the recompute path
+        // reads the server, never in-memory sessions).
+        var dailyLoads = Array(repeating: 0.0, count: 86)
+        dailyLoads += [120, 120, 120, 120]
+        let ratio = try XCTUnwrap(TrainingMetrics.acwrRatio(dailyLoads: dailyLoads))
+
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-17", timeZone: bangkok))
+        let sessions: [Session] = dailyLoads.enumerated().compactMap { offset, load in
+            guard load > 0 else { return nil }
+            return Session(
+                id: UUID(),
+                date: LocalDateSupport.daysAgo(dailyLoads.count - 1 - offset, from: reference, timeZone: bangkok),
+                type: "fingerboard",
+                typeLabel: "Fingerboard",
+                durationMinutes: 10,
+                rpe: 6,
+                load: load,
+                phase: .strength
+            )
+        }
+        let expected = try XCTUnwrap(TrainingMetrics.computeACWR(
+            sessions: sessions,
+            referenceDate: reference,
+            timeZone: bangkok
+        ).ratio)
+        XCTAssertEqual(ratio, expected, accuracy: 0.000001)
+    }
+
+    func testAcwrRatioNilWhenNoLoad() {
+        XCTAssertNil(TrainingMetrics.acwrRatio(dailyLoads: Array(repeating: 0.0, count: 90)))
+    }
 }

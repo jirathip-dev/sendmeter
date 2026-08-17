@@ -30,12 +30,18 @@ struct DashboardView: View {
                     }
                 }
             }
-            .refreshable { await model.refreshAll(showSpinner: false) }
+            .refreshable {
+                // #661 (finding 5): pull-to-refresh is the ONLY user-initiated
+                // HealthKit resync — run the full server refetch AND a manual
+                // (authoritative, #109 bypass) readiness recompute.
+                await model.refreshAll(showSpinner: false)
+                await model.silentHealthRefresh(trigger: .manual)
+            }
             .task {
                 // #661: on Dashboard appear, silently refresh readiness/health
-                // when a reading already exists (a cold first run has no
-                // reading yet, so nothing to refresh). A failed refresh keeps
-                // the last reading — never blank, never fabricated.
+                // (gated on HealthKit authorization; the read is automatic).
+                // A failed or empty refresh keeps the last reading — never
+                // blank, never fabricated.
                 await model.silentHealthRefresh(trigger: .appear)
             }
             .sheet(isPresented: $showLog) {

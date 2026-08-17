@@ -109,6 +109,11 @@ private struct SessionRow: Decodable {
     }
 }
 
+private struct SessionLoadRow: Decodable {
+    let date: String
+    let load: Double
+}
+
 private struct SessionInsert: Encodable {
     let id: UUID?
     let date: String
@@ -265,7 +270,12 @@ private struct HealthMetricUpsert: Encodable {
     let date: String
     let readiness: Int?
     let zone: String?
-    let computedAt: Date
+    // Optional (not just "nullable in the DB") for #661/#109: when a pass
+    // keeps an existing score, these three are left OUT of the upsert payload
+    // entirely (synthesized `encodeIfPresent` omits nil keys), so Postgres'
+    // ON CONFLICT merge only touches the biometric columns and leaves the
+    // existing readiness/zone/computed_at untouched.
+    let computedAt: Date?
     let hrvSDNN: Double?
     let restingHR: Double?
     let sleepHours: Double?
@@ -862,6 +872,43 @@ public final class SendmeterRepository: @unchecked Sendable {
             ]
         )
         return rows.map { $0.model(accountUserID: accountUserID) }
+    }
+
+    /// Session loads for the readiness recompute's ACWR (#661 F2). The
+    /// recompute must read the ACWR from the server, never the in-memory
+    /// `sessions` (which can be empty on a cold launch, fabricating a score up
+    /// to 20 points high). Same shape/soft-delete exclusion as the shipped
+    /// plugin's `computeAcwr`. Filtered to the EWMA lookback window.
+    public func fetchSessionLoads() async throws -> [SessionLoad] {
+        let cutoff = LocalDateSupport.daysAgo(90)
+        let rows: [SessionLoadRow] = try await transport.request(
+            path: "rest/v1/sessions",
+            method: .get,
+            queryItems: [
+                URLQueryItem(name: "select", value: "date,load"),
+                URLQueryItem(name: "date", value: "gte.\(cutoff)"),
+                URLQueryItem(name: "deleted_at", value: "is.null"),
+                URLQueryItem(name: "order", value: "date.desc,created_at.desc")
+            ]
+        )
+        return rows.map { SessionLoad(date: $0.date, load: $0.load) }
+    }
+
+    /// Today's `health_metrics` row, if any. The #109 write policy needs the
+    /// existing row's readiness + date to decide whether an automatic sync may
+    /// overwrite today's score; the #661 keep-last-reading rule needs its
+    /// readiness when a fresh compute yields nil.
+    public func fetchTodayHealthMetric() async throws -> HealthMetric? {
+        let today = LocalDateSupport.string(from: Date())
+        let rows: [HealthMetricRow] = try await transport.request(
+            path: "rest/v1/health_metrics",
+            method: .get,
+            queryItems: [
+                URLQueryItem(name: "select", value: "date,readiness,zone,computed_at,hrv_sdnn_ms,resting_hr,sleep_hours,sleep_deep_hours,sleep_rem_hours,body_mass_kg,resp_rate_bpm"),
+                URLQueryItem(name: "date", value: "eq.\(today)")
+            ]
+        )
+        return rows.first.map(\.model)
     }
 
     public func fetchDeletedSessions(accountUserID: UUID? = nil) async throws -> [Session] {

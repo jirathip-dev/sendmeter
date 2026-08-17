@@ -10,8 +10,6 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
-- iPhone: the Dashboard now refreshes Apple Health automatically when it opens and when you bring the app back to the foreground, so newer Health/Apple Watch data appears without reinstalling the app. The refresh is silent: while it's in flight the readiness card shows a "Syncing" pill, and if the sync fails you keep your last readiness score — it's never blanked and never made up. Pull-to-refresh still works as before.
-
 - Apple Watch Force sessions can now arm hands-free for free holds: pulling starts and releasing saves automatically; between reps it waits for the gauge to unload, with a 10-minute idle safety cutoff.
 - Apple Watch now shows quarantined uploads — items the server has stopped accepting — with the failing stage, HTTP status, PostgREST code, a trimmed error message, the attempt count and the quarantine time, plus what happens next for each kind (permanently rejected vs. retrying automatically). Home's action page links to this list.
 - Apple Watch: uploads stuck in the set-aside state can now be retried by hand — a "Retry stuck uploads" action moves the retryable ones straight back to the upload queue and tries them immediately, instead of waiting out the automatic week-long backoff. Permanently rejected items are shown but never offered as a retry.
@@ -62,6 +60,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Fixed
 
+- iPhone: the readiness score now updates when the app opens and when you bring it back to the foreground, instead of only after a fresh install — newer Apple Health or Apple Watch data is picked up on open. The refresh is silent and shows a "Syncing" pill while in flight; if the sync fails, or Apple Health briefly returns no data (for example before the watch has written overnight values), your last score stays on screen instead of being blanked, and a pull-to-refresh still forces an update.
 - Watch: an upload the server answers with "forbidden" (HTTP 403 — usually the watch's sign-in has gone stale, not a problem with the workout itself) no longer spends the upload's retry budget: the watch asks the iPhone for a fresh sign-in instead, and only if the same 403 keeps coming back after several refreshes is the upload counted toward being set aside.
 - iPhone: reopening the app now reacts to both foreground signals — the WebView's visibility change and the native app's own active transition — before re-sharing the current sign-in with the paired Apple Watch and the Health sync, and each reopen triggers a single re-share and a single health sync. When the Apple Watch asks the phone for a fresh sign-in while the iPhone's session is already gone, the reason is now recorded separately in Settings → Sign-in diagnostics under its own entry.
 - Watch: if a Climb Workout fails to start partway through, the watch now ends and discards the partially-started session instead of leaving it running in the background.

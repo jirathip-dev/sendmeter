@@ -247,7 +247,11 @@ public struct HealthMetric: Codable, Equatable, Sendable, Identifiable {
     public let date: String
     public let readiness: Int?
     public let zone: String?
-    public let computedAt: Date
+    /// Optional (not just "nullable in the DB") for the #661 keep-last-reading
+    /// rule: when a pass keeps an existing score (a nil fresh score, or a #109
+    /// post-noon automatic lock), the upsert omits `computed_at` entirely so
+    /// the DB row's timestamp is not stamped as if a fresh compute had run.
+    public let computedAt: Date?
     public let hrvSDNNMilliseconds: Double?
     public let restingHeartRate: Double?
     public let sleepHours: Double?
@@ -260,7 +264,7 @@ public struct HealthMetric: Codable, Equatable, Sendable, Identifiable {
         date: String,
         readiness: Int?,
         zone: String?,
-        computedAt: Date,
+        computedAt: Date?,
         hrvSDNNMilliseconds: Double?,
         restingHeartRate: Double?,
         sleepHours: Double?,
@@ -281,6 +285,26 @@ public struct HealthMetric: Codable, Equatable, Sendable, Identifiable {
         self.bodyMassKilograms = bodyMassKilograms
         self.respiratoryRate = respiratoryRate
     }
+
+    /// The same biometric columns with readiness/zone/computedAt nil, used to
+    /// re-upsert the current-day inputs without overwriting a kept score —
+    /// mirrors the plugin's `HealthMetricsUpsert` omitting those three keys
+    /// (synthesized `encodeIfPresent` on the upsert struct drops nil).
+    public func omittingReadiness() -> HealthMetric {
+        HealthMetric(
+            date: date,
+            readiness: nil,
+            zone: nil,
+            computedAt: nil,
+            hrvSDNNMilliseconds: hrvSDNNMilliseconds,
+            restingHeartRate: restingHeartRate,
+            sleepHours: sleepHours,
+            sleepDeepHours: sleepDeepHours,
+            sleepREMHours: sleepREMHours,
+            bodyMassKilograms: bodyMassKilograms,
+            respiratoryRate: respiratoryRate
+        )
+    }
 }
 
 public struct ACWRData: Codable, Equatable, Sendable {
@@ -292,6 +316,20 @@ public struct ACWRData: Codable, Equatable, Sendable {
         self.acute = acute
         self.chronic = chronic
         self.ratio = ratio
+    }
+}
+
+/// A lightweight session-load row used by the readiness recompute (#661 F2):
+/// the server is the ACWR authority for a recompute, never the in-memory
+/// `sessions` (which may be empty on a cold launch). Same shape as the
+/// plugin's `SessionLoadRow`.
+public struct SessionLoad: Codable, Equatable, Sendable {
+    public let date: String
+    public let load: Double
+
+    public init(date: String, load: Double) {
+        self.date = date
+        self.load = load
     }
 }
 

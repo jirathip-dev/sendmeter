@@ -96,6 +96,23 @@ public enum TrainingMetrics {
         return ACWRData(acute: acute, chronic: chronic, ratio: ratio)
     }
 
+    /// ACWR ratio from a server-derived daily-load series (oldest first, one
+    /// entry per day, length `ewmaLookbackDays`). Exactly the `ratio` path of
+    /// `computeACWR` — same EWMA seeding/series — so a recompute that reads
+    /// the server (never the in-memory `sessions`, #661 F2) produces the same
+    /// number the Dashboard would show once sessions are loaded.
+    public static func acwrRatio(
+        dailyLoads: [Double]
+    ) -> Double? {
+        guard dailyLoads.contains(where: { $0 != 0 }) else { return nil }
+        let seed = dailyLoads.reduce(0, +) / Double(dailyLoads.count)
+        let series: [Double?] = [seed] + dailyLoads.map(Optional.some)
+        let acute = ewma(values: series, span: acuteSpanDays).last ?? nil
+        let chronic = ewma(values: series, span: chronicSpanDays).last ?? nil
+        guard let acute, let chronic, chronic > 0 else { return nil }
+        return acute / chronic
+    }
+
     public static func weeklyLoads(
         sessions: [Session],
         referenceDate: Date = Date(),
