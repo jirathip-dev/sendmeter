@@ -63,7 +63,9 @@ struct RootView: View {
             // behind the deterministic screenshot launch flag so no
             // production navigation changes.
             WatchIconPrimitiveFixtureView()
-        } else if ScreenshotFixtures.enabled, ScreenshotFixtures.state == .forceGuidedRun {
+        } else if ScreenshotFixtures.enabled,
+                  ScreenshotFixtures.state == .forceGuidedRun ||
+                  ScreenshotFixtures.state == .forceGuidedRunMovement {
             GuidedForceRunnerView()
         } else if guidedForceRunner.isActive {
             GuidedForceRunnerView()

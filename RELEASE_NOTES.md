@@ -10,6 +10,7 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- Apple Watch resisted-movement runs now show the live force trace underneath the movement display — a compact sparkline strip while the gauge is measuring — so you can see your force rhythm while the cadence clock guides each rep. Between sets the strip steps aside and the countdown is the whole screen again; runs without a force sensor stay honestly trace-free. (The phone's Force fullscreen already showed the live trace during movement work, so nothing changes there.)
 - Apple Watch Force sessions can now arm hands-free for free holds: pulling starts and releasing saves automatically; between reps it waits for the gauge to unload, with a 10-minute idle safety cutoff.
 - Apple Watch now shows quarantined uploads — items the server has stopped accepting — with the failing stage, HTTP status, PostgREST code, a trimmed error message, the attempt count and the quarantine time, plus what happens next for each kind (permanently rejected vs. retrying automatically). Home's action page links to this list.
 - Apple Watch: uploads stuck in the set-aside state can now be retried by hand — a "Retry stuck uploads" action moves the retryable ones straight back to the upload queue and tries them immediately, instead of waiting out the automatic week-long backoff. Permanently rejected items are shown but never offered as a retry.
