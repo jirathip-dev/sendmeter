@@ -142,6 +142,12 @@ public final class AppModel: ObservableObject {
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
     private var recomputeGate = ReadinessRecomputeGate()
+    /// #661: silent foreground/appear health sync. The policy is pure Core
+    /// (`HealthRefreshPolicy`, unit-tested); `lastHealthRefreshStartedAt` is
+    /// the monotonic start time of the most recent actual refresh. The
+    /// window mirrors the web's `FOREGROUND_SYNC_COALESCE_MS` (5s).
+    private let healthRefreshPolicy = HealthRefreshPolicy(coalescingWindow: 5)
+    private var lastHealthRefreshStartedAt: Date?
 
     /// Live workout mirror cursor (two producers: WC beat + realtime row,
     /// one merge discipline — see LiveWorkoutMirror).
@@ -255,6 +261,10 @@ public final class AppModel: ObservableObject {
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &nestedCancellables)
         weather.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &nestedCancellables)
+        let health = self.health
+        health.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &nestedCancellables)
         // #627/#628: a disconnect ends the gauge session (auto-log) — unless
@@ -471,7 +481,7 @@ public final class AppModel: ObservableObject {
         await refreshLiveWorkoutRow()
         if UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") {
             await health.ensureBackgroundObserversRegistered()
-            await syncHealth(requestAuthorization: false)
+            await silentHealthRefresh(trigger: .foreground)
         }
         // Last on purpose: the drain's "Saved" toasts above must not clobber
         // the loss notice — the user hearing about the lost rep is the point.
@@ -1378,6 +1388,11 @@ public final class AppModel: ObservableObject {
 
     // MARK: Health and account
 
+    /// The user-facing sync entry point (Settings' Connect/Sync). With
+    /// `requestAuthorization` it also requests HealthKit permission and
+    /// records the health-authorized flag that gates the automatic refresh
+    /// paths. The success toast + `lastHealthRefreshStartedAt` stamp make a
+    /// manual sync authoritative: a foreground right after won't re-sync.
     public func syncHealth(requestAuthorization: Bool) async {
         guard let userID = currentUserID else { return }
         await perform {
@@ -1386,7 +1401,36 @@ public final class AppModel: ObservableObject {
                 UserDefaults.standard.set(true, forKey: "sendmeter.native.health-authorized")
             }
             try await self.computeAndPublishReadiness(userID: userID)
+            self.lastHealthRefreshStartedAt = Date()
             self.toastMessage = "Apple Health synced."
+        }
+    }
+
+    /// #661: the silent refresh trigger for Dashboard appear and app
+    /// foreground. Runs the recompute ONLY when the coalescing policy says
+    /// so; the current reading (today's row, or the stored `healthMetrics`)
+    /// is always kept on failure — never blanked, never a fabricated score.
+    /// A failure is swallowed, not surfaced: this is a background-quality
+    /// refresh (web `runForegroundSync` parity), so a HealthKit hiccup must
+    /// not throw an error banner over the last reading. The recompute path
+    /// is single-flight with the manual/background paths
+    /// (`ReadinessRecomputeGate`), so a storm of appear + foreground
+    /// triggers plus a background observer fire collapses into at most one
+    /// follow-up pass.
+    public func silentHealthRefresh(trigger: HealthRefreshTrigger) async {
+        guard UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") else { return }
+        let now = Date()
+        guard healthRefreshPolicy.shouldRefresh(
+            trigger: trigger,
+            lastStartedAt: lastHealthRefreshStartedAt,
+            now: now
+        ) else { return }
+        lastHealthRefreshStartedAt = now
+        guard let userID = currentUserID else { return }
+        do {
+            try await computeAndPublishReadiness(userID: userID)
+        } catch {
+            // Silent: keep the last reading on failure.
         }
     }
 

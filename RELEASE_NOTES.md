@@ -10,6 +10,8 @@ CI, dependency updates, and refactors unless users experience a change.
 
 ### Added
 
+- iPhone: the Dashboard now refreshes Apple Health automatically when it opens and when you bring the app back to the foreground, so newer Health/Apple Watch data appears without reinstalling the app. The refresh is silent: while it's in flight the readiness card shows a "Syncing" pill, and if the sync fails you keep your last readiness score — it's never blanked and never made up. Pull-to-refresh still works as before.
+
 - Apple Watch Force sessions can now arm hands-free for free holds: pulling starts and releasing saves automatically; between reps it waits for the gauge to unload, with a 10-minute idle safety cutoff.
 - Apple Watch now shows quarantined uploads — items the server has stopped accepting — with the failing stage, HTTP status, PostgREST code, a trimmed error message, the attempt count and the quarantine time, plus what happens next for each kind (permanently rejected vs. retrying automatically). Home's action page links to this list.
 - Apple Watch: uploads stuck in the set-aside state can now be retried by hand — a "Retry stuck uploads" action moves the retryable ones straight back to the upload queue and tries them immediately, instead of waiting out the automatic week-long backoff. Permanently rejected items are shown but never offered as a retry.

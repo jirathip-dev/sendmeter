@@ -31,6 +31,13 @@ struct DashboardView: View {
                 }
             }
             .refreshable { await model.refreshAll(showSpinner: false) }
+            .task {
+                // #661: on Dashboard appear, silently refresh readiness/health
+                // when a reading already exists (a cold first run has no
+                // reading yet, so nothing to refresh). A failed refresh keeps
+                // the last reading — never blank, never fabricated.
+                await model.silentHealthRefresh(trigger: .appear)
+            }
             .sheet(isPresented: $showLog) {
                 LogSessionSheet()
             }
@@ -67,7 +74,11 @@ private struct TodayDecisionCard: View {
                 HStack {
                     SectionLabel("Today's decision", systemImage: "sparkles")
                     Spacer()
-                    if let zone = model.readiness?.zone {
+                    if model.health.isSyncing {
+                        // #661: the auto-sync runs silently, but the pill says
+                        // it's in-flight — no prolonged stale flash.
+                        StatusPill("Syncing", color: SendmeterStyle.caution)
+                    } else if let zone = model.readiness?.zone {
                         StatusPill(zone.capitalized, color: readinessColor(scheme))
                     }
                 }
