@@ -25,9 +25,12 @@ struct LoginView: View {
             ScrollView {
                 VStack(spacing: 24) {
                     VStack(spacing: 12) {
-                        Image(systemName: "mountain.2.fill")
-                            .font(.system(size: 58, weight: .bold))
-                            .foregroundStyle(SendmeterStyle.primary)
+                        // #662: brand mark from the Capacitor splash (kangaroo),
+                        // replacing the generated mountain glyph.
+                        Image("SplashKangaroo")
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 96, height: 96)
                         Text("Sendmeter")
                             .font(.largeTitle.bold())
                         Text("Training load, readiness, climbing workouts, and force measurement in one native app.")

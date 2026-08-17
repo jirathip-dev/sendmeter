@@ -103,21 +103,30 @@ struct MainTabView: View {
 struct SplashView: View {
     var body: some View {
         ZStack {
+            // #662: the shipped Capacitor app's splash — cave backdrop filled
+            // to the screen with the separated kangaroo centered on top. Same
+            // artwork and layering as the web SplashScreen component.
+            Image("SplashCaveBackground")
+                .resizable()
+                .scaledToFill()
+                .ignoresSafeArea()
             LinearGradient(
-                colors: [Color(hex: "#0E121B"), Color(hex: "#273348")],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                stops: [
+                    .init(color: Color.black.opacity(0.17), location: 0),
+                    .init(color: .clear, location: 0.44),
+                    .init(color: Color.black.opacity(0.35), location: 1),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
             )
             .ignoresSafeArea()
-            VStack(spacing: 20) {
-                Image(systemName: "mountain.2.fill")
-                    .font(.system(size: 64, weight: .bold))
-                    .foregroundStyle(.white)
-                Text("Sendmeter")
-                    .font(.largeTitle.bold())
-                    .foregroundStyle(.white)
-                ProgressView()
-                    .tint(.white)
+            GeometryReader { proxy in
+                Image("SplashKangaroo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: min(proxy.size.width * 0.8, 410))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .shadow(color: Color.black.opacity(0.35), radius: 18, y: 16)
             }
         }
     }
