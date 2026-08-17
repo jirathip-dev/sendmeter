@@ -16,6 +16,7 @@ import {
   recordingCapacityModality,
   recordingZone,
   TIE_BAND_SETS,
+  trainingBalanceZone,
   zoneSetDurationS,
   zoneSets,
   zoneTrainingSets,
@@ -174,6 +175,18 @@ describe("recordingZone (#259)", () => {
     });
     expect(recordingZone({ durationMs: 10_000, zone: "warmup" })).toEqual({
       zone: "warmup",
+      source: "recorded",
+    });
+  });
+
+  it("recognizes a recorded 'capacity' zone (#657) — native-only, read honestly, bucketed later", () => {
+    // The web's four-quality model has no protocol for "capacity" (a
+    // native-only recorded value), but the row must still READ as what it
+    // is — "recorded as Capacity", never relabelled to the bucket it counts
+    // toward. The capacity → endurance mapping belongs to the balance
+    // aggregation (`trainingBalanceZone`/`zoneSets`), not this read path.
+    expect(recordingZone({ durationMs: 60_000, zone: "capacity" })).toEqual({
+      zone: "capacity",
       source: "recorded",
     });
   });
@@ -660,6 +673,44 @@ describe("zoneTrainingSets (SL-100, #182)", () => {
       endurance: 0,
     });
   });
+
+  it("#657: a capacity-zone recording inside the 28-day window counts toward endurance", () => {
+    const sets = zoneTrainingSets(
+      [{ ...rec("2026-07-20T10:00:00Z", 60_000), zone: "capacity" as const }],
+      NOW,
+    );
+    expect(sets.endurance).toBeCloseTo(60 / 240, 10);
+    expect(sets.power).toBe(0);
+    // …and an identical recording OUTSIDE the window is the only thing
+    // keeping it out of the balance — not the bucket mapping.
+    const outside = zoneTrainingSets(
+      [{ ...rec("2026-05-01T10:00:00Z", 60_000), zone: "capacity" as const }],
+      NOW,
+    );
+    expect(outside.endurance).toBe(0);
+  });
+});
+
+describe("trainingBalanceZone (#657)", () => {
+  it("maps a recorded native-only 'capacity' zone to endurance — matching native ZoneMix.swift:64-75", () => {
+    // Native maps recorded `.capacity` → `.endurance` ("long holds") rather
+    // than dropping the recording from the mix; the web must land the same
+    // recording in the same bucket or the parity bug this issue fixes
+    // reappears in the 28-day window.
+    expect(trainingBalanceZone("capacity")).toBe("endurance");
+  });
+
+  it("passes the four trainable qualities through unchanged", () => {
+    for (const q of ["power", "strength", "power-endurance", "endurance"] as const) {
+      expect(trainingBalanceZone(q)).toBe(q);
+    }
+  });
+
+  it("excludes maintenance zones and null exactly as zoneSets always did", () => {
+    expect(trainingBalanceZone("warmup")).toBeNull();
+    expect(trainingBalanceZone("prehab")).toBeNull();
+    expect(trainingBalanceZone(null)).toBeNull();
+  });
 });
 
 describe("zoneSets (#214)", () => {
@@ -709,6 +760,19 @@ describe("zoneSets (#214)", () => {
       rec("2026-07-19T10:00:00Z", 30000),
     ];
     expect(zoneTrainingSets(recs, NOW)).toEqual(zoneSets(recs));
+  });
+
+  it("#657: a recorded 'capacity' hold counts toward endurance — its seconds are NOT dropped", () => {
+    // The bug: a native-written zone="capacity" row had no RecordedZone
+    // member, so zoneSets wrote its seconds into a key the returned record
+    // never reads — the same session badged Endurance in native and nothing
+    // in web. 60s of capacity work = 60/240 endurance sets (the endurance
+    // divisor), matching native's bucket for the identical row.
+    const sets = zoneSets([{ durationMs: 60_000, zone: "capacity" as const }]);
+    expect(sets.endurance).toBeCloseTo(60 / zoneSetDurationS("endurance"), 10);
+    expect(sets.power).toBe(0);
+    expect(sets.strength).toBe(0);
+    expect(sets["power-endurance"]).toBe(0);
   });
 });
 
