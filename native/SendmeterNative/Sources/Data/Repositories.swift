@@ -724,9 +724,13 @@ private struct WorkoutListRow: Decodable {
     let startedAt: Date
     let endedAt: Date
     let averageHeartRate: Double?
+    let maxHeartRate: Double?
+    let activeKilocalories: Double?
+    let elevationGainMeters: Double?
     let attemptsConfirmed: Int
     let attemptsDetected: Int
     let rpeConfirmed: Double?
+    let rpePredicted: Double?
     let source: String
 
     enum CodingKeys: String, CodingKey {
@@ -735,9 +739,13 @@ private struct WorkoutListRow: Decodable {
         case startedAt = "started_at"
         case endedAt = "ended_at"
         case averageHeartRate = "avg_hr"
+        case maxHeartRate = "max_hr"
+        case activeKilocalories = "active_kcal"
+        case elevationGainMeters = "elevation_gain_m"
         case attemptsConfirmed = "attempts_confirmed"
         case attemptsDetected = "attempts_detected"
         case rpeConfirmed = "rpe_confirmed"
+        case rpePredicted = "rpe_predicted"
     }
 
     var model: WorkoutListItem {
@@ -747,10 +755,49 @@ private struct WorkoutListRow: Decodable {
             startedAt: startedAt,
             endedAt: endedAt,
             averageHeartRate: averageHeartRate,
+            maxHeartRate: maxHeartRate,
+            activeKilocalories: activeKilocalories,
+            elevationGainMeters: elevationGainMeters,
             attemptsConfirmed: attemptsConfirmed,
             attemptsDetected: attemptsDetected,
             rpeConfirmed: rpeConfirmed,
+            rpePredicted: rpePredicted,
             source: WorkoutSource(rawValue: source) ?? .watch
+        )
+    }
+}
+
+/// A `climb_attempts` row for one workout, fetched for the detail charts
+/// (#645): the attempt windows shaded over the HR trace and the effort bars
+/// below need the same x-domain contribution as the trace itself.
+private struct WorkoutAttemptRow: Decodable {
+    let startedAt: Date
+    let durationS: Double
+    let elevationGainM: Double
+    let avgHr: Double?
+    let peakHr: Double?
+    let effortScore: Double?
+    let source: String
+
+    enum CodingKeys: String, CodingKey {
+        case source
+        case startedAt = "started_at"
+        case durationS = "duration_s"
+        case elevationGainM = "elevation_gain_m"
+        case avgHr = "avg_hr"
+        case peakHr = "peak_hr"
+        case effortScore = "effort_score"
+    }
+
+    var model: WorkoutAttempt {
+        WorkoutAttempt(
+            startedAt: startedAt,
+            durationSeconds: Int(durationS.rounded()),
+            elevationGainMeters: elevationGainM,
+            averageHeartRate: avgHr,
+            peakHeartRate: peakHr,
+            effortScore: effortScore,
+            source: source
         )
     }
 }
@@ -1444,7 +1491,7 @@ public final class SendmeterRepository: @unchecked Sendable {
             path: "rest/v1/climb_workouts",
             method: .get,
             queryItems: [
-                URLQueryItem(name: "select", value: "id,session_id,started_at,ended_at,avg_hr,attempts_confirmed,attempts_detected,rpe_confirmed,source"),
+                URLQueryItem(name: "select", value: "id,session_id,started_at,ended_at,avg_hr,max_hr,active_kcal,elevation_gain_m,attempts_confirmed,attempts_detected,rpe_confirmed,rpe_predicted,source"),
                 URLQueryItem(name: "order", value: "started_at.desc"),
                 URLQueryItem(name: "limit", value: String(max(1, limit)))
             ]
@@ -1452,7 +1499,24 @@ public final class SendmeterRepository: @unchecked Sendable {
         return rows.map(\.model)
     }
 
-    /// The workout's 1 Hz HR trace (web `fetchWorkoutRaw`): `climb_workouts.raw`
+    /// The workout's `climb_attempts` (web's embedded `climb_attempts`
+    /// sub-query of `fetchWorkoutById`): the attempt windows the HR chart
+    /// shades and the effort bars plot on the same x-domain. A workout with
+    /// no attempts yields `[]` — the charts then show the trace alone.
+    public func fetchWorkoutAttempts(id: UUID) async throws -> [WorkoutAttempt] {
+        let rows: [WorkoutAttemptRow] = try await transport.request(
+            path: "rest/v1/climb_attempts",
+            method: .get,
+            queryItems: [
+                URLQueryItem(name: "select", value: "started_at,duration_s,elevation_gain_m,avg_hr,peak_hr,effort_score,source"),
+                URLQueryItem(name: "workout_id", value: "eq.\(id.uuidString.lowercased())"),
+                URLQueryItem(name: "order", value: "started_at.asc")
+            ]
+        )
+        return rows.map(\.model)
+    }
+
+    /// The workout's HR trace (web `fetchWorkoutRaw`): `climb_workouts.raw`
     /// is `[[t_s, alt_m, motion_rms, hr], ...]`, shaped into `{t, hr}` samples
     /// by `WorkoutRawTrace.hrSeries`. Nil when the workout kept no trace
     /// (older builds, phone workouts) — the HR chart just doesn't render.

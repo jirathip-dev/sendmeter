@@ -850,9 +850,17 @@ public struct WorkoutListItem: Codable, Equatable, Sendable, Identifiable {
     public let startedAt: Date
     public let endedAt: Date
     public let averageHeartRate: Double?
+    /// #645: widened with the four columns the summary card now shows (web
+    /// `WorkoutDetailPanel`): max HR, active kcal, elevation gain, predicted
+    /// RPE. They are read on the list fetch so the detail needs no extra
+    /// round-trip — only the HR trace is lazy.
+    public let maxHeartRate: Double?
+    public let activeKilocalories: Double?
+    public let elevationGainMeters: Double?
     public let attemptsConfirmed: Int
     public let attemptsDetected: Int
     public let rpeConfirmed: Double?
+    public let rpePredicted: Double?
     public let source: WorkoutSource
 
     public init(
@@ -861,9 +869,13 @@ public struct WorkoutListItem: Codable, Equatable, Sendable, Identifiable {
         startedAt: Date,
         endedAt: Date,
         averageHeartRate: Double?,
+        maxHeartRate: Double?,
+        activeKilocalories: Double?,
+        elevationGainMeters: Double?,
         attemptsConfirmed: Int,
         attemptsDetected: Int,
         rpeConfirmed: Double?,
+        rpePredicted: Double?,
         source: WorkoutSource
     ) {
         self.id = id
@@ -871,9 +883,13 @@ public struct WorkoutListItem: Codable, Equatable, Sendable, Identifiable {
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.averageHeartRate = averageHeartRate
+        self.maxHeartRate = maxHeartRate
+        self.activeKilocalories = activeKilocalories
+        self.elevationGainMeters = elevationGainMeters
         self.attemptsConfirmed = attemptsConfirmed
         self.attemptsDetected = attemptsDetected
         self.rpeConfirmed = rpeConfirmed
+        self.rpePredicted = rpePredicted
         self.source = source
     }
 }

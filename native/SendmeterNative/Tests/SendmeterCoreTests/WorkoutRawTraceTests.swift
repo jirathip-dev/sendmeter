@@ -64,41 +64,43 @@ final class WorkoutRawTraceTests: XCTestCase {
         )
     }
 
-    func testAbsurdHeartRateBecomesAGap() {
-        // Negative, zero, sub-resting and above-plausible-max reads are sensor
-        // artifacts → nil, so the chart splits its line instead of drawing a
-        // spike.
+    func testHeartRateIsMappedVerbatimWithoutAPlausibilityClamp() {
+        // The web maps entries verbatim (`hr = s[3] ?? null`) with no
+        // 30–250 clamp (#645 review F9): a genuine low reading — a fit
+        // athlete's deep-rest 28 bpm, or the watch's first post-start
+        // sample — stays a real reading, not a fabricated gap. Native now
+        // matches, so both platforms draw the same chart for identical data.
         let raw: [[Double?]] = [
-            [0, 1, 2, -40],
+            [0, 1, 2, 28],
             [1, 1, 2, 0],
-            [2, 1, 2, 29],
-            [3, 1, 2, 251],
-            [4, 1, 2, Double.nan],
-            [5, 1, 2, Double.infinity]
+            [2, 1, 2, 251],
+            [3, 1, 2, 130]
+        ]
+        XCTAssertEqual(
+            WorkoutRawTrace.hrSeries(raw),
+            [
+                WorkoutHrSample(t: 0, hr: 28),
+                WorkoutHrSample(t: 1, hr: 0),
+                WorkoutHrSample(t: 2, hr: 251),
+                WorkoutHrSample(t: 3, hr: 130)
+            ]
+        )
+    }
+
+    func testNonFiniteHeartRateBecomesAGap() {
+        // jsonb cannot hold NaN/Infinity, so this is purely defensive — but
+        // if a row ever carries one, it becomes a gap like a nil.
+        let raw: [[Double?]] = [
+            [0, 1, 2, Double.nan],
+            [1, 1, 2, Double.infinity],
+            [2, 1, 2, 130]
         ]
         XCTAssertEqual(
             WorkoutRawTrace.hrSeries(raw),
             [
                 WorkoutHrSample(t: 0, hr: nil),
                 WorkoutHrSample(t: 1, hr: nil),
-                WorkoutHrSample(t: 2, hr: nil),
-                WorkoutHrSample(t: 3, hr: nil),
-                WorkoutHrSample(t: 4, hr: nil),
-                WorkoutHrSample(t: 5, hr: nil)
-            ]
-        )
-    }
-
-    func testPlausibleBoundsAreKept() {
-        let raw: [[Double?]] = [
-            [0, 1, 2, 30],
-            [1, 1, 2, 250]
-        ]
-        XCTAssertEqual(
-            WorkoutRawTrace.hrSeries(raw),
-            [
-                WorkoutHrSample(t: 0, hr: 30),
-                WorkoutHrSample(t: 1, hr: 250)
+                WorkoutHrSample(t: 2, hr: 130)
             ]
         )
     }
@@ -111,6 +113,100 @@ final class WorkoutRawTraceTests: XCTestCase {
             [0, 1, 2, 88, 999, -1]
         ]
         XCTAssertEqual(WorkoutRawTrace.hrSeries(raw), [WorkoutHrSample(t: 0, hr: 88)])
+    }
+
+    // MARK: hrRuns — contiguous non-nil runs (the AC2 fixture)
+
+    private func sample(_ t: Double, _ hr: Double?) -> WorkoutHrSample {
+        WorkoutHrSample(t: t, hr: hr)
+    }
+
+    func testHrRunsSplitsAtNilGaps() {
+        // A gap in the middle splits the trace into two runs — each drawn as
+        // its own series so the chart never interpolates across the gap.
+        let runs = WorkoutRawTrace.hrRuns([
+            sample(0, 88), sample(1, 91), sample(2, 95),
+            sample(3, nil),
+            sample(4, 100), sample(5, 102)
+        ])
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertEqual(runs[0], [sample(0, 88), sample(1, 91), sample(2, 95)])
+        XCTAssertEqual(runs[1], [sample(4, 100), sample(5, 102)])
+    }
+
+    func testHrRunsKeepsTrailingAndLeadingGaps() {
+        // nil before the first reading and after the last don't create empty
+        // runs; the surviving runs keep their boundaries.
+        let runs = WorkoutRawTrace.hrRuns([
+            sample(0, nil),
+            sample(1, 90), sample(2, 92),
+            sample(3, nil),
+            sample(4, 100)
+        ])
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertEqual(runs[0], [sample(1, 90), sample(2, 92)])
+        XCTAssertEqual(runs[1], [sample(4, 100)])
+    }
+
+    func testHrRunsEmptyWhenNoHr() {
+        XCTAssertEqual(WorkoutRawTrace.hrRuns([]), [])
+        XCTAssertEqual(WorkoutRawTrace.hrRuns([sample(0, nil), sample(1, nil)]), [])
+    }
+
+    func testHrRunsKeepsSingleSampleRun() {
+        // A lone valid sample is a run of 1 — the chart skips runs < 2, but
+        // the split itself is honest about where it starts/ends.
+        let runs = WorkoutRawTrace.hrRuns([
+            sample(0, 88),
+            sample(1, nil),
+            sample(2, 90)
+        ])
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertEqual(runs[0], [sample(0, 88)])
+        XCTAssertEqual(runs[1], [sample(2, 90)])
+    }
+
+    // MARK: downsample / downsampleRuns — bounded marks (F11)
+
+    func testDownsampleKeepsUnderCapUntouched() {
+        let small = (0..<10).map { sample(Double($0), 100 + Double($0)) }
+        XCTAssertEqual(WorkoutRawTrace.downsample(small, maxPoints: 600), small)
+    }
+
+    func testDownsampleDecimatesUniformlyKeepingEndpoints() {
+        let large = (0..<100).map { sample(Double($0), 100 + Double($0)) }
+        let result = WorkoutRawTrace.downsample(large, maxPoints: 10)
+        XCTAssertEqual(result.count, 10)
+        XCTAssertEqual(result.first, large.first)
+        XCTAssertEqual(result.last, large.last)
+        // Evenly spread across the original span.
+        let expectedTs = Set([0, 11, 22, 33, 44, 55, 66, 77, 88, 99].map(Double.init))
+        XCTAssertEqual(Set(result.map(\.t)), expectedTs)
+    }
+
+    func testDownsampleRunsBoundedByCap() {
+        // A ~5000-sample single-run trace (a 95-min session at the watch's
+        // 3 s stride is ~1900; a 3-h outdoor one is ~7200).
+        let large = (0..<5000).map { sample(Double($0), 100 + Double($0 % 40)) }
+        let runs = WorkoutRawTrace.downsampleRuns(large, maxPoints: 600)
+        XCTAssertEqual(runs.count, 1)
+        XCTAssertEqual(runs[0].count, 600)
+        XCTAssertEqual(runs[0].first, large.first)
+        XCTAssertEqual(runs[0].last, large.last)
+    }
+
+    func testDownsampleRunsSplitsThenBoundsPerRun() {
+        // Two runs of 1000 each → each gets a 300-point budget (600 total).
+        var input: [WorkoutHrSample] = []
+        input += (0..<1000).map { sample(Double($0), 100) }
+        input.append(sample(1000, nil))
+        input += (1001..<2001).map { sample(Double($0), 110) }
+        let runs = WorkoutRawTrace.downsampleRuns(input, maxPoints: 600)
+        XCTAssertEqual(runs.count, 2)
+        let total = runs.reduce(0) { $0 + $1.count }
+        XCTAssertLessThanOrEqual(total, 600)
+        XCTAssertEqual(runs[0].first?.hr, 100)
+        XCTAssertEqual(runs[1].first?.hr, 110)
     }
 
     // MARK: isChartRenderable — the web's < 2 valid samples guard
@@ -219,8 +315,30 @@ final class WorkoutRawTraceTests: XCTestCase {
         XCTAssertEqual(WorkoutChartAxis.fmtMinSec(65), "1:05")
         XCTAssertEqual(WorkoutChartAxis.fmtMinSec(3_659), "60:59")
         // Rounds the total first, so a tick at 119.6 s reads 2:00 — not the
-        // web's "0:60" (floor minute + rounded second remainder).
+        // old "0:60" (floor minute + rounded second remainder). The web was
+        // aligned to this (#645 review F15).
         XCTAssertEqual(WorkoutChartAxis.fmtMinSec(119.6), "2:00")
         XCTAssertEqual(WorkoutChartAxis.fmtMinSec(59.4), "0:59")
+    }
+
+    // MARK: attemptWindows — the shared x-domain contribution (F4)
+
+    func testAttemptWindowsPlaceOnTraceSeconds() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        let attempts = [
+            WorkoutAttempt(startedAt: start.addingTimeInterval(30), durationSeconds: 40, source: "auto"),
+            WorkoutAttempt(
+                startedAt: start.addingTimeInterval(300),
+                durationSeconds: 20,
+                source: "manual"
+            )
+        ]
+        XCTAssertEqual(
+            WorkoutChartAxis.attemptWindows(startedAt: start, attempts: attempts),
+            [
+                WorkoutChartAxis.AttemptWindow(start: 30, end: 70, manual: false),
+                WorkoutChartAxis.AttemptWindow(start: 300, end: 320, manual: true)
+            ]
+        )
     }
 }
