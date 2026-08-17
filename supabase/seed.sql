@@ -117,26 +117,52 @@ values (
 insert into public.climb_workouts (
   id, user_id, started_at, ended_at, avg_hr, max_hr, active_kcal,
   elevation_gain_m, attempts_detected, attempts_confirmed,
-  rpe_predicted, rpe_confirmed, mean_effort, attempts_per_10min, session_id, source
+  rpe_predicted, rpe_confirmed, mean_effort, attempts_per_10min, session_id, source,
+  raw
 ) values (
   '33333333-3333-3333-3333-333333333333',
   '11111111-1111-1111-1111-111111111111',
   (current_date - 3)::timestamptz + interval '18 hours',
   (current_date - 3)::timestamptz + interval '19 hours 35 minutes',
   132, 171, 520, 210, 18, 16, 7.2, 7.0, 6.1, 1.7,
-  '22222222-2222-2222-2222-222222222222', 'watch'
+  '22222222-2222-2222-2222-222222222222', 'watch',
+  -- #645: a modest trace (95 min → ~380 samples at a 15 s stride) so the HR
+  -- chart can be exercised on ladder rungs 2/3 without production data.
+  -- Each row is [t_s, alt_m, motion_rms, hr]; the deliberate null-hr run
+  -- (t 1800–2040, a ~4 min sensor dropout mid-rest) is the AC2 fixture —
+  -- the chart must break its line there, never interpolate across it.
+  (
+    select jsonb_agg(jsonb_build_array(
+      t,
+      round((10 + 8 * sin(t / 400.0))::numeric, 1),
+      round((0.2 + 0.08 * abs(sin(t / 250.0)))::numeric, 3),
+      case
+        when t between 1800 and 2040 then null
+        when t between 540 and 569 then 150
+        when t between 1080 and 1113 then 154
+        when t between 1620 and 1657 then 158
+        when t between 2160 and 2201 then 162
+        when t between 2700 and 2745 then 166
+        else round((110 + 22 * sin(t / 800.0))::numeric, 1)
+      end
+    ))
+    from generate_series(0, 5700, 15) as t
+  )
 );
 
 insert into public.climb_attempts (
   workout_id, user_id, started_at, duration_s, elevation_gain_m,
-  avg_hr, peak_hr, motion_intensity, effort_score
+  avg_hr, peak_hr, motion_intensity, effort_score, source
 )
 select
   '33333333-3333-3333-3333-333333333333',
   '11111111-1111-1111-1111-111111111111',
   (current_date - 3)::timestamptz + interval '18 hours' + (n * interval '9 minutes'),
   25 + n * 4, 3 + n * 0.3, 138 + n * 2, 158 + n * 2,
-  0.28 + n * 0.02, 5 + n * 0.6
+  0.28 + n * 0.02, 5 + n * 0.6,
+  -- One manual attempt (n = 4, the watch's Boulder/Stop button) so the
+  -- chart's caution shading for manual windows is exercised locally too.
+  case when n = 4 then 'manual' else 'auto' end
 from generate_series(1, 5) as n;
 
 -- ── Tindeq recordings: short sessions + a force-duration ladder ───────

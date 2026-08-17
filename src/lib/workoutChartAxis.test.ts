@@ -129,4 +129,13 @@ describe("fmtMinSec", () => {
     expect(fmtMinSec(65)).toBe("1:05");
     expect(fmtMinSec(600)).toBe("10:00");
   });
+
+  it("rounds the total first, never emitting a 0:60 remainder", () => {
+    // The native side rounds total seconds (119.6 → "2:00"); the web was
+    // fixed to match so both platforms label the same axis identically
+    // (#645 review F15).
+    expect(fmtMinSec(119.6)).toBe("2:00");
+    expect(fmtMinSec(59.4)).toBe("0:59");
+    expect(fmtMinSec(59.6)).toBe("1:00");
+  });
 });

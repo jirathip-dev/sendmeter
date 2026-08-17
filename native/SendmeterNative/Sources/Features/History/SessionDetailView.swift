@@ -4,16 +4,30 @@ import SwiftUI
 /// #630: the expanded detail for a session in the combined History timeline —
 /// the native counterpart of the web's `SessionRow` detail sheet. Tindeq
 /// sessions show their recordings (grouped by tag) with per-rep box plots +
-/// the zone-mix badge; workout sessions show a summary card. Workout sessions
-/// deliberately stop at the summary: the native model fetches `climb_workouts`
-/// without the 1 Hz `raw` trace, so there is no HR chart to draw — the
-/// summary is everything the model already holds.
+/// the zone-mix badge; workout sessions show the summary card plus an HR
+/// chart drawn from the `climb_workouts.raw` trace (#645), fetched
+/// lazily on expand — the list fetch (`fetchWorkouts`) deliberately never
+/// selects `raw`, exactly like the recording-samples pattern.
 struct SessionDetailView: View {
     @EnvironmentObject private var model: AppModel
     let session: SendmeterCore.Session
 
     @State private var boxStatsByID: [UUID: BoxStats] = [:]
     @State private var loadingSamples = false
+    /// #645: the lazily-fetched detail for this session's workout — the HR
+    /// trace, its fetch state and the attempt windows. A 4-state model
+    /// (notLoaded/loading/loaded/failed) so a null/empty `raw` on a watch
+    /// workout reads as "still syncing" (AC4), never as an empty chart, and
+    /// a failed fetch degrades in-card with a retry instead of raising the
+    /// app-wide error banner (#645 review F2/F6).
+    private enum WorkoutTraceState: Equatable {
+        case notLoaded
+        case loading
+        case loaded(trace: [WorkoutHrSample], attempts: [WorkoutAttempt])
+        case failed
+    }
+
+    @State private var traceState: WorkoutTraceState = .notLoaded
 
     private var isTindeq: Bool { session.type == "tindeq" && session.groupID != nil }
     private var isWorkout: Bool { session.workoutSource != nil }
@@ -55,6 +69,7 @@ struct SessionDetailView: View {
                     recordingsSection
                 } else if isWorkout {
                     workoutSummaryCard
+                    workoutChartsSection
                 }
             }
             .padding()
@@ -62,7 +77,10 @@ struct SessionDetailView: View {
         .background(Color(uiColor: .systemGroupedBackground))
         .navigationTitle(session.typeLabel)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await loadSamples() }
+        .task {
+            await loadSamples()
+            await loadWorkoutDetail()
+        }
     }
 
     // MARK: Header
@@ -219,8 +237,19 @@ struct SessionDetailView: View {
             VStack(alignment: .leading, spacing: 10) {
                 SectionLabel("Workout", systemImage: "figure.climbing")
                 if let workout {
+                    // The web's WorkoutDetailPanel — six rows, "—" for nulls.
                     LabeledContent("Average HR", value: workout.averageHeartRate.map { "\(Int($0.rounded())) bpm" } ?? "—")
+                    LabeledContent("Max HR", value: workout.maxHeartRate.map { "\(Int($0.rounded())) bpm" } ?? "—")
+                    LabeledContent("Active", value: workout.activeKilocalories.map { "\(Int($0.rounded())) kcal" } ?? "—")
+                    LabeledContent(
+                        "Elev gain",
+                        value: workout.elevationGainMeters.map { "+\($0.formatted(.number.precision(.fractionLength(1))))m" } ?? "—"
+                    )
                     LabeledContent("Attempts", value: "\(workout.attemptsConfirmed) confirmed · \(workout.attemptsDetected) detected")
+                    LabeledContent(
+                        "RPE",
+                        value: "\(workout.rpeConfirmed.map { $0.formatted(.number.precision(.fractionLength(0...1))) } ?? "—") conf · \(workout.rpePredicted.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—") pred"
+                    )
                     LabeledContent(
                         "Source",
                         value: workout.source == .watch ? "Auto-tracked by the watch" : "Logged on the phone"
@@ -234,7 +263,122 @@ struct SessionDetailView: View {
         }
     }
 
+    // MARK: HR trace + effort (#645)
+
+    /// The HR chart card, below the summary, plus the effort chart stacked on
+    /// the SAME x-domain (AC3). The raw trace and attempts are fetched lazily
+    /// here (like `fetchRecordingSamples`), never on the list.
+    ///
+    /// The trace's fetch state is a 4-state model (F2):
+    /// - loading → spinner;
+    /// - loaded, trace renderable → the charts;
+    /// - loaded, trace nil/empty → "still syncing" for a watch workout
+    ///   (the watch uploads it in the background), nothing for a phone one;
+    /// - failed → a quiet in-card "couldn't load" state with a retry, never
+    ///   the app-wide error banner.
+    @ViewBuilder
+    private var workoutChartsSection: some View {
+        if let workout {
+            switch traceState {
+            case .notLoaded:
+                EmptyView()
+            case .loading:
+                SurfaceCard {
+                    ProgressView("Loading heart-rate trace…")
+                        .frame(maxWidth: .infinity, minHeight: 100)
+                }
+            case let .loaded(trace, attempts):
+                let chartTMax = WorkoutChartAxis.timeMaxS(
+                    startedAt: workout.startedAt,
+                    endedAt: workout.endedAt,
+                    attempts: attempts,
+                    samples: trace
+                )
+                if WorkoutRawTrace.isChartRenderable(trace) {
+                    SurfaceCard {
+                        VStack(alignment: .leading, spacing: 12) {
+                            WorkoutHrChartView(
+                                samples: trace,
+                                attempts: attempts,
+                                startedAt: workout.startedAt,
+                                endedAt: workout.endedAt,
+                                source: workout.source,
+                                tMax: chartTMax
+                            )
+                            if !attempts.isEmpty {
+                                WorkoutEffortChartView(
+                                    attempts: attempts,
+                                    startedAt: workout.startedAt,
+                                    tMax: chartTMax
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    if workout.source == .watch {
+                        // AC4: a watch workout whose trace has not uploaded
+                        // yet gets reassurance, not a blank box.
+                        SurfaceCard {
+                            WorkoutHrChartView(
+                                samples: [],
+                                attempts: attempts,
+                                startedAt: workout.startedAt,
+                                endedAt: workout.endedAt,
+                                source: workout.source,
+                                tMax: chartTMax
+                            )
+                        }
+                    }
+                    if !attempts.isEmpty {
+                        // Web parity: the effort chart stands alone when the
+                        // trace is absent (a phone workout has attempts but
+                        // never a trace).
+                        SurfaceCard {
+                            WorkoutEffortChartView(
+                                attempts: attempts,
+                                startedAt: workout.startedAt,
+                                tMax: chartTMax
+                            )
+                        }
+                    }
+                }
+            case .failed:
+                SurfaceCard {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        Text("Couldn't load the heart-rate trace.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Retry") { Task { await loadWorkoutDetail() } }
+                            .font(.subheadline.weight(.semibold))
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: Samples
+
+    private func loadWorkoutDetail() async {
+        guard isWorkout, let workout, traceState != .loading else { return }
+        traceState = .loading
+        defer { if traceState == .loading { traceState = .notLoaded } }
+        do {
+            let trace = try await model.repository.fetchWorkoutRaw(id: workout.id)
+            let attempts = try await model.repository.fetchWorkoutAttempts(id: workout.id)
+            traceState = .loaded(trace: trace ?? [], attempts: attempts)
+        } catch is CancellationError {
+            // Popped the detail mid-fetch — nothing to show, and the app-wide
+            // banner must not say "cancelled" over History (#645 review F6).
+        } catch let error as URLError where error.code == .cancelled {
+            // Same — `session.data(for:)` surfaces cancellation as URLError.
+        } catch {
+            traceState = .failed
+        }
+    }
 
     private func loadSamples() async {
         guard isTindeq, !loadingSamples, boxStatsByID.isEmpty else { return }
