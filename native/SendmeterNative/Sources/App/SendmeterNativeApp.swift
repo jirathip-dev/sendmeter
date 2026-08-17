@@ -101,24 +101,95 @@ struct MainTabView: View {
 }
 
 struct SplashView: View {
+    @Environment(\.colorScheme) private var systemScheme
+
     var body: some View {
+        // #662: the shipped Capacitor app's splash — cave backdrop filled to
+        // the screen with the separated kangaroo centered on top. Mirrors the
+        // web SplashScreen component (src/components/SplashScreen.tsx +
+        // src/index.css .splash-*). KEEP-IN-SYNC: if you change either side,
+        // update the other (assets live in Resources/Assets.xcassets).
         ZStack {
+            // Cave backdrop: web `object-fit: cover; object-position: center
+            // 57%` (center 64% on ≥720px-wide screens). The image is wider
+            // than any phone viewport, so only wide screens (iPad landscape,
+            // Slide Over) overflow vertically and the crop offset applies.
+            GeometryReader { proxy in
+                Image("SplashCaveBackground")
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .offset(y: caveCropOffset(container: proxy.size))
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .clipped()
+                    .accessibilityHidden(true)
+            }
+            .ignoresSafeArea()
+            // Web overlay gradient, `--overlay` theme-dependent:
+            // light rgba(10,15,25,0.48) -> alphas 0.168 / 0.346,
+            // dark rgba(3,6,12,0.68) -> alphas 0.238 / 0.490
+            // (src/index.css .splash-screen::after).
             LinearGradient(
-                colors: [Color(hex: "#0E121B"), Color(hex: "#273348")],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                stops: overlayStops,
+                startPoint: .top,
+                endPoint: .bottom
             )
             .ignoresSafeArea()
-            VStack(spacing: 20) {
-                Image(systemName: "mountain.2.fill")
-                    .font(.system(size: 64, weight: .bold))
-                    .foregroundStyle(.white)
-                Text("Sendmeter")
-                    .font(.largeTitle.bold())
-                    .foregroundStyle(.white)
+            // Kangaroo stage: `width: clamp(290px, 80vw, 410px)` (src/index.css
+            // .splash-stage). Sized from the full viewport, not the safe area.
+            GeometryReader { proxy in
+                Image("SplashKangaroo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: max(290, min(proxy.size.width * 0.8, 410)))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .shadow(color: Color.black.opacity(0.35), radius: 18, y: 16)
+                    .accessibilityHidden(true)
+            }
+            .ignoresSafeArea()
+            VStack {
+                Spacer()
+                // Loading status for assistive tech and sighted users (the web
+                // component labels its container `role="status"` "Starting
+                // Sendmeter"; the ProgressView keeps the boot affordance the
+                // old splash had).
                 ProgressView()
                     .tint(.white)
+                    .accessibilityLabel("Starting Sendmeter")
+                    .padding(.bottom, 24)
             }
+            .ignoresSafeArea()
         }
+    }
+
+    private var overlayStops: [Gradient.Stop] {
+        // Match the web --overlay alpha values for the active appearance.
+        let dark = systemScheme == .dark
+        let topAlpha: Double = dark ? 0.238 : 0.168
+        let bottomAlpha: Double = dark ? 0.490 : 0.346
+        return [
+            .init(color: .black.opacity(topAlpha), location: 0),
+            .init(color: .clear, location: 0.44),
+            .init(color: .black.opacity(bottomAlpha), location: 1),
+        ]
+    }
+
+    /// Reproduces the web `object-position: center p%` crop for a
+    /// `cover`-filled backdrop. The cave art is 1080×1920 (aspect 0.5625); a
+    /// container wider than that overflows vertically and the offset shifts
+    /// the crop to keep the intended portion visible. `p` is 0.57 on phones
+    /// (matches 57%), 0.64 on ≥720pt-wide screens (matches 64%).
+    ///
+    /// `object-position: p%` aligns the image's p% point with the box's p%
+    /// point. Centered `cover` shows the middle; moving the anchor away from
+    /// 50% shifts the image in the opposite direction (p > 0.5 lifts the crop
+    /// upward, negative offset).
+    private func caveCropOffset(container size: CGSize) -> CGFloat {
+        let artAspect: CGFloat = 1080.0 / 1920.0
+        let containerAspect = size.width / max(size.height, 1)
+        guard containerAspect > artAspect else { return 0 }
+        let p: CGFloat = size.width >= 720 ? 0.64 : 0.57
+        let scaledHeight = size.width / artAspect
+        return (0.5 - p) * (scaledHeight - size.height)
     }
 }
