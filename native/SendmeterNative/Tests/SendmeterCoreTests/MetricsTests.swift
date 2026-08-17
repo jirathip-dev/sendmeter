@@ -140,5 +140,85 @@ final class MetricsTests: XCTestCase {
 
     func testAcwrRatioNilWhenNoLoad() {
         XCTAssertNil(TrainingMetrics.acwrRatio(dailyLoads: Array(repeating: 0.0, count: 90)))
+    // MARK: Readiness trend series (#664)
+
+    private func makeMetric(
+        dayOffset: Int,
+        reference: Date,
+        readiness: Int? = nil,
+        zone: String? = nil,
+        hrv: Double? = nil,
+        rhr: Double? = nil,
+        sleep: Double? = nil
+    ) -> HealthMetric {
+        HealthMetric(
+            date: LocalDateSupport.daysAgo(dayOffset, from: reference, timeZone: bangkok),
+            readiness: readiness,
+            zone: zone,
+            computedAt: reference,
+            hrvSDNNMilliseconds: hrv,
+            restingHeartRate: rhr,
+            sleepHours: sleep,
+            sleepDeepHours: nil,
+            sleepREMHours: nil,
+            bodyMassKilograms: nil,
+            respiratoryRate: nil
+        )
+    }
+
+    func testReadinessSeriesReturnsFourteenDaysOldestToNewest() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let series = TrainingMetrics.readinessSeries(metrics: [], referenceDate: reference, timeZone: bangkok)
+        XCTAssertEqual(series.count, 14)
+        XCTAssertEqual(series.first?.date, "2026-08-02")
+        XCTAssertEqual(series.last?.date, "2026-08-15")
+        XCTAssertEqual(series.map(\.date), series.map(\.date).sorted(), "dates are oldest → newest")
+    }
+
+    func testReadinessSeriesMapsMetricsToTheirCalendarDay() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let metrics = [
+            makeMetric(dayOffset: 0, reference: reference, readiness: 82, zone: "push", hrv: 62, rhr: 48, sleep: 7.5),
+            makeMetric(dayOffset: 1, reference: reference, readiness: 55, zone: "maintain"),
+            makeMetric(dayOffset: 2, reference: reference, readiness: 28, zone: "recover")
+        ]
+        let series = TrainingMetrics.readinessSeries(metrics: metrics, referenceDate: reference, timeZone: bangkok)
+        XCTAssertEqual(series[13].readiness, 82)
+        XCTAssertEqual(series[13].zone, "push")
+        XCTAssertEqual(series[13].hrvSDNNMilliseconds, 62)
+        XCTAssertEqual(series[13].restingHeartRate, 48)
+        XCTAssertEqual(series[13].sleepHours, 7.5)
+        XCTAssertEqual(series[12].readiness, 55)
+        XCTAssertEqual(series[11].readiness, 28)
+    }
+
+    func testReadinessSeriesGapsRenderNil() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let series = TrainingMetrics.readinessSeries(
+            metrics: [makeMetric(dayOffset: 0, reference: reference, readiness: 70, zone: "push")],
+            referenceDate: reference,
+            timeZone: bangkok
+        )
+        XCTAssertNil(series[12].readiness, "a missing day reads as no data")
+        XCTAssertEqual(series[13].readiness, 70, "the single metric lands on its calendar day")
+    }
+
+    func testReadinessSeriesIgnoresMetricsOutsideTheWindow() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let series = TrainingMetrics.readinessSeries(
+            metrics: [makeMetric(dayOffset: 14, reference: reference, readiness: 90, zone: "push")],
+            referenceDate: reference,
+            timeZone: bangkok
+        )
+        XCTAssertEqual(series.map(\.readiness), Array(repeating: nil, count: 14), "an out-of-window metric is never plotted")
+    }
+
+    func testReadinessSeriesPinsDateValuesToGregorianDays() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let series = TrainingMetrics.readinessSeries(metrics: [], referenceDate: reference, timeZone: bangkok)
+        for day in series {
+            let parsed = LocalDateSupport.date(from: day.date, timeZone: bangkok)
+            XCTAssertEqual(day.dateValue, parsed, "dateValue is the parsed calendar date, not the wall-clock now")
+        }
     }
 }

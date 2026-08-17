@@ -12,6 +12,7 @@ struct DashboardView: View {
             ScrollView {
                 LazyVStack(spacing: 16) {
                     TodayDecisionCard()
+                    ReadinessTrendCard()
                     HStack(alignment: .top, spacing: 16) {
                         PhaseCard(showPhases: $showPhases)
                         SendConditionsCard()
