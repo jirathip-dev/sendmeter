@@ -140,6 +140,8 @@ final class MetricsTests: XCTestCase {
 
     func testAcwrRatioNilWhenNoLoad() {
         XCTAssertNil(TrainingMetrics.acwrRatio(dailyLoads: Array(repeating: 0.0, count: 90)))
+    }
+
     // MARK: Readiness trend series (#664)
 
     private func makeMetric(
