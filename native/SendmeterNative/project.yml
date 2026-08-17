@@ -38,6 +38,12 @@ targets:
       # resources are declared as sources with an explicit buildPhase. The
       # AppIcon set lives in this project (Resources/Assets.xcassets), not the
       # Capacitor app's catalog — external ../ paths are dropped by XcodeGen.
+      #
+      # SplashCaveBackground + SplashKangaroo are PNG ports of the web splash
+      # art (public/splash-cave-background.webp, public/splash-kangaroo.webp)
+      # used by src/components/SplashScreen.tsx. KEEP-IN-SYNC: if the web art
+      # changes, re-port it here (and update the .splash-* layout in
+      # src/index.css alongside Sources/App/SendmeterNativeApp.swift#SplashView).
       - path: Resources/Info.plist
         buildPhase: none
       - path: Resources/PrivacyInfo.xcprivacy

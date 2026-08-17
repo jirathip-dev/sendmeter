@@ -1,9 +1,19 @@
 {
   "images" : [
     {
-      "filename" : "splash-kangaroo.png",
+      "filename" : "splash-kangaroo@1x.png",
       "idiom" : "universal",
       "scale" : "1x"
+    },
+    {
+      "filename" : "splash-kangaroo@2x.png",
+      "idiom" : "universal",
+      "scale" : "2x"
+    },
+    {
+      "filename" : "splash-kangaroo.png",
+      "idiom" : "universal",
+      "scale" : "3x"
     }
   ],
   "info" : {
