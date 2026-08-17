@@ -1,17 +1,19 @@
 import { useState } from "react";
 import BoxChip from "./BoxChip";
 import type { TindeqSide } from "../types";
-
-const SIDE_OPTIONS: { value: TindeqSide; label: string }[] = [
-  { value: "", label: "—" },
-  { value: "left", label: "Left" },
-  { value: "right", label: "Right" },
-  { value: "both", label: "Both" },
-];
+import type { ExerciseSideMode } from "../lib/sideMode";
+import {
+  sideLabel,
+  sideOptionsFor,
+  sideSummaryVisible,
+} from "../lib/sideModeUi";
 
 /// Shared exercise setup (SL-82: no dropdowns): a LARGE current-exercise box,
 /// every tag as a selectable box chip with a "+" chip to add a new tag, and
-/// the side as box chips too. Set once, tweak between reps.
+/// the side as box chips too. Set once, tweak between reps. Side chips and
+/// the summary line come from the exercise's side mode (#584) — a mode with
+/// no choice renders no chips at all, and not_applicable omits the "Side:"
+/// summary entirely.
 export default function TagSideEditor({
   tag,
   side,
@@ -19,6 +21,9 @@ export default function TagSideEditor({
   onTag,
   onSide,
   locked,
+  /// #584: the selected exercise's side mode (slice-1 policy) — never a
+  /// local hardcoded mode→options mapping.
+  mode,
 }: {
   tag: string;
   side: TindeqSide;
@@ -31,6 +36,7 @@ export default function TagSideEditor({
   /// live but inert (a tap that produces no visible change, then applies
   /// silently after Stop).
   locked: boolean;
+  mode: ExerciseSideMode;
 }) {
   const [addingTag, setAddingTag] = useState(false);
   const [showAllTags, setShowAllTags] = useState(false);
@@ -58,7 +64,7 @@ export default function TagSideEditor({
     setAddingTag(false);
   }
 
-  const sideLabel = SIDE_OPTIONS.find((o) => o.value === side)?.label ?? "—";
+  const options = sideOptionsFor(mode);
 
   return (
     <div>
@@ -86,9 +92,20 @@ export default function TagSideEditor({
         >
           {trimmed || "Pick an exercise"}
         </div>
-        <div style={{ fontSize: "var(--t-xs)", color: "var(--ink-muted)", marginTop: 2 }}>
-          Side: <span style={{ fontWeight: 700, color: "var(--ink)" }}>{sideLabel}</span>
-        </div>
+        {sideSummaryVisible(mode) && (
+          <div
+            style={{
+              fontSize: "var(--t-xs)",
+              color: "var(--ink-muted)",
+              marginTop: 2,
+            }}
+          >
+            Side:{" "}
+            <span style={{ fontWeight: 700, color: "var(--ink)" }}>
+              {sideLabel(side)}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Tag chips + "+" to add a new one; long lists collapse behind "+N" */}
@@ -142,20 +159,24 @@ export default function TagSideEditor({
         </div>
       )}
 
-      {/* Side — box chips, no dropdown */}
-      <span className="field-label">Side</span>
-      <div style={{ display: "flex", gap: 6 }}>
-        {SIDE_OPTIONS.map((o) => (
-          <BoxChip
-            key={o.value}
-            label={o.label}
-            active={side === o.value}
-            onClick={() => onSide(o.value)}
-            disabled={locked}
-            style={{ flex: 1, minWidth: 0 }}
-          />
-        ))}
-      </div>
+      {/* Side — box chips, no dropdown; a mode with no choice renders none */}
+      {options.length > 0 && (
+        <>
+          <span className="field-label">Side</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {options.map((o) => (
+              <BoxChip
+                key={o.value}
+                label={o.label}
+                active={side === o.value}
+                onClick={() => onSide(o.value)}
+                disabled={locked}
+                style={{ flex: 1, minWidth: 0 }}
+              />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

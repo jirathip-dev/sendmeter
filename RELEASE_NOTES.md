@@ -57,6 +57,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Force: shortened the brief pause after Stop while your force curve recomputes, without changing any of the numbers it produces.
 - Apple Watch Force screens now match the rest of Sendmeter's visual language: the primary Start button, protocol card, and guided-run timer use the same blue/indigo accent as the rest of the app instead of a separate pink/purple identity, with connection, warning, and error states still called out in their usual colors.
 - Force's Exercise & Side card now shows a compact "Manage exercises" icon button instead of a text button, and the manager sheet it opens is titled "Manage exercises".
+- Force: Manage exercises now lets you set each exercise's side mode — unilateral or bilateral, unilateral only, bilateral only, or not applicable — and the setup card adapts to it: bilateral-only exercises show no side choice and record both sides, not-applicable exercises show no side choice and no "Side:" summary at all, unilateral-only exercises offer just Left/Right, and default exercises keep the same four — / Left / Right / Both choices as before. Switching to an exercise whose mode doesn't allow the selected side falls back to a valid one automatically (e.g. to Both for a bilateral-only exercise), and existing recordings are never re-labeled.
 
 ### Fixed
 
