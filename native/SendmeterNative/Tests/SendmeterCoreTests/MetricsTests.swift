@@ -216,9 +216,64 @@ final class MetricsTests: XCTestCase {
     func testReadinessSeriesPinsDateValuesToGregorianDays() throws {
         let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
         let series = TrainingMetrics.readinessSeries(metrics: [], referenceDate: reference, timeZone: bangkok)
+        // Independent reference — NOT LocalDateSupport, so a fallback to
+        // Calendar.current (Buddhist on a Thai-region device, year +543)
+        // fails this test. Review F8: the old assertion checked the
+        // implementation against the same helper it calls, so it could never
+        // catch the calendar regression this repo was burned by.
+        let gregorianFormatter = DateFormatter()
+        gregorianFormatter.calendar = Calendar(identifier: .gregorian)
+        gregorianFormatter.locale = Locale(identifier: "en_US_POSIX")
+        gregorianFormatter.timeZone = bangkok
+        gregorianFormatter.dateFormat = "yyyy-MM-dd"
         for day in series {
-            let parsed = LocalDateSupport.date(from: day.date, timeZone: bangkok)
-            XCTAssertEqual(day.dateValue, parsed, "dateValue is the parsed calendar date, not the wall-clock now")
+            XCTAssertEqual(day.dateValue, gregorianFormatter.date(from: day.date),
+                           "dateValue is the Gregorian date string's calendar day")
+            XCTAssertEqual(day.date.prefix(4), "2026",
+                           "series date strings must carry the Gregorian year, not the Buddhist year")
         }
+    }
+
+    func testReadinessSeriesGroupsContiguousScoredDaysIntoRuns() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        // Scored 08-02..08-04 (offsets 13..11), gap 08-05..08-14, scored 08-15.
+        let metrics = [
+            makeMetric(dayOffset: 13, reference: reference, readiness: 60, zone: "maintain"),
+            makeMetric(dayOffset: 12, reference: reference, readiness: 55, zone: "maintain"),
+            makeMetric(dayOffset: 11, reference: reference, readiness: 50, zone: "maintain"),
+            makeMetric(dayOffset: 0, reference: reference, readiness: 80, zone: "push")
+        ]
+        let series = TrainingMetrics.readinessSeries(metrics: metrics, referenceDate: reference, timeZone: bangkok)
+        XCTAssertEqual(series[0].runIndex, 1, "first run starts at 08-02")
+        XCTAssertEqual(series[1].runIndex, 1)
+        XCTAssertEqual(series[2].runIndex, 1)
+        for index in 3..<13 {
+            XCTAssertNil(series[index].runIndex, "gap day \(series[index].date) has no run")
+        }
+        XCTAssertEqual(series[13].runIndex, 2, "08-15 starts a new run after the gap")
+        XCTAssertEqual(series.map(\.runIndex).compactMap { $0 }.max(), 2)
+    }
+
+    func testReadinessSeriesTwoDaysOfDataKeepHonestGaps() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        // A brand-new user: exactly two scored days, everything else a gap.
+        let metrics = [
+            makeMetric(dayOffset: 1, reference: reference, readiness: 60, zone: "maintain"),
+            makeMetric(dayOffset: 0, reference: reference, readiness: 70, zone: "push")
+        ]
+        let series = TrainingMetrics.readinessSeries(metrics: metrics, referenceDate: reference, timeZone: bangkok)
+        XCTAssertEqual(series.filter { $0.readiness != nil }.count, 2)
+        XCTAssertEqual(series.filter { $0.runIndex != nil }.count, 2, "only the two scored days belong to a run")
+        XCTAssertEqual(series[12].runIndex, 1)
+        XCTAssertEqual(series[13].runIndex, 1)
+    }
+
+    func testReadinessSeriesDuplicateDatesResolveLastWins() throws {
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let older = makeMetric(dayOffset: 0, reference: reference, readiness: 50, zone: "maintain")
+        let newer = makeMetric(dayOffset: 0, reference: reference, readiness: 80, zone: "push")
+        XCTAssertEqual(older.date, newer.date, "both rows share the duplicate date")
+        let series = TrainingMetrics.readinessSeries(metrics: [older, newer], referenceDate: reference, timeZone: bangkok)
+        XCTAssertEqual(series.last?.readiness, 80, "duplicate date resolves last-wins like the web's Map")
     }
 }

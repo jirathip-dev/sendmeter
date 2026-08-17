@@ -1,5 +1,13 @@
 import Foundation
 
+/// Gregorian-only date helpers — never `Calendar.current`, which on a
+/// Thai-region device defaults to the Buddhist calendar (year +543) and once
+/// corrupted every stored date. `ISO8601FormatStyle` is used instead of
+/// `DateFormatter` because it is inherently Gregorian (no `calendar` property
+/// to forget to pin), zero-pads to `yyyy-MM-dd`, and is `Sendable` so the
+/// whole app shares one cached instance instead of allocating a
+/// `DateFormatter` per call (the readiness-series path alone created 28 per
+/// body pass — #664 review finding 2).
 public enum LocalDateSupport {
     public static func calendar(timeZone: TimeZone = .current) -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
@@ -7,29 +15,42 @@ public enum LocalDateSupport {
         return calendar
     }
 
+    /// Shared `yyyy-MM-dd` formatter. `timeZone` is a mutable property, so the
+    /// style is re-created whenever it differs — the common call site passes
+    /// the same time zone every time, so this caches after the first call.
+    private static let dayStyleCache = DayStyleCache()
+
+    private final class DayStyleCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cachedTimeZone: TimeZone?
+        private var style: Date.ISO8601FormatStyle?
+
+        func style(for timeZone: TimeZone) -> Date.ISO8601FormatStyle {
+            lock.lock()
+            defer { lock.unlock() }
+            if let style, let cachedTimeZone, cachedTimeZone == timeZone {
+                return style
+            }
+            var style = Date.ISO8601FormatStyle().year().month().day()
+            style.timeZone = timeZone
+            self.style = style
+            self.cachedTimeZone = timeZone
+            return style
+        }
+    }
+
     public static func string(
         from date: Date,
         timeZone: TimeZone = .current
     ) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        dayStyleCache.style(for: timeZone).format(date)
     }
 
     public static func date(
         from string: String,
         timeZone: TimeZone = .current
     ) -> Date? {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.isLenient = false
-        return formatter.date(from: string)
+        try? dayStyleCache.style(for: timeZone).parse(string)
     }
 
     public static func daysAgo(
