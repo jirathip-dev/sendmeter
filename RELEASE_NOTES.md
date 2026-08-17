@@ -18,6 +18,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Apple Watch: when a stuck upload leaves the set-aside state — retried by hand or by the automatic weekly retry — the watch keeps a small record of why it was set aside (failing stage, HTTP status, error code and when), shown under Recent history in Quarantined uploads, so a sync problem that has since cleared stays diagnosable.
 - The native Dashboard now shows a 14-day readiness trend chart under the score ring, with the recover/push zone thresholds at 40 and 70, a scrub tooltip with each day's readiness plus HRV/resting-HR/sleep context, and VoiceOver-accessible per-day labels — matching the web Readiness card.
 - The native Dashboard's Training-load card now opens a full load sheet: the same weekly bars, a GitHub-style daily contribution heatmap (53 weeks, each day hued by its dominant activity and shaded by total load, with tap/scrub day inspection and VoiceOver-accessible per-day labels), and the last 28 days shown as a proportional activity-mix bar with per-activity AU — matching the web load sheet.
+- The native Dashboard now shows an ACWR next-7-days projection card: where your load ratio drifts over the coming week if you train nothing, drawn against your current training block's target band, plus what a single session would take to keep the ratio in band.
 
 ### Improved
 

@@ -18,6 +18,7 @@ struct DashboardView: View {
                         SendConditionsCard()
                     }
                     LoadCard()
+                    AcwrProjectionCard()
                     RecentSessionsCard()
                 }
                 .padding()

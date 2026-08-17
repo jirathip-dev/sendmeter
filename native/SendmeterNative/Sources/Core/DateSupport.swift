@@ -64,6 +64,16 @@ public enum LocalDateSupport {
         return string(from: date, timeZone: timeZone)
     }
 
+    /// Days ahead of `referenceDate` (`daysAgo` going forward) — the web's
+    /// `daysAhead(n)` for the ACWR projection's future dates.
+    public static func daysAhead(
+        _ days: Int,
+        from referenceDate: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> String {
+        daysAgo(-days, from: referenceDate, timeZone: timeZone)
+    }
+
     public static func dayDistance(
         from startDate: String,
         to endDate: String,
@@ -74,6 +84,47 @@ public enum LocalDateSupport {
         else { return nil }
         let calendar = calendar(timeZone: timeZone)
         return calendar.dateComponents([.day], from: start, to: end).day
+    }
+
+    /// Whole local days from `referenceDate` to `date` (negative = past) — the
+    /// web's `dayOffsetFromToday`. Rounding (not `floor`) keeps a DST boundary
+    /// from under-counting a transition day.
+    public static func dayOffset(
+        from date: String,
+        to referenceDate: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> Int? {
+        guard let target = self.date(from: date, timeZone: timeZone),
+              let reference = self.date(from: string(from: referenceDate, timeZone: timeZone), timeZone: timeZone)
+        else { return nil }
+        return Int((target.timeIntervalSince(reference) / 86_400).rounded())
+    }
+
+    /// How a nearby day is named in prose: "yesterday" / "today" /
+    /// "tomorrow" / the plain weekday inside the coming week. Past ~6 days out
+    /// a bare weekday is ambiguous (which Thursday?), so it falls back to a
+    /// short date. Same as the web's `relativeDayLabel`.
+    public static func relativeDayLabel(
+        for date: String,
+        referenceDate: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> String {
+        guard let offset = dayOffset(from: date, to: referenceDate, timeZone: timeZone) else {
+            return date
+        }
+        if offset == -1 { return "yesterday" }
+        if offset == 0 { return "today" }
+        if offset == 1 { return "tomorrow" }
+        guard let day = self.date(from: date, timeZone: timeZone) else { return date }
+        var style: Date.FormatStyle
+        if offset > 1 && offset <= 6 {
+            style = Date.FormatStyle().weekday(.wide)
+        } else {
+            style = Date.FormatStyle().month(.abbreviated).day()
+        }
+        style.calendar = Calendar(identifier: .gregorian)
+        style.timeZone = timeZone
+        return day.formatted(style)
     }
 
     public static func iso8601String(from date: Date) -> String {
