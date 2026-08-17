@@ -28,6 +28,10 @@ struct ReadinessTrendCard: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.colorScheme) private var scheme
     @State private var selectedDate: Date?
+    /// Measured tooltip size, updated as the tooltip renders, so the clamp
+    /// pins the tooltip using its actual width/height rather than a guess
+    /// (review L1).
+    @State private var tooltipSize: CGSize = .zero
 
     /// The 14-day series, computed once per data change (or day rollover),
     /// not per body pass. `chartXSelection` fires on every touch-move sample
@@ -61,6 +65,18 @@ struct ReadinessTrendCard: View {
         }
     }
 
+    /// Whether ANY stored health row carries a readiness score — the whole
+    /// `model.healthMetrics` array (up to 60 rows), not just the 14-day
+    /// window. A user with months of history but a recent wear gap has plenty
+    /// of scored rows, so they get the chart (honestly empty in the window)
+    /// instead of a "no baseline yet" sentence (review N1). Also reads the
+    /// model live rather than the not-yet-rebuilt `snapshot`, so the first
+    /// body pass can't flash the wrong copy before `.onAppear` rebuilds
+    /// (review L3).
+    private var hasAnyScoredRowEver: Bool {
+        model.healthMetrics.contains { $0.readiness != nil }
+    }
+
     /// VoiceOver label for one day — matches the web's per-day aria-label.
     private func accessibilityText(for day: ReadinessDay) -> String {
         if let readiness = day.readiness {
@@ -83,16 +99,18 @@ struct ReadinessTrendCard: View {
                     }
                 }
 
-                // Empty state (review F6): "nothing synced" (no health rows at
-                // all) is different from "syncing but no baseline yet" (rows
-                // present, every readiness nil until ~7 days of HRV / resting-HR
-                // history) — giving baseline-less users the web's explanation
-                // instead of telling them to sync something already syncing.
+                // Empty state (review N1): gate on "no scored row at all in
+                // the model" — NOT on whether any score falls in the 14-day
+                // window. Nothing synced gets the sync prompt; rows present but
+                // every readiness nil gets the web's baseline explanation; and
+                // a user with scored history but a fully-gapped window still
+                // gets the chart, which renders its honest all-gap window.
+                // (The web always draws the 14 bars once `metrics.length > 0`.)
                 if model.healthMetrics.isEmpty {
                     Text("Sync Apple Health to see a 14-day readiness trend.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                } else if !hasAnyScore {
+                } else if !hasAnyScoredRowEver {
                     Text("Your metrics are syncing, but the score needs about a week of overnight HRV / resting-heart-rate history in Apple Health before the trend appears.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -112,7 +130,7 @@ struct ReadinessTrendCard: View {
         let days = TrainingMetrics.readinessSeries(metrics: model.healthMetrics)
         snapshot = ReadinessSnapshot(
             days: days,
-            yAxisGregorian: ReadinessSnapshot.gregorianAxisStyle
+            xAxisGregorian: ReadinessSnapshot.gregorianDateAxisStyle
         )
     }
 
@@ -160,13 +178,17 @@ struct ReadinessTrendCard: View {
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
 
             ForEach(snapshot.days) { day in
-                if let readiness = day.readiness {
-                    let seriesValue: Int = day.runIndex ?? 0
+                // `groupedIntoRuns` guarantees a non-nil runIndex for a
+                // scored day; binding it here instead of falling back to
+                // series 0, so a directly-constructed `ReadinessDay` (init
+                // defaults runIndex to nil) can never silently bridge every
+                // day into one series (review I3).
+                if let readiness = day.readiness, let runIndex = day.runIndex {
                     AreaMark(
                         x: .value("Day", day.dateValue),
                         yStart: .value("Baseline", 0),
                         yEnd: .value("Readiness", readiness),
-                        series: .value("Run", seriesValue)
+                        series: .value("Run", runIndex)
                     )
                     .foregroundStyle(ChartToken.health.areaGradient(scheme))
                     .interpolationMethod(.monotone)
@@ -174,7 +196,7 @@ struct ReadinessTrendCard: View {
                     LineMark(
                         x: .value("Day", day.dateValue),
                         y: .value("Readiness", readiness),
-                        series: .value("Run", seriesValue)
+                        series: .value("Run", runIndex)
                     )
                     .foregroundStyle(ChartToken.health.color(scheme))
                     .interpolationMethod(.monotone)
@@ -197,7 +219,7 @@ struct ReadinessTrendCard: View {
         }
         .chartXAxis {
             AxisMarks(values: .stride(by: .day, count: 3)) { _ in
-                AxisValueLabel(format: snapshot.yAxisGregorian)
+                AxisValueLabel(format: snapshot.xAxisGregorian)
                     .foregroundStyle(ChartToken.axis.color(scheme))
             }
         }
@@ -205,11 +227,13 @@ struct ReadinessTrendCard: View {
 
     /// The scrub tooltip. Positioned in the chart's coordinate space and
     /// clamped so it never overflows the plot frame: it anchors at the
-    /// scrubbed day's x but pins itself inside the frame's bounds, so a
-    /// populated "82 / Push / HRV 62ms RHR 48 Sleep 7.5h" tooltip (~220 pt)
-    /// stays on card at every scrub position and Dynamic Type size, and a
-    /// right-edge day (the common "today" case) clamps to just inside the
-    /// trailing edge instead of half-dropping off-card (review F3).
+    /// scrubbed day's x but is pinned inside the frame's bounds, so a
+    /// populated "82 / Push / HRV 62ms RHR 48 Sleep 7.5h" tooltip stays on
+    /// card at every scrub position and Dynamic Type size, and a right-edge
+    /// day (the common "today" case) clamps to just inside the trailing edge
+    /// instead of half-dropping off-card (review F3). The clamp uses the
+    /// tooltip's MEASURED size — a guessed half-width over-clamps at default
+    /// sizes and still overhangs at accessibility sizes (review L1).
     private func tooltip(for day: ReadinessDay, x: CGFloat, plotFrame: CGRect) -> some View {
         let content = VStack(alignment: .leading, spacing: 2) {
             if let readiness = day.readiness {
@@ -248,25 +272,45 @@ struct ReadinessTrendCard: View {
         .fixedSize()
 
         return content
-            .position(x: clampedTooltipX(x: x, plotFrame: plotFrame), y: 20)
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { tooltipSize = geo.size }
+                        .onChange(of: geo.size) { newSize in
+                            tooltipSize = newSize
+                        }
+                }
+            )
+            .position(
+                x: clampedTooltipX(x: x, plotFrame: plotFrame, tooltipWidth: tooltipSize.width),
+                y: clampedTooltipY(plotFrame: plotFrame, tooltipHeight: tooltipSize.height)
+            )
     }
 
     /// Clamp the tooltip's center inside the plot frame. `plotFrame.origin.x`
     /// is the y-axis label strip; the tooltip is anchored at the scrubbed
-    /// day's x but the center is clamped so the whole fixed-size tooltip stays
+    /// day's x but the center is clamped so the whole measured tooltip stays
     /// within the plot's bounds with ~8 pt margins. `.position` centers the
     /// view at the returned x, so a right-edge day (the common "today" case)
-    /// must land at `rightBound - halfWidth - 8`, not `rightBound - 8`, or
-    /// half the tooltip renders off-card (review F3).
-    private func clampedTooltipX(x: CGFloat, plotFrame: CGRect) -> CGFloat {
-        let leftBound = plotFrame.origin.x
-        let rightBound = plotFrame.maxX
-        // The tooltip is ~180-220 pt at default sizes; a 110 pt half-width
-        // guard keeps it on card even when the label row is present.
-        let halfWidth: CGFloat = 110
-        let minCenter = leftBound + halfWidth + 8
-        let maxCenter = rightBound - halfWidth - 8
+    /// must land at `rightBound - width/2 - 8`, not `rightBound - 8`, or half
+    /// the tooltip renders off-card (review F3/L1). Degenerate narrow plots
+    /// (minCenter > maxCenter) fall back to the plot's horizontal center.
+    private func clampedTooltipX(x: CGFloat, plotFrame: CGRect, tooltipWidth: CGFloat) -> CGFloat {
+        let width = tooltipWidth > 0 ? tooltipWidth : 90
+        let minCenter = plotFrame.minX + width / 2 + 8
+        let maxCenter = plotFrame.maxX - width / 2 - 8
+        if minCenter > maxCenter { return plotFrame.midX }
         return min(max(x, minCenter), maxCenter)
+    }
+
+    /// Clamp the tooltip's vertical center so a tall tooltip doesn't clip past
+    /// the plot's top/bottom edge.
+    private func clampedTooltipY(plotFrame: CGRect, tooltipHeight: CGFloat) -> CGFloat {
+        let height = tooltipHeight > 0 ? tooltipHeight : 60
+        let minCenter = plotFrame.minY + height / 2 + 4
+        let maxCenter = plotFrame.maxY - height / 2 - 4
+        if minCenter > maxCenter { return plotFrame.midY }
+        return min(max(minCenter, plotFrame.midY), maxCenter)
     }
 }
 
@@ -275,16 +319,17 @@ struct ReadinessTrendCard: View {
 /// lookups instead of ~34 series rebuilds (review F2).
 struct ReadinessSnapshot {
     let days: [ReadinessDay]
-    let yAxisGregorian: Date.FormatStyle
+    let xAxisGregorian: Date.FormatStyle
 
-    static let empty = ReadinessSnapshot(days: [], yAxisGregorian: Self.gregorianAxisStyle)
+    static let empty = ReadinessSnapshot(days: [], xAxisGregorian: Self.gregorianDateAxisStyle)
 
-    /// Gregorian-pinned `M/d` axis labels — everything else in this diff
-    /// routes through `LocalDateSupport`, and a Thai-region device defaults
-    /// `Date.FormatStyle` to the Buddhist calendar (review F10). Month/day are
-    /// identical between the calendars today; pinning now keeps a future
+    /// Gregorian-pinned `M/d` x-axis labels (review F10/I4: the style is used
+    /// on the chart's *x* axis; the `xAxisGregorian` name says so). Everything
+    /// else in this diff routes through `LocalDateSupport`, and a Thai-region
+    /// device defaults `Date.FormatStyle` to the Buddhist calendar. Month/day
+    /// are identical between the calendars today; pinning now keeps a future
     /// `.year()` from silently regressing.
-    static var gregorianAxisStyle: Date.FormatStyle {
+    static var gregorianDateAxisStyle: Date.FormatStyle {
         var style = Date.FormatStyle.dateTime.month(.defaultDigits).day()
         style.calendar = Calendar(identifier: .gregorian)
         style.locale = Locale(identifier: "en_US_POSIX")
@@ -327,16 +372,23 @@ struct ReadinessSeriesAccessibilityDescriptor: AXChartDescriptorRepresentable {
         ) { value in
             "\(Int(value))"
         }
+        // Gap days are OMITTED from the data points (the categorical x-axis
+        // keeps the remaining days in their positions). The label was already
+        // honest ("no data"), but the audio-graph pitch is derived from `y`,
+        // so a missing week used to play as a dive to the bottom of the range
+        // — F1's visual defect, delivered to VoiceOver users (review L4).
+        let points = days.compactMap { day -> AXDataPoint? in
+            guard let readiness = day.readiness else { return nil }
+            return AXDataPoint(
+                x: day.date,
+                y: Double(readiness),
+                label: "\(readiness)\(day.zone.map { " \($0)" } ?? "")"
+            )
+        }
         let series = AXDataSeriesDescriptor(
             name: "Readiness",
             isContinuous: true,
-            dataPoints: days.map { day in
-                AXDataPoint(
-                    x: day.date,
-                    y: day.readiness.map(Double.init) ?? 0,
-                    label: day.readiness.map { "\($0)" } ?? "no data"
-                )
-            }
+            dataPoints: points
         )
         return AXChartDescriptor(
             title: "Fourteen-day readiness trend",
