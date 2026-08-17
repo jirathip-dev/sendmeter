@@ -1,6 +1,7 @@
 import Auth
 import Combine
 import Foundation
+import SendLogHealthCore
 import SendmeterCore
 import SwiftUI
 
@@ -142,6 +143,14 @@ public final class AppModel: ObservableObject {
     private var nestedCancellables = Set<AnyCancellable>()
     private var didBootstrapUserID: UUID?
     private var recomputeGate = ReadinessRecomputeGate()
+    /// #661: silent foreground/appear health sync. The policy is pure Core
+    /// (`HealthRefreshPolicy`, unit-tested); `lastHealthRefreshStartedAt` is
+    /// the monotonic system-uptime time the most recent actual refresh started
+    /// (never wall-clock — an NTP step or manual clock change must not suppress
+    /// every refresh for the skew, finding 7). The window mirrors the web's
+    /// `FOREGROUND_SYNC_COALESCE_MS` (5s).
+    private let healthRefreshPolicy = HealthRefreshPolicy(coalescingWindow: 5)
+    private var lastHealthRefreshStartedAt: TimeInterval?
 
     /// Live workout mirror cursor (two producers: WC beat + realtime row,
     /// one merge discipline — see LiveWorkoutMirror).
@@ -202,6 +211,7 @@ public final class AppModel: ObservableObject {
         let tindeq = self.tindeq
         let auth = self.auth
         let weather = self.weather
+        let health = self.health
 
         watch.onSessionRequested = { [weak self] in
             await self?.relayValidSessionToWatch(guaranteed: true)
@@ -255,6 +265,9 @@ public final class AppModel: ObservableObject {
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &nestedCancellables)
         weather.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &nestedCancellables)
+        health.objectWillChange
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &nestedCancellables)
         // #627/#628: a disconnect ends the gauge session (auto-log) — unless
@@ -471,7 +484,7 @@ public final class AppModel: ObservableObject {
         await refreshLiveWorkoutRow()
         if UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") {
             await health.ensureBackgroundObserversRegistered()
-            await syncHealth(requestAuthorization: false)
+            await silentHealthRefresh(trigger: .foreground)
         }
         // Last on purpose: the drain's "Saved" toasts above must not clobber
         // the loss notice — the user hearing about the lost rep is the point.
@@ -1378,6 +1391,12 @@ public final class AppModel: ObservableObject {
 
     // MARK: Health and account
 
+    /// The user-facing sync entry point (Settings' Connect/Sync). With
+    /// `requestAuthorization` it also requests HealthKit permission and
+    /// records the health-authorized flag that gates the automatic refresh
+    /// paths. A manual sync is authoritative (#109: bypasses the post-noon
+    /// lock). The start stamp keeps a foreground/appear right after from
+    /// re-syncing within the coalescing window.
     public func syncHealth(requestAuthorization: Bool) async {
         guard let userID = currentUserID else { return }
         await perform {
@@ -1385,19 +1404,48 @@ public final class AppModel: ObservableObject {
                 try await self.health.requestAuthorization()
                 UserDefaults.standard.set(true, forKey: "sendmeter.native.health-authorized")
             }
-            try await self.computeAndPublishReadiness(userID: userID)
+            self.lastHealthRefreshStartedAt = ProcessInfo.processInfo.systemUptime
+            try await self.computeAndPublishReadiness(userID: userID, trigger: .manual)
             self.toastMessage = "Apple Health synced."
+        }
+    }
+
+    /// #661: the silent refresh trigger for Dashboard appear and app
+    /// foreground (and a manual pull-to-refresh). Runs the recompute ONLY
+    /// when the coalescing policy says so. The last reading is always kept on
+    /// failure — a throwing query or a successful-but-empty read never blanks
+    /// a scored today row and never fabricates a score (see
+    /// `ReadinessSyncPolicy`). A failure is swallowed, not surfaced: this is
+    /// a background-quality refresh (web `runForegroundSync` parity), so a
+    /// HealthKit hiccup must not throw an error banner over the last reading.
+    /// `.manual` maps to the authoritative #109 trigger and so may surface the
+    /// honest empty state; appear/foreground/background are automatic.
+    public func silentHealthRefresh(trigger: HealthRefreshTrigger) async {
+        guard UserDefaults.standard.bool(forKey: "sendmeter.native.health-authorized") else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard healthRefreshPolicy.shouldRefresh(
+            trigger: trigger,
+            lastStartedAt: lastHealthRefreshStartedAt,
+            now: now
+        ) else { return }
+        guard let userID = currentUserID else { return }
+        lastHealthRefreshStartedAt = now
+        do {
+            try await computeAndPublishReadiness(userID: userID, trigger: trigger.syncTrigger)
+        } catch {
+            // Silent: keep the last reading on failure.
         }
     }
 
     /// A background HealthKit observer fire. Same path as foreground sync:
     /// recompute via RecoveryEngine, upsert `health_metrics`, relay to the
-    /// watch. Single-flight with `syncHealth` — a fire during a foreground
-    /// sync coalesces into at most one follow-up instead of double-computing.
+    /// watch. Single-flight with the other triggers — a fire during a
+    /// foreground sync coalesces into at most one follow-up instead of
+    /// double-computing.
     private func handleHealthBackgroundUpdate() async {
         guard let userID = currentUserID else { return }
         await perform {
-            try await self.computeAndPublishReadiness(userID: userID)
+            try await self.computeAndPublishReadiness(userID: userID, trigger: .automatic)
         }
     }
 
@@ -1405,21 +1453,63 @@ public final class AppModel: ObservableObject {
     /// pass runs at a time and a concurrent trigger (foreground or
     /// background) coalesces into at most one follow-up. The gate is entered
     /// before the first await so two fires cannot both start a compute.
-    private func computeAndPublishReadiness(userID: UUID) async throws {
+    ///
+    /// Per-pass (mirrors the shipped plugin's `performPass`):
+    /// - ACWR is read from the SERVER (`fetchSessionLoads`), never the
+    ///   in-memory `sessions` — a cold-launch appear must not compute against
+    ///   an empty session list (a fabricated score up to 20 points high,
+    ///   #661 F2). An ACWR fetch failure fails the whole pass (last reading
+    ///   kept), rather than scoring with a missing load penalty.
+    /// - `ReadinessWritePolicy` (#109) decides whether an automatic trigger
+    ///   may overwrite today's score (frozen morning score after noon).
+    /// - `ReadinessSyncPolicy` decides what to relay vs upsert (never a
+    ///   blanked score, never a stamped `computed_at` over a kept row).
+    private func computeAndPublishReadiness(userID: UUID, trigger: SyncTrigger) async throws {
         guard recomputeGate.request() == .start else { return }
         do {
             while true {
-                let metric = try await health.computeTodayMetric(acwr: acwr.ratio)
-                try await repository.upsertHealthMetric(metric, userID: userID)
-                healthMetrics.removeAll { $0.date == metric.date }
-                healthMetrics.insert(metric, at: 0)
-                watch.publishReadiness(metric)
+                let now = Date()
+                // Fail-open (plugin parity): a fetch blip means "not yet
+                // locked", i.e. an automatic sync may still overwrite.
+                let existing = try? await repository.fetchTodayHealthMetric()
+                let allowOverwrite = ReadinessWritePolicy.shouldOverwriteReadiness(
+                    existingReadiness: existing?.readiness,
+                    existingRowDate: existing?.date,
+                    now: now,
+                    trigger: trigger
+                )
+                let acwr = try await serverACWRRatio()
+                let fresh = try await health.computeTodayMetric(acwr: acwr)
+                let plan = ReadinessSyncPolicy.plan(
+                    existingToday: existing,
+                    freshlyComputed: fresh,
+                    allowReadinessOverwrite: allowOverwrite
+                )
+                try await repository.upsertHealthMetric(plan.upsertMetric, userID: userID)
+                healthMetrics.removeAll { $0.date == fresh.date }
+                healthMetrics.insert(plan.relayMetric, at: 0)
+                watch.publishReadiness(plan.relayMetric)
                 guard recomputeGate.complete() == .rerun else { return }
             }
         } catch {
             recomputeGate.cancel()
             throw error
         }
+    }
+
+    /// ACWR ratio from the server's session loads over the EWMA lookback
+    /// window (#661 F2) — never from the in-memory `sessions`.
+    private func serverACWRRatio() async throws -> Double? {
+        let loads = try await repository.fetchSessionLoads()
+        var loadByDate: [String: Double] = [:]
+        for load in loads { loadByDate[load.date, default: 0] += load.load }
+        var dailyLoads: [Double] = []
+        dailyLoads.reserveCapacity(TrainingMetrics.ewmaLookbackDays)
+        for offset in stride(from: TrainingMetrics.ewmaLookbackDays - 1, through: 0, by: -1) {
+            let day = LocalDateSupport.daysAgo(offset)
+            dailyLoads.append(loadByDate[day] ?? 0)
+        }
+        return TrainingMetrics.acwrRatio(dailyLoads: dailyLoads)
     }
 
     public func deleteAccount() async {

@@ -15,12 +15,20 @@ let package = Package(
         // The core library REUSES the watch's pure model code rather than
         // duplicating it: RPEDepletion (W'-depletion RPE prediction, #627)
         // and HandsFreeForce (the hands-free arming state machine, #628).
-        .package(path: "../../ios/App/SendLogWatchCore")
+        .package(path: "../../ios/App/SendLogWatchCore"),
+        // #661 F3: `SyncTrigger`/`ReadinessWritePolicy` (#109) live in the
+        // readiness core the shipped plugin shares — SendmeterCore maps its
+        // triggers to the same `SyncTrigger` and consults the same policy
+        // rather than reimplementing either.
+        .package(path: "../../native-plugins/sendlog-health-core")
     ],
     targets: [
         .target(
             name: "SendmeterCore",
-            dependencies: ["SendLogWatchCore"],
+            dependencies: [
+                "SendLogWatchCore",
+                .product(name: "SendLogHealthCore", package: "sendlog-health-core")
+            ],
             // #649: ChartTheme.swift lives at Sources/App/ChartTheme.swift
             // (the issue's placement, next to DesignSystem.swift) but must be
             // unit-testable via `swift test`, which only compiles this
