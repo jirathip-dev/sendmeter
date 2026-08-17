@@ -1127,6 +1127,10 @@ public final class AppModel: ObservableObject {
             $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedTag
                 && !pendingRecordings.keys.contains($0.id)
                 && modalityFilter($0, modality: modality)
+                // #651: warm-up/prehab (submaximal) and salvage blobs
+                // (inflated duration / deflated avg) corrupt CF/W′ — exclude
+                // them exactly like the web's `curveCandidateRecordings`.
+                && ZoneMix.isCurveFitCandidate($0)
         }
         guard !byTag.isEmpty else { return nil }
         let candidates = ForceCurveEngine.pickCurveRecordings(byTag)
@@ -1173,6 +1177,11 @@ public final class AppModel: ObservableObject {
             $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedTag
                 && !pendingRecordings.keys.contains($0.id)
                 && ($0.protocolMode != .reverseAction || $0.capacityEvidence == true)
+                // #651: effort-only for PR/trend — warm-up/prehab never win by
+                // walkover. Recovery blobs are deliberately NOT excluded here:
+                // a blob's peakKg is a max over samples, unaffected by rest
+                // contamination (web #486 asymmetry).
+                && ZoneMix.isEffortRecording($0)
         }
         let exactSide = byTag.filter { side == .unspecified || $0.side == side }
         let metadata: [TindeqRecording]
@@ -1193,7 +1202,9 @@ public final class AppModel: ObservableObject {
             )
         }
 
-        let candidates = ForceCurveEngine.pickCurveRecordings(metadata)
+        let candidates = ForceCurveEngine.pickCurveRecordings(
+            metadata.filter(ZoneMix.isCurveFitCandidate)
+        )
         let repository = self.repository
         let sampleSets = await withTaskGroup(of: [TindeqSample]?.self) { group in
             for candidate in candidates {
@@ -1210,6 +1221,11 @@ public final class AppModel: ObservableObject {
         }
 
         return await Task.detached(priority: .userInitiated) {
+            // #651: `metadata` here is EFFORT-only (PR/trend keep a recovered
+            // blob's valid peakKg), while `sampleSets` came from
+            // curve-fit candidates — a salvage blob's inflated duration /
+            // deflated avg never reaches the CF/W′ regression. Web #486
+            // asymmetry preserved.
             ForceCurveEngine.references(metadata: metadata, sampleSets: sampleSets)
         }.value
     }
