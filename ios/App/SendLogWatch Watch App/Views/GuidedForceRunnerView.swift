@@ -1,3 +1,4 @@
+import Combine
 import SendLogWatchCore
 import SwiftUI
 
@@ -15,10 +16,15 @@ struct GuidedForceRunnerView: View {
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
 
     /// #611: the movement mode's live trace, refreshed at the same 10 Hz
-    /// cadence ForceGaugeView uses for its sparkline. `recentSamples()` is
-    /// windowed off the manager's last sample, so between sets the strip
-    /// keeps the last measured trace and a cadence-only run (no samples ever)
-    /// simply stays empty — never fabricated data.
+    /// cadence ForceGaugeView uses for its sparkline. The timer is gated on
+    /// `tindeq.status == .measuring` — the same live read ForceGaugeView uses
+    /// (re-evaluated every tick) — and `sparkSamples` is cleared whenever the
+    /// gauge is not measuring, so a set-rest never keeps painting the previous
+    /// set's last 10 s as a "live" trace: the strip simply disappears between
+    /// sets, matching the phone's reverse-action display, and reappears the
+    /// instant a movement set's samples land. `recentSamples()` windows off
+    /// the manager's last sample, so a cadence-only run (no samples ever)
+    /// stays empty — never fabricated data.
     @State private var sparkSamples: [(t: Double, kg: Double)] = []
     private let sparkTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
@@ -62,11 +68,34 @@ struct GuidedForceRunnerView: View {
         .interactiveDismissDisabled(true)
         .watchCanvas()
         .onReceive(sparkTimer) { _ in
-            // Ungated by `status == .measuring` on purpose: a movement run
-            // that starts cadence-only and connects mid-run must pick up the
-            // measured trace the moment samples land.
+            // Gated on `tindeq.status == .measuring` (a live read, exactly as
+            // ForceGaugeView does it — a movement run that connects mid-run
+            // flips status and the next tick picks the trace up). Clearing
+            // `sparkSamples` when not measuring means a rest between sets
+            // never renders the previous set's stale trace as live. The
+            // screenshot fixture owns its own seeded trace, so the timer
+            // stands down entirely under a fixture launch.
+            guard ScreenshotFixtures.guidedRun == nil else { return }
             if display.isMovement {
-                sparkSamples = tindeq.recentSamples()
+                if tindeq.status == .measuring {
+                    sparkSamples = tindeq.recentSamples()
+                } else if !sparkSamples.isEmpty {
+                    sparkSamples = []
+                }
+            }
+        }
+        .task {
+            // #611: the movement fixture can't drive the real `TindeqManager`
+            // (it is idle under a screenshot launch), so seed the same
+            // deterministic trace ForceGaugeView's `forceLive` fixture uses —
+            // this is what makes the strip (and F2's layout pressure) actually
+            // reachable by the layout test. Presentation-only.
+            if display.isMovement, ScreenshotFixtures.guidedRun != nil {
+                sparkSamples = [
+                    (0.0, 0.0), (0.2, 5.8), (0.4, 12.4), (0.6, 18.9),
+                    (0.8, 15.7), (1.0, 23.6), (1.2, 20.8), (1.4, 27.1),
+                    (1.6, 24.9), (1.8, 28.4), (2.0, 26.8),
+                ]
             }
         }
     }
@@ -100,17 +129,16 @@ struct GuidedForceRunnerView: View {
                         compactSetRep
                     }
 
-                    Text(display.countdownText)
-                        .font(.system(size: 38, weight: .heavy, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(WatchPalette.textPrimary)
-                        .minimumScaleFactor(0.56)
-                        .lineLimit(1)
-                        .contentTransition(reduceMotion ? .identity : .numericText())
-                        .accessibilityLabel("Phase countdown")
-                        .accessibilityValue("\(display.countdownText) seconds")
-
-                    movementSparkline(height: 20)
+                    // #611: on micro the movement trace floats BEHIND the
+                    // countdown (ForceGaugeView's 40mm treatment) instead of
+                    // spending a dedicated row — a rigid 20pt strip would be
+                    // the one element in the card that cannot give ground
+                    // while every text element around it scales, and the
+                    // non-scrolling live screen would clip Stop. The countdown
+                    // keeps a subtle backing only while the trace is present
+                    // so the number it is pacing never drowns in it; static
+                    // holds keep the countdown they already had.
+                    microCountdown
 
                     HStack(spacing: 3) {
                         compactWorkStatus
@@ -160,7 +188,10 @@ struct GuidedForceRunnerView: View {
                         .accessibilityLabel("Phase countdown")
                         .accessibilityValue("\(display.countdownText) seconds")
 
-                    movementSparkline(height: 22)
+                    // #611: a flexible trace (never a rigid strip) so this
+                    // card yields to the surrounding text under Dynamic Type
+                    // instead of pushing Stop below the fold (F2).
+                    movementSparkline(minHeight: 18, maxHeight: 24)
 
                     HStack(spacing: 4) {
                         compactWorkStatus
@@ -305,7 +336,9 @@ struct GuidedForceRunnerView: View {
                     .foregroundStyle(WatchPalette.textTertiary)
                     .accessibilityHidden(true)
 
-                movementSparkline(height: 26)
+                // #611: flexible trace — rich screens have room, but it still
+                // yields rather than being the one rigid element (F2).
+                movementSparkline(minHeight: 22, maxHeight: 30)
 
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 8) {
@@ -397,13 +430,45 @@ struct GuidedForceRunnerView: View {
     /// #611: the movement mode's live force strip, rendered only when a
     /// reverse-action run has at least two measured samples — a cadence-only
     /// run (or the prepare before the first pull) shows nothing, never a
-    /// fabricated trace. Decorative: hidden from accessibility.
+    /// fabricated trace. Flexible within `minHeight...maxHeight` so it is the
+    /// element that gives ground under Dynamic Type pressure, never the
+    /// rigid strip that pushes Stop off-screen (F2). Decorative: hidden from
+    /// accessibility.
     @ViewBuilder
-    private func movementSparkline(height: CGFloat) -> some View {
+    private func movementSparkline(minHeight: CGFloat, maxHeight: CGFloat) -> some View {
         if display.isMovement, sparkSamples.count >= 2 {
             Sparkline(samples: sparkSamples)
-                .frame(height: height)
+                .frame(minHeight: minHeight, maxHeight: maxHeight)
                 .accessibilityHidden(true)
+        }
+    }
+
+    /// The micro countdown with the #611 movement trace layered behind it on
+    /// the smallest 40mm surface — no dedicated row, matching ForceGaugeView's
+    /// behind-the-readout precedent. Static holds render the plain countdown
+    /// unchanged.
+    @ViewBuilder
+    private var microCountdown: some View {
+        ZStack {
+            movementSparkline(minHeight: 16, maxHeight: 22)
+                .opacity(0.55)
+                .allowsHitTesting(false)
+            Text(display.countdownText)
+                .font(.system(size: 38, weight: .heavy, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(WatchPalette.textPrimary)
+                .minimumScaleFactor(0.56)
+                .lineLimit(1)
+                .contentTransition(reduceMotion ? .identity : .numericText())
+                .padding(.horizontal, 6)
+                .background(
+                    display.isMovement
+                        ? AnyShapeStyle(WatchPalette.canvas.opacity(0.55))
+                        : AnyShapeStyle(.clear),
+                    in: Capsule()
+                )
+                .accessibilityLabel("Phase countdown")
+                .accessibilityValue("\(display.countdownText) seconds")
         }
     }
 
@@ -462,9 +527,10 @@ private struct GuidedRunDisplay {
         progress = fixture.progress
         isMeasured = fixture.isMeasured
         isCadenceOnly = fixture.isCadenceOnly
-        // The screenshot fixture is a static-hold run ("Static PR Ladder");
-        // no movement trace is exercised on that surface.
-        isMovement = false
+        // #611: the fixture owns `isMovement` so the movement fixture (and
+        // its sparkline strip) is reachable by the layout test — see the
+        // `forceGuidedRunMovement` fixture comment.
+        isMovement = fixture.isMovement
         protocolName = fixture.protocolName
         currentSet = fixture.currentSet
         totalSets = fixture.totalSets

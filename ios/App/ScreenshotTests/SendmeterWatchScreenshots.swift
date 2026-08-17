@@ -1227,13 +1227,28 @@ final class SendmeterWatchScreenshots: XCTestCase {
     /// with fixed display data (`RootView`'s fixture bypass +
     /// `GuidedForceRunnerView.display`), the same presentation-only pattern
     /// `forceSetup`/`forceConnected`/etc. already use for `ForceGaugeView`.
+    ///
+    /// #611 (F3): the layout guard that F2 threatened runs against BOTH the
+    /// static-hold fixture and the new movement fixture, so the strip the
+    /// feature adds is exercised — with the Stop control still fully visible
+    /// — instead of being structurally unreachable on the only test this view
+    /// has. The scheme runs this against the 40mm and 49mm destinations.
     func testForceGuidedRunRendersActivePhase() throws {
-        let app = launchFixture("forceGuidedRun")
+        try assertGuidedRunLayout(fixture: "forceGuidedRun", captureName: "force-guided-run")
+    }
+
+    func testForceGuidedRunMovementRendersActivePhase() throws {
+        try assertGuidedRunLayout(fixture: "forceGuidedRunMovement", captureName: "force-guided-run-movement")
+    }
+
+    private func assertGuidedRunLayout(fixture: String, captureName: String) throws {
+        let app = launchFixture(fixture)
+        defer { app.terminate() }
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
 
         let stop = app.buttons["force-guided-stop"]
-        XCTAssertTrue(stop.waitForExistence(timeout: 10), "fixture should render the Stop control")
-        assertFullyVisible(stop, in: app, fixture: "forceGuidedRun")
+        XCTAssertTrue(stop.waitForExistence(timeout: 10), "fixture \(fixture) should render the Stop control")
+        assertFullyVisible(stop, in: app, fixture: fixture)
 
         let phaseCard = app.descendants(matching: .any)
             .matching(NSPredicate(
@@ -1241,10 +1256,10 @@ final class SendmeterWatchScreenshots: XCTestCase {
                 "force-guided-phase-card", "force-guided-compact-card", "force-guided-micro-card"
             ))
             .firstMatch
-        XCTAssertTrue(phaseCard.waitForExistence(timeout: 5), "fixture should render one of the phase-card layouts")
+        XCTAssertTrue(phaseCard.waitForExistence(timeout: 5), "fixture \(fixture) should render one of the phase-card layouts")
 
         let capture = XCTAttachment(screenshot: app.screenshot())
-        capture.name = "force-guided-run"
+        capture.name = captureName
         capture.lifetime = .keepAlways
         add(capture)
     }
