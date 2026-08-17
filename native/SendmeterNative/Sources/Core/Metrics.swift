@@ -211,6 +211,63 @@ public enum TrainingMetrics {
         }
         return PhaseStepBackSuggestion(suggested: streak >= 3, streakDays: streak)
     }
+
+    /// The per-day readiness series the Dashboard trend chart plots (#664) —
+    /// web `ReadinessCard.tsx` parity. The web derives a date-indexed lookup
+    /// over the last 14 calendar days, filling gaps with "no data"; this is
+    /// the same derivation, returning the window oldest → newest. Metrics
+    /// outside the window (or days with no row) fall back to nil values, so
+    /// the chart always has a full 14-bar axis.
+    ///
+    /// Contiguous non-nil days are grouped into "runs" via `runIndex`
+    /// (nil on a gap day): Swift Charts bridges nothing across a run break,
+    /// so a week without a watch plots an honest gap instead of a
+    /// plunge-to-zero line. The web parallels this with the 2 px empty stub
+    /// (`ReadinessCard.tsx`) — same visible meaning, native marks.
+    public static func readinessSeries(
+        metrics: [HealthMetric],
+        days: Int = 14,
+        referenceDate: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> [ReadinessDay] {
+        precondition(days > 0, "days must be positive")
+        // Last-wins on a duplicate date, same as the web's `new Map(...)`.
+        let byDate = Dictionary(metrics.map { ($0.date, $0) }, uniquingKeysWith: { _, new in new })
+        let window = (0..<days).reversed().map { offset in
+            let day = LocalDateSupport.daysAgo(offset, from: referenceDate, timeZone: timeZone)
+            let metric = byDate[day]
+            return ReadinessDay(
+                date: day,
+                dateValue: LocalDateSupport.date(from: day, timeZone: timeZone) ?? referenceDate,
+                readiness: metric?.readiness,
+                zone: metric?.zone,
+                hrvSDNNMilliseconds: metric?.hrvSDNNMilliseconds,
+                restingHeartRate: metric?.restingHeartRate,
+                sleepHours: metric?.sleepHours
+            )
+        }
+        return groupedIntoRuns(window)
+    }
+
+    /// Assigns a `runIndex` to each contiguous run of non-nil readiness days,
+    /// oldest → newest. Gap days (nil readiness) keep `runIndex` nil. Two
+    /// days share a runIndex iff they are adjacent in the window AND both
+    /// have a score.
+    static func groupedIntoRuns(_ window: [ReadinessDay]) -> [ReadinessDay] {
+        var runIndex = 0
+        var previousScored = false
+        var result: [ReadinessDay] = []
+        result.reserveCapacity(window.count)
+        for day in window {
+            let scored = day.readiness != nil
+            if scored && !previousScored {
+                runIndex += 1
+            }
+            result.append(day.withRunIndex(scored ? runIndex : nil))
+            previousScored = scored
+        }
+        return result
+    }
 }
 
 public struct EWMALoadState: Equatable, Sendable {
@@ -262,5 +319,56 @@ public struct PhaseStepBackSuggestion: Equatable, Sendable {
     public init(suggested: Bool, streakDays: Int) {
         self.suggested = suggested
         self.streakDays = streakDays
+    }
+}
+
+/// One day of the Dashboard's 14-day readiness trend series (#664). `dateValue`
+/// is the parsed chart x-coordinate (a stable Gregorian date in local time);
+/// the metric fields are nil when that day has no `health_metrics` row, so
+/// the chart can render a full window with honest gaps. `runIndex` groups
+/// contiguous scored days — the chart must pass it through `series:` so a gap
+/// between runs is never bridged by interpolation.
+public struct ReadinessDay: Equatable, Identifiable, Sendable {
+    public var id: String { date }
+    public let date: String
+    public let dateValue: Date
+    public let readiness: Int?
+    public let zone: String?
+    public let hrvSDNNMilliseconds: Double?
+    public let restingHeartRate: Double?
+    public let sleepHours: Double?
+    public let runIndex: Int?
+
+    public init(
+        date: String,
+        dateValue: Date,
+        readiness: Int?,
+        zone: String?,
+        hrvSDNNMilliseconds: Double?,
+        restingHeartRate: Double?,
+        sleepHours: Double?,
+        runIndex: Int? = nil
+    ) {
+        self.date = date
+        self.dateValue = dateValue
+        self.readiness = readiness
+        self.zone = zone
+        self.hrvSDNNMilliseconds = hrvSDNNMilliseconds
+        self.restingHeartRate = restingHeartRate
+        self.sleepHours = sleepHours
+        self.runIndex = runIndex
+    }
+
+    func withRunIndex(_ runIndex: Int?) -> ReadinessDay {
+        ReadinessDay(
+            date: date,
+            dateValue: dateValue,
+            readiness: readiness,
+            zone: zone,
+            hrvSDNNMilliseconds: hrvSDNNMilliseconds,
+            restingHeartRate: restingHeartRate,
+            sleepHours: sleepHours,
+            runIndex: runIndex
+        )
     }
 }

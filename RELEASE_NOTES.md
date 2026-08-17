@@ -16,6 +16,7 @@ CI, dependency updates, and refactors unless users experience a change.
 - Apple Watch now shows quarantined uploads — items the server has stopped accepting — with the failing stage, HTTP status, PostgREST code, a trimmed error message, the attempt count and the quarantine time, plus what happens next for each kind (permanently rejected vs. retrying automatically). Home's action page links to this list.
 - Apple Watch: uploads stuck in the set-aside state can now be retried by hand — a "Retry stuck uploads" action moves the retryable ones straight back to the upload queue and tries them immediately, instead of waiting out the automatic week-long backoff. Permanently rejected items are shown but never offered as a retry.
 - Apple Watch: when a stuck upload leaves the set-aside state — retried by hand or by the automatic weekly retry — the watch keeps a small record of why it was set aside (failing stage, HTTP status, error code and when), shown under Recent history in Quarantined uploads, so a sync problem that has since cleared stays diagnosable.
+- The native Dashboard now shows a 14-day readiness trend chart under the score ring, with the recover/push zone thresholds at 40 and 70, a scrub tooltip with each day's readiness plus HRV/resting-HR/sleep context, and VoiceOver-accessible per-day labels — matching the web Readiness card.
 
 ### Improved
 
