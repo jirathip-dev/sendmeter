@@ -17,11 +17,11 @@ struct TrainingLoadSheet: View {
         )
     }
 
-    private var daily: [String: TrainingLoad.DailyLoad] {
+    private var daily: [String: DailyLoad] {
         TrainingLoad.dailyLoads(sessions: model.sessions)
     }
 
-    private var currentDelta: TrainingLoad.WeekDelta? {
+    private var currentDelta: WeekDelta? {
         let weeks = model.weeklyLoads
         guard weeks.count >= 2 else { return nil }
         return TrainingLoad.weekDelta(
@@ -72,14 +72,19 @@ struct TrainingLoadSheet: View {
         }
     }
 
-    private func deltaLabel(_ delta: TrainingLoad.WeekDelta) -> String? {
+    private func deltaLabel(_ delta: WeekDelta) -> String? {
         let pct = Int(abs(delta.pct).rounded())
         return "\(delta.arrow) \(pct)% vs prior wk"
     }
 
-    private func deltaColor(_ delta: TrainingLoad.WeekDelta) -> Color {
+    /// #649 rule: chart views never read `SendmeterStyle.*` (static, no
+    /// appearance switch) — the delta chip uses ChartToken semantics matching
+    /// the web's `var(--success)` / `var(--danger)` / `var(--ink-muted)`.
+    private func deltaColor(_ delta: WeekDelta) -> Color {
         if delta.isFlat { return .secondary }
-        return delta.isUp ? SendmeterStyle.optimal : SendmeterStyle.alert
+        return delta.isUp
+            ? ChartToken.optimal.color(scheme)
+            : ChartToken.alert.color(scheme)
     }
 
     // MARK: - Daily load

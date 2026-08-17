@@ -9,13 +9,17 @@ import SwiftUI
 /// selectable. Cells are fixed-size squares derived from the available width,
 /// so 53 columns always fit with no horizontal scrolling — even on an SE.
 struct ContributionHeatmapView: View {
-    let daily: [String: TrainingLoad.DailyLoad]
+    let daily: [String: DailyLoad]
     var weeks: Int = 53
     var unit: String = "AU"
     var today: Date = Date()
 
     @Environment(\.colorScheme) private var scheme
     @State private var selectedDate: String?
+    /// Day-rollover refresh (same convention as ReadinessTrendCard): `today`
+    /// is captured at init, so an app left open across midnight bumps this
+    /// via `.NSCalendarDayChanged` and the grid slides forward a day.
+    @State private var referenceDate: Date
 
     private static let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     private static let weekdayRows = [1, 3, 5] // Mon / Wed / Fri (0-indexed)
@@ -26,15 +30,31 @@ struct ContributionHeatmapView: View {
     private let hSpacing: CGFloat = 6
     private let monthLabelHeight: CGFloat = 14
 
+    init(
+        daily: [String: DailyLoad],
+        weeks: Int = 53,
+        unit: String = "AU",
+        today: Date = Date()
+    ) {
+        self.daily = daily
+        self.weeks = weeks
+        self.unit = unit
+        self.today = today
+        _referenceDate = State(initialValue: today)
+    }
+
     private var grid: HeatmapGrid {
-        TrainingLoad.heatmapGrid(daily: daily, today: today, weeks: weeks)
+        TrainingLoad.heatmapGrid(daily: daily, today: referenceDate, weeks: weeks)
     }
 
     var body: some View {
         let grid = self.grid
         VStack(alignment: .leading, spacing: 8) {
             heatmap(grid: grid)
-            legend(grid: grid)
+            legend
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            referenceDate = Date()
         }
     }
 
@@ -123,8 +143,9 @@ struct ContributionHeatmapView: View {
 
     private func tooltip(for cell: HeatmapCell, cellSize: CGFloat, gridWidth: CGFloat) -> some View {
         let row = rowIndex(of: cell) ?? 0
-        let x = weekdayColumnWidth + hSpacing + columnIndex(of: cell) * (cellSize + gap) + cellSize / 2
-        let clampedX = min(max(x, 64), max(gridWidth - 64, 64))
+        let columnX = weekdayColumnWidth + hSpacing
+            + CGFloat(columnIndex(of: cell)) * (cellSize + gap) + cellSize / 2
+        let clampedX = min(max(columnX, 64), max(gridWidth - 64, 64))
         let y = row < 4
             ? monthLabelHeight + CGFloat(row + 1) * (cellSize + gap) + 8
             : monthLabelHeight + CGFloat(row) * (cellSize + gap) - 8
@@ -214,13 +235,14 @@ struct ContributionHeatmapView: View {
     }
 
     /// Activity types that actually appear (for the legend), in the palette
-    /// order — unknown ids sort last (web `presentTypes`).
-    private func legendTypes(grid: HeatmapGrid) -> [String] {
-        var seen: [String] = []
-        for column in grid.columns {
-            for cell in column where cell.value > 0 && !cell.type.isEmpty {
-                if !seen.contains(cell.type) { seen.append(cell.type) }
-            }
+    /// order — unknown ids sort last. Mirrors the web's `presentTypes`
+    /// (ContributionHeatmap.tsx), which scans the full `values` map — not the
+    /// rendered grid — so an activity whose sessions all fall outside the
+    /// 53-week window still shows up in the legend.
+    private var legendTypes: [String] {
+        var seen: Set<String> = []
+        for entry in daily.values where entry.total > 0 && !entry.type.isEmpty {
+            seen.insert(entry.type)
         }
         return seen.sorted { lhs, rhs in
             let lhsIndex = ChartActivityHue.allCases.firstIndex { $0.rawValue == lhs } ?? .max
@@ -229,8 +251,8 @@ struct ContributionHeatmapView: View {
         }
     }
 
-    private func legend(grid: HeatmapGrid) -> some View {
-        let types = legendTypes(grid: grid)
+    private var legend: some View {
+        let types = legendTypes
         if types.isEmpty {
             return AnyView(EmptyView())
         }
