@@ -482,8 +482,9 @@ struct HistoryView: View {
 
     private var uploadBanner: some View {
         let phonePending = model.queuedWriteCount
+        let phoneQuarantined = model.quarantinedWrites?.count ?? 0
         let watchPending = model.watch.pendingSyncCount ?? 0
-        if phonePending > 0 || watchPending > 0 {
+        if phonePending > 0 || watchPending > 0 || phoneQuarantined > 0 {
             return AnyView(
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "externaldrive.badge.icloud")
@@ -491,7 +492,7 @@ struct HistoryView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Uploads waiting")
                             .font(.subheadline.weight(.semibold))
-                        Text(uploadMessage(phone: phonePending, watch: watchPending))
+                        Text(uploadMessage(phone: phonePending, watch: watchPending, quarantined: phoneQuarantined))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -500,6 +501,11 @@ struct HistoryView: View {
                         retryingUploads = true
                         Task {
                             await model.retryAllQueuedWrites()
+                            // #675: the banner also surfaces quarantined items
+                            // ("rejected, not retrying"), so its one Retry
+                            // action re-attempts those too — the web's History
+                            // "Retry now" covers stuck entries the same way.
+                            await model.retryQuarantinedWrites()
                             retryingUploads = false
                         }
                     } label: {
@@ -517,11 +523,14 @@ struct HistoryView: View {
         return AnyView(EmptyView())
     }
 
-    private func uploadMessage(phone: Int, watch: Int) -> String {
+    private func uploadMessage(phone: Int, watch: Int, quarantined: Int) -> String {
         var parts: [String] = []
         if phone > 0 { parts.append("\(phone) queued on this iPhone") }
         if watch > 0 { parts.append("\(watch) on your watch") }
-        return parts.joined(separator: " · ") + ". Queued data is durable on device and retries automatically."
+        if quarantined > 0 {
+            parts.append("\(quarantined) rejected, not retrying")
+        }
+        return parts.joined(separator: " · ") + ". Queued data is durable on device and retries automatically; rejected items never retry on their own — manage them in Settings."
     }
 
     // MARK: Filter chips (#630-4)

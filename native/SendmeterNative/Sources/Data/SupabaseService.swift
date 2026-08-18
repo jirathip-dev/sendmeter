@@ -128,6 +128,18 @@ public struct PostgRESTError: Error, Codable, LocalizedError, Sendable {
     }
 }
 
+// MARK: - #675 offline-queue rejection classification
+
+extension PostgRESTError: ServerRejectionClassifying {
+    /// The native port of the web's `classifyHandledFailure` line (monitoring.ts)
+    /// as far as the offline queue cares. All the rules live in the pure
+    /// `ServerRejectionClassifier` in Core (unit-tested by `swift test`);
+    /// this conformance just feeds it this error's code + status.
+    public var rejectionClass: RejectionClass {
+        ServerRejectionClassifier.classify(code: code, statusCode: statusCode)
+    }
+}
+
 private struct RemoteErrorBody: Decodable {
     let code: String?
     let message: String?

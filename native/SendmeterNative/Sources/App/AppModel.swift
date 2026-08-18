@@ -27,6 +27,44 @@ private enum PendingWrite: Codable, Sendable {
     case workout(WorkoutDraft)
 }
 
+/// #675: the Settings-facing summary of one quarantined write. A separate
+/// public type on purpose: the queue payload (`PendingWrite`) is AppModel-
+/// private, and the surface needs only a stable identity, a description, and
+/// the rejection stamp — not the raw samples.
+public struct QuarantinedWrite: Identifiable, Sendable {
+    public let id: UUID
+    public let accountUserID: UUID
+    public let createdAt: Date
+    public let kind: String
+    public let attempts: Int
+    public let rejection: QueueRejection
+    public let lastError: String?
+}
+
+private extension DurableQueueItem where Payload == PendingWrite {
+    func summary() -> QuarantinedWrite {
+        let kind: String
+        switch payload {
+        case .session: kind = "Session"
+        case .recording: kind = "Force recording"
+        case .workout: kind = "Phone workout"
+        }
+        return QuarantinedWrite(
+            id: id,
+            accountUserID: accountUserID,
+            createdAt: createdAt,
+            kind: kind,
+            attempts: attempts,
+            rejection: quarantined ?? QueueRejection(
+                kind: .permanent,
+                code: nil,
+                detail: lastError ?? ""
+            ),
+            lastError: lastError
+        )
+    }
+}
+
 private struct SessionQueuePayload: Codable, Sendable {
     let id: UUID
     let draft: SessionDraft
@@ -101,6 +139,13 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var isRefreshing = false
     @Published public private(set) var queuedWriteCount = 0
     @Published public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
+    /// #675: entries the server has permanently rejected — retained on device,
+    /// excluded from every automatic retry, and recoverable only by the
+    /// explicit Retry/Discard actions in Settings. `nil` means the queue has
+    /// not been read yet this session; `[]` means genuinely nothing
+    /// quarantined. Never default to `[]` where the honest state is "not
+    /// known" (#269 honest-states rule — unknown must not render as empty).
+    @Published public private(set) var quarantinedWrites: [QuarantinedWrite]?
     @Published public var errorMessage: String?
     @Published public var toastMessage: String?
     @Published public var passwordRecovery = false
@@ -1719,10 +1764,18 @@ public final class AppModel: ObservableObject {
             uploaded = true
         } catch {
             do {
+                // #675: classify the rejection. A permanent one (constraint /
+                // malformed / forbidden-with-valid-token) earns the entry a
+                // bounded number of attempts and then a quarantine; auth and
+                // transient failures keep plain backoff. The classification is
+                // the transport's (PostgRESTError conformance), so the actor
+                // never parses server errors.
                 try await queue.markFailure(
                     id: item.id,
                     accountUserID: item.accountUserID,
-                    error: error.localizedDescription
+                    error: error.localizedDescription,
+                    classification: (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable,
+                    code: (error as? PostgRESTError)?.code
                 )
             } catch {
                 surface(error)
@@ -1732,14 +1785,53 @@ public final class AppModel: ObservableObject {
         return uploaded
     }
 
+    /// #675: the explicit-user-action re-attempt for quarantined entries —
+    /// native mirror of the web's `retryStuckRecordings` (#484). With `id` it
+    /// retries ONE quarantined entry (the per-item Settings action); without,
+    /// all of them. Clears the rejection stamp (fresh bounded-attempt budget)
+    /// and uploads immediately; on success the upload removes the entry from
+    /// the queue.
+    public func retryQuarantinedWrites(id: UUID? = nil) async {
+        guard let userID = currentUserID, let queue else { return }
+        let quarantined = await queue.quarantinedItems(for: userID)
+        for item in quarantined where id == nil || item.id == id {
+            do {
+                guard try await queue.retryQuarantined(
+                    id: item.id,
+                    accountUserID: item.accountUserID
+                ) else { continue }
+                await upload(item)
+            } catch {
+                surface(error)
+            }
+        }
+        await refreshQueueCount()
+    }
+
+    /// #675: discard ONE quarantined entry. Quarantined-only (the Settings
+    /// surface's Discard action is never offered for an active entry); the
+    /// #273 sign-out and account-deletion paths keep their own removal rules,
+    /// so this is the only per-item discard site.
+    public func discardQuarantinedWrite(id: UUID) async {
+        guard let userID = currentUserID, let queue else { return }
+        do {
+            try await queue.discardQuarantined(id: id, accountUserID: userID)
+        } catch {
+            surface(error)
+        }
+        await refreshQueueCount()
+    }
+
     private func refreshQueueCount() async {
         guard let userID = currentUserID, let queue else {
             queuedWriteCount = 0
             queueBreadcrumbs = []
+            quarantinedWrites = nil
             return
         }
         queuedWriteCount = await queue.count(for: userID)
         queueBreadcrumbs = await queue.breadcrumbs(for: userID)
+        quarantinedWrites = await queue.quarantinedItems(for: userID).map { $0.summary() }
     }
 
     // MARK: Watch completions
@@ -2102,6 +2194,7 @@ public final class AppModel: ObservableObject {
         pendingRecordings = [:]
         queuedWriteCount = 0
         queueBreadcrumbs = []
+        quarantinedWrites = nil
         gaugeSessionTracker.reset()
         guidedProtocolActive = false
         tagCurveCache = [:]

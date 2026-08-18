@@ -182,6 +182,100 @@ final class SignOutQueuePolicyTests: XCTestCase {
         XCTAssertEqual(firstRemaining, 0)
         XCTAssertEqual(secondRemaining, 1)
     }
+
+    /// #675: the pre-sign-out drain and its remainder count run over the
+    /// ACTIVE entries only (`queue.items` / `queue.count` exclude quarantined),
+    /// so a user-initiated sign-out never attempts, counts, or discards a
+    /// quarantined item — it stays on the device for the same account to
+    /// recover (retry/discard) on its next sign-in, exactly like the accepted
+    /// residual for entries that can't upload. A quarantined item is
+    /// "rejected, not retrying", NOT "waiting to upload", so it must not
+    /// inflate the #273 remainder prompt either.
+    func testSignOutDrainLeavesQuarantinedItemsUntouched() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestQueuePayload>(directoryURL: directory, filename: "queue.json")
+        let active = DurableQueueItem(accountUserID: user, payload: TestQueuePayload(value: "active"))
+        let poison = DurableQueueItem(accountUserID: user, payload: TestQueuePayload(value: "poison"))
+        try await queue.enqueue(active)
+        try await queue.enqueue(poison)
+        // Push `poison` into quarantine: 3 permanent rejections.
+        var now = Date(timeIntervalSince1970: 1_000)
+        for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+            try await queue.markFailure(
+                id: poison.id,
+                accountUserID: user,
+                error: "constraint",
+                classification: .permanent,
+                code: "23514",
+                now: now
+            )
+            now = now.addingTimeInterval(30)
+        }
+        let quarantinedCountBeforeDrain = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(quarantinedCountBeforeDrain, 1)
+
+        var drainTouched = 0
+        let result = await SignOutQueuePolicy.drainBeforeSignOut(
+            userId: user,
+            drain: { userID in
+                var uploaded = 0
+                for item in await queue.items(for: userID) {
+                    try? await queue.remove(id: item.id, accountUserID: userID, reason: "uploaded")
+                    uploaded += 1
+                    drainTouched += 1
+                }
+                return uploaded
+            },
+            countRemaining: { await queue.count(for: $0) },
+            askAboutRemainder: { _ in .signOut },
+            signOut: {}
+        )
+        // Only the active entry was drained; the quarantined one was never
+        // touched by the drain, never counted as remaining.
+        XCTAssertEqual(drainTouched, 1)
+        XCTAssertEqual(result.outcome?.uploaded, 1)
+        XCTAssertEqual(result.outcome?.remaining, 0)
+        let stillQuarantined = await queue.quarantinedItems(for: user)
+        XCTAssertEqual(stillQuarantined.count, 1)
+        XCTAssertEqual(stillQuarantined.first?.id, poison.id)
+        XCTAssertEqual(stillQuarantined.first?.quarantined?.kind, .permanent)
+    }
+
+    /// #675: the account-deletion discard (`DurableQueue.discardAll`) DOES
+    /// cover quarantined entries — deleting the account deletes its data, and
+    /// a quarantine is a retention state, not a protection.
+    func testAccountDeletionDiscardsQuarantinedEntriesToo() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestQueuePayload>(directoryURL: directory, filename: "queue.json")
+        let poison = DurableQueueItem(accountUserID: user, payload: TestQueuePayload(value: "poison"))
+        try await queue.enqueue(poison)
+        var now = Date(timeIntervalSince1970: 1_000)
+        for _ in 1...DurableQueueItem<TestQueuePayload>.maxPermanentAttempts {
+            try await queue.markFailure(
+                id: poison.id,
+                accountUserID: user,
+                error: "constraint",
+                classification: .permanent,
+                code: "23514",
+                now: now
+            )
+            now = now.addingTimeInterval(30)
+        }
+        let quarantinedBeforeDelete = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(quarantinedBeforeDelete, 1)
+
+        try await queue.discardAll(accountUserID: user, reason: "account-deleted", now: now)
+        let activeAfterDelete = await queue.count(for: user)
+        let quarantinedAfterDelete = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(activeAfterDelete, 0)
+        XCTAssertEqual(quarantinedAfterDelete, 0)
+    }
 }
 
 private struct TestQueuePayload: Codable, Equatable, Sendable {
