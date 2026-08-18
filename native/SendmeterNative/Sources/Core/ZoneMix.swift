@@ -21,6 +21,18 @@ public enum ZoneQuality: String, Codable, CaseIterable, Sendable, Identifiable {
         case .endurance: return "Endurance"
         }
     }
+
+    /// The long form the Focus-Next reason sentence uses — the web's `label`
+    /// record in `recommendZone` ("power-endurance", not the bar's short
+    /// "Pow End") (#653 review finding 13).
+    public var longLabel: String {
+        switch self {
+        case .power: return "power"
+        case .strength: return "strength"
+        case .powerEndurance: return "power-endurance"
+        case .endurance: return "endurance"
+        }
+    }
 }
 
 /// Zone classification + duration-normalized set counts (#630): which
@@ -29,18 +41,65 @@ public enum ZoneQuality: String, Codable, CaseIterable, Sendable, Identifiable {
 /// (#214) use. Port of `src/lib/zoneHistory.ts`'s `classifyZone` /
 /// `zoneSets` / `dominantZone`.
 public enum ZoneMix {
-    /// One zone's protocol "set" length in seconds — reps × hold from
-    /// ZONE_PROTOCOLS (web force-curve.ts): power 5s×6, strength 10s×5,
+    /// One zone's protocol prescription — the single source of truth for the
+    /// web's `ZONE_PROTOCOLS` table (`force-curve.ts:444-453`), from which the
+    /// set-duration divisor, the guided preset, and the duration bands are all
+    /// derived so they can't drift apart (#653 review finding 11).
+    public struct ZoneProtocol {
+        public let holdSeconds: Int
+        public let restBetweenRepetitionsSeconds: Int
+        public let repetitions: Int
+        /// Sets. Endurance is modeled as 1 rep × 8 sets (#320) so each 30s
+        /// recovery is a set boundary.
+        public let sets: Int
+        public let restBetweenSetsSeconds: Int
+        /// True only for endurance: its training-balance unit is the WHOLE
+        /// 8-hold protocol, so `sets` is multiplied into the set duration.
+        /// Every other zone's unit is one round (holdS × reps), deliberately
+        /// not multiplied by the number of rounds (web `zoneSetDurationS`).
+        public let setDurationIncludesSets: Bool
+
+        public init(
+            holdSeconds: Int,
+            restBetweenRepetitionsSeconds: Int,
+            repetitions: Int,
+            sets: Int,
+            restBetweenSetsSeconds: Int,
+            setDurationIncludesSets: Bool = false
+        ) {
+            self.holdSeconds = holdSeconds
+            self.restBetweenRepetitionsSeconds = restBetweenRepetitionsSeconds
+            self.repetitions = repetitions
+            self.sets = sets
+            self.restBetweenSetsSeconds = restBetweenSetsSeconds
+            self.setDurationIncludesSets = setDurationIncludesSets
+        }
+
+        /// The training-balance set length: holdS × reps × sets for endurance
+        /// (its unit is the whole 8-hold protocol, #320), holdS × reps for the
+        /// others (web `zoneSetDurationS`).
+        public var setDurationSeconds: Double {
+            let setsFactor = setDurationIncludesSets ? Double(sets) : 1
+            return Double(holdSeconds) * Double(repetitions) * setsFactor
+        }
+    }
+
+    /// ZONE_PROTOCOLS (web `force-curve.ts`): power 5s×6, strength 10s×5,
+    /// power-endurance 7s×6, endurance 30s×1×8.
+    public static let zoneProtocols: [ZoneQuality: ZoneProtocol] = [
+        .power: ZoneProtocol(holdSeconds: 5, restBetweenRepetitionsSeconds: 150, repetitions: 6, sets: 1, restBetweenSetsSeconds: 0),
+        .strength: ZoneProtocol(holdSeconds: 10, restBetweenRepetitionsSeconds: 150, repetitions: 5, sets: 1, restBetweenSetsSeconds: 0),
+        .powerEndurance: ZoneProtocol(holdSeconds: 7, restBetweenRepetitionsSeconds: 3, repetitions: 6, sets: 4, restBetweenSetsSeconds: 120),
+        .endurance: ZoneProtocol(holdSeconds: 30, restBetweenRepetitionsSeconds: 0, repetitions: 1, sets: 8, restBetweenSetsSeconds: 30, setDurationIncludesSets: true)
+    ]
+
+    /// One zone's protocol "set" length in seconds — derived from the single
+    /// `zoneProtocols` table (web ZONE_PROTOCOLS): power 5s×6, strength 10s×5,
     /// power-endurance 7s×6, endurance 30s×1×8 (endurance's 8 sets are
     /// deliberately multiplied in — its training-balance unit is the whole
     /// 8-hold protocol, #320).
     public static func zoneSetDurationSeconds(_ zone: ZoneQuality) -> Double {
-        switch zone {
-        case .power: return 5 * 6
-        case .strength: return 10 * 5
-        case .powerEndurance: return 7 * 6
-        case .endurance: return 30 * 1 * 8
-        }
+        zoneProtocols[zone]?.setDurationSeconds ?? 0
     }
 
     /// Buckets by hold length around each zone's anchor hold (power 5s ·
@@ -66,6 +125,7 @@ public enum ZoneMix {
             switch recorded {
             case .power: return .power
             case .strength: return .strength
+            case .powerEndurance: return .powerEndurance
             case .endurance: return .endurance
             case .capacity: return .endurance
             case .warmup, .prehab: return nil
@@ -148,13 +208,13 @@ public enum ZoneMix {
 /// predicted 5s peak, the exact fields the web's `ForceCurveModel` exposes
 /// (`force-curve.ts`: `cf`, `maxF`, `wPrime`). Native callers build this from
 /// whichever fit they hold: `ForceCurveModel` (cf + maxF + impulse) or the
-/// cached `TagForceCurve` (cf + wPrime; maxForce nil). The two produce the
-/// identical ratio when the fit can predict a peak; an absent piece of that
-/// pair disables the bias rather than guessing — a partial fit that can't
-/// produce a peak can't break a tie.
+/// cached `TagForceCurve` (cf + wPrime + the fit's max force). The peak is
+/// always `min(maxF, cf + W′/5)` exactly like web `predictForce`, so a
+/// low-W′/high-maxF fit is capped and the bias matches the web's (#653 review
+/// finding 7).
 public struct ZoneCurveInput: Sendable, Equatable {
     public let cf: Double?
-    /// The fit's maximum force (web `maxF`). nil for `TagForceCurve`.
+    /// The fit's maximum force (web `maxF`).
     public let maxForce: Double?
     public let wPrime: Double?
 
@@ -173,10 +233,10 @@ public struct ZoneCurveInput: Sendable, Equatable {
         )
     }
 
-    /// From the native cached tag curve — no max force, so the peak
-    /// prediction falls back to CF + W′/5 (web `predictForce`).
+    /// From the native cached tag curve, which now carries the fit's maximum
+    /// force so the peak prediction is capped exactly like the web's.
     public init(_ curve: TagForceCurve) {
-        self.init(cf: curve.cf, maxForce: nil, wPrime: curve.wPrime)
+        self.init(cf: curve.cf, maxForce: curve.maxForceKilograms, wPrime: curve.wPrime)
     }
 }
 
@@ -212,8 +272,9 @@ extension ZoneMix {
 
     /// The web's `recommendZone` (#653): the least-trained quality by
     /// duration-normalised set count, with the force curve breaking near-ties.
-    /// `TIE_BAND_SETS` is the band within which two zones count as "roughly
-    /// equally under-trained"; `CURVE_BIAS_RATIO` is the CF/peak threshold
+    /// `ZoneMix.tieBandSets` (web `TIE_BAND_SETS`) is the band within which two
+    /// zones count as "roughly equally under-trained"; `ZoneMix.curveBiasRatio`
+    /// (web `CURVE_BIAS_RATIO`) is the CF/peak threshold
     /// below which the curve reads as endurance-limited (endurance side wins)
     /// and at or above which strength-limited (strength side wins). Returns
     /// nil with no training at all. `model` is nil when no fit exists — the
@@ -232,21 +293,25 @@ extension ZoneMix {
         guard total > 0 else { return nil }
 
         let minSets = zoneOrder.map { sets[$0] ?? 0 }.min() ?? 0
-        let tied = zoneOrder.filter { (sets[$0] ?? 0) - minSets <= TIE_BAND_SETS }
+        let tied = zoneOrder.filter { (sets[$0] ?? 0) - minSets <= Self.tieBandSets }
 
         // Curve signal: CF (sustainable force) as a fraction of peak short-
         // hold force. Low → endurance-limited; high → strength-limited. Mirrors
-        // `predictForce(model, 5) || model.maxF` — the CF + W′/5 prediction,
-        // falling back to maxF when the fit can't predict (native's cached
-        // TagForceCurve has no maxF, so an absent peak disables the bias).
+        // the web's `predictForce(model, 5) || model.maxF` exactly:
+        //   predictForce = maxF when wPrime is nil OR cf is nil
+        //   otherwise    = min(maxF, cf + wPrime/5)
+        // A wPrime of 0 or negative still computes the predicted peak (the web
+        // guards only `wPrime !== null`), so `min(maxF, cf + w/5)` can bind at
+        // cf itself — never treated as "no peak" (#653 review finding 8).
         var ratio: Double?
         if let model, let cf = model.cf {
-            let peak: Double? = {
-                if let wPrime = model.wPrime, wPrime > 0 {
-                    return min(model.maxForce ?? .infinity, cf + wPrime / 5)
-                }
-                return model.maxForce
-            }()
+            let peak: Double?
+            if let wPrime = model.wPrime {
+                let predicted = cf + wPrime / 5
+                peak = model.maxForce.map { min($0, predicted) } ?? predicted
+            } else {
+                peak = model.maxForce
+            }
             if let peak, peak > 0, peak.isFinite {
                 ratio = cf / peak
             }
@@ -255,7 +320,7 @@ extension ZoneMix {
         let strengthSide: [ZoneQuality] = [.power, .strength]
         let curveBias: ZoneCurveBias? = ratio == nil
             ? nil
-            : (ratio! < CURVE_BIAS_RATIO ? .endurance : .strength)
+            : (ratio! < Self.curveBiasRatio ? .endurance : .strength)
         let bias: [ZoneQuality]? = curveBias.map {
             $0 == .endurance ? enduranceSide : strengthSide
         }
@@ -274,7 +339,7 @@ extension ZoneMix {
 
         let roundedSets = (sets[zone] ?? 0).roundedToTenths
         let setWord = roundedSets == 1 ? "set" : "sets"
-        var reason = "\(roundedSets.fmtTenths) \(zone.label.lowercased()) \(setWord) in the last 4 weeks"
+        var reason = "\(roundedSets.fmtTenths) \(zone.longLabel) \(setWord) in the last 4 weeks"
         if let ratio {
             reason += " · CF is \(Int((ratio * 100).rounded()))% of peak"
         }
@@ -363,20 +428,28 @@ extension ZoneMix {
     /// The duration bands `classifyZone` applies, for the detail sheet's band
     /// table (web `ZONE_BANDS`). The zone → band mapping is looked up through
     /// `classifyZone` (see `band(for:)`), so the labels can't quietly drift
-    /// from the rule they describe.
-    public static let zoneBands: [(zone: ZoneQuality, band: String, anchorS: Int)] = [
-        (.power, "1–6s", 5),
-        (.powerEndurance, "6–8.5s", 7),
-        (.strength, "8.5–20s", 10),
-        (.endurance, "over 20s", 30)
-    ]
+    /// from the rule they describe. The anchor is derived from the single
+    /// `zoneProtocols` table, not hardcoded again (#653 review finding 11).
+    public static let zoneBands: [ZoneBand] = [
+        ZoneBand(zone: .power, band: "1–6s"),
+        ZoneBand(zone: .powerEndurance, band: "6–8.5s"),
+        ZoneBand(zone: .strength, band: "8.5–20s"),
+        ZoneBand(zone: .endurance, band: "over 20s")
+    ].map { ZoneBand(zone: $0.zone, band: $0.band, anchorS: anchorHoldSeconds($0.zone)) }
+
+    /// The protocol's anchor hold seconds for a zone — the `holdS` of
+    /// `ZONE_PROTOCOLS`, used for the breakdown's "holdS × N holds = set
+    /// duration" identity.
+    public static func anchorHoldSeconds(_ zone: ZoneQuality) -> Int {
+        zoneProtocols[zone]?.holdSeconds ?? 1
+    }
 
     /// The band a single hold's DURATION falls in, or nil for a sub-1s blip —
     /// the inference rule, not necessarily the hold's zone (a recording that
     /// carries its own zone was never bucketed by this).
-    public static func band(for durationS: Double) -> (zone: ZoneQuality, band: String)? {
+    public static func band(for durationS: Double) -> ZoneBand? {
         guard let zone = classifyZone(durationSeconds: durationS) else { return nil }
-        return zoneBands.first(where: { $0.zone == zone }).map { ($0.zone, $0.band) }
+        return zoneBands.first(where: { $0.zone == zone })
     }
 
     /// The caveat that belongs next to those bands (web `ZONE_BAND_CAVEAT`):
@@ -385,78 +458,53 @@ extension ZoneMix {
     public static let zoneBandCaveat = "A hold recorded under an armed zone or preset stores the zone it was performed under — those are marked \"recorded\" and use it as-is. Every other hold — anything saved before this app stored it, and any freehand pull with no protocol armed — has its zone inferred from how long the hold lasted. The power (5s), pow end (7s) and strength (10s) anchors sit close together, so short holds are inherently fuzzy: an inferred hold that lands on the wrong side of the 6s or 8.5s boundary shows up as fractional credit in the neighbouring zone rather than being smoothed away. Inferred holds under 1s are treated as stray blips and counted nowhere."
 
     /// Builds the guided-protocol preset a recommended zone arms — the native
-    /// sibling of the web's `buildZoneSelection(...).protocol` (the same
-    /// `ZONE_PROTOCOLS` shape: holdS × reps, with endurance's 1-rep × 8-set
-    /// recovery-split #320 special case). The caller sets this as the selected
-    /// preset AND stamps the Force metadata `zone` with `recordedZone(for:)`
-    /// so a recording saved under the run carries the quality it was performed
-    /// under — the native equivalent of the web's `performedQuality` read
-    /// back from a `zone:` id.
+    /// sibling of the web's `buildZoneSelection(...).protocol`, derived from
+    /// the SAME `zoneProtocols` table the balance divisor reads, so a
+    /// prescription change can never silently drift the two apart (#653 review
+    /// finding 11). The caller sets this as the selected preset AND stamps the
+    /// Force metadata `zone` with `recordedZone(for:)` so a recording saved
+    /// under the run carries the quality it was performed under.
     public static func zonePreset(for zone: ZoneQuality) -> TindeqPreset {
-        switch zone {
-        case .power:
-            return TindeqPreset(
-                name: "Power",
-                holdSeconds: 5,
-                repetitions: 6,
-                sets: 1,
-                restBetweenRepetitionsSeconds: 150,
-                restBetweenSetsSeconds: 0
-            )
-        case .strength:
-            return TindeqPreset(
-                name: "Strength",
-                holdSeconds: 10,
-                repetitions: 5,
-                sets: 1,
-                restBetweenRepetitionsSeconds: 150,
-                restBetweenSetsSeconds: 0
-            )
-        case .powerEndurance:
-            return TindeqPreset(
-                name: "Pow End",
-                holdSeconds: 7,
-                repetitions: 6,
-                sets: 4,
-                restBetweenRepetitionsSeconds: 3,
-                restBetweenSetsSeconds: 120
-            )
-        case .endurance:
-            return TindeqPreset(
-                name: "Endurance",
-                holdSeconds: 30,
-                repetitions: 1,
-                sets: 8,
-                restBetweenRepetitionsSeconds: 0,
-                restBetweenSetsSeconds: 30
-            )
-        }
+        let prescription = zoneProtocols[zone] ?? ZoneProtocol(
+            holdSeconds: 5,
+            restBetweenRepetitionsSeconds: 150,
+            repetitions: 6,
+            sets: 1,
+            restBetweenSetsSeconds: 0
+        )
+        return TindeqPreset(
+            name: zone.label,
+            holdSeconds: prescription.holdSeconds,
+            repetitions: prescription.repetitions,
+            sets: prescription.sets,
+            restBetweenRepetitionsSeconds: prescription.restBetweenRepetitionsSeconds,
+            restBetweenSetsSeconds: prescription.restBetweenSetsSeconds
+        )
     }
 
     /// The `RecordedZone` a recommended zone's recordings are stamped with
-    /// when its preset is armed. Power-endurance has no native `RecordedZone`
-    /// member (the enum predates #657 and never grew one), so it returns nil
-    /// — its 7s holds are still classified into the power-endurance bucket by
-    /// duration, the same way a freehand pull is, so the training balance is
-    /// unaffected; only the "recorded" provenance (vs. inferred) is lost for
-    /// that one zone.
+    /// when its preset is armed — every zone has one, so a guided run's holds
+    /// carry the performed quality as a fact instead of being re-inferred from
+    /// measured duration (which hands-free start latency can skew across the
+    /// 6s/8.5s band, #653 review finding 1).
     public static func recordedZone(for zone: ZoneQuality) -> RecordedZone? {
         switch zone {
         case .power: return .power
         case .strength: return .strength
-        case .powerEndurance: return nil
+        case .powerEndurance: return .powerEndurance
         case .endurance: return .endurance
         }
     }
+    /// TIE_BAND_SETS (web `zoneHistory.ts`): zones within this many sets of
+    /// the true minimum are treated as tied candidates for the curve bias to
+    /// break.
+    public static let tieBandSets = 0.5
+
+    /// CURVE_BIAS_RATIO (web `zoneHistory.ts`): CF-to-peak ratio below which
+    /// the curve reads as endurance-limited (and at or above which
+    /// strength-limited).
+    public static let curveBiasRatio = 0.35
 }
-
-/// TIE_BAND_SETS (web `zoneHistory.ts`): zones within this many sets of the
-/// true minimum are treated as tied candidates for the curve bias to break.
-public let TIE_BAND_SETS = 0.5
-
-/// CURVE_BIAS_RATIO (web `zoneHistory.ts`): CF-to-peak ratio below which the
-/// curve reads as endurance-limited (and at or above which strength-limited).
-public let CURVE_BIAS_RATIO = 0.35
 
 public enum ZoneCurveBias: String, Sendable {
     case endurance
@@ -505,6 +553,20 @@ public struct ZoneRecommendationDetail: Sendable, Equatable {
         self.curveRatio = curveRatio
         self.curveBias = curveBias
         self.biasChangedPick = biasChangedPick
+    }
+}
+
+/// The duration band a hold's inference buckets into, for the detail sheet's
+/// band table (#653, web `ZONE_BANDS`).
+public struct ZoneBand: Sendable, Equatable {
+    public let zone: ZoneQuality
+    public let band: String
+    public let anchorS: Int
+
+    public init(zone: ZoneQuality, band: String, anchorS: Int = 0) {
+        self.zone = zone
+        self.band = band
+        self.anchorS = anchorS
     }
 }
 

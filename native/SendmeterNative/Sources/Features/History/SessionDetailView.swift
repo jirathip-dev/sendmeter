@@ -211,7 +211,7 @@ struct SessionDetailView: View {
             }
         }
         if recording.side != .unspecified { parts.append(recording.side.label) }
-        if let zone = recording.zone { parts.append(zone.rawValue.capitalized) }
+        if let zone = recording.zone { parts.append(zone.displayLabel) }
         if parts.isEmpty { parts.append(recording.recordedAt.formatted(date: .abbreviated, time: .shortened)) }
         return parts.joined(separator: " · ")
     }

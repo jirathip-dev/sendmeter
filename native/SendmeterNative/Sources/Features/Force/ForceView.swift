@@ -22,17 +22,26 @@ struct ForceView: View {
     @State private var selectedTargetPlan = ForceTargetPlan.empty
     @State private var resolvingTargets = false
     @State private var savingSummary = false
-    /// #653: the recommended zone's preset, kept in ForceView state rather
-    /// than persisted with the user's own presets — arming Focus Next is a
-    /// temporary guided-protocol selection, the same way the web's `zoneSel`
-    /// is transient.
+    /// #653: the recommended zone's preset + the quality it arms, kept in
+    /// ForceView state rather than persisted with the user's own presets —
+    /// arming Focus Next is a temporary guided-protocol selection, the same
+    /// way the web's `zoneSel` is transient. Armed zone and user preset are
+    /// mutually exclusive (#653 review finding 3). The quality is stored
+    /// explicitly (not re-derived from the preset name) so the save-time zone
+    /// stamp stays exact.
     @State private var zoneArmedPreset: TindeqPreset?
+    @State private var armedZoneQuality: ZoneQuality?
 
     private var side: TindeqSide {
         get { TindeqSide(rawValue: sideValue) ?? .unspecified }
         nonmutating set { sideValue = newValue.rawValue }
     }
 
+    /// The persisted zone pick (the metadata card's "Zone" picker). Deliberately
+    /// separate from the Focus-Next arm: arming a recommendation never writes
+    /// this, so clearing the arm never leaves a stale persisted zone stamp on
+    /// unrelated presets or free pulls (#653 review finding 5). The arm's own
+    /// zone is derived from the armed preset at save time instead.
     private var zone: RecordedZone? {
         get { RecordedZone(rawValue: zoneValue) }
         nonmutating set { zoneValue = newValue?.rawValue ?? "" }
@@ -43,6 +52,27 @@ struct ForceView: View {
             return model.presets.first(where: { $0.id == selectedPresetID })
         }
         return zoneArmedPreset
+    }
+
+    /// The currently selected guided target for the metadata card: a user
+    /// preset, the armed Focus-Next zone preset, or nil (free pull).
+    private var selectedTarget: GuidedTarget? {
+        if let selectedPresetID {
+            return .userPreset(selectedPresetID)
+        }
+        if let zoneArmedPreset {
+            return .armedZone(zoneArmedPreset.name)
+        }
+        return nil
+    }
+
+    /// True when the selected guided target is a reverse-action (movement)
+    /// preset — the training-balance card offers only static-hold protocols,
+    /// so it hides while one is selected (#653 review finding 13, web
+    /// `capacityModality === "static"`).
+    private var isReverseActionTarget: Bool {
+        guard let preset = selectedPreset else { return false }
+        return preset.protocolMode == .reverseAction
     }
 
     /// #627: the active gauge session's recording count (for the Finish pill
@@ -66,16 +96,29 @@ struct ForceView: View {
         return ZoneCurveInput(curve)
     }
 
+    /// The zone stamped onto recordings saved under the current selection:
+    /// the armed Focus-Next quality wins (a guided run's holds carry the zone
+    /// they were performed under as a fact — #653 review finding 1), otherwise
+    /// the persisted metadata picker's zone. Never persisted itself.
+    private var recordingZone: RecordedZone? {
+        if let armedZoneQuality {
+            return ZoneMix.recordedZone(for: armedZoneQuality)
+        }
+        return zone
+    }
+
     /// #653: arm the recommended zone's guided protocol for the active tag —
-    /// the web's Focus-Next pick path. Stamps the zone the run's recordings
-    /// are performed under (native `performedQuality`), then arms the preset.
-    /// Arming is just a selection (web `selectZone`): connection and the
-    /// unsaved-recording guard belong to Start, not the pick — the main Start
-    /// button launches the armed zone's guided protocol. The zone preset is
-    /// held in view state, not persisted among the user's own presets.
+    /// the web's Focus-Next pick path. Arming is just a selection (web
+    /// `selectZone`): connection and the unsaved-recording guard belong to
+    /// Start, not the pick — the main Start button launches the armed zone's
+    /// guided protocol. Arming replaces any user preset (mutually exclusive,
+    /// web `selectZoneOutcome`), and it never writes the persisted `zone`
+    /// picker — the arm's zone is applied to saved recordings at save time,
+    /// not left behind on the next free pull (#653 review findings 3 and 5).
     private func armRecommendedZone(_ zone: ZoneQuality) {
-        self.zone = ZoneMix.recordedZone(for: zone)
         zoneArmedPreset = ZoneMix.zonePreset(for: zone)
+        armedZoneQuality = zone
+        selectedPresetID = nil
     }
 
     var body: some View {
@@ -117,7 +160,26 @@ struct ForceView: View {
                         tag: $tag,
                         side: Binding(get: { side }, set: { side = $0 }),
                         zone: Binding(get: { zone }, set: { zone = $0 }),
-                        presetID: $selectedPresetID,
+                        selectedTarget: selectedTarget,
+                        onSelectTarget: { target in
+                            // A user preset pick and a Focus-Next arm are
+                            // mutually exclusive (web `selectZoneOutcome` /
+                            // `withPresetSelected`). Selecting any real target
+                            // — or Free pull — clears the other.
+                            switch target {
+                            case .userPreset(let id):
+                                zoneArmedPreset = nil
+                                armedZoneQuality = nil
+                                selectedPresetID = id
+                            case .armedZone:
+                                break
+                            case nil:
+                                selectedPresetID = nil
+                                zoneArmedPreset = nil
+                                armedZoneQuality = nil
+                            }
+                            publishFreePullContext()
+                        },
                         presets: model.presets,
                         knownTags: model.visibleTagNames
                     )
@@ -127,8 +189,12 @@ struct ForceView: View {
                     // guided protocol — the same arms the ForceMetadataCard
                     // zone picker uses. The card shows for any selected tag;
                     // `zoneCurve` (the Focus-Next tie-break) is optional and
-                    // nil when no static fit exists yet.
-                    if !tag.isEmpty {
+                    // nil when no static fit exists yet. It offers only
+                    // static-hold zone protocols, so it hides while a
+                    // reverse-action (movement) preset is selected — the
+                    // native analogue of the web's `capacityModality ===
+                    // "static"` gate (#653 review finding 13).
+                    if !tag.isEmpty, !isReverseActionTarget {
                         ZoneFocusCard(
                             recordings: model.recordings.filter { $0.tag == tag },
                             exercise: tag,
@@ -170,15 +236,8 @@ struct ForceView: View {
             .onChange(of: tag) { _ in publishFreePullContext() }
             .onChange(of: side) { _ in publishFreePullContext() }
             .onChange(of: zone) { _ in publishFreePullContext() }
-            .onChange(of: selectedPresetID) { _ in
-                // #653: a manual preset pick and a Focus-Next arm are mutually
-                // exclusive (web `selectZoneOutcome` / `withPresetSelected`).
-                // Choosing a preset from the metadata card (or "Free pull")
-                // clears the transient zone arm; arming a recommendation only
-                // touches `zoneArmedPreset`, so it never trips this.
-                zoneArmedPreset = nil
-                publishFreePullContext()
-            }
+            .onChange(of: selectedPresetID) { _ in publishFreePullContext() }
+            .onChange(of: zoneArmedPreset) { _ in publishFreePullContext() }
             .onChange(of: selectedTargetPlan) { _ in publishFreePullContext() }
             .onChange(of: handsFreeEnabled) { enabled in
                 if !enabled { model.handsFree.disarm() }
@@ -197,7 +256,7 @@ struct ForceView: View {
                     tag: tag,
                     startingSide: side == .right ? .right : .left,
                     fallbackSide: side,
-                    zone: zone,
+                    zone: recordingZone,
                     handsFreeEnabled: handsFreeEnabled
                 )
             }
@@ -255,7 +314,7 @@ struct ForceView: View {
         model.freePullContext = FreePullContext(
             tag: tag,
             side: side,
-            zone: zone,
+            zone: recordingZone,
             preset: selectedPreset,
             targetBand: selectedTargetPlan.band(forSet: 1, side: side)
         )
@@ -279,7 +338,7 @@ struct ForceView: View {
                 summary,
                 tag: savedTag,
                 side: side,
-                zone: zone,
+                zone: recordingZone,
                 preset: selectedPreset,
                 targetBand: selectedTargetPlan.band(forSet: 1, side: side)
             )
@@ -296,7 +355,14 @@ struct ForceView: View {
         let recordingFingerprint = model.recordings.prefix(24).map {
             "\($0.id.uuidString):\($0.sampleCount):\($0.recordedAt.timeIntervalSince1970)"
         }.joined(separator: "|")
-        return "\(selectedPresetID?.uuidString ?? "free")|\(tag)|\(side.rawValue)|\(recordingFingerprint)"
+        // #653 review finding 4: the key includes the armed zone preset (not
+        // just `selectedPresetID`), so `.task(id:)` re-resolves the target
+        // band the moment Focus Next is armed — the web resolves and displays
+        // the zone's target as soon as it is picked, not after Start.
+        let presetKey = selectedPresetID?.uuidString
+            ?? zoneArmedPreset.map { "zone:\($0.name)" }
+            ?? "free"
+        return "\(presetKey)|\(tag)|\(side.rawValue)|\(recordingFingerprint)"
     }
 
     @MainActor
@@ -329,8 +395,12 @@ struct ForceView: View {
         // #653: only a persisted user preset keeps the metadata picker in
         // sync; a transient Focus-Next zone preset is not in `model.presets`,
         // so it must not clobber `selectedPresetID` (which would read back
-        // as "Free pull" and clear the zone arm via the onChange below).
+        // as "Free pull" and clear the zone arm).
         if model.presets.contains(where: { $0.id == preset.id }) {
+            // A user preset and a Focus-Next arm are mutually exclusive
+            // (#653 review finding 3): launching a user preset clears the arm.
+            zoneArmedPreset = nil
+            armedZoneQuality = nil
             selectedPresetID = preset.id
         }
         resolvingTargets = true
@@ -658,12 +728,29 @@ private struct ForceMetadataCard: View {
     @Binding var tag: String
     @Binding var side: TindeqSide
     @Binding var zone: RecordedZone?
-    @Binding var presetID: UUID?
+    /// The selected guided target. `nil` = free pull; a UUID = one of the
+    /// user's presets; `armedZonePreset` is shown by name and, when picked,
+    /// maps to a `nil` selection after clearing the arm (#653 review finding 2
+    /// — Focus Next must be disarmable and visible in the picker).
+    let selectedTarget: GuidedTarget?
+    let onSelectTarget: (GuidedTarget?) -> Void
     let presets: [TindeqPreset]
     /// #631: pickable exercise names — distinct recording tags minus hidden
     /// (SL-92). Hidden tags' recordings still exist, they just leave the
     /// default pickers.
     let knownTags: [String]
+
+    private var selection: Int {
+        switch selectedTarget {
+        case nil: return 0
+        case let .armedZone(name): return 1
+        case let .userPreset(id):
+            if let index = presets.firstIndex(where: { $0.id == id }) {
+                return index + 2
+            }
+            return 0
+        }
+    }
 
     var body: some View {
         SurfaceCard {
@@ -693,21 +780,44 @@ private struct ForceMetadataCard: View {
                     Picker("Zone", selection: $zone) {
                         Text("Not set").tag(Optional<RecordedZone>.none)
                         ForEach(RecordedZone.allCases, id: \.self) { zone in
-                            Text(zone.rawValue.capitalized).tag(Optional(zone))
+                            Text(zone.displayLabel).tag(Optional(zone))
                         }
                     }
                     .pickerStyle(.menu)
                 }
-                Picker("Guided target", selection: $presetID) {
-                    Text("Free pull").tag(Optional<UUID>.none)
-                    ForEach(presets) { preset in
-                        Text(preset.name).tag(Optional(preset.id))
+                Picker("Guided target", selection: Binding(
+                    get: { selection },
+                    set: { index in
+                        switch index {
+                        case 0: onSelectTarget(nil)
+                        case 1: break // the armed zone is cleared by picking Free pull; no re-arm here
+                        default:
+                            let presetIndex = index - 2
+                            if presets.indices.contains(presetIndex) {
+                                onSelectTarget(.userPreset(presets[presetIndex].id))
+                            }
+                        }
+                    }
+                )) {
+                    Text("Free pull").tag(0)
+                    if case let .armedZone(name) = selectedTarget {
+                        Text("\(name) (Focus Next)").tag(1)
+                    }
+                    ForEach(Array(presets.enumerated()), id: \.element.id) { index, preset in
+                        Text(preset.name).tag(index + 2)
                     }
                 }
                 .pickerStyle(.menu)
             }
         }
     }
+}
+
+/// The selected guided target on the Force tab: a free pull, one of the user's
+/// presets, or a Focus-Next-armed zone preset (#653).
+private enum GuidedTarget: Equatable {
+    case userPreset(UUID)
+    case armedZone(String)
 }
 
 struct ForceTraceChart: View {

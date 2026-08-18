@@ -41,11 +41,16 @@ struct TrainingBalanceDetailView: View {
     }
 
     var body: some View {
+        // #653 review finding 10: `windowRecordings`/`scopeCounts` recompute
+        // per access; bind them once so the sheet body doesn't rescan the
+        // recording array for each sentence.
+        let windowRecordings = self.windowRecordings
+        let scopeCounts = self.scopeCounts
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    scopeSection
-                    breakdownSection
+                    scopeSection(windowRecordings: windowRecordings, scopeCounts: scopeCounts)
+                    breakdownSection(windowRecordings)
                     if let recommendation {
                         recommendationSection(recommendation)
                     }
@@ -65,7 +70,10 @@ struct TrainingBalanceDetailView: View {
 
     // MARK: What this counts
 
-    private var scopeSection: some View {
+    private func scopeSection(
+        windowRecordings: [TindeqRecording],
+        scopeCounts: (effortCount: Int, recordedCount: Int)
+    ) -> some View {
         SectionCard(title: "What this counts") {
             scopeRow("One exercise") {
                 Text("Only holds tagged **\(exercise)** count. Every other exercise is excluded, so this is the balance of one exercise, not of your training as a whole.")
@@ -80,7 +88,7 @@ struct TrainingBalanceDetailView: View {
                 Text("Each zone's total hold time divided by that zone's own protocol set length, so a 5-minute warm-up registers as a fraction of a set instead of a whole session. \(scopeCounts.effortCount) recording\(scopeCounts.effortCount == 1 ? "" : "s") fed the numbers below.")
             }
             scopeRow("Recorded vs inferred zones") {
-                recordedVsInferred
+                recordedVsInferred(scopeCounts)
             }
             scopeRow("Why History reads differently") {
                 Text("History lists every session for every exercise over all time, and badges each one with the zone that session alone was mostly in. It's a different measurement over a different scope — the two are expected to disagree, and neither is wrong.")
@@ -89,20 +97,19 @@ struct TrainingBalanceDetailView: View {
     }
 
     @ViewBuilder
-    private var recordedVsInferred: some View {
-        let counts = scopeCounts
-        let recorded = counts.recordedCount
-        let inferred = counts.effortCount - recorded
+    private func recordedVsInferred(_ scopeCounts: (effortCount: Int, recordedCount: Int)) -> some View {
+        let recorded = scopeCounts.recordedCount
+        let inferred = scopeCounts.effortCount - recorded
         if recorded == 0 {
             Text("None of these holds store the zone they were performed under, so every one is bucketed by how long it lasted. Only holds recorded under an armed zone or preset carry the real thing.")
         } else {
-            Text("\(recorded) of \(counts.effortCount) hold\(counts.effortCount == 1 ? "" : "s") store the zone they were performed under and are counted as that; \(inferred == 0 ? "none are inferred" : "the other \(inferred) have it inferred from hold length").")
+            Text("\(recorded) of \(scopeCounts.effortCount) hold\(scopeCounts.effortCount == 1 ? "" : "s") store the zone they were performed under and are counted as that; \(inferred == 0 ? "none are inferred" : "the other \(inferred) have it inferred from hold length").")
         }
     }
 
     // MARK: Where each number comes from
 
-    private var breakdownSection: some View {
+    private func breakdownSection(_ windowRecordings: [TindeqRecording]) -> some View {
         SectionCard(title: "Where each number comes from") {
             ZoneBreakdownPanel(recordings: windowRecordings)
         }
@@ -125,14 +132,14 @@ struct TrainingBalanceDetailView: View {
                 Text("Least-trained zone wins. The lowest of the four is \(fmt1(detail.minSets)) set\(fmt1(detail.minSets) == "1" ? "" : "s"); \(recommendation.zone.label) is at \(fmt1(sets[recommendation.zone] ?? 0)).")
 
                 if tiedOthers.isEmpty {
-                    Text("No other zone is within \(TIE_BAND_SETS) sets of it, so there was no tie to break.")
+                    Text("No other zone is within \(ZoneMix.tieBandSets) sets of it, so there was no tie to break.")
                 } else {
-                    Text("Within \(TIE_BAND_SETS) sets of that minimum, so treated as tied: \(detail.tied.map { "\($0.label) \(fmt1(sets[$0] ?? 0))" }.joined(separator: " · ")).")
+                    Text("Within \(ZoneMix.tieBandSets) sets of that minimum, so treated as tied: \(detail.tied.map { "\($0.label) \(fmt1(sets[$0] ?? 0))" }.joined(separator: " · ")).")
                 }
 
                 if let ratio = detail.curveRatio {
                     let percent = Int((ratio * 100).rounded())
-                    Text("Your critical force is \(percent)% of your predicted 5s peak — \(detail.curveBias == .endurance ? "under \(Int((CURVE_BIAS_RATIO * 100).rounded()))%, which reads as endurance-limited" : "at or over \(Int((CURVE_BIAS_RATIO * 100).rounded()))%, which reads as strength-limited"). \(tiedOthers.isEmpty ? "With no tie to break, it changed nothing here." : (detail.biasChangedPick ? "That broke the tie toward the \(detail.curveBias?.rawValue ?? "") side, over \(detail.unbiasedZone.label)." : "That points at the same zone the set counts already did (\(detail.unbiasedZone.label)), so it changed nothing."))")
+                    Text("Your critical force is \(percent)% of your predicted 5s peak — \(detail.curveBias == .endurance ? "under \(Int((ZoneMix.curveBiasRatio * 100).rounded()))%, which reads as endurance-limited" : "at or over \(Int((ZoneMix.curveBiasRatio * 100).rounded()))%, which reads as strength-limited"). \(tiedOthers.isEmpty ? "With no tie to break, it changed nothing here." : (detail.biasChangedPick ? "That broke the tie toward the \(detail.curveBias?.rawValue ?? "") side, over \(detail.unbiasedZone.label)." : "That points at the same zone the set counts already did (\(detail.unbiasedZone.label)), so it changed nothing."))")
                 } else {
                     Text("No critical-force fit yet, so the force curve had no say — the least-trained zone stands on its own.")
                 }
@@ -206,7 +213,16 @@ private struct ZoneBreakdownPanel: View {
         return parts.joined(separator: " · ")
     }
 
+    /// Holds recorded with the native-only "capacity" zone — counted toward
+    /// Endurance via `ZoneMix.zone(for:)` (#657).
+    private var capacityCount: Int {
+        recordings.filter { $0.zone == .capacity }.count
+    }
+
     var body: some View {
+        // #653 review finding 10: derive the breakdown once per body pass
+        // instead of re-scanning the recording array on every access.
+        let breakdown = self.breakdown
         VStack(alignment: .leading, spacing: 10) {
             ForEach(ZoneQuality.allCases, id: \.self) { zone in
                 if let entry = breakdown.zones[zone] {
@@ -221,6 +237,15 @@ private struct ZoneBreakdownPanel: View {
             }
             if !breakdown.excluded.isEmpty {
                 Text("\(excludedSummary) recorded outside training balance")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            // #657: native-only "capacity" recordings count toward Endurance —
+            // said outright so a hold shown inside the Endurance band with a
+            // "recorded as Capacity" origin doesn't read as a zone that isn't
+            // one of the four bars (#653 review finding 13).
+            if capacityCount > 0 {
+                Text("\(capacityCount) hold\(capacityCount == 1 ? "" : "s") recorded as Capacity count toward Endurance (long holds).")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -271,7 +296,8 @@ private struct ZoneBreakdownPanel: View {
                     .foregroundStyle(.secondary)
                     .padding(.leading, 15)
             } else {
-                Text("\(fmt1(entry.totalHoldS))s of holds ÷ \(Int(entry.setDurationS))s per set (\(anchorS(zone))s × \(Int((entry.setDurationS / anchorS(zone)).rounded())) holds) = \(fmt1(entry.sets))")
+                let anchor = Double(ZoneMix.anchorHoldSeconds(zone))
+                Text("\(fmt1(entry.totalHoldS))s of holds ÷ \(Int(entry.setDurationS))s per set (\(fmt1(anchor))s × \(Int((entry.setDurationS / anchor).rounded())) holds) = \(fmt1(entry.sets))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .padding(.leading, 15)
@@ -332,7 +358,7 @@ private struct ZoneBreakdownPanel: View {
         switch hold.source {
         case .recorded:
             guard let zone = hold.recording.zone else { return "" }
-            return " · recorded as \(zone.rawValue.capitalized)"
+            return " · recorded as \(zone.displayLabel)"
         case .inferred:
             guard let band = ZoneMix.band(for: hold.durationS)?.band else { return "" }
             return " · \(band)"
@@ -344,15 +370,4 @@ private func fmt1(_ n: Double) -> String {
     let rounded = (n * 10).rounded() / 10
     if rounded == rounded.rounded() { return "\(Int(rounded))" }
     return String(format: "%.1f", rounded)
-}
-
-/// The anchor hold seconds for a zone — the `holdS` of its protocol, for the
-/// breakdown's "holdS × N holds = setDurationS" identity (web `ZONE_PROTOCOLS`).
-private func anchorS(_ zone: ZoneQuality) -> Double {
-    switch zone {
-    case .power: return 5
-    case .strength: return 10
-    case .powerEndurance: return 7
-    case .endurance: return 30
-    }
 }

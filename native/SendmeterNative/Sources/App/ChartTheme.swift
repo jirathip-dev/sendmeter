@@ -45,12 +45,16 @@ public enum ChartToken: String, CaseIterable, Sendable {
         scheme == .dark ? 0.20 : 0.16
     }
 
-    /// Training-quality hue for the training-balance bars — the same mapping
+    /// Training-quality hue for the training-balance bars — the same *mapping*
     /// as the web's `QUALITY_COLORS` (power → danger, strength → warning,
     /// power-endurance → info, endurance → success), expressed in ChartTheme
-    /// tokens so the palette stays central (#653). The token values match the
-    /// CSS vars exactly (alert `#E5743A`, caution `#DDB13A`, load `#7B83EB`,
-    /// optimal `#2E96F0`).
+    /// tokens so the palette stays central (#653). This is a hue-family
+    /// substitution, NOT an exact hex match: the tokens resolve to the
+    /// `--chart-*` palette (alert `#E5743A`, caution `#DDB13A`, load
+    /// `#7B83EB`, optimal `#2E96F0`), while the web's `QUALITY_COLORS` use the
+    /// semantic `--danger/--warning/--info/--success` vars (`#B95122`,
+    /// `#956A00`, `#5964B7`, `#1674BE`). Same hue families, deliberately
+    /// different values (#653 review finding 9).
     public static func zoneQuality(_ zone: ZoneQuality) -> ChartToken {
         switch zone {
         case .power: return .alert

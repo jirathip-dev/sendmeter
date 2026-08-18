@@ -202,11 +202,11 @@ final class TrainingBalanceTests: XCTestCase {
         // Ratio exactly 0.35 is NOT below the threshold → strength side.
         let at = ZoneMix.recommendZone(
             sets: [.power: 0, .strength: 2, .powerEndurance: 2, .endurance: 0],
-            model: .init(cf: CURVE_BIAS_RATIO * 60, maxForce: 60, wPrime: 500)
+            model: .init(cf: ZoneMix.curveBiasRatio * 60, maxForce: 60, wPrime: 500)
         )
         XCTAssertEqual(at?.detail.curveBias, .strength)
-        XCTAssertEqual(TIE_BAND_SETS, 0.5)
-        XCTAssertEqual(CURVE_BIAS_RATIO, 0.35)
+        XCTAssertEqual(ZoneMix.tieBandSets, 0.5)
+        XCTAssertEqual(ZoneMix.curveBiasRatio, 0.35)
     }
 
     func testPreferTheLowerOfTwoInBandBiasedZonesNotFirstInOrder() {
@@ -263,14 +263,36 @@ final class TrainingBalanceTests: XCTestCase {
         XCTAssertNil(rec?.detail.curveBias)
     }
 
-    func testTagForceCurveInputProducesTheSameRatio() {
-        // The native cached curve (cf + wPrime, no maxF) must give the same
-        // 5s-peak ratio a full model with wPrime gives when maxF doesn't cap.
-        let fromTagCurve = ZoneMix.recommendZone(
+    func testTagForceCurveInputCapsPeakLikeTheWeb() {
+        // The native cached curve carries the fit's max force; the predicted
+        // 5s peak must be capped by it exactly like web `predictForce`.
+        // cf 30, wPrime 100 → cf + 20 = 50, maxF 60 → no cap → ratio 30/50.
+        let uncapped = ZoneMix.recommendZone(
             sets: [.power: 1, .strength: 0, .powerEndurance: 1, .endurance: 1],
-            model: .init(TagForceCurve(tag: "Crimps", modality: "static", cf: 30, wPrime: 100))
+            model: .init(TagForceCurve(tag: "Crimps", modality: "static", cf: 30, wPrime: 100, maxForceKilograms: 60))
         )
-        XCTAssertEqual(fromTagCurve?.detail.curveRatio ?? 0, 30.0 / 50.0, accuracy: 1e-12)
+        XCTAssertEqual(uncapped?.detail.curveRatio ?? 0, 30.0 / 50.0, accuracy: 1e-12)
+        // cf 30, wPrime 300 → cf + 60 = 90, maxF 60 → capped at 60 → ratio 0.5.
+        let capped = ZoneMix.recommendZone(
+            sets: [.power: 1, .strength: 0, .powerEndurance: 1, .endurance: 1],
+            model: .init(TagForceCurve(tag: "Crimps", modality: "static", cf: 30, wPrime: 300, maxForceKilograms: 60))
+        )
+        XCTAssertEqual(capped?.detail.curveRatio ?? 0, 0.5, accuracy: 1e-12)
+        XCTAssertEqual(capped?.detail.curveBias, .strength)
+    }
+
+    func testWPrimeZeroComputesPredictedPeakBoundAtCfLikeTheWeb() {
+        // Web `predictForce` guards only `wPrime !== null`: with wPrime = 0 the
+        // peak is min(maxF, cf + 0) = min(maxF, cf). cf 20, maxF 60 → peak 20 →
+        // ratio 1.0 → strength bias. Native must NOT fall back to maxF here
+        // (#653 review finding 8).
+        let rec = ZoneMix.recommendZone(
+            sets: [.power: 0, .strength: 2, .powerEndurance: 2, .endurance: 0],
+            model: .init(cf: 20, maxForce: 60, wPrime: 0)
+        )
+        XCTAssertEqual(rec?.detail.curveRatio ?? 0, 1.0, accuracy: 1e-12)
+        XCTAssertEqual(rec?.detail.curveBias, .strength)
+        XCTAssertEqual(rec?.zone, .power)
     }
 
     // MARK: balanceScopeCounts (#325)
@@ -349,10 +371,52 @@ final class TrainingBalanceTests: XCTestCase {
         XCTAssertEqual(ZoneMix.zoneSetDurationSeconds(.endurance), 240)
     }
 
-    func testRecordedZoneForPowerEnduranceIsNil() {
+    func testRecordedZoneEveryQualityHasAValue() {
+        // #653 review finding 1: power-endurance now has a real RecordedZone
+        // so a guided PE run's holds carry the zone as a fact instead of being
+        // re-inferred from measured duration (hands-free start latency skew).
         XCTAssertEqual(ZoneMix.recordedZone(for: .power), .power)
         XCTAssertEqual(ZoneMix.recordedZone(for: .strength), .strength)
         XCTAssertEqual(ZoneMix.recordedZone(for: .endurance), .endurance)
-        XCTAssertNil(ZoneMix.recordedZone(for: .powerEndurance))
+        XCTAssertEqual(ZoneMix.recordedZone(for: .powerEndurance), .powerEndurance)
+    }
+
+    func testRecordedPowerEnduranceZoneWinsOverDuration() {
+        // A 5.9s hold recorded as power-endurance (a hands-free PE rep that
+        // ramped 1.1s late) must stay power-endurance — never re-inferred as
+        // power from duration (#653 review finding 1 direction A).
+        let rec = recording(iso: "2026-07-20T10:00:00Z", durationMs: 5_900, zone: .powerEndurance)
+        XCTAssertEqual(ZoneMix.zone(for: rec), .powerEndurance)
+        XCTAssertEqual(ZoneMix.zoneSets([rec])[.powerEndurance] ?? 0, 5.9 / 42, accuracy: 1e-12)
+        XCTAssertEqual(ZoneMix.zoneSets([rec])[.power] ?? 0, 0)
+    }
+
+    func testRecordedPowerEnduranceRawValueRoundTrips() {
+        // #653 review finding 1 direction B: web-written rows carry the
+        // "power-endurance" raw value; it must decode instead of silently
+        // becoming nil and being re-inferred by duration.
+        XCTAssertEqual(RecordedZone(rawValue: "power-endurance"), .powerEndurance)
+        XCTAssertEqual(RecordedZone.powerEndurance.rawValue, "power-endurance")
+    }
+
+    func testZoneSetDurationDerivesFromProtocolTable() {
+        // #653 review finding 11: the divisor must come from the same
+        // protocol table the guided preset is built from, so they can't drift.
+        for zone in ZoneQuality.allCases {
+            let prescription = ZoneMix.zoneProtocols[zone]!
+            let setsFactor = prescription.setDurationIncludesSets
+                ? Double(prescription.sets)
+                : 1
+            let expected = Double(prescription.holdSeconds)
+                * Double(prescription.repetitions)
+                * setsFactor
+            XCTAssertEqual(
+                ZoneMix.zoneSetDurationSeconds(zone),
+                expected,
+                accuracy: 1e-12,
+                "\(zone) divisor must match its protocol prescription"
+            )
+            XCTAssertEqual(prescription.holdSeconds, ZoneMix.anchorHoldSeconds(zone))
+        }
     }
 }

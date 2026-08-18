@@ -37,16 +37,12 @@ struct ZoneFocusCard: View {
 
     private static let windowDays = 28
 
-    private var sets: [ZoneQuality: Double] {
-        ZoneMix.zoneTrainingSets(recordings, now: now, windowDays: Self.windowDays)
-    }
-
-    private var recommendation: ZoneRecommendation? {
-        ZoneMix.recommendZone(sets: sets, model: curveInput)
-    }
-
-    private var maxSets: Double {
-        max(1, ZoneQuality.allCases.map { sets[$0] ?? 0 }.max() ?? 0)
+    /// The balance window + recommendation, computed ONCE per body pass and
+    /// threaded through every bar (the review flagged ~9 full-array sweeps per
+    /// body evaluation — this view sits in ForceView, which re-renders at BLE
+    /// sample rate; #653 review finding 10).
+    private var snapshot: ZoneFocusSnapshot {
+        ZoneFocusSnapshot(recordings: recordings, now: now, curveInput: curveInput)
     }
 
     var body: some View {
@@ -54,7 +50,8 @@ struct ZoneFocusCard: View {
         // classifiable training in the 28-day window, so no recommendation
         // exists to show and no fabricated one should be invented from thin
         // data (`if (!rec) return null` in ZoneFocusCard.tsx).
-        if let recommendation {
+        let snapshot = self.snapshot
+        if let recommendation = snapshot.recommendation {
             SurfaceCard {
                 VStack(alignment: .leading, spacing: 12) {
                     // The chart region — tapping it opens the detail sheet. Kept
@@ -72,12 +69,18 @@ struct ZoneFocusCard: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
-                        bars
+                        bars(snapshot)
                     }
                     .contentShape(Rectangle())
+                    // #653 review finding 6: `.accessibilityElement(children:
+                    // .contain)` makes this an inactive container; VoiceOver
+                    // must be able to activate the sheet it describes. The
+                    // button trait + explicit action expose the double-tap.
                     .accessibilityElement(children: .contain)
+                    .accessibilityAddTraits(.isButton)
                     .accessibilityLabel("Training balance for \(exercise), last four weeks")
                     .accessibilityHint("Opens the training balance detail")
+                    .accessibilityAction { detailOpen = true }
                     .onTapGesture { detailOpen = true }
 
                     FocusNextButton(
@@ -94,7 +97,7 @@ struct ZoneFocusCard: View {
                     exercise: exercise,
                     now: now,
                     windowDays: Self.windowDays,
-                    sets: sets,
+                    sets: snapshot.sets,
                     recommendation: recommendation,
                     curveInput: curveInput
                 )
@@ -104,16 +107,16 @@ struct ZoneFocusCard: View {
 
     /// Four horizontal duration-normalised set bars, each labelled with its
     /// zone and its set count.
-    private var bars: some View {
+    private func bars(_ snapshot: ZoneFocusSnapshot) -> some View {
         VStack(spacing: 5) {
             ForEach(ZoneQuality.allCases, id: \.self) { zone in
-                barRow(for: zone)
+                barRow(for: zone, snapshot: snapshot)
             }
         }
     }
 
-    private func barRow(for zone: ZoneQuality) -> some View {
-        let sets = sets[zone] ?? 0
+    private func barRow(for zone: ZoneQuality, snapshot: ZoneFocusSnapshot) -> some View {
+        let sets = snapshot.sets[zone] ?? 0
         let rounded = (sets * 10).rounded() / 10
         let color = ChartToken.zoneQuality(zone).color(scheme)
         return HStack(spacing: 8) {
@@ -133,7 +136,7 @@ struct ZoneFocusCard: View {
                                 endPoint: .trailing
                             )
                         )
-                        .frame(width: geo.size.width * CGFloat(sets / maxSets))
+                        .frame(width: geo.size.width * CGFloat(sets / snapshot.maxSets))
                 }
             }
             .frame(height: 8)
@@ -146,6 +149,22 @@ struct ZoneFocusCard: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(zone.label): \(fmt1(sets)) set\(rounded == 1 ? "" : "s")")
+    }
+}
+
+/// One immutable computation of the training-balance window — computed once per
+/// body pass so a re-render at BLE sample rate doesn't rescan the recording
+/// array ~9× (#653 review finding 10).
+private struct ZoneFocusSnapshot {
+    let sets: [ZoneQuality: Double]
+    let recommendation: ZoneRecommendation?
+    let maxSets: Double
+
+    init(recordings: [TindeqRecording], now: Date, curveInput: ZoneCurveInput?) {
+        let sets = ZoneMix.zoneTrainingSets(recordings, now: now, windowDays: 28)
+        self.sets = sets
+        self.recommendation = ZoneMix.recommendZone(sets: sets, model: curveInput)
+        self.maxSets = max(1, ZoneQuality.allCases.map { sets[$0] ?? 0 }.max() ?? 0)
     }
 }
 
