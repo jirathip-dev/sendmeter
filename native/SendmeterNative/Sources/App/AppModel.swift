@@ -1060,10 +1060,13 @@ public final class AppModel: ObservableObject {
         } else {
             keepAwakeRelease?()
             keepAwakeRelease = nil
-            // #671 review F6: backgrounding suspends the process anyway, so
-            // tear the flush timer down rather than let it fire into a
-            // non-rendering app; foreground re-creates it.
-            tindeq.setFlushDriverPaused(true)
+            // #671 review N1: only `.background` suspends the process. `.inactive`
+            // fires behind a notification banner or Control Center pull while the
+            // gauge is still on screen and rendering — tearing the flush driver
+            // down then would freeze the live trace mid-pull.
+            if phase == .background {
+                tindeq.setFlushDriverPaused(true)
+            }
         }
     }
 
