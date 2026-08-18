@@ -89,11 +89,15 @@ public enum LocalDateSupport {
     /// How a nearby day is named in prose: "yesterday" / "today" /
     /// "tomorrow" / the plain weekday inside the coming week. Past ~6 days out
     /// a bare weekday is ambiguous (which Thursday?), so it falls back to a
-    /// short date. Same as the web's `relativeDayLabel`.
+    /// short date. Same as the web's `relativeDayLabel`. The locale is
+    /// injected (defaulting to the device's) like `timeZone` so the prose
+    /// follows the user's region while remaining testable with a fixed
+    /// locale; only the calendar is pinned.
     public static func relativeDayLabel(
         for date: String,
         referenceDate: Date = Date(),
-        timeZone: TimeZone = .current
+        timeZone: TimeZone = .current,
+        locale: Locale = .autoupdatingCurrent
     ) -> String {
         let reference = string(from: referenceDate, timeZone: timeZone)
         guard let offset = dayDistance(from: reference, to: date, timeZone: timeZone) else {
@@ -110,6 +114,7 @@ public enum LocalDateSupport {
             style = Date.FormatStyle().month(.abbreviated).day()
         }
         style.calendar = Calendar(identifier: .gregorian)
+        style.locale = locale
         style.timeZone = timeZone
         return day.formatted(style)
     }

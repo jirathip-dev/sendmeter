@@ -118,40 +118,46 @@ final class DateSupportTests: XCTestCase {
     }
 
     func testRelativeDayLabel() throws {
-        // 2026-08-15 is a Saturday (Bangkok). Walk the five prose branches.
+        // 2026-08-15 is a Saturday (Bangkok). Walk the five prose branches with
+        // a pinned en_US locale so the assertions hold on any CI runner —
+        // `relativeDayLabel` follows the device locale by default (the F10
+        // contract), which this host (en_TH) renders as "22 Aug" vs en_US
+        // "Aug 22". The helper's `locale:` injection keeps the prose
+        // user-facing while the test is deterministic.
+        let locale = Locale(identifier: "en_US")
         let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
         let day = { (offset: Int) in
             LocalDateSupport.daysAhead(offset, from: reference, timeZone: self.bangkok)
         }
         XCTAssertEqual(
-            LocalDateSupport.relativeDayLabel(for: day(0), referenceDate: reference, timeZone: bangkok),
+            LocalDateSupport.relativeDayLabel(for: day(0), referenceDate: reference, timeZone: bangkok, locale: locale),
             "today"
         )
         XCTAssertEqual(
-            LocalDateSupport.relativeDayLabel(for: day(-1), referenceDate: reference, timeZone: bangkok),
+            LocalDateSupport.relativeDayLabel(for: day(-1), referenceDate: reference, timeZone: bangkok, locale: locale),
             "yesterday"
         )
         XCTAssertEqual(
-            LocalDateSupport.relativeDayLabel(for: day(1), referenceDate: reference, timeZone: bangkok),
+            LocalDateSupport.relativeDayLabel(for: day(1), referenceDate: reference, timeZone: bangkok, locale: locale),
             "tomorrow"
         )
         // +2 (Monday) → wide weekday; +6 (Friday) → still a weekday.
         XCTAssertEqual(
-            LocalDateSupport.relativeDayLabel(for: day(2), referenceDate: reference, timeZone: bangkok),
+            LocalDateSupport.relativeDayLabel(for: day(2), referenceDate: reference, timeZone: bangkok, locale: locale),
             "Monday"
         )
         XCTAssertEqual(
-            LocalDateSupport.relativeDayLabel(for: day(6), referenceDate: reference, timeZone: bangkok),
+            LocalDateSupport.relativeDayLabel(for: day(6), referenceDate: reference, timeZone: bangkok, locale: locale),
             "Friday"
         )
         // +7 (next Saturday) → past the unambiguous-weekday horizon → short date.
         XCTAssertEqual(
-            LocalDateSupport.relativeDayLabel(for: day(7), referenceDate: reference, timeZone: bangkok),
-            "22 Aug"
+            LocalDateSupport.relativeDayLabel(for: day(7), referenceDate: reference, timeZone: bangkok, locale: locale),
+            "Aug 22"
         )
         // Unparseable input fails safely by echoing the input.
         XCTAssertEqual(
-            LocalDateSupport.relativeDayLabel(for: "not-a-date", referenceDate: reference, timeZone: bangkok),
+            LocalDateSupport.relativeDayLabel(for: "not-a-date", referenceDate: reference, timeZone: bangkok, locale: locale),
             "not-a-date"
         )
     }
