@@ -2,17 +2,26 @@ import Foundation
 
 /// Pure content model + countdown mapping for the guided protocol's
 /// lock-screen Live Activity (#628). The ActivityKit activity lives in the
-/// app target; this model is the single source of truth BOTH the app (which
-/// starts the activity) and any future widget extension (which renders it)
-/// would compile against — the web duplicates the model across its widget and
-/// plugin copies with a KEEP-IN-SYNC comment (`ActivityModels.swift`); the
-/// native rewrite avoids the duplication by sharing one Core package.
+/// app target; this model is the single source of truth the app (which starts
+/// the activity) compiles against — the widget extension renders only the
+/// wire `ContentState`, never this model. The web duplicates the model across
+/// its widget and plugin copies with a KEEP-IN-SYNC comment
+/// (`ActivityModels.swift`); the native rewrite avoids the duplication by
+/// sharing one Core package.
 ///
 /// The lock screen renders its countdown natively from timestamps
 /// (`Text(timerInterval:)`), so the app only speaks on state transitions —
 /// never on a tick — exactly like the web's `src/lib/liveActivity.ts`
 /// contract. The segment wire shape (p/s/rep/set/startS/durS) mirrors the
 /// web's `ActivitySegment` so the two implementations stay comparable.
+///
+/// A snapshot can be produced two ways:
+///   * `from(run:…)` builds a fixed wall-clock schedule (the web's
+///     `timelineAt` contract), used to size/preview a run up front.
+///   * a `RunAnchor` mirrors the run's LIVE state machine
+///     (`currentStage` + `stageStartedAt`), so out-of-band advances (Skip
+///     Stage, #674 review F3) and the terminal complete stage (#674 F5) are
+///     reflected immediately instead of falling back to wall clock.
 public struct GuidedActivitySegment: Codable, Equatable, Sendable, Identifiable {
     public enum Phase: String, Codable, Sendable {
         case prepare
@@ -21,6 +30,21 @@ public struct GuidedActivitySegment: Codable, Equatable, Sendable, Identifiable 
         case rest
         case setRest
         case complete
+
+        /// Map the run's stage kind to the wire phase token. `.complete` is
+        /// produced here too (the anchor path needs it for the terminal
+        /// DONE state); the fixed-schedule `from(run:)` skips it because the
+        /// complete stage is zero-length.
+        public static func from(stageKind: ForceProtocolStageKind) -> Phase {
+            switch stageKind {
+            case .prepare: return .prepare
+            case .work: return .work
+            case .switchSide: return .switch
+            case .restBetweenRepetitions: return .rest
+            case .restBetweenSets: return .setRest
+            case .complete: return .complete
+            }
+        }
 
         public var label: String {
             switch self {
@@ -152,19 +176,96 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
     public func snapshot(atEpochMs: Double, peakKilograms: Double? = nil) -> Snapshot? {
         let elapsedSeconds = max(0, (atEpochMs - startEpochMs) / 1_000)
         guard let segment = currentSegment(elapsedSeconds: elapsedSeconds) else { return nil }
+        return snapshot(
+            segment: segment,
+            segmentStartEpochMs: startEpochMs + segment.startS * 1_000,
+            elapsedSeconds: elapsedSeconds,
+            peakKilograms: peakKilograms
+        )
+    }
+
+    /// A point-in-time snapshot of the run's LIVE state machine — the current
+    /// stage plus how much of it is left, anchored at one instant. The app
+    /// builds this from `ForceProtocolRun.currentStage` + `stageStartedAt`
+    /// whenever it pushes a lock-screen update, so out-of-band advances (Skip
+    /// Stage) and the terminal complete stage stay in sync with what the
+    /// fullscreen shows (#674 review F3/F5).
+    public struct RunAnchor: Sendable {
+        public let stage: ForceProtocolStage
+        public let remainingSeconds: Double
+        public let anchoredAtEpochMs: Double
+
+        public init(stage: ForceProtocolStage, remainingSeconds: Double, anchoredAtEpochMs: Double) {
+            self.stage = stage
+            self.remainingSeconds = remainingSeconds
+            self.anchoredAtEpochMs = anchoredAtEpochMs
+        }
+
+        /// Capture the anchor from a run at an instant.
+        public init(run: ForceProtocolRun, at date: Date = Date()) {
+            self.init(
+                stage: run.currentStage,
+                remainingSeconds: run.remainingSeconds(at: date),
+                anchoredAtEpochMs: date.timeIntervalSince1970 * 1_000
+            )
+        }
+    }
+
+    /// Everything the lock screen needs from a run ANCHOR — the live
+    /// `currentStage` + `stageStartedAt` state machine instead of the fixed
+    /// wall-clock schedule. This is the snapshot the app pushes on every
+    /// state transition (stage change / Skip Stage / hold-end peak / run
+    /// complete), so the card can never disagree with the in-app countdown
+    /// (#674 review F3) and the terminal complete stage is reachable (#674
+    /// F5). The countdown window starts NOW and runs for the current stage's
+    /// full remaining duration; when the stage is the zero-length complete
+    /// stage the window is empty and `remainingSeconds == 0`.
+    public func snapshot(runAnchor: RunAnchor, peakKilograms: Double? = nil) -> Snapshot {
+        let stage = runAnchor.stage
+        let nowEpochMs = runAnchor.anchoredAtEpochMs
+        let remaining = max(0, runAnchor.remainingSeconds)
+        let duration = max(0, stage.durationSeconds)
+        let endEpochMs = nowEpochMs + remaining * 1_000
+        let progress: Double
+        if stage.kind == .complete {
+            progress = 1
+        } else if duration > 0 {
+            let elapsed = duration - remaining
+            progress = min(1, max(0, elapsed / duration))
+        } else {
+            progress = 0
+        }
+        var detail = "Set \(stage.setNumber) · Rep \(stage.repetitionNumber)"
+        if stage.side != .unspecified {
+            detail += " · \(stage.side.label)"
+        }
+        let phase = GuidedActivitySegment.Phase.from(stageKind: stage.kind)
+        return Snapshot(
+            title: title,
+            phaseToken: phase.rawValue,
+            phaseLabel: phase.label,
+            detailLabel: detail,
+            segmentStartEpochMs: nowEpochMs,
+            segmentEndEpochMs: endEpochMs,
+            progress: progress,
+            peakKilograms: peakKilograms,
+            targetKilograms: targetKilograms
+        )
+    }
+
+    private func snapshot(segment: GuidedActivitySegment, segmentStartEpochMs: Double, elapsedSeconds: Double, peakKilograms: Double?) -> Snapshot {
         var detail = "Set \(segment.set) · Rep \(segment.rep)"
         if segment.side != .unspecified {
             detail += " · \(segment.side.label)"
         }
-        let startMs = startEpochMs + segment.startS * 1_000
-        let endMs = startEpochMs + (segment.startS + segment.durS) * 1_000
+        let endEpochMs = segmentStartEpochMs + segment.durS * 1_000
         return Snapshot(
             title: title,
             phaseToken: segment.phase.rawValue,
             phaseLabel: segment.phase.label,
             detailLabel: detail,
-            segmentStartEpochMs: startMs,
-            segmentEndEpochMs: endMs,
+            segmentStartEpochMs: segmentStartEpochMs,
+            segmentEndEpochMs: endEpochMs,
             progress: progress(elapsedSeconds: elapsedSeconds) ?? 0,
             peakKilograms: peakKilograms,
             targetKilograms: targetKilograms
@@ -173,8 +274,11 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
 
     /// Build the activity's schedule from the native protocol run: the stages
     /// are already the flat, timed, side-carrying timeline the fullscreen
-    /// walks (same source as `save-per-hold`), so the lock screen and the
-    /// in-app countdown can never disagree about what segment is current.
+    /// walks (same source as `save-per-hold`). The schedule is a faithful
+    /// PREVIEW of the run, but the pushed snapshots must come from the live
+    /// anchor instead — a Skip Stage or a disconnect re-advances `run` and
+    /// wall clock can no longer describe the current segment (#674 review
+    /// F3).
     public static func from(
         run: ForceProtocolRun,
         preset: TindeqPreset,

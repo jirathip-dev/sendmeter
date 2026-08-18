@@ -11,6 +11,13 @@ import Foundation
 /// targets with a KEEP-IN-SYNC comment). ActivityKit matches an activity to
 /// its rendering widget by type name + Codable shape, so this must stay a
 /// plain wire type: no logic, no references to app-only code.
+///
+/// What is shared is EXACTLY this file. The widget extension target has no
+/// SendmeterCore dependency and never imports `GuidedActivityContent` — the
+/// app-side manager renders the ContentState from Core and pushes it; the
+/// widget only renders the pushed state. Keep the two targets' use of the
+/// `phase` token and the `progress` field in step (the manager produces them,
+/// the widget renders them), and never let the widget start importing Core.
 public struct GuidedProtocolActivityAttributes: ActivityAttributes {
     public struct ContentState: Codable, Hashable {
         public var title: String

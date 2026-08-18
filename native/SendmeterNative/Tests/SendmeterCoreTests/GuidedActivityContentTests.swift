@@ -8,7 +8,8 @@ final class GuidedActivityContentTests: XCTestCase {
         sets: Int = 1,
         prepareSeconds: Int = 5,
         alternateSides: Bool = true,
-        restBetweenRepetitionsSeconds: Int = 60
+        restBetweenRepetitionsSeconds: Int = 60,
+        restBetweenSetsSeconds: Int = 120
     ) -> TindeqPreset {
         TindeqPreset(
             name: "Repeaters",
@@ -16,7 +17,7 @@ final class GuidedActivityContentTests: XCTestCase {
             repetitions: repetitions,
             sets: sets,
             restBetweenRepetitionsSeconds: restBetweenRepetitionsSeconds,
-            restBetweenSetsSeconds: 120,
+            restBetweenSetsSeconds: restBetweenSetsSeconds,
             alternateSides: alternateSides,
             prepareSeconds: prepareSeconds
         )
@@ -125,6 +126,104 @@ final class GuidedActivityContentTests: XCTestCase {
 
         // Past the schedule: nil (the activity ends, not a stale card).
         XCTAssertNil(content.snapshot(atEpochMs: 2_000_000_000))
+    }
+
+    // MARK: #674 review F3 — the LIVE anchor path
+
+    func testRunAnchorReflectsSkipStage() {
+        // A Repeaters run reaches its set rest; at 10s in the user taps Skip
+        // Stage. The anchor path must re-anchor to the CURRENT stage (the
+        // next work hold) instead of replaying the frozen schedule, which
+        // would show SET REST counting down from 170s (#674 F3).
+        let preset = preset(repetitions: 2, sets: 2, restBetweenSetsSeconds: 180)
+        let content = content(preset: preset, startEpochMs: 1_000_000)
+        var run = ForceProtocolRun(preset: preset, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        var guardCount = 0
+        while run.currentStage.kind != .restBetweenSets {
+            run.advance(at: Date(timeIntervalSince1970: 0))
+            guardCount += 1
+            XCTAssertLessThan(guardCount, 50)
+        }
+        // advance(at:) set stageStartedAt to the boundary date; re-start the
+        // stage so the anchor has a deterministic in-progress stage.
+        run.start(at: Date(timeIntervalSince1970: 1_000))
+        let anchorBefore = GuidedProtocolActivityContent.RunAnchor(
+            run: run,
+            at: Date(timeIntervalSince1970: 1_010)
+        )
+        let before = content.snapshot(runAnchor: anchorBefore, peakKilograms: nil)
+        XCTAssertEqual(before.phaseToken, "setRest")
+        // Anchored at 1_010_000ms with 170s left → window ends at 1_180_000ms.
+        XCTAssertEqual(before.segmentStartEpochMs, 1_010_000)
+        XCTAssertEqual(before.segmentEndEpochMs, 1_180_000)
+
+        // Skip Stage: advance to the next (work) stage and re-anchor.
+        run.advance(at: Date(timeIntervalSince1970: 1_010))
+        XCTAssertEqual(run.currentStage.kind, .work)
+        let anchorAfter = GuidedProtocolActivityContent.RunAnchor(
+            run: run,
+            at: Date(timeIntervalSince1970: 1_010)
+        )
+        let after = content.snapshot(runAnchor: anchorAfter, peakKilograms: nil)
+        XCTAssertEqual(after.phaseToken, "work")
+        // The new window starts NOW and runs the full hold duration.
+        XCTAssertEqual(after.segmentStartEpochMs, 1_010_000)
+        XCTAssertEqual(after.segmentEndEpochMs, 1_020_000)
+        XCTAssertEqual(after.progress, 0, accuracy: 1e-9)
+    }
+
+    func testRunAnchorProgressTracksElapsedWithinStage() {
+        let preset = preset(holdSeconds: 10)
+        let content = content(preset: preset, startEpochMs: 1_000_000)
+        var run = ForceProtocolRun(preset: preset, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        // Midway through the first (prepare, 5s) stage.
+        let anchor = GuidedProtocolActivityContent.RunAnchor(
+            run: run,
+            at: Date(timeIntervalSince1970: 2.5)
+        )
+        let snapshot = content.snapshot(runAnchor: anchor, peakKilograms: 40)
+        XCTAssertEqual(snapshot.phaseToken, "prepare")
+        XCTAssertEqual(snapshot.progress, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(snapshot.segmentStartEpochMs, 2_500)
+        XCTAssertEqual(snapshot.segmentEndEpochMs, 5_000)
+    }
+
+    // MARK: #674 review F5 — the terminal complete stage
+
+    func testRunAnchorEmitsTerminalComplete() {
+        let preset = preset(repetitions: 1, sets: 1, prepareSeconds: 0, restBetweenRepetitionsSeconds: 0)
+        let content = content(preset: preset, startEpochMs: 1_000_000)
+        var run = ForceProtocolRun(preset: preset, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        var guardCount = 0
+        while !run.isComplete {
+            run.advance(at: Date(timeIntervalSince1970: 10))
+            guardCount += 1
+            XCTAssertLessThan(guardCount, 50)
+        }
+        let anchor = GuidedProtocolActivityContent.RunAnchor(run: run, at: Date(timeIntervalSince1970: 10))
+        let snapshot = content.snapshot(runAnchor: anchor, peakKilograms: nil)
+        XCTAssertEqual(snapshot.phaseToken, "complete")
+        XCTAssertEqual(snapshot.progress, 1)
+        // The complete stage is zero-length: empty countdown window.
+        XCTAssertEqual(snapshot.segmentEndEpochMs, snapshot.segmentStartEpochMs)
+    }
+
+    func testAnchorSnapshotAlwaysHasProgressField() {
+        // #674 review F8: the ContentState.progress field must be populated on
+        // every push — including the terminal complete stage — so the widget's
+        // progress bar has a value.
+        let preset = preset(repetitions: 1, sets: 1, prepareSeconds: 0, restBetweenRepetitionsSeconds: 0)
+        let content = content(preset: preset, startEpochMs: 0)
+        var run = ForceProtocolRun(preset: preset, startingSide: .left)
+        run.start(at: Date(timeIntervalSince1970: 0))
+        while !run.isComplete {
+            run.advance(at: Date(timeIntervalSince1970: 10))
+        }
+        let snapshot = content.snapshot(runAnchor: .init(run: run, at: Date(timeIntervalSince1970: 10)))
+        XCTAssertEqual(snapshot.progress, 1)
     }
 
     func testFallbackSideUsedForUnspecifiedStages() {

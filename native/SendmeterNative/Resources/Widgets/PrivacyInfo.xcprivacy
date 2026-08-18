@@ -14,10 +14,12 @@
 
 	<!-- No required-reason API here. This bundle has no App Group and no
 	     Button(intent:) (the guided protocol has no lock-screen actions;
-	     the workout Live Activity + intents are a follow-up, #674). Not
+	     interactive intents are iOS 17+ and a follow-up if ever added). Not
 	     strictly required by Apple (a bundle that uses no required-reason
 	     API needs no manifest), but kept so every shipped bundle states its
-	     position explicitly. -->
+	     position explicitly. This file MUST be named PrivacyInfo.xcprivacy
+	     at the appex bundle root — Apple's manifest tooling reads exactly
+	     that name (#674 review F4). -->
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array/>
 </dict>

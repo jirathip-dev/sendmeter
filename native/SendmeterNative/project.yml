@@ -8,6 +8,17 @@ options:
 configs:
   Debug: debug
   Release: release
+# Project-level version settings: every target (the app AND the widget
+# appex) derives CFBundleShortVersionString / CFBundleVersion from these
+# ONE place, so a version bump can never leave the appex's version
+# string diverging from the app's (App Store validation rejects an
+# embedded bundle whose CFBundleShortVersionString differs from the
+# containing app's). The lane's CURRENT_PROJECT_VERSION xcargs override
+# stays a command-line override for the build number only.
+settings:
+  base:
+    MARKETING_VERSION: 1.0.0
+    CURRENT_PROJECT_VERSION: 1
 packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
@@ -80,8 +91,6 @@ targets:
         SWIFT_VERSION: 5.0
         IPHONEOS_DEPLOYMENT_TARGET: 16.2
         TARGETED_DEVICE_FAMILY: "1,2"
-        MARKETING_VERSION: 1.0.0
-        CURRENT_PROJECT_VERSION: 1
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: YES
@@ -114,10 +123,14 @@ targets:
       # (same quirk as the app above), so the widget's Info.plist + privacy
       # manifest are declared as sources with an explicit buildPhase. The
       # Info.plist lives OUTSIDE the synced Sources/Widgets dir (repo
-      # convention for widget/appex targets).
+      # convention for widget/appex targets). The privacy manifest lives in
+      # its OWN subdirectory so it keeps the exact `PrivacyInfo.xcprivacy`
+      # leaf name Apple's manifest tooling reads at the bundle root — a
+      # disambiguated name (e.g. WidgetsPrivacyInfo.xcprivacy) ships the file
+      # but Apple never reads it (#674 review F4).
       - path: Resources/WidgetsInfo.plist
         buildPhase: none
-      - path: Resources/WidgetsPrivacyInfo.xcprivacy
+      - path: Resources/Widgets/PrivacyInfo.xcprivacy
         buildPhase: resources
     settings:
       base:
@@ -135,8 +148,6 @@ targets:
         SWIFT_VERSION: 5.0
         IPHONEOS_DEPLOYMENT_TARGET: 16.2
         TARGETED_DEVICE_FAMILY: "1,2"
-        MARKETING_VERSION: 1.0.0
-        CURRENT_PROJECT_VERSION: 1
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: YES

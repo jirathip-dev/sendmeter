@@ -7,13 +7,25 @@ import WidgetKit
 /// current protocol segment counts down natively from the timestamps in the
 /// ContentState (`Text(timerInterval:)`), so the card needs zero per-tick
 /// updates from the app; the app only speaks on state transitions (stage
-/// changes, hold-end peak), exactly the `GuidedProtocolActivityManager`
-/// contract.
+/// changes, Skip Stage, hold-end peak, run complete), exactly the
+/// `GuidedProtocolActivityManager` contract.
 ///
-/// The rendered content model is the tested `GuidedActivityContent` in
-/// SendmeterCore plus the shared `GuidedProtocolActivityAttributes` from
-/// `Sources/Shared` — no logic is forked here, and the wire shape cannot
-/// drift (single source files shared with the app target).
+/// KEEP-IN-SYNC note: this widget target has NO SendmeterCore dependency and
+/// never sees `GuidedActivityContent` — it renders the wire `ContentState` in
+/// `GuidedProtocolActivityAttributes` (the one genuinely shared file,
+/// `Sources/Shared`, compiled into both targets). Keep it that way: no Core
+/// import, no copied model, and keep the `phase`/`progress` rendering in
+/// step with the manager that produces them.
+///
+/// The Dynamic Island tap deep-links to the Force tab through the registered
+/// `sendmeter://force` scheme: WidgetKit delivers the URL to the containing
+/// app, whose `onOpenURL` routes it (see `AppModel.handleDeepLink`) — the
+/// scheme is in Info.plist and the router intercepts it BEFORE the auth
+/// parser. This is the fix for the Capacitor widget's `widgetURL` line being
+/// copied verbatim: it originally fed every URL to supabase-swift's PKCE
+/// `session(from:)`, which threw "Not a valid PKCE flow URL" and surfaced the
+/// raw error in a red banner (#674 review F2). The URL is only safe because
+/// the native app has a real route for it.
 struct GuidedProtocolLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: GuidedProtocolActivityAttributes.self) { context in
@@ -68,36 +80,45 @@ private struct LockScreenGuidedProtocolView: View {
     let context: ActivityViewContext<GuidedProtocolActivityAttributes>
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(segLabel(context.state))
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(segColor(context.state))
-                segTimer(context.state)
-                    .font(.system(size: 34, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                Text(context.state.title)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(context.state.detailLabel)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
-                if let peak = context.state.peakKilograms {
-                    Text("peak \(String(format: "%.1f", peak)) kg")
-                        .font(.caption2)
-                        .foregroundStyle(.green)
-                }
-                if let target = context.state.targetKilograms {
-                    Text("target \(String(format: "%.1f", target)) kg")
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(segLabel(context.state))
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(segColor(context.state))
+                    segTimer(context.state)
+                        .font(.system(size: 34, weight: .heavy, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                    Text(context.state.title)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(context.state.detailLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                    if let peak = context.state.peakKilograms {
+                        Text("peak \(String(format: "%.1f", peak)) kg")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                    }
+                    if let target = context.state.targetKilograms {
+                        Text("target \(String(format: "%.1f", target)) kg")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
+            // #674 review F8: the manager transmits `progress` on every
+            // update; render it here instead of leaving dead wire payload.
+            // An empty window (the zero-length complete stage) shows a full
+            // bar rather than a spurious 0.
+            ProgressView(value: context.state.progress)
+                .progressViewStyle(.linear)
+                .tint(segColor(context.state))
         }
     }
 }
