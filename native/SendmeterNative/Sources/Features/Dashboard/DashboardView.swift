@@ -18,6 +18,7 @@ struct DashboardView: View {
                         SendConditionsCard()
                     }
                     LoadCard()
+                    AcwrProjectionCard()
                     RecentSessionsCard()
                 }
                 .padding()
@@ -247,13 +248,7 @@ private struct LoadCard: View {
     }
 
     private func statusColor(_ scheme: ColorScheme) -> Color {
-        switch TrainingMetrics.acwrStatus(model.acwr.ratio) {
-        case .optimal: return ChartToken.optimal.color(scheme)
-        case .low, .underTraining: return ChartToken.focus.color(scheme)
-        case .caution: return ChartToken.caution.color(scheme)
-        case .danger: return ChartToken.alert.color(scheme)
-        case .noData: return .secondary
-        }
+        ChartToken.acwrStatusColor(model.acwr.ratio, scheme)
     }
 }
 

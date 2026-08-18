@@ -64,6 +64,16 @@ public enum LocalDateSupport {
         return string(from: date, timeZone: timeZone)
     }
 
+    /// Days ahead of `referenceDate` (`daysAgo` going forward) — the web's
+    /// `daysAhead(n)` for the ACWR projection's future dates.
+    public static func daysAhead(
+        _ days: Int,
+        from referenceDate: Date = Date(),
+        timeZone: TimeZone = .current
+    ) -> String {
+        daysAgo(-days, from: referenceDate, timeZone: timeZone)
+    }
+
     public static func dayDistance(
         from startDate: String,
         to endDate: String,
@@ -74,6 +84,39 @@ public enum LocalDateSupport {
         else { return nil }
         let calendar = calendar(timeZone: timeZone)
         return calendar.dateComponents([.day], from: start, to: end).day
+    }
+
+    /// How a nearby day is named in prose: "yesterday" / "today" /
+    /// "tomorrow" / the plain weekday inside the coming week. Past ~6 days out
+    /// a bare weekday is ambiguous (which Thursday?), so it falls back to a
+    /// short date. Same as the web's `relativeDayLabel`. The locale is
+    /// injected (defaulting to the device's) like `timeZone` so the prose
+    /// follows the user's region while remaining testable with a fixed
+    /// locale; only the calendar is pinned.
+    public static func relativeDayLabel(
+        for date: String,
+        referenceDate: Date = Date(),
+        timeZone: TimeZone = .current,
+        locale: Locale = .autoupdatingCurrent
+    ) -> String {
+        let reference = string(from: referenceDate, timeZone: timeZone)
+        guard let offset = dayDistance(from: reference, to: date, timeZone: timeZone) else {
+            return date
+        }
+        if offset == -1 { return "yesterday" }
+        if offset == 0 { return "today" }
+        if offset == 1 { return "tomorrow" }
+        guard let day = self.date(from: date, timeZone: timeZone) else { return date }
+        var style: Date.FormatStyle
+        if offset > 1 && offset <= 6 {
+            style = Date.FormatStyle().weekday(.wide)
+        } else {
+            style = Date.FormatStyle().month(.abbreviated).day()
+        }
+        style.calendar = Calendar(identifier: .gregorian)
+        style.locale = locale
+        style.timeZone = timeZone
+        return day.formatted(style)
     }
 
     public static func iso8601String(from date: Date) -> String {

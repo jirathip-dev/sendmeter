@@ -92,6 +92,20 @@ public enum ChartToken: String, CaseIterable, Sendable {
         (opacity: 0, location: 1)
     ]
 
+    /// The universal ACWR status color — the single mapping shared by the Load
+    /// card and the projection card's day-0 dot (#652 F12). The web splits
+    /// under-training (`--primary`) from low (`--info`); native folds both into
+    /// `focus`, matching the existing Load card.
+    public static func acwrStatusColor(_ ratio: Double?, _ scheme: ColorScheme) -> Color {
+        switch TrainingMetrics.acwrStatus(ratio) {
+        case .optimal: return ChartToken.optimal.color(scheme)
+        case .low, .underTraining: return ChartToken.focus.color(scheme)
+        case .caution: return ChartToken.caution.color(scheme)
+        case .danger: return ChartToken.alert.color(scheme)
+        case .noData: return .secondary
+        }
+    }
+
     /// Radial glow behind a selected point, built from `selectedHaloStops`.
     /// The web's `selectedHalo` SVG is centered with no explicit `cx`/`cy`,
     /// so the native halo defaults to the center too; radii are parameters
