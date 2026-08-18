@@ -144,6 +144,15 @@ public final class AppModel: ObservableObject {
     public private(set) var gaugeSessionTracker = GaugeSessionTracker()
     public var freePullContext = FreePullContext()
 
+    /// #656 (review F1): the one way a user asks to connect the Progressor.
+    /// Marks the transport as user-initiated for THIS LAUNCH so the
+    /// success/error haptics in the `$status` sink may fire — a cold launch
+    /// with Bluetooth off has no user gesture behind it and must stay silent.
+    public func requestConnect() {
+        transportUserInitiated = true
+        tindeq.connect()
+    }
+
     private let queue: DurableQueue<PendingWrite>?
     private var authObservationTask: Task<Void, Never>?
     private var pendingSessions: [UUID: SendmeterCore.Session] = [:]
@@ -159,6 +168,21 @@ public final class AppModel: ObservableObject {
     /// `FOREGROUND_SYNC_COALESCE_MS` (5s).
     private let healthRefreshPolicy = HealthRefreshPolicy(coalescingWindow: 5)
     private var lastHealthRefreshStartedAt: TimeInterval?
+    /// #656: the previously observed transport status, so the connect
+    /// success / drop error haptics fire once per transition (never when
+    /// `stopMeasuring()` re-sets `.connected` after a rep).
+    private var lastTransportStatus: TindeqBluetooth.Status?
+    /// #656: the transport may only cue success/error once the user has
+    /// initiated a connection THIS LAUNCH (review F1) — a cold launch with
+    /// Bluetooth off must not buzz an unsolicited `.error` on the Dashboard,
+    /// and the issue's own guard column ("only when presented by a tap")
+    /// exists for exactly this class.
+    private var transportUserInitiated = false
+    /// #656: the last transport cue played, so one Bluetooth-off event — iOS
+    /// delivers BOTH a `.poweredOff` `.interrupted` AND a `didDisconnect`
+    /// `.interrupted` with a different message — collapses to one buzz
+    /// (review F2, "one tick per gesture").
+    private var lastTransportCue: HapticCue?
 
     /// Live workout mirror cursor (two producers: WC beat + realtime row,
     /// one merge discipline — see LiveWorkoutMirror).
@@ -282,11 +306,45 @@ public final class AppModel: ObservableObject {
         // a guided protocol is running, whose interrupted path preserves the
         // final rep and then ends the session itself (so the last rep can
         // never be orphaned into a fresh group by a racing end). The
-        // keep-awake hold follows the transport + arming state.
+        // keep-awake hold follows the transport + arming state. #656: the
+        // transport's transitions carry the success/error haptics — connect
+        // succeeds, a drop (or deliberate disconnect) errors. The success
+        // fires ONLY on a `.connecting`/`.scanning` → `.connected` transition,
+        // never when `stopMeasuring()` re-sets `.connected` after a rep.
         tindeq.$status
             .receive(on: DispatchQueue.main)
             .sink { [weak self] status in
                 guard let self else { return }
+                let previous = self.lastTransportStatus
+                self.lastTransportStatus = status
+                // #656 (review F1/F2): the transport cues success/error only
+                // when a user gesture armed them this launch — `connect()`
+                // called from the Force tab — and only once per logical
+                // event. A cold launch with Bluetooth off is `.idle →
+                // .interrupted` with no user intent, and must stay silent.
+                // A single Bluetooth-off delivers TWO different
+                // `.interrupted` values back-to-back (the `.poweredOff` state
+                // change and the `didDisconnect`), so consecutive error
+                // statuses collapse to one cue.
+                let cue: HapticCue?
+                switch (previous, status) {
+                case (.connecting?, .connected), (.scanning?, .connected), (.idle?, .connected), (nil, .connected):
+                    cue = transportUserInitiated ? .success : nil
+                case (_, .interrupted), (_, .unavailable):
+                    cue = transportUserInitiated ? .error : nil
+                case (_, .idle):
+                    cue = transportUserInitiated && previous != nil
+                        && previous != .idle && previous != .unavailable
+                        ? .error : nil
+                default:
+                    cue = nil
+                }
+                if let cue, cue != lastTransportCue {
+                    lastTransportCue = cue
+                    Haptics.shared.play(cue)
+                } else if cue == nil {
+                    lastTransportCue = nil
+                }
                 if case .interrupted = status {
                     self.handsFree.handleDisconnected()
                     if !self.guidedProtocolActive {

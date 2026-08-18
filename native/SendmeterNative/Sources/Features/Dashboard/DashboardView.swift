@@ -27,7 +27,12 @@ struct DashboardView: View {
             .navigationTitle("Dashboard")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showLog = true } label: {
+                    Button {
+                        // #656: a tap opening a sheet arms the presentation
+                        // tick.
+                        Haptics.shared.tap()
+                        showLog = true
+                    } label: {
                         Label("Log Session", systemImage: "plus.circle.fill")
                     }
                 }
@@ -48,9 +53,11 @@ struct DashboardView: View {
             }
             .sheet(isPresented: $showLog) {
                 LogSessionSheet()
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .sheet(isPresented: $showPhases) {
                 PhasesView()
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
         }
     }
@@ -148,7 +155,11 @@ private struct PhaseCard: View {
     }
 
     var body: some View {
-        Button { showPhases = true } label: {
+        Button {
+            // #656: a tap opening a sheet arms the presentation tick.
+            Haptics.shared.tap()
+            showPhases = true
+        } label: {
             SurfaceCard {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {

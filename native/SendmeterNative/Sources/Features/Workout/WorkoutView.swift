@@ -19,8 +19,17 @@ struct WorkoutView: View {
                     if engine == nil {
                         StartWorkoutCard(start: startWorkout)
                         RoutineLibraryCard(
-                            run: { runningRoutine = RoutineRunPresentation(preset: $0, restored: nil) },
-                            edit: { showRoutineEditor = true }
+                            run: { preset in
+                                // #656: a tap opening a sheet arms the
+                                // presentation tick.
+                                Haptics.shared.tap()
+                                runningRoutine = RoutineRunPresentation(preset: preset, restored: nil)
+                            },
+                            edit: {
+                                // #656: see `run:` above.
+                                Haptics.shared.tap()
+                                showRoutineEditor = true
+                            }
                         )
                     } else {
                         ActiveWorkoutCard(
@@ -36,9 +45,11 @@ struct WorkoutView: View {
             .navigationTitle("Workout")
             .sheet(isPresented: $showRoutineEditor) {
                 RoutineEditorSheet()
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .sheet(item: $runningRoutine) { presentation in
                 RoutineRunnerSheet(presentation: presentation)
+                    .onAppear { Haptics.shared.sheetPresented() }
             }
             .task {
                 guard !hasResolvedPersistedRun else { return }
@@ -158,6 +169,10 @@ struct WorkoutView: View {
         guard var engine else { return }
         do {
             let draft = try engine.finish()
+            // #656 (re-review): the accepted medium tick fires only once the
+            // finish is real — an empty-workout refusal below must play the
+            // warning pattern, never the accepted tick.
+            Haptics.shared.play(.medium)
             self.engine = nil
             isSaving = true
             Task {
@@ -166,6 +181,9 @@ struct WorkoutView: View {
             }
         } catch WorkoutEngineError.emptyWorkout {
             model.errorMessage = "Record at least one attempt before finishing the workout."
+            // #222: the Finish button is deliberately kept clickable so the
+            // tap can say why — a refused finish must not feel accepted.
+            Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
         } catch {
             model.errorMessage = error.localizedDescription
         }
@@ -574,6 +592,9 @@ private struct RoutineEditorSheet: View {
                         }
                         .swipeActions {
                             Button(role: .destructive) {
+                                // #656: a confirmed destructive action fires
+                                // the medium tick once per gesture.
+                                Haptics.shared.play(.medium)
                                 steps.removeAll { $0.id == step.id }
                             } label: { Label("Delete", systemImage: "trash") }
                         }
