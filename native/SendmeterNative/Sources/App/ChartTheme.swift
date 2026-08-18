@@ -45,6 +45,21 @@ public enum ChartToken: String, CaseIterable, Sendable {
         scheme == .dark ? 0.20 : 0.16
     }
 
+    /// Training-quality hue for the training-balance bars — the same mapping
+    /// as the web's `QUALITY_COLORS` (power → danger, strength → warning,
+    /// power-endurance → info, endurance → success), expressed in ChartTheme
+    /// tokens so the palette stays central (#653). The token values match the
+    /// CSS vars exactly (alert `#E5743A`, caution `#DDB13A`, load `#7B83EB`,
+    /// optimal `#2E96F0`).
+    public static func zoneQuality(_ zone: ZoneQuality) -> ChartToken {
+        switch zone {
+        case .power: return .alert
+        case .strength: return .caution
+        case .powerEndurance: return .load
+        case .endurance: return .optimal
+        }
+    }
+
     /// `--chart-band-opacity` (index.css): 0.12 light / 0.16 dark. The top
     /// stop of a reference band fill.
     public func bandOpacity(_ scheme: ColorScheme) -> Double {

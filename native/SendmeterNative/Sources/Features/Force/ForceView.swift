@@ -22,6 +22,11 @@ struct ForceView: View {
     @State private var selectedTargetPlan = ForceTargetPlan.empty
     @State private var resolvingTargets = false
     @State private var savingSummary = false
+    /// #653: the recommended zone's preset, kept in ForceView state rather
+    /// than persisted with the user's own presets — arming Focus Next is a
+    /// temporary guided-protocol selection, the same way the web's `zoneSel`
+    /// is transient.
+    @State private var zoneArmedPreset: TindeqPreset?
 
     private var side: TindeqSide {
         get { TindeqSide(rawValue: sideValue) ?? .unspecified }
@@ -34,8 +39,10 @@ struct ForceView: View {
     }
 
     private var selectedPreset: TindeqPreset? {
-        guard let selectedPresetID else { return nil }
-        return model.presets.first(where: { $0.id == selectedPresetID })
+        if let selectedPresetID {
+            return model.presets.first(where: { $0.id == selectedPresetID })
+        }
+        return zoneArmedPreset
     }
 
     /// #627: the active gauge session's recording count (for the Finish pill
@@ -44,6 +51,31 @@ struct ForceView: View {
         guard model.gaugeSessionTracker.isActive else { return 0 }
         let groupID = model.gaugeSessionTracker.active?.groupID
         return model.recordings.filter { $0.groupID == groupID }.count
+    }
+
+    /// The force-curve signal for the Focus-Next tie-break: the cached static
+    /// fit for the active tag, if any. Scoped to the tag (both sides) like the
+    /// card, matching the web's model for the zone pick.
+    private var zoneCurve: ZoneCurveInput? {
+        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+        guard let curve = model.tagCurves.first(where: {
+            $0.tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
+                && $0.modality == "static"
+        }) else { return nil }
+        return ZoneCurveInput(curve)
+    }
+
+    /// #653: arm the recommended zone's guided protocol for the active tag —
+    /// the web's Focus-Next pick path. Stamps the zone the run's recordings
+    /// are performed under (native `performedQuality`), then arms the preset.
+    /// Arming is just a selection (web `selectZone`): connection and the
+    /// unsaved-recording guard belong to Start, not the pick — the main Start
+    /// button launches the armed zone's guided protocol. The zone preset is
+    /// held in view state, not persisted among the user's own presets.
+    private func armRecommendedZone(_ zone: ZoneQuality) {
+        self.zone = ZoneMix.recordedZone(for: zone)
+        zoneArmedPreset = ZoneMix.zonePreset(for: zone)
     }
 
     var body: some View {
@@ -59,7 +91,18 @@ struct ForceView: View {
                         resolvingTarget: resolvingTargets,
                         savingSummary: savingSummary,
                         gaugeSessionCount: gaugeSessionCount,
-                        start: startMeasurement,
+                        // #653: a Focus-Next-armed zone makes the main Start
+                        // button launch that zone's guided protocol — the
+                        // native equivalent of the web's Start-with-an-armed-
+                        // zone opening the guided timer. With nothing armed it
+                        // stays a free pull.
+                        start: {
+                            if let zoneArmedPreset {
+                                launch(zoneArmedPreset)
+                            } else {
+                                startMeasurement()
+                            }
+                        },
                         armHandsFree: armHandsFree,
                         stopAndSave: stopAndSave,
                         cancelArm: { model.handsFree.cancelArm() },
@@ -78,6 +121,24 @@ struct ForceView: View {
                         presets: model.presets,
                         knownTags: model.visibleTagNames
                     )
+
+                    // #653: training balance + Focus Next for the active
+                    // exercise (both sides), arming the recommended zone's
+                    // guided protocol — the same arms the ForceMetadataCard
+                    // zone picker uses. The card shows for any selected tag;
+                    // `zoneCurve` (the Focus-Next tie-break) is optional and
+                    // nil when no static fit exists yet.
+                    if !tag.isEmpty {
+                        ZoneFocusCard(
+                            recordings: model.recordings.filter { $0.tag == tag },
+                            exercise: tag,
+                            curveInput: zoneCurve,
+                            onPick: armRecommendedZone,
+                            locked: model.tindeq.status == .measuring
+                                || model.handsFree.isArmed
+                                || model.handsFree.isMeasuring
+                        )
+                    }
 
                     if let live = model.watch.liveForce,
                        live.accountUserID == nil || live.accountUserID == model.currentUserID {
@@ -109,7 +170,15 @@ struct ForceView: View {
             .onChange(of: tag) { _ in publishFreePullContext() }
             .onChange(of: side) { _ in publishFreePullContext() }
             .onChange(of: zone) { _ in publishFreePullContext() }
-            .onChange(of: selectedPresetID) { _ in publishFreePullContext() }
+            .onChange(of: selectedPresetID) { _ in
+                // #653: a manual preset pick and a Focus-Next arm are mutually
+                // exclusive (web `selectZoneOutcome` / `withPresetSelected`).
+                // Choosing a preset from the metadata card (or "Free pull")
+                // clears the transient zone arm; arming a recommendation only
+                // touches `zoneArmedPreset`, so it never trips this.
+                zoneArmedPreset = nil
+                publishFreePullContext()
+            }
             .onChange(of: selectedTargetPlan) { _ in publishFreePullContext() }
             .onChange(of: handsFreeEnabled) { enabled in
                 if !enabled { model.handsFree.disarm() }
@@ -257,7 +326,13 @@ struct ForceView: View {
             model.errorMessage = "Connect the Progressor before starting a guided protocol."
             return
         }
-        selectedPresetID = preset.id
+        // #653: only a persisted user preset keeps the metadata picker in
+        // sync; a transient Focus-Next zone preset is not in `model.presets`,
+        // so it must not clobber `selectedPresetID` (which would read back
+        // as "Free pull" and clear the zone arm via the onChange below).
+        if model.presets.contains(where: { $0.id == preset.id }) {
+            selectedPresetID = preset.id
+        }
         resolvingTargets = true
         Task {
             let startSide: TindeqSide = side == .right ? .right : .left
