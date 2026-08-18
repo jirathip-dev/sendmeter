@@ -6,8 +6,9 @@ import Foundation
 /// the activity) compiles against — the widget extension renders only the
 /// wire `ContentState`, never this model. The web duplicates the model across
 /// its widget and plugin copies with a KEEP-IN-SYNC comment
-/// (`ActivityModels.swift`); the native rewrite avoids the duplication by
-/// sharing one Core package.
+/// (`ActivityModels.swift`); the native app compiles this model ONCE from
+/// Core and the widget renders only the pushed wire state, so no duplicated
+/// model exists to drift.
 ///
 /// The lock screen renders its countdown natively from timestamps
 /// (`Text(timerInterval:)`), so the app only speaks on state transitions —
@@ -146,7 +147,6 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
         public let detailLabel: String
         public let segmentStartEpochMs: Double
         public let segmentEndEpochMs: Double
-        public let progress: Double
         public let peakKilograms: Double?
         public let targetKilograms: Double?
 
@@ -157,7 +157,6 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
             detailLabel: String,
             segmentStartEpochMs: Double,
             segmentEndEpochMs: Double,
-            progress: Double,
             peakKilograms: Double?,
             targetKilograms: Double?
         ) {
@@ -167,7 +166,6 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
             self.detailLabel = detailLabel
             self.segmentStartEpochMs = segmentStartEpochMs
             self.segmentEndEpochMs = segmentEndEpochMs
-            self.progress = progress
             self.peakKilograms = peakKilograms
             self.targetKilograms = targetKilograms
         }
@@ -179,7 +177,6 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
         return snapshot(
             segment: segment,
             segmentStartEpochMs: startEpochMs + segment.startS * 1_000,
-            elapsedSeconds: elapsedSeconds,
             peakKilograms: peakKilograms
         )
     }
@@ -224,17 +221,7 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
         let stage = runAnchor.stage
         let nowEpochMs = runAnchor.anchoredAtEpochMs
         let remaining = max(0, runAnchor.remainingSeconds)
-        let duration = max(0, stage.durationSeconds)
         let endEpochMs = nowEpochMs + remaining * 1_000
-        let progress: Double
-        if stage.kind == .complete {
-            progress = 1
-        } else if duration > 0 {
-            let elapsed = duration - remaining
-            progress = min(1, max(0, elapsed / duration))
-        } else {
-            progress = 0
-        }
         var detail = "Set \(stage.setNumber) · Rep \(stage.repetitionNumber)"
         if stage.side != .unspecified {
             detail += " · \(stage.side.label)"
@@ -247,13 +234,12 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
             detailLabel: detail,
             segmentStartEpochMs: nowEpochMs,
             segmentEndEpochMs: endEpochMs,
-            progress: progress,
             peakKilograms: peakKilograms,
             targetKilograms: targetKilograms
         )
     }
 
-    private func snapshot(segment: GuidedActivitySegment, segmentStartEpochMs: Double, elapsedSeconds: Double, peakKilograms: Double?) -> Snapshot {
+    private func snapshot(segment: GuidedActivitySegment, segmentStartEpochMs: Double, peakKilograms: Double?) -> Snapshot {
         var detail = "Set \(segment.set) · Rep \(segment.rep)"
         if segment.side != .unspecified {
             detail += " · \(segment.side.label)"
@@ -266,7 +252,6 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
             detailLabel: detail,
             segmentStartEpochMs: segmentStartEpochMs,
             segmentEndEpochMs: endEpochMs,
-            progress: progress(elapsedSeconds: elapsedSeconds) ?? 0,
             peakKilograms: peakKilograms,
             targetKilograms: targetKilograms
         )

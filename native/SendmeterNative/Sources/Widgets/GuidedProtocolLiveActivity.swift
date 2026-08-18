@@ -14,8 +14,11 @@ import WidgetKit
 /// never sees `GuidedActivityContent` — it renders the wire `ContentState` in
 /// `GuidedProtocolActivityAttributes` (the one genuinely shared file,
 /// `Sources/Shared`, compiled into both targets). Keep it that way: no Core
-/// import, no copied model, and keep the `phase`/`progress` rendering in
-/// step with the manager that produces them.
+/// import, no copied model. Both the countdown AND the progress bar animate
+/// natively from the segment window (`Text(timerInterval:)` /
+/// `ProgressView(timerInterval:)`), so the app's pushes carry only the window
+/// timestamps — keep the rendering in step with the manager that produces
+/// them.
 ///
 /// The Dynamic Island tap deep-links to the Force tab through the registered
 /// `sendmeter://force` scheme: WidgetKit delivers the URL to the containing
@@ -112,11 +115,14 @@ private struct LockScreenGuidedProtocolView: View {
                     }
                 }
             }
-            // #674 review F8: the manager transmits `progress` on every
-            // update; render it here instead of leaving dead wire payload.
-            // An empty window (the zero-length complete stage) shows a full
-            // bar rather than a spurious 0.
-            ProgressView(value: context.state.progress)
+            // #674 review N2: a static `ProgressView(value:)` would sit at ~0
+            // for a whole segment because the app only pushes on transitions
+            // — the card would read as hung next to a correctly-counting
+            // timer. `ProgressView(timerInterval:)` animates natively from
+            // the segment window (same trick as `Text(timerInterval:)`) with
+            // zero pushes. The zero-length complete window is guarded by
+            // rendering the checkmark instead, exactly like `segTimer`.
+            segProgress(context.state)
                 .progressViewStyle(.linear)
                 .tint(segColor(context.state))
         }
@@ -150,5 +156,15 @@ private func segTimer(_ s: GuidedProtocolActivityAttributes.ContentState) -> som
         Text("✓")
     } else {
         Text(timerInterval: s.segmentStart...s.segmentEnd, countsDown: true)
+    }
+}
+
+@ViewBuilder
+private func segProgress(_ s: GuidedProtocolActivityAttributes.ContentState) -> some View {
+    if s.phase == "complete" {
+        // Zero-length window: a full bar reads as "done" rather than 0%.
+        ProgressView(value: 1)
+    } else {
+        ProgressView(timerInterval: s.segmentStart...s.segmentEnd, countsDown: true)
     }
 }

@@ -33,7 +33,6 @@ public struct GuidedProtocolActivityAttributes: ActivityAttributes {
         /// app only speaks on state transitions, never on a tick.
         public var segmentStart: Date
         public var segmentEnd: Date
-        public var progress: Double
         public var peakKilograms: Double?
         public var targetKilograms: Double?
     }

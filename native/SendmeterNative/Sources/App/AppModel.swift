@@ -560,6 +560,15 @@ public final class AppModel: ObservableObject {
         selectedTab = tab
     }
 
+    /// #674 review F7: the orphan sweep ALSO runs on the root view's first
+    /// appearance, because `becameActive()` is driven by a `scenePhase`
+    /// change and whether a COLD launch delivers one is version-dependent.
+    /// This is the launch-time guarantee: force-quit mid-protocol → relaunch
+    /// → the stranded card is retired even if no phase change fires.
+    public func reconcileStrandedActivitiesAtLaunch() {
+        guidedActivity.reconcileOrphans()
+    }
+
     public func becameActive() async {
         // #674 review F7: clear any guided Live Activity stranded by a
         // force-quit / jetsam BEFORE the auth gate — a killed app never ran
