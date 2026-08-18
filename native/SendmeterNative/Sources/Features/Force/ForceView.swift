@@ -1039,8 +1039,16 @@ private struct RecentForceCard: View {
                     ForEach(recordings) { recording in
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(recording.tag.isEmpty ? "Untitled pull" : recording.tag)
-                                    .font(.headline)
+                                HStack(spacing: 7) {
+                                    Text(recording.tag.isEmpty ? "Untitled pull" : recording.tag)
+                                        .font(.headline)
+                                    // #675 F1: a restored quarantined
+                                    // placeholder reads "Rejected" — it won't
+                                    // upload on its own.
+                                    if recording.rejected {
+                                        StatusPill("Rejected", color: SendmeterStyle.alert)
+                                    }
+                                }
                                 Text(recording.recordedAt.formatted(date: .abbreviated, time: .shortened))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)

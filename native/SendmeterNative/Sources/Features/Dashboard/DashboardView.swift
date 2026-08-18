@@ -324,7 +324,10 @@ struct SessionSummaryRow: View {
                     Text(session.typeLabel)
                         .font(.subheadline.weight(.semibold))
                     if session.pending {
-                        StatusPill("Syncing", color: SendmeterStyle.caution)
+                        StatusPill(
+                            session.rejected ? "Rejected" : "Syncing",
+                            color: session.rejected ? SendmeterStyle.alert : SendmeterStyle.caution
+                        )
                     }
                 }
                 Text("\(session.date) · \(session.durationMinutes) min · RPE \(session.rpe, format: .number.precision(.fractionLength(0...1)))")

@@ -159,6 +159,151 @@ final class OfflineQueueTests: XCTestCase {
         XCTAssertNil(due.first?.quarantined)
     }
 
+    /// #675 F3: the bounded-attempt budget is PERMANENT-specific. A long spell
+    /// of retryable failures (the offline case an offline queue exists for)
+    /// must never spend it — the first real permanent rejection after the
+    /// network returns must get the full bounded window, not be quarantined on
+    /// sight because `attempts` had already climbed past the cap.
+    func testRetryableFailuresThenFirstPermanentGetsFullWindow() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "fine"))
+        try await queue.enqueue(item)
+
+        var now = Date(timeIntervalSince1970: 1_000)
+        // A long offline spell: many retryable failures, all with backoff.
+        let many = DurableQueueItem<TestPayload>.maxPermanentAttempts * 4
+        for _ in 1...many {
+            try await queue.markFailure(
+                id: item.id,
+                accountUserID: user,
+                error: "offline",
+                classification: .retryable,
+                now: now
+            )
+            now = now.addingTimeInterval(30)
+        }
+        let quarantinedAfterOffline = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(quarantinedAfterOffline, 0)
+
+        // First and second permanent rejections: NOT quarantined yet — the
+        // full bounded window starts now, not at the pre-existing attempt
+        // count.
+        for _ in 1..<DurableQueueItem<TestPayload>.maxPermanentAttempts {
+            try await queue.markFailure(
+                id: item.id,
+                accountUserID: user,
+                error: "constraint",
+                classification: .permanent,
+                code: "23514",
+                now: now
+            )
+            let quarantinedBeforeCap = await queue.quarantinedCount(for: user)
+            XCTAssertEqual(
+                quarantinedBeforeCap,
+                0,
+                "permanent rejection before the cap must not quarantine"
+            )
+            now = now.addingTimeInterval(30)
+        }
+
+        // Third permanent rejection — the permanent budget is spent,
+        // regardless of how many retryable failures preceded it.
+        try await queue.markFailure(
+            id: item.id,
+            accountUserID: user,
+            error: "constraint",
+            classification: .permanent,
+            code: "23514",
+            now: now
+        )
+        let quarantinedAfterCap = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(quarantinedAfterCap, 1)
+        let quarantined = await queue.quarantinedItems(for: user)
+        XCTAssertEqual(quarantined.first?.quarantined?.kind, .permanent)
+    }
+
+    /// #675 F2: a PARKED rejection (403/RLS) behaves exactly like auth — it
+    /// never quarantines, no matter how many times it fires.
+    func testParkedFailuresNeverQuarantine() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "mine"))
+        try await queue.enqueue(item)
+
+        var now = Date(timeIntervalSince1970: 1_000)
+        for _ in 1...(DurableQueueItem<TestPayload>.maxPermanentAttempts * 2) {
+            try await queue.markFailure(
+                id: item.id,
+                accountUserID: user,
+                error: "permission denied",
+                classification: .parked,
+                code: "42501",
+                now: now
+            )
+            now = now.addingTimeInterval(30)
+        }
+        let parkedQuarantined = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(parkedQuarantined, 0)
+        let due = await queue.items(for: user, dueAt: now.addingTimeInterval(1_000))
+        XCTAssertEqual(due.count, 1)
+        XCTAssertNil(due.first?.quarantined)
+    }
+
+    /// #675 F6: a concurrent drain and manual retry can both snapshot the same
+    /// due entry before the first `markFailure` quarantines it — the second
+    /// `markFailure` on an already-quarantined entry must be a NO-OP, not a
+    /// thrown `alreadyQuarantined`, and must not corrupt the quarantine stamp.
+    func testMarkFailureOnAlreadyQuarantinedIsANoOp() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "bad"))
+        try await queue.enqueue(item)
+
+        var now = Date(timeIntervalSince1970: 1_000)
+        for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+            try await queue.markFailure(
+                id: item.id,
+                accountUserID: user,
+                error: "constraint",
+                classification: .permanent,
+                code: "23514",
+                now: now
+            )
+            now = now.addingTimeInterval(30)
+        }
+        let quarantinedBefore = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(quarantinedBefore, 1)
+        let stamp = (await queue.quarantinedItems(for: user)).first?.quarantined
+
+        // A late, racing markFailure lands on the now-quarantined entry.
+        try await queue.markFailure(
+            id: item.id,
+            accountUserID: user,
+            error: "constraint again",
+            classification: .permanent,
+            code: "23514",
+            now: now
+        )
+        // No throw, no re-armoring, stamp intact, still exactly one quarantined.
+        let quarantined = await queue.quarantinedItems(for: user)
+        XCTAssertEqual(quarantined.count, 1)
+        XCTAssertEqual(quarantined.first?.quarantined, stamp)
+        XCTAssertEqual(quarantined.first?.quarantined?.kind, .permanent)
+        // And the active path still never sees it.
+        let active = await queue.items(for: user)
+        XCTAssertTrue(active.isEmpty)
+    }
+
     /// #273 interaction: an `auth` failure never quarantines — it parks on the
     /// retry path (mirroring the web's never-destroy-data-on-auth-failure
     /// rule), so a revoked token can never turn into a discarded recording.
@@ -372,6 +517,136 @@ final class OfflineQueueTests: XCTestCase {
         let items = await queue.items(for: user)
         XCTAssertEqual(items.count, 1)
         XCTAssertNil(items.first?.quarantined)
+        XCTAssertNil(items.first?.permanentAttempts)
         XCTAssertEqual(items.first?.payload, TestPayload(value: "legacy"))
+    }
+
+    /// #675 F5: a MANUAL retry's failure must NOT count toward the quarantine
+    /// budget — the user's own remediation attempt is an explicit action, and
+    /// tapping "Retry now" three times must never be what quarantines the
+    /// entry they were trying to save.
+    func testManualRetryFailuresDoNotSpendQuarantineBudget() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "bad"))
+        try await queue.enqueue(item)
+
+        var now = Date(timeIntervalSince1970: 1_000)
+        // Many MANUAL retries, all permanent-classified but explicitly opted
+        // out of the quarantine count.
+        for _ in 1...(DurableQueueItem<TestPayload>.maxPermanentAttempts * 2) {
+            try await queue.markFailure(
+                id: item.id,
+                accountUserID: user,
+                error: "constraint",
+                classification: .permanent,
+                code: "23514",
+                now: now,
+                countsTowardQuarantine: false
+            )
+            now = now.addingTimeInterval(30)
+        }
+        let quarantined = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(quarantined, 0)
+        let active = await queue.items(for: user)
+        XCTAssertNil(active.first?.quarantined)
+        XCTAssertNil(active.first?.permanentAttempts)
+    }
+
+    /// #675 F1: `items(for:includeQuarantined: true)` is the VISIBILITY read
+    /// `restorePendingWrites` uses — it returns quarantined entries too, so a
+    /// rejected write stays visible in History/Force after a relaunch. The hot
+    /// drain path (`items(for:)` without the flag) still never sees them.
+    func testIncludeQuarantinedReturnsQuarantinedForVisibilityOnly() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "bad"))
+        try await queue.enqueue(item)
+        var now = Date(timeIntervalSince1970: 1_000)
+        for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+            try await queue.markFailure(
+                id: item.id,
+                accountUserID: user,
+                error: "constraint",
+                classification: .permanent,
+                code: "23514",
+                now: now
+            )
+            now = now.addingTimeInterval(30)
+        }
+
+        // The drain read (default) excludes it.
+        let drain = await queue.items(for: user)
+        XCTAssertTrue(drain.isEmpty)
+        // The visibility read includes it.
+        let visible = await queue.items(for: user, includeQuarantined: true)
+        XCTAssertEqual(visible.count, 1)
+        XCTAssertNotNil(visible.first?.quarantined)
+    }
+
+    /// #675 F7: a failed MANUAL retry must re-stamp the quarantine
+    /// immediately — the entry never sits active on the hot drain path
+    /// re-arming free automatic attempts behind the user's back.
+    func testRequarantineRestoresQuarantinedState() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let user = UUID()
+        let queue = try DurableQueue<TestPayload>(directoryURL: directory, filename: "queue.json")
+        let item = DurableQueueItem(accountUserID: user, payload: TestPayload(value: "bad"))
+        try await queue.enqueue(item)
+        var now = Date(timeIntervalSince1970: 1_000)
+        for _ in 1...DurableQueueItem<TestPayload>.maxPermanentAttempts {
+            try await queue.markFailure(
+                id: item.id,
+                accountUserID: user,
+                error: "constraint",
+                classification: .permanent,
+                code: "23514",
+                now: now
+            )
+            now = now.addingTimeInterval(30)
+        }
+        let quarantinedBeforeRetry = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(quarantinedBeforeRetry, 1)
+
+        // Manual retry clears the stamp and resets the budget.
+        let retried = try await queue.retryQuarantined(id: item.id, accountUserID: user, now: now)
+        XCTAssertTrue(retried)
+        let activeAfterRetry = await queue.items(for: user)
+        XCTAssertTrue(activeAfterRetry.contains { $0.id == item.id })
+        XCTAssertNil(activeAfterRetry.first { $0.id == item.id }?.quarantined)
+
+        // The upload failed → re-stamp. The entry is quarantined again, and
+        // the hot drain path cannot touch it.
+        let restamped = try await queue.requarantine(
+            id: item.id,
+            accountUserID: user,
+            detail: "Manual retry failed",
+            now: now
+        )
+        XCTAssertTrue(restamped)
+        let quarantinedCount = await queue.quarantinedCount(for: user)
+        XCTAssertEqual(quarantinedCount, 1)
+        let activeAfterRestamp = await queue.items(for: user)
+        XCTAssertTrue(activeAfterRestamp.isEmpty)
+        let quarantine = await queue.quarantinedItems(for: user)
+        XCTAssertEqual(quarantine.first?.quarantined?.detail, "Manual retry failed")
+
+        // Re-stamping an already-quarantined entry is a no-op (it may have
+        // been uploaded by a racing drain).
+        let second = try await queue.requarantine(
+            id: item.id,
+            accountUserID: user,
+            detail: "too late",
+            now: now
+        )
+        XCTAssertFalse(second)
     }
 }

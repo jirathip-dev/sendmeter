@@ -339,7 +339,11 @@ struct SettingsView: View {
     /// #675: one quarantined item — its kind + when it was rejected, and the
     /// two recoverability actions (retry by hand / discard). Per-item actions
     /// only for the explicit user path; the #273 sign-out and account-
-    /// deletion flows keep their own removal rules.
+    /// deletion flows keep their own removal rules. #675 F9: Discard is
+    /// disabled while a retry is in flight — `retryQuarantined` clears the
+    /// stamp before the upload starts, so a Discard tap in that window would
+    /// silently no-op (`discardQuarantined` guards on `quarantined != nil`)
+    /// after the user confirmed a destructive dialog.
     private func quarantineRow(_ item: QuarantinedWrite) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -378,6 +382,7 @@ struct SettingsView: View {
                     Text("Discard")
                 }
                 .buttonStyle(.bordered)
+                .disabled(retryingQuarantined)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

@@ -20,6 +20,15 @@ public enum RejectionClass: String, Codable, Sendable, Equatable {
     /// after backoff, or the next sign-in) and the app is expected to recover
     /// the session.
     case auth
+    /// #675 F2: a permission/identity denial — SQLSTATE `42501` or an HTTP
+    /// 403, i.e. an RLS `with check` refusing the write. This is the
+    /// auth-shaped sibling of `auth`: the request's identity is not the one
+    /// the payload assumes, so the payload is byte-for-byte fine and would
+    /// upload the moment the session is right. It parks exactly like `auth` —
+    /// never quarantines, never shelves user data over an identity problem —
+    /// mirroring the web's `permission` class, which `isConstraintFailure`
+    /// (`src/lib/recordingQueue.ts:650`) never quarantines.
+    case parked
     /// The server rejected THIS PAYLOAD's content — a CHECK/NOT NULL/foreign-
     /// key violation, a malformed body, a forbidden write with a valid token.
     /// The payload, not the environment, is the problem. Retried with backoff
@@ -70,16 +79,38 @@ public protocol ServerRejectionClassifying {
 ///     rule wins: a revoked/expired token is an environment problem, and
 ///     destroying user data over one is the exact regression the web's
 ///     forced-sign-out rule exists to prevent. Auth parks, never quarantines.
-///   * A 403 with a VALID token (or no code at all) says "this write will
-///     never be accepted" — permanent. A 23505 riding on a 409 is permanent
-///     content; a bare 409 (no constraint code) is the unique-violation race
-///     the repository already turns into a fetch-and-return, so it is
-///     retryable.
+///   * A 403 / SQLSTATE `42501` (RLS "permission denied") is `parked`, the
+///     identity sibling of `auth` (#675 F2): the request's identity, not the
+///     payload's content, is what the server refused, and the web's own
+///     taxonomy checks this branch BEFORE `auth` (`monitoring.ts:477-492`)
+///     and never quarantines it. It parks, never quarantines — a session
+///     problem, not a payload problem.
+///   * A 404 (`PGRST205` schema-cache reload, classified `schema` on the
+///     web) is `retryable`: a genuinely transient window, never proof the
+///     payload is bad.
+///   * A 400 (`PGRST102` malformed body, `PGRST204` unknown column, `22P02`
+///     bad text representation — the statuses PostgREST actually emits for
+///     a bad payload) is `permanent` (#675 F4).
+///   * A 23505 riding on a 409 is permanent content; a bare 409 (no
+///     constraint code) is the unique-violation race the repository already
+///     turns into a fetch-and-return, so it is retryable.
 ///   * Everything else — network errors, timeouts, 5xx, 429, and any code
 ///     with no status — is `retryable`.
 public enum ServerRejectionClassifier {
     public static func classify(code: String?, statusCode: Int) -> RejectionClass {
         let upperCode = code?.uppercased()
+        // #675 F2: an RLS "permission denied" (SQLSTATE 42501 rides on the
+        // 403) is an IDENTITY condition — the commonest cause is that the
+        // request's session is not the account the payload assumes. The
+        // payload is byte-for-byte fine and would upload the moment the
+        // session is right. This branch is checked BEFORE the constraint
+        // branch, exactly like the web's `classifyHandledFailure`
+        // (monitoring.ts:477-492 checks 42501/403 before the 23xxx match):
+        // a constraint code riding a 403 is still a permission denial, never
+        // proof the payload is bad. Park, never quarantine.
+        if statusCode == 403 {
+            return .parked
+        }
         // A constraint SQLSTATE (CHECK/NOT NULL/FK) is permanent content —
         // unless the 401 token problem is also present, in which case #273
         // wins (auth parks, never quarantines).
@@ -89,14 +120,22 @@ public enum ServerRejectionClassifier {
         switch statusCode {
         case 401:
             return .auth
-        case 403, 404, 406, 413, 415, 422:
-            // 403 = forbidden-with-a-valid-token (#675 scope: a constraint
-            // rejection rides on a 403/400 body with a 23xxx code, but a bare
-            // 403 with no constraint code is still a hard "never accepted");
-            // 404/422 = malformed payload the server refuses; 406/413/415 =
+        case 400:
+            // #675 F4: the status PostgREST actually emits for a malformed
+            // body (PGRST102), an unknown column (PGRST204 — a native build
+            // ahead of its migration, the exact tolerance #675 exists for),
+            // or a bad text representation (22P02). Retrying these forever
+            // is the exact condition the issue was opened to stop.
+            return .permanent
+        case 404:
+            // #675 F2: PGRST205 "table not found" during a schema-cache
+            // reload is a transient window, classified "schema" on the web
+            // and never quarantined there. Not proof the payload is bad.
+            return .retryable
+        case 406, 413, 415, 422:
+            // 406/422 = malformed payload the server refuses; 406/413/415 =
             // this payload's shape is wrong for the endpoint. None of these
-            // will heal on their own for THIS entry, with or without a
-            // PostgREST code in the body.
+            // will heal on their own for THIS entry.
             return .permanent
         case 409:
             // Unique-violation race: the repository already converts 23505/409
@@ -117,6 +156,14 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
     public let createdAt: Date
     public var updatedAt: Date
     public var attempts: Int
+    /// #675 F3: how many times THIS entry has been rejected with a
+    /// `permanent` classification — the only counter the quarantine bound
+    /// reads. Network/5xx/429 retries (`attempts`) are exactly the offline
+    /// case an offline queue exists for and must never spend the budget;
+    /// the first `permanent` rejection after a long offline spell must get
+    /// the full bounded window, not be quarantined on sight. Optional so
+    /// pre-#675 queue files decode to `nil` (treated as 0).
+    public var permanentAttempts: Int?
     public var nextAttemptAt: Date
     public var lastError: String?
     /// #675: non-nil once the entry has exhausted its bounded attempts on a
@@ -143,6 +190,7 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         accountUserID: UUID,
         createdAt: Date = Date(),
         attempts: Int = 0,
+        permanentAttempts: Int = 0,
         nextAttemptAt: Date? = nil,
         lastError: String? = nil,
         quarantined: QueueRejection? = nil,
@@ -153,6 +201,7 @@ public struct DurableQueueItem<Payload: Codable & Sendable>: Codable, Sendable, 
         self.createdAt = createdAt
         self.updatedAt = createdAt
         self.attempts = attempts
+        self.permanentAttempts = permanentAttempts == 0 ? nil : permanentAttempts
         self.nextAttemptAt = nextAttemptAt ?? createdAt
         self.lastError = lastError
         self.quarantined = quarantined
@@ -190,8 +239,9 @@ public enum DurableQueueError: Error, Equatable, Sendable {
     case itemNotFound
     case invalidDirectory
     /// #675: a `markFailure` landed on an entry that is already quarantined.
-    /// The drain never returns quarantined entries, so reaching this is a
-    /// caller bug — surfaced rather than silently double-stamped.
+    /// Kept for API compatibility; since #675 F6 the drain treats this as a
+    /// no-op (a concurrent drain + manual retry can both snapshot the same
+    /// due entry), so this case is no longer thrown in practice.
     case alreadyQuarantined
 }
 
@@ -264,8 +314,21 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         for accountUserID: UUID,
         dueAt date: Date? = nil
     ) -> [DurableQueueItem<Payload>] {
+        items(for: accountUserID, dueAt: date, includeQuarantined: false)
+    }
+
+    /// #675 F1: the entry the app must VISUALLY restore after a relaunch —
+    /// `restorePendingWrites` reads this (it rebuilds the optimistic
+    /// placeholders from the durable queue, and a quarantined entry is data
+    /// the user still owns). The hot drain path stays on the strict
+    /// `items(for:dueAt:)` above; this is for visibility, never for retry.
+    public func items(
+        for accountUserID: UUID,
+        dueAt date: Date? = nil,
+        includeQuarantined: Bool
+    ) -> [DurableQueueItem<Payload>] {
         store.items
-            .filter { $0.accountUserID == accountUserID && $0.quarantined == nil }
+            .filter { $0.accountUserID == accountUserID && (includeQuarantined || $0.quarantined == nil) }
             .filter { item in
                 guard let date else { return true }
                 return item.nextAttemptAt <= date
@@ -317,7 +380,8 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         error: String,
         classification: RejectionClass,
         code: String? = nil,
-        now: Date = Date()
+        now: Date = Date(),
+        countsTowardQuarantine: Bool = true
     ) throws {
         guard let index = store.items.firstIndex(where: { $0.id == id }) else {
             throw DurableQueueError.itemNotFound
@@ -326,25 +390,41 @@ public actor DurableQueue<Payload: Codable & Sendable> {
             throw DurableQueueError.accountMismatch
         }
         // A quarantined entry has no failure path left — nothing should be
-        // calling markFailure on it (the drain never returns it), and the
-        // guard failing loud is better than silently re-armoring it.
-        guard store.items[index].quarantined == nil else {
-            throw DurableQueueError.alreadyQuarantined
-        }
+        // calling markFailure on it (the drain never returns it). #675 F6: a
+        // concurrent drain and manual retry can BOTH snapshot the same due
+        // entry before the first markFailure quarantines it, so this is
+        // reachable in production, not just a caller bug. Treat it as a
+        // no-op (the entry is already in its terminal state) rather than
+        // throwing an unreadable `alreadyQuarantined` banner; the drain's
+        // per-item `upload` already treats it as failed and the quarantine
+        // is what the user chose to see.
+        guard store.items[index].quarantined == nil else { return }
         var item = store.items[index]
         item.attempts += 1
         item.updatedAt = now
         item.lastError = String(error.prefix(500))
 
-        // #675: auth failures PARK, they never quarantine (#273: a revoked or
-        // expired token is an environment problem, not proof the payload is
-        // bad — destroying training data over an auth failure is the exact
-        // regression the web's forced-sign-out rule exists to prevent).
-        // Auth is retried with normal backoff like any transient failure; the
-        // session recovery is the app's job, not the queue's.
+        // #675 F2: auth-shaped failures (`.auth` — revoked/expired token —
+        // and `.parked` — an RLS/permission denial) PARK, they never
+        // quarantine (#273: an identity condition is an environment problem,
+        // not proof the payload is bad — destroying training data over one is
+        // the exact regression the web's forced-sign-out rule exists to
+        // prevent). They are retried with normal backoff like any transient
+        // failure; the session recovery is the app's job, not the queue's.
         switch classification {
         case .permanent:
-            if item.attempts >= DurableQueueItem<Payload>.maxPermanentAttempts {
+            // #675 F3: the quarantine bound reads the PERMANENT-specific
+            // counter, so a spell of network/5xx/429 retries (`attempts`)
+            // can never spend the budget. The first permanent rejection after
+            // a long offline stretch gets the full bounded window.
+            //
+            // #675 F5: a manual retry (explicit user action) may OPT OUT of
+            // counting toward the quarantine bound — the user's own
+            // remediation attempt must never be what quarantines the entry.
+            if countsTowardQuarantine {
+                item.permanentAttempts = (item.permanentAttempts ?? 0) + 1
+            }
+            if (item.permanentAttempts ?? 0) >= DurableQueueItem<Payload>.maxPermanentAttempts {
                 item.quarantined = QueueRejection(
                     kind: .permanent,
                     at: now,
@@ -352,7 +432,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
                     detail: error
                 )
             }
-        case .auth, .retryable:
+        case .auth, .parked, .retryable:
             break
         }
         item.nextAttemptAt = now.addingTimeInterval(
@@ -362,12 +442,48 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         try persist()
     }
 
+    /// #675 F7: re-apply the quarantine stamp immediately after a failed
+    /// MANUAL retry. `retryQuarantined` cleared the stamp and reset the
+    /// attempt budget; if that single explicit upload then failed, the entry
+    /// must go straight back to its quarantined, never-auto-retried state —
+    /// NOT sit active on the hot drain path re-arming free automatic attempts
+    /// behind the user's back (Settings tells the user it is "never retried on
+    /// their own"). No attempt counting: the budget stays reset so the next
+    /// MANUAL retry starts a clean window. Returns `false` when the id is not
+    /// currently active (already quarantined again, or already uploaded).
+    @discardableResult
+    public func requarantine(
+        id: UUID,
+        accountUserID: UUID,
+        code: String? = nil,
+        detail: String,
+        now: Date = Date()
+    ) throws -> Bool {
+        guard let index = store.items.firstIndex(where: { $0.id == id }) else {
+            throw DurableQueueError.itemNotFound
+        }
+        guard store.items[index].accountUserID == accountUserID else {
+            throw DurableQueueError.accountMismatch
+        }
+        guard store.items[index].quarantined == nil else { return false }
+        store.items[index].quarantined = QueueRejection(
+            kind: .permanent,
+            at: now,
+            code: code,
+            detail: detail
+        )
+        store.items[index].updatedAt = now
+        try persist()
+        return true
+    }
+
     /// #675: the explicit-user-action way back from quarantine — the native
     /// mirror of the web's `retryStuckRecordings` (#484). Clears the rejection
-    /// stamp and resets attempts, so the next drain treats it as a fresh entry
-    /// with a fresh bounded-attempt budget (if it was rejected again under the
-    /// current build, that starts a new window rather than re-tripping on an
-    /// old attempt count). Returns `false` when the id is not quarantined.
+    /// stamp and resets BOTH attempt counters, so the next drain treats it as
+    /// a fresh entry with a fresh bounded-attempt budget (if it was rejected
+    /// again under the current build, that starts a new window rather than
+    /// re-tripping on an old attempt count). Returns `false` when the id is
+    /// not quarantined.
     @discardableResult
     public func retryQuarantined(
         id: UUID,
@@ -383,6 +499,7 @@ public actor DurableQueue<Payload: Codable & Sendable> {
         guard store.items[index].quarantined != nil else { return false }
         store.items[index].quarantined = nil
         store.items[index].attempts = 0
+        store.items[index].permanentAttempts = nil
         store.items[index].updatedAt = now
         store.items[index].nextAttemptAt = now
         try persist()

@@ -1687,7 +1687,6 @@ public final class AppModel: ObservableObject {
         let label = "\(notice.count) item\(notice.count == 1 ? "" : "s")"
         toastMessage = "\(label) couldn't be saved"
     }
-
     // MARK: Offline queue
 
     public func drainQueue() async {
@@ -1703,7 +1702,7 @@ public final class AppModel: ObservableObject {
         guard let userID = currentUserID, let queue else { return }
         let pending = await queue.items(for: userID)
         for item in pending {
-            await upload(item)
+            await upload(item, manual: true)
         }
         await refreshQueueCount()
     }
@@ -1732,7 +1731,10 @@ public final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func upload(_ item: DurableQueueItem<PendingWrite>) async -> Bool {
+    private func upload(
+        _ item: DurableQueueItem<PendingWrite>,
+        manual: Bool = false
+    ) async -> Bool {
         guard let queue, currentUserID == item.accountUserID else { return false }
         var uploaded = false
         do {
@@ -1766,16 +1768,23 @@ public final class AppModel: ObservableObject {
             do {
                 // #675: classify the rejection. A permanent one (constraint /
                 // malformed / forbidden-with-valid-token) earns the entry a
-                // bounded number of attempts and then a quarantine; auth and
-                // transient failures keep plain backoff. The classification is
-                // the transport's (PostgRESTError conformance), so the actor
-                // never parses server errors.
+                // bounded number of attempts and then a quarantine; auth /
+                // parked / transient failures keep plain backoff. The
+                // classification is the transport's (PostgRESTError
+                // conformance), so the actor never parses server errors.
+                //
+                // #675 F5: a MANUAL retry ("Retry now" in History/Settings,
+                // or the per-item quarantine retry) is an explicit user
+                // action, not an automatic drain attempt — it must never
+                // spend the quarantine budget, so its failures do not count
+                // toward the permanent-attempt bound.
                 try await queue.markFailure(
                     id: item.id,
                     accountUserID: item.accountUserID,
                     error: error.localizedDescription,
                     classification: (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable,
-                    code: (error as? PostgRESTError)?.code
+                    code: (error as? PostgRESTError)?.code,
+                    countsTowardQuarantine: !manual
                 )
             } catch {
                 surface(error)
@@ -1791,6 +1800,13 @@ public final class AppModel: ObservableObject {
     /// all of them. Clears the rejection stamp (fresh bounded-attempt budget)
     /// and uploads immediately; on success the upload removes the entry from
     /// the queue.
+    ///
+    /// #675 F7: the entry is NOT re-armed onto the hot drain path by a failed
+    /// manual retry. The upload runs with `manual: true` (so its rejection
+    /// never spends the quarantine budget — #675 F5), and on ANY failure the
+    /// quarantine stamp is immediately re-applied, so the entry goes straight
+    /// back to its quarantined, never-auto-retried state instead of getting
+    /// free automatic retries behind the user's back.
     public func retryQuarantinedWrites(id: UUID? = nil) async {
         guard let userID = currentUserID, let queue else { return }
         let quarantined = await queue.quarantinedItems(for: userID)
@@ -1800,7 +1816,24 @@ public final class AppModel: ObservableObject {
                     id: item.id,
                     accountUserID: item.accountUserID
                 ) else { continue }
-                await upload(item)
+                let uploaded = await upload(item, manual: true)
+                if !uploaded {
+                    // #675 F7: the manual attempt failed — re-stamp the
+                    // quarantine NOW so the entry is never auto-retried by a
+                    // later drain (Settings tells the user it is "kept on this
+                    // device and never retried on their own"). The re-stamp
+                    // carries the FRESH failure (`upload` already recorded it
+                    // via markFailure), and reuses the fresh-item attempt
+                    // budget (0), so the next MANUAL retry starts a clean
+                    // window.
+                    let fresh = await queue.item(id: item.id, accountUserID: item.accountUserID)
+                    try await queue.requarantine(
+                        id: item.id,
+                        accountUserID: item.accountUserID,
+                        detail: fresh?.lastError ?? item.lastError ?? "Manual retry failed",
+                        now: Date()
+                    )
+                }
             } catch {
                 surface(error)
             }
@@ -1811,11 +1844,18 @@ public final class AppModel: ObservableObject {
     /// #675: discard ONE quarantined entry. Quarantined-only (the Settings
     /// surface's Discard action is never offered for an active entry); the
     /// #273 sign-out and account-deletion paths keep their own removal rules,
-    /// so this is the only per-item discard site.
+    /// so this is the only per-item discard site. Also drops the restored
+    /// rejected placeholder from History/Force — a discarded entry is gone,
+    /// it must not keep rendering as "Rejected" (#675 F1).
     public func discardQuarantinedWrite(id: UUID) async {
         guard let userID = currentUserID, let queue else { return }
         do {
-            try await queue.discardQuarantined(id: id, accountUserID: userID)
+            if try await queue.discardQuarantined(id: id, accountUserID: userID) {
+                pendingSessions.removeValue(forKey: id)
+                pendingRecordings.removeValue(forKey: id)
+                sessions.removeAll { $0.id == id }
+                recordings.removeAll { $0.id == id }
+            }
         } catch {
             surface(error)
         }
@@ -2040,8 +2080,18 @@ public final class AppModel: ObservableObject {
         remoteRecordingIDs: Set<UUID>
     ) async {
         guard let queue else { return }
-        let queued = await queue.items(for: userID)
+        // #675 F1: restore BOTH the active entries AND the quarantined ones.
+        // A quarantined write is data the user still owns — it is on device,
+        // was permanently rejected, and must stay visible in History/Force
+        // after a relaunch (rebuilding the optimistic placeholders from
+        // `items(for:)` alone made it vanish: not on the server, and the
+        // strict drain filter no longer returns it). The restored placeholder
+        // is badged `rejected`, never "Syncing" — it will NOT upload on its
+        // own. The hot drain path never sees these (only the Settings
+        // Retry/Discard actions touch them).
+        let queued = await queue.items(for: userID, includeQuarantined: true)
         for item in queued {
+            let rejected = item.quarantined != nil
             switch item.payload {
             case let .session(payload):
                 guard !remoteSessionIDs.contains(payload.id) else { continue }
@@ -2050,14 +2100,15 @@ public final class AppModel: ObservableObject {
                     draft: payload.draft,
                     accountUserID: userID,
                     rpeConfirmed: payload.rpeConfirmed,
-                    groupID: payload.groupID
+                    groupID: payload.groupID,
+                    rejected: rejected
                 )
             case let .workout(draft):
                 guard !remoteSessionIDs.contains(draft.sessionID) else { continue }
-                pendingSessions[draft.sessionID] = pendingSession(from: draft)
+                pendingSessions[draft.sessionID] = pendingSession(from: draft, rejected: rejected)
             case let .recording(recording):
                 guard !remoteRecordingIDs.contains(recording.id) else { continue }
-                pendingRecordings[recording.id] = pendingRecording(from: recording)
+                pendingRecordings[recording.id] = pendingRecording(from: recording, rejected: rejected)
             }
         }
     }
@@ -2067,7 +2118,8 @@ public final class AppModel: ObservableObject {
         draft: SessionDraft,
         accountUserID: UUID,
         rpeConfirmed: Bool? = nil,
-        groupID: UUID? = nil
+        groupID: UUID? = nil,
+        rejected: Bool = false
     ) -> SendmeterCore.Session {
         SendmeterCore.Session(
             id: id,
@@ -2081,11 +2133,12 @@ public final class AppModel: ObservableObject {
             phase: draft.phase,
             groupID: groupID,
             pending: true,
+            rejected: rejected,
             accountUserID: accountUserID
         )
     }
 
-    private func pendingSession(from draft: WorkoutDraft) -> SendmeterCore.Session {
+    private func pendingSession(from draft: WorkoutDraft, rejected: Bool = false) -> SendmeterCore.Session {
         let endedAt = draft.endedAt ?? Date()
         let count = draft.attempts.count
         return SendmeterCore.Session(
@@ -2100,11 +2153,12 @@ public final class AppModel: ObservableObject {
             phase: draft.phase,
             workoutSource: .phone,
             pending: true,
+            rejected: rejected,
             accountUserID: draft.accountUserID
         )
     }
 
-    private func pendingRecording(from recording: NewTindeqRecording) -> TindeqRecording {
+    private func pendingRecording(from recording: NewTindeqRecording, rejected: Bool = false) -> TindeqRecording {
         TindeqRecording(
             id: recording.id,
             recordedAt: recording.recordedAt,
@@ -2136,7 +2190,8 @@ public final class AppModel: ObservableObject {
             setupNote: recording.setupNote,
             capacityEvidence: recording.capacityEvidence,
             completedRepetitions: recording.completedRepetitions,
-            completionStatus: recording.completionStatus
+            completionStatus: recording.completionStatus,
+            rejected: rejected
         )
     }
 
