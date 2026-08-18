@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var syncingHealth = false
     @State private var registeringPasskey = false
     @State private var retryingQueue = false
+    @State private var retryingQuarantined = false
+    @State private var discardConfirmation: QuarantinedWrite?
 
     var body: some View {
         NavigationStack {
@@ -57,7 +59,33 @@ struct SettingsView: View {
             } message: {
                 Text(signOutRemainderMessage)
             }
+            .confirmationDialog(
+                "Discard quarantined \(discardConfirmation?.kind.lowercased() ?? "item")?",
+                isPresented: discardConfirmationBinding,
+                titleVisibility: .visible
+            ) {
+                Button("Discard", role: .destructive) {
+                    if let item = discardConfirmation {
+                        Task { await model.discardQuarantinedWrite(id: item.id) }
+                    }
+                    discardConfirmation = nil
+                }
+                Button("Keep", role: .cancel) { discardConfirmation = nil }
+            } message: {
+                Text("This permanently deletes the unsynced \(discardConfirmation?.kind.lowercased() ?? "item") from this device. The server never received it, so it cannot be recovered after this.")
+            }
         }
+    }
+
+    /// #675: the quarantine discard is a per-item confirmation — a quarantined
+    /// item is user training data the server never accepted, and the honest
+    /// prompt must say exactly what goes away (mirrors the web's destructive-
+    /// action discipline; never an unconditional confirm on the whole list).
+    private var discardConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { discardConfirmation != nil },
+            set: { if !$0 { discardConfirmation = nil } }
+        )
     }
 
     /// #632: the remainder prompt from the web's SignOutPendingSheet (#273),
@@ -263,7 +291,102 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // #675: the quarantine is its own honest state — never folded into
+            // the pending count above, never hidden. `nil` (queue not read yet)
+            // must not render as "nothing quarantined" (#269).
+            if let quarantined = model.quarantinedWrites {
+                if quarantined.isEmpty {
+                    LabeledContent("Rejected uploads", value: "None")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    LabeledContent(
+                        "Rejected uploads",
+                        value: "\(quarantined.count) — not retrying automatically"
+                    )
+                    .foregroundStyle(SendmeterStyle.alert)
+                    Text("The server rejected these permanently. They are kept on this device and never retried on their own; retry them by hand if you believe they should upload now, or discard them.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(quarantined) { item in
+                        quarantineRow(item)
+                    }
+                    if quarantined.count > 1 {
+                        Button {
+                            retryingQuarantined = true
+                            Task {
+                                await model.retryQuarantinedWrites()
+                                retryingQuarantined = false
+                            }
+                        } label: {
+                            HStack {
+                                Label("Retry All", systemImage: "arrow.clockwise")
+                                Spacer()
+                                if retryingQuarantined { ProgressView() }
+                            }
+                        }
+                        .disabled(retryingQuarantined)
+                    }
+                }
+            } else {
+                LabeledContent("Rejected uploads", value: "Checking…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+    }
+
+    /// #675: one quarantined item — its kind + when it was rejected, and the
+    /// two recoverability actions (retry by hand / discard). Per-item actions
+    /// only for the explicit user path; the #273 sign-out and account-
+    /// deletion flows keep their own removal rules. #675 F9: Discard is
+    /// disabled while a retry is in flight — `retryQuarantined` clears the
+    /// stamp before the upload starts, so a Discard tap in that window would
+    /// silently no-op (`discardQuarantined` guards on `quarantined != nil`)
+    /// after the user confirmed a destructive dialog.
+    private func quarantineRow(_ item: QuarantinedWrite) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(item.kind)
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Text(item.rejection.at.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let code = item.rejection.code {
+                LabeledContent("Server code", value: code)
+                    .font(.caption)
+            }
+            if !item.rejection.detail.isEmpty {
+                Text(item.rejection.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            HStack {
+                Button {
+                    retryingQuarantined = true
+                    Task {
+                        await model.retryQuarantinedWrites(id: item.id)
+                        retryingQuarantined = false
+                    }
+                } label: {
+                    Text("Retry")
+                }
+                .buttonStyle(.bordered)
+                .disabled(retryingQuarantined)
+                Button(role: .destructive) {
+                    discardConfirmation = item
+                } label: {
+                    Text("Discard")
+                }
+                .buttonStyle(.bordered)
+                .disabled(retryingQuarantined)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 4)
     }
 
     private var appearanceSection: some View {

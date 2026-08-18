@@ -482,16 +482,27 @@ struct HistoryView: View {
 
     private var uploadBanner: some View {
         let phonePending = model.queuedWriteCount
+        // #675 F8: `quarantinedWrites == nil` means "the queue has not been
+        // read yet this session" — collapsing it to 0 would render an unknown
+        // state as "nothing quarantined" (#269 honest-states rule). The
+        // unknown state never shows the banner (there is nothing actionable
+        // yet); once read, `[]` means genuinely nothing quarantined.
+        let phoneQuarantined = model.quarantinedWrites?.count ?? -1
+        let quarantineUnknown = phoneQuarantined < 0
         let watchPending = model.watch.pendingSyncCount ?? 0
-        if phonePending > 0 || watchPending > 0 {
+        // A banner is shown only when it has something actionable: a real
+        // pending count, or a CONFIRMED (non-nil) quarantined count > 0.
+        // Unknown quarantine must not show as empty and must not fabricate a
+        // banner either.
+        if phonePending > 0 || watchPending > 0 || (phoneQuarantined > 0 && !quarantineUnknown) {
             return AnyView(
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: "externaldrive.badge.icloud")
                         .foregroundStyle(SendmeterStyle.caution)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Uploads waiting")
+                        Text(uploadTitle(phone: phonePending, watch: watchPending, quarantined: phoneQuarantined))
                             .font(.subheadline.weight(.semibold))
-                        Text(uploadMessage(phone: phonePending, watch: watchPending))
+                        Text(uploadMessage(phone: phonePending, watch: watchPending, quarantined: phoneQuarantined))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -500,6 +511,11 @@ struct HistoryView: View {
                         retryingUploads = true
                         Task {
                             await model.retryAllQueuedWrites()
+                            // #675: the banner also surfaces quarantined items
+                            // ("rejected, not retrying"), so its one Retry
+                            // action re-attempts those too — the web's History
+                            // "Retry now" covers stuck entries the same way.
+                            await model.retryQuarantinedWrites()
                             retryingUploads = false
                         }
                     } label: {
@@ -517,11 +533,33 @@ struct HistoryView: View {
         return AnyView(EmptyView())
     }
 
-    private func uploadMessage(phone: Int, watch: Int) -> String {
+    /// #675 F8: "Uploads waiting" only when something is actually waiting to
+    /// upload. A quarantined item is NOT waiting to upload — it was rejected
+    /// and won't retry on its own — so a banner whose only entries are
+    /// quarantined reads honestly: "Rejected uploads", not "Uploads waiting".
+    private func uploadTitle(phone: Int, watch: Int, quarantined: Int) -> String {
+        let hasWaiting = phone > 0 || watch > 0
+        let hasQuarantined = quarantined > 0
+        if hasWaiting {
+            return "Uploads waiting"
+        }
+        if hasQuarantined {
+            return "Rejected uploads"
+        }
+        return "Uploads waiting"
+    }
+
+    private func uploadMessage(phone: Int, watch: Int, quarantined: Int) -> String {
         var parts: [String] = []
         if phone > 0 { parts.append("\(phone) queued on this iPhone") }
         if watch > 0 { parts.append("\(watch) on your watch") }
-        return parts.joined(separator: " · ") + ". Queued data is durable on device and retries automatically."
+        if quarantined > 0 {
+            parts.append("\(quarantined) rejected, not retrying")
+        }
+        if parts.isEmpty {
+            return "The server rejected these; they are kept on this device and never retried on their own — manage them in Settings."
+        }
+        return parts.joined(separator: " · ") + ". Queued data is durable on device and retries automatically; rejected items never retry on their own — manage them in Settings."
     }
 
     // MARK: Filter chips (#630-4)
@@ -658,7 +696,14 @@ private struct HistorySessionRow: View {
                         ZoneBadge(zone: zone, mix: zoneMix)
                     }
                     if session.pending {
-                        StatusPill("Pending", color: SendmeterStyle.caution)
+                        // #675 F1: a restored quarantined placeholder reads
+                        // "Rejected", never "Pending"/"Syncing" — it will NOT
+                        // upload on its own and the user should manage it in
+                        // Settings, not wait.
+                        StatusPill(
+                            session.rejected ? "Rejected" : "Pending",
+                            color: session.rejected ? SendmeterStyle.alert : SendmeterStyle.caution
+                        )
                     }
                 }
                 Text(session.note.isEmpty ? PhaseCatalog.definition(for: session.phase).name : session.note)
@@ -702,8 +747,16 @@ private struct HistoryRecordingRow: View {
                 .foregroundStyle(SendmeterStyle.primary)
                 .frame(width: 34)
             VStack(alignment: .leading, spacing: 4) {
-                Text(recording.tag.isEmpty ? "Untitled pull" : recording.tag)
-                    .font(.headline)
+                HStack(spacing: 7) {
+                    Text(recording.tag.isEmpty ? "Untitled pull" : recording.tag)
+                        .font(.headline)
+                    // #675 F1: a restored quarantined placeholder reads
+                    // "Rejected", never silently "syncing" — it won't upload
+                    // on its own.
+                    if recording.rejected {
+                        StatusPill("Rejected", color: SendmeterStyle.alert)
+                    }
+                }
                 HStack(spacing: 7) {
                     Text(recording.recordedAt.formatted(date: .abbreviated, time: .shortened))
                     if recording.side != .unspecified { Text(recording.side.label) }

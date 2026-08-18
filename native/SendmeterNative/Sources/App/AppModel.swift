@@ -27,6 +27,44 @@ private enum PendingWrite: Codable, Sendable {
     case workout(WorkoutDraft)
 }
 
+/// #675: the Settings-facing summary of one quarantined write. A separate
+/// public type on purpose: the queue payload (`PendingWrite`) is AppModel-
+/// private, and the surface needs only a stable identity, a description, and
+/// the rejection stamp — not the raw samples.
+public struct QuarantinedWrite: Identifiable, Sendable {
+    public let id: UUID
+    public let accountUserID: UUID
+    public let createdAt: Date
+    public let kind: String
+    public let attempts: Int
+    public let rejection: QueueRejection
+    public let lastError: String?
+}
+
+private extension DurableQueueItem where Payload == PendingWrite {
+    func summary() -> QuarantinedWrite {
+        let kind: String
+        switch payload {
+        case .session: kind = "Session"
+        case .recording: kind = "Force recording"
+        case .workout: kind = "Phone workout"
+        }
+        return QuarantinedWrite(
+            id: id,
+            accountUserID: accountUserID,
+            createdAt: createdAt,
+            kind: kind,
+            attempts: attempts,
+            rejection: quarantined ?? QueueRejection(
+                kind: .permanent,
+                code: nil,
+                detail: lastError ?? ""
+            ),
+            lastError: lastError
+        )
+    }
+}
+
 private struct SessionQueuePayload: Codable, Sendable {
     let id: UUID
     let draft: SessionDraft
@@ -101,6 +139,13 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var isRefreshing = false
     @Published public private(set) var queuedWriteCount = 0
     @Published public private(set) var queueBreadcrumbs: [QueueBreadcrumb] = []
+    /// #675: entries the server has permanently rejected — retained on device,
+    /// excluded from every automatic retry, and recoverable only by the
+    /// explicit Retry/Discard actions in Settings. `nil` means the queue has
+    /// not been read yet this session; `[]` means genuinely nothing
+    /// quarantined. Never default to `[]` where the honest state is "not
+    /// known" (#269 honest-states rule — unknown must not render as empty).
+    @Published public private(set) var quarantinedWrites: [QuarantinedWrite]?
     @Published public var errorMessage: String?
     @Published public var toastMessage: String?
     @Published public var passwordRecovery = false
@@ -514,7 +559,7 @@ public final class AppModel: ObservableObject {
         guard let queue else { return 0 }
         var uploaded = 0
         for item in await queue.items(for: accountUserID) {
-            if await upload(item) { uploaded += 1 }
+            if (await upload(item)).uploaded { uploaded += 1 }
         }
         return uploaded
     }
@@ -1642,14 +1687,13 @@ public final class AppModel: ObservableObject {
         let label = "\(notice.count) item\(notice.count == 1 ? "" : "s")"
         toastMessage = "\(label) couldn't be saved"
     }
-
     // MARK: Offline queue
 
     public func drainQueue() async {
         guard let userID = currentUserID, let queue else { return }
         let due = await queue.items(for: userID, dueAt: Date())
         for item in due {
-            await upload(item)
+            _ = await upload(item)
         }
         await refreshQueueCount()
     }
@@ -1658,7 +1702,7 @@ public final class AppModel: ObservableObject {
         guard let userID = currentUserID, let queue else { return }
         let pending = await queue.items(for: userID)
         for item in pending {
-            await upload(item)
+            _ = await upload(item, manual: true)
         }
         await refreshQueueCount()
     }
@@ -1677,7 +1721,7 @@ public final class AppModel: ObservableObject {
             try await queue.enqueue(item)
             await refreshQueueCount()
             Task { [weak self] in
-                await self?.upload(item)
+                _ = await self?.upload(item)
             }
             return true
         } catch {
@@ -1686,10 +1730,29 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// #675 N1: the classification + diagnostic an upload failure recorded,
+    /// so `retryQuarantinedWrites` can decide whether a fresh failure replaces
+    /// the prior rejection stamp or the prior stamp is restored verbatim.
+    private struct UploadFailure {
+        let classification: RejectionClass
+        let code: String?
+        let detail: String
+    }
+
+    private struct UploadResult {
+        let uploaded: Bool
+        let failure: UploadFailure?
+    }
+
     @discardableResult
-    private func upload(_ item: DurableQueueItem<PendingWrite>) async -> Bool {
-        guard let queue, currentUserID == item.accountUserID else { return false }
-        var uploaded = false
+    private func upload(
+        _ item: DurableQueueItem<PendingWrite>,
+        manual: Bool = false
+    ) async -> UploadResult {
+        guard let queue, currentUserID == item.accountUserID else {
+            return UploadResult(uploaded: false, failure: nil)
+        }
+        let result: UploadResult
         do {
             switch item.payload {
             case let .session(payload):
@@ -1716,30 +1779,134 @@ public final class AppModel: ObservableObject {
                 reason: "uploaded"
             )
             toastMessage = "Saved"
-            uploaded = true
+            result = UploadResult(uploaded: true, failure: nil)
         } catch {
             do {
+                // #675: classify the rejection. A permanent one (constraint /
+                // malformed / forbidden-with-valid-token) earns the entry a
+                // bounded number of attempts and then a quarantine; auth /
+                // parked / transient failures keep plain backoff. The
+                // classification is the transport's (PostgRESTError
+                // conformance), so the actor never parses server errors.
+                //
+                // #675 F5: a MANUAL retry ("Retry now" in History/Settings,
+                // or the per-item quarantine retry) is an explicit user
+                // action, not an automatic drain attempt — it must never
+                // spend the quarantine budget, so its failures do not count
+                // toward the permanent-attempt bound.
+                let classification = (error as? ServerRejectionClassifying)?.rejectionClass ?? .retryable
+                let code = (error as? PostgRESTError)?.code
                 try await queue.markFailure(
                     id: item.id,
                     accountUserID: item.accountUserID,
-                    error: error.localizedDescription
+                    error: error.localizedDescription,
+                    classification: classification,
+                    code: code,
+                    countsTowardQuarantine: !manual
                 )
+                result = UploadResult(
+                    uploaded: false,
+                    failure: UploadFailure(
+                        classification: classification,
+                        code: code,
+                        detail: error.localizedDescription
+                    )
+                )
+            } catch {
+                surface(error)
+                result = UploadResult(uploaded: false, failure: nil)
+            }
+        }
+        await refreshQueueCount()
+        return result
+    }
+
+    /// #675: the explicit-user-action re-attempt for quarantined entries —
+    /// native mirror of the web's `retryStuckRecordings` (#484). With `id` it
+    /// retries ONE quarantined entry (the per-item Settings action); without,
+    /// all of them. Clears the rejection stamp (fresh bounded-attempt budget)
+    /// and uploads immediately; on success the upload removes the entry from
+    /// the queue.
+    ///
+    /// #675 F7: the entry is NOT re-armed onto the hot drain path by a failed
+    /// manual retry. The upload runs manual (so its rejection never spends the
+    /// quarantine budget — #675 F5), and on ANY failure the quarantine stamp
+    /// is immediately re-applied, so the entry goes straight back to its
+    /// quarantined, never-auto-retried state instead of getting free
+    /// automatic retries behind the user's back.
+    ///
+    /// #675 N1: a failed manual retry preserves the rejection DIAGNOSTIC. The
+    /// prior stamp is passed to `requarantine` as `previous`; a transient /
+    /// auth / parked failure on the retry restores it verbatim (code, detail
+    /// and `at` all survive), while only a FRESH `.permanent` rejection
+    /// replaces the stamp with its own code/detail.
+    public func retryQuarantinedWrites(id: UUID? = nil) async {
+        guard let userID = currentUserID, let queue else { return }
+        let quarantined = await queue.quarantinedItems(for: userID)
+        for item in quarantined where id == nil || item.id == id {
+            do {
+                guard let previous = try await queue.retryQuarantined(
+                    id: item.id,
+                    accountUserID: item.accountUserID
+                ) else { continue }
+                let result = await upload(item, manual: true)
+                if !result.uploaded {
+                    // #675 F7 + N1: the manual attempt failed — re-stamp the
+                    // quarantine NOW so the entry is never auto-retried by a
+                    // later drain (Settings tells the user it is "kept on this
+                    // device and never retried on their own"). The stamp is
+                    // the PRIOR rejection unless the retry itself was a fresh
+                    // permanent rejection; either way the budget stays reset
+                    // (0), so the next MANUAL retry starts a clean window.
+                    let failure = result.failure
+                    try await queue.requarantine(
+                        id: item.id,
+                        accountUserID: item.accountUserID,
+                        previous: previous,
+                        classification: failure?.classification ?? .retryable,
+                        code: failure?.code,
+                        detail: failure?.detail ?? item.lastError ?? "Manual retry failed",
+                        now: Date()
+                    )
+                }
             } catch {
                 surface(error)
             }
         }
         await refreshQueueCount()
-        return uploaded
+    }
+
+    /// #675: discard ONE quarantined entry. Quarantined-only (the Settings
+    /// surface's Discard action is never offered for an active entry); the
+    /// #273 sign-out and account-deletion paths keep their own removal rules,
+    /// so this is the only per-item discard site. Also drops the restored
+    /// rejected placeholder from History/Force — a discarded entry is gone,
+    /// it must not keep rendering as "Rejected" (#675 F1).
+    public func discardQuarantinedWrite(id: UUID) async {
+        guard let userID = currentUserID, let queue else { return }
+        do {
+            if try await queue.discardQuarantined(id: id, accountUserID: userID) {
+                pendingSessions.removeValue(forKey: id)
+                pendingRecordings.removeValue(forKey: id)
+                sessions.removeAll { $0.id == id }
+                recordings.removeAll { $0.id == id }
+            }
+        } catch {
+            surface(error)
+        }
+        await refreshQueueCount()
     }
 
     private func refreshQueueCount() async {
         guard let userID = currentUserID, let queue else {
             queuedWriteCount = 0
             queueBreadcrumbs = []
+            quarantinedWrites = nil
             return
         }
         queuedWriteCount = await queue.count(for: userID)
         queueBreadcrumbs = await queue.breadcrumbs(for: userID)
+        quarantinedWrites = await queue.quarantinedItems(for: userID).map { $0.summary() }
     }
 
     // MARK: Watch completions
@@ -1948,8 +2115,18 @@ public final class AppModel: ObservableObject {
         remoteRecordingIDs: Set<UUID>
     ) async {
         guard let queue else { return }
-        let queued = await queue.items(for: userID)
+        // #675 F1: restore BOTH the active entries AND the quarantined ones.
+        // A quarantined write is data the user still owns — it is on device,
+        // was permanently rejected, and must stay visible in History/Force
+        // after a relaunch (rebuilding the optimistic placeholders from
+        // `items(for:)` alone made it vanish: not on the server, and the
+        // strict drain filter no longer returns it). The restored placeholder
+        // is badged `rejected`, never "Syncing" — it will NOT upload on its
+        // own. The hot drain path never sees these (only the Settings
+        // Retry/Discard actions touch them).
+        let queued = await queue.items(for: userID, includeQuarantined: true)
         for item in queued {
+            let rejected = item.quarantined != nil
             switch item.payload {
             case let .session(payload):
                 guard !remoteSessionIDs.contains(payload.id) else { continue }
@@ -1958,14 +2135,15 @@ public final class AppModel: ObservableObject {
                     draft: payload.draft,
                     accountUserID: userID,
                     rpeConfirmed: payload.rpeConfirmed,
-                    groupID: payload.groupID
+                    groupID: payload.groupID,
+                    rejected: rejected
                 )
             case let .workout(draft):
                 guard !remoteSessionIDs.contains(draft.sessionID) else { continue }
-                pendingSessions[draft.sessionID] = pendingSession(from: draft)
+                pendingSessions[draft.sessionID] = pendingSession(from: draft, rejected: rejected)
             case let .recording(recording):
                 guard !remoteRecordingIDs.contains(recording.id) else { continue }
-                pendingRecordings[recording.id] = pendingRecording(from: recording)
+                pendingRecordings[recording.id] = pendingRecording(from: recording, rejected: rejected)
             }
         }
     }
@@ -1975,7 +2153,8 @@ public final class AppModel: ObservableObject {
         draft: SessionDraft,
         accountUserID: UUID,
         rpeConfirmed: Bool? = nil,
-        groupID: UUID? = nil
+        groupID: UUID? = nil,
+        rejected: Bool = false
     ) -> SendmeterCore.Session {
         SendmeterCore.Session(
             id: id,
@@ -1989,11 +2168,12 @@ public final class AppModel: ObservableObject {
             phase: draft.phase,
             groupID: groupID,
             pending: true,
+            rejected: rejected,
             accountUserID: accountUserID
         )
     }
 
-    private func pendingSession(from draft: WorkoutDraft) -> SendmeterCore.Session {
+    private func pendingSession(from draft: WorkoutDraft, rejected: Bool = false) -> SendmeterCore.Session {
         let endedAt = draft.endedAt ?? Date()
         let count = draft.attempts.count
         return SendmeterCore.Session(
@@ -2008,11 +2188,12 @@ public final class AppModel: ObservableObject {
             phase: draft.phase,
             workoutSource: .phone,
             pending: true,
+            rejected: rejected,
             accountUserID: draft.accountUserID
         )
     }
 
-    private func pendingRecording(from recording: NewTindeqRecording) -> TindeqRecording {
+    private func pendingRecording(from recording: NewTindeqRecording, rejected: Bool = false) -> TindeqRecording {
         TindeqRecording(
             id: recording.id,
             recordedAt: recording.recordedAt,
@@ -2044,7 +2225,8 @@ public final class AppModel: ObservableObject {
             setupNote: recording.setupNote,
             capacityEvidence: recording.capacityEvidence,
             completedRepetitions: recording.completedRepetitions,
-            completionStatus: recording.completionStatus
+            completionStatus: recording.completionStatus,
+            rejected: rejected
         )
     }
 
@@ -2102,6 +2284,7 @@ public final class AppModel: ObservableObject {
         pendingRecordings = [:]
         queuedWriteCount = 0
         queueBreadcrumbs = []
+        quarantinedWrites = nil
         gaugeSessionTracker.reset()
         guidedProtocolActive = false
         tagCurveCache = [:]

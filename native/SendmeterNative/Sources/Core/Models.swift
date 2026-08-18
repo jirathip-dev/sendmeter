@@ -143,6 +143,12 @@ public struct Session: Codable, Equatable, Sendable, Identifiable {
     public var groupID: UUID?
     public var workoutSource: WorkoutSource?
     public var pending: Bool
+    /// #675 F1: true for an optimistic placeholder rebuilt from a QUARANTINED
+    /// queue entry after a relaunch. A quarantined write was permanently
+    /// rejected and will NOT upload on its own, so the honest badge is
+    /// "Rejected", never "Syncing"/"Pending". Cleared when the entry uploads
+    /// (the server row replaces the placeholder).
+    public var rejected: Bool
     public var accountUserID: UUID?
 
     public init(
@@ -159,6 +165,7 @@ public struct Session: Codable, Equatable, Sendable, Identifiable {
         groupID: UUID? = nil,
         workoutSource: WorkoutSource? = nil,
         pending: Bool = false,
+        rejected: Bool = false,
         accountUserID: UUID? = nil
     ) {
         self.id = id
@@ -174,6 +181,7 @@ public struct Session: Codable, Equatable, Sendable, Identifiable {
         self.groupID = groupID
         self.workoutSource = workoutSource
         self.pending = pending
+        self.rejected = rejected
         self.accountUserID = accountUserID
     }
 }
@@ -491,6 +499,10 @@ public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
     public let capacityEvidence: Bool?
     public let completedRepetitions: Int?
     public let completionStatus: String?
+    /// #675 F1: true for an optimistic placeholder rebuilt from a QUARANTINED
+    /// queue entry after a relaunch — the recording is rejected and will NOT
+    /// upload on its own. Never set on a server row.
+    public var rejected: Bool
 
     public init(
         id: UUID,
@@ -523,7 +535,8 @@ public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
         setupNote: String = "",
         capacityEvidence: Bool? = nil,
         completedRepetitions: Int? = nil,
-        completionStatus: String? = nil
+        completionStatus: String? = nil,
+        rejected: Bool = false
     ) {
         self.id = id
         self.recordedAt = recordedAt
@@ -556,6 +569,7 @@ public struct TindeqRecording: Codable, Equatable, Sendable, Identifiable {
         self.capacityEvidence = capacityEvidence
         self.completedRepetitions = completedRepetitions
         self.completionStatus = completionStatus
+        self.rejected = rejected
     }
 }
 

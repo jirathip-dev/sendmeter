@@ -93,7 +93,10 @@ struct SessionDetailView: View {
                         ZoneBadge(zone: dominantZone, mix: zoneMix)
                     }
                     if session.pending {
-                        StatusPill("Pending", color: SendmeterStyle.caution)
+                        StatusPill(
+                            session.rejected ? "Rejected" : "Pending",
+                            color: session.rejected ? SendmeterStyle.alert : SendmeterStyle.caution
+                        )
                     }
                     if isWorkout {
                         StatusPill(
