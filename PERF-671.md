@@ -67,30 +67,38 @@ The native BLE→UI path was *less* coalesced than the web version it replaces:
 ## Evidence — publishes/sec at stream rates
 
 The publish rate of the **shipped driver** is exactly the timer cadence: the
-60 Hz fire sequence with realistic jitter, and each pending fire publishes
-(no skip). The test
-`testPublishBenchDrivesShippedSchedulerAtTimerCadence` drives the actual
-scheduler rule with a simulated 60 Hz fire sequence (schedule + accumulating
-jitter) and counts publishes:
+timer is scheduled with `ForcePublishScheduler.displayIntervalSeconds`
+(`TindeqBluetooth.startFlushDriver()`), and every pending fire publishes (no
+second gate, so no skip). The test
+`testPublishBenchRunsAtShippedDisplayCadence` derives the fire sequence from
+that same shipped interval and counts publishes:
 
 | Stream | Rate | Before (no coalescing) | After (shipped driver) |
 |---|---|---|---|
-| Fake-gauge (`?fake-tindeq`, `useTindeq.ts:515-520`) | ~83 Hz (12 ms) | **~83 publishes/s** (one per notification) | **~60 publishes/s** (every 16.7 ms fire; F1-skip fraction 0) |
+| Fake-gauge (`?fake-tindeq`, `useTindeq.ts:515-520`) | ~83 Hz (12 ms) | **~83 publishes/s** (one per notification) | **~60 publishes/s** (60 fires at 16.7 ms cadence, every pending fire publishes) |
 | Fast Progressor batches | ~100 Hz (10 ms) | ~100 publishes/s | **~60 publishes/s** (same cadence) |
 | Real Progressor stream | ~80 Hz (12.5 ms) | ~80 publishes/s | **~60 publishes/s** (same cadence) |
 
-The "~83 Hz" rows are the *arrival rates* the timer's fires get saturated by —
-publishes are independent of them. The bounded number is the driver's display
-cadence, and every fire publishes (the review's F1 skip fraction, 22–43%, is
-zero by construction — the scheduler test asserts it). Before: one publish
-(5 `@Published` assignments + an O(window) array copy) per notification. After:
-one `objectWillChange` pulse per 16.7 ms timer fire with pending samples, and
-one window copy per fire — never per notification.
+A real repeating `Timer` keeps its absolute schedule — fire *k* is scheduled at
+`k·interval` and lateness never compounds into the period — so the bench models
+exactly that: an absolute schedule plus a small independent (non-accumulating)
+jitter per fire. The assertions are on the cadence itself: the fire sequence
+must be 58–61 fires over a simulated second, so a degenerate sub-cadence (the
+review's round-2 measurement of the earlier cumulative-jitter model degenerating
+to 41/s) fails the test rather than passing it. The stream rows above are the
+*arrival rates* the timer's fires get saturated by — publishes are independent
+of them.
 
-The DEBUG `publishesPerSecond` counter (a real in-app measurement) reads the
-same number on a live fake-gauge run in the simulator: it counts flushed
-publishes per second in `flushIfDue`. The deterministic bench above reproduces
-it exactly (the counter divides the same count by the same elapsed time).
+Before: one publish (5 `@Published` assignments + an O(window) array copy) per
+notification. After: one `objectWillChange` pulse per 16.7 ms timer fire with
+pending samples, and one window copy per fire — never per notification.
+
+The DEBUG `publishesPerSecond` counter (`TindeqBluetooth`) is the in-app
+observability seam for this: it divides the same flushed-publish count by the
+same elapsed time in `flushIfDue`, so it reads the same ~60/s number the
+deterministic bench above produces. It is debug-only and zero outside DEBUG
+builds; no simulator capture is shipped with this doc because the native
+transport has no fake-gauge driver to drive it in this repo.
 
 The per-notification O(window) copy is gone from the hot path entirely. What
 remains is the single `Array(...)` at flush time — display rate, not
@@ -100,8 +108,8 @@ notification rate.
 
 - ✅ View-body evaluations bounded at ≤ display rate, independent of BLE rate:
   the timer's fire cadence is the one and only throttle; every pending fire
-  publishes; the bench drives the shipped scheduler rule at a jittered 60 Hz
-  sequence and asserts the bound and the zero-skip invariant.
+  publishes; the bench drives the shipped cadence and asserts it is ~60/s
+  (58–61 fires over a simulated second), so a wrong cadence fails.
 - ✅ No per-notification O(window) copy on the hot path: notifications only
   append + set `pendingPublish`; the window copy happens once per flush from
   the accumulator's stable storage.
@@ -109,9 +117,8 @@ notification rate.
   unaffected (pre-start samples still consumed only by `onWeightSample`); new
   tests cover the scheduler cadence/no-skip, the snapshot branch fields (F8),
   and the window-range slice.
-- ✅ Evidence above (deterministic bench driving the shipped scheduler at the
-  fake-gauge stream rate + the DEBUG in-app counter that reads the same
-  number).
+- ✅ Evidence above (deterministic bench at the shipped ~60 Hz cadence, at the
+  fake-gauge stream rate; the DEBUG in-app counter reads the same number).
 
 ## Gates run
 

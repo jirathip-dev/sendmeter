@@ -115,64 +115,62 @@ final class ForceEngineTests: XCTestCase {
         XCTAssertTrue(scheduler.shouldPublishOnFire(pending: true))
     }
 
-    /// #671 benchmark evidence (deterministic, drives the SHIPPED scheduler
-    /// rule): the flush driver's timer fires at display interval (~16.7 ms)
-    /// and every pending fire publishes. BLE arrival rates do NOT matter — a
-    /// fire with no pending samples publishes nothing, so the publish rate is
-    /// exactly the timer cadence while the stream is saturated, with the
-    /// display-interval bound independent of the stream rate. This replaces
-    /// the review's F2 criticism: the old bench polled a time-gate at BLE
-    /// arrival times (an implementation that was never shipped) and hid the
-    /// F1 skip bug entirely; this one simulates the real 60 Hz fire sequence,
-    /// including realistic jitter, against the exact rule the driver runs.
-    func testPublishBenchDrivesShippedSchedulerAtTimerCadence() {
+    /// #671 benchmark evidence (deterministic, at the SHIPPED driver's cadence):
+    /// the flush timer is scheduled with
+    /// `ForcePublishScheduler.displayIntervalSeconds` — the exact value
+    /// `TindeqBluetooth.startFlushDriver()` uses for its real `Timer` — so this
+    /// bench generates the same ~60 Hz fire sequence and asserts the cadence
+    /// itself, which is the thing the round-2 review found wrong.
+    ///
+    /// A real repeating `Timer` keeps its absolute schedule: fire k is scheduled
+    /// at k·interval, and lateness does NOT compound into the period. The model
+    /// below is exactly that — an absolute schedule plus a bounded, independent
+    /// (non-accumulating) jitter per fire. The round-2 review measured the
+    /// previous cumulative-jitter model degenerating to 41 fires/s while the
+    /// old assertions still passed (they were tautologies: `publishCount ==
+    /// fireCount` when the rule is the identity). Every assertion here fails if
+    /// the cadence drifts from ~60/s.
+    func testPublishBenchRunsAtShippedDisplayCadence() {
         let scheduler = ForcePublishScheduler()
-        let interval = scheduler.displayIntervalSeconds
+        let interval = scheduler.displayIntervalSeconds // 1/60 s ≈ 16.7 ms
 
-        func tickSequence(seconds: Double, withJitter: Bool) -> [Double] {
-            // A 60 Hz timer fires at-or-after each scheduled instant, with
-            // jitter that grows over a run. Model it as schedule + a slowly
-            // accumulating positive offset.
-            var times: [Double] = []
-            var elapsed = 0.0
-            var jitter = 0.0
-            while elapsed < seconds {
-                jitter += withJitter ? 0.0004 : 0.0
-                elapsed += interval + jitter
-                times.append(elapsed)
+        // Deterministic per-fire lateness in [0, 0.4 ms): fires land at or
+        // after their scheduled instant, never shifting the next fire's
+        // schedule.
+        func tickSequence(seconds: Double) -> [Double] {
+            let fireCount = Int((seconds / interval).rounded())
+            return (0..<fireCount).map { k in
+                let scheduled = Double(k) * interval
+                let jitter = 0.0004 * (Double(k % 8) / 8.0)
+                return scheduled + jitter
             }
-            return times
         }
 
-        // Saturate every fire: a fast stream keeps `pending` true between fires.
-        func publishesPerSecond(fireTimes: [Double], alwaysPending: Bool) -> Int {
-            var count = 0
-            for fire in fireTimes {
-                if scheduler.shouldPublishOnFire(pending: alwaysPending) {
-                    count += 1
-                }
-            }
-            return count
+        let fires = tickSequence(seconds: 1.0)
+        // The cadence must be display rate: ~60 fires per second. A degenerate
+        // sub-cadence (41 Hz in round 2, or a 30 Hz model) fails here.
+        XCTAssertGreaterThanOrEqual(fires.count, 58, "the timer must run at display cadence (~60/s)")
+        XCTAssertLessThanOrEqual(fires.count, 61, "the timer must not exceed display cadence")
+
+        // Saturated stream (the fake-gauge rate marks `pending` between every
+        // fire): publishes equal fires — ~60/s, bounded by the cadence, never
+        // the ~83 Hz arrival rate, with zero skipped fires.
+        let saturatedPublishes = fires.reduce(into: 0) { count, _ in
+            if scheduler.shouldPublishOnFire(pending: true) { count += 1 }
         }
+        XCTAssertEqual(saturatedPublishes, fires.count, "every pending fire must publish")
+        XCTAssertGreaterThanOrEqual(saturatedPublishes, 58, "publishes must run at display cadence (~60/s)")
+        XCTAssertLessThanOrEqual(saturatedPublishes, 61, "publishes must not exceed display cadence")
 
-        // At a true ~60 Hz cadence (with jitter) over one second, saturated:
-        // publishes equal fires — every fire that has data publishes.
-        let jitteryFires = tickSequence(seconds: 1.0, withJitter: true)
-        let saturatedPublishes = publishesPerSecond(fireTimes: jitteryFires, alwaysPending: true)
-        XCTAssertEqual(saturatedPublishes, jitteryFires.count, "every pending fire must publish")
-        // Bounded at display rate (60 Hz cadence + jitter) — a real 120 Hz
-        // stream can never push this higher.
-        XCTAssertLessThanOrEqual(saturatedPublishes, 61)
-
-        // Stream-rate independence: a far faster stream marks `pending` between
-        // fires too, and publishes are STILL the fire count — not stream count.
-        let idleFires = tickSequence(seconds: 1.0, withJitter: true)
-        let idlePublishes = publishesPerSecond(fireTimes: idleFires, alwaysPending: false)
+        // Idle stream: fires without pending data publish nothing.
+        let idlePublishes = fires.reduce(into: 0) { count, _ in
+            if scheduler.shouldPublishOnFire(pending: false) { count += 1 }
+        }
         XCTAssertEqual(idlePublishes, 0, "fires without pending data publish nothing")
 
-        // The F1 skip fraction is zero by construction: no time-gate drops a
-        // fire. Every fire with pending samples published.
-        XCTAssertEqual(saturatedPublishes, jitteryFires.count)
+        // Stream-rate independence: a far faster stream (100 Hz) still
+        // publishes at the cadence, not at stream rate.
+        XCTAssertLessThan(saturatedPublishes, 100)
     }
 
     /// #671: the published snapshot has exactly one field set while a stream
