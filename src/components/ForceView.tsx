@@ -57,8 +57,8 @@ import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
 import type { GaugeInputs } from "../lib/gaugeInputLock";
 import {
   loadLastUsedGaugeLabel,
+  rememberGaugeLabelSelection,
   resolveRecordingGaugeLabel,
-  saveLastUsedGaugeLabel,
 } from "../lib/gaugeTagResolution";
 import {
   endTindeqLiveActivity,
@@ -387,18 +387,33 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
   // prompt — a rep now saves the moment you stop, using the tag set beforehand.
   const [justSaved, setJustSaved] = useState<TindeqRecordingMeta | null>(null);
-  // #684: the raw Exercise&Side fields stay empty on mount (as before); the
-  // last-used pair is a persist-boundary FALLBACK for an untagged free hold,
-  // never a display seed — see gaugeTagResolution.ts. Every explicit selection
-  // below is remembered through `rememberGaugeLabel`, and the ref mirrors it
+  // #684: the raw Exercise&Side fields stay empty on mount; the last-used pair
+  // is a persist-boundary FALLBACK for an untagged free hold, never a display
+  // seed — see gaugeTagResolution.ts. Every explicit selection below is
+  // remembered through `rememberGaugeLabel`, and the ref mirrors it
   // synchronously so the boundary guard reads the latest choice.
   const [pendingTag, setPendingTag] = useState("");
   const [pendingSide, setPendingSide] = useState<TindeqSide>("");
   // #684: the last-used pair, mirrored in a ref so the persist-boundary guard
   // in runStop reads a value that can never be stale from an old render (the
-  // repo's closure-race rule). Kept in lockstep with the localStorage writes
-  // below — the ref is the same write path, one source of truth.
-  const lastUsedGaugeLabelRef = useRef(loadLastUsedGaugeLabel());
+  // repo's closure-race rule). The initial value is read ONCE, through a lazy
+  // `useState` initializer (#684 F3) — `useRef(loadLastUsedGaugeLabel())` would
+  // re-run the two synchronous storage reads on every render, and ForceView
+  // re-renders per animation frame while measuring. The ref is initialized
+  // from that first-render state and written only by `rememberGaugeLabel`,
+  // which is the single write path for both — so the two never drift, and
+  // there is no render-time ref write (react-hooks/refs).
+  const [lastUsedGaugeLabel, setLastUsedGaugeLabel] = useState(loadLastUsedGaugeLabel);
+  const lastUsedGaugeLabelRef = useRef(lastUsedGaugeLabel);
+  // #684: the persist-boundary resolution — a saved rep's tag/side is decided
+  // through this and ONLY this: the raw (explicit) fields win, then the
+  // remembered last-used pair, then untagged `''`. Reads the ref at call time
+  // (never a captured value — repo closure-race rule) so the always-armed
+  // free-hold path is covered even when the raw fields are empty. Every
+  // recording builder below funnels through this so no persist site can drift
+  // from the rule (#684 F4).
+  const resolveBoundaryLabel = (explicit: { tag: string; side: TindeqSide }) =>
+    resolveRecordingGaugeLabel(explicit, lastUsedGaugeLabelRef.current);
   // #684: every explicit Exercise&Side selection is remembered for the next
   // untagged free hold ("remember rather than repeatedly ask", #546). The ref
   // is updated synchronously so the persist boundary sees the latest choice
@@ -406,9 +421,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // deselecting (re-tapping the active chip, or the "—" side) must NOT
   // clobber the last-used pair — that pair is the "user chose it" default an
   // empty field falls back to, so it survives until the next explicit pick.
+  // The two fields merge independently (see rememberGaugeLabelSelection), so
+  // picking a side while the Exercise field is empty keeps the remembered tag
+  // (#684 F2) — and vice versa.
   function rememberGaugeLabel(tag: string, side: TindeqSide) {
-    lastUsedGaugeLabelRef.current = { tag: tag.trim(), side };
-    saveLastUsedGaugeLabel(tag, side);
+    const merged = rememberGaugeLabelSelection(
+      { tag, side },
+      lastUsedGaugeLabelRef.current,
+    );
+    setLastUsedGaugeLabel(merged);
+    lastUsedGaugeLabelRef.current = merged;
   }
   function handlePendingTag(t: string) {
     setPendingTag(t);
@@ -708,14 +730,16 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         // id still lands (see recordingListsEqual).
         if (recordingListsEqual(list, recordingsRef.current)) return;
         setRecordings(list);
-        // Default the tag input to the most-recorded exercise so the input
-        // matches what the charts below already show (they fall back to it).
-        const counts = new Map<string, number>();
-        for (const r of list) {
-          if (r.tag) counts.set(r.tag, (counts.get(r.tag) ?? 0) + 1);
-        }
-        const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
-        if (top) setPendingTag((prev) => (prev.trim() ? prev : top));
+        // #684 F1: the raw Exercise field is DELIBERATELY not seeded from the
+        // most-recorded exercise on mount. The display layer already falls
+        // back to `allTags[0]` for its charts; seeding `pendingTag` with the
+        // same value would make that arbitrary first-in-list exercise an
+        // EXPLICIT selection at the persist boundary, so an untagged free
+        // hold would be stamped under an exercise the user never picked —
+        // the exact "worse than not locking at all" footgun gaugeInputLock.ts
+        // documents. An empty field on mount means the rep resolves to the
+        // remembered last-used pair, or untagged `''` — never the display
+        // fallback.
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -807,8 +831,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // reading the raw values here would let a tag change mid-run file
       // later reps under a different tag than the zone/target they were
       // actually performed against.
-      tag: gaugeInputs.pendingTag,
-      side: seg.side ?? gaugeInputs.pendingSide,
+      // #684 F4: the raw fields flow through the shared persist-boundary
+      // resolution (resolveBoundaryLabel) — explicit ?? last-used ?? '' — so
+      // an untagged hold keeps the remembered pair instead of stamping ''.
+      ...resolveBoundaryLabel({
+        tag: gaugeInputs.pendingTag,
+        side: seg.side ?? gaugeInputs.pendingSide,
+      }),
       groupId: ensureSession(),
       protocolRunId: protocolRunIdRef.current,
       setNo: seg.set,
@@ -883,8 +912,17 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       peakKg: Math.max(...kgs),
       avgKg: Math.round((kgs.reduce((sum, kg) => sum + kg, 0) / kgs.length) * 100) / 100,
       note,
-      tag: snapshot.tag,
-      side: hold.side || snapshot.side,
+      // #684 F4: snapshot.tag/side flow through the shared persist-boundary
+      // resolution (resolveBoundaryLabel) — explicit ?? last-used ?? '' — so
+      // the always-armed hands-free path (the motivating case for #684) keeps
+      // the remembered pair on an untagged hold. The adaptive snapshot
+      // itself holds the raw LOCKED fields at run start; the boundary applies
+      // the last-used fallback here, at the shared builder, covering both the
+      // live save and the sign-out salvage of the same hold.
+      ...resolveBoundaryLabel({
+        tag: snapshot.tag,
+        side: hold.side || snapshot.side,
+      }),
       groupId: snapshot.groupId,
       protocolRunId: snapshot.runId,
       setNo: hold.set,
@@ -993,8 +1031,13 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       cadenceReturnS: protocol.cadenceReturnS ?? 3,
       base: {
         note,
-        tag: snapshot.tag,
-        side: snapshot.side,
+        // #684 F4: the snapshot's raw tag/side flow through the shared
+        // persist-boundary resolution (explicit ?? last-used ?? '') so a
+        // reverse-action set never stamps untagged when a pair is remembered.
+        ...resolveBoundaryLabel({
+          tag: snapshot.tag,
+          side: snapshot.side,
+        }),
         groupId:
           reverseRunGroupIdRef.current ?? snapshot.groupId ?? ensureSession(),
         protocolRunId: runId,
@@ -1141,22 +1184,28 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // is only reachable while TagSideEditor is disabled (runActive), so raw
     // and locked agree today, but reading raw here was reachable "only by
     // convention" — exactly the class of bug CLAUDE.md's #196 note warns about.
-    // #684: this is the persist boundary — the one place a saved rep's
-    // tag/side is decided. The raw fields fall back to the remembered
-    // last-used pair, and with neither the rep persists UNTAGGED (`''`); the
-    // display fallback `liveEffectiveTag`/`allTags[0]` must never stamp a
-    // recording (see gaugeInputLock.ts's own comment). Read BEFORE
-    // `tindeq.stop()` like everything above, and resolve the last-used
-    // fallback here from the ref (never a captured value — repo closure-race
-    // rule) so the always-armed free-hold path is covered even when the raw
-    // fields are empty.
+    // #684: this is the persist boundary — a saved rep's tag/side is decided
+    // through `resolveBoundaryLabel` and nothing else: the raw fields win,
+    // then the remembered last-used pair, then untagged `''`; the display
+    // fallback `liveEffectiveTag`/`allTags[0]` must never stamp a recording
+    // (see gaugeInputLock.ts's own comment). Read BEFORE `tindeq.stop()` like
+    // everything above, and resolve the last-used fallback here from the ref
+    // (never a captured value — repo closure-race rule) so the always-armed
+    // free-hold path is covered even when the raw fields are empty.
+    // #684 F7 (decision, kept from #119): an interruption-recovery save whose
+    // label is genuinely unknown — recoveredTagSide returned "" because the
+    // drop-time snapshot was also empty — runs through the same boundary as a
+    // normal stop, so it falls back to the remembered last-used pair (and
+    // then to untagged). That is deliberately CONSISTENT with every other
+    // persist site (#684 F4), including the sign-out salvage of the same
+    // interruption; the note ("Recovered after connection loss" / "Recovered
+    // after sign-out") is what marks a blob as a recovery, not an untagged
+    // label.
     const pending = { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide };
-    const resolvedBoundary = (input: { tag: string; side: TindeqSide }) =>
-      resolveRecordingGaugeLabel(input, lastUsedGaugeLabelRef.current);
     const { tag, side } =
       note === ""
-        ? resolvedBoundary(pending)
-        : resolvedBoundary(recoveredTagSide(pending, tindeq.interruptionContext));
+        ? resolveBoundaryLabel(pending)
+        : resolveBoundaryLabel(recoveredTagSide(pending, tindeq.interruptionContext));
     const summary = await tindeq.stop(endMs);
     void endTindeqLiveActivity();
     if (!summary) return;
@@ -1927,8 +1976,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
         const targetKg = presetTargetKg(protocol, snapshot.refs, set);
         return {
           note: "Recovered after sign-out",
-          tag: snapshot.tag,
-          side: snapshot.side,
+          // #684 F4: same boundary as the live reverse-action save — the
+          // snapshot's raw tag/side fall back to the remembered pair here too,
+          // so the sign-out salvage of a reverse-action set doesn't stamp
+          // untagged when the live save of the same set would have kept it.
+          ...resolveBoundaryLabel({
+            tag: snapshot.tag,
+            side: snapshot.side,
+          }),
           groupId: reverseRunGroupIdRef.current ?? snapshot.groupId,
           protocolRunId: runId,
           zone: performedQuality(
@@ -2148,6 +2203,14 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
       // throwaway dev accounts, not just hypothetical).
       userId,
       stopInFlight: stopInFlightRef.current,
+      // #684 F4: the sign-out salvage resolves through the SAME
+      // persist-boundary rule as the live saves (explicit ?? last-used ??
+      // ''), read from the ref at salvage time — so the salvaged free hold
+      // keeps the remembered pair, exactly like the same hold's normal Stop.
+      // `resolveBoundaryLabel` is recreated every render but the salvage
+      // reads the ref, and it's a stable-on-purpose function value for this
+      // effect's identity.
+      resolveLabel: resolveBoundaryLabel,
       buildSalvageRecordings: (samples) =>
         buildAdaptiveStaticSalvage(samples) ?? buildReverseSalvageRecordings(samples),
     }));
@@ -2955,8 +3018,12 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
               peakKg: null,
               avgKg: null,
               note: "Sensorless timed external-load attempt",
-              tag: gaugeInputs.pendingTag,
-              side: seg.side ?? gaugeInputs.pendingSide,
+              // #684 F4: same shared persist-boundary resolution as every
+              // other recording — explicit ?? last-used ?? ''.
+              ...resolveBoundaryLabel({
+                tag: gaugeInputs.pendingTag,
+                side: seg.side ?? gaugeInputs.pendingSide,
+              }),
               groupId,
               protocolRunId: runId,
               setNo: seg.set,

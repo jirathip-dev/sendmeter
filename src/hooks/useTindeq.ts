@@ -95,6 +95,18 @@ export interface SalvageContext {
   buildSalvageRecordings?: (
     samples: readonly TindeqSample[],
   ) => (NewTindeqRecording & { id: string })[] | null;
+  /// #684 F4: resolves a raw tag/side at the persist boundary (explicit ??
+  /// last-used ?? ''), supplied by the label owner (ForceView) so the generic
+  /// sign-out salvage row applies the SAME rule as the live saves — the two
+  /// saves of the same free hold can't disagree (the #119 parity the recovery
+  /// path relies on). Reads the last-used pair from the owner's ref at call
+  /// time (synchronous, matching this cleanup's sync-only contract). Absent on
+  /// the no-owner fallback below, where the raw fields ARE the answer — "" —
+  /// which the resolver would produce anyway.
+  resolveLabel?: (explicit: {
+    tag: string;
+    side: TindeqSide;
+  }) => { tag: string; side: TindeqSide };
 }
 
 /// Pure gate for the unmount-salvage cleanup — pulled out so the exact
@@ -348,6 +360,7 @@ export function useTindeq() {
         groupId: null,
         stopInFlight: false,
         buildSalvageRecordings: undefined,
+        resolveLabel: undefined,
       };
       const userId: string | null = registered?.userId ?? null;
       if (
@@ -399,8 +412,23 @@ export function useTindeq() {
           // slice, not a clean per-rep hold, and tagging it into a run
           // would skew SL-102's per-rep box plots/run grouping.
           note: "Recovered after sign-out",
-          tag: ctx.tag,
-          side: ctx.side,
+          // #684 F4: the same persist-boundary resolution as the live saves —
+          // the registered ctx.tag/side are the raw LOCKED fields at drop
+          // time; an empty one falls back to the remembered last-used pair
+          // here, so the sign-out salvage of a free hold stamps the same
+          // label a normal Stop of that hold would have (the #119 parity the
+          // recovery path relies on), instead of reverting to '' while the
+          // live save keeps the remembered pair. Resolution happens HERE, at
+          // the shared generic builder, so no salvage site can drift from the
+          // rule. This cleanup is synchronous by contract, and the resolver
+          // reads the owner's last-used ref synchronously — no await
+          // introduced. The no-owner fallback below carries no resolver, in
+          // which case the raw "" fields ARE the answer the resolver would
+          // have produced anyway.
+          ...(ctx.resolveLabel?.({ tag: ctx.tag, side: ctx.side }) ?? {
+            tag: ctx.tag,
+            side: ctx.side,
+          }),
           groupId: ctx.groupId,
           protocolRunId: null,
           setNo: null,
