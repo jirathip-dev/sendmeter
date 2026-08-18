@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+
+	<!-- The Live Activity extension only renders the ActivityAttributes /
+	     ContentState the app process pushes to it. It collects nothing. -->
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+
+	<!-- No required-reason API here. This bundle has no App Group and no
+	     Button(intent:) (the guided protocol has no lock-screen actions;
+	     the workout Live Activity + intents are a follow-up, #674). Not
+	     strictly required by Apple (a bundle that uses no required-reason
+	     API needs no manifest), but kept so every shipped bundle states its
+	     position explicitly. -->
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array/>
+</dict>
+</plist>

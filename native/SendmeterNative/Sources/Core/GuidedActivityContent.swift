@@ -113,6 +113,11 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
     /// segment window, so this is only computed on state transitions.
     public struct Snapshot: Codable, Equatable, Sendable {
         public let title: String
+        /// Stable machine token of the current segment phase — "prepare" |
+        /// "work" | "switch" | "rest" | "setRest" | "complete". The widget's
+        /// color mapping keys off this (#674); the human label lives in
+        /// `phaseLabel`.
+        public let phaseToken: String
         public let phaseLabel: String
         public let detailLabel: String
         public let segmentStartEpochMs: Double
@@ -123,6 +128,7 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
 
         public init(
             title: String,
+            phaseToken: String,
             phaseLabel: String,
             detailLabel: String,
             segmentStartEpochMs: Double,
@@ -132,6 +138,7 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
             targetKilograms: Double?
         ) {
             self.title = title
+            self.phaseToken = phaseToken
             self.phaseLabel = phaseLabel
             self.detailLabel = detailLabel
             self.segmentStartEpochMs = segmentStartEpochMs
@@ -153,6 +160,7 @@ public struct GuidedProtocolActivityContent: Codable, Equatable, Sendable {
         let endMs = startEpochMs + (segment.startS + segment.durS) * 1_000
         return Snapshot(
             title: title,
+            phaseToken: segment.phase.rawValue,
             phaseLabel: segment.phase.label,
             detailLabel: detail,
             segmentStartEpochMs: startMs,

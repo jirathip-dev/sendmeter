@@ -15,34 +15,20 @@ import SendmeterCore
 /// never per-tick updates — exactly the web's contract.
 ///
 /// KEEP-IN-SYNC note: unlike the web (which duplicates `ActivityModels.swift`
-/// across its widget and plugin targets), the app and any future widget
-/// extension compile the SAME `GuidedActivityContent` from SendmeterCore, so
-/// the ActivityKit `Attributes`/`ContentState` shape cannot drift between
-/// them — keep it that way: the widget must consume the Core model, never a
-/// copied one.
+/// across its widget and plugin targets), the app and the widget extension
+/// compile the SAME `GuidedActivityContent` from SendmeterCore and the SAME
+/// `GuidedProtocolActivityAttributes` from `Sources/Shared` (single source
+/// file, two targets, one XcodeGen project), so the ActivityKit
+/// `Attributes`/`ContentState` shape cannot drift between them — keep it that
+/// way: the widget must consume the Core model, never a copied one, and the
+/// wire type must stay in `Sources/Shared`, never duplicated.
 ///
 /// Live Activities do not run in the simulator's gallery — device-only to
 /// verify; every failure here is swallowed so the protocol itself is never
 /// affected.
 @MainActor
 public final class GuidedProtocolActivityManager {
-    public struct Attributes: ActivityAttributes {
-        public struct ContentState: Codable, Hashable {
-            public let title: String
-            public let phaseLabel: String
-            public let detailLabel: String
-            public let segmentStart: Date
-            public let segmentEnd: Date
-            public let progress: Double
-            public let peakKilograms: Double?
-            public let targetKilograms: Double?
-        }
-
-        public let presetID: UUID
-        public let runID: UUID
-    }
-
-    private var activity: Activity<Attributes>?
+    private var activity: Activity<GuidedProtocolActivityAttributes>?
     private var content: GuidedProtocolActivityContent?
     private var peakKilograms: Double?
 
@@ -72,7 +58,7 @@ public final class GuidedProtocolActivityManager {
             atEpochMs: Date().timeIntervalSince1970 * 1_000
         ) else { return }
         do {
-            let attributes = Attributes(presetID: preset.id, runID: run.runID)
+            let attributes = GuidedProtocolActivityAttributes(presetID: preset.id, runID: run.runID)
             let state = makeContentState(snapshot)
             let initial = ActivityContent(
                 state: state,
@@ -134,9 +120,10 @@ public final class GuidedProtocolActivityManager {
         }
     }
 
-    private func makeContentState(_ snapshot: GuidedProtocolActivityContent.Snapshot) -> Attributes.ContentState {
-        Attributes.ContentState(
+    private func makeContentState(_ snapshot: GuidedProtocolActivityContent.Snapshot) -> GuidedProtocolActivityAttributes.ContentState {
+        GuidedProtocolActivityAttributes.ContentState(
             title: snapshot.title,
+            phase: snapshot.phaseToken,
             phaseLabel: snapshot.phaseLabel,
             detailLabel: snapshot.detailLabel,
             segmentStart: Date(timeIntervalSince1970: snapshot.segmentStartEpochMs / 1_000),

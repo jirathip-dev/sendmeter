@@ -107,6 +107,7 @@ final class GuidedActivityContentTests: XCTestCase {
         let content = content(preset: preset(), startEpochMs: 1_000_000)
         let snapshot = content.snapshot(atEpochMs: 1_002_000, peakKilograms: 44.1)
         XCTAssertEqual(snapshot?.title, "Repeaters")
+        XCTAssertEqual(snapshot?.phaseToken, "prepare")
         XCTAssertEqual(snapshot?.phaseLabel, "Prepare")
         XCTAssertEqual(snapshot?.segmentStartEpochMs, 1_000_000)
         XCTAssertEqual(snapshot?.segmentEndEpochMs, 1_005_000)
@@ -116,6 +117,7 @@ final class GuidedActivityContentTests: XCTestCase {
 
         // A work segment carries side + set/rep detail.
         let workSnapshot = content.snapshot(atEpochMs: 1_006_000)
+        XCTAssertEqual(workSnapshot?.phaseToken, "work")
         XCTAssertEqual(workSnapshot?.phaseLabel, "Hold")
         XCTAssertEqual(workSnapshot?.detailLabel, "Set 1 · Rep 1 · Left")
         XCTAssertEqual(workSnapshot?.segmentStartEpochMs, 1_005_000)
