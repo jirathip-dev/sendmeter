@@ -146,6 +146,7 @@ struct ForceView: View {
                                 startMeasurement()
                             }
                         },
+                        connect: { model.requestConnect() },
                         armHandsFree: armHandsFree,
                         stopAndSave: stopAndSave,
                         cancelArm: { model.handsFree.cancelArm() },
@@ -230,7 +231,12 @@ struct ForceView: View {
                             Haptics.shared.tap()
                             creatingPreset = true
                         },
-                        delete: { preset in Task { await model.deletePreset(preset) } }
+                        delete: { preset in
+                            // #656 (review F14): deleting a protocol preset is
+                            // a confirm/destructive action — medium tick.
+                            Haptics.shared.play(.medium)
+                            Task { await model.deletePreset(preset) }
+                        }
                     )
 
                     RecentForceCard(recordings: Array(model.recordings.prefix(8)))
@@ -277,25 +283,27 @@ struct ForceView: View {
         }
     }
 
-    /// #656: a refused start fires the warning pattern, never the accepted
-    /// light tick (#222). The Start/Arm buttons are genuinely `disabled` only
-    /// for an unsaved recording (those fire nothing); every other refusal —
-    /// gauge not connected, previous pull still owed — is a deliberate
-    /// "kept clickable so the tap can say why" and must NOT feel accepted.
-    private func refuseStart(_ message: String) {
+    /// #656: a refused gauge action fires the warning pattern, never the
+    /// accepted tick (#222). The live surfaces are the guided-protocol Run
+    /// button (not connected / pull owed — those two buttons carry no
+    /// `.disabled`, so the tap is how the user learns why) and a Stop & Save
+    /// with no samples. The Force tab's Start/Arm buttons use hard `.disabled`
+    /// for the same conditions and therefore fire nothing — matching the web's
+    /// #222 rule, where a genuinely disabled control gets no cue at all.
+    private func refuseAction(_ message: String) {
         model.errorMessage = message
         Haptics.shared.play(RefusedActionHaptics.cue(tappableAndRefused: true))
     }
 
     private func startMeasurement() {
         guard !model.tindeq.hasUnsavedRecording else {
-            refuseStart("Save or discard the previous pull before starting another.")
+            refuseAction("Save or discard the previous pull before starting another.")
             return
         }
         do {
             try model.tindeq.startMeasuring()
         } catch {
-            refuseStart(error.localizedDescription)
+            refuseAction(error.localizedDescription)
         }
     }
 
@@ -303,11 +311,11 @@ struct ForceView: View {
     /// loop instead of recording immediately.
     private func armHandsFree() {
         guard !model.tindeq.hasUnsavedRecording else {
-            refuseStart("Save or discard the previous pull before starting another.")
+            refuseAction("Save or discard the previous pull before starting another.")
             return
         }
         guard model.tindeq.status == .connected else {
-            refuseStart("Connect the Progressor before arming hands-free.")
+            refuseAction("Connect the Progressor before arming hands-free.")
             return
         }
         publishFreePullContext()
@@ -328,7 +336,7 @@ struct ForceView: View {
             return
         }
         guard let summary = model.tindeq.stopMeasuring() else {
-            refuseStart("No force samples were received.")
+            refuseAction("No force samples were received.")
             return
         }
         save(summary, recovered: false)
@@ -409,11 +417,11 @@ struct ForceView: View {
 
     private func launch(_ preset: TindeqPreset) {
         guard !model.tindeq.hasUnsavedRecording else {
-            refuseStart("Save or discard the previous pull before starting a guided protocol.")
+            refuseAction("Save or discard the previous pull before starting a guided protocol.")
             return
         }
         guard model.tindeq.status == .connected else {
-            refuseStart("Connect the Progressor before starting a guided protocol.")
+            refuseAction("Connect the Progressor before starting a guided protocol.")
             return
         }
         // #653: only a persisted user preset keeps the metadata picker in
@@ -467,6 +475,7 @@ private struct ForceDeviceCard: View {
     let savingSummary: Bool
     let gaugeSessionCount: Int
     let start: () -> Void
+    let connect: () -> Void
     let armHandsFree: () -> Void
     let stopAndSave: () -> Void
     let cancelArm: () -> Void
@@ -625,7 +634,9 @@ private struct ForceDeviceCard: View {
                 .foregroundStyle(.secondary)
         case .idle, .interrupted:
             Button {
-                device.connect()
+                // #656 (review F1): user-initiated — arms the transport's
+                // success/error haptics for this launch.
+                connect()
             } label: {
                 Label("Connect Progressor", systemImage: "antenna.radiowaves.left.and.right")
             }
@@ -658,6 +669,9 @@ private struct ForceDeviceCard: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(SendmeterStyle.primary)
                         Button("Cancel", role: .destructive) {
+                            // #656 (review F14): disarming hands-free is a
+                            // destructive action — medium tick.
+                            Haptics.shared.play(.medium)
                             cancelArm()
                         }
                         .buttonStyle(.bordered)
@@ -1482,6 +1496,9 @@ private struct GuidedForceProtocolView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", role: .destructive) {
+                        // #656 (review F14): cancelling a running protocol is
+                        // a confirm/destructive action — medium tick.
+                        Haptics.shared.play(.medium)
                         Task { await cancelAndPreserve() }
                     }
                 }
@@ -1640,6 +1657,14 @@ private struct GuidedForceProtocolView: View {
         }
         run.advance(at: date)
         observedStageID = nil
+        // #656 (review F3): the moment the run steps into the `.complete`
+        // stage, every later `tick` returns early at `guard !run.isComplete`,
+        // so the transition block never reaches the `.complete` case — this
+        // is the one cue the user is waiting for while looking away from the
+        // phone, and the web fires it ("done" → `[80,60,80]` + 3 beeps).
+        if run.currentStage.kind == .complete {
+            Haptics.shared.play(GuidedTransitionHaptics.cue(entering: .complete))
+        }
         // #628: disarm the stage's arming so rest/switch stages cannot start
         // a phantom recording on leftover load; the next work stage re-arms.
         if stage.kind == .work {

@@ -417,14 +417,16 @@ struct HistoryView: View {
                 .tint(SendmeterStyle.primary)
             }
         } else {
-            Button { editingSession = session } label: {
+            Button {
+                // #656: a tap opening a sheet arms the presentation tick —
+                // inside the action, the same mechanism as every other site
+                // (review F13 — no second gesture recognizer).
+                Haptics.shared.tap()
+                editingSession = session
+            } label: {
                 row
             }
             .buttonStyle(.plain)
-            .simultaneousGesture(TapGesture().onEnded {
-                // #656: a tap opening a sheet arms the presentation tick.
-                Haptics.shared.tap()
-            })
             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                 Button(role: .destructive) { delete(session) } label: {
                     Label("Trash", systemImage: "trash")

@@ -297,9 +297,13 @@ struct SettingsView: View {
     private var destructiveSection: some View {
         Section {
             Button(role: .destructive) {
-                // #656: a refused (disabled) control fires nothing — this is
-                // genuinely disabled while signing out, so no warning. The
-                // confirm at the remainder dialog carries the medium tick.
+                // #656 (review F6): the issue names sign-out as a
+                // confirm/destructive `.medium` action. The button is fully
+                // enabled at the moment of the tap (it only disables while
+                // `signOut()` is in flight), so the #222 "disabled fires
+                // nothing" rule does not apply; the remainder dialog's tick
+                // is an additional confirm only when the queue left writes.
+                Haptics.shared.play(.medium)
                 Task { await model.signOut() }
             } label: {
                 Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")

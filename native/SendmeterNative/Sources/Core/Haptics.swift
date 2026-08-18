@@ -20,6 +20,27 @@ public enum HapticPattern: Equatable, Sendable {
     case stutter(milliseconds: [Double])
 }
 
+/// The weight a `.single` buzz maps to — `UIImpactFeedbackGenerator` has no
+/// duration axis, so the web's duration-coded singles (hold 150, armed 80,
+/// in-zone 45) are approximated by intensity so the cues stay distinguishable
+/// (review F11). Pure Core so the mapping is unit-tested; the App dispatcher
+/// turns each weight into a UIKit style.
+public enum HapticSingleWeight: Equatable, Sendable {
+    case light
+    case medium
+    case heavy
+}
+
+public enum HapticPatternWeights {
+    /// 150 ms (a hold) is the reference `.medium`; longer reads heavier,
+    /// shorter lighter.
+    public static func singleWeight(milliseconds: Double) -> HapticSingleWeight {
+        if milliseconds >= 130 { return .heavy }
+        if milliseconds <= 80 { return .light }
+        return .medium
+    }
+}
+
 /// The complete feedback vocabulary. Every haptic in the app is one of these.
 public enum HapticCue: Equatable, Sendable {
     case light
@@ -27,6 +48,10 @@ public enum HapticCue: Equatable, Sendable {
     case warning
     case success
     case error
+    /// The crisp picker/scrubber detent — the web's `selectionHaptic()`, a
+    /// DIFFERENT generator (`UISelectionFeedbackGenerator`), deliberately
+    /// unguarded per value change (review F4). Sheet/open ticks use `.light`.
+    case selection
     case pattern(HapticPattern)
 }
 
@@ -36,6 +61,19 @@ public enum HapticCue: Equatable, Sendable {
 /// are one continuous `.work` stage (there is no per-rep return cadence), so
 /// the web's `[70,60,70]` return pattern has no native surface to attach to
 /// yet — it stays representable via `HapticPattern` for when one lands.
+///
+/// Spec rows with no native surface to attach to — documented here so the next
+/// reader doesn't re-derive them (review F15):
+///
+/// - `return` → `[70,60,70]` and failed-transition → `[120,80,120,80,120]`:
+///   `ForceProtocolStageKind` has no `move`/`return` stage and native has no
+///   adaptive-failed state, so neither pattern can fire.
+/// - Target-zone coach cues (`in-zone` 45, `below` `[35,45,70]`, `above`
+///   `[70,45,35]` — `ForceFullscreen.tsx:632-635`): native has no target-zone
+///   coach at all, so there is genuinely nothing to attach to.
+/// - Routine-timer segment transitions (web `RoutineFullscreen.tsx:235`):
+///   out of #656's scope (its table names only force segments) — a known
+///   parity gap, flagged for the next haptics pass.
 public enum GuidedTransitionHaptics {
     public static func cue(entering kind: ForceProtocolStageKind) -> HapticCue {
         switch kind {

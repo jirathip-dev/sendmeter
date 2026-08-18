@@ -38,6 +38,29 @@ final class HapticsTests: XCTestCase {
         )
     }
 
+    func testCompleteCuesStutter() {
+        // Review F3: the `.complete` case was dead code — the run's
+        // `isComplete` guard made every later tick return before the
+        // transition block. It is now fired on advance, so it must be pinned
+        // like every other stage.
+        XCTAssertEqual(
+            GuidedTransitionHaptics.cue(entering: .complete),
+            .pattern(.stutter(milliseconds: [80, 60, 80]))
+        )
+    }
+
+    // MARK: Single-buzz weight mapping (review F11)
+
+    func testSingleBuzzWeightMapsByDuration() {
+        // The web distinguishes single buzzes by duration (hold 150, armed
+        // 80, in-zone 45); UIImpactFeedbackGenerator has no duration axis, so
+        // the pure mapping encodes duration → intensity.
+        XCTAssertEqual(HapticPatternWeights.singleWeight(milliseconds: 150), .heavy)
+        XCTAssertEqual(HapticPatternWeights.singleWeight(milliseconds: 80), .light)
+        XCTAssertEqual(HapticPatternWeights.singleWeight(milliseconds: 45), .light)
+        XCTAssertEqual(HapticPatternWeights.singleWeight(milliseconds: 100), .medium)
+    }
+
     // MARK: Hands-free armed/measuring (web `armed ? 80 : 150`)
 
     func testHandsFreeArmedCuesSingle80() {
@@ -69,6 +92,14 @@ final class HapticsTests: XCTestCase {
         // A second observation of the same value — the finger never left the
         // band — must not fire.
         XCTAssertFalse(SelectionHaptics.valueChanged(day, day))
+    }
+
+    // MARK: Vocabulary pins (#656 spec table)
+
+    func testSelectionCueIsDistinctFromLight() {
+        // The issue's table says scrub/point selection is `.selection`, a
+        // DIFFERENT generator from the sheet-open `.light` (review F4).
+        XCTAssertNotEqual(HapticCue.selection, HapticCue.light)
     }
 
     // MARK: Refused vs disabled (#222)

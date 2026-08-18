@@ -166,6 +166,9 @@ struct WorkoutView: View {
     }
 
     private func finishWorkout() {
+        // #656 (review F14): finishing the workout is a confirm/destructive
+        // action — medium tick, once per gesture.
+        Haptics.shared.play(.medium)
         guard var engine else { return }
         do {
             let draft = try engine.finish()

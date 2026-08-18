@@ -16,9 +16,9 @@ import SwiftUI
 /// a tooltip showing that day's score, zone and HRV/resting-HR/sleep context;
 /// the same per-day data is exposed to VoiceOver via an `AXChartDescriptor` on
 /// both branches (iOS 16 has no scrub gesture, so the descriptor is the whole
-/// accessible surface there). The scrub currently emits no haptic tick — that
-/// belongs to #656 (haptics parity), which is still open; a `sensoryFeedback`
-/// may be added there, not here.
+/// accessible surface there). The scrub fires a `.selection` haptic tick once
+/// per day crossed (never per drag frame, and re-selecting a day after
+/// deselecting ticks again) — #656.
 ///
 /// Refresh: the chart reads `model.healthMetrics` directly, so a health sync
 /// landing re-renders it. The 14-day window is recomputed on a day-change
@@ -53,6 +53,8 @@ struct ReadinessTrendCard: View {
     /// per drag frame, and zero when the finger stays within one band. The
     /// guard reads the previously ticked day (a ref), so the value-change
     /// decision can't come from a state snapshot that lags the gesture.
+    /// Deselecting (the finger lifts, `selectedDate` returns to nil) clears
+    /// it so re-selecting the same day ticks again (review F5).
     @State private var tickedDay: ReadinessDay?
 
     /// Zone-threshold color for a day's bar — same mapping as the web's
@@ -146,10 +148,17 @@ struct ReadinessTrendCard: View {
                     // #656: scrub tick — once per value change (the day under
                     // the finger), never per drag frame. A second pass over
                     // the same day is silent; the ref (not a captured value)
-                    // is what makes the guard correct mid-gesture.
-                    if let selected, SelectionHaptics.valueChanged(tickedDay, selected) {
-                        tickedDay = selected
-                        Haptics.shared.play(.light)
+                    // is what makes the guard correct mid-gesture. Deselect
+                    // clears the guard so a re-selected day ticks again (F5).
+                    // `.selection` is the crisp scrubber detent, not the
+                    // sheet-open `.light` (F4).
+                    if let selected {
+                        if SelectionHaptics.valueChanged(tickedDay, selected) {
+                            tickedDay = selected
+                            Haptics.shared.play(.selection)
+                        }
+                    } else {
+                        tickedDay = nil
                     }
                 }
                 .onDisappear { tickedDay = nil }

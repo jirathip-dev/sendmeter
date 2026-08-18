@@ -5,14 +5,17 @@ import UIKit
 /// Core (`Haptics.swift`); this dispatcher is the one UIKit surface that turns
 /// a `HapticCue` into feedback-generator calls. Feature code calls
 /// `Haptics.shared.play(...)` (or `tap()` / `sheetPresented()`) and never
-/// touches `UIImpactFeedbackGenerator` directly (grep-assertable).
+/// touches a feedback generator directly (grep-assertable, pinned by
+/// `src/lib/hapticsInvariants.test.ts`).
 ///
 /// All calls are fire-and-forget: a failure can never propagate into the
-/// action it accompanies, and no generator outlives the play it serves. The
-/// feedback generators are recreated per play because they must be prepared on
-/// the run loop the gesture happened on to be reliable — holding one app-wide
-/// instance that the UI thread never touches (a real risk with SwiftUI's
-/// background-diffed state) silently mutes the whole app.
+/// action it accompanies.
+///
+/// Generators are cached per style and reused, because `prepare()` is an
+/// asynchronous warm-up that must run AHEAD of the event to help; allocating a
+/// fresh generator and calling `prepare()` on the very next line pays cold-start
+/// latency on every tick (review F10). The whole dispatcher is `@MainActor`,
+/// which is exactly the context Apple's retain-and-prepare guidance assumes.
 ///
 /// Pattern cues are approximated as `.rigid` impacts spaced by `Task.sleep`
 /// at the web's rhythm (single 150 ms hold, `[80,60,80]` switch, etc.) — a
@@ -29,6 +32,9 @@ public final class Haptics {
     public static let shared = Haptics()
 
     private var gestureGate = HapticGestureGate()
+    private var impacts: [UIImpactFeedbackGenerator.FeedbackStyle: UIImpactFeedbackGenerator] = [:]
+    private var notification: UINotificationFeedbackGenerator?
+    private var selection: UISelectionFeedbackGenerator?
     private init() {}
 
     /// A user-initiated tap landed on a control that presents a sheet/full-
@@ -54,12 +60,14 @@ public final class Haptics {
             impact(.light)
         case .medium:
             impact(.medium)
+        case .selection:
+            selectionGenerator().selectionChanged()
         case .warning:
-            notification(.warning)
+            notificationGenerator().notificationOccurred(.warning)
         case .success:
-            notification(.success)
+            notificationGenerator().notificationOccurred(.success)
         case .error:
-            notification(.error)
+            notificationGenerator().notificationOccurred(.error)
         case let .pattern(pattern):
             play(pattern: pattern)
         }
@@ -70,13 +78,15 @@ public final class Haptics {
     /// with the gesture; later ticks are spaced by `Task.sleep`.
     public func play(pattern: HapticPattern) {
         switch pattern {
-        case .single:
-            // The web encodes a single-buzz distinction in duration (hold 150
-            // vs armed 80 vs in-zone 45); UIImpactFeedbackGenerator has no
-            // duration axis, so a single buzz is one rigid tick regardless —
-            // the distinction still reads because the single/pattern split
-            // carries the semantic content.
-            impact(.rigid)
+        case let .single(milliseconds):
+            // The web's single-buzz vocabulary distinguishes by DURATION (hold
+            // 150, hands-free armed 80, in-zone 45) and
+            // UIImpactFeedbackGenerator has no duration axis. Approximate
+            // with intensity instead so the cues stay distinguishable: a
+            // longer cue reads as the heavier `.heavy` tick, a short one as
+            // `.light` (review F11). The mapping is pure Core
+            // (`HapticPatternWeights`), unit-tested; device pass re-checks it.
+            impact(singleImpactStyle(milliseconds))
         case let .stutter(milliseconds):
             for (index, delay) in millisecondOffsets(milliseconds).enumerated() {
                 if index == 0 {
@@ -88,6 +98,16 @@ public final class Haptics {
                     }
                 }
             }
+        }
+    }
+
+    /// Maps a web single-buzz duration to an impact style via the pure Core
+    /// weight (`HapticPatternWeights.singleWeight`).
+    private func singleImpactStyle(_ milliseconds: Double) -> UIImpactFeedbackGenerator.FeedbackStyle {
+        switch HapticPatternWeights.singleWeight(milliseconds: milliseconds) {
+        case .light: return .light
+        case .medium: return .medium
+        case .heavy: return .heavy
         }
     }
 
@@ -111,15 +131,33 @@ public final class Haptics {
     }
 
     private func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
-        let generator = UIImpactFeedbackGenerator(style: style)
+        let generator = impacts[style] ?? {
+            let fresh = UIImpactFeedbackGenerator(style: style)
+            impacts[style] = fresh
+            return fresh
+        }()
         generator.prepare()
         generator.impactOccurred()
     }
 
-    private func notification(_ type: UINotificationFeedbackGenerator.FeedbackType) {
-        let generator = UINotificationFeedbackGenerator()
+    private func notificationGenerator() -> UINotificationFeedbackGenerator {
+        let generator = notification ?? {
+            let fresh = UINotificationFeedbackGenerator()
+            notification = fresh
+            return fresh
+        }()
         generator.prepare()
-        generator.notificationOccurred(type)
+        return generator
+    }
+
+    private func selectionGenerator() -> UISelectionFeedbackGenerator {
+        let generator = selection ?? {
+            let fresh = UISelectionFeedbackGenerator()
+            selection = fresh
+            return fresh
+        }()
+        generator.prepare()
+        return generator
     }
 
     private func nowMilliseconds() -> Double {
