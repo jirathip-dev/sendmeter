@@ -57,6 +57,59 @@ public enum HandsFreeForceInactiveStatus: Equatable, Sendable {
     case unsupported
 }
 
+/// Idle-disarm budget for a live armed stream (#681 review F1). The watch
+/// keeps the weight stream running through tap/cap saves, so armed samples
+/// keep flowing while the async save runs; without re-basing, the
+/// sample-clock idle check would count the whole rep plus pre-rep idle
+/// against the save window and spuriously disarm — guaranteed on the
+/// 30-minute cap path. The budget is re-based at every armed-epoch boundary
+/// (arm, rep start, save-window entry, re-arm, transport loss), so recording
+/// time and the save window never count as idle. The web never drives an
+/// idle disarm (a nil/zero timeout is always within budget); the type exists
+/// for KEEP-IN-SYNC parity and the shared regression tests.
+public struct ArmedStreamIdleBudget: Equatable, Sendable {
+    /// Device timestamp (µs) of the first sample of the current armed epoch.
+    public private(set) var baseUs: UInt32?
+
+    public init() {}
+
+    public init(baseUs: UInt32?) {
+        self.baseUs = baseUs
+    }
+}
+
+public struct ArmedStreamIdleStep: Equatable, Sendable {
+    public let budget: ArmedStreamIdleBudget
+    /// True when the sample falls at/after `timeoutSeconds` of the epoch —
+    /// the caller must disarm the armed stream.
+    public let idleExceeded: Bool
+
+    public init(budget: ArmedStreamIdleBudget, idleExceeded: Bool) {
+        self.budget = budget
+        self.idleExceeded = idleExceeded
+    }
+}
+
+/// Observe one armed-stream sample against the idle budget. The first sample
+/// of an epoch establishes the base instead of disarming, so a sample inside
+/// the save window at a device timestamp past the arm timeout (the stale
+/// pre-rep base would compute the whole rep as idle) never cancels. UInt32
+/// wrapping subtraction mirrors the device clock's 32-bit µs counter.
+public func observeArmedStreamIdleBudget(
+    _ budget: ArmedStreamIdleBudget,
+    sampleUs: UInt32,
+    timeoutSeconds: Double?
+) -> ArmedStreamIdleStep {
+    guard let timeoutSeconds, timeoutSeconds > 0 else {
+        return ArmedStreamIdleStep(budget: budget, idleExceeded: false)
+    }
+    let base = budget.baseUs ?? sampleUs
+    return ArmedStreamIdleStep(
+        budget: ArmedStreamIdleBudget(baseUs: base),
+        idleExceeded: Double(sampleUs &- base) / 1000 >= timeoutSeconds * 1000
+    )
+}
+
 public func armedHandsFreeForce() -> HandsFreeForceState {
     .armed(aboveSinceMs: nil)
 }
@@ -170,6 +223,21 @@ public enum HandsFreeStopReason: Equatable, Sendable {
         switch self {
         case .released(let endMs): return endMs
         case .userTapped, .cappedAt30Min: return nil
+        }
+    }
+
+    /// Whether this stop keeps the weight stream running through the async
+    /// save (#681). A `.released` stop already proved `stopGraceMs` of slack,
+    /// so the transport can stop outright and re-arm straight to armed; a tap
+    /// or the 30-minute cap has no such proof and keeps the stream live so a
+    /// release-to-slack edge inside the save window is still observed. The
+    /// manager's `keepStreamRunning` is this AND transport availability —
+    /// decided here in Core so a new stop reason cannot silently pick the
+    /// wrong live-window behavior (#681 review F3).
+    public var keepsStreamLive: Bool {
+        switch self {
+        case .released: return false
+        case .userTapped, .cappedAt30Min: return true
         }
     }
 }

@@ -333,7 +333,7 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         feed(manager, [(3, 0), (3, 600_000), (25, 700_000)])
         XCTAssertEqual(manager.status, .measuring)
 
-        // The user taps "Save now" while still hanging. With the stream kept
+        // The user taps "Stop & Save" while still hanging. With the stream kept
         // live, the release that follows is observed during the save window.
         manager.stopAndSave(reason: .userTapped)
         feed(manager, [(0.5, 800_000)])
@@ -394,7 +394,10 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
     }
 
     func testThirtyMinuteCapSavesOneUntrimmedRepAndWaitsForSlack() async throws {
-        let recordings = RecordingQueueSpy()
+        // #681 review F1: the save is held open with a blocking queue so a
+        // post-cap sample can be fed INSIDE the save window — the exact
+        // scenario the stale pre-rep idle base used to mis-fire on.
+        let recordings = BlockingRecordingQueueSpy()
         var commands: [Tindeq.Cmd] = []
         let manager = TindeqManager(
             recordingQueue: recordings,
@@ -413,6 +416,21 @@ final class TindeqHandsFreeIntegrationTests: XCTestCase {
         // UI timer's cap check can stop it, and that stop must not get
         // release semantics (#503) — no proven slack, no trimmed tail.
         feed(manager, [(25, 1_800_600_000)])
+        try await waitUntil { manager.saving }
+        // #681 review F1 regression: the cap save keeps the stream LIVE, so
+        // this post-cap sample lands INSIDE the save window at a device
+        // timestamp ~30 min past arming (3x the 10-minute arm timeout). The
+        // idle budget was re-based at save-window entry, so it must NOT
+        // cancel — the stale pre-rep base would have computed 30 min of
+        // "idle" and disarmed the gauge mid-save (dead under #683).
+        feed(manager, [(25, 1_801_000_000)])
+        XCTAssertTrue(
+            manager.handsFreeRequested,
+            "a save-window sample at a device timestamp past the arm timeout must NOT cancel hands-free"
+        )
+        XCTAssertEqual(manager.handsFreeState, .waitingForSlack)
+        XCTAssertEqual(commands, [.startWeight], "the save-window sample must not emit a .stop")
+        await recordings.releaseAll()
         try await waitUntil { manager.sessionCount == 1 && !manager.saving }
         let rows = await recordings.snapshot().map(\.row)
         XCTAssertEqual(rows.count, 1)
