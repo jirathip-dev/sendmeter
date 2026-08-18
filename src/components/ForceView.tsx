@@ -56,6 +56,11 @@ import {
 import { nextLockedGaugeInputs } from "../lib/gaugeInputLock";
 import type { GaugeInputs } from "../lib/gaugeInputLock";
 import {
+  loadLastUsedGaugeLabel,
+  resolveRecordingGaugeLabel,
+  saveLastUsedGaugeLabel,
+} from "../lib/gaugeTagResolution";
+import {
   endTindeqLiveActivity,
   startTindeqLiveActivity,
   updateTindeqLivePeak,
@@ -382,8 +387,37 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
   // eyeball its tag (and undo if it was wrong). Replaces the old discard/save
   // prompt — a rep now saves the moment you stop, using the tag set beforehand.
   const [justSaved, setJustSaved] = useState<TindeqRecordingMeta | null>(null);
+  // #684: the raw Exercise&Side fields stay empty on mount (as before); the
+  // last-used pair is a persist-boundary FALLBACK for an untagged free hold,
+  // never a display seed — see gaugeTagResolution.ts. Every explicit selection
+  // below is remembered through `rememberGaugeLabel`, and the ref mirrors it
+  // synchronously so the boundary guard reads the latest choice.
   const [pendingTag, setPendingTag] = useState("");
   const [pendingSide, setPendingSide] = useState<TindeqSide>("");
+  // #684: the last-used pair, mirrored in a ref so the persist-boundary guard
+  // in runStop reads a value that can never be stale from an old render (the
+  // repo's closure-race rule). Kept in lockstep with the localStorage writes
+  // below — the ref is the same write path, one source of truth.
+  const lastUsedGaugeLabelRef = useRef(loadLastUsedGaugeLabel());
+  // #684: every explicit Exercise&Side selection is remembered for the next
+  // untagged free hold ("remember rather than repeatedly ask", #546). The ref
+  // is updated synchronously so the persist boundary sees the latest choice
+  // even if it runs before a re-render. Only a real selection is remembered:
+  // deselecting (re-tapping the active chip, or the "—" side) must NOT
+  // clobber the last-used pair — that pair is the "user chose it" default an
+  // empty field falls back to, so it survives until the next explicit pick.
+  function rememberGaugeLabel(tag: string, side: TindeqSide) {
+    lastUsedGaugeLabelRef.current = { tag: tag.trim(), side };
+    saveLastUsedGaugeLabel(tag, side);
+  }
+  function handlePendingTag(t: string) {
+    setPendingTag(t);
+    if (t.trim()) rememberGaugeLabel(t, pendingSide);
+  }
+  function handlePendingSide(s: TindeqSide) {
+    setPendingSide(s);
+    if (s) rememberGaugeLabel(pendingTag, s);
+  }
   const [saving, setSaving] = useState(false);
   // Guided-protocol clock controls. The protocol position is normally a pure
   // function of the physical measuring clock (tindeq.elapsedMs); these let the
@@ -1107,13 +1141,22 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
     // is only reachable while TagSideEditor is disabled (runActive), so raw
     // and locked agree today, but reading raw here was reachable "only by
     // convention" — exactly the class of bug CLAUDE.md's #196 note warns about.
+    // #684: this is the persist boundary — the one place a saved rep's
+    // tag/side is decided. The raw fields fall back to the remembered
+    // last-used pair, and with neither the rep persists UNTAGGED (`''`); the
+    // display fallback `liveEffectiveTag`/`allTags[0]` must never stamp a
+    // recording (see gaugeInputLock.ts's own comment). Read BEFORE
+    // `tindeq.stop()` like everything above, and resolve the last-used
+    // fallback here from the ref (never a captured value — repo closure-race
+    // rule) so the always-armed free-hold path is covered even when the raw
+    // fields are empty.
+    const pending = { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide };
+    const resolvedBoundary = (input: { tag: string; side: TindeqSide }) =>
+      resolveRecordingGaugeLabel(input, lastUsedGaugeLabelRef.current);
     const { tag, side } =
       note === ""
-        ? { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide }
-        : recoveredTagSide(
-            { tag: gaugeInputs.pendingTag, side: gaugeInputs.pendingSide },
-            tindeq.interruptionContext,
-          );
+        ? resolvedBoundary(pending)
+        : resolvedBoundary(recoveredTagSide(pending, tindeq.interruptionContext));
     const summary = await tindeq.stop(endMs);
     void endTindeqLiveActivity();
     if (!summary) return;
@@ -2445,8 +2488,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           tag={pendingTag}
           side={pendingSide}
           allTags={allTags}
-          onTag={setPendingTag}
-          onSide={setPendingSide}
+          onTag={handlePendingTag}
+          onSide={handlePendingSide}
           locked={runActive}
         />
         {runActive && (
@@ -2798,8 +2841,8 @@ export default function ForceView({ userId, onLogSession }: ForceViewProps) {
           globalSide={gaugeInputs.pendingSide}
           tag={gaugeInputs.pendingTag}
           allTags={allTags}
-          onTag={setPendingTag}
-          onSide={setPendingSide}
+          onTag={handlePendingTag}
+          onSide={handlePendingSide}
           onOpenSetupGuide={() => {
             setSetupGuideSensor(true);
             setSetupGuideOpen(true);

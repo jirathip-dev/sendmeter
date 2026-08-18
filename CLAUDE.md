@@ -635,7 +635,10 @@ are safe regardless.
   `.glass-bar`) shares the translucent blur-glass recipe.
 - **localStorage keys** are prefixed `sendmeter:` — `phone-workout` (resumable
   workout state machine), `rest-target-s`, `gauge-prepare`, `passkey-prompt`,
-  `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202).
+  `theme`, `auth-events` (bounded ring of null-session diagnostics, #194/#202),
+  plus `gauge-last-tag`/`gauge-last-side` (#684: the last explicitly-picked
+  Exercise&Side, written on every selection and read as the fallback at the
+  force persist boundary — never `allTags[0]`).
 - **Auth diagnostics don't live in localStorage on native.** `auth-events`,
   `auth-heartbeat` and `webview-canary` go through `authEventStore.ts`:
   Capacitor **Preferences** (NSUserDefaults) on native,
