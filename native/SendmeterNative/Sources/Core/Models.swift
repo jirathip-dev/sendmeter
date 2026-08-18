@@ -388,8 +388,17 @@ public enum RecordedZone: String, Codable, CaseIterable, Sendable {
     case prehab
     case strength
     case power
+    case powerEndurance = "power-endurance"
     case capacity
     case endurance
+
+    /// Human-readable label for UI ("Power Endurance" for the dash form).
+    public var displayLabel: String {
+        switch self {
+        case .powerEndurance: return "Power Endurance"
+        default: return rawValue.capitalized
+        }
+    }
 }
 
 public enum ForceProtocolMode: String, Codable, Sendable {

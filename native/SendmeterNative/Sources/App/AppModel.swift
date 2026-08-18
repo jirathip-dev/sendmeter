@@ -1176,7 +1176,13 @@ public final class AppModel: ObservableObject {
         guard let cf = references.criticalForceKilograms,
               let wPrime = references.impulseAboveCriticalForceKilogramSeconds
         else { return nil }
-        return TagForceCurve(tag: tag, modality: modality, cf: cf, wPrime: wPrime)
+        return TagForceCurve(
+            tag: tag,
+            modality: modality,
+            cf: cf,
+            wPrime: wPrime,
+            maxForceKilograms: references.maximumForceKilograms
+        )
     }
 
     private func modalityFilter(_ recording: TindeqRecording, modality: String) -> Bool {

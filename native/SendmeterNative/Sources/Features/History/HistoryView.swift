@@ -675,7 +675,7 @@ private struct HistoryRecordingRow: View {
                 HStack(spacing: 7) {
                     Text(recording.recordedAt.formatted(date: .abbreviated, time: .shortened))
                     if recording.side != .unspecified { Text(recording.side.label) }
-                    if let zone = recording.zone { Text(zone.rawValue.capitalized) }
+                    if let zone = recording.zone { Text(zone.displayLabel) }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

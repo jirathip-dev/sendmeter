@@ -4,7 +4,10 @@ import SendLogWatchCore
 /// A tag's fitted critical-force curve, the per-rep `cf`/`wPrime` a gauge
 /// session's W'-depletion prediction reads (mirrors the web's cached
 /// `TagCurve` registry — `src/lib/repo/tindeq.ts` `fetchTagCurves`, which is
-/// itself partitioned by execution modality).
+/// itself partitioned by execution modality). Carries the fit's max force too
+/// so the training-balance Focus-Next tie-break can cap its predicted 5s peak
+/// exactly like the web (`predictForce` = `min(maxF, cf + W′/5)`, #653 review
+/// finding 7).
 public struct TagForceCurve: Codable, Equatable, Sendable {
     public let tag: String
     /// "static" or "reverse_action" — the modality of the recordings the
@@ -13,12 +16,16 @@ public struct TagForceCurve: Codable, Equatable, Sendable {
     public let modality: String
     public let cf: Double
     public let wPrime: Double
+    /// The fit's maximum short-window force (web `maxF`) — the cap on the
+    /// predicted 5s peak. Optional for pre-#653 cache shapes.
+    public let maxForceKilograms: Double?
 
-    public init(tag: String, modality: String, cf: Double, wPrime: Double) {
+    public init(tag: String, modality: String, cf: Double, wPrime: Double, maxForceKilograms: Double? = nil) {
         self.tag = tag
         self.modality = modality
         self.cf = cf
         self.wPrime = wPrime
+        self.maxForceKilograms = maxForceKilograms
     }
 }
 
