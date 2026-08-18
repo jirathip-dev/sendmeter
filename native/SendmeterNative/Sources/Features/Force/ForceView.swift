@@ -1640,7 +1640,7 @@ private struct GuidedForceProtocolView: View {
                     }
                 }
             }
-            model.guidedActivity.refresh()
+            model.guidedActivity.refresh(run: run, at: date)
         }
 
         guard run.remainingSeconds(at: date) <= 0 else { return }
@@ -1653,7 +1653,7 @@ private struct GuidedForceProtocolView: View {
         isAdvancing = true
         let stage = run.currentStage
         if stage.kind == .work, let summary = model.tindeq.stopMeasuring() {
-            model.guidedActivity.updatePeak(summary.peakKilograms)
+            model.guidedActivity.updatePeak(summary.peakKilograms, run: run, at: date)
             let enqueued = await preserve(summary, stage: stage, partial: false)
             guard enqueued else {
                 isAdvancing = false
@@ -1670,8 +1670,11 @@ private struct GuidedForceProtocolView: View {
         // so the transition block never reaches the `.complete` case — this
         // is the one cue the user is waiting for while looking away from the
         // phone, and the web fires it ("done" → `[80,60,80]` + 3 beeps).
+        // #674 review F5: same terminal-entry reason — the Live Activity DONE
+        // card must be pushed here explicitly or it sits on the last rest.
         if run.currentStage.kind == .complete {
             Haptics.shared.play(GuidedTransitionHaptics.cue(entering: .complete))
+            model.guidedActivity.refresh(run: run, at: date)
         }
         // #628: disarm the stage's arming so rest/switch stages cannot start
         // a phantom recording on leftover load; the next work stage re-arms.

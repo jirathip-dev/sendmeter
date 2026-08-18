@@ -16,6 +16,13 @@ struct SendmeterNativeApp: App {
                 .onOpenURL { url in
                     Task { await model.handleDeepLink(url) }
                 }
+                // #674 review F7: the orphan sweep also runs once on the
+                // root's first appearance — `scenePhase` change delivery on a
+                // COLD launch is not guaranteed, so this is the launch-time
+                // guarantee that a force-quit-stuck Live Activity is cleared.
+                .task {
+                    model.reconcileStrandedActivitiesAtLaunch()
+                }
                 .onChange(of: scenePhase) { phase in
                     // #628: backgrounding clears the keep-awake hold (the
                     // screen must not be pinned while the app can't show

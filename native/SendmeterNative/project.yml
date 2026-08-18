@@ -8,6 +8,17 @@ options:
 configs:
   Debug: debug
   Release: release
+# Project-level version settings: every target (the app AND the widget
+# appex) derives CFBundleShortVersionString / CFBundleVersion from these
+# ONE place, so a version bump can never leave the appex's version
+# string diverging from the app's (App Store validation rejects an
+# embedded bundle whose CFBundleShortVersionString differs from the
+# containing app's). The lane's CURRENT_PROJECT_VERSION xcargs override
+# stays a command-line override for the build number only.
+settings:
+  base:
+    MARKETING_VERSION: 1.0.0
+    CURRENT_PROJECT_VERSION: 1
 packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift
@@ -50,7 +61,17 @@ targets:
         buildPhase: resources
       - path: Resources/Assets.xcassets
         buildPhase: resources
+      # #674: GuidedProtocolActivityAttributes.swift is the ActivityKit wire
+      # type — compiled into BOTH the app and the widget extension from this
+      # single file so the activity shape cannot drift (same-project share;
+      # the web duplicates it with a KEEP-IN-SYNC comment instead).
+      - path: Sources/Shared
     dependencies:
+      # #674: the widget extension is embedded into the app via a target
+      # dependency (XcodeGen adds the PlugIns copy-files phase automatically
+      # for app-extension dependencies) — without this the .appex never ships
+      # in the app bundle and Live Activities cannot render.
+      - target: SendmeterNativeWidgets
       - package: Supabase
         product: Supabase
       - package: Supabase
@@ -70,8 +91,6 @@ targets:
         SWIFT_VERSION: 5.0
         IPHONEOS_DEPLOYMENT_TARGET: 16.2
         TARGETED_DEVICE_FAMILY: "1,2"
-        MARKETING_VERSION: 1.0.0
-        CURRENT_PROJECT_VERSION: 1
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
         ENABLE_USER_SCRIPT_SANDBOXING: YES
@@ -86,11 +105,68 @@ targets:
           base:
             SWIFT_COMPILATION_MODE: wholemodule
             SWIFT_OPTIMIZATION_LEVEL: -O
+  # #674: WidgetKit app-extension hosting the guided-protocol Live Activity
+  # UI. XcodeGen auto-embeds an app-extension into the app that depends on it
+  # (an "Embed Foundation Extensions" copy-files phase into PlugIns), so
+  # listing it in the app's dependencies is all the wiring the bundle needs.
+  # The target is min iOS 16.2 to match the app; interactive Button(intent:)
+  # bits are iOS 17+ and would need availability gating here (the guided
+  # protocol has none — no lock-screen actions).
+  SendmeterNativeWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.2"
+    sources:
+      - path: Sources/Widgets
+      - path: Sources/Shared
+      # XcodeGen ignores the top-level `resources:` block for this spec shape
+      # (same quirk as the app above), so the widget's Info.plist + privacy
+      # manifest are declared as sources with an explicit buildPhase. The
+      # Info.plist lives OUTSIDE the synced Sources/Widgets dir (repo
+      # convention for widget/appex targets). The privacy manifest lives in
+      # its OWN subdirectory so it keeps the exact `PrivacyInfo.xcprivacy`
+      # leaf name Apple's manifest tooling reads at the bundle root — a
+      # disambiguated name (e.g. WidgetsPrivacyInfo.xcprivacy) ships the file
+      # but Apple never reads it (#674 review F4).
+      - path: Resources/WidgetsInfo.plist
+        buildPhase: none
+      - path: Resources/Widgets/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jirathip.sendlog.native.widgets
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        INFOPLIST_FILE: Resources/WidgetsInfo.plist
+        # GENERATE_INFOPLIST_FILE: YES lets Xcode synthesize the CFBundle*
+        # keys (identifier, version, package type) on top of the NSExtension
+        # dict in WidgetsInfo.plist — the same convention as the Capacitor
+        # app's SendmeterWidgets target. With NO, the appex ships without a
+        # bundle identifier and ValidateEmbeddedBinary rejects it.
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Sendmeter
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        SWIFT_VERSION: 5.0
+        IPHONEOS_DEPLOYMENT_TARGET: 16.2
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        SKIP_INSTALL: YES
+        SUPPORTS_MACCATALYST: NO
+      configs:
+        Debug:
+          base:
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        Release:
+          base:
+            SWIFT_COMPILATION_MODE: wholemodule
+            SWIFT_OPTIMIZATION_LEVEL: -O
 schemes:
   SendmeterNative:
     build:
       targets:
         SendmeterNative: all
+        SendmeterNativeWidgets: all
     run:
       config: Debug
     archive:

@@ -27,6 +27,10 @@ in `docs/native-swift-rewrite.md`.
 - Apple Health readiness through the repository's existing `SendLogHealthCore`
 - Direct WatchConnectivity mirroring, access-token-only relay, and pending workout reconciliation
 - Account, passkey, device, queue, and destructive account-management settings
+- Lock-screen Live Activity mirror for guided Force protocols (#674): the
+  current segment counts down natively, the Dynamic Island tap deep-links to
+  the Force tab, and the card is kept in sync through stage changes, Skip
+  Stage, hold-end peaks, and run completion
 
 ## Architecture
 
@@ -36,8 +40,18 @@ SwiftUI application
 ├── Sources/Data       Supabase auth and typed PostgREST repositories
 ├── Sources/Platform   CoreBluetooth, HealthKit, and WatchConnectivity
 ├── Sources/Features   Native product screens
+├── Sources/Shared     ActivityKit wire type shared verbatim with the widget appex (#674)
+├── Sources/Widgets    The WidgetKit app-extension target's rendering code (#674)
 └── Sources/App        App lifecycle, orchestration, design system, and optimistic reconciliation
 ```
+
+`Sources/Shared` + `Sources/Widgets` compile into a second product target —
+`SendmeterNativeWidgets`, a WidgetKit app-extension embedded in the app
+bundle — in the same XcodeGen project. The extension renders the guided
+protocol's lock-screen Live Activity; it shares `GuidedProtocolActivityAttributes`
+(from `Sources/Shared`) with the app and intentionally has no SendmeterCore
+dependency: the app pushes the `ContentState` and the widget renders it
+(`Sources/App/GuidedProtocolActivityManager.swift` owns the activity).
 
 The reusable `SendmeterCore` package has no iOS UI dependency and is tested on
 Linux and macOS. The application target uses local packages already maintained

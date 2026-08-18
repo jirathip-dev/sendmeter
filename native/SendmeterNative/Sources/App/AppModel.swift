@@ -572,11 +572,54 @@ public final class AppModel: ObservableObject {
         }
     }
 
+    /// Route an incoming URL. `sendmeter://<host>` is the navigation scheme
+    /// the Live Activity / Dynamic Island taps (sendmeter://force) and any
+    /// future widgets/complications use — it must be intercepted BEFORE the
+    /// auth parser, or supabase-swift's PKCE `session(from:)` throws "Not a
+    /// valid PKCE flow URL" and the raw error lands in the ErrorBanner
+    /// (#674 review F2). Everything else is an auth callback
+    /// (com.jirathip.sendlog://auth#access_token=…).
     public func handleDeepLink(_ url: URL) async {
+        if url.scheme == "sendmeter" {
+            routeNativeDeepLink(url)
+            return
+        }
         await perform { try await self.auth.handleDeepLink(url) }
     }
 
+    /// Map a `sendmeter://` host to a tab — the native mirror of the watch's
+    /// `WatchNavigation.resolvedPath`. Pure so it is unit-testable.
+    public static func tab(forDeepLink url: URL) -> AppTab? {
+        switch url.host {
+        case "force": return .force
+        case "dashboard": return .dashboard
+        case "workout": return .workout
+        case "history": return .history
+        case "settings": return .settings
+        default: return nil
+        }
+    }
+
+    private func routeNativeDeepLink(_ url: URL) {
+        guard let tab = Self.tab(forDeepLink: url) else { return }
+        selectedTab = tab
+    }
+
+    /// #674 review F7: the orphan sweep ALSO runs on the root view's first
+    /// appearance, because `becameActive()` is driven by a `scenePhase`
+    /// change and whether a COLD launch delivers one is version-dependent.
+    /// This is the launch-time guarantee: force-quit mid-protocol → relaunch
+    /// → the stranded card is retired even if no phase change fires.
+    public func reconcileStrandedActivitiesAtLaunch() {
+        guidedActivity.reconcileOrphans()
+    }
+
     public func becameActive() async {
+        // #674 review F7: clear any guided Live Activity stranded by a
+        // force-quit / jetsam BEFORE the auth gate — a killed app never ran
+        // the in-process teardown, and relaunch is the only chance to retire
+        // the card. No-op while a run is in progress.
+        guidedActivity.reconcileOrphans()
         guard authSession != nil else { return }
         await relayValidSessionToWatch(guaranteed: false)
         await drainQueue()
