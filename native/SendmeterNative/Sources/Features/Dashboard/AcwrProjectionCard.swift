@@ -17,10 +17,17 @@ import SwiftUI
 struct AcwrProjectionCard: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.colorScheme) private var scheme
+    /// Bumped on a calendar-day rollover so the projection (whose dates and
+    /// relative labels read `Date()`) recomputes for the new today (#652 F11).
+    @State private var dayMarker = Date()
 
-    /// The projection, recomputed on each model change. Cheap (8 forward
-    /// steps), so no snapshot machinery is needed like the readiness trend.
+    /// The projection, recomputed on each model change. Deliberately no
+    /// snapshot machinery like the readiness trend — the projection itself is
+    /// only 8 forward steps (~0.02 ms), and the view recomputes it from the
+    /// model's sessions exactly once per body pass, in one place (`projection`
+    /// below) that every subview reads.
     private var projection: AcwrProjection.Result? {
+        _ = dayMarker
         let phase = model.currentPhase
         let band = AcwrProjection.Band(low: phase.acwrLow, high: phase.acwrHigh)
         return AcwrProjection.project(
@@ -43,18 +50,49 @@ struct AcwrProjectionCard: View {
                     Text(headline(projection))
                         .font(.subheadline)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    if let keepInBand = projection.keepInBand {
-                        Text(keepInBandText(keepInBand, todayFit: projection.days[0].fit, bandLow: projection.band!.low))
+                    if let keepInBand = projection.keepInBand, let band = projection.band {
+                        Text(keepInBandText(keepInBand, todayFit: projection.days[0].fit, bandLow: band.low))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 } else {
-                    Text("Log a few sessions and this card will show where your ACWR drifts over the coming week if you don't train.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    emptyState
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            // A full day in the foreground must not keep yesterday's dates and
+            // relative labels — bump the marker so the projection recomputes
+            // from the new today (#652 F11). The projection reads `Date()`
+            // internally, so any body invalidation recomputes it.
+            dayMarker = Date()
+        }
+    }
+
+    /// #652 F2: distinguish the nil causes instead of telling a user with
+    /// years of history "log a few sessions" on every cold launch.
+    ///
+    /// `projection` is nil in three materially different situations:
+    /// - sessions not fetched yet → "still loading" (distinct — sessions have
+    ///   no disk cache, so every cold launch renders a pass with `[]`);
+    /// - genuinely no sessions → the "log a few sessions" explainer;
+    /// - sessions exist but all load fell out of the 90-day window (or the
+    ///   chronic term is zero) → the ratio has nothing to project from.
+    @ViewBuilder
+    private var emptyState: some View {
+        if !model.hasLoadedSessions {
+            Text("Your training history is still loading.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } else if model.sessions.isEmpty {
+            Text("Log a few sessions and this card will show where your ACWR drifts over the coming week if you don't train.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("Your most recent sessions fall outside the 90-day window this card projects from, so there's no ACWR ratio to extend yet — log a session and this card will show where it drifts over the coming week.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -81,10 +119,11 @@ struct AcwrProjectionCard: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
             }
 
-            // Dashed on purpose: none of this is measured data.
+            // Dashed on purpose: none of this is measured data. All x values
+            // are Double so the whole chart shares one numeric x scale.
             ForEach(projection.days, id: \.dayOffset) { day in
                 LineMark(
-                    x: .value("Day", day.dayOffset),
+                    x: .value("Day", Double(day.dayOffset)),
                     y: .value("ACWR", day.acwr)
                 )
             }
@@ -93,24 +132,27 @@ struct AcwrProjectionCard: View {
 
             // The first day the curve drops under the floor.
             if let crossing = projection.fallsBelow {
-                RuleMark(x: .value("Crossing", crossing.dayOffset))
+                RuleMark(x: .value("Crossing", Double(crossing.dayOffset)))
                     .foregroundStyle(ChartToken.axis.color(scheme))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
             }
 
             // Today is the only real number on the chart — a solid point
-            // colored by its risk status, with a radial halo behind it.
+            // colored by its risk status, with a radial halo behind it. The
+            // halo's symbolSize is an area (≈ r²·π), so it is sized to make
+            // its radius match the gradient's endRadius — the fade completes
+            // at the shape edge, exactly like the web's r=7 halo.
             PointMark(
-                x: .value("Day", today.dayOffset),
+                x: .value("Day", Double(today.dayOffset)),
                 y: .value("ACWR", today.acwr)
             )
-            .foregroundStyle(ChartToken.selectedHalo(scheme, endRadius: 14))
-            .symbolSize(28)
+            .foregroundStyle(ChartToken.selectedHalo(scheme, endRadius: 7))
+            .symbolSize(154)
             PointMark(
-                x: .value("Day", today.dayOffset),
+                x: .value("Day", Double(today.dayOffset)),
                 y: .value("ACWR", today.acwr)
             )
-            .foregroundStyle(statusColor(scheme))
+            .foregroundStyle(ChartToken.acwrStatusColor(today.acwr, scheme))
             .symbolSize(8)
         }
         .chartYScale(domain: yDomain(projection))
@@ -163,12 +205,19 @@ struct AcwrProjectionCard: View {
         return values.sorted()
     }
 
+    /// #652 F9: the web draws the "Now", the crossing weekday, and "+7d" on
+    /// separate axis rows so a day-7 crossing keeps BOTH its weekday and the
+    /// horizon label. Replicate by giving the crossing tick a two-line label
+    /// when it coincides with the horizon.
     private func axisLabel(_ value: Double?, projection: AcwrProjection.Result) -> Text {
         guard let value else { return Text("") }
         if value == 0 {
             return Text("Now \(projection.days[0].acwr.formatted(.number.precision(.fractionLength(2))))")
         }
         if value == Double(AcwrProjection.projectionDays) {
+            if let crossing = projection.fallsBelow, value == Double(crossing.dayOffset) {
+                return Text("\(weekdayLabel(for: crossing.date))\n+\(AcwrProjection.projectionDays)d")
+            }
             return Text("+\(AcwrProjection.projectionDays)d")
         }
         if let crossing = projection.fallsBelow, value == Double(crossing.dayOffset) {
@@ -182,29 +231,23 @@ struct AcwrProjectionCard: View {
         return [band.low, band.high]
     }
 
+    /// #652 F10: the device locale for the weekday — matching
+    /// `relativeDayLabel` in the headline directly beneath the chart (the web
+    /// uses the device locale for both). Only the calendar is pinned.
     private func weekdayLabel(for date: String) -> String {
         guard let day = LocalDateSupport.date(from: date) else { return "" }
         var style = Date.FormatStyle().weekday(.abbreviated)
         style.calendar = Calendar(identifier: .gregorian)
-        style.locale = Locale(identifier: "en_US_POSIX")
         return day.formatted(style)
-    }
-
-    /// The universal ACWR status color — same mapping the Load card uses.
-    private func statusColor(_ scheme: ColorScheme) -> Color {
-        switch TrainingMetrics.acwrStatus(projection?.days[0].acwr) {
-        case .optimal: return ChartToken.optimal.color(scheme)
-        case .low, .underTraining: return ChartToken.focus.color(scheme)
-        case .caution: return ChartToken.caution.color(scheme)
-        case .danger: return ChartToken.alert.color(scheme)
-        case .noData: return .secondary
-        }
     }
 
     // MARK: - Copy
 
     /// The plain-language version of the projection: what leaves the band,
-    /// when. Mirrors the web's `headline()`.
+    /// when. Mirrors the web's `headline()`. `model.currentPhase` always has a
+    /// band (non-optional `acwrLow/acwrHigh`), so the projection is never
+    /// created with `band == nil` from this card — but the no-band branches
+    /// are kept for the pure function's contract (#652 F12).
     private func headline(_ projection: AcwrProjection.Result) -> String {
         let todayFit = projection.days[0].fit
         guard let band = projection.band, let todayFit else {

@@ -99,6 +99,63 @@ final class DateSupportTests: XCTestCase {
         )
     }
 
+    func testDaysAheadWalksForwardThroughMonthBoundary() {
+        // Same reference: daysAhead(1) lands on 2026-08-02, ahead(31) crosses
+        // into September.
+        let reference = Date(timeIntervalSince1970: 1_785_517_200)
+        XCTAssertEqual(
+            LocalDateSupport.daysAhead(0, from: reference, timeZone: bangkok),
+            "2026-08-01"
+        )
+        XCTAssertEqual(
+            LocalDateSupport.daysAhead(1, from: reference, timeZone: bangkok),
+            "2026-08-02"
+        )
+        XCTAssertEqual(
+            LocalDateSupport.daysAhead(31, from: reference, timeZone: bangkok),
+            "2026-09-01"
+        )
+    }
+
+    func testRelativeDayLabel() throws {
+        // 2026-08-15 is a Saturday (Bangkok). Walk the five prose branches.
+        let reference = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-15", timeZone: bangkok))
+        let day = { (offset: Int) in
+            LocalDateSupport.daysAhead(offset, from: reference, timeZone: self.bangkok)
+        }
+        XCTAssertEqual(
+            LocalDateSupport.relativeDayLabel(for: day(0), referenceDate: reference, timeZone: bangkok),
+            "today"
+        )
+        XCTAssertEqual(
+            LocalDateSupport.relativeDayLabel(for: day(-1), referenceDate: reference, timeZone: bangkok),
+            "yesterday"
+        )
+        XCTAssertEqual(
+            LocalDateSupport.relativeDayLabel(for: day(1), referenceDate: reference, timeZone: bangkok),
+            "tomorrow"
+        )
+        // +2 (Monday) → wide weekday; +6 (Friday) → still a weekday.
+        XCTAssertEqual(
+            LocalDateSupport.relativeDayLabel(for: day(2), referenceDate: reference, timeZone: bangkok),
+            "Monday"
+        )
+        XCTAssertEqual(
+            LocalDateSupport.relativeDayLabel(for: day(6), referenceDate: reference, timeZone: bangkok),
+            "Friday"
+        )
+        // +7 (next Saturday) → past the unambiguous-weekday horizon → short date.
+        XCTAssertEqual(
+            LocalDateSupport.relativeDayLabel(for: day(7), referenceDate: reference, timeZone: bangkok),
+            "22 Aug"
+        )
+        // Unparseable input fails safely by echoing the input.
+        XCTAssertEqual(
+            LocalDateSupport.relativeDayLabel(for: "not-a-date", referenceDate: reference, timeZone: bangkok),
+            "not-a-date"
+        )
+    }
+
     func testDayDistance() {
         XCTAssertEqual(
             LocalDateSupport.dayDistance(from: "2026-08-01", to: "2026-08-15", timeZone: bangkok),

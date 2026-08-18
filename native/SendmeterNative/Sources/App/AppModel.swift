@@ -73,6 +73,14 @@ public final class AppModel: ObservableObject {
     @Published public private(set) var bootState: AppBootState = .loading
     @Published public private(set) var authSession: AuthSession?
     @Published public private(set) var sessions: [SendmeterCore.Session] = []
+    /// True once the session list has been fetched at least once for the
+    /// current account (even if it came back empty). Sessions have no disk
+    /// cache — `refreshAll` fetches them over the network and `sessions` stays
+    /// `[]` until that resolves — so `sessions.isEmpty` alone cannot tell "no
+    /// history" from "not loaded yet". Consumers (the ACWR projection card)
+    /// use this to avoid claiming a fresh user has no history on every cold
+    /// launch or failed refresh (#652 F2).
+    @Published public private(set) var hasLoadedSessions = false
     @Published public private(set) var deletedSessions: [SendmeterCore.Session] = []
     @Published public private(set) var deletedRecordings: [TindeqRecording] = []
     @Published public private(set) var healthMetrics: [HealthMetric] = []
@@ -1981,6 +1989,10 @@ public final class AppModel: ObservableObject {
                 if $0.date != $1.date { return $0.date > $1.date }
                 return $0.id.uuidString > $1.id.uuidString
             }
+        // Whether the fetch came back empty or not, the account's session list
+        // has now been loaded once — consumers can distinguish "no history"
+        // from "not fetched yet" (#652 F2).
+        hasLoadedSessions = true
     }
 
     private func replaceSession(_ session: SendmeterCore.Session) {
@@ -1991,6 +2003,7 @@ public final class AppModel: ObservableObject {
             if $0.date != $1.date { return $0.date > $1.date }
             return $0.id.uuidString > $1.id.uuidString
         }
+        hasLoadedSessions = true
     }
 
     private func replaceRecording(_ recording: TindeqRecording) {
@@ -2001,6 +2014,7 @@ public final class AppModel: ObservableObject {
 
     private func clearLoadedData() {
         sessions = []
+        hasLoadedSessions = false
         deletedSessions = []
         deletedRecordings = []
         healthMetrics = []

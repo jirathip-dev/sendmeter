@@ -154,6 +154,18 @@ final class ChartThemeTests: XCTestCase {
         XCTAssertEqual(stops.map(\.location), [0, 0.7, 1])
     }
 
+    func testACWRStatusColorMappingMatchesLoadCard() {
+        // The shared mapping the Load card and the projection day-0 dot both
+        // use (#652 F12): optimal → optimal token; low/under-training →
+        // focus; caution → caution; danger → alert; no data → secondary.
+        XCTAssertEqual(ChartToken.acwrStatusColor(1.0, .light), ChartToken.optimal.color(.light))
+        XCTAssertEqual(ChartToken.acwrStatusColor(0.7, .light), ChartToken.focus.color(.light))
+        XCTAssertEqual(ChartToken.acwrStatusColor(0.5, .dark), ChartToken.focus.color(.dark))
+        XCTAssertEqual(ChartToken.acwrStatusColor(1.4, .dark), ChartToken.caution.color(.dark))
+        XCTAssertEqual(ChartToken.acwrStatusColor(1.6, .light), ChartToken.alert.color(.light))
+        XCTAssertEqual(ChartToken.acwrStatusColor(nil, .light), Color.secondary)
+    }
+
     func testColorsResolveForBothSchemes() {
         for token in ChartToken.allCases {
             XCTAssertNotNil(token.color(.light), "\(token.rawValue) light color")

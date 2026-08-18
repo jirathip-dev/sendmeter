@@ -179,7 +179,10 @@ public enum AcwrProjection {
         // on the day BEFORE the suggested session, which the ratio alone can't
         // recover.
         var states: [EWMALoadState] = [state]
-        for offset in 1...horizonDays {
+        // stride, not `1...horizonDays`: the closed range traps on horizonDays 0
+        // (a legal argument — the web's `for (let i = 1; i <= horizonDays; i++)`
+        // just returns today), while stride yields an empty sequence.
+        for offset in stride(from: 1, through: horizonDays, by: 1) {
             let next = stepEwmaLoad(states[offset - 1], load: 0)
             states.append(next)
             guard let acwr = acwrOf(next) else { break }

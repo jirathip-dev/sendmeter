@@ -28,6 +28,25 @@ final class AcwrProjectionTests: XCTestCase {
         )!
     }
 
+    /// The web's `history()` fixture (`acwrProjection.test.ts:38-40`): 60 days
+    /// of sessions, one per day back from the reference, with deterministic
+    /// varied loads. Kept inside 60 days on purpose — the EWMA lookback is 90,
+    /// so nothing falls out of the window when the clock advances a day.
+    private func historySessions(reference: Date) -> [Session] {
+        (0..<60).map { i in
+            Session(
+                id: UUID(),
+                date: LocalDateSupport.daysAgo(i, from: reference, timeZone: bangkok),
+                type: "board",
+                typeLabel: "Board",
+                durationMinutes: 60,
+                rpe: 5,
+                load: 100 + Double((i * 37) % 210),
+                phase: .capacity
+            )
+        }
+    }
+
     // MARK: - Decay constants
 
     func testDecayConstantsMatchProductContract() {
@@ -83,11 +102,74 @@ final class AcwrProjectionTests: XCTestCase {
 
     // MARK: - projectAcwr
 
-    func testDayZeroIsTodaysRatio() {
-        let p = projection(EWMALoadState(acute: 300, chronic: 300), capacityBand)
+    /// Web fixture "day 0 IS today's ratio — the same number the ACWR card
+    /// shows" (`acwrProjection.test.ts:92-98`): a real 60-day session history
+    /// through `ewmaLoadState`, asserting the projected day 0 equals the ratio
+    /// `computeACWR` renders on the Load card directly above. This is the
+    /// anti-fabrication guard — it is what would fail if the card ever got a
+    /// truncated session window, a different EWMA seed, or a different
+    /// reference date than the ACWR pipeline.
+    func testDayZeroIsTheRatioTheACWRCardShows() throws {
+        let sessions = historySessions(reference: reference)
+        let state = try XCTUnwrap(TrainingMetrics.ewmaLoadState(
+            sessions: sessions,
+            referenceDate: reference,
+            timeZone: bangkok
+        ))
+        let p = projection(state, capacityBand)
         XCTAssertEqual(p.days[0].dayOffset, 0)
         XCTAssertEqual(p.days[0].date, "2026-08-15")
-        XCTAssertEqual(p.days[0].acwr, 1.0, accuracy: 1e-12)
+        XCTAssertEqual(
+            p.days[0].acwr,
+            try XCTUnwrap(TrainingMetrics.computeACWR(
+                sessions: sessions,
+                referenceDate: reference,
+                timeZone: bangkok
+            ).ratio),
+            accuracy: 1e-12
+        )
+    }
+
+    /// Web fixture "a projected zero-load day reproduces what ewmaAcwr computes
+    /// the next day" (`acwrProjection.test.ts:107-119`): advance the clock one
+    /// day, log nothing, and the real recompute must land where day 1 predicted.
+    /// Not bit-identical — the 90-day window slides, so the mean seed decays one
+    /// step less than a pure forward step assumes (~1e-4 of the ratio, shrinking
+    /// with history) — hence the 1e-3 tolerance, exactly as the web asserts.
+    func testProjectedZeroLoadDayReproducesNextDaysComputation() throws {
+        let sessions = historySessions(reference: reference)
+        let state = try XCTUnwrap(TrainingMetrics.ewmaLoadState(
+            sessions: sessions,
+            referenceDate: reference,
+            timeZone: bangkok
+        ))
+        let projected = projection(state, nil).days[1].acwr
+
+        let nextDay = try XCTUnwrap(LocalDateSupport.date(from: "2026-08-16", timeZone: bangkok))
+        let recomputed = try XCTUnwrap(TrainingMetrics.computeACWR(
+            sessions: sessions,
+            referenceDate: nextDay,
+            timeZone: bangkok
+        ).ratio)
+        XCTAssertEqual(recomputed, projected, accuracy: 1e-3)
+    }
+
+    /// F3 regression: `horizonDays: 0` must return a one-day projection (just
+    /// today), exactly as the web's `for (let i = 1; i <= 0; i++)` does — never
+    /// trap on the closed range.
+    func testHorizonZeroReturnsJustToday() {
+        let p = AcwrProjection.project(
+            state: EWMALoadState(acute: 300, chronic: 300),
+            band: capacityBand,
+            horizonDays: 0,
+            referenceDate: reference,
+            timeZone: bangkok
+        )!
+        XCTAssertEqual(p.days.count, 1)
+        XCTAssertEqual(p.days[0].dayOffset, 0)
+        XCTAssertNil(p.fallsBelow)
+        XCTAssertNil(p.entersBand)
+        XCTAssertNil(p.keepInBand)
     }
 
     func testProjectsSevenDaysPastToday() {

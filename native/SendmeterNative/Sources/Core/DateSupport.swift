@@ -86,20 +86,6 @@ public enum LocalDateSupport {
         return calendar.dateComponents([.day], from: start, to: end).day
     }
 
-    /// Whole local days from `referenceDate` to `date` (negative = past) — the
-    /// web's `dayOffsetFromToday`. Rounding (not `floor`) keeps a DST boundary
-    /// from under-counting a transition day.
-    public static func dayOffset(
-        from date: String,
-        to referenceDate: Date = Date(),
-        timeZone: TimeZone = .current
-    ) -> Int? {
-        guard let target = self.date(from: date, timeZone: timeZone),
-              let reference = self.date(from: string(from: referenceDate, timeZone: timeZone), timeZone: timeZone)
-        else { return nil }
-        return Int((target.timeIntervalSince(reference) / 86_400).rounded())
-    }
-
     /// How a nearby day is named in prose: "yesterday" / "today" /
     /// "tomorrow" / the plain weekday inside the coming week. Past ~6 days out
     /// a bare weekday is ambiguous (which Thursday?), so it falls back to a
@@ -109,7 +95,8 @@ public enum LocalDateSupport {
         referenceDate: Date = Date(),
         timeZone: TimeZone = .current
     ) -> String {
-        guard let offset = dayOffset(from: date, to: referenceDate, timeZone: timeZone) else {
+        let reference = string(from: referenceDate, timeZone: timeZone)
+        guard let offset = dayDistance(from: reference, to: date, timeZone: timeZone) else {
             return date
         }
         if offset == -1 { return "yesterday" }
